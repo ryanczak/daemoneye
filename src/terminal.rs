@@ -70,6 +70,7 @@ pub struct TerminalState {
     pub insert_mode: bool,    // IRM — CSI 4h / CSI 4l
     pub bracketed_paste: bool, // CSI ?2004h / CSI ?2004l
     pub mouse_mode: u16,      // 0=off, 1000=X10, 1002=button-event, 1006=SGR
+    pub app_cursor_keys: bool, // DECCKM — true when ?1h is active
     // --- Tier 3 fields ---
     pub pending_clipboard: Option<String>, // OSC 52 clipboard content to set
     // --- Scrollback ---
@@ -112,6 +113,7 @@ impl TerminalState {
             insert_mode: false,
             bracketed_paste: false,
             mouse_mode: 0,
+            app_cursor_keys: false,
             pending_clipboard: None,
             scrollback: VecDeque::new(),
             scrollback_limit: 10000,
@@ -263,6 +265,27 @@ impl TerminalState {
         let new_offset = (self.scroll_offset as i32 + delta).max(0);
         self.scroll_offset = (new_offset as usize).min(self.scrollback.len());
         self.dirty = true;
+    }
+
+    /// Render the last `lines` lines of scrollback + visible grid as plain text.
+    /// Used for building AI context prompts.
+    pub fn capture_context(&self, lines: usize) -> String {
+        let total = self.scrollback.len() + self.rows;
+        let start = total.saturating_sub(lines);
+        let mut out = String::with_capacity(lines * self.cols);
+        for i in 0..lines {
+            let virtual_y = start + i;
+            let row: &[Cell] = if virtual_y < self.scrollback.len() {
+                &self.scrollback[virtual_y]
+            } else {
+                let gy = virtual_y - self.scrollback.len();
+                if gy < self.grid.len() { &self.grid[gy] } else { &[] }
+            };
+            let line: String = row.iter().map(|c| c.c).collect();
+            out.push_str(line.trim_end());
+            out.push('\n');
+        }
+        out
     }
 }
 
@@ -534,6 +557,7 @@ impl Perform for TerminalState {
                     for &code in param_group {
                         if is_dec {
                             match code {
+                                1 => self.app_cursor_keys = true,
                                 7 => self.auto_wrap = true,
                                 25 => self.cursor_visible = true,
                                 1000 | 1002 | 1006 => self.mouse_mode = code,
@@ -568,6 +592,7 @@ impl Perform for TerminalState {
                     for &code in param_group {
                         if is_dec {
                             match code {
+                                1 => self.app_cursor_keys = false,
                                 7 => self.auto_wrap = false,
                                 25 => self.cursor_visible = false,
                                 1000 | 1002 | 1006 => self.mouse_mode = 0,
@@ -784,6 +809,7 @@ impl Perform for TerminalState {
                     self.charset_g0 = b'B';
                     self.cursor_visible = true;
                     self.mouse_mode = 0;
+                    self.app_cursor_keys = false;
                     self.bracketed_paste = false;
                     // Reset tab stops to default every-8
                     for (i, ts) in self.tab_stops.iter_mut().enumerate() {
@@ -946,6 +972,31 @@ impl Perform for TerminalState {
                 // ESC ( B — switch to ASCII charset
                 self.charset_g0 = b'B';
             }
+            b'c' => {
+                // RIS — Full Reset (ESC c)
+                self.current_fg = None;
+                self.current_bg = None;
+                self.current_attrs = TextAttrs::default();
+                self.cursor_x = 0;
+                self.cursor_y = 0;
+                self.scroll_top = 0;
+                self.scroll_bottom = self.rows.saturating_sub(1);
+                self.auto_wrap = true;
+                self.wrap_pending = false;
+                self.insert_mode = false;
+                self.charset_g0 = b'B';
+                self.cursor_visible = true;
+                self.mouse_mode = 0;
+                self.app_cursor_keys = false;
+                self.bracketed_paste = false;
+                self.alt_grid = None;
+                self.scrollback.clear();
+                self.scroll_offset = 0;
+                self.grid = vec![vec![Cell::new(' '); self.cols]; self.rows];
+                for (i, ts) in self.tab_stops.iter_mut().enumerate() {
+                    *ts = i % 8 == 0;
+                }
+            }
             _ => {}
         }
         self.dirty = true;
@@ -956,7 +1007,12 @@ pub struct PTYHandle {
     pub master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
-pub fn spawn_pty(state: Arc<Mutex<TerminalState>>, initial_cols: u16, initial_rows: u16) -> Result<PTYHandle, anyhow::Error> {
+pub fn spawn_pty_cmd(
+    state: Arc<Mutex<TerminalState>>,
+    initial_cols: u16,
+    initial_rows: u16,
+    cmd: CommandBuilder,
+) -> Result<PTYHandle, anyhow::Error> {
     let pty_system = NativePtySystem::default();
     let pair = pty_system.openpty(PtySize {
         rows: initial_rows,
@@ -965,19 +1021,14 @@ pub fn spawn_pty(state: Arc<Mutex<TerminalState>>, initial_cols: u16, initial_ro
         pixel_height: 0,
     })?;
 
-    let mut cmd = CommandBuilder::new("tmux");
-    cmd.env("COLORTERM", "truecolor");
-    cmd.args(["new-session", "-A", "-s", "t1000_main"]);
     let _child = pair.slave.spawn_command(cmd)?;
-    
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader()?;
-    
+
     thread::spawn(move || {
         let mut parser = Parser::new();
         let mut buf = [0u8; 1024];
-
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
@@ -991,4 +1042,11 @@ pub fn spawn_pty(state: Arc<Mutex<TerminalState>>, initial_cols: u16, initial_ro
     });
 
     Ok(PTYHandle { master: pair.master })
+}
+
+pub fn _spawn_pty(state: Arc<Mutex<TerminalState>>, initial_cols: u16, initial_rows: u16) -> Result<PTYHandle, anyhow::Error> {
+    let mut cmd = CommandBuilder::new("tmux");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.args(["new-session", "-A", "-s", "t1000_main"]);
+    spawn_pty_cmd(state, initial_cols, initial_rows, cmd)
 }
