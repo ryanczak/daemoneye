@@ -33,9 +33,12 @@ T1000 elevates the command-line experience by embedding AI agents like Google Ge
 - **Instant Activation**: Summon an AI agent instantly via a tmux keybinding or CLI command. This opens an interactive AI session in a dynamically positioned tmux pane.
 - **AI-Powered Capabilities**:
   - **Pair-Programming & Troubleshooting**: The AI doesn't just suggest commands; it uses Tool Calling to propose executing commands directly in your active tmux session. With user consent, it autonomously runs diagnostics, reads the output, and iterates to find the root cause of an issue.
+  - **Dual Execution Modes**: The AI chooses between two command execution modes. *Background mode* runs the command as a daemon subprocess — silently capturing output and returning it to the AI for analysis. *Foreground mode* injects the command directly into your terminal pane, making it visible and interactive. The AI knows your daemon's hostname and whether your pane is SSH'd to a remote machine, and selects the mode accordingly.
+  - **Sudo Integration**: Commands requiring elevated privileges are handled gracefully in both modes. Background sudo prompts appear in the chat interface with echo-disabled password input. Foreground sudo commands notify you to type your password in the terminal pane.
   - **Task Automation & Fleet Management**: Generate scripts or run on-the-fly automation commands to manage single host configurations or automated fleet deployments. The AI agent acts as an expert sysadmin.
   - **Security Auditing**: Have the AI agent analyze system states, running processes, or security scan outputs to recommend and automatically apply remediation solutions.
-  - **Prompt Library**: A library of pre-defined prompts for common tasks. Users can also create and save their own prompts. The prompts are stored in the user's home directory in the .t1000/prompts directory.
+  - **Command Audit Log**: Every command the AI executes is written to `~/.t1000/commands.log` — a tamper-evident, single-line-per-event log with timestamp, session ID, execution mode, approval status, and output excerpt.
+  - **Prompt Library**: A library of pre-defined prompts for common tasks. Users can also create and save their own prompts. The prompts are stored in the user's home directory in the `.t1000/prompts` directory.
 
 ### 3.3 Extensibility & Community Ecosystem
 
@@ -50,8 +53,8 @@ T1000 elevates the command-line experience by embedding AI agents like Google Ge
 
 1. A user attempts to start a local database service in a tmux pane, but it fails with a cryptic 50-line error trace.
 2. The user hits the **AI agent keybinding**.
-3. T1000 captures the last 100 lines of history from the active pane and passes it to the AI agent.
-4. The AI agent's tmux pane opens, explaining the error in plain English: *"It looks like port 5432 is already bound by another zombie process. Run `sudo kill -9 <PID>` to clear it."* The sysadmin can also have the AI agent execute the commands for them in the sysadmin's terminal.
+3. T1000 captures the last 200 lines of history from the active pane, notes the daemon hostname and that the pane is local, then passes everything to the AI agent.
+4. The AI agent's tmux pane opens, explaining the error in plain English: *"It looks like port 5432 is already bound by another zombie process."* It proposes `sudo kill -9 <PID>`. The user approves; the chat interface prompts for the sudo password with echo disabled, runs the command, and reports the result — all without leaving the AI pane.
 
 ### Workflow 2: Rapid Fleet Configuration
 

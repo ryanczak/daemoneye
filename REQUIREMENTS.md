@@ -10,6 +10,7 @@ This document specifies the functional and non-functional requirements for T1000
 - **FR-1.1.2**: The application MUST use `tmux` as its presentation layer and session interaction mechanism.
 - **FR-1.1.3**: The daemon MUST be capable of spawning new tmux panes within the user's active tmux session to present the AI interface.
 - **FR-1.1.4**: The application MUST provide a CLI tool or tmux keybinding to trigger the AI agent, which communicates with the background daemon.
+- **FR-1.1.5**: The daemon MUST append a structured, single-line audit record to a configurable command log file for every tool call execution event (approved, denied, or timed out). The log path MUST default to `~/.t1000/commands.log` and MUST be overridable or disableable via CLI flags (`--command-log-file`, `--no-command-log`).
 
 ### 1.2 AI Agent Integration
 
@@ -18,6 +19,10 @@ This document specifies the functional and non-functional requirements for T1000
 - **FR-1.2.3**: The AI MUST be able to analyze stack traces, crash logs, failing services, and security scan outputs to provide root cause analysis and remediation strategies.
 - **FR-1.2.4**: The AI interacts directly with the user's active terminal using tmux session features. This allows the AI agent to "pair program" with the user. By hooking into the user's terminal session via tmux, the AI agent can execute commands, read output, and respond to system prompts with the user's permission.
 - **FR-1.2.5**: The application MUST actively audit the system state (OS release, uptime, memory, load average, top CPU processes, shell environment, and shell history) once per session, cache it, and prepend this summary to the AI agent's context alongside the visible terminal buffer.
+- **FR-1.2.6**: The daemon MUST detect its own hostname and whether the user's active tmux pane is connected to a remote host (via SSH or mosh). This execution context MUST be injected into the first-turn AI prompt so the AI understands which machine each execution mode (`background` vs `foreground`) will target.
+- **FR-1.2.7**: The application MUST support two distinct command execution modes and the AI MUST be instructed to choose between them appropriately:
+  - *Background mode*: Command runs as a daemon subprocess on the daemon's local host. Output is captured and returned to the AI silently.
+  - *Foreground mode*: Command is injected into the user's active tmux pane via `send-keys`. The user can see and interact with the command. If the user's pane is SSH'd to a remote host, the command executes on that remote host.
 
 ### 1.3 Prompt Library
 
@@ -29,6 +34,8 @@ This document specifies the functional and non-functional requirements for T1000
 
 - **FR-1.4.1**: Sensitive data (passwords, secret keys, PII) MUST be masked or filtered from the terminal buffer before being transmitted to the AI API.
 - **FR-1.4.2**: Users MUST have explicit controls over what terminal context is sent to the LLM.
+- **FR-1.4.3**: When the AI proposes a background command that requires `sudo`, the application MUST prompt the user for their password via the chat interface with terminal echo disabled. The password MUST be piped directly to the `sudo` subprocess and MUST NOT be logged, stored on disk, or transmitted to the AI.
+- **FR-1.4.4**: When the AI proposes a foreground command that requires `sudo`, the application MUST notify the user in the chat interface to type their password in the terminal pane. The application MUST extend the wait time for the command to complete to accommodate the password entry.
 
 ### 1.5 Extensibility
 
@@ -52,3 +59,6 @@ This document specifies the functional and non-functional requirements for T1000
 ### 2.3 Usability
 
 - **NFR-2.3.1**: The interaction with the AI agent inside the tmux pane MUST feel natural and responsive.
+- **NFR-2.3.2**: The chat interface MUST provide a visual indicator (animated spinner) while waiting for the AI to respond.
+- **NFR-2.3.3**: Tool call prompts MUST clearly communicate which execution mode will be used and where the command will run (daemon host or user's terminal pane).
+- **NFR-2.3.4**: The chat interface SHOULD use color and Unicode symbols to visually distinguish AI responses, tool calls, approvals, errors, and system messages.

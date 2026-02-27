@@ -121,12 +121,14 @@ fn get_tool_definition() -> Value {
     json!([
         {
             "name": "run_terminal_command",
-            "description": "Execute a bash command. Set 'background' to true for diagnostics (ls, ps, cat, grep) to keep the user's terminal clean. Set 'background' to false only for commands that the user MUST see or interact with (e.g. starting a service, editing a file).",
+            "description": "Execute a bash command in one of two modes:\n\
+             - background=true: Runs as a subprocess on the DAEMON HOST. Output is captured silently and returned to you. Use for read-only diagnostics (ls, ps, cat, grep, df, curl, etc.). If the user is SSH'd into a remote host, this still runs locally on the daemon machine. Supports sudo: the user will be prompted for their password in the chat interface.\n\
+             - background=false: Injects the command into the USER'S TERMINAL PANE via tmux send-keys. The command is visible and interactive. Use for state-changing commands, service restarts, file edits, or anything that must run on the user's active host. If the user's pane is SSH'd to a remote machine, the command runs there. Supports sudo: the user types their password directly in the terminal pane.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The bash command to execute."},
-                    "background": {"type": "boolean", "description": "Whether to run invisibly in the background."}
+                    "background": {"type": "boolean", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote)."}
                 },
                 "required": ["command", "background"]
             }
@@ -140,12 +142,14 @@ fn get_openai_tool_definition() -> Value {
             "type": "function",
             "function": {
                 "name": "run_terminal_command",
-                "description": "Execute a bash command. Set 'background' to true for diagnostics (ls, ps, cat, grep) to keep the user's terminal clean.",
+                "description": "Execute a bash command in one of two modes:\n\
+                 - background=true: Runs as a subprocess on the DAEMON HOST. Output is captured silently. Use for read-only diagnostics. If the user is SSH'd to a remote host, this still runs on the daemon machine. Supports sudo via chat interface.\n\
+                 - background=false: Injects the command into the USER'S TERMINAL PANE via tmux. Visible and interactive. Use for state-changing commands or anything needing the user's active host. If the pane is SSH'd, the command runs remotely. Sudo requires the user to type their password in the pane.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "The bash command to execute."},
-                        "background": {"type": "boolean", "description": "Whether to run invisibly in the background."}
+                        "background": {"type": "boolean", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote)."}
                     },
                     "required": ["command", "background"]
                 }
@@ -516,12 +520,12 @@ impl AiClient for GeminiClient {
                     "function_declarations": [
                         {
                             "name": "run_terminal_command",
-                            "description": "Execute a bash command. Set 'background' to true for diagnostics (ls, ps, cat, grep) to keep the user's terminal clean.",
+                            "description": "Execute a bash command in one of two modes:\n- background=true: Runs on the DAEMON HOST as a subprocess. Output captured silently. Use for read-only diagnostics. Supports sudo via chat.\n- background=false: Runs in the USER'S TERMINAL PANE via tmux send-keys. Visible and interactive. If the user is SSH'd, runs remotely. Sudo requires the user to type password in the pane.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
                                     "command": {"type": "STRING", "description": "The bash command to execute."},
-                                    "background": {"type": "BOOLEAN", "description": "Whether to run invisibly in the background."}
+                                    "background": {"type": "BOOLEAN", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, possibly remote)."}
                                 },
                                 "required": ["command", "background"]
                             }

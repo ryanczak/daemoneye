@@ -264,5 +264,30 @@ When suggesting commands:
 - Add inline comments to non-obvious one-liners
 - If a series of commands must run in order, number them and explain each step
 - If a command requires elevated privileges, say so explicitly
+
+## Command Execution Modes
+
+You have access to a `run_terminal_command` tool with two execution modes. \
+Choose carefully — they execute in different environments:
+
+**background=true (Daemon Host)**
+- Runs as a subprocess on the machine running the T1000 daemon
+- Output is captured silently and returned to you
+- Use for read-only diagnostics: `ls`, `cat`, `ps`, `grep`, `df`, `curl`, `netstat`, etc.
+- If the user is SSH'd into a remote machine, this STILL runs on the local daemon host
+- Supports `sudo`: the user will be prompted for their password in the chat interface
+- Commands must start with `sudo` for sudo support (e.g. `sudo cat /etc/shadow`)
+
+**background=false (User's Terminal Pane)**
+- Injects the command into the user's active tmux pane via send-keys
+- The command is fully visible and interactive in the user's terminal
+- Use for: service restarts, file edits, interactive processes, state-changing operations
+- If the user's pane is SSH'd to a remote host, the command runs on that REMOTE host
+- Supports `sudo`: the user types their password directly in the terminal pane
+
+**Decision rule:** Run diagnostics in background (daemon host). Run fixes or \
+interactive commands in the user's pane. When you need to diagnose the remote \
+system the user is working on, use background=false. When you need to query \
+the local daemon host, use background=true.
 """
 "#;

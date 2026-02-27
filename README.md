@@ -1,6 +1,6 @@
 # T1000
 
-T1000 is a lightweight background daemon that integrates natively with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware pair-sysadmin.
+T1000 is a lightweight background daemon that integrates natively with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware principal-engineer.
 
 ---
 
@@ -9,7 +9,10 @@ T1000 is a lightweight background daemon that integrates natively with `tmux` to
 - **Native tmux Integration** — T1000 runs as a background process and interacts directly with your active `tmux` server.
 - **Session State Caching** — The daemon actively monitors your `tmux` session, summarizing output from all panes to provide the AI with a global, real-time context of your terminal environment.
 - **Embedded AI Assistant** — Streams responses from Anthropic Claude, OpenAI, or Google Gemini with automatic context capture and sensitive-data masking.
-- **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Upon your approval, the daemon securely injects and executes the commands directly in your active `tmux` pane.
+- **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Upon your approval, the daemon securely executes them. Two modes: *background* (daemon subprocess, result returned to AI silently) and *foreground* (injected into your tmux pane via `send-keys`, visible and interactive).
+- **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
+- **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
+- **Command Audit Logging** — Every executed command is appended to `~/.t1000/commands.log` as a single structured line, including timestamp, session ID, execution mode, pane target, approval status, and output excerpt.
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session.
 - **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`/tmp/t1000.sock`) for instant, non-blocking interaction.
 
@@ -70,13 +73,26 @@ Daemon output (startup messages, errors) is written to `~/.t1000/daemon.log` by 
 t1000 logs
 ```
 
-To write logs to a custom path:
+To log directly to the console (useful when troubleshooting):
+
+```sh
+t1000 daemon --console
+```
+
+To write daemon logs to a custom path:
 
 ```sh
 t1000 daemon --log-file /var/log/t1000.log
 ```
 
-You can also manage the daemon with systemd — see the provided `t1000.service` file.
+Command execution events are written to `~/.t1000/commands.log` by default. To change the path or disable the audit log:
+
+```sh
+t1000 daemon --command-log-file /var/log/t1000-commands.log
+t1000 daemon --no-command-log
+```
+
+You can also manage the daemon with systemd — run `t1000 setup` for the service file.
 
 ### 2. Configure tmux
 
@@ -84,7 +100,7 @@ Run `t1000 setup` to get the recommended `tmux` configuration and add the output
 
 ```sh
 # ~/.tmux.conf
-bind-key T split-window -h 't1000 chat'
+bind-key T split-window -h -e "T1000_SOURCE_PANE=#{pane_id}" 't1000 chat'
 ```
 
 Reload your tmux config:
@@ -111,13 +127,17 @@ t1000 chat
 
 | Command | Description |
 |---|---|
-| `t1000 daemon [--log-file FILE]` | Start the background daemon |
+| `t1000 daemon` | Start the background daemon |
+| `t1000 daemon --console` | Start daemon with output on the console (troubleshooting) |
+| `t1000 daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.t1000/daemon.log` |
+| `t1000 daemon --command-log-file FILE` | Write command audit log to `FILE` |
+| `t1000 daemon --no-command-log` | Disable command audit logging |
 | `t1000 stop` | Stop the daemon gracefully |
 | `t1000 ping` | Check whether the daemon is running |
 | `t1000 logs [--log-file FILE]` | Tail the daemon log (wraps `tail -f`) |
 | `t1000 chat` | Start an interactive multi-turn chat session |
 | `t1000 ask <query>` | Send a single question to the AI |
-| `t1000 setup` | Print the recommended tmux configuration |
+| `t1000 setup` | Print the systemd service file and recommended tmux config |
 
 ---
 
@@ -185,6 +205,21 @@ src/
 
 ---
 
+## Command Audit Log
+
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a single line in `~/.t1000/commands.log`:
+
+```
+[1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
+[1748000001] session=abc123 mode=foreground pane=%3 status=denied cmd=sudo rm -rf /tmp/old out=
+```
+
+Fields: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
+
+Control with `--command-log-file FILE` or `--no-command-log` on `t1000 daemon`.
+
+---
+
 ## Security Notes
 
 Before sending terminal context to an AI provider, T1000 applies a regex-based
@@ -199,6 +234,15 @@ filter that masks:
 Masked values are replaced with placeholder tokens (`<REDACTED>`, `<AWS_KEY>`,
 etc.). Review the context shown in the AI pane before submitting if you handle
 highly sensitive data.
+
+### Sudo passwords
+
+When the AI requests a background command that requires `sudo`, the chat interface
+prompts you for your password with terminal echo disabled. The password is piped
+directly to `sudo -S` and is never written to disk, logged, or sent to the AI.
+
+For foreground commands run in your terminal pane, you type the password directly
+into the pane — T1000 never sees it.
 
 ---
 

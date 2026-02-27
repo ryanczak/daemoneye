@@ -15,6 +15,8 @@ pub enum Request {
     Ask { query: String, tmux_pane: Option<String>, session_id: Option<String> },
     /// Approve or deny a tool call.
     ToolCallResponse { id: String, approved: bool },
+    /// Respond to a sudo password prompt from the daemon.
+    SudoPassword { id: String, password: String },
 }
 
 /// Messages sent from the daemon back to the CLI client.
@@ -31,4 +33,6 @@ pub enum Response {
     Token(String),
     /// A prompt for the user to approve a tool call.
     ToolCallPrompt { id: String, command: String, background: bool },
+    /// The approved background command requires sudo — prompt the user for their password.
+    SudoPrompt { id: String, command: String },
 }

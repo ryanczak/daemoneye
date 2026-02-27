@@ -23,6 +23,15 @@ enum Commands {
         /// Redirect daemon output to FILE instead of stdout (default: ~/.t1000/daemon.log)
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
+        /// Log to the console instead of a file (useful for troubleshooting)
+        #[arg(long)]
+        console: bool,
+        /// Write command execution audit log to FILE (default: ~/.t1000/commands.log)
+        #[arg(long, value_name = "FILE")]
+        command_log_file: Option<PathBuf>,
+        /// Disable command execution audit logging
+        #[arg(long)]
+        no_command_log: bool,
     },
     /// Tail the daemon log
     Logs {
@@ -51,9 +60,18 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Daemon { log_file } => {
-            let log_file = Some(log_file.unwrap_or_else(config::default_log_path));
-            daemon::run_daemon(log_file).await?;
+        Commands::Daemon { log_file, console, command_log_file, no_command_log } => {
+            let log_file = if console {
+                None
+            } else {
+                Some(log_file.unwrap_or_else(config::default_log_path))
+            };
+            let command_log = if no_command_log {
+                None
+            } else {
+                Some(command_log_file.unwrap_or_else(|| config::config_dir().join("commands.log")))
+            };
+            daemon::run_daemon(log_file, command_log).await?;
         }
         Commands::Logs { log_file } => {
             let path = log_file.unwrap_or_else(config::default_log_path);

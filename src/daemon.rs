@@ -24,6 +24,88 @@ type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
 
 const FALLBACK_SESSION: &str = "t1000";
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Return the hostname of the machine running the daemon.
+fn daemon_hostname() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|s| s.trim().to_string())
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Check whether a tmux pane's foreground process is SSH or mosh.
+/// Returns a human-readable description if the pane is on a remote host.
+fn get_pane_remote_host(pane_id: &str) -> Option<String> {
+    let out = std::process::Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_current_command}"])
+        .output()
+        .ok()?;
+    let cmd = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    match cmd.as_str() {
+        "ssh" | "mosh-client" | "mosh" => Some(format!("remote (via {})", cmd)),
+        _ => None,
+    }
+}
+
+/// True if the command string contains `sudo` as a standalone word.
+fn command_has_sudo(cmd: &str) -> bool {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap());
+    re.is_match(cmd)
+}
+
+/// Rewrite a command that starts with `sudo` to add `-S -p ""` so the
+/// password can be piped in via stdin without an interactive prompt.
+fn inject_sudo_flags(cmd: &str) -> String {
+    let t = cmd.trim();
+    if let Some(rest) = t.strip_prefix("sudo ") {
+        format!(r#"sudo -S -p "" {}"#, rest)
+    } else {
+        cmd.to_string()
+    }
+}
+
+/// Append a single-line execution record to the command log.
+/// Does nothing when `log_path` is `None` (logging disabled).
+fn log_command(
+    log_path: Option<&std::path::Path>,
+    session_id: Option<&str>,
+    mode: &str,
+    pane: &str,
+    command: &str,
+    status: &str,
+    output_excerpt: &str,
+) {
+    let Some(path) = log_path else { return; };
+
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let session = session_id.unwrap_or("-");
+    // Escape embedded newlines so each log event stays on one line.
+    let cmd: String = command.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
+    let out: String = output_excerpt
+        .chars()
+        .take(200)
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
+    let line = format!(
+        "[{ts}] session={session} mode={mode} pane={pane} status={status} cmd={cmd} out={out}\n"
+    );
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 /// Conventional environment variable for each provider's API key.
 fn api_key_env_var(provider: &str) -> &'static str {
     match provider {
@@ -41,10 +123,12 @@ fn resolve_api_key(config: &Config) -> String {
     std::env::var(api_key_env_var(&config.ai.provider)).unwrap_or_default()
 }
 
-/// Returns the tmux session the daemon should monitor.
-/// If launched from inside a tmux session, uses that session.
-/// Otherwise creates/attaches the fallback "t1000" session.
-fn detect_or_create_session() -> Result<String> {
+/// Returns `(session_name, newly_created)`.
+/// If the daemon was launched from inside an existing tmux session, that
+/// session is used and `newly_created` is false.
+/// Otherwise the fallback "t1000" session is used; `newly_created` is true
+/// when this call actually created it (not when it already existed).
+fn detect_or_create_session() -> Result<(String, bool)> {
     if std::env::var("TMUX").is_ok() {
         let out = std::process::Command::new("tmux")
             .args(["display-message", "-p", "#S"])
@@ -52,14 +136,73 @@ fn detect_or_create_session() -> Result<String> {
         if let Ok(o) = out {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if !s.is_empty() {
-                return Ok(s);
+                return Ok((s, false));
             }
         }
     }
-    if !tmux::has_session(FALLBACK_SESSION) {
+    let already_exists = tmux::has_session(FALLBACK_SESSION);
+    if !already_exists {
         tmux::create_session(FALLBACK_SESSION)?;
     }
-    Ok(FALLBACK_SESSION.to_string())
+    Ok((FALLBACK_SESSION.to_string(), !already_exists))
+}
+
+/// After the daemon socket is bound, open the AI chat pane in the newly
+/// created session so the user sees it immediately on `tmux attach`.
+async fn open_chat_pane(session_name: String) {
+    // Brief pause so the accept loop is running before the chat client connects.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let pane_target = format!("{}:0.0", session_name);
+
+    // Resolve the global pane ID (e.g. %3) of the shell pane so we can pass
+    // it as T1000_SOURCE_PANE — the pane where commands should be injected.
+    let shell_pane_id = match std::process::Command::new("tmux")
+        .args(["display-message", "-t", &pane_target, "-p", "#{pane_id}"])
+        .output()
+    {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Err(e) => {
+            eprintln!("Warning: could not read shell pane ID: {e}");
+            return;
+        }
+    };
+
+    if shell_pane_id.is_empty() {
+        eprintln!("Warning: empty shell pane ID, skipping chat pane setup");
+        return;
+    }
+
+    // Use the exact binary that is currently running so the path is always
+    // correct regardless of how the daemon was invoked.
+    let t1000_bin = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "t1000".to_string());
+
+    let chat_cmd = format!("{} chat", t1000_bin);
+
+    let result = std::process::Command::new("tmux")
+        .args([
+            "split-window", "-h",
+            "-t", &pane_target,
+            "-e", &format!("T1000_SOURCE_PANE={}", shell_pane_id),
+            &chat_cmd,
+        ])
+        .output();
+
+    match result {
+        Ok(o) if o.status.success() => {
+            println!("Chat pane ready. Attach with:  tmux attach -t {}", session_name);
+        }
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            eprintln!("Warning: could not open chat pane: {}", err.trim());
+            eprintln!("Attach manually with:  tmux attach -t {}  then run `t1000 chat`", session_name);
+        }
+        Err(e) => {
+            eprintln!("Warning: could not open chat pane: {e}");
+        }
+    }
 }
 
 /// Returns true if a daemon is already listening and responding on the socket.
@@ -86,7 +229,7 @@ async fn daemon_is_running() -> bool {
     }
 }
 
-pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
+pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>) -> Result<()> {
     if let Some(ref path) = log_file {
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -116,7 +259,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     }
     println!("Provider: {} / {}", startup_config.ai.provider, startup_config.ai.model);
 
-    let session_name = detect_or_create_session()?;
+    let (session_name, session_was_created) = detect_or_create_session()?;
     println!("Monitoring tmux session: {}", session_name);
 
     let cache = Arc::new(SessionCache::new(&session_name));
@@ -132,6 +275,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     });
 
     let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+    let command_log = Arc::new(command_log);
 
     // Prune chat sessions idle for more than 30 minutes.
     let sessions_cleanup = Arc::clone(&sessions);
@@ -166,6 +310,14 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
 
     println!("Daemon listening on {}", DEFAULT_SOCKET_PATH);
 
+    // If the daemon just created the tmux session, open the chat pane inside
+    // it now that the socket is ready. Users can then simply
+    // `tmux attach -t t1000` and start chatting immediately.
+    if session_was_created {
+        let sn = session_name.clone();
+        tokio::spawn(async move { open_chat_pane(sn).await });
+    }
+
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("Failed to install SIGTERM handler")?;
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
@@ -178,8 +330,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                     Ok((stream, _addr)) => {
                         let cache_conn = Arc::clone(&cache);
                         let sessions_conn = Arc::clone(&sessions);
+                        let cmd_log_conn = Arc::clone(&command_log);
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn).await {
+                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, cmd_log_conn).await {
                                 eprintln!("Error handling client: {}", e);
                             }
                         });
@@ -204,7 +357,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: SessionStore) -> Result<()> {
+async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: SessionStore, command_log: Arc<Option<PathBuf>>) -> Result<()> {
     let mut config = Config::load().unwrap_or_else(|_| {
         eprintln!("Warning: failed to load config, using defaults");
         Config {
@@ -317,8 +470,18 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
     // snapshot only (sys_ctx is already in the conversation history).
     let prompt = if is_first_turn {
         let sys_ctx = get_or_init_sys_context().format_for_ai();
+        let daemon_host = daemon_hostname();
+        let pane_location = client_pane.as_deref()
+            .and_then(get_pane_remote_host)
+            .map(|h| format!("REMOTE — {}", h))
+            .unwrap_or_else(|| format!("LOCAL — same host as daemon ({})", daemon_host));
         format!(
             "## Host Context\n```\n{sys_ctx}\n```\n\n\
+             ## Execution Context\n\
+             - Daemon host: {daemon_host}\n\
+             - User's terminal pane: {pane_location}\n\
+             - background=true  → runs on DAEMON HOST ({daemon_host})\n\
+             - background=false → runs in USER'S PANE ({pane_location})\n\n\
              ## Terminal Session\n```\n{session_summary}\n```\n\n\
              User: {safe_query}"
         )
@@ -439,33 +602,113 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                         };
 
                         let output = if approved {
-                            let active_pane_fallback = cache.active_pane.read().unwrap().clone();
-                            let target = client_pane.as_deref()
-                                .or_else(|| active_pane_fallback.as_deref())
-                                .unwrap_or("");
-                            if !target.is_empty() {
-                                let cmd_to_run = if *bg { format!("{} &", cmd) } else { cmd.clone() };
-                                match tmux::send_keys(target, &cmd_to_run) {
-                                    Ok(()) => {
-                                        let delay = if *bg {
-                                            Duration::from_millis(500)
-                                        } else {
-                                            Duration::from_secs(3)
-                                        };
-                                        tokio::time::sleep(delay).await;
-                                        match tmux::capture_pane(target, 200) {
-                                            Ok(out) => mask_sensitive(&out),
-                                            Err(_) => "Command sent but could not capture output.".to_string(),
+                            if *bg {
+                                // Background commands run in a daemon subprocess: output
+                                // is captured and returned to the AI invisibly.
+                                let needs_sudo = command_has_sudo(cmd);
+                                let (exec_cmd, opt_password) = if needs_sudo {
+                                    // Ask the client for the sudo password before running.
+                                    send_response_split(&mut tx, Response::SudoPrompt {
+                                        id: id.clone(),
+                                        command: cmd.clone(),
+                                    }).await?;
+
+                                    let mut sudo_line = String::new();
+                                    let password = match tokio::time::timeout(
+                                        Duration::from_secs(30),
+                                        rx.read_line(&mut sudo_line),
+                                    ).await {
+                                        Ok(Ok(_)) => match serde_json::from_str::<Request>(sudo_line.trim()) {
+                                            Ok(Request::SudoPassword { password, .. }) => password,
+                                            _ => String::new(),
+                                        },
+                                        _ => String::new(),
+                                    };
+                                    (inject_sudo_flags(cmd), Some(password))
+                                } else {
+                                    (cmd.clone(), None)
+                                };
+
+                                use std::process::Stdio;
+                                let mut proc = tokio::process::Command::new("sh");
+                                proc.args(["-c", &exec_cmd])
+                                    .stdout(Stdio::piped())
+                                    .stderr(Stdio::piped());
+                                if opt_password.is_some() {
+                                    proc.stdin(Stdio::piped());
+                                } else {
+                                    proc.stdin(Stdio::null());
+                                }
+
+                                let result = match proc.spawn() {
+                                    Ok(mut child) => {
+                                        if let Some(ref password) = opt_password {
+                                            if let Some(mut stdin) = child.stdin.take() {
+                                                let _ = stdin.write_all(
+                                                    format!("{}\n", password).as_bytes()
+                                                ).await;
+                                            }
+                                        }
+                                        match child.wait_with_output().await {
+                                            Ok(out) => {
+                                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                                let combined = format!("{}{}", stdout, stderr);
+                                                let r = combined.trim().to_string();
+                                                if r.is_empty() { "(no output)".to_string() } else { mask_sensitive(&r) }
+                                            }
+                                            Err(e) => format!("Failed to run command: {}", e),
                                         }
                                     }
-                                    Err(e) => format!("Failed to send command: {}", e),
-                                }
+                                    Err(e) => format!("Failed to spawn command: {}", e),
+                                };
+                                log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "background", "", cmd, "approved", &result);
+                                result
                             } else {
-                                "No active pane found.".to_string()
+                                // Foreground commands are injected into the user's working pane
+                                // via tmux send-keys so they are visible and interactive.
+                                let active_pane_fallback = cache.active_pane.read().unwrap().clone();
+                                let target = client_pane.as_deref()
+                                    .or_else(|| active_pane_fallback.as_deref())
+                                    .unwrap_or("");
+                                if !target.is_empty() {
+                                    match tmux::send_keys(target, cmd) {
+                                        Ok(()) => {
+                                            // If sudo is involved, notify the user via the chat
+                                            // interface so they know to type their password in the
+                                            // terminal pane, then wait longer for the command.
+                                            let wait_secs = if command_has_sudo(cmd) {
+                                                send_response_split(&mut tx, Response::Token(
+                                                    "\n[sudo] This command requires elevated privileges. \
+                                                     Please type your password in the terminal pane.\n".to_string()
+                                                )).await?;
+                                                30u64
+                                            } else {
+                                                3u64
+                                            };
+                                            tokio::time::sleep(Duration::from_secs(wait_secs)).await;
+                                            let result = match tmux::capture_pane(target, 200) {
+                                                Ok(out) => mask_sensitive(&out),
+                                                Err(_) => "Command sent but could not capture output.".to_string(),
+                                            };
+                                            log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "foreground", target, cmd, "approved", &result);
+                                            result
+                                        }
+                                        Err(e) => {
+                                            let msg = format!("Failed to send command: {}", e);
+                                            log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "foreground", target, cmd, "send-failed", &msg);
+                                            msg
+                                        }
+                                    }
+                                } else {
+                                    "No active pane found.".to_string()
+                                }
                             }
                         } else if timed_out {
+                            log_command(command_log.as_ref().as_deref(), session_id.as_deref(), if *bg { "background" } else { "foreground" }, "", cmd, "timeout", "");
                             "Approval timed out (60 s); command not executed.".to_string()
                         } else {
+                            log_command(command_log.as_ref().as_deref(), session_id.as_deref(), if *bg { "background" } else { "foreground" }, "", cmd, "denied", "");
                             "User denied execution".to_string()
                         };
 
