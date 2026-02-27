@@ -7,14 +7,14 @@
 **Inspiration**: tmux, gemini-cli, claude code, T-1000 (Terminator franchise)
 
 **Vision Statement**:  
-T1000 elevates the command-line experience by embedding AI agents like Google Gemini, Anthropic Claude, or OpenAI's ChatGPT directly into your existing terminal workflow via **tmux**. Operating as a lightweight daemon process, T1000 manages AI interactions through tmux panes without attempting to replace your terminal emulator. The goal of T1000 is to act as an intelligent, context-aware pair-sysadmin, leveraging advanced AI to automate tasks, troubleshoot problems, manage host and OS settings and security.
+T1000 elevates the command-line experience by embedding AI agents like Google Gemini, Anthropic Claude, or OpenAI's ChatGPT directly into your existing terminal workflow via **tmux**. Operating as a lightweight daemon process, T1000 manages AI interactions through tmux panes without attempting to replace your terminal emulator. The goal of T1000 is to act as an intelligent, context-aware pair-sysadmin, leveraging advanced AI to automate tasks, troubleshoot problems, manage OS settings and security.
 
 ---
 
 ## 2. Target Audience
 
 - **System Administrators (Sysadmins)**: Managing fleets of internal/external servers, deploying applications, performing configuration management, and troubleshooting live production issues.
-- **SREs & Platform Engineers**: Operating and troubleshooting OS, scripts, apps, CI/CD pipelines and cloud infrastructure directly from the terminal, via control plane APIs, and scrappiness as required to get the job done. 
+- **SREs & Platform Engineers**: Operating and troubleshooting OS, scripts, apps, CI/CD pipelines and cloud infrastructure directly from the terminal, via control plane APIs, and scrappiness as required to get the job done.
 - **Developers**: Writing code, managing local environments, reading complex build logs, and seeking rapid, context-aware debugging support.
 
 ---
@@ -24,7 +24,7 @@ T1000 elevates the command-line experience by embedding AI agents like Google Ge
 ### 3.1 Native tmux Integration
 
 - **tmux Backend Process**: T1000 runs as a background daemon and integrates directly with your active `tmux` server.
-- **Seamless Attachment**: Simply attach to an existing tmux session, or start a new one, and invoke the AI agent. The AI agent will appear in a newly spawned tmux pane alongside your work.
+- **Seamless Attachment**: Attach to an existing tmux session, or start a new one, and invoke the AI agent. The AI agent will appear in a newly spawned tmux pane alongside your work.
 - **Session Persistence**: Sessions, panes, and window layouts are fully preserved through native tmux capabilities, meaning users can detach and reattach to remote or local environments without dropping their AI context.
 
 ### 3.2 Deep AI Integration
@@ -56,7 +56,7 @@ T1000 elevates the command-line experience by embedding AI agents like Google Ge
 ### Workflow 2: Rapid Fleet Configuration
 
 1. A sysadmin is SSH'd into a jump server via a tmux session.
-2. They open the AI agent pane and ask: *"Draft an ssh-keyscan loop to update my known_hosts for the 15 web servers listed in `fleet.txt`, then write a command to update Nginx on all of them."*
+2. They open the AI agent pane and ask: *"exexcute an ssh-keyscan loop to update my known_hosts for the 15 web servers listed in `fleet.txt`, then write a command to update Nginx on all of them."*
 3. The AI agent provides the exact bash loops and the sysadmin executes them. The sysadmin can also have the AI agent execute the commands for them.
 
 ### Workflow 3: Security Remediation
