@@ -182,8 +182,8 @@ async fn run_chat_inner() -> Result<()> {
     // between the two readers.
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
-    // If running inside tmux, resize the chat pane to 40% of the window width
-    // (minimum 80 cols) so the header has a comfortable width, then query the
+    // If running inside tmux, resize the chat pane to 25% of the window width
+    // (minimum 20 cols) so the header has a comfortable width, then query the
     // exact post-resize width directly from tmux.  TIOCGWINSZ can lag behind
     // the actual pane size due to the SIGWINCH race at pane creation time,
     // which would cause the header border to fall short of the right edge.
@@ -200,7 +200,7 @@ async fn run_chat_inner() -> Result<()> {
     // Header box — round corners, bright cyan, width-adaptive.
     // Stretches to fill the measured chat pane width.
     {
-        let w     = chat_width.max(40);
+        let w     = chat_width.max(70);
         let inner = w - 2; // chars between the corner glyphs
 
         // Title row anchors — each 19 visible chars.
