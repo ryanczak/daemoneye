@@ -21,7 +21,7 @@ This document specifies the functional and non-functional requirements for T1000
 - **FR-1.2.5**: The application MUST actively audit the system state (OS release, uptime, memory, load average, top CPU processes, shell environment, and shell history) once per session, cache it, and prepend this summary to the AI agent's context alongside the visible terminal buffer.
 - **FR-1.2.6**: The daemon MUST detect its own hostname and whether the user's active tmux pane is connected to a remote host (via SSH or mosh). This execution context MUST be injected into the first-turn AI prompt so the AI understands which machine each execution mode (`background` vs `foreground`) will target.
 - **FR-1.2.7**: The application MUST support two distinct command execution modes and the AI MUST be instructed to choose between them appropriately:
-  - *Background mode*: Command runs as a daemon subprocess on the daemon's local host. Output is captured and returned to the AI silently.
+  - *Background mode*: Command runs as a daemon subprocess on the daemon's local host. Output is captured and returned to the AI silently. The application must share Background commands with the user and gain approval before executing them.
   - *Foreground mode*: Command is injected into the user's active tmux pane via `send-keys`. The user can see and interact with the command. If the user's pane is SSH'd to a remote host, the command executes on that remote host.
 
 ### 1.3 Prompt Library
@@ -35,7 +35,7 @@ This document specifies the functional and non-functional requirements for T1000
 - **FR-1.4.1**: Sensitive data (passwords, secret keys, PII) MUST be masked or filtered from the terminal buffer before being transmitted to the AI API.
 - **FR-1.4.2**: Users MUST have explicit controls over what terminal context is sent to the LLM.
 - **FR-1.4.3**: When the AI proposes a background command that requires `sudo`, the application MUST prompt the user for their password via the chat interface with terminal echo disabled. The password MUST be piped directly to the `sudo` subprocess and MUST NOT be logged, stored on disk, or transmitted to the AI.
-- **FR-1.4.4**: When the AI proposes a foreground command that requires `sudo`, the application MUST notify the user in the chat interface to type their password in the terminal pane. The application MUST extend the wait time for the command to complete to accommodate the password entry.
+- **FR-1.4.4**: When the AI proposes a foreground command that requires `sudo`, the daemon MUST inject the command into the user's terminal pane and wait briefly for it to start. The daemon MUST then capture the pane output and check whether a sudo password prompt is present. If a password prompt is detected: the application MUST notify the user in the chat interface, make the target terminal pane active so the user can type their password, wait for the password to be entered and the command to complete, then switch focus back to the AI chat pane. If no password prompt is detected (e.g. a NOPASSWD sudoers rule or a still-valid credential timestamp), the application MUST proceed with a standard wait interval without switching panes.
 
 ### 1.5 Extensibility
 

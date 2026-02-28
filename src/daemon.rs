@@ -70,6 +70,18 @@ fn inject_sudo_flags(cmd: &str) -> String {
     }
 }
 
+/// Normalise command output for display and AI context:
+/// - trims trailing whitespace from every line
+/// - strips leading and trailing blank lines
+/// - returns an empty string when all lines are blank
+fn normalize_output(s: &str) -> String {
+    let trimmed: Vec<&str> = s.lines().map(|l| l.trim_end()).collect();
+    let start = trimmed.iter().position(|l| !l.is_empty()).unwrap_or(0);
+    let end   = trimmed.iter().rposition(|l| !l.is_empty()).map(|i| i + 1).unwrap_or(0);
+    if start >= end { return String::new(); }
+    trimmed[start..end].join("\n")
+}
+
 /// Append a single-line execution record to the command log.
 /// Does nothing when `log_path` is `None` (logging disabled).
 fn log_command(
@@ -395,7 +407,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);
 
-    let (initial_query, client_pane, session_id) = match request {
+    let (initial_query, client_pane, session_id, chat_pane) = match request {
         Request::Ping => {
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
@@ -406,7 +418,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
             let _ = std::fs::remove_file(socket_path);
             std::process::exit(0);
         }
-        Request::Ask { query, tmux_pane, session_id } => (query, tmux_pane, session_id),
+        Request::Ask { query, tmux_pane, session_id, chat_pane } => (query, tmux_pane, session_id, chat_pane),
         _ => return Ok(()),
     };
 
@@ -654,7 +666,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                 let stdout = String::from_utf8_lossy(&out.stdout);
                                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                                 let combined = format!("{}{}", stdout, stderr);
-                                                let r = combined.trim().to_string();
+                                                let r = normalize_output(&combined);
                                                 if r.is_empty() { "(no output)".to_string() } else { mask_sensitive(&r) }
                                             }
                                             Err(e) => format!("Failed to run command: {}", e),
@@ -672,25 +684,125 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                     .or_else(|| active_pane_fallback.as_deref())
                                     .unwrap_or("");
                                 if !target.is_empty() {
+                                    // Snapshot the shell name before sending keys so we
+                                    // can detect when the command finishes (pane_current_command
+                                    // returns to the idle shell value).
+                                    let idle_cmd = tmux::pane_current_command(target)
+                                        .unwrap_or_default();
                                     match tmux::send_keys(target, cmd) {
                                         Ok(()) => {
-                                            // If sudo is involved, notify the user via the chat
-                                            // interface so they know to type their password in the
-                                            // terminal pane, then wait longer for the command.
-                                            let wait_secs = if command_has_sudo(cmd) {
-                                                send_response_split(&mut tx, Response::Token(
-                                                    "\n[sudo] This command requires elevated privileges. \
-                                                     Please type your password in the terminal pane.\n".to_string()
-                                                )).await?;
-                                                30u64
+                                            // Track whether we switched the user to their working
+                                            // pane so we know to switch back afterward.
+                                            let mut switched_to_working = false;
+
+                                            if command_has_sudo(cmd) {
+                                                // Poll the pane at 100 ms intervals for a sudo
+                                                // password prompt.  Exit as soon as one is found
+                                                // or after 3 s (NOPASSWD / cached credentials).
+                                                let poll = Duration::from_millis(100);
+                                                let mut waited = Duration::ZERO;
+                                                let prompt_timeout = Duration::from_secs(3);
+                                                let sudo_pattern = |out: String| {
+                                                    let lower = out.to_lowercase();
+                                                    lower.contains("[sudo]")
+                                                        || lower.contains("password for")
+                                                        || lower.contains("password:")
+                                                };
+                                                let needs_password = loop {
+                                                    tokio::time::sleep(poll).await;
+                                                    waited += poll;
+                                                    let found = tmux::capture_pane(target, 50)
+                                                        .map(sudo_pattern)
+                                                        .unwrap_or(false);
+                                                    if found { break true; }
+                                                    if waited >= prompt_timeout { break false; }
+                                                };
+
+                                                if needs_password {
+                                                    // Notify and switch to the working pane.
+                                                    send_response_split(&mut tx, Response::SystemMsg(
+                                                        "sudo password prompt detected — \
+                                                         switching to your terminal pane. \
+                                                         Type your password there.".to_string()
+                                                    )).await?;
+                                                    let _ = tmux::select_pane(target);
+                                                    switched_to_working = true;
+                                                    // Poll until sudo is no longer the foreground
+                                                    // process — that means the password was accepted
+                                                    // and the command has started (or finished).
+                                                    // Using pane_current_command is reliable because
+                                                    // capture-pane retains the prompt text in the
+                                                    // scrollback even after the password is entered.
+                                                    let mut waited2 = Duration::ZERO;
+                                                    let password_timeout = Duration::from_secs(30);
+                                                    loop {
+                                                        tokio::time::sleep(poll).await;
+                                                        waited2 += poll;
+                                                        let still_sudo = tmux::pane_current_command(target)
+                                                            .map(|cmd| cmd == "sudo")
+                                                            .unwrap_or(false);
+                                                        if !still_sudo || waited2 >= password_timeout {
+                                                            break;
+                                                        }
+                                                    }
+                                                    // Brief pause for command output to settle.
+                                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                                }
+                                                // If no prompt was found we have already waited up
+                                                // to 3 s while polling — no extra sleep needed.
                                             } else {
-                                                3u64
-                                            };
-                                            tokio::time::sleep(Duration::from_secs(wait_secs)).await;
+                                                // Poll until the shell is back AND pane output
+                                                // has stabilised for two consecutive ticks.
+                                                //
+                                                // The stability check is critical for commands
+                                                // like `bash script.sh` when idle_cmd is also
+                                                // "bash": the process-name check alone would
+                                                // fire immediately while the script still runs.
+                                                // Requiring two stable snapshots ensures we only
+                                                // exit once output has actually settled.
+                                                let poll = Duration::from_millis(100);
+                                                let mut waited = Duration::ZERO;
+                                                let cmd_timeout = Duration::from_secs(30);
+                                                // Brief initial pause to let the command start.
+                                                tokio::time::sleep(Duration::from_millis(150)).await;
+                                                waited += Duration::from_millis(150);
+                                                let mut prev_snap = String::new();
+                                                let mut stable_ticks = 0u32;
+                                                loop {
+                                                    tokio::time::sleep(poll).await;
+                                                    waited += poll;
+                                                    let back_to_shell = tmux::pane_current_command(target)
+                                                        .map(|c| c == idle_cmd)
+                                                        .unwrap_or(true);
+                                                    let snap = tmux::capture_pane(target, 5)
+                                                        .unwrap_or_default();
+                                                    if snap == prev_snap {
+                                                        stable_ticks += 1;
+                                                    } else {
+                                                        stable_ticks = 0;
+                                                        prev_snap = snap;
+                                                    }
+                                                    if (back_to_shell && stable_ticks >= 2)
+                                                        || waited >= cmd_timeout
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
                                             let result = match tmux::capture_pane(target, 200) {
-                                                Ok(out) => mask_sensitive(&out),
+                                                Ok(out) => mask_sensitive(&normalize_output(&out)),
                                                 Err(_) => "Command sent but could not capture output.".to_string(),
                                             };
+
+                                            // Return focus to the AI chat pane now that the
+                                            // command is done and the user typed their password.
+                                            if switched_to_working {
+                                                if let Some(ref cp) = chat_pane {
+                                                    let _ = tmux::select_pane(cp);
+                                                }
+                                            }
+
                                             log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "foreground", target, cmd, "approved", &result);
                                             result
                                         }
@@ -712,6 +824,10 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                             "User denied execution".to_string()
                         };
 
+                        // Show the command output to the user before the AI continues.
+                        if approved {
+                            send_response_split(&mut tx, Response::ToolResult(output.clone())).await?;
+                        }
                         tool_results.push(ToolResult { tool_call_id: id.clone(), content: output });
                     }
 

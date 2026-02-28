@@ -67,6 +67,67 @@ pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
 }
 
 
+/// Return the name of the foreground process running in a pane.
+pub fn pane_current_command(pane_id: &str) -> Result<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_current_command}"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to query pane_current_command for '{}'", pane_id);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Query the current width of a pane in columns.
+pub fn query_pane_width(pane_id: &str) -> Result<usize> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_width}"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to query pane width for '{}'", pane_id);
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<usize>()
+        .map_err(|e| anyhow::anyhow!("Could not parse pane width: {}", e))
+}
+
+/// Query the width of the window containing a pane in columns.
+pub fn query_window_width(pane_id: &str) -> Result<usize> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{window_width}"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to query window width for '{}'", pane_id);
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<usize>()
+        .map_err(|e| anyhow::anyhow!("Could not parse window width: {}", e))
+}
+
+/// Resize a pane to the given number of columns.
+pub fn resize_pane_width(pane_id: &str, width: usize) -> Result<()> {
+    let output = Command::new("tmux")
+        .args(["resize-pane", "-t", pane_id, "-x", &width.to_string()])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to resize pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+/// Switch tmux focus to the specified pane.
+pub fn select_pane(pane_id: &str) -> Result<()> {
+    let output = Command::new("tmux")
+        .args(["select-pane", "-t", pane_id])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to select pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
 /// Send keys (a command) to a specific pane.
 pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
     let output = Command::new("tmux")

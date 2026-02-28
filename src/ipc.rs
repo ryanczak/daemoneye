@@ -12,7 +12,9 @@ pub enum Request {
     Shutdown,
     /// Send an ask request with the invoking tmux pane (if in tmux).
     /// `session_id` is set by `run_chat` to maintain conversational memory across turns.
-    Ask { query: String, tmux_pane: Option<String>, session_id: Option<String> },
+    /// `chat_pane` is the pane ID of the AI chat pane itself (i.e. `$TMUX_PANE` inside
+    /// `t1000 chat`) so the daemon can switch focus back to it after a foreground sudo command.
+    Ask { query: String, tmux_pane: Option<String>, session_id: Option<String>, chat_pane: Option<String> },
     /// Approve or deny a tool call.
     ToolCallResponse { id: String, approved: bool },
     /// Respond to a sudo password prompt from the daemon.
@@ -31,8 +33,14 @@ pub enum Response {
     SessionInfo { message_count: usize },
     /// A stream of tokens from the AI.
     Token(String),
+    /// A system-level notification from the daemon (sudo alerts, pane-switch
+    /// notices, etc.).  Displayed with a distinct amber prefix.
+    SystemMsg(String),
     /// A prompt for the user to approve a tool call.
     ToolCallPrompt { id: String, command: String, background: bool },
     /// The approved background command requires sudo — prompt the user for their password.
     SudoPrompt { id: String, command: String },
+    /// The output captured after an approved tool call completes.
+    /// Sent to the client so it can display a dimmed result block.
+    ToolResult(String),
 }

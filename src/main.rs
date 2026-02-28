@@ -51,14 +51,53 @@ enum Commands {
     Setup,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+// main() is a plain synchronous function so we can fork() before the tokio
+// runtime starts.  Forking inside a live multi-threaded runtime is unsafe
+// (only the calling thread survives in the child but mutex state from other
+// threads may be inconsistent).
+fn main() -> anyhow::Result<()> {
     if let Err(e) = config::Config::ensure_dirs() {
         eprintln!("Warning: could not initialise config directory: {}", e);
     }
 
     let cli = Cli::parse();
 
+    // For `daemon` without `--console`, fork into the background before
+    // starting the async runtime so the calling shell is released immediately.
+    if let Commands::Daemon { console: false, .. } = &cli.command {
+        unsafe {
+            let pid = libc::fork();
+            if pid < 0 {
+                anyhow::bail!("fork() failed: {}", std::io::Error::last_os_error());
+            }
+            if pid > 0 {
+                // Parent: report the child PID and exit cleanly.
+                println!("t1000 daemon started (PID {})", pid);
+                return Ok(());
+            }
+            // Child: create a new session so we are no longer attached to the
+            // calling terminal, then redirect stdin from /dev/null.
+            libc::setsid();
+            let devnull = libc::open(
+                b"/dev/null\0".as_ptr() as *const libc::c_char,
+                libc::O_RDONLY,
+            );
+            if devnull >= 0 {
+                libc::dup2(devnull, libc::STDIN_FILENO);
+                libc::close(devnull);
+            }
+        }
+    }
+
+    // Build the tokio runtime and run async work in the child (or directly
+    // for --console / all other subcommands).
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main(cli))
+}
+
+async fn async_main(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Daemon { log_file, console, command_log_file, no_command_log } => {
             let log_file = if console {
