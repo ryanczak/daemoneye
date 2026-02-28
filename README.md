@@ -1,6 +1,6 @@
 # T1000
 
-T1000 is a lightweight background daemon that integrates natively with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware principal-engineer.
+T1000 is a lightweight background daemon that integrates natively with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware principal site reliability engineer.
 
 ---
 
