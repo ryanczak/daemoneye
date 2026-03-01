@@ -29,8 +29,12 @@ pub enum Request {
     },
     /// Approve or deny a tool call.
     ToolCallResponse { id: String, approved: bool },
-    /// Respond to a sudo password prompt from the daemon.
-    SudoPassword { id: String, password: String },
+    /// User-supplied credential (password / passphrase) in response to
+    /// `Response::CredentialPrompt`. The daemon injects it into the PTY.
+    CredentialResponse { id: String, credential: String },
+    /// User's yes/no decision in response to `Response::ConfirmationPrompt`.
+    /// `accepted = true` → "yes" injected; `false` → "no".
+    ConfirmationResponse { id: String, accepted: bool },
     /// Re-collect the system context (OS info, memory, processes, history).
     /// Daemon responds with Response::Ok when done.
     Refresh,
@@ -53,8 +57,13 @@ pub enum Response {
     SystemMsg(String),
     /// A prompt for the user to approve a tool call.
     ToolCallPrompt { id: String, command: String, background: bool },
-    /// The approved background command requires sudo — prompt the user for their password.
-    SudoPrompt { id: String, command: String },
+    /// The background PTY command is waiting for a credential (password / passphrase).
+    /// The client MUST prompt the user with echo disabled and return a
+    /// `Request::CredentialResponse`.
+    CredentialPrompt { id: String, prompt: String },
+    /// The background PTY command is waiting for a yes/no confirmation (e.g. SSH host-key).
+    /// The client MUST display `message` and return a `Request::ConfirmationResponse`.
+    ConfirmationPrompt { id: String, message: String },
     /// The output captured after an approved tool call completes.
     /// Sent to the client so it can display a dimmed result block.
     ToolResult(String),
@@ -160,12 +169,24 @@ mod tests {
     }
 
     #[test]
-    fn request_sudo_password_roundtrip() {
-        let req = Request::SudoPassword { id: "tc_2".to_string(), password: "hunter2".to_string() };
+    fn request_credential_response_roundtrip() {
+        let req = Request::CredentialResponse { id: "tc_2".to_string(), credential: "hunter2".to_string() };
         match roundtrip_req(&req) {
-            Request::SudoPassword { id, password } => {
+            Request::CredentialResponse { id, credential } => {
                 assert_eq!(id, "tc_2");
-                assert_eq!(password, "hunter2");
+                assert_eq!(credential, "hunter2");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_confirmation_response_roundtrip() {
+        let req = Request::ConfirmationResponse { id: "tc_3".to_string(), accepted: true };
+        match roundtrip_req(&req) {
+            Request::ConfirmationResponse { id, accepted } => {
+                assert_eq!(id, "tc_3");
+                assert!(accepted);
             }
             _ => panic!("wrong variant"),
         }
@@ -223,12 +244,24 @@ mod tests {
     }
 
     #[test]
-    fn response_sudo_prompt_roundtrip() {
-        let resp = Response::SudoPrompt { id: "tc_4".to_string(), command: "sudo apt update".to_string() };
+    fn response_credential_prompt_roundtrip() {
+        let resp = Response::CredentialPrompt { id: "tc_4".to_string(), prompt: "[sudo] password for alice:".to_string() };
         match roundtrip_resp(&resp) {
-            Response::SudoPrompt { id, command } => {
+            Response::CredentialPrompt { id, prompt } => {
                 assert_eq!(id, "tc_4");
-                assert_eq!(command, "sudo apt update");
+                assert_eq!(prompt, "[sudo] password for alice:");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_confirmation_prompt_roundtrip() {
+        let resp = Response::ConfirmationPrompt { id: "tc_5".to_string(), message: "Are you sure? (yes/no)".to_string() };
+        match roundtrip_resp(&resp) {
+            Response::ConfirmationPrompt { id, message } => {
+                assert_eq!(id, "tc_5");
+                assert_eq!(message, "Are you sure? (yes/no)");
             }
             _ => panic!("wrong variant"),
         }

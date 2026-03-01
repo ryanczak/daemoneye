@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use std::time::Duration;
 
@@ -54,26 +54,6 @@ fn get_pane_remote_host(pane_id: &str) -> Option<String> {
     match cmd.as_str() {
         "ssh" | "mosh-client" | "mosh" => Some(format!("remote (via {})", cmd)),
         _ => None,
-    }
-}
-
-/// True if the command string contains `sudo` as a standalone word.
-fn command_has_sudo(cmd: &str) -> bool {
-    use regex::Regex;
-    use std::sync::OnceLock;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap());
-    re.is_match(cmd)
-}
-
-/// Rewrite a command that starts with `sudo` to add `-S -p ""` so the
-/// password can be piped in via stdin without an interactive prompt.
-fn inject_sudo_flags(cmd: &str) -> String {
-    let t = cmd.trim();
-    if let Some(rest) = t.strip_prefix("sudo ") {
-        format!(r#"sudo -S -p "" {}"#, rest)
-    } else {
-        cmd.to_string()
     }
 }
 
@@ -780,117 +760,31 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
 
                         let output = if approved {
                             if *bg {
-                                // Background commands run in a daemon subprocess: output
-                                // is captured and returned to the AI invisibly.
-                                let needs_sudo = command_has_sudo(cmd);
-                                let (exec_cmd, opt_password) = if needs_sudo {
-                                    // Ask the client for the sudo password before running.
-                                    send_response_split(&mut tx, Response::SudoPrompt {
-                                        id: id.clone(),
-                                        command: cmd.clone(),
-                                    }).await?;
-
-                                    let mut sudo_line = String::new();
-                                    let password = match tokio::time::timeout(
-                                        Duration::from_secs(30),
-                                        rx.read_line(&mut sudo_line),
-                                    ).await {
-                                        Ok(Ok(_)) => match serde_json::from_str::<Request>(sudo_line.trim()) {
-                                            Ok(Request::SudoPassword { password, .. }) => password,
-                                            _ => String::new(),
-                                        },
-                                        _ => String::new(),
-                                    };
-                                    (inject_sudo_flags(cmd), Some(password))
-                                } else {
-                                    (cmd.clone(), None)
-                                };
-
-                                use std::process::Stdio;
-
-                                const BG_CMD_TIMEOUT: Duration = Duration::from_secs(30);
-
-                                let mut proc = tokio::process::Command::new("sh");
-                                proc.args(["-c", &exec_cmd])
-                                    .stdout(Stdio::piped())
-                                    .stderr(Stdio::piped());
-                                if opt_password.is_some() {
-                                    proc.stdin(Stdio::piped());
-                                } else {
-                                    proc.stdin(Stdio::null());
-                                }
-
-                                // Apply resource limits in the child before exec.
-                                unsafe {
-                                    proc.pre_exec(|| {
-                                        // Virtual address space: 512 MiB
-                                        let mem = libc::rlimit {
-                                            rlim_cur: 512 * 1024 * 1024,
-                                            rlim_max: 512 * 1024 * 1024,
+                                // Background commands run inside a PTY so interactive prompts
+                                // (sudo, su, SSH host-key, etc.) can be relayed to the user.
+                                let result = match crate::pty_exec::run_pty_command(
+                                    id,
+                                    cmd,
+                                    Duration::from_secs(30),
+                                    &mut tx,
+                                    &mut rx,
+                                ).await {
+                                    Ok(pty_out) => {
+                                        let body = if pty_out.output.is_empty() {
+                                            "(no output)".to_string()
+                                        } else {
+                                            mask_sensitive(&pty_out.output)
                                         };
-                                        libc::setrlimit(libc::RLIMIT_AS, &mem);
-                                        // Open file descriptors: 256
-                                        let fds = libc::rlimit { rlim_cur: 256, rlim_max: 256 };
-                                        libc::setrlimit(libc::RLIMIT_NOFILE, &fds);
-                                        Ok(())
-                                    });
-                                }
-
-                                let result = match proc.spawn() {
-                                    Ok(mut child) => {
-                                        if let Some(ref password) = opt_password {
-                                            if let Some(mut stdin) = child.stdin.take() {
-                                                let _ = stdin.write_all(
-                                                    format!("{}\n", password).as_bytes()
-                                                ).await;
-                                            }
-                                        }
-                                        // Drain stdout/stderr in background tasks so we can
-                                        // independently time-out the wait() call and kill if needed.
-                                        let stdout_handle = child.stdout.take();
-                                        let stderr_handle = child.stderr.take();
-                                        let out_task = tokio::spawn(async move {
-                                            let mut v = Vec::new();
-                                            if let Some(mut s) = stdout_handle {
-                                                let _ = s.read_to_end(&mut v).await;
-                                            }
-                                            v
-                                        });
-                                        let err_task = tokio::spawn(async move {
-                                            let mut v = Vec::new();
-                                            if let Some(mut s) = stderr_handle {
-                                                let _ = s.read_to_end(&mut v).await;
-                                            }
-                                            v
-                                        });
-                                        match tokio::time::timeout(BG_CMD_TIMEOUT, child.wait()).await {
-                                            Ok(Ok(status)) => {
-                                                let out = out_task.await.unwrap_or_default();
-                                                let err = err_task.await.unwrap_or_default();
-                                                let combined = format!(
-                                                    "{}{}",
-                                                    String::from_utf8_lossy(&out),
-                                                    String::from_utf8_lossy(&err),
-                                                );
-                                                let r = normalize_output(&combined);
-                                                let body = if r.is_empty() { "(no output)".to_string() } else { mask_sensitive(&r) };
-                                                if status.success() {
-                                                    body
-                                                } else {
-                                                    let code = status.code().unwrap_or(-1);
-                                                    format!("exit {} · {}\n--- output ---\n{}", code, classify_exit_code(code), body)
-                                                }
-                                            }
-                                            Ok(Err(e)) => format!("Failed to run command: {}", e),
-                                            Err(_elapsed) => {
-                                                let _ = child.kill().await;
-                                                out_task.abort();
-                                                err_task.abort();
-                                                format!("Command timed out after {} s and was killed", BG_CMD_TIMEOUT.as_secs())
-                                            }
+                                        if pty_out.exit_code != 0 && pty_out.exit_code != -1 {
+                                            format!("exit {} · {}\n--- output ---\n{}",
+                                                pty_out.exit_code,
+                                                classify_exit_code(pty_out.exit_code),
+                                                body)
+                                        } else {
+                                            body
                                         }
                                     }
-                                    Err(e) => format!("Failed to spawn command: {}", e),
+                                    Err(e) => format!("Failed to run command: {}", e),
                                 };
                                 log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "background", "", cmd, "approved", &result);
                                 result
@@ -913,89 +807,117 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                             // pane so we know to switch back afterward.
                                             let mut switched_to_working = false;
 
-                                            if command_has_sudo(cmd) {
-                                                // Poll the pane at 100 ms intervals for a sudo
-                                                // password prompt.  Exit as soon as one is found
-                                                // or after 3 s (NOPASSWD / cached credentials).
+                                            // Unified wait loop: poll every 100 ms.
+                                            //
+                                            // PromptDetector scans capture-pane snapshots for
+                                            // any interactive prompt (sudo, su, SSH, gpg…).
+                                            //
+                                            // On detection: switch focus to the working pane and
+                                            // record `prompt_active_cmd` (the owning process name).
+                                            //
+                                            // Resolution is detected when `pane_current_command`
+                                            // changes from `prompt_active_cmd`.  Using the process
+                                            // name rather than the prompt text means we correctly
+                                            // handle "Sorry, try again" re-prompts (where sudo
+                                            // keeps running) without false-triggering a return,
+                                            // while still switching back immediately when sudo
+                                            // actually exits (success, cancellation, or max failures).
+                                            //
+                                            // The command timeout is paused while a prompt is
+                                            // active so the user has unlimited time to respond.
+                                            {
                                                 let poll = Duration::from_millis(100);
-                                                let mut waited = Duration::ZERO;
-                                                let prompt_timeout = Duration::from_secs(3);
-                                                let needs_password = loop {
-                                                    tokio::time::sleep(poll).await;
-                                                    waited += poll;
-                                                    let is_sudo = tmux::pane_current_command(target)
-                                                        .map(|c| c == "sudo")
-                                                        .unwrap_or(false);
-                                                    if is_sudo { break true; }
-                                                    if waited >= prompt_timeout { break false; }
-                                                };
-
-                                                if needs_password {
-                                                    // Notify and switch to the working pane.
-                                                    send_response_split(&mut tx, Response::SystemMsg(
-                                                        "sudo password prompt detected — \
-                                                         switching to your terminal pane. \
-                                                         Type your password there.".to_string()
-                                                    )).await?;
-                                                    let _ = tmux::select_pane(target);
-                                                    switched_to_working = true;
-                                                    // Poll until sudo is no longer the foreground
-                                                    // process — that means the password was accepted
-                                                    // and the command has started (or finished).
-                                                    // Using pane_current_command is reliable because
-                                                    // capture-pane retains the prompt text in the
-                                                    // scrollback even after the password is entered.
-                                                    let mut waited2 = Duration::ZERO;
-                                                    let password_timeout = Duration::from_secs(30);
-                                                    loop {
-                                                        tokio::time::sleep(poll).await;
-                                                        waited2 += poll;
-                                                        let still_sudo = tmux::pane_current_command(target)
-                                                            .map(|cmd| cmd == "sudo")
-                                                            .unwrap_or(false);
-                                                        if !still_sudo || waited2 >= password_timeout {
-                                                            break;
-                                                        }
-                                                    }
-                                                    // Brief pause for command output to settle.
-                                                    tokio::time::sleep(Duration::from_millis(500)).await;
-                                                }
-                                                // If no prompt was found we have already waited up
-                                                // to 3 s while polling — no extra sleep needed.
-                                            } else {
-                                                // Poll until the shell is back AND pane output
-                                                // has stabilised for two consecutive ticks.
-                                                //
-                                                // The stability check is critical for commands
-                                                // like `bash script.sh` when idle_cmd is also
-                                                // "bash": the process-name check alone would
-                                                // fire immediately while the script still runs.
-                                                // Requiring two stable snapshots ensures we only
-                                                // exit once output has actually settled.
-                                                let poll = Duration::from_millis(100);
-                                                let mut waited = Duration::ZERO;
-                                                let cmd_timeout = Duration::from_secs(30);
-                                                // Brief initial pause to let the command start.
+                                                let mut active_waited = Duration::ZERO;
+                                                let cmd_timeout_fg = Duration::from_secs(30);
+                                                let wall_deadline = std::time::Instant::now()
+                                                    + Duration::from_secs(120);
                                                 tokio::time::sleep(Duration::from_millis(150)).await;
-                                                waited += Duration::from_millis(150);
                                                 let mut prev_snap = String::new();
                                                 let mut stable_ticks = 0u32;
+                                                let mut last_prompt_text: Option<String> = None;
+                                                // Name of the process that owns the current prompt.
+                                                // None = no prompt active.
+                                                let mut prompt_active_cmd: Option<String> = None;
+                                                let fg_detector = crate::pty_exec::PromptDetector::new();
                                                 loop {
                                                     tokio::time::sleep(poll).await;
-                                                    waited += poll;
-                                                    let back_to_shell = tmux::pane_current_command(target)
-                                                        .map(|c| c == idle_cmd)
-                                                        .unwrap_or(true);
-                                                    let snap = tmux::capture_pane(target, 5)
+                                                    let current_cmd = tmux::pane_current_command(target)
                                                         .unwrap_or_default();
-                                                    if snap == prev_snap {
+                                                    let back_to_shell = current_cmd == idle_cmd;
+                                                    let snap = tmux::capture_pane(target, 10)
+                                                        .unwrap_or_default();
+                                                    let snap_plain = crate::pty_exec::strip_ansi(&snap);
+                                                    if snap_plain == prev_snap {
                                                         stable_ticks += 1;
                                                     } else {
                                                         stable_ticks = 0;
-                                                        prev_snap = snap;
+                                                        prev_snap = snap_plain.clone();
                                                     }
+
+                                                    if let Some(ref active_cmd) = prompt_active_cmd {
+                                                        // A prompt is in flight.  Check if the
+                                                        // owning process has exited — that is the
+                                                        // authoritative signal that the user has
+                                                        // resolved the prompt (success, wrong
+                                                        // password max-out, or Ctrl-C cancel).
+                                                        // "Sorry, try again" re-prompts keep the
+                                                        // same process alive so they don't trigger.
+                                                        if &current_cmd != active_cmd {
+                                                            prompt_active_cmd = None;
+                                                            last_prompt_text = None;
+                                                            // Return focus to the chat pane now
+                                                            // that the input requirement is cleared.
+                                                            if switched_to_working {
+                                                                if let Some(ref cp) = chat_pane {
+                                                                    let _ = tmux::select_pane(cp);
+                                                                }
+                                                                switched_to_working = false;
+                                                                send_response_split(&mut tx, Response::SystemMsg(
+                                                                    "Terminal input accepted — returning to chat. \
+                                                                     Check the command output below; \
+                                                                     if authentication failed or was cancelled \
+                                                                     the output will show the reason.".to_string()
+                                                                )).await?;
+                                                            }
+                                                            // Resume timeout counting from this tick.
+                                                        } else {
+                                                            // Prompt still active — pause timeout.
+                                                            stable_ticks = 0;
+                                                        }
+                                                    } else {
+                                                        // No prompt active — scan for one.
+                                                        match fg_detector.check(&snap_plain) {
+                                                            Some(event) => {
+                                                                if last_prompt_text.as_deref() != Some(&event.text) {
+                                                                    last_prompt_text = Some(event.text.clone());
+                                                                    let kind_label = match event.kind {
+                                                                        crate::pty_exec::PromptKind::Credential => "password prompt",
+                                                                        crate::pty_exec::PromptKind::Confirmation => "confirmation prompt",
+                                                                    };
+                                                                    // Record the owning process for
+                                                                    // resolution detection.
+                                                                    prompt_active_cmd = Some(current_cmd.clone());
+                                                                    send_response_split(&mut tx, Response::SystemMsg(
+                                                                        format!("{} detected — switching to your terminal pane. \
+                                                                                 Respond there.",
+                                                                                kind_label)
+                                                                    )).await?;
+                                                                    if !switched_to_working {
+                                                                        let _ = tmux::select_pane(target);
+                                                                        switched_to_working = true;
+                                                                    }
+                                                                }
+                                                                stable_ticks = 0;
+                                                            }
+                                                            None => {
+                                                                active_waited += poll;
+                                                            }
+                                                        }
+                                                    }
+
                                                     if (back_to_shell && stable_ticks >= 2)
-                                                        || waited >= cmd_timeout
+                                                        || active_waited >= cmd_timeout_fg
+                                                        || std::time::Instant::now() >= wall_deadline
                                                     {
                                                         break;
                                                     }
@@ -1010,8 +932,8 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                 Err(_) => "Command sent but could not capture output.".to_string(),
                                             };
 
-                                            // Return focus to the AI chat pane now that the
-                                            // command is done and the user typed their password.
+                                            // If the loop ended (timeout or command done) while
+                                            // focus was still on the working pane, return to chat.
                                             if switched_to_working {
                                                 if let Some(ref cp) = chat_pane {
                                                     let _ = tmux::select_pane(cp);
@@ -1140,55 +1062,6 @@ mod tests {
     fn classify_unknown_code_returns_generic() {
         assert_eq!(classify_exit_code(42),  "non-zero exit");
         assert_eq!(classify_exit_code(255), "non-zero exit");
-    }
-
-    // ── inject_sudo_flags ────────────────────────────────────────────────────
-
-    #[test]
-    fn inject_sudo_flags_rewrites_sudo_prefix() {
-        let out = inject_sudo_flags("sudo apt update");
-        assert!(out.starts_with("sudo -S -p \"\""));
-        assert!(out.contains("apt update"));
-    }
-
-    #[test]
-    fn inject_sudo_flags_leaves_non_sudo_unchanged() {
-        let cmd = "ls -la /etc";
-        assert_eq!(inject_sudo_flags(cmd), cmd);
-    }
-
-    #[test]
-    fn inject_sudo_flags_trims_leading_whitespace() {
-        let out = inject_sudo_flags("  sudo reboot");
-        assert!(out.starts_with("sudo -S -p \"\""));
-    }
-
-    // ── command_has_sudo ─────────────────────────────────────────────────────
-
-    #[test]
-    fn command_has_sudo_simple() {
-        assert!(command_has_sudo("sudo apt install vim"));
-    }
-
-    #[test]
-    fn command_has_sudo_in_pipeline() {
-        assert!(command_has_sudo("echo hi | sudo tee /etc/hosts"));
-    }
-
-    #[test]
-    fn command_has_sudo_after_semicolon() {
-        assert!(command_has_sudo("cd /tmp; sudo rm -rf foo"));
-    }
-
-    #[test]
-    fn command_has_sudo_false_positive_guard() {
-        // "sudoer" is not "sudo" — word-boundary check must hold.
-        assert!(!command_has_sudo("cat /etc/sudoers"));
-    }
-
-    #[test]
-    fn command_has_sudo_no_sudo() {
-        assert!(!command_has_sudo("ls -la /home"));
     }
 
     // ── trim_history ─────────────────────────────────────────────────────────

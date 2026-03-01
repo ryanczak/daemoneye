@@ -1049,16 +1049,33 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
                 print_tool_panel("output", &body_refs, true);
                 md.reset();
             }
-            Response::SudoPrompt { id, command } => {
+            Response::CredentialPrompt { id, prompt } => {
                 md.flush();
-                println!("\n\x1b[33m⚠\x1b[0m  \x1b[1msudo required\x1b[0m  \x1b[1m$\x1b[0m {}", command);
+                println!("\n\x1b[33m⚙\x1b[0m  \x1b[1m{}\x1b[0m", prompt);
                 // read_password_silent uses synchronous stdin with echo disabled.
-                // The async BufReader hasn't consumed any bytes yet at this point
-                // because the user hasn't typed anything since the last prompt.
-                let password = read_password_silent("   \x1b[33mPassword:\x1b[0m ").unwrap_or_default();
-                // read_password_silent ends with println(), so col is back to 0.
+                // The async reader hasn't consumed bytes at this point so the
+                // synchronous read is safe.
+                let credential = read_password_silent("   \x1b[33mEnter credential:\x1b[0m ").unwrap_or_default();
                 md.reset();
-                send_request(&mut tx, Request::SudoPassword { id, password }).await?;
+                send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
+            }
+            Response::ConfirmationPrompt { id, message } => {
+                md.flush();
+                println!("\n\x1b[33m⚙\x1b[0m  \x1b[1m{}\x1b[0m", message);
+                print!(
+                    "  \x1b[32mProceed?\x1b[0m \
+                     [\x1b[1;92mY\x1b[0m]es  \
+                     [\x1b[1;91mN\x1b[0m]o \
+                     \x1b[32m›\x1b[0m "
+                );
+                std::io::stdout().flush()?;
+                let input = stdin.read_line().await.unwrap_or_default();
+                let accepted = matches!(
+                    input.trim().to_ascii_lowercase().as_str(),
+                    "y" | "yes"
+                );
+                md.reset();
+                send_request(&mut tx, Request::ConfirmationResponse { id, accepted }).await?;
             }
         }
     }
