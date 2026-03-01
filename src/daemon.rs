@@ -907,31 +907,40 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                     // returns to the idle shell value).
                                     let idle_cmd = tmux::pane_current_command(target)
                                         .unwrap_or_default();
-                                    match tmux::send_keys(target, cmd) {
+                                    // Append a wait-for signal to the command so the daemon
+                                    // can detect completion the instant the shell processes
+                                    // the trailing semicolon — no stability polling needed.
+                                    let signal = format!("de_{}", id);
+                                    let signaling_cmd = format!("{}; tmux wait-for -S {}", cmd, signal);
+                                    match tmux::send_keys(target, &signaling_cmd) {
                                         Ok(()) => {
                                             // Track whether we switched the user to their working
                                             // pane so we know to switch back afterward.
                                             let mut switched_to_working = false;
 
                                             if command_has_sudo(cmd) {
-                                                // Poll the pane at 100 ms intervals for a sudo
-                                                // password prompt.  Exit as soon as one is found
-                                                // or after 3 s (NOPASSWD / cached credentials).
+                                                // Poll the pane at 100 ms intervals to detect a
+                                                // sudo password prompt.  Exit early if:
+                                                //   - "sudo" is the foreground process (prompt found)
+                                                //   - the shell is already idle (NOPASSWD / cached)
+                                                //   - 3 s have elapsed without a prompt
                                                 let poll = Duration::from_millis(100);
                                                 let mut waited = Duration::ZERO;
                                                 let prompt_timeout = Duration::from_secs(3);
                                                 let needs_password = loop {
                                                     tokio::time::sleep(poll).await;
                                                     waited += poll;
-                                                    let is_sudo = tmux::pane_current_command(target)
-                                                        .map(|c| c == "sudo")
-                                                        .unwrap_or(false);
-                                                    if is_sudo { break true; }
+                                                    let cur = tmux::pane_current_command(target)
+                                                        .unwrap_or_default();
+                                                    if cur == "sudo"   { break true;  }
+                                                    if cur == idle_cmd { break false; }
                                                     if waited >= prompt_timeout { break false; }
                                                 };
 
                                                 if needs_password {
-                                                    // Notify and switch to the working pane.
+                                                    // Notify the user and switch to their pane so
+                                                    // they can type the password.  The wait-for
+                                                    // signal below covers full command completion.
                                                     send_response_split(&mut tx, Response::SystemMsg(
                                                         "sudo password prompt detected — \
                                                          switching to your terminal pane. \
@@ -939,68 +948,47 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                     )).await?;
                                                     let _ = tmux::select_pane(target);
                                                     switched_to_working = true;
-                                                    // Poll until sudo is no longer the foreground
-                                                    // process — that means the password was accepted
-                                                    // and the command has started (or finished).
-                                                    // Using pane_current_command is reliable because
-                                                    // capture-pane retains the prompt text in the
-                                                    // scrollback even after the password is entered.
-                                                    let mut waited2 = Duration::ZERO;
-                                                    let password_timeout = Duration::from_secs(30);
-                                                    loop {
-                                                        tokio::time::sleep(poll).await;
-                                                        waited2 += poll;
-                                                        let still_sudo = tmux::pane_current_command(target)
-                                                            .map(|cmd| cmd == "sudo")
-                                                            .unwrap_or(false);
-                                                        if !still_sudo || waited2 >= password_timeout {
-                                                            break;
-                                                        }
-                                                    }
-                                                    // Brief pause for command output to settle.
-                                                    tokio::time::sleep(Duration::from_millis(500)).await;
-                                                }
-                                                // If no prompt was found we have already waited up
-                                                // to 3 s while polling — no extra sleep needed.
-                                            } else {
-                                                // Poll until the shell is back AND pane output
-                                                // has stabilised for two consecutive ticks.
-                                                //
-                                                // The stability check is critical for commands
-                                                // like `bash script.sh` when idle_cmd is also
-                                                // "bash": the process-name check alone would
-                                                // fire immediately while the script still runs.
-                                                // Requiring two stable snapshots ensures we only
-                                                // exit once output has actually settled.
-                                                let poll = Duration::from_millis(100);
-                                                let mut waited = Duration::ZERO;
-                                                let cmd_timeout = Duration::from_secs(30);
-                                                // Brief initial pause to let the command start.
-                                                tokio::time::sleep(Duration::from_millis(150)).await;
-                                                waited += Duration::from_millis(150);
-                                                let mut prev_snap = String::new();
-                                                let mut stable_ticks = 0u32;
-                                                loop {
-                                                    tokio::time::sleep(poll).await;
-                                                    waited += poll;
-                                                    let back_to_shell = tmux::pane_current_command(target)
-                                                        .map(|c| c == idle_cmd)
-                                                        .unwrap_or(true);
-                                                    let snap = tmux::capture_pane(target, 5)
-                                                        .unwrap_or_default();
-                                                    if snap == prev_snap {
-                                                        stable_ticks += 1;
-                                                    } else {
-                                                        stable_ticks = 0;
-                                                        prev_snap = snap;
-                                                    }
-                                                    if (back_to_shell && stable_ticks >= 2)
-                                                        || waited >= cmd_timeout
-                                                    {
-                                                        break;
-                                                    }
                                                 }
                                             }
+
+                                            // Wait for the shell to reach `; tmux wait-for -S signal`
+                                            // at the end of the injected command.  This unblocks the
+                                            // instant the command finishes — zero extra latency.
+                                            //
+                                            // A lightweight pane_current_command fallback runs in the
+                                            // same loop to handle Ctrl+C (where the signal suffix is
+                                            // never reached and the channel is never signaled).
+                                            let cmd_timeout = Duration::from_secs(30);
+                                            let signal_clone = signal.clone();
+                                            let wait_task = tokio::spawn(async move {
+                                                let _ = tokio::process::Command::new("tmux")
+                                                    .args(["wait-for", &signal_clone])
+                                                    .stdout(std::process::Stdio::null())
+                                                    .stderr(std::process::Stdio::null())
+                                                    .status()
+                                                    .await;
+                                            });
+                                            let poll = Duration::from_millis(50);
+                                            let mut waited = Duration::ZERO;
+                                            loop {
+                                                tokio::time::sleep(poll).await;
+                                                waited += poll;
+                                                if wait_task.is_finished() { break; }
+                                                let back = tmux::pane_current_command(target)
+                                                    .map(|c| c == idle_cmd)
+                                                    .unwrap_or(true);
+                                                if back || waited >= cmd_timeout {
+                                                    // Signal the channel so the spawned
+                                                    // `tmux wait-for` subprocess exits cleanly.
+                                                    let _ = std::process::Command::new("tmux")
+                                                        .args(["wait-for", "-S", &signal])
+                                                        .output();
+                                                    break;
+                                                }
+                                            }
+                                            // Brief settle: lets the shell draw its prompt so the
+                                            // subsequent capture_pane includes the trailing prompt.
+                                            tokio::time::sleep(Duration::from_millis(50)).await;
 
                                             let result = match tmux::capture_pane(target, 200) {
                                                 Ok(snap) => {
