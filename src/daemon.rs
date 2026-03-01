@@ -886,7 +886,10 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                         }
                                                     } else {
                                                         // No prompt active — scan for one.
-                                                        match fg_detector.check(&snap_plain) {
+                                                        // trim_end() drops trailing blank terminal
+                                                        // rows so tail_lines() sees the last line of
+                                                        // actual content, not empty screen cells.
+                                                        match fg_detector.check(snap_plain.trim_end()) {
                                                             Some(event) => {
                                                                 if last_prompt_text.as_deref() != Some(&event.text) {
                                                                     last_prompt_text = Some(event.text.clone());

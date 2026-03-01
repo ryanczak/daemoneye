@@ -1090,6 +1090,15 @@ fn read_password_silent(prompt: &str) -> anyhow::Result<String> {
     std::io::stdout().flush()?;
 
     let fd = libc::STDIN_FILENO;
+
+    // AsyncStdin sets O_NONBLOCK on fd 0 so that the async reader can use epoll.
+    // Synchronous read_line returns EAGAIN immediately when O_NONBLOCK is set, so
+    // clear the flag here and restore it after the read.
+    let saved_flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+    if saved_flags >= 0 {
+        unsafe { libc::fcntl(fd, libc::F_SETFL, saved_flags & !libc::O_NONBLOCK) };
+    }
+
     let mut old: libc::termios = unsafe { std::mem::zeroed() };
     let termios_ok = unsafe { libc::tcgetattr(fd, &mut old) } == 0;
 
@@ -1105,6 +1114,12 @@ fn read_password_silent(prompt: &str) -> anyhow::Result<String> {
     if termios_ok {
         unsafe { libc::tcsetattr(fd, libc::TCSANOW, &old) };
     }
+
+    // Restore O_NONBLOCK so the async stdin reader continues to work.
+    if saved_flags >= 0 {
+        unsafe { libc::fcntl(fd, libc::F_SETFL, saved_flags) };
+    }
+
     println!(); // newline after silent input
     result?;
     Ok(input.trim_end_matches('\n').trim_end_matches('\r').to_string())
