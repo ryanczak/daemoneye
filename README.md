@@ -1,4 +1,4 @@
-# DaemonEye v.9
+# DaemonEye - The AI Powered Operator 
 
 DaemonEye is a lightweight background daemon that integrates with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware senior principal site reliability engineer.
 
