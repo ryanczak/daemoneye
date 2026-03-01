@@ -22,6 +22,10 @@ pub enum Request {
         /// Optional prompt override — name of a prompt in ~/.daemoneye/prompts/.
         /// When set, the daemon uses this instead of the configured default.
         prompt: Option<String>,
+        /// Width of the chat pane in columns (terminal_width() value from the client).
+        /// Passed to the AI so it formats prose for the actual display width.
+        #[serde(default)]
+        chat_width: Option<usize>,
     },
     /// Approve or deny a tool call.
     ToolCallResponse { id: String, approved: bool },
@@ -95,14 +99,16 @@ mod tests {
             session_id: Some("deadbeef".to_string()),
             chat_pane: Some("%4".to_string()),
             prompt: Some("sre".to_string()),
+            chat_width: Some(54),
         };
         match roundtrip_req(&req) {
-            Request::Ask { query, tmux_pane, session_id, chat_pane, prompt } => {
+            Request::Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width } => {
                 assert_eq!(query, "what is load avg?");
                 assert_eq!(tmux_pane, Some("%3".to_string()));
                 assert_eq!(session_id, Some("deadbeef".to_string()));
                 assert_eq!(chat_pane, Some("%4".to_string()));
                 assert_eq!(prompt, Some("sre".to_string()));
+                assert_eq!(chat_width, Some(54));
             }
             _ => panic!("wrong variant"),
         }
@@ -116,13 +122,15 @@ mod tests {
             session_id: None,
             chat_pane: None,
             prompt: None,
+            chat_width: None,
         };
         match roundtrip_req(&req) {
-            Request::Ask { tmux_pane, session_id, chat_pane, prompt, .. } => {
+            Request::Ask { tmux_pane, session_id, chat_pane, prompt, chat_width, .. } => {
                 assert!(tmux_pane.is_none());
                 assert!(session_id.is_none());
                 assert!(chat_pane.is_none());
                 assert!(prompt.is_none());
+                assert!(chat_width.is_none());
             }
             _ => panic!("wrong variant"),
         }

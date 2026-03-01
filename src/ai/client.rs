@@ -152,14 +152,14 @@ fn get_tool_definition() -> Value {
             "name": "run_terminal_command",
             "description": "Execute a bash command in one of two modes:\n\
              - background=true: Runs as a subprocess on the DAEMON HOST. Output is captured silently and returned to you. Use for read-only diagnostics (ls, ps, cat, grep, df, curl, etc.). If the user is SSH'd into a remote host, this still runs locally on the daemon machine. Supports sudo: the user will be prompted for their password in the chat interface.\n\
-             - background=false: Injects the command into the USER'S TERMINAL PANE via tmux send-keys. The command is visible and interactive. Use for state-changing commands, service restarts, file edits, or anything that must run on the user's active host. If the user's pane is SSH'd to a remote machine, the command runs there. Supports sudo: the user types their password directly in the terminal pane.",
+             - background=false (default): Injects the command into the USER'S TERMINAL PANE via tmux send-keys. The command is visible and interactive. Use for state-changing commands, service restarts, file edits, or anything that must run on the user's active host. If the user's pane is SSH'd to a remote machine, the command runs there. Supports sudo: the user types their password directly in the terminal pane.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The bash command to execute."},
-                    "background": {"type": "boolean", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote)."}
+                    "background": {"type": "boolean", "default": false, "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote). Defaults to false."}
                 },
-                "required": ["command", "background"]
+                "required": ["command"]
             }
         }
     ])
@@ -173,14 +173,14 @@ fn get_openai_tool_definition() -> Value {
                 "name": "run_terminal_command",
                 "description": "Execute a bash command in one of two modes:\n\
                  - background=true: Runs as a subprocess on the DAEMON HOST. Output is captured silently. Use for read-only diagnostics. If the user is SSH'd to a remote host, this still runs on the daemon machine. Supports sudo via chat interface.\n\
-                 - background=false: Injects the command into the USER'S TERMINAL PANE via tmux. Visible and interactive. Use for state-changing commands or anything needing the user's active host. If the pane is SSH'd, the command runs remotely. Sudo requires the user to type their password in the pane.",
+                 - background=false (default): Injects the command into the USER'S TERMINAL PANE via tmux. Visible and interactive. Use for state-changing commands or anything needing the user's active host. If the pane is SSH'd, the command runs remotely. Sudo requires the user to type their password in the pane.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "The bash command to execute."},
-                        "background": {"type": "boolean", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote)."}
+                        "background": {"type": "boolean", "default": false, "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote). Defaults to false."}
                     },
-                    "required": ["command", "background"]
+                    "required": ["command"]
                 }
             }
         }
@@ -492,6 +492,26 @@ impl AiClient for OpenAiClient {
 // Gemini
 // ---------------------------------------------------------------------------
 
+/// Parse a Python-style function call from a Gemini `MALFORMED_FUNCTION_CALL`
+/// `finishMessage`, e.g.:
+///   `Malformed function call: print(default_api.run_terminal_command(command='cat README.md', background=false))`
+///
+/// Returns `(command, background)` if parsing succeeds, `None` otherwise.
+fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    // Captures the command string (allowing escaped single quotes) and the background bool.
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"run_terminal_command\(command='((?:[^'\\]|\\.)*)'\s*,\s*background=(true|false)\)"#)
+            .expect("valid regex")
+    });
+    let caps = re.captures(msg)?;
+    let cmd = caps[1].replace("\\'", "'");
+    let bg  = &caps[2] == "true";
+    Some((cmd, bg))
+}
+
 /// Google Gemini API backend.
 pub struct GeminiClient {
     api_key: String,
@@ -564,14 +584,14 @@ impl AiClient for GeminiClient {
                     "function_declarations": [
                         {
                             "name": "run_terminal_command",
-                            "description": "Execute a bash command in one of two modes:\n- background=true: Runs on the DAEMON HOST as a subprocess. Output captured silently. Use for read-only diagnostics. Supports sudo via chat.\n- background=false: Runs in the USER'S TERMINAL PANE via tmux send-keys. Visible and interactive. If the user is SSH'd, runs remotely. Sudo requires the user to type password in the pane.",
+                            "description": "Execute a bash command in one of two modes:\n- background=true: Runs on the DAEMON HOST as a subprocess. Output captured silently. Use for read-only diagnostics. Supports sudo via chat.\n- background=false (default): Runs in the USER'S TERMINAL PANE via tmux send-keys. Visible and interactive. If the user is SSH'd, runs remotely. Sudo requires the user to type password in the pane.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
                                     "command": {"type": "STRING", "description": "The bash command to execute."},
-                                    "background": {"type": "BOOLEAN", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, possibly remote)."}
+                                    "background": {"type": "BOOLEAN", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, possibly remote). Defaults to false."}
                                 },
-                                "required": ["command", "background"]
+                                "required": ["command"]
                             }
                         }
                     ]
@@ -596,6 +616,32 @@ impl AiClient for GeminiClient {
                     if let Ok(v) = serde_json::from_str::<Value>(data) {
                         if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array()) {
                             if let Some(candidate) = candidates.get(0) {
+                                // Gemini 2.5 Flash (thinking model) sometimes produces a
+                                // Python-style function call string instead of a structured
+                                // functionCall block.  The API signals this with finishReason
+                                // "MALFORMED_FUNCTION_CALL" and a finishMessage containing
+                                // the raw call text.  Recover by parsing the finishMessage.
+                                if candidate.get("finishReason").and_then(|r| r.as_str())
+                                    == Some("MALFORMED_FUNCTION_CALL")
+                                {
+                                    if let Some(msg) = candidate
+                                        .get("finishMessage")
+                                        .and_then(|m| m.as_str())
+                                    {
+                                        if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
+                                            let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd, bg));
+                                        } else {
+                                            let _ = tx.send(AiEvent::Error(format!(
+                                                "Gemini produced a malformed function call \
+                                                 that could not be recovered.\n\
+                                                 Raw: {msg}"
+                                            )));
+                                            return Ok(());
+                                        }
+                                    }
+                                    continue;
+                                }
+
                                 if let Some(parts) = candidate["content"].get("parts").and_then(|p| p.as_array()) {
                                     for part in parts {
                                         if let Some(t) = part.get("text").and_then(|text| text.as_str()) {
@@ -776,5 +822,34 @@ mod tests {
         let back: ToolCall = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "tc_99");
         assert_eq!(back.name, "run_terminal_command");
+    }
+
+    // ── parse_malformed_gemini_call ───────────────────────────────────────────
+
+    #[test]
+    fn parse_malformed_gemini_call_basic() {
+        let msg = "Malformed function call: print(default_api.run_terminal_command(command='cat README.md', background=false))";
+        let result = parse_malformed_gemini_call(msg);
+        assert_eq!(result, Some(("cat README.md".to_string(), false)));
+    }
+
+    #[test]
+    fn parse_malformed_gemini_call_background_true() {
+        let msg = "Malformed function call: print(default_api.run_terminal_command(command='df -h', background=true))";
+        let result = parse_malformed_gemini_call(msg);
+        assert_eq!(result, Some(("df -h".to_string(), true)));
+    }
+
+    #[test]
+    fn parse_malformed_gemini_call_escaped_quote_in_command() {
+        let msg = r"Malformed function call: print(default_api.run_terminal_command(command='echo \'hello\'', background=false))";
+        let result = parse_malformed_gemini_call(msg);
+        assert_eq!(result, Some(("echo 'hello'".to_string(), false)));
+    }
+
+    #[test]
+    fn parse_malformed_gemini_call_unrecognised_format_returns_none() {
+        let msg = "something completely different";
+        assert!(parse_malformed_gemini_call(msg).is_none());
     }
 }

@@ -7,11 +7,405 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use crate::config::Config;
 use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
 
-/// A persistent async stdin reader owned for the lifetime of a chat session.
-/// Using one reader for both the main query loop and tool-call approvals
-/// guarantees a single internal buffer — no bytes get lost between the two
-/// call sites.
-type ChatStdin = tokio::io::Lines<tokio::io::BufReader<tokio::io::Stdin>>;
+// ── Async stdin wrapper ───────────────────────────────────────────────────────
+
+/// Non-owning handle to fd 0 used with `AsyncFd`.  Does not close the fd on
+/// drop — closing stdin would break the process.
+struct StdinRawFd;
+
+impl std::os::unix::io::AsRawFd for StdinRawFd {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd { libc::STDIN_FILENO }
+}
+
+/// Single async reader over stdin (fd 0), shared by the main input loop and
+/// tool-call approval prompts.  Supports raw-mode byte-at-a-time reading
+/// (for the interactive line editor) and cooked-mode line reading (for simple
+/// y/n prompts) through the same `AsyncFd` registration.
+struct AsyncStdin(tokio::io::unix::AsyncFd<StdinRawFd>);
+
+impl AsyncStdin {
+    fn new() -> anyhow::Result<Self> {
+        // AsyncFd requires the fd to be in O_NONBLOCK mode.
+        unsafe {
+            let flags = libc::fcntl(libc::STDIN_FILENO, libc::F_GETFL, 0);
+            libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+        Ok(Self(tokio::io::unix::AsyncFd::new(StdinRawFd)?))
+    }
+
+    /// Read one raw byte from stdin asynchronously.
+    async fn read_byte(&self) -> Option<u8> {
+        let mut buf = [0u8; 1];
+        loop {
+            let mut guard = self.0.readable().await.ok()?;
+            let n = unsafe {
+                libc::read(libc::STDIN_FILENO, buf.as_mut_ptr() as *mut libc::c_void, 1)
+            };
+            if n == 1 {
+                return Some(buf[0]); // guard dropped → readiness retained for next byte
+            } else if n == 0 {
+                return None; // EOF
+            } else {
+                let e = std::io::Error::last_os_error();
+                if e.kind() == std::io::ErrorKind::WouldBlock {
+                    guard.clear_ready(); // stale readiness; wait for next epoll event
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+
+    /// Read a line (up to `\n` or `\r`, not included).  Works in both cooked
+    /// and raw terminal modes.
+    async fn read_line(&self) -> Option<String> {
+        let mut line = String::new();
+        loop {
+            match self.read_byte().await? {
+                b'\n' | b'\r' => return Some(line),
+                b              => line.push(b as char),
+            }
+        }
+    }
+}
+
+// ── Interactive line editor ───────────────────────────────────────────────────
+
+/// A single editable line: a character buffer and a cursor position.
+struct InputLine {
+    buf:    Vec<char>,
+    cursor: usize, // character index, 0 ..= buf.len()
+}
+
+impl InputLine {
+    fn new() -> Self { Self { buf: Vec::new(), cursor: 0 } }
+
+    fn from_str(s: &str) -> Self {
+        let buf: Vec<char> = s.chars().collect();
+        let cursor = buf.len();
+        Self { buf, cursor }
+    }
+
+    fn insert(&mut self, c: char) { self.buf.insert(self.cursor, c); self.cursor += 1; }
+    fn backspace(&mut self) {
+        if self.cursor > 0 { self.buf.remove(self.cursor - 1); self.cursor -= 1; }
+    }
+    fn delete(&mut self) {
+        if self.cursor < self.buf.len() { self.buf.remove(self.cursor); }
+    }
+    fn move_left(&mut self)  { if self.cursor > 0               { self.cursor -= 1; } }
+    fn move_right(&mut self) { if self.cursor < self.buf.len()  { self.cursor += 1; } }
+    fn move_home(&mut self)  { self.cursor = 0; }
+    fn move_end(&mut self)   { self.cursor = self.buf.len(); }
+    fn kill_to_end(&mut self)   { self.buf.truncate(self.cursor); }
+    fn kill_to_start(&mut self) { self.buf.drain(..self.cursor); self.cursor = 0; }
+    fn as_string(&self) -> String { self.buf.iter().collect() }
+}
+
+/// Session-wide input state: the current line plus the navigable history.
+struct InputState {
+    current:     InputLine,
+    history:     Vec<String>,
+    history_idx: Option<usize>,
+    saved:       String, // current line stashed while browsing history
+}
+
+impl InputState {
+    fn new() -> Self {
+        Self { current: InputLine::new(), history: Vec::new(),
+               history_idx: None, saved: String::new() }
+    }
+
+    /// Commit a query to history and reset the current line to empty.
+    fn push_history(&mut self, s: String) {
+        if !s.is_empty() && self.history.last().map(|l| l.as_str()) != Some(&s) {
+            self.history.push(s);
+        }
+        self.history_idx = None;
+        self.saved = String::new();
+        self.current = InputLine::new();
+    }
+
+    fn history_up(&mut self) {
+        if self.history.is_empty() { return; }
+        let new_idx = match self.history_idx {
+            None    => { self.saved = self.current.as_string(); self.history.len() - 1 }
+            Some(0) => return,
+            Some(i) => i - 1,
+        };
+        self.history_idx = Some(new_idx);
+        self.current = InputLine::from_str(&self.history[new_idx].clone());
+    }
+
+    fn history_down(&mut self) {
+        match self.history_idx {
+            None => {}
+            Some(i) if i + 1 >= self.history.len() => {
+                self.history_idx = None;
+                let s = self.saved.clone();
+                self.current = InputLine::from_str(&s);
+            }
+            Some(i) => {
+                let new_idx = i + 1;
+                self.history_idx = Some(new_idx);
+                self.current = InputLine::from_str(&self.history[new_idx].clone());
+            }
+        }
+    }
+}
+
+/// Parsed key event from raw-mode terminal input.
+enum Key {
+    Char(char),
+    Backspace, Delete,
+    Left, Right, Up, Down,
+    Home, End,
+    Enter,
+    CtrlA, CtrlE, CtrlK, CtrlU,
+    CtrlC, CtrlD,
+}
+
+/// Switch stdin to raw (non-canonical, no-echo) mode.
+/// Returns the saved termios for later restoration via `restore_termios`.
+fn set_raw_mode() -> anyhow::Result<libc::termios> {
+    unsafe {
+        let mut old = std::mem::MaybeUninit::<libc::termios>::uninit();
+        if libc::tcgetattr(libc::STDIN_FILENO, old.as_mut_ptr()) != 0 {
+            return Err(anyhow::anyhow!("tcgetattr: {}", std::io::Error::last_os_error()));
+        }
+        let old = old.assume_init();
+        let mut raw = old;
+        // Disable: CR→NL, flow control, parity, strip, break-int.
+        raw.c_iflag &= !(libc::BRKINT | libc::ICRNL | libc::INPCK | libc::ISTRIP | libc::IXON);
+        // Disable output processing (so \n doesn't become \r\n).
+        raw.c_oflag &= !libc::OPOST;
+        // 8-bit characters.
+        raw.c_cflag = (raw.c_cflag & !libc::CSIZE) | libc::CS8;
+        // Disable: echo, canonical mode, extended processing, signal generation.
+        raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::IEXTEN | libc::ISIG);
+        // Return after each byte, no timeout.
+        raw.c_cc[libc::VMIN  as usize] = 1;
+        raw.c_cc[libc::VTIME as usize] = 0;
+        if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &raw) != 0 {
+            return Err(anyhow::anyhow!("tcsetattr: {}", std::io::Error::last_os_error()));
+        }
+        Ok(old)
+    }
+}
+
+fn restore_termios(old: libc::termios) {
+    unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old); }
+}
+
+/// Redraw the input row to reflect `line`'s current buffer and cursor.
+///
+/// The visible window scrolls horizontally to keep the cursor in view.
+/// Layout: `│ ❯ <text>│`  — text occupies columns 5 … (chat_width − 1).
+fn render_input_row(line: &InputLine, input_row: usize, chat_width: usize) {
+    use std::io::Write;
+    let avail  = chat_width.saturating_sub(5); // chars available for text
+    let len    = line.buf.len();
+    let cursor = line.cursor;
+
+    // Viewport start: keep cursor centred, clamped so we never show past the end.
+    let view_start = if len <= avail || cursor <= avail / 2 {
+        0
+    } else if len.saturating_sub(cursor) < avail / 2 {
+        len.saturating_sub(avail)
+    } else {
+        cursor.saturating_sub(avail / 2)
+    };
+    let view_end   = (view_start + avail).min(len);
+    let visible: String = line.buf[view_start..view_end].iter().collect();
+    let cursor_col = 5 + (cursor - view_start); // 1-indexed terminal column
+
+    print!("\x1b[{input_row};1H\x1b[2K");
+    print!("\x1b[1m\x1b[96m│\x1b[0m \x1b[92m❯\x1b[0m {}", visible);
+    print!("\x1b7");
+    print!("\x1b[{input_row};{chat_width}H\x1b[1m\x1b[96m│\x1b[0m");
+    print!("\x1b8");
+    print!("\x1b[{input_row};{}H", cursor_col);
+    std::io::stdout().flush().ok();
+}
+
+/// Read and parse one key event from raw-mode stdin.
+///
+/// Arrow keys and other escape sequences are consumed with a 30 ms inter-byte
+/// timeout so a lone Escape is distinguishable from a CSI sequence.
+async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
+    use tokio::time::{Duration, timeout};
+
+    let b = stdin.read_byte().await?;
+    Some(match b {
+        b'\r' | b'\n'      => Key::Enter,
+        b'\x7f' | b'\x08' => Key::Backspace,
+        b'\x01'            => Key::CtrlA,
+        b'\x03'            => Key::CtrlC,
+        b'\x04'            => Key::CtrlD,
+        b'\x05'            => Key::CtrlE,
+        b'\x0b'            => Key::CtrlK,
+        b'\x15'            => Key::CtrlU,
+        b'\x1b' => {
+            match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+                Ok(Some(b'[')) => {
+                    match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+                        Ok(Some(b'A')) => Key::Up,
+                        Ok(Some(b'B')) => Key::Down,
+                        Ok(Some(b'C')) => Key::Right,
+                        Ok(Some(b'D')) => Key::Left,
+                        Ok(Some(b'H')) => Key::Home,
+                        Ok(Some(b'F')) => Key::End,
+                        Ok(Some(b'3')) => { // \x1b[3~ = Delete
+                            let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
+                            Key::Delete
+                        }
+                        Ok(Some(b'1')) | Ok(Some(b'7')) => { // \x1b[1~ / \x1b[7~ = Home
+                            let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
+                            Key::Home
+                        }
+                        Ok(Some(b'4')) | Ok(Some(b'8')) => { // \x1b[4~ / \x1b[8~ = End
+                            let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
+                            Key::End
+                        }
+                        _ => Key::Char('\x1b'),
+                    }
+                }
+                Ok(Some(b'O')) => {
+                    match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+                        Ok(Some(b'H')) => Key::Home,
+                        Ok(Some(b'F')) => Key::End,
+                        _              => Key::Char('\x1b'),
+                    }
+                }
+                _ => Key::Char('\x1b'), // bare Escape
+            }
+        }
+        c if c < 0x20 => Key::Char('\0'), // ignore other control chars
+        c if c < 0x80 => Key::Char(c as char),
+        c => {
+            // Multi-byte UTF-8: accumulate continuation bytes.
+            let extra = if c >= 0xF0 { 3 } else if c >= 0xE0 { 2 } else { 1 };
+            let mut utf8 = vec![c];
+            for _ in 0..extra {
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_millis(30),
+                    stdin.read_byte(),
+                ).await {
+                    Ok(Some(b)) => utf8.push(b),
+                    _           => break,
+                }
+            }
+            match std::str::from_utf8(&utf8) {
+                Ok(s)  => s.chars().next().map_or(Key::Char('\0'), Key::Char),
+                Err(_) => Key::Char('\0'),
+            }
+        }
+    })
+}
+
+/// Run the interactive line-editor loop in raw mode.
+///
+/// Handles history navigation (↑/↓), cursor movement (←/→, Ctrl+A/E),
+/// and kill shortcuts (Ctrl+K/U).  Integrates the SIGWINCH resize handler
+/// so the input row repaints correctly after a terminal resize.
+/// Returns `None` on EOF or Ctrl+D with an empty buffer.
+async fn read_input_line(
+    state:       &mut InputState,
+    stdin:       &AsyncStdin,
+    sigwinch:    &mut tokio::signal::unix::Signal,
+    chat_width:  &mut usize,
+    chat_height: &mut usize,
+    start_time:  std::time::Instant,
+    session_id:  &str,
+    status:      &str,
+) -> anyhow::Result<Option<String>> {
+    let old = set_raw_mode()?;
+    let result = read_input_line_inner(
+        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, status,
+    ).await;
+    restore_termios(old);
+    result
+}
+
+async fn read_input_line_inner(
+    state:       &mut InputState,
+    stdin:       &AsyncStdin,
+    sigwinch:    &mut tokio::signal::unix::Signal,
+    chat_width:  &mut usize,
+    chat_height: &mut usize,
+    start_time:  std::time::Instant,
+    session_id:  &str,
+    status:      &str,
+) -> anyhow::Result<Option<String>> {
+    // Initial render of the (empty or restored) input row.
+    render_input_row(&state.current, chat_height.saturating_sub(2).max(1), *chat_width);
+
+    loop {
+        let row = chat_height.saturating_sub(2).max(1);
+        tokio::select! {
+            _ = sigwinch.recv() => {
+                *chat_width  = terminal_width();
+                *chat_height = terminal_height();
+                setup_scroll_region(*chat_height);
+                draw_input_frame(*chat_height, *chat_width, start_time);
+                draw_status_bar(*chat_height, *chat_width, session_id, status);
+                render_input_row(&state.current, chat_height.saturating_sub(2).max(1), *chat_width);
+            }
+            key = read_key(stdin) => {
+                let Some(key) = key else { return Ok(None); };
+                match key {
+                    Key::Enter  => return Ok(Some(state.current.as_string())),
+                    Key::CtrlD  => {
+                        if state.current.buf.is_empty() { return Ok(None); }
+                        state.current.delete();
+                        render_input_row(&state.current, row, *chat_width);
+                    }
+                    Key::CtrlC  => {
+                        // Clear the current line; history nav position is reset.
+                        state.current = InputLine::new();
+                        state.history_idx = None;
+                        render_input_row(&state.current, row, *chat_width);
+                    }
+                    Key::Char(c) if c != '\0' => {
+                        state.current.insert(c);
+                        render_input_row(&state.current, row, *chat_width);
+                    }
+                    Key::Backspace               => { state.current.backspace();    render_input_row(&state.current, row, *chat_width); }
+                    Key::Delete                  => { state.current.delete();       render_input_row(&state.current, row, *chat_width); }
+                    Key::Left                    => { state.current.move_left();    render_input_row(&state.current, row, *chat_width); }
+                    Key::Right                   => { state.current.move_right();   render_input_row(&state.current, row, *chat_width); }
+                    Key::Up                      => { state.history_up();           render_input_row(&state.current, row, *chat_width); }
+                    Key::Down                    => { state.history_down();          render_input_row(&state.current, row, *chat_width); }
+                    Key::Home   | Key::CtrlA     => { state.current.move_home();    render_input_row(&state.current, row, *chat_width); }
+                    Key::End    | Key::CtrlE     => { state.current.move_end();     render_input_row(&state.current, row, *chat_width); }
+                    Key::CtrlK                   => { state.current.kill_to_end();  render_input_row(&state.current, row, *chat_width); }
+                    Key::CtrlU                   => { state.current.kill_to_start();render_input_row(&state.current, row, *chat_width); }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// True if the command string contains `sudo` as a standalone word.
+/// Mirrors the same check in daemon.rs so the client classifies commands
+/// identically for session-level approval.
+fn command_is_sudo(cmd: &str) -> bool {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap());
+    re.is_match(cmd)
+}
+
+/// Per-session auto-approval flags for the two command classes.
+/// Once set, the corresponding class is approved without prompting
+/// for the rest of the chat session.
+#[derive(Default)]
+struct SessionApproval {
+    regular: bool, // auto-approve non-sudo commands
+    sudo: bool,    // auto-approve sudo commands
+}
 
 pub fn run_setup() -> Result<()> {
     // Write the systemd user service file.
@@ -152,9 +546,9 @@ pub async fn run_ping() -> Result<()> {
 }
 
 pub async fn run_ask(query: String) -> Result<()> {
-    // Single-shot: create a fresh stdin reader just for any tool-call approvals.
-    let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-    ask_with_session(query, None, None, &mut stdin).await
+    let stdin = AsyncStdin::new()?;
+    let mut approval = SessionApproval::default(); // never persists; single-shot has no session
+    ask_with_session(query, None, None, &stdin, Some(terminal_width()), &mut approval).await
 }
 
 /// List all available prompts from ~/.daemoneye/prompts/.
@@ -202,8 +596,7 @@ pub fn run_prompts() -> Result<()> {
 pub async fn run_chat() -> Result<()> {
     let result = run_chat_inner().await;
     if let Err(ref e) = result {
-        // The ChatStdin async reader has been dropped by now, so using the
-        // synchronous stdin here is safe.
+        // AsyncStdin has been dropped by now; synchronous stdin is safe.
         use std::io::Write;
         eprintln!("\n\x1b[31m✗\x1b[0m daemoneye error: {}", e);
         eprint!("\x1b[2mPress Enter to close this pane…\x1b[0m");
@@ -218,12 +611,13 @@ async fn run_chat_inner() -> Result<()> {
     let mut session_id = new_session_id();
     // None = use daemon's configured default prompt; Some(name) = override.
     let mut current_prompt: Option<String> = None;
+    let mut approval = SessionApproval::default();
 
-    // One async stdin reader shared by the main query loop AND any tool-call
-    // approval prompts inside ask_with_session. Sharing a single BufReader
-    // means there is only one internal buffer — no bytes can silently disappear
-    // between the two readers.
-    let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    // Single AsyncStdin owns the fd 0 epoll registration for the whole session.
+    // Shared by the interactive line editor (raw mode) and tool-call approval
+    // prompts (cooked mode); they never run concurrently.
+    let stdin = AsyncStdin::new()?;
+    let mut input_state = InputState::new();
 
     // Register the SIGWINCH listener before doing anything that depends on
     // terminal size.  tokio queues signals from the moment the listener is
@@ -279,6 +673,23 @@ async fn run_chat_inner() -> Result<()> {
     // the wrong place or have it visually overwritten by the greeting content.
     setup_scroll_region(chat_height);
 
+    // ASCII logo — centered using the settled chat_width.
+    {
+        let logo_lines = [
+            "████▄   ▄▄▄  ▄▄▄▄▄ ▄▄   ▄▄  ▄▄▄  ▄▄  ▄▄ ██████ ▄▄ ▄▄ ▄▄▄▄▄",
+            "██  ██ ██▀██ ██▄▄  ██▀▄▀██ ██▀██ ███▄██ ██▄▄   ▀███▀ ██▄▄",
+            "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
+        ];
+        let subtitle = "                 AI POWERED OPERATOR";
+        let logo_w = logo_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+        let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
+        println!();
+        for line in &logo_lines {
+            println!("{pad}\x1b[1m\x1b[96m{line}\x1b[0m");
+        }
+        println!("{pad}\x1b[2m{subtitle}\x1b[0m");
+    }
+
     // One-time usage hints — stacked vertically, centered in the pane.
     {
         let center = |vis_len: usize| -> String {
@@ -299,7 +710,7 @@ async fn run_chat_inner() -> Result<()> {
 
     // Send an automatic opening message so the AI greets the user immediately
     // rather than waiting for them to type first.
-    if let Err(e) = ask_with_session("Hello!".to_string(), Some(&session_id), current_prompt.as_deref(), &mut stdin).await {
+    if let Err(e) = ask_with_session("Hello!".to_string(), Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
         eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
@@ -315,120 +726,93 @@ async fn run_chat_inner() -> Result<()> {
     draw_status_bar(chat_height, chat_width, &session_id, current_status);
 
     loop {
-        // Derive row positions from the current height on every iteration so
-        // they reflect any resize that occurred since the last pass.
-        let input_row    = chat_height.saturating_sub(2).max(1);
-        let scroll_bottom = chat_height.saturating_sub(4).max(1);
+        // read_input_line handles its own rendering and SIGWINCH internally.
+        let line_opt = read_input_line(
+            &mut input_state, &stdin, &mut sigwinch,
+            &mut chat_width, &mut chat_height,
+            start_time, &session_id, current_status,
+        ).await?;
 
-        // Draw the input prompt inside the box: │ ❯ [cursor] … │
-        // Left border and prompt are printed directly; the right border is
-        // placed at column chat_width via save/restore so the cursor ends up
-        // at the typing position (after "❯ ").
+        let Some(line) = line_opt else { break }; // EOF or Ctrl+D on empty line
+
+        // Clear the input row and anchor to the scroll region's bottom so
+        // all subsequent output scrolls upward.
         {
             use std::io::Write;
+            let input_row     = chat_height.saturating_sub(2).max(1);
+            let scroll_bottom = chat_height.saturating_sub(4).max(1);
             print!("\x1b[{input_row};1H\x1b[2K");
-            print!("\x1b[1m\x1b[96m│\x1b[0m \x1b[92m❯\x1b[0m ");
-            print!("\x1b7");   // save cursor (typing position)
-            print!("\x1b[{input_row};{chat_width}H\x1b[1m\x1b[96m│\x1b[0m");
-            print!("\x1b8");   // restore cursor to typing position
+            print!("\x1b[{scroll_bottom};1H");
             std::io::stdout().flush()?;
         }
 
-        tokio::select! {
-            // ── Resize event ────────────────────────────────────────────────
-            // SIGWINCH fires when the tmux pane (or underlying terminal) is
-            // resized.  Re-query the live dimensions via TIOCGWINSZ, re-install
-            // the DECSTBM scroll region at the new boundaries, and repaint the
-            // input frame and status bar at their new positions.  The loop then
-            // continues to the top where rows are recomputed and the bordered
-            // input prompt is repositioned.
-            _ = sigwinch.recv() => {
-                chat_width  = terminal_width();
-                chat_height = terminal_height();
-                setup_scroll_region(chat_height);
+        let query = line.trim().to_string();
+        if query.is_empty() { continue; }
+
+        // Push to history before processing so /clear etc. are also navigable.
+        input_state.push_history(query.clone());
+
+        if query == "exit" || query == "quit" { break; }
+        if query == "/clear" {
+            session_id = new_session_id();
+            approval = SessionApproval::default();
+            current_prompt = None;
+            let label = format!(" session cleared · new session:{} ", &session_id[..8]);
+            let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+            println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+            current_status = "ready";
+            draw_input_frame(chat_height, chat_width, start_time);
+            draw_status_bar(chat_height, chat_width, &session_id, current_status);
+            continue;
+        }
+        if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
+            let name = name.to_string();
+            let path = crate::config::prompts_dir().join(format!("{}.toml", name));
+            if !path.exists() && name != "sre" {
+                println!("\x1b[31m✗\x1b[0m  Unknown prompt \x1b[1m{}\x1b[0m — run \x1b[1mdaemoneye prompts\x1b[0m to list available prompts.", name);
+            } else {
+                session_id = new_session_id();
+                approval = SessionApproval::default();
+                current_prompt = Some(name.clone());
+                let label = format!(" prompt: {}  ·  new session:{} ", name, &session_id[..8]);
+                let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                current_status = "ready";
                 draw_input_frame(chat_height, chat_width, start_time);
                 draw_status_bar(chat_height, chat_width, &session_id, current_status);
             }
-
-            // ── User input ──────────────────────────────────────────────────
-            result = stdin.next_line() => {
-                match result? {
-                    None => break, // EOF / pane closed
-                    Some(line) => {
-                        use std::io::Write;
-                        // Clear the input row, then explicitly position at the
-                        // bottom of the scroll region so all output anchors
-                        // there and scrolls upward.
-                        print!("\x1b[{input_row};1H\x1b[2K");
-                        print!("\x1b[{scroll_bottom};1H");
-                        std::io::stdout().flush()?;
-
-                        let query = line.trim().to_string();
-                        if query.is_empty() { continue; }
-                        if query == "exit" || query == "quit" { break; }
-                        if query == "/clear" {
-                            session_id = new_session_id();
-                            current_prompt = None;
-                            let label = format!(" session cleared · new session:{} ", &session_id[..8]);
-                            let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
-                            println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                            current_status = "ready";
-                            draw_input_frame(chat_height, chat_width, start_time);
-                            draw_status_bar(chat_height, chat_width, &session_id, current_status);
-                            continue;
-                        }
-                        if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
-                            let name = name.to_string();
-                            let path = crate::config::prompts_dir().join(format!("{}.toml", name));
-                            if !path.exists() && name != "sre" {
-                                println!("\x1b[31m✗\x1b[0m  Unknown prompt \x1b[1m{}\x1b[0m — run \x1b[1mdaemoneye prompts\x1b[0m to list available prompts.", name);
-                            } else {
-                                session_id = new_session_id();
-                                current_prompt = Some(name.clone());
-                                let label = format!(" prompt: {}  ·  new session:{} ", name, &session_id[..8]);
-                                let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
-                                println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                                current_status = "ready";
-                                draw_input_frame(chat_height, chat_width, start_time);
-                                draw_status_bar(chat_height, chat_width, &session_id, current_status);
-                            }
-                            continue;
-                        }
-                        if query == "/refresh" {
-                            match send_refresh().await {
-                                Ok(()) => {
-                                    session_id = new_session_id();
-                                    let label = format!(" context refreshed  ·  new session:{} ", &session_id[..8]);
-                                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
-                                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                                    current_status = "ready";
-                                    draw_input_frame(chat_height, chat_width, start_time);
-                                    draw_status_bar(chat_height, chat_width, &session_id, current_status);
-                                }
-                                Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
-                            }
-                            continue;
-                        }
-                        // Echo the query at the bottom of the scroll region.
-                        println!("\x1b[92m❯\x1b[0m {}", query);
-                        current_status = "thinking…";
-                        draw_status_bar(chat_height, chat_width, &session_id, current_status);
-                        if let Err(e) = ask_with_session(query, Some(&session_id), current_prompt.as_deref(), &mut stdin).await {
-                            eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
-                        }
-                        // Re-sync dimensions after the (potentially long)
-                        // streaming response — the pane may have been resized
-                        // while the AI was replying.
-                        chat_width  = terminal_width();
-                        chat_height = terminal_height();
-                        setup_scroll_region(chat_height);
-                        current_status = "ready";
-                        draw_input_frame(chat_height, chat_width, start_time);
-                        draw_status_bar(chat_height, chat_width, &session_id, current_status);
-                    }
-                }
-            }
+            continue;
         }
+        if query == "/refresh" {
+            match send_refresh().await {
+                Ok(()) => {
+                    session_id = new_session_id();
+                    approval = SessionApproval::default();
+                    let label = format!(" context refreshed  ·  new session:{} ", &session_id[..8]);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                    current_status = "ready";
+                    draw_input_frame(chat_height, chat_width, start_time);
+                    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
+            }
+            continue;
+        }
+        // Echo the query at the bottom of the scroll region.
+        println!("\x1b[92m❯\x1b[0m {}", query);
+        current_status = "thinking…";
+        draw_status_bar(chat_height, chat_width, &session_id, current_status);
+        if let Err(e) = ask_with_session(query, Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
+            eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
+        }
+        // Re-sync dimensions after the (potentially long) streaming response.
+        chat_width  = terminal_width();
+        chat_height = terminal_height();
+        setup_scroll_region(chat_height);
+        current_status = "ready";
+        draw_input_frame(chat_height, chat_width, start_time);
+        draw_status_bar(chat_height, chat_width, &session_id, current_status);
     }
 
     teardown_scroll_region(chat_height);
@@ -473,7 +857,7 @@ fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
     println!("\x1b[1m\x1b[96m╰{}\x1b[22m╯\x1b[0m", "─".repeat(inner));
 }
 
-async fn ask_with_session(query: String, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &mut ChatStdin) -> Result<()> {
+async fn ask_with_session(query: String, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &AsyncStdin, chat_width: Option<usize>, approval: &mut SessionApproval) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
 
@@ -500,6 +884,7 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
         session_id: session_id.map(|s| s.to_string()),
         chat_pane,
         prompt: prompt_override.map(|s| s.to_string()),
+        chat_width,
     }).await?;
 
     // Braille-pattern spinner frames, updated every 80 ms while waiting for
@@ -594,17 +979,40 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
                 };
                 let cmd_line = format!("$ {}", command);
                 print_tool_panel(where_label, &[&cmd_line], false);
-                print!("  \x1b[32mApprove?\x1b[0m [y/N] \x1b[32m›\x1b[0m ");
-                std::io::stdout().flush()?;
-                // Use the shared async stdin reader so the buffer stays
-                // consistent with the main query loop — no bytes dropped.
-                let input = stdin.next_line().await?.unwrap_or_default();
-                let approved = input.trim().eq_ignore_ascii_case("y");
-                if approved {
-                    println!("  \x1b[32m✓ approved\x1b[0m");
+
+                let is_sudo = command_is_sudo(&command);
+                let auto_approved = if is_sudo { approval.sudo } else { approval.regular };
+
+                let approved = if auto_approved {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
+                    true
                 } else {
-                    println!("  \x1b[2m✗ skipped\x1b[0m");
-                }
+                    let session_label = if is_sudo { "sudo session" } else { "session" };
+                    print!(
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92mY\x1b[0m]es  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         [\x1b[1;93mA\x1b[0m]pprove for {session_label} \
+                         \x1b[32m›\x1b[0m "
+                    );
+                    std::io::stdout().flush()?;
+                    let input = stdin.read_line().await.unwrap_or_default();
+                    let trimmed = input.trim();
+                    let approve_session = trimmed.eq_ignore_ascii_case("a");
+                    let approved_once = trimmed.eq_ignore_ascii_case("y") || approve_session;
+
+                    if approve_session {
+                        if is_sudo { approval.sudo = true; } else { approval.regular = true; }
+                        println!("  \x1b[32m✓ approved — all {} commands auto-approved for this session\x1b[0m",
+                                 if is_sudo { "sudo" } else { "regular" });
+                    } else if approved_once {
+                        println!("  \x1b[32m✓ approved\x1b[0m");
+                    } else {
+                        println!("  \x1b[2m✗ skipped\x1b[0m");
+                    }
+                    approved_once
+                };
+
                 md.reset();
                 send_request(&mut tx, Request::ToolCallResponse { id, approved }).await?;
             }
@@ -1516,6 +1924,34 @@ async fn recv(rx: &mut BufReader<OwnedReadHalf>) -> Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── command_is_sudo ───────────────────────────────────────────────────────
+
+    #[test]
+    fn command_is_sudo_simple() {
+        assert!(command_is_sudo("sudo apt install vim"));
+    }
+
+    #[test]
+    fn command_is_sudo_in_pipeline() {
+        assert!(command_is_sudo("echo hi | sudo tee /etc/hosts"));
+    }
+
+    #[test]
+    fn command_is_sudo_after_semicolon() {
+        assert!(command_is_sudo("cd /tmp; sudo rm -rf foo"));
+    }
+
+    #[test]
+    fn command_is_sudo_false_positive_guard() {
+        // "sudoers" is not "sudo" — word-boundary must hold.
+        assert!(!command_is_sudo("cat /etc/sudoers"));
+    }
+
+    #[test]
+    fn command_is_sudo_no_sudo() {
+        assert!(!command_is_sudo("ls -la /home"));
+    }
 
     // ── visual_len ────────────────────────────────────────────────────────────
 
