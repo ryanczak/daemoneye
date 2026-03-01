@@ -17,17 +17,17 @@ pub fn run_setup() -> Result<()> {
     // Write the systemd user service file.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let systemd_dir = PathBuf::from(&home).join(".config/systemd/user");
-    let service_path = systemd_dir.join("t1000.service");
+    let service_path = systemd_dir.join("daemoneye.service");
 
     let service_content = "\
 [Unit]
-Description=T1000 AI Tmux Daemon
+Description=DaemonEye AI Tmux Daemon
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.cargo/bin/t1000 daemon
-ExecStop=%h/.cargo/bin/t1000 stop
+ExecStart=%h/.cargo/bin/daemoneye daemon
+ExecStop=%h/.cargo/bin/daemoneye stop
 Restart=on-failure
 RestartSec=5
 Environment=\"PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin\"
@@ -44,17 +44,17 @@ WantedBy=default.target
             println!();
             println!("# Enable and start the daemon:");
             println!("systemctl --user daemon-reload");
-            println!("systemctl --user enable --now t1000");
+            println!("systemctl --user enable --now daemoneye");
             println!();
             println!("# Check status and view logs:");
-            println!("systemctl --user status t1000");
-            println!("t1000 logs");
+            println!("systemctl --user status daemoneye");
+            println!("daemoneye logs");
         }
         Err(e) => {
             eprintln!("Warning: could not write service file: {}", e);
             eprintln!("You can install it manually:");
             eprintln!("  mkdir -p ~/.config/systemd/user");
-            eprintln!("  cp t1000.service ~/.config/systemd/user/");
+            eprintln!("  cp daemoneye.service ~/.config/systemd/user/");
         }
     }
 
@@ -73,21 +73,21 @@ WantedBy=default.target
     // when ~/.cargo/bin is not in the PATH inherited by the tmux session (a
     // common issue when the daemon created the session from a background
     // process or service with a minimal environment).
-    let t1000_bin = std::env::current_exe()
+    let daemon_bin = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "t1000".to_string());
+        .unwrap_or_else(|_| "daemoneye".to_string());
 
     println!();
     println!("# Add this to your ~/.tmux.conf:");
     println!(
-        "bind-key T split-window {} -e \"T1000_SOURCE_PANE=#{{pane_id}}\" '{} chat'",
-        split_flag, t1000_bin
+        "bind-key T split-window {} -e \"DAEMONEYE_SOURCE_PANE=#{{pane_id}}\" '{} chat'",
+        split_flag, daemon_bin
     );
     println!();
     println!("# Then reload tmux config:");
     println!("tmux source-file ~/.tmux.conf");
     println!();
-    println!("# If you already have a bind-key that uses the bare name 't1000',");
+    println!("# If you already have a bind-key that uses the bare name 'daemoneye',");
     println!("# replace it with the full path above — the tmux session may not");
     println!("# inherit ~/.cargo/bin in its PATH.");
 
@@ -97,7 +97,7 @@ WantedBy=default.target
 pub fn run_logs(path: PathBuf) -> Result<()> {
     if !path.exists() {
         eprintln!("No log file found at {}.", path.display());
-        eprintln!("The daemon writes logs there by default when started with: t1000 daemon");
+        eprintln!("The daemon writes logs there by default when started with: daemoneye daemon");
         std::process::exit(1);
     }
     use std::os::unix::process::CommandExt;
@@ -154,7 +154,49 @@ pub async fn run_ping() -> Result<()> {
 pub async fn run_ask(query: String) -> Result<()> {
     // Single-shot: create a fresh stdin reader just for any tool-call approvals.
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-    ask_with_session(query, None, &mut stdin).await
+    ask_with_session(query, None, None, &mut stdin).await
+}
+
+/// List all available prompts from ~/.daemoneye/prompts/.
+pub fn run_prompts() -> Result<()> {
+    use crate::config::{load_named_prompt, prompts_dir};
+
+    let dir = prompts_dir();
+    let mut entries: Vec<(String, String)> = Vec::new();
+
+    if dir.is_dir() {
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |x| x == "toml"))
+            .collect();
+        paths.sort_by_key(|e| e.file_name());
+
+        for entry in paths {
+            let name = entry.path()
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let def = load_named_prompt(&name);
+            entries.push((name, def.description));
+        }
+    }
+
+    if entries.is_empty() {
+        println!("No prompts found in {}", dir.display());
+        println!("Create a prompt file: {}/my-prompt.toml", dir.display());
+        return Ok(());
+    }
+
+    let name_width = entries.iter().map(|(n, _)| n.len()).max().unwrap_or(4).max(4);
+    println!("\x1b[1mAvailable prompts\x1b[0m  ({})", dir.display());
+    println!();
+    for (name, desc) in &entries {
+        println!("  \x1b[1m\x1b[96m{:<width$}\x1b[0m  {}", name, desc, width = name_width);
+    }
+    println!();
+    println!("  Use \x1b[1m/prompt <name>\x1b[0m in chat to switch, or set \x1b[1mprompt = \"<name>\"\x1b[0m in config.toml.");
+    Ok(())
 }
 
 pub async fn run_chat() -> Result<()> {
@@ -163,7 +205,7 @@ pub async fn run_chat() -> Result<()> {
         // The ChatStdin async reader has been dropped by now, so using the
         // synchronous stdin here is safe.
         use std::io::Write;
-        eprintln!("\n\x1b[31m✗\x1b[0m t1000 error: {}", e);
+        eprintln!("\n\x1b[31m✗\x1b[0m daemoneye error: {}", e);
         eprint!("\x1b[2mPress Enter to close this pane…\x1b[0m");
         std::io::stderr().flush().ok();
         let _ = std::io::stdin().read_line(&mut String::new());
@@ -172,9 +214,10 @@ pub async fn run_chat() -> Result<()> {
 }
 
 async fn run_chat_inner() -> Result<()> {
-    use std::io::Write;
-
+    let start_time = std::time::Instant::now();
     let mut session_id = new_session_id();
+    // None = use daemon's configured default prompt; Some(name) = override.
+    let mut current_prompt: Option<String> = None;
 
     // One async stdin reader shared by the main query loop AND any tool-call
     // approval prompts inside ask_with_session. Sharing a single BufReader
@@ -182,89 +225,213 @@ async fn run_chat_inner() -> Result<()> {
     // between the two readers.
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
-    // If running inside tmux, resize the chat pane to 25% of the window width
-    // (minimum 20 cols) so the header has a comfortable width, then query the
-    // exact post-resize width directly from tmux.  TIOCGWINSZ can lag behind
-    // the actual pane size due to the SIGWINCH race at pane creation time,
-    // which would cause the header border to fall short of the right edge.
-    let chat_width: usize = if let Ok(pane_id) = std::env::var("TMUX_PANE") {
-        let target = crate::tmux::query_window_width(&pane_id)
-            .map(|w| (w * 25 / 100).max(20))
-            .unwrap_or(100);
-        let _ = crate::tmux::resize_pane_width(&pane_id, target);
-        crate::tmux::query_pane_width(&pane_id).unwrap_or(target)
-    } else {
-        terminal_width()
+    // Register the SIGWINCH listener before doing anything that depends on
+    // terminal size.  tokio queues signals from the moment the listener is
+    // created, so no resize event can slip through the gap between process
+    // start and our first poll.
+    let mut sigwinch = {
+        use tokio::signal::unix::{SignalKind, signal};
+        signal(SignalKind::window_change())?
     };
 
-    // Header box — round corners, bright cyan, width-adaptive.
-    // Stretches to fill the measured chat pane width.
-    {
-        let w     = chat_width.max(70);
-        let inner = w - 2; // chars between the corner glyphs
-
-        // Title row anchors — each 19 visible chars.
-        let title_left  = "─ T1000  AI  Agent ";
-        let title_right = format!(" session:{} ─", &session_id[..8]);
-        // Use visual_len (char-count) not .len() (byte-count): ─ and · are
-        // multi-byte UTF-8 but each occupies exactly one terminal column.
-        let anchors = visual_len(title_left) + visual_len(&title_right);
-
-        let top = if inner >= anchors {
-            let mid = "─".repeat(inner - anchors);
-            format!("\x1b[1m\x1b[96m╭{title_left}{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m")
-        } else {
-            // Terminal too narrow to fit the session tag — just fill with dashes.
-            let dashes = "─".repeat(inner.saturating_sub(visual_len(title_left)));
-            format!("\x1b[1m\x1b[96m╭{title_left}{dashes}╮\x1b[0m")
-        };
-        println!("{top}");
-
-        // Hint row — pad to inner width.
-        let hint     = "  Type '\x1b[1mexit\x1b[0m' or \x1b[1mCtrl-C\x1b[0m to close  ·  \x1b[1m/clear\x1b[0m to reset session";
-        let hint_vis = visual_len(hint);
-        let pad      = " ".repeat(inner.saturating_sub(hint_vis));
-        println!("\x1b[1m\x1b[96m│\x1b[0m{hint}{pad}\x1b[1m\x1b[96m│\x1b[0m");
-
-        // Bottom row.
-        let bot = "─".repeat(inner);
-        println!("\x1b[1m\x1b[96m╰{bot}╯\x1b[0m");
+    // Initial pane dimensions — use the tmux query to set the 25%-width target
+    // and read back the exact post-resize size.
+    let pane_id_opt = std::env::var("TMUX_PANE").ok();
+    let mut chat_width: usize;
+    let mut chat_height: usize;
+    if let Some(ref pane_id) = pane_id_opt {
+        let target_w = crate::tmux::query_window_width(pane_id)
+            .map(|w| (w * 25 / 100).max(20))
+            .unwrap_or(100);
+        let _ = crate::tmux::resize_pane_width(pane_id, target_w);
+        chat_width  = crate::tmux::query_pane_width(pane_id).unwrap_or(target_w);
+        chat_height = crate::tmux::query_pane_height(pane_id).unwrap_or_else(|_| terminal_height());
+    } else {
+        chat_width  = terminal_width();
+        chat_height = terminal_height();
     }
-    println!();
+
+    // When running inside tmux a new split pane triggers one or more SIGWINCH
+    // signals as the layout is negotiated.  Wait here until no SIGWINCH has
+    // arrived for SETTLE_MS milliseconds so we know the final dimensions before
+    // printing anything.  Re-query on every signal so we always end up with
+    // the correct settled size.
+    if pane_id_opt.is_some() {
+        const SETTLE_MS: u64 = 500;
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(SETTLE_MS),
+                sigwinch.recv(),
+            ).await {
+                Ok(_) => {
+                    // Another resize — update dims and restart the quiet timer.
+                    chat_width  = terminal_width();
+                    chat_height = terminal_height();
+                }
+                Err(_elapsed) => break, // stable for SETTLE_MS — proceed
+            }
+        }
+    }
+
+    // Install the scroll region.  The input frame and status bar are
+    // intentionally NOT drawn yet — the greeting streams next and the
+    // dimensions may still shift.  Drawing the frame now would show it in
+    // the wrong place or have it visually overwritten by the greeting content.
+    setup_scroll_region(chat_height);
+
+    // One-time usage hints — stacked vertically, centered in the pane.
+    {
+        let center = |vis_len: usize| -> String {
+            " ".repeat((chat_width.saturating_sub(vis_len)) / 2)
+        };
+        println!();
+        // visible lengths (no ANSI): 22, 23, 26
+        println!("{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",   center(22));
+        println!("{}\x1b[96m/clear\x1b[0m to reset session",                   center(23));
+        println!("{}\x1b[96m/refresh\x1b[0m to resync context",                center(26));
+        println!();
+    }
+
+    // Only the status bar is drawn before the greeting so the user gets a
+    // visual cue that the system is initialising.
+    let mut current_status = "thinking…";
+    draw_status_bar(chat_height, chat_width, &session_id, current_status);
 
     // Send an automatic opening message so the AI greets the user immediately
     // rather than waiting for them to type first.
-    if let Err(e) = ask_with_session("Hello!".to_string(), Some(&session_id), &mut stdin).await {
+    if let Err(e) = ask_with_session("Hello!".to_string(), Some(&session_id), current_prompt.as_deref(), &mut stdin).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
-        eprintln!("  Make sure it is running:  \x1b[1mt1000 daemon --console\x1b[0m");
+        eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
         eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
     }
 
-    loop {
-        print!("\n\x1b[92m❯\x1b[0m ");
-        std::io::stdout().flush()?;
+    // Greeting is done.  Re-query dimensions in case the pane was resized
+    // while it streamed, then draw the full chrome for the first time.
+    chat_width  = terminal_width();
+    chat_height = terminal_height();
+    setup_scroll_region(chat_height);
+    current_status = "ready";
+    draw_input_frame(chat_height, chat_width, start_time);
+    draw_status_bar(chat_height, chat_width, &session_id, current_status);
 
-        match stdin.next_line().await? {
-            None => break, // EOF / pane closed
-            Some(line) => {
-                let query = line.trim().to_string();
-                if query.is_empty() { continue; }
-                if query == "exit" || query == "quit" { break; }
-                if query == "/clear" {
-                    session_id = new_session_id();
-                    let w = terminal_width();
-                    let label = format!(" session cleared · new session:{} ", &session_id[..8]);
-                    let dashes = w.min(72).saturating_sub(visual_len(&label) + 1);
-                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                    continue;
-                }
-                if let Err(e) = ask_with_session(query, Some(&session_id), &mut stdin).await {
-                    eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
+    loop {
+        // Derive row positions from the current height on every iteration so
+        // they reflect any resize that occurred since the last pass.
+        let input_row    = chat_height.saturating_sub(2).max(1);
+        let scroll_bottom = chat_height.saturating_sub(4).max(1);
+
+        // Draw the input prompt inside the box: │ ❯ [cursor] … │
+        // Left border and prompt are printed directly; the right border is
+        // placed at column chat_width via save/restore so the cursor ends up
+        // at the typing position (after "❯ ").
+        {
+            use std::io::Write;
+            print!("\x1b[{input_row};1H\x1b[2K");
+            print!("\x1b[1m\x1b[96m│\x1b[0m \x1b[92m❯\x1b[0m ");
+            print!("\x1b7");   // save cursor (typing position)
+            print!("\x1b[{input_row};{chat_width}H\x1b[1m\x1b[96m│\x1b[0m");
+            print!("\x1b8");   // restore cursor to typing position
+            std::io::stdout().flush()?;
+        }
+
+        tokio::select! {
+            // ── Resize event ────────────────────────────────────────────────
+            // SIGWINCH fires when the tmux pane (or underlying terminal) is
+            // resized.  Re-query the live dimensions via TIOCGWINSZ, re-install
+            // the DECSTBM scroll region at the new boundaries, and repaint the
+            // input frame and status bar at their new positions.  The loop then
+            // continues to the top where rows are recomputed and the bordered
+            // input prompt is repositioned.
+            _ = sigwinch.recv() => {
+                chat_width  = terminal_width();
+                chat_height = terminal_height();
+                setup_scroll_region(chat_height);
+                draw_input_frame(chat_height, chat_width, start_time);
+                draw_status_bar(chat_height, chat_width, &session_id, current_status);
+            }
+
+            // ── User input ──────────────────────────────────────────────────
+            result = stdin.next_line() => {
+                match result? {
+                    None => break, // EOF / pane closed
+                    Some(line) => {
+                        use std::io::Write;
+                        // Clear the input row, then explicitly position at the
+                        // bottom of the scroll region so all output anchors
+                        // there and scrolls upward.
+                        print!("\x1b[{input_row};1H\x1b[2K");
+                        print!("\x1b[{scroll_bottom};1H");
+                        std::io::stdout().flush()?;
+
+                        let query = line.trim().to_string();
+                        if query.is_empty() { continue; }
+                        if query == "exit" || query == "quit" { break; }
+                        if query == "/clear" {
+                            session_id = new_session_id();
+                            current_prompt = None;
+                            let label = format!(" session cleared · new session:{} ", &session_id[..8]);
+                            let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                            println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                            current_status = "ready";
+                            draw_input_frame(chat_height, chat_width, start_time);
+                            draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                            continue;
+                        }
+                        if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
+                            let name = name.to_string();
+                            let path = crate::config::prompts_dir().join(format!("{}.toml", name));
+                            if !path.exists() && name != "sre" {
+                                println!("\x1b[31m✗\x1b[0m  Unknown prompt \x1b[1m{}\x1b[0m — run \x1b[1mdaemoneye prompts\x1b[0m to list available prompts.", name);
+                            } else {
+                                session_id = new_session_id();
+                                current_prompt = Some(name.clone());
+                                let label = format!(" prompt: {}  ·  new session:{} ", name, &session_id[..8]);
+                                let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                                println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                                current_status = "ready";
+                                draw_input_frame(chat_height, chat_width, start_time);
+                                draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                            }
+                            continue;
+                        }
+                        if query == "/refresh" {
+                            match send_refresh().await {
+                                Ok(()) => {
+                                    session_id = new_session_id();
+                                    let label = format!(" context refreshed  ·  new session:{} ", &session_id[..8]);
+                                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                                    current_status = "ready";
+                                    draw_input_frame(chat_height, chat_width, start_time);
+                                    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                                }
+                                Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
+                            }
+                            continue;
+                        }
+                        // Echo the query at the bottom of the scroll region.
+                        println!("\x1b[92m❯\x1b[0m {}", query);
+                        current_status = "thinking…";
+                        draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                        if let Err(e) = ask_with_session(query, Some(&session_id), current_prompt.as_deref(), &mut stdin).await {
+                            eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
+                        }
+                        // Re-sync dimensions after the (potentially long)
+                        // streaming response — the pane may have been resized
+                        // while the AI was replying.
+                        chat_width  = terminal_width();
+                        chat_height = terminal_height();
+                        setup_scroll_region(chat_height);
+                        current_status = "ready";
+                        draw_input_frame(chat_height, chat_width, start_time);
+                        draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                    }
                 }
             }
         }
     }
 
+    teardown_scroll_region(chat_height);
     println!("\n\x1b[2mGoodbye.\x1b[0m");
     Ok(())
 }
@@ -306,7 +473,7 @@ fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
     println!("\x1b[1m\x1b[96m╰{}\x1b[22m╯\x1b[0m", "─".repeat(inner));
 }
 
-async fn ask_with_session(query: String, session_id: Option<&str>, stdin: &mut ChatStdin) -> Result<()> {
+async fn ask_with_session(query: String, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &mut ChatStdin) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
 
@@ -314,13 +481,13 @@ async fn ask_with_session(query: String, session_id: Option<&str>, stdin: &mut C
     let (rx, mut tx) = stream.into_split();
     let mut rx = BufReader::new(rx);
 
-    // T1000_SOURCE_PANE is set by the recommended tmux bind-key:
-    //   split-window -h -e "T1000_SOURCE_PANE=#{pane_id}" 't1000 chat'
+    // DAEMONEYE_SOURCE_PANE is set by the recommended tmux bind-key:
+    //   split-window -h -e "DAEMONEYE_SOURCE_PANE=#{pane_id}" 'daemoneye chat'
     // It records the user's working pane before the split so the daemon
     // captures context from — and injects commands into — the right pane.
-    // Falls back to TMUX_PANE, which is correct when `t1000 chat` or
-    // `t1000 ask` is run directly from the user's working pane.
-    let tmux_pane = std::env::var("T1000_SOURCE_PANE")
+    // Falls back to TMUX_PANE, which is correct when `daemoneye chat` or
+    // `daemoneye ask` is run directly from the user's working pane.
+    let tmux_pane = std::env::var("DAEMONEYE_SOURCE_PANE")
         .ok()
         .or_else(|| std::env::var("TMUX_PANE").ok());
     // The chat pane is this process's own pane ($TMUX_PANE).  The daemon uses
@@ -332,6 +499,7 @@ async fn ask_with_session(query: String, session_id: Option<&str>, stdin: &mut C
         tmux_pane,
         session_id: session_id.map(|s| s.to_string()),
         chat_pane,
+        prompt: prompt_override.map(|s| s.to_string()),
     }).await?;
 
     // Braille-pattern spinner frames, updated every 80 ms while waiting for
@@ -361,8 +529,14 @@ async fn ask_with_session(query: String, session_id: Option<&str>, stdin: &mut C
                 }
             }
         } else {
-            // Phase 2 — streaming: wait directly without spinning.
-            recv(&mut rx).await?
+            // Phase 2 — streaming: wait with a 60 s inter-token deadline so a
+            // daemon that stops responding mid-stream produces a clear error.
+            tokio::time::timeout(
+                Duration::from_secs(60),
+                recv(&mut rx),
+            )
+            .await
+            .context("Daemon stopped responding (60 s inter-token timeout)")??
         };
 
         match msg {
@@ -547,6 +721,120 @@ fn terminal_width() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .map(|w| w.saturating_sub(1))
         .unwrap_or(79)
+}
+
+/// Query the visible row height of the terminal on stdout.
+/// Uses `ioctl(TIOCGWINSZ)` so the value is live; falls back to `$LINES` then 24.
+fn terminal_height() -> usize {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0
+            && ws.ws_row > 2
+        {
+            return ws.ws_row as usize;
+        }
+    }
+    std::env::var("LINES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(24)
+}
+
+/// Install a terminal scroll region that reserves the bottom four rows:
+///   rows 1..(height-4) — scrolling content area
+///   row (height-3) — input box top border (app name + uptime)
+///   row (height-2) — input prompt
+///   row (height-1) — input box bottom border
+///   row  height    — status bar
+fn setup_scroll_region(height: usize) {
+    use std::io::Write;
+    let scroll_bottom = height.saturating_sub(4).max(1);
+    // DECSTBM — set scrolling region (1-indexed).
+    print!("\x1b[1;{scroll_bottom}r");
+    // Position cursor at the bottom of the scroll region so the first output
+    // starts at the correct row.
+    print!("\x1b[{scroll_bottom};1H");
+    std::io::stdout().flush().ok();
+}
+
+/// Reset the terminal to full-screen scrolling and clear the four reserved rows.
+fn teardown_scroll_region(height: usize) {
+    use std::io::Write;
+    // \x1b[r resets the scroll region to the full screen.
+    print!("\x1b[r");
+    for row in [
+        height.saturating_sub(3).max(1),
+        height.saturating_sub(2).max(1),
+        height.saturating_sub(1).max(1),
+        height,
+    ] {
+        print!("\x1b[{row};1H\x1b[2K");
+    }
+    // Leave cursor near the bottom of the now-full-screen terminal.
+    print!("\x1b[{};1H", height.saturating_sub(4).max(1));
+    std::io::stdout().flush().ok();
+}
+
+/// Format an elapsed duration as a compact uptime string.
+fn fmt_uptime(elapsed: std::time::Duration) -> String {
+    let s = elapsed.as_secs();
+    if s < 60 {
+        format!("{}s", s)
+    } else if s < 3600 {
+        format!("{}m {}s", s / 60, s % 60)
+    } else {
+        format!("{}h {}m", s / 3600, (s % 3600) / 60)
+    }
+}
+
+/// Draw (or redraw) the input box borders.
+///
+/// The top border carries the app name and current uptime; the bottom border
+/// is plain.  Uses DEC save/restore cursor so it is safe to call at any point
+/// without disturbing the scroll-region cursor position.
+///   row (height-3): ╭─ DaemonEye  AI  Agent ──────────── up 4m 12s ─╮
+///   row (height-1): ╰────────────────────────────────────────────╯
+fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) {
+    use std::io::Write;
+    let border_top    = height.saturating_sub(3).max(1);
+    let border_bottom = height.saturating_sub(1).max(1);
+    let inner = width.saturating_sub(2);
+
+    let title_left  = "─ DaemonEye  AI  Agent ";
+    let title_right = format!(" up {} ─", fmt_uptime(start.elapsed()));
+    let anchors     = visual_len(title_left) + visual_len(&title_right);
+    let top = if inner >= anchors {
+        let mid = "─".repeat(inner - anchors);
+        format!("\x1b[1m\x1b[96m╭{title_left}{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m")
+    } else {
+        let dashes = "─".repeat(inner.saturating_sub(visual_len(title_left)));
+        format!("\x1b[1m\x1b[96m╭{title_left}{dashes}╮\x1b[0m")
+    };
+
+    print!("\x1b7");
+    print!("\x1b[{border_top};1H\x1b[2K{top}");
+    print!("\x1b[{border_bottom};1H\x1b[2K\x1b[1m\x1b[96m╰{}╯\x1b[0m", "─".repeat(inner));
+    print!("\x1b8");
+    std::io::stdout().flush().ok();
+}
+
+/// Render (or refresh) the status bar in the bottom row.
+/// Uses DEC save/restore cursor (\x1b7 / \x1b8) so this is safe to call
+/// at any point without disturbing the scroll-region cursor position.
+fn draw_status_bar(height: usize, width: usize, session_id: &str, status: &str) {
+    use std::io::Write;
+    let left = format!(
+        " ⬡ daemoneye  ·  session:{}  ·  {}",
+        &session_id[..8.min(session_id.len())],
+        status,
+    );
+    let vis = visual_len(&left);
+    let pad = " ".repeat(width.saturating_sub(vis));
+    print!("\x1b7");                    // DEC save cursor
+    print!("\x1b[{height};1H");        // move to status bar row
+    print!("\x1b[2m{}{}\x1b[0m", left, pad);
+    print!("\x1b8");                    // DEC restore cursor
+    std::io::stdout().flush().ok();
 }
 
 /// Streaming word-wrap writer.
@@ -1164,20 +1452,48 @@ impl MarkdownRenderer {
 }
 
 /// Generate a random session ID from /dev/urandom.
+/// Falls back to timestamp+PID entropy if /dev/urandom is unavailable,
+/// avoiding the predictable all-zeros key produced by the old code.
 fn new_session_id() -> String {
     let mut bytes = [0u8; 8];
     if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
         use std::io::Read;
-        let _ = f.read_exact(&mut bytes);
+        if f.read_exact(&mut bytes).is_ok() {
+            return bytes.iter().map(|b| format!("{:02x}", b)).collect();
+        }
     }
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    // /dev/urandom unavailable — mix nanosecond timestamp with PID.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id();
+    format!("{:08x}{:08x}", nanos ^ pid, pid.wrapping_mul(2_654_435_761))
+}
+
+/// Ask the daemon to re-collect system context (OS info, memory, processes, history).
+async fn send_refresh() -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    let mut data = serde_json::to_vec(&crate::ipc::Request::Refresh)?;
+    data.push(b'\n');
+    tx.write_all(&data).await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    Ok(())
 }
 
 async fn connect() -> Result<UnixStream> {
     let socket_path = Path::new(DEFAULT_SOCKET_PATH);
-    UnixStream::connect(socket_path)
-        .await
-        .with_context(|| format!("Failed to connect to daemon at {}", DEFAULT_SOCKET_PATH))
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        UnixStream::connect(socket_path),
+    )
+    .await
+    .with_context(|| format!("Timed out connecting to daemon at {} (is it running?)", DEFAULT_SOCKET_PATH))?
+    .with_context(|| format!("Failed to connect to daemon at {}", DEFAULT_SOCKET_PATH))
 }
 
 async fn send_request(tx: &mut OwnedWriteHalf, req: Request) -> Result<()> {
@@ -1195,4 +1511,81 @@ async fn recv(rx: &mut BufReader<OwnedReadHalf>) -> Result<Response> {
     }
     let response: Response = serde_json::from_str(line.trim())?;
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── visual_len ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn visual_len_plain_ascii() {
+        assert_eq!(visual_len("hello"), 5);
+    }
+
+    #[test]
+    fn visual_len_empty_string() {
+        assert_eq!(visual_len(""), 0);
+    }
+
+    #[test]
+    fn visual_len_strips_ansi_reset() {
+        // "\x1b[0m" is an ANSI reset — it contributes 0 visual columns.
+        assert_eq!(visual_len("\x1b[0mhello"), 5);
+    }
+
+    #[test]
+    fn visual_len_strips_ansi_colour() {
+        assert_eq!(visual_len("\x1b[31mred\x1b[0m"), 3);
+    }
+
+    #[test]
+    fn visual_len_strips_bold() {
+        assert_eq!(visual_len("\x1b[1mbold text\x1b[0m"), 9);
+    }
+
+    #[test]
+    fn visual_len_nested_escape_sequences() {
+        // Two different ANSI sequences around some text.
+        let s = "\x1b[1m\x1b[32mgreen bold\x1b[0m\x1b[0m";
+        assert_eq!(visual_len(s), 10);
+    }
+
+    #[test]
+    fn visual_len_no_escape_inside_word() {
+        // "DaemonEye" has no escapes — all 9 chars count.
+        assert_eq!(visual_len("DaemonEye"), 9);
+    }
+
+    // ── fmt_uptime ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn fmt_uptime_seconds_only() {
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(0)),  "0s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(42)), "42s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn fmt_uptime_minutes_and_seconds() {
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(60)),  "1m 0s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(90)),  "1m 30s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3599)), "59m 59s");
+    }
+
+    #[test]
+    fn fmt_uptime_hours_and_minutes() {
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3600)),  "1h 0m");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3660)),  "1h 1m");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(7322)),  "2h 2m");
+    }
+
+    #[test]
+    fn fmt_uptime_exact_hour_boundary() {
+        // 3600s == 1h 0m, not shown as minutes
+        let out = fmt_uptime(std::time::Duration::from_secs(3600));
+        assert!(out.contains('h'), "should show hours: {out}");
+        assert!(!out.contains('s'), "should not show seconds: {out}");
+    }
 }

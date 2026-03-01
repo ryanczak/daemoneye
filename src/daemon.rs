@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use std::time::Duration;
 
@@ -15,14 +15,21 @@ use crate::ai::filter::mask_sensitive;
 use crate::config::{Config, load_named_prompt};
 use crate::sys_context::get_or_init_sys_context;
 
+/// In-memory record of an active chat session.
+/// Evicted by the cleanup task after 30 minutes of inactivity.
 struct SessionEntry {
+    /// Full trimmed message history for this session (bounded to `MAX_HISTORY`).
     messages: Vec<Message>,
+    /// Wall-clock time of the last `Ask` request; used to prune idle sessions.
     last_accessed: Instant,
 }
 
+/// Thread-safe, shared session store passed to every client handler.
 type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
 
-const FALLBACK_SESSION: &str = "t1000";
+const FALLBACK_SESSION: &str = "daemoneye";
+/// Maximum number of messages retained per session (in memory and on disk).
+const MAX_HISTORY: usize = 40;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -70,6 +77,22 @@ fn inject_sudo_flags(cmd: &str) -> String {
     }
 }
 
+/// Map a process exit code to a human-readable label for AI consumption.
+/// Covers the most common POSIX exit codes; anything else becomes "non-zero exit".
+fn classify_exit_code(code: i32) -> &'static str {
+    match code {
+        1   => "generic failure",
+        2   => "misuse of shell built-in",
+        126 => "permission denied (not executable)",
+        127 => "command not found",
+        128 => "invalid exit argument",
+        130 => "interrupted (Ctrl-C)",
+        137 => "killed (SIGKILL / OOM)",
+        143 => "terminated (SIGTERM)",
+        _   => "non-zero exit",
+    }
+}
+
 /// Normalise command output for display and AI context:
 /// - trims trailing whitespace from every line
 /// - strips leading and trailing blank lines
@@ -80,6 +103,87 @@ fn normalize_output(s: &str) -> String {
     let end   = trimmed.iter().rposition(|l| !l.is_empty()).map(|i| i + 1).unwrap_or(0);
     if start >= end { return String::new(); }
     trimmed[start..end].join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// File-backed session persistence
+// ---------------------------------------------------------------------------
+
+/// Path to the JSONL file storing a session's message history.
+fn session_file(id: &str) -> std::path::PathBuf {
+    crate::config::sessions_dir().join(format!("{}.jsonl", id))
+}
+
+/// Write the current (already-trimmed) message history to disk, overwriting
+/// the previous snapshot.  Failures are non-fatal — we just skip persistence.
+fn write_session_file(id: &str, messages: &[Message]) {
+    use std::io::Write;
+    let path = session_file(id);
+    if let Ok(mut f) = std::fs::File::create(&path) {
+        for msg in messages {
+            if let Ok(line) = serde_json::to_string(msg) {
+                let _ = writeln!(f, "{}", line);
+            }
+        }
+    }
+}
+
+/// Trim a message history Vec to at most `MAX_HISTORY` entries.
+///
+/// Layout after trim: `[first_message] [placeholder] [tail…]`
+/// - `first_message` is the initial user turn (contains injected system context).
+/// - `placeholder` is a synthetic assistant message noting the truncation so the
+///   AI understands it is not seeing the full history.
+/// - `tail` is the most-recent slice, always starting at an even index (user turn)
+///   to keep the strict `user → assistant → user → …` alternation valid.
+///
+/// Returns `messages` unchanged when `messages.len() <= MAX_HISTORY`.
+fn trim_history(messages: Vec<Message>) -> Vec<Message> {
+    if messages.len() <= MAX_HISTORY {
+        return messages;
+    }
+    // raw_tail_start ensures result length ≤ MAX_HISTORY:
+    //   1 (first) + 1 (placeholder) + (N - tail_start) ≤ MAX_HISTORY
+    let raw_tail_start = messages.len() - MAX_HISTORY + 2;
+    // Round up to even so the tail begins on a user message.
+    let tail_start = if raw_tail_start % 2 == 0 {
+        raw_tail_start
+    } else {
+        raw_tail_start + 1
+    };
+    let dropped = tail_start - 1;
+    let first = messages[0].clone();
+    let placeholder = Message {
+        role: "assistant".to_string(),
+        content: format!(
+            "[{} earlier messages were trimmed to fit the context window. \
+             The conversation continues from a later point in the session.]",
+            dropped
+        ),
+        tool_calls: None,
+        tool_results: None,
+    };
+    let mut trimmed = Vec::with_capacity(MAX_HISTORY);
+    trimmed.push(first);
+    trimmed.push(placeholder);
+    trimmed.extend_from_slice(&messages[tail_start..]);
+    trimmed
+}
+
+/// Load message history from a session file, returning at most `MAX_HISTORY`
+/// tail messages.  Returns an empty Vec if the file does not exist or is unreadable.
+fn read_session_file(id: &str) -> Vec<Message> {
+    let path = session_file(id);
+    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let msgs: Vec<Message> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    if msgs.len() <= MAX_HISTORY {
+        msgs
+    } else {
+        msgs[msgs.len() - MAX_HISTORY..].to_vec()
+    }
 }
 
 /// Append a single-line execution record to the command log.
@@ -138,7 +242,7 @@ fn resolve_api_key(config: &Config) -> String {
 /// Returns `(session_name, newly_created)`.
 /// If the daemon was launched from inside an existing tmux session, that
 /// session is used and `newly_created` is false.
-/// Otherwise the fallback "t1000" session is used; `newly_created` is true
+/// Otherwise the fallback "daemoneye" session is used; `newly_created` is true
 /// when this call actually created it (not when it already existed).
 fn detect_or_create_session() -> Result<(String, bool)> {
     if std::env::var("TMUX").is_ok() {
@@ -168,7 +272,7 @@ async fn open_chat_pane(session_name: String) {
     let pane_target = format!("{}:0.0", session_name);
 
     // Resolve the global pane ID (e.g. %3) of the shell pane so we can pass
-    // it as T1000_SOURCE_PANE — the pane where commands should be injected.
+    // it as DAEMONEYE_SOURCE_PANE — the pane where commands should be injected.
     let shell_pane_id = match std::process::Command::new("tmux")
         .args(["display-message", "-t", &pane_target, "-p", "#{pane_id}"])
         .output()
@@ -187,17 +291,17 @@ async fn open_chat_pane(session_name: String) {
 
     // Use the exact binary that is currently running so the path is always
     // correct regardless of how the daemon was invoked.
-    let t1000_bin = std::env::current_exe()
+    let daemon_bin = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "t1000".to_string());
+        .unwrap_or_else(|_| "daemoneye".to_string());
 
-    let chat_cmd = format!("{} chat", t1000_bin);
+    let chat_cmd = format!("{} chat", daemon_bin);
 
     let result = std::process::Command::new("tmux")
         .args([
             "split-window", "-h",
             "-t", &pane_target,
-            "-e", &format!("T1000_SOURCE_PANE={}", shell_pane_id),
+            "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
             &chat_cmd,
         ])
         .output();
@@ -209,7 +313,7 @@ async fn open_chat_pane(session_name: String) {
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
             eprintln!("Warning: could not open chat pane: {}", err.trim());
-            eprintln!("Attach manually with:  tmux attach -t {}  then run `t1000 chat`", session_name);
+            eprintln!("Attach manually with:  tmux attach -t {}  then run `daemoneye chat`", session_name);
         }
         Err(e) => {
             eprintln!("Warning: could not open chat pane: {e}");
@@ -241,6 +345,16 @@ async fn daemon_is_running() -> bool {
     }
 }
 
+/// Start the daemon process.
+///
+/// Lifecycle:
+/// 1. Redirect stdout/stderr to `log_file` (if provided).
+/// 2. Validate the configured AI API key; bail immediately if absent.
+/// 3. Detect or create a tmux session to monitor.
+/// 4. Spawn the pane-cache refresh loop (every 2 s).
+/// 5. Bind the Unix domain socket and enter the accept loop.
+/// 6. Optionally open the chat pane if the daemon just created the tmux session.
+/// 7. Shut down cleanly on SIGTERM or SIGINT.
 pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>) -> Result<()> {
     if let Some(ref path) = log_file {
         let file = std::fs::OpenOptions::new()
@@ -260,11 +374,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
     // Validate API key before binding the socket so the error is immediate
     // and obvious rather than surfacing as a cryptic 401 mid-conversation.
     let startup_config = Config::load().unwrap_or_default();
+
+    // Initialise the masking filter with built-in patterns + any user-defined extras.
+    crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
+
     if resolve_api_key(&startup_config).is_empty() {
         let env_var = api_key_env_var(&startup_config.ai.provider);
         anyhow::bail!(
             "No API key found for provider '{provider}'.\n\
-             Set 'api_key' in ~/.t1000/config.toml  or  export {env_var}=<your-key>",
+             Set 'api_key' in ~/.daemoneye/config.toml  or  export {env_var}=<your-key>",
             provider = startup_config.ai.provider,
             env_var = env_var,
         );
@@ -297,7 +415,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
             let now = Instant::now();
             sessions_cleanup
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .retain(|_, v| now.duration_since(v.last_accessed) < Duration::from_secs(1800));
         }
     });
@@ -305,7 +423,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
     if daemon_is_running().await {
         anyhow::bail!(
             "A daemon is already running on {}.\n\
-             Stop it with:  t1000 stop",
+             Stop it with:  daemoneye stop",
             DEFAULT_SOCKET_PATH,
         );
     }
@@ -324,7 +442,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
 
     // If the daemon just created the tmux session, open the chat pane inside
     // it now that the socket is ready. Users can then simply
-    // `tmux attach -t t1000` and start chatting immediately.
+    // `tmux attach -t daemoneye` and start chatting immediately.
     if session_was_created {
         let sn = session_name.clone();
         tokio::spawn(async move { open_chat_pane(sn).await });
@@ -369,6 +487,28 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
     Ok(())
 }
 
+/// Handle one client connection end-to-end.
+///
+/// ## Request routing
+/// - `Ping` / `Shutdown` / `Refresh` are dispatched and returned immediately.
+/// - `Ask` drives the full conversation turn: load history → build prompt →
+///   stream AI response → collect tool calls → execute each (background or
+///   foreground) → loop back for the next AI turn until no tool calls remain.
+///
+/// ## Tool call execution
+/// Each tool call goes through an approval gate:
+/// - The client is sent a `ToolCallPrompt`; the user approves or denies.
+/// - **Background** (`background: true`): the daemon runs the command as a
+///   subprocess (`tokio::process`). If sudo is needed a `SudoPrompt` is sent
+///   and the password is piped to `sudo -S`.
+/// - **Foreground** (`background: false`): `tmux send-keys` dispatches to the
+///   user's working pane. If sudo is detected the daemon switches focus to that
+///   pane and waits for `pane_current_command` to leave "sudo".
+///
+/// ## Session persistence
+/// Message history is stored both in the in-memory `sessions` map (fast lookup
+/// within the same daemon run) and in `~/.daemoneye/sessions/<id>.jsonl` (survives
+/// restarts). History is trimmed to `MAX_HISTORY` messages before each save.
 async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: SessionStore, command_log: Arc<Option<PathBuf>>) -> Result<()> {
     let mut config = Config::load().unwrap_or_else(|_| {
         eprintln!("Warning: failed to load config, using defaults");
@@ -380,6 +520,8 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                 prompt: "sre".to_string(),
                 position: "right".to_string(),
             },
+            masking: Default::default(),
+            context: Default::default(),
         }
     });
     // If the config file has no key, fall back to the provider's env var.
@@ -407,7 +549,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);
 
-    let (initial_query, client_pane, session_id, chat_pane) = match request {
+    let (initial_query, client_pane, session_id, chat_pane, prompt_override) = match request {
         Request::Ping => {
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
@@ -418,14 +560,28 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
             let _ = std::fs::remove_file(socket_path);
             std::process::exit(0);
         }
-        Request::Ask { query, tmux_pane, session_id, chat_pane } => (query, tmux_pane, session_id, chat_pane),
+        Request::Ask { query, tmux_pane, session_id, chat_pane, prompt } => (query, tmux_pane, session_id, chat_pane, prompt),
+        Request::Refresh => {
+            crate::sys_context::refresh_sys_context();
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
         _ => return Ok(()),
     };
 
     // Load existing message history for this session (if any).
+    // Fast path: in-memory store (same daemon run).
+    // Slow path: file on disk (survives daemon restarts).
     let mut messages: Vec<Message> = session_id
         .as_ref()
-        .and_then(|id| sessions.lock().unwrap().get(id).map(|e| e.messages.clone()))
+        .and_then(|id| {
+            let mem = sessions.lock().unwrap_or_else(|e| e.into_inner());
+            mem.get(id).map(|e| e.messages.clone())
+        })
+        .or_else(|| {
+            session_id.as_ref().map(|id| read_session_file(id))
+                .filter(|v| !v.is_empty())
+        })
         .unwrap_or_default();
 
     // Trim history to keep the context window bounded.
@@ -436,46 +592,12 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
     // tail_start is snapped to an even index so the tail always starts on a
     // user message, which keeps alternation valid regardless of how many
     // messages are dropped.
-    const MAX_HISTORY: usize = 40;
-    if messages.len() > MAX_HISTORY {
-        // raw_tail_start ensures result length ≤ MAX_HISTORY:
-        //   1 (first) + 1 (placeholder) + (N - tail_start) ≤ MAX_HISTORY
-        let raw_tail_start = messages.len() - MAX_HISTORY + 2;
-        // Round up to even so the tail begins on a user message.
-        let tail_start = if raw_tail_start % 2 == 0 {
-            raw_tail_start
-        } else {
-            raw_tail_start + 1
-        };
-        let dropped = tail_start - 1;
-
-        let first = messages[0].clone();
-        let placeholder = Message {
-            role: "assistant".to_string(),
-            content: format!(
-                "[{} earlier messages were trimmed to fit the context window. \
-                 The conversation continues from a later point in the session.]",
-                dropped
-            ),
-            tool_calls: None,
-            tool_results: None,
-        };
-        let mut trimmed = Vec::with_capacity(MAX_HISTORY);
-        trimmed.push(first);
-        trimmed.push(placeholder);
-        trimmed.extend_from_slice(&messages[tail_start..]);
-        messages = trimmed;
-    }
+    messages = trim_history(messages);
 
     let is_first_turn = messages.is_empty();
 
-    let pane_context = if let Some(ref pane_id) = client_pane {
-        tmux::capture_pane(pane_id, 200).unwrap_or_else(|_| cache.get_context_summary())
-    } else {
-        cache.get_context_summary()
-    };
-
-    let session_summary = mask_sensitive(&pane_context);
+    // Build labeled terminal context: active pane at full depth, background panes as summaries.
+    let session_summary = cache.get_labeled_context(client_pane.as_deref());
     let safe_query = mask_sensitive(&initial_query);
 
     // First turn: include full host context. Subsequent turns: fresh terminal
@@ -483,6 +605,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
     let prompt = if is_first_turn {
         let sys_ctx = get_or_init_sys_context().format_for_ai();
         let daemon_host = daemon_hostname();
+        let environment = &config.context.environment;
         let pane_location = client_pane.as_deref()
             .and_then(get_pane_remote_host)
             .map(|h| format!("REMOTE — {}", h))
@@ -490,6 +613,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
         format!(
             "## Host Context\n```\n{sys_ctx}\n```\n\n\
              ## Execution Context\n\
+             - Environment: {environment}\n\
              - Daemon host: {daemon_host}\n\
              - User's terminal pane: {pane_location}\n\
              - background=true  → runs on DAEMON HOST ({daemon_host})\n\
@@ -504,7 +628,8 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
         )
     };
 
-    let sys_prompt = load_named_prompt(&config.ai.prompt).system;
+    let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);
+    let sys_prompt = load_named_prompt(prompt_name).system;
 
     let history_count = messages.len();
     messages.push(Message {
@@ -558,6 +683,8 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                             });
                         }
                         // Persist the conversation for the next turn.
+                        // In-memory: fast lookup within the same daemon run.
+                        // On-disk: survives daemon restarts.
                         if let Some(ref id) = session_id {
                             if let Ok(mut store) = sessions.lock() {
                                 store.insert(id.clone(), SessionEntry {
@@ -565,6 +692,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                     last_accessed: Instant::now(),
                                 });
                             }
+                            write_session_file(id, &messages);
                         }
                         send_response_split(&mut tx, Response::Ok).await?;
                         return Ok(());
@@ -583,6 +711,11 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                         tool_results: None,
                     });
 
+                    // --- Tool call execution loop ---
+                    // Each pending call goes through:
+                    //   1. Approval gate  (client sends ToolCallResponse)
+                    //   2. Execution      (background subprocess OR foreground tmux send-keys)
+                    //   3. Result capture (output appended to tool_results for the next AI turn)
                     let mut tool_results = Vec::new();
                     for (id, cmd, bg) in &pending_calls {
                         send_response_split(&mut tx, Response::ToolCallPrompt {
@@ -642,6 +775,9 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                 };
 
                                 use std::process::Stdio;
+
+                                const BG_CMD_TIMEOUT: Duration = Duration::from_secs(30);
+
                                 let mut proc = tokio::process::Command::new("sh");
                                 proc.args(["-c", &exec_cmd])
                                     .stdout(Stdio::piped())
@@ -650,6 +786,22 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                     proc.stdin(Stdio::piped());
                                 } else {
                                     proc.stdin(Stdio::null());
+                                }
+
+                                // Apply resource limits in the child before exec.
+                                unsafe {
+                                    proc.pre_exec(|| {
+                                        // Virtual address space: 512 MiB
+                                        let mem = libc::rlimit {
+                                            rlim_cur: 512 * 1024 * 1024,
+                                            rlim_max: 512 * 1024 * 1024,
+                                        };
+                                        libc::setrlimit(libc::RLIMIT_AS, &mem);
+                                        // Open file descriptors: 256
+                                        let fds = libc::rlimit { rlim_cur: 256, rlim_max: 256 };
+                                        libc::setrlimit(libc::RLIMIT_NOFILE, &fds);
+                                        Ok(())
+                                    });
                                 }
 
                                 let result = match proc.spawn() {
@@ -661,15 +813,49 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                 ).await;
                                             }
                                         }
-                                        match child.wait_with_output().await {
-                                            Ok(out) => {
-                                                let stdout = String::from_utf8_lossy(&out.stdout);
-                                                let stderr = String::from_utf8_lossy(&out.stderr);
-                                                let combined = format!("{}{}", stdout, stderr);
-                                                let r = normalize_output(&combined);
-                                                if r.is_empty() { "(no output)".to_string() } else { mask_sensitive(&r) }
+                                        // Drain stdout/stderr in background tasks so we can
+                                        // independently time-out the wait() call and kill if needed.
+                                        let stdout_handle = child.stdout.take();
+                                        let stderr_handle = child.stderr.take();
+                                        let out_task = tokio::spawn(async move {
+                                            let mut v = Vec::new();
+                                            if let Some(mut s) = stdout_handle {
+                                                let _ = s.read_to_end(&mut v).await;
                                             }
-                                            Err(e) => format!("Failed to run command: {}", e),
+                                            v
+                                        });
+                                        let err_task = tokio::spawn(async move {
+                                            let mut v = Vec::new();
+                                            if let Some(mut s) = stderr_handle {
+                                                let _ = s.read_to_end(&mut v).await;
+                                            }
+                                            v
+                                        });
+                                        match tokio::time::timeout(BG_CMD_TIMEOUT, child.wait()).await {
+                                            Ok(Ok(status)) => {
+                                                let out = out_task.await.unwrap_or_default();
+                                                let err = err_task.await.unwrap_or_default();
+                                                let combined = format!(
+                                                    "{}{}",
+                                                    String::from_utf8_lossy(&out),
+                                                    String::from_utf8_lossy(&err),
+                                                );
+                                                let r = normalize_output(&combined);
+                                                let body = if r.is_empty() { "(no output)".to_string() } else { mask_sensitive(&r) };
+                                                if status.success() {
+                                                    body
+                                                } else {
+                                                    let code = status.code().unwrap_or(-1);
+                                                    format!("exit {} · {}\n--- output ---\n{}", code, classify_exit_code(code), body)
+                                                }
+                                            }
+                                            Ok(Err(e)) => format!("Failed to run command: {}", e),
+                                            Err(_elapsed) => {
+                                                let _ = child.kill().await;
+                                                out_task.abort();
+                                                err_task.abort();
+                                                format!("Command timed out after {} s and was killed", BG_CMD_TIMEOUT.as_secs())
+                                            }
                                         }
                                     }
                                     Err(e) => format!("Failed to spawn command: {}", e),
@@ -679,7 +865,7 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                             } else {
                                 // Foreground commands are injected into the user's working pane
                                 // via tmux send-keys so they are visible and interactive.
-                                let active_pane_fallback = cache.active_pane.read().unwrap().clone();
+                                let active_pane_fallback = cache.active_pane.read().unwrap_or_else(|e| e.into_inner()).clone();
                                 let target = client_pane.as_deref()
                                     .or_else(|| active_pane_fallback.as_deref())
                                     .unwrap_or("");
@@ -702,19 +888,13 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                 let poll = Duration::from_millis(100);
                                                 let mut waited = Duration::ZERO;
                                                 let prompt_timeout = Duration::from_secs(3);
-                                                let sudo_pattern = |out: String| {
-                                                    let lower = out.to_lowercase();
-                                                    lower.contains("[sudo]")
-                                                        || lower.contains("password for")
-                                                        || lower.contains("password:")
-                                                };
                                                 let needs_password = loop {
                                                     tokio::time::sleep(poll).await;
                                                     waited += poll;
-                                                    let found = tmux::capture_pane(target, 50)
-                                                        .map(sudo_pattern)
+                                                    let is_sudo = tmux::pane_current_command(target)
+                                                        .map(|c| c == "sudo")
                                                         .unwrap_or(false);
-                                                    if found { break true; }
+                                                    if is_sudo { break true; }
                                                     if waited >= prompt_timeout { break false; }
                                                 };
 
@@ -858,4 +1038,215 @@ async fn send_response_split(tx: &mut tokio::net::unix::OwnedWriteHalf, response
     data.push(b'\n');
     tx.write_all(&data).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::client::Message;
+
+    // ── normalize_output ─────────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_basic() {
+        assert_eq!(normalize_output("hello"), "hello");
+    }
+
+    #[test]
+    fn normalize_trims_trailing_whitespace_per_line() {
+        let input = "line one   \nline two  \nline three";
+        let out = normalize_output(input);
+        assert_eq!(out, "line one\nline two\nline three");
+    }
+
+    #[test]
+    fn normalize_strips_leading_blank_lines() {
+        let input = "\n\n\nhello\nworld";
+        assert_eq!(normalize_output(input), "hello\nworld");
+    }
+
+    #[test]
+    fn normalize_strips_trailing_blank_lines() {
+        let input = "hello\nworld\n\n\n";
+        assert_eq!(normalize_output(input), "hello\nworld");
+    }
+
+    #[test]
+    fn normalize_all_blank_returns_empty() {
+        assert_eq!(normalize_output("   \n  \n   "), "");
+    }
+
+    #[test]
+    fn normalize_empty_input_returns_empty() {
+        assert_eq!(normalize_output(""), "");
+    }
+
+    #[test]
+    fn normalize_preserves_internal_blank_lines() {
+        let input = "a\n\nb\n\nc";
+        assert_eq!(normalize_output(input), "a\n\nb\n\nc");
+    }
+
+    // ── classify_exit_code ───────────────────────────────────────────────────
+
+    #[test]
+    fn classify_known_codes() {
+        assert_eq!(classify_exit_code(1),   "generic failure");
+        assert_eq!(classify_exit_code(2),   "misuse of shell built-in");
+        assert_eq!(classify_exit_code(126), "permission denied (not executable)");
+        assert_eq!(classify_exit_code(127), "command not found");
+        assert_eq!(classify_exit_code(128), "invalid exit argument");
+        assert_eq!(classify_exit_code(130), "interrupted (Ctrl-C)");
+        assert_eq!(classify_exit_code(137), "killed (SIGKILL / OOM)");
+        assert_eq!(classify_exit_code(143), "terminated (SIGTERM)");
+    }
+
+    #[test]
+    fn classify_unknown_code_returns_generic() {
+        assert_eq!(classify_exit_code(42),  "non-zero exit");
+        assert_eq!(classify_exit_code(255), "non-zero exit");
+    }
+
+    // ── inject_sudo_flags ────────────────────────────────────────────────────
+
+    #[test]
+    fn inject_sudo_flags_rewrites_sudo_prefix() {
+        let out = inject_sudo_flags("sudo apt update");
+        assert!(out.starts_with("sudo -S -p \"\""));
+        assert!(out.contains("apt update"));
+    }
+
+    #[test]
+    fn inject_sudo_flags_leaves_non_sudo_unchanged() {
+        let cmd = "ls -la /etc";
+        assert_eq!(inject_sudo_flags(cmd), cmd);
+    }
+
+    #[test]
+    fn inject_sudo_flags_trims_leading_whitespace() {
+        let out = inject_sudo_flags("  sudo reboot");
+        assert!(out.starts_with("sudo -S -p \"\""));
+    }
+
+    // ── command_has_sudo ─────────────────────────────────────────────────────
+
+    #[test]
+    fn command_has_sudo_simple() {
+        assert!(command_has_sudo("sudo apt install vim"));
+    }
+
+    #[test]
+    fn command_has_sudo_in_pipeline() {
+        assert!(command_has_sudo("echo hi | sudo tee /etc/hosts"));
+    }
+
+    #[test]
+    fn command_has_sudo_after_semicolon() {
+        assert!(command_has_sudo("cd /tmp; sudo rm -rf foo"));
+    }
+
+    #[test]
+    fn command_has_sudo_false_positive_guard() {
+        // "sudoer" is not "sudo" — word-boundary check must hold.
+        assert!(!command_has_sudo("cat /etc/sudoers"));
+    }
+
+    #[test]
+    fn command_has_sudo_no_sudo() {
+        assert!(!command_has_sudo("ls -la /home"));
+    }
+
+    // ── trim_history ─────────────────────────────────────────────────────────
+
+    fn make_msg(role: &str, content: &str) -> Message {
+        Message { role: role.to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+    }
+
+    fn make_history(n: usize) -> Vec<Message> {
+        (0..n).map(|i| make_msg(if i % 2 == 0 { "user" } else { "assistant" }, &format!("msg {i}"))).collect()
+    }
+
+    #[test]
+    fn trim_history_unchanged_when_under_limit() {
+        let msgs = make_history(10);
+        let out = trim_history(msgs.clone());
+        assert_eq!(out.len(), 10);
+        assert_eq!(out[0].content, "msg 0");
+    }
+
+    #[test]
+    fn trim_history_at_exact_limit_unchanged() {
+        let msgs = make_history(MAX_HISTORY);
+        let out = trim_history(msgs);
+        assert_eq!(out.len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn trim_history_over_limit_bounded() {
+        let msgs = make_history(MAX_HISTORY + 10);
+        let out = trim_history(msgs);
+        assert!(out.len() <= MAX_HISTORY);
+    }
+
+    #[test]
+    fn trim_history_preserves_first_message() {
+        let msgs = make_history(MAX_HISTORY + 5);
+        let out = trim_history(msgs);
+        assert_eq!(out[0].content, "msg 0");
+    }
+
+    #[test]
+    fn trim_history_placeholder_is_assistant() {
+        let msgs = make_history(MAX_HISTORY + 5);
+        let out = trim_history(msgs);
+        // position 1 is the placeholder
+        assert_eq!(out[1].role, "assistant");
+        assert!(out[1].content.contains("trimmed"));
+    }
+
+    #[test]
+    fn trim_history_tail_starts_on_user_turn() {
+        // After [first, placeholder], the next message must be a user message
+        // so the user→assistant alternation is valid.
+        let msgs = make_history(MAX_HISTORY + 5);
+        let out = trim_history(msgs);
+        assert_eq!(out[2].role, "user", "tail must start on a user message");
+    }
+
+    // ── session file round-trip ───────────────────────────────────────────────
+
+    #[test]
+    fn session_file_roundtrip() {
+        // Write messages to a temp session file and read them back.
+        let id = format!("test_{}", std::process::id());
+        // Temporarily point sessions_dir() at /tmp to avoid HOME dependency.
+        // We call the helpers directly using /tmp as the base.
+        let dir = std::path::PathBuf::from("/tmp");
+        let path = dir.join(format!("{}.jsonl", id));
+
+        let msgs = vec![
+            make_msg("user", "hello"),
+            make_msg("assistant", "hi there"),
+        ];
+
+        // Replicate write_session_file logic with a known path.
+        use std::io::Write;
+        let mut f = std::fs::File::create(&path).unwrap();
+        for m in &msgs {
+            writeln!(f, "{}", serde_json::to_string(m).unwrap()).unwrap();
+        }
+
+        // Replicate read_session_file logic with the same path.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let loaded: Vec<Message> = text.lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].role, "user");
+        assert_eq!(loaded[0].content, "hello");
+        assert_eq!(loaded[1].role, "assistant");
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

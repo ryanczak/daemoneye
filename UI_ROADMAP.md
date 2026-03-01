@@ -1,4 +1,4 @@
-# T1000 Chat UI Improvement Roadmap
+# DaemonEye Chat UI Improvement Roadmap
 
 Improvements suggested after the initial Claude Code-inspired UI pass.
 Ordered roughly by visual impact.

@@ -1,20 +1,20 @@
-# T1000
+# DaemonEye v.9
 
-T1000 is a lightweight background daemon that integrates natively with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware principal site reliability engineer.
+DaemonEye is a lightweight background daemon that integrates with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware senior principal site reliability engineer.
 
 ---
 
 ## Features
 
-- **Native tmux Integration** — T1000 runs as a background process and interacts directly with your active `tmux` server.
+- **Native tmux Integration** — DaemonEye runs as a background process and interacts directly with your active `tmux` server.
 - **Session State Caching** — The daemon actively monitors your `tmux` session, summarizing output from all panes to provide the AI with a global, real-time context of your terminal environment.
 - **Embedded AI Assistant** — Streams responses from Anthropic Claude, OpenAI, or Google Gemini with automatic context capture and sensitive-data masking.
 - **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Upon your approval, the daemon securely executes them. Two modes: *background* (daemon subprocess, output summarized chat and logged) and *foreground* (injected into your tmux active pane via `send-keys`, visible and interactive. Output summary is returned in chat and logged).
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
-- **Command Audit Logging** — Every executed command is appended to `~/.t1000/commands.log` as a single structured line, including timestamp, session ID, execution mode, pane target, approval status, and output excerpt.
+- **Command Audit Logging** — Every executed command is appended to `~/.daemoneye/commands.log` as a single structured line, including timestamp, session ID, execution mode, pane target, approval status, and output excerpt.
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session.
-- **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`/tmp/t1000.sock`) for instant, non-blocking interaction.
+- **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`/tmp/daemoneye.sock`) for instant, non-blocking interaction.
 
 ---
 
@@ -43,11 +43,11 @@ sudo dnf install tmux
 
 ```sh
 git clone <repo>
-cd t1000
+cd daemoneye
 cargo build --release
 ```
 
-The compiled binary is at `target/release/t1000`.
+The compiled binary is at `target/release/daemoneye`.
 
 To install it into your `~/.cargo/bin` path:
 
@@ -59,48 +59,48 @@ cargo install --path .
 
 ## Usage
 
-T1000 requires the daemon to be running in the background.
+DaemonEye requires the daemon to be running in the background.
 
 ### 1. Start the daemon
 
 ```sh
-t1000 daemon
+daemoneye daemon
 ```
 
-Daemon output (startup messages, errors) is written to `~/.t1000/daemon.log` by default. To stream it live:
+Daemon output (startup messages, errors) is written to `~/.daemoneye/daemon.log` by default. To stream it live:
 
 ```sh
-t1000 logs
+daemoneye logs
 ```
 
 To log directly to the console (useful when troubleshooting):
 
 ```sh
-t1000 daemon --console
+daemoneye daemon --console
 ```
 
 To write daemon logs to a custom path:
 
 ```sh
-t1000 daemon --log-file /var/log/t1000.log
+daemoneye daemon --log-file /var/log/daemoneye.log
 ```
 
-Command execution events are written to `~/.t1000/commands.log` by default. To change the path or disable the audit log:
+Command execution events are written to `~/.daemoneye/commands.log` by default. To change the path or disable the audit log:
 
 ```sh
-t1000 daemon --command-log-file /var/log/t1000-commands.log
-t1000 daemon --no-command-log
+daemoneye daemon --command-log-file /var/log/daemoneye-commands.log
+daemoneye daemon --no-command-log
 ```
 
-You can also manage the daemon with systemd — run `t1000 setup` for the service file.
+You can also manage the daemon with systemd — run `daemoneye setup` for the service file.
 
 ### 2. Configure tmux
 
-Run `t1000 setup` to get the recommended `tmux` configuration and add the output to your `~/.tmux.conf`:
+Run `daemoneye setup` to get the recommended `tmux` configuration and add the output to your `~/.tmux.conf`:
 
 ```sh
 # ~/.tmux.conf
-bind-key T split-window -h -e "T1000_SOURCE_PANE=#{pane_id}" 't1000 chat'
+bind-key T split-window -h -e "DAEMONEYE_SOURCE_PANE=#{pane_id}" 'daemoneye chat'
 ```
 
 Reload your tmux config:
@@ -111,39 +111,39 @@ tmux source-file ~/.tmux.conf
 
 ### 3. Interact with the AI
 
-Press your configured hotkey (e.g., `Ctrl+b T`) inside a tmux session to open a new split pane connected to T1000. Ask it questions about errors in your other panes, or request it to execute commands.
+Press your configured hotkey (e.g., `Ctrl+b T`) inside a tmux session to open a new split pane connected to DaemonEye. Ask it questions about errors in your other panes, or request it to execute commands.
 
 You can also interact directly from the command line:
 
 ```sh
 # Single question (non-interactive)
-t1000 ask "why is nginx returning 502?"
+daemoneye ask "why is nginx returning 502?"
 
 # Interactive multi-turn chat
-t1000 chat
+daemoneye chat
 ```
 
 ### All subcommands
 
 | Command | Description |
 |---|---|
-| `t1000 daemon` | Start the background daemon |
-| `t1000 daemon --console` | Start daemon with output on the console (troubleshooting) |
-| `t1000 daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.t1000/daemon.log` |
-| `t1000 daemon --command-log-file FILE` | Write command audit log to `FILE` |
-| `t1000 daemon --no-command-log` | Disable command audit logging |
-| `t1000 stop` | Stop the daemon gracefully |
-| `t1000 ping` | Check whether the daemon is running |
-| `t1000 logs [--log-file FILE]` | Tail the daemon log (wraps `tail -f`) |
-| `t1000 chat` | Start an interactive multi-turn chat session |
-| `t1000 ask <query>` | Send a single question to the AI |
-| `t1000 setup` | Print the systemd service file and recommended tmux config |
+| `daemoneye daemon` | Start the background daemon |
+| `daemoneye daemon --console` | Start daemon with output on the console (troubleshooting) |
+| `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/daemon.log` |
+| `daemoneye daemon --command-log-file FILE` | Write command audit log to `FILE` |
+| `daemoneye daemon --no-command-log` | Disable command audit logging |
+| `daemoneye stop` | Stop the daemon gracefully |
+| `daemoneye ping` | Check whether the daemon is running |
+| `daemoneye logs [--log-file FILE]` | Tail the daemon log (wraps `tail -f`) |
+| `daemoneye chat` | Start an interactive multi-turn chat session |
+| `daemoneye ask <query>` | Send a single question to the AI |
+| `daemoneye setup` | Print the systemd service file and recommended tmux config |
 
 ---
 
 ## Configuration
 
-T1000 stores its configuration in `~/.t1000/config.toml`. The file is created automatically on first launch with default values.
+DaemonEye stores its configuration in `~/.daemoneye/config.toml`. The file is created automatically on first launch with default values.
 
 ### Full example
 
@@ -153,6 +153,9 @@ provider = "anthropic"
 api_key  = "sk-ant-..."
 model    = "claude-sonnet-4-6"
 prompt   = "sre"
+
+# [masking]
+# extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
 ```
 
 ### `[ai]` section
@@ -162,8 +165,24 @@ prompt   = "sre"
 | `provider` | string | `"anthropic"` | AI backend to use. See valid values below. |
 | `api_key` | string | `""` | API key for the chosen provider. If empty, falls back to the provider's environment variable. |
 | `model` | string | `"claude-sonnet-4-6"` | Model name passed to the provider API. |
-| `prompt` | string | `"sre"` | Name of a prompt file in `~/.t1000/prompts/` (without `.toml`). |
-| `position` | string | `"bottom"` | Where `t1000 setup` places the chat pane: `"bottom"`, `"top"`, `"right"`, or `"left"`. |
+| `prompt` | string | `"sre"` | Name of a prompt file in `~/.daemoneye/prompts/` (without `.toml`). |
+| `position` | string | `"bottom"` | Where `daemoneye setup` places the chat pane: `"bottom"`, `"top"`, `"right"`, or `"left"`. |
+
+### `[masking]` section
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `extra_patterns` | list of strings | `[]` | Additional regex patterns to redact before context is sent to the AI. Each match is replaced with `<REDACTED>`. Built-in patterns always run; these extend the set. |
+
+Example:
+
+```toml
+[masking]
+extra_patterns = [
+  "MYCO-[A-Z0-9]{32}",       # internal API token format
+  "sk_live_[A-Za-z0-9]{32}", # Stripe live secret key
+]
+```
 
 #### Valid `provider` values
 
@@ -196,7 +215,7 @@ src/
 ├── tmux/
 │   ├── mod.rs       # tmux interoperability layer (capture-pane, send-keys, list-panes, etc.)
 │   └── cache.rs     # Background poller that caches and summarizes all tmux panes
-├── config.rs        # ~/.t1000/config.toml parsing and prompt loading
+├── config.rs        # ~/.daemoneye/config.toml parsing and prompt loading
 └── ai/
     ├── mod.rs
     ├── client.rs    # AiClient trait + Anthropic/OpenAI/Gemini streaming implementations
@@ -207,7 +226,7 @@ src/
 
 ## Command Audit Log
 
-Every command the AI proposes — whether approved, denied, or timed out — is recorded as a single line in `~/.t1000/commands.log`:
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a single line in `~/.daemoneye/commands.log`:
 
 ```
 [1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
@@ -216,24 +235,29 @@ Every command the AI proposes — whether approved, denied, or timed out — is 
 
 Fields: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
 
-Control with `--command-log-file FILE` or `--no-command-log` on `t1000 daemon`.
+Control with `--command-log-file FILE` or `--no-command-log` on `daemoneye daemon`.
 
 ---
 
 ## Security Notes
 
-Before sending terminal context to an AI provider, T1000 applies a regex-based
+Before sending terminal context to an AI provider, DaemonEye applies a regex-based
 filter that masks:
 
-- AWS access key IDs (`AKIA...`)
-- Password, token, secret, and API key assignments
-- PEM private key blocks
+- AWS access key IDs (`AKIA…`)
+- PEM private key blocks (RSA, EC, OpenSSH, etc.)
+- GCP service-account JSON `"private_key"` fields
+- JWT bearer tokens
+- GitHub personal access tokens — classic (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`) and fine-grained (`github_pat_`)
+- Database / broker connection URLs with embedded credentials (`postgresql://`, `mysql://`, `mongodb+srv://`, `redis://`, `amqp://`, etc.)
+- Password, token, secret, and API key assignments (`password=…`, `api_key: …`, etc.)
+- URL query-param secrets (`?token=…`, `&password=…`)
 - Credit card numbers (16-digit grouped format)
 - US Social Security Numbers
 
-Masked values are replaced with placeholder tokens (`<REDACTED>`, `<AWS_KEY>`,
-etc.). Review the context shown in the AI pane before submitting if you handle
-highly sensitive data.
+Masked values are replaced with placeholder tokens (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.). Review the context shown in the AI pane before submitting if you handle highly sensitive data.
+
+To register organisation-specific patterns, add them to your config (see [masking] below). Built-in patterns always run — user patterns extend the set, never replace it.
 
 ### Sudo passwords
 
@@ -242,7 +266,7 @@ prompts you for your password with terminal echo disabled. The password is piped
 directly to `sudo -S` and is never written to disk, logged, or sent to the AI.
 
 For foreground commands run in your terminal pane, you type the password directly
-into the pane — T1000 never sees it.
+into the pane — DaemonEye never sees it.
 
 ---
 

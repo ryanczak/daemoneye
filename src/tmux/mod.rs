@@ -92,6 +92,20 @@ pub fn query_pane_width(pane_id: &str) -> Result<usize> {
         .map_err(|e| anyhow::anyhow!("Could not parse pane width: {}", e))
 }
 
+/// Query the height of a pane in rows.
+pub fn query_pane_height(pane_id: &str) -> Result<usize> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_height}"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to query pane height for '{}'", pane_id);
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<usize>()
+        .map_err(|e| anyhow::anyhow!("Could not parse pane height: {}", e))
+}
+
 /// Query the width of the window containing a pane in columns.
 pub fn query_window_width(pane_id: &str) -> Result<usize> {
     let output = Command::new("tmux")

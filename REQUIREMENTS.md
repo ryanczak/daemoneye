@@ -1,6 +1,6 @@
-# Product Requirements Document (PRD) Details for T1000
+# Product Requirements Document (PRD) Details for DaemonEye
 
-This document specifies the functional and non-functional requirements for T1000, building upon the Product Definition.
+This document specifies the functional and non-functional requirements for DaemonEye, building upon the Product Definition.
 
 ## 1. Functional Requirements
 
@@ -10,7 +10,7 @@ This document specifies the functional and non-functional requirements for T1000
 - **FR-1.1.2**: The application MUST use `tmux` as its presentation layer and session interaction mechanism.
 - **FR-1.1.3**: The daemon MUST be capable of spawning new tmux panes within the user's active tmux session to present the AI interface.
 - **FR-1.1.4**: The application MUST provide a CLI tool or tmux keybinding to trigger the AI agent, which communicates with the background daemon.
-- **FR-1.1.5**: The daemon MUST append a structured, single-line audit record to a configurable command log file for every tool call execution event (approved, denied, or timed out). The log path MUST default to `~/.t1000/commands.log` and MUST be overridable or disableable via CLI flags (`--command-log-file`, `--no-command-log`).
+- **FR-1.1.5**: The daemon MUST append a structured, single-line audit record to a configurable command log file for every tool call execution event (approved, denied, or timed out). The log path MUST default to `~/.daemoneye/commands.log` and MUST be overridable or disableable via CLI flags (`--command-log-file`, `--no-command-log`).
 
 ### 1.2 AI Agent Integration
 
@@ -27,12 +27,12 @@ This document specifies the functional and non-functional requirements for T1000
 ### 1.3 Prompt Library
 
 - **FR-1.3.1**: The application MUST include a library of pre-defined prompts for common tasks.
-- **FR-1.3.2**: Users MUST be able to create, save, and manage their own custom prompts.
-- **FR-1.3.3**: All user-defined and standard prompts MUST be stored in the user's home directory under `~/.t1000/prompts`.
+- **FR-1.3.2**: Users MUST be able to create, save, and manage their own custom prompts. A `daemoneye prompts` subcommand MUST list available prompts with their descriptions. A `/prompt <name>` in-chat command MUST start a new session using the named prompt as the system message. *(Config and file loading are implemented; the subcommand and in-chat command are pending.)*
+- **FR-1.3.3**: All user-defined and standard prompts MUST be stored in the user's home directory under `~/.daemoneye/prompts`.
 
 ### 1.4 Authentication & Security
 
-- **FR-1.4.1**: Sensitive data (passwords, secret keys, PII) MUST be masked or filtered from the terminal buffer before being transmitted to the AI API.
+- **FR-1.4.1**: Sensitive data (passwords, secret keys, PII) MUST be masked or filtered from the terminal buffer before being transmitted to the AI API. The filter MUST cover at minimum: AWS access key IDs, PEM private key blocks, GCP service-account JSON private key fields, JWT bearer tokens, GitHub personal access tokens, database/broker connection URLs with embedded credentials, password/token/API-key assignments, URL query-param secrets, credit card numbers, and SSNs. Users MUST be able to extend the filter with additional patterns via `[masking] extra_patterns` in `config.toml`; built-in patterns MUST NOT be disableable.
 - **FR-1.4.2**: Users MUST have explicit controls over what terminal context is sent to the LLM.
 - **FR-1.4.3**: When the AI proposes a background command that requires `sudo`, the application MUST prompt the user for their password via the chat interface with terminal echo disabled. The password MUST be piped directly to the `sudo` subprocess and MUST NOT be logged, stored on disk, or transmitted to the AI.
 - **FR-1.4.4**: When the AI proposes a foreground command that requires `sudo`, the daemon MUST inject the command into the user's terminal pane and wait briefly for it to start. The daemon MUST then capture the pane output and check whether a sudo password prompt is present. If a password prompt is detected: the application MUST notify the user in the chat interface, make the target terminal pane active so the user can type their password, wait for the password to be entered and the command to complete, then switch focus back to the AI chat pane. If no password prompt is detected (e.g. a NOPASSWD sudoers rule or a still-valid credential timestamp), the application MUST proceed with a standard wait interval without switching panes.

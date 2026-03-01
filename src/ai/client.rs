@@ -9,8 +9,11 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+/// Monotonically increasing counter used to generate unique tool call IDs
+/// within the daemon process lifetime (e.g. `tc_1`, `tc_2`, …).
 static TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Generate the next unique tool call ID (process-scoped, not session-scoped).
 fn next_tool_id() -> String {
     format!("tc_{}", TOOL_CALL_ID.fetch_add(1, Ordering::Relaxed))
 }
@@ -20,6 +23,7 @@ fn next_tool_id() -> String {
 /// request throws away that pool on every turn.
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+/// Return a reference to the process-wide HTTP client, initialising it on first call.
 fn http() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
@@ -28,23 +32,37 @@ fn http() -> &'static reqwest::Client {
 // Message types for conversation history
 // ---------------------------------------------------------------------------
 
+/// A tool call emitted by the AI during a response stream.
+/// Stored in `Message::tool_calls` and echoed back as a tool-result message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// Unique identifier for this invocation (used to correlate results).
     pub id: String,
+    /// Always `"run_terminal_command"` — the single tool DaemonEye exposes.
     pub name: String,
+    /// JSON-encoded arguments: `{"command": "...", "background": bool}`.
     pub arguments: String,
 }
 
+/// The captured output of a completed tool call, sent back to the AI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
+    /// Matches the `ToolCall::id` this result belongs to.
     pub tool_call_id: String,
+    /// stdout/stderr text (normalised and potentially truncated).
     pub content: String,
 }
 
+/// A single turn in the conversation history.
+/// Serialised to JSONL in `~/.daemoneye/sessions/<id>.jsonl` for persistence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
+    /// `"user"` or `"assistant"`.
     pub role: String,
+    /// Plain text content of the message.
     pub content: String,
+    /// Tool calls emitted by the assistant (present only on assistant turns
+    /// that triggered at least one tool invocation).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     /// All tool results for a single assistant turn, batched together.
@@ -58,11 +76,16 @@ pub struct Message {
 // Events sent back to the GTK main thread
 // ---------------------------------------------------------------------------
 
+/// Events streamed from the AI client task back to the daemon's request handler.
 #[derive(Debug)]
 pub enum AiEvent {
+    /// A partial response token to forward to the client immediately.
     Token(String),
-    ToolCall(String, String, bool), // id, command, background
+    /// A complete tool call extracted from the stream: (id, command, background).
+    ToolCall(String, String, bool),
+    /// The stream finished normally; no more events will follow.
     Done,
+    /// A non-retryable error terminated the stream.
     Error(String),
 }
 
@@ -70,9 +93,15 @@ pub enum AiEvent {
 // Trait
 // ---------------------------------------------------------------------------
 
+/// Abstraction over AI provider backends (Anthropic, OpenAI, Gemini).
+///
+/// Implementors stream response events through an unbounded channel rather than
+/// returning a value so that the daemon can forward tokens to the client in
+/// real time without buffering the full response first.
 #[async_trait]
 pub trait AiClient: Send + Sync {
-    /// Stream response tokens by sending `AiEvent` values to `tx`.
+    /// Stream response tokens and tool calls by sending [`AiEvent`] values to `tx`.
+    /// Must send exactly one [`AiEvent::Done`] or [`AiEvent::Error`] as the final event.
     async fn chat(&self, system: &str, messages: Vec<Message>, tx: UnboundedSender<AiEvent>) -> Result<()>;
 }
 
@@ -162,16 +191,25 @@ fn get_openai_tool_definition() -> Value {
 // Anthropic
 // ---------------------------------------------------------------------------
 
+/// Anthropic API backend (Claude family).
 pub struct AnthropicClient {
     api_key: String,
     model: String,
 }
 
 impl AnthropicClient {
+    /// Create a new Anthropic client for the given model.
     pub fn new(api_key: String, model: String) -> Self {
         AnthropicClient { api_key, model }
     }
 
+    /// Convert the internal `Message` history into Anthropic's JSON format.
+    ///
+    /// Anthropic's message structure differs from the internal representation:
+    /// - Tool results must be batched into a single `role: "user"` message with
+    ///   an array of `tool_result` content blocks.
+    /// - Tool calls from the assistant must be expressed as `tool_use` content
+    ///   blocks alongside any plain text content.
     fn convert_messages(&self, messages: Vec<Message>) -> Vec<Value> {
         let mut result = Vec::new();
         for m in messages {
@@ -302,6 +340,9 @@ impl AiClient for AnthropicClient {
 // OpenAI-compatible
 // ---------------------------------------------------------------------------
 
+/// OpenAI-compatible API backend (GPT family, or any OpenAI-compatible endpoint).
+/// The `base_url` defaults to the official OpenAI API but can be overridden for
+/// local inference servers (e.g. Ollama, vLLM) via the `OPENAI_BASE_URL` env var.
 pub struct OpenAiClient {
     api_key: String,
     model: String,
@@ -309,6 +350,7 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
+    /// Create a new OpenAI-compatible client, reading `OPENAI_BASE_URL` for the endpoint.
     pub fn new(api_key: String, model: String) -> Self {
         OpenAiClient {
             api_key,
@@ -450,12 +492,14 @@ impl AiClient for OpenAiClient {
 // Gemini
 // ---------------------------------------------------------------------------
 
+/// Google Gemini API backend.
 pub struct GeminiClient {
     api_key: String,
     model: String,
 }
 
 impl GeminiClient {
+    /// Create a new Gemini client.
     pub fn new(api_key: String, model: String) -> Self {
         GeminiClient { api_key, model }
     }
@@ -585,10 +629,152 @@ impl AiClient for GeminiClient {
 // Factory
 // ---------------------------------------------------------------------------
 
+/// Construct an [`AiClient`] for the given provider name.
+/// Defaults to Anthropic for any unrecognised provider string.
 pub fn make_client(provider: &str, api_key: String, model: String) -> Box<dyn AiClient> {
     match provider {
         "openai" => Box::new(OpenAiClient::new(api_key, model)),
         "gemini" => Box::new(GeminiClient::new(api_key, model)),
         _ => Box::new(AnthropicClient::new(api_key, model)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user_msg(content: &str) -> Message {
+        Message { role: "user".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+    }
+    fn assistant_msg(content: &str) -> Message {
+        Message { role: "assistant".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+    }
+    fn client() -> AnthropicClient {
+        AnthropicClient::new("key".to_string(), "model".to_string())
+    }
+
+    // ── AnthropicClient::convert_messages ─────────────────────────────────────
+
+    #[test]
+    fn convert_plain_conversation() {
+        let msgs = vec![user_msg("hi"), assistant_msg("hello")];
+        let out = client().convert_messages(msgs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["role"], "user");
+        assert_eq!(out[0]["content"], "hi");
+        assert_eq!(out[1]["role"], "assistant");
+    }
+
+    #[test]
+    fn convert_tool_call_becomes_tool_use_block() {
+        let tc = ToolCall {
+            id: "tc_1".to_string(),
+            name: "run_terminal_command".to_string(),
+            arguments: r#"{"command":"ls","background":true}"#.to_string(),
+        };
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: "running ls".to_string(),
+            tool_calls: Some(vec![tc]),
+            tool_results: None,
+        };
+        let out = client().convert_messages(vec![msg]);
+        assert_eq!(out.len(), 1);
+        // Content should be an array with text + tool_use blocks.
+        let content = out[0]["content"].as_array().expect("content array");
+        assert!(content.iter().any(|b| b["type"] == "tool_use"), "no tool_use block");
+        assert!(content.iter().any(|b| b["type"] == "text"), "no text block");
+    }
+
+    #[test]
+    fn convert_tool_call_without_text_omits_text_block() {
+        let tc = ToolCall {
+            id: "tc_2".to_string(),
+            name: "run_terminal_command".to_string(),
+            arguments: r#"{"command":"pwd","background":false}"#.to_string(),
+        };
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: String::new(), // no prose
+            tool_calls: Some(vec![tc]),
+            tool_results: None,
+        };
+        let out = client().convert_messages(vec![msg]);
+        let content = out[0]["content"].as_array().expect("content array");
+        assert!(!content.iter().any(|b| b["type"] == "text"), "empty text block should be omitted");
+    }
+
+    #[test]
+    fn convert_tool_results_become_user_message_with_tool_result_blocks() {
+        let tr = ToolResult {
+            tool_call_id: "tc_1".to_string(),
+            content: "output here".to_string(),
+        };
+        let msg = Message {
+            role: "user".to_string(),
+            content: String::new(),
+            tool_calls: None,
+            tool_results: Some(vec![tr]),
+        };
+        let out = client().convert_messages(vec![msg]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "user");
+        let content = out[0]["content"].as_array().expect("content array");
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "tc_1");
+        assert_eq!(content[0]["content"], "output here");
+    }
+
+    // ── make_client dispatch ──────────────────────────────────────────────────
+
+    #[test]
+    fn make_client_unknown_defaults_to_anthropic() {
+        // We just verify make_client doesn't panic for unknown providers.
+        let _c = make_client("unknown_provider", "key".to_string(), "model".to_string());
+    }
+
+    #[test]
+    fn make_client_openai() {
+        let _c = make_client("openai", "key".to_string(), "gpt-4o".to_string());
+    }
+
+    #[test]
+    fn make_client_gemini() {
+        let _c = make_client("gemini", "key".to_string(), "gemini-2.0-flash".to_string());
+    }
+
+    // ── Message serialization ─────────────────────────────────────────────────
+
+    #[test]
+    fn message_roundtrip_plain() {
+        let msg = user_msg("test content");
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.role, "user");
+        assert_eq!(back.content, "test content");
+        assert!(back.tool_calls.is_none());
+        assert!(back.tool_results.is_none());
+    }
+
+    #[test]
+    fn message_tool_calls_skipped_when_none() {
+        let msg = user_msg("hi");
+        let json = serde_json::to_string(&msg).unwrap();
+        // `tool_calls` and `tool_results` should not appear in the JSON at all.
+        assert!(!json.contains("tool_calls"));
+        assert!(!json.contains("tool_results"));
+    }
+
+    #[test]
+    fn tool_call_roundtrip() {
+        let tc = ToolCall {
+            id: "tc_99".to_string(),
+            name: "run_terminal_command".to_string(),
+            arguments: r#"{"command":"echo hi","background":true}"#.to_string(),
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        let back: ToolCall = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "tc_99");
+        assert_eq!(back.name, "run_terminal_command");
     }
 }

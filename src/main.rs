@@ -20,13 +20,13 @@ struct Cli {
 enum Commands {
     /// Start the background daemon
     Daemon {
-        /// Redirect daemon output to FILE instead of stdout (default: ~/.t1000/daemon.log)
+        /// Redirect daemon output to FILE instead of stdout (default: ~/.daemoneye/daemon.log)
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
         /// Log to the console instead of a file (useful for troubleshooting)
         #[arg(long)]
         console: bool,
-        /// Write command execution audit log to FILE (default: ~/.t1000/commands.log)
+        /// Write command execution audit log to FILE (default: ~/.daemoneye/commands.log)
         #[arg(long, value_name = "FILE")]
         command_log_file: Option<PathBuf>,
         /// Disable command execution audit logging
@@ -35,7 +35,7 @@ enum Commands {
     },
     /// Tail the daemon log
     Logs {
-        /// Log file to tail (default: ~/.t1000/daemon.log)
+        /// Log file to tail (default: ~/.daemoneye/daemon.log)
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
     },
@@ -47,8 +47,10 @@ enum Commands {
     Ping,
     /// Stop the background daemon
     Stop,
-    /// Print the tmux configuration for T1000
+    /// Print the tmux configuration for DaemonEye
     Setup,
+    /// List available prompts in ~/.daemoneye/prompts/
+    Prompts,
 }
 
 // main() is a plain synchronous function so we can fork() before the tokio
@@ -72,7 +74,7 @@ fn main() -> anyhow::Result<()> {
             }
             if pid > 0 {
                 // Parent: report the child PID and exit cleanly.
-                println!("t1000 daemon started (PID {})", pid);
+                println!("daemoneye daemon started (PID {})", pid);
                 return Ok(());
             }
             // Child: create a new session so we are no longer attached to the
@@ -130,6 +132,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Setup => {
             client::run_setup()?;
+        }
+        Commands::Prompts => {
+            client::run_prompts()?;
         }
     }
 
