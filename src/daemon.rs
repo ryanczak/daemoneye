@@ -905,14 +905,14 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                     // Snapshot the shell name before sending keys so we
                                     // can detect when the command finishes (pane_current_command
                                     // returns to the idle shell value).
+                                    // Snapshot the shell's PID before injecting the command
+                                    // so we can watch /proc for child processes appearing
+                                    // and disappearing — giving low-latency completion
+                                    // detection without modifying the visible command text.
+                                    let shell_pid = tmux::pane_pid(target).ok();
                                     let idle_cmd = tmux::pane_current_command(target)
                                         .unwrap_or_default();
-                                    // Append a wait-for signal to the command so the daemon
-                                    // can detect completion the instant the shell processes
-                                    // the trailing semicolon — no stability polling needed.
-                                    let signal = format!("de_{}", id);
-                                    let signaling_cmd = format!("{}; tmux wait-for -S {}", cmd, signal);
-                                    match tmux::send_keys(target, &signaling_cmd) {
+                                    match tmux::send_keys(target, cmd) {
                                         Ok(()) => {
                                             // Track whether we switched the user to their working
                                             // pane so we know to switch back afterward.
@@ -938,9 +938,6 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                 };
 
                                                 if needs_password {
-                                                    // Notify the user and switch to their pane so
-                                                    // they can type the password.  The wait-for
-                                                    // signal below covers full command completion.
                                                     send_response_split(&mut tx, Response::SystemMsg(
                                                         "sudo password prompt detected — \
                                                          switching to your terminal pane. \
@@ -951,43 +948,51 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                                 }
                                             }
 
-                                            // Wait for the shell to reach `; tmux wait-for -S signal`
-                                            // at the end of the injected command.  This unblocks the
-                                            // instant the command finishes — zero extra latency.
+                                            // Detect command completion via /proc child-process
+                                            // tracking.  When the shell forks to run the command a
+                                            // child PID appears in:
+                                            //   /proc/<shell_pid>/task/<shell_pid>/children
+                                            // and disappears when that child exits.  This lets us
+                                            // detect completion within one 20 ms tick without
+                                            // appending anything to the visible command text.
                                             //
-                                            // A lightweight pane_current_command fallback runs in the
-                                            // same loop to handle Ctrl+C (where the signal suffix is
-                                            // never reached and the channel is never signaled).
+                                            // Fallback: if /proc is unavailable or the command
+                                            // completed before the first poll (e.g. on a very fast
+                                            // `ls`), we exit once the shell is idle and we have
+                                            // waited at least 100 ms to rule out a startup race.
                                             let cmd_timeout = Duration::from_secs(30);
-                                            let signal_clone = signal.clone();
-                                            let wait_task = tokio::spawn(async move {
-                                                let _ = tokio::process::Command::new("tmux")
-                                                    .args(["wait-for", &signal_clone])
-                                                    .stdout(std::process::Stdio::null())
-                                                    .stderr(std::process::Stdio::null())
-                                                    .status()
-                                                    .await;
-                                            });
-                                            let poll = Duration::from_millis(50);
+                                            let poll = Duration::from_millis(20);
                                             let mut waited = Duration::ZERO;
+                                            let mut saw_child = false;
                                             loop {
                                                 tokio::time::sleep(poll).await;
                                                 waited += poll;
-                                                if wait_task.is_finished() { break; }
+
+                                                let has_child = shell_pid.map(|pid| {
+                                                    std::fs::read_to_string(format!(
+                                                        "/proc/{}/task/{}/children", pid, pid
+                                                    ))
+                                                    .map(|s| !s.trim().is_empty())
+                                                    .unwrap_or(false)
+                                                }).unwrap_or(false);
+
+                                                if has_child { saw_child = true; }
+
                                                 let back = tmux::pane_current_command(target)
                                                     .map(|c| c == idle_cmd)
                                                     .unwrap_or(true);
-                                                if back || waited >= cmd_timeout {
-                                                    // Signal the channel so the spawned
-                                                    // `tmux wait-for` subprocess exits cleanly.
-                                                    let _ = std::process::Command::new("tmux")
-                                                        .args(["wait-for", "-S", &signal])
-                                                        .output();
-                                                    break;
-                                                }
+
+                                                // Normal path: child came and went, shell is idle.
+                                                // Fallback: never saw a child (fast command or
+                                                //   /proc unavailable) — exit once idle and the
+                                                //   startup-race grace period has elapsed.
+                                                let done = (saw_child && !has_child && back)
+                                                    || (!saw_child && back && waited >= Duration::from_millis(100))
+                                                    || waited >= cmd_timeout;
+                                                if done { break; }
                                             }
-                                            // Brief settle: lets the shell draw its prompt so the
-                                            // subsequent capture_pane includes the trailing prompt.
+                                            // Brief settle: lets the shell draw its prompt before
+                                            // capture_pane so the extracted output is complete.
                                             tokio::time::sleep(Duration::from_millis(50)).await;
 
                                             let result = match tmux::capture_pane(target, 200) {

@@ -67,6 +67,20 @@ pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
 }
 
 
+/// Return the PID of the shell process that owns the given pane.
+pub fn pane_pid(pane_id: &str) -> Result<u32> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to query pane_pid for '{}'", pane_id);
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .map_err(|e| anyhow::anyhow!("Could not parse pane pid: {}", e))
+}
+
 /// Return the name of the foreground process running in a pane.
 pub fn pane_current_command(pane_id: &str) -> Result<String> {
     let output = Command::new("tmux")
