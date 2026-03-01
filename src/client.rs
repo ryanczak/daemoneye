@@ -703,13 +703,34 @@ async fn run_chat_inner() -> Result<()> {
         println!();
     }
 
-    // Only the status bar is drawn before the greeting so the user gets a
-    // visual cue that the system is initialising.
-    let mut current_status = "thinking…";
+    // Hold off on the AI greeting until a tmux client is attached to this
+    // session.  When the daemon auto-opens the chat pane in a freshly-created
+    // (detached) session, nobody is watching yet; firing the greeting
+    // immediately would waste an API call and surface a stale response when
+    // the user eventually attaches.
+    //
+    // In the normal keybinding workflow (user already inside an active tmux
+    // session), #{session_attached} is already ≥ 1 so the loop exits on the
+    // first check with no perceptible delay.
+    let mut current_status = "ready";
     draw_status_bar(chat_height, chat_width, &session_id, current_status);
 
-    // Send an automatic opening message so the AI greets the user immediately
-    // rather than waiting for them to type first.
+    loop {
+        let attached = std::process::Command::new("tmux")
+            .args(["display-message", "-p", "#{session_attached}"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(1); // treat errors as attached (e.g. running outside tmux)
+        if attached > 0 { break; }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+
+    // A client is now attached — switch to "thinking…" and send the greeting.
+    current_status = "thinking…";
+    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+
     if let Err(e) = ask_with_session("Hello!".to_string(), Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
