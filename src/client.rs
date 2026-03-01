@@ -1049,16 +1049,12 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
                 print_tool_panel("output", &body_refs, true);
                 md.reset();
             }
-            Response::SudoPrompt { id, command } => {
+            Response::CredentialPrompt { id, prompt } => {
                 md.flush();
-                println!("\n\x1b[33m⚠\x1b[0m  \x1b[1msudo required\x1b[0m  \x1b[1m$\x1b[0m {}", command);
-                // read_password_silent uses synchronous stdin with echo disabled.
-                // The async BufReader hasn't consumed any bytes yet at this point
-                // because the user hasn't typed anything since the last prompt.
-                let password = read_password_silent("   \x1b[33mPassword:\x1b[0m ").unwrap_or_default();
-                // read_password_silent ends with println(), so col is back to 0.
+                println!("\n\x1b[33m⚠\x1b[0m  \x1b[1m{}\x1b[0m", prompt);
+                let credential = read_password_silent("   \x1b[33mPassword:\x1b[0m ").unwrap_or_default();
                 md.reset();
-                send_request(&mut tx, Request::SudoPassword { id, password }).await?;
+                send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
             }
         }
     }
@@ -1073,6 +1069,15 @@ fn read_password_silent(prompt: &str) -> anyhow::Result<String> {
     std::io::stdout().flush()?;
 
     let fd = libc::STDIN_FILENO;
+
+    // AsyncStdin sets O_NONBLOCK on fd 0 so the async reader can work with epoll.
+    // Synchronous read_line returns EAGAIN immediately when O_NONBLOCK is set, so
+    // clear it here and restore it after the read.
+    let saved_flags = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+    if saved_flags >= 0 {
+        unsafe { libc::fcntl(fd, libc::F_SETFL, saved_flags & !libc::O_NONBLOCK) };
+    }
+
     let mut old: libc::termios = unsafe { std::mem::zeroed() };
     let termios_ok = unsafe { libc::tcgetattr(fd, &mut old) } == 0;
 
@@ -1088,6 +1093,12 @@ fn read_password_silent(prompt: &str) -> anyhow::Result<String> {
     if termios_ok {
         unsafe { libc::tcsetattr(fd, libc::TCSANOW, &old) };
     }
+
+    // Restore O_NONBLOCK so the async stdin reader continues to work.
+    if saved_flags >= 0 {
+        unsafe { libc::fcntl(fd, libc::F_SETFL, saved_flags) };
+    }
+
     println!(); // newline after silent input
     result?;
     Ok(input.trim_end_matches('\n').trim_end_matches('\r').to_string())

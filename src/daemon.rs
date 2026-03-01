@@ -527,8 +527,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
 /// Each tool call goes through an approval gate:
 /// - The client is sent a `ToolCallPrompt`; the user approves or denies.
 /// - **Background** (`background: true`): the daemon runs the command as a
-///   subprocess (`tokio::process`). If sudo is needed a `SudoPrompt` is sent
-///   and the password is piped to `sudo -S`.
+///   subprocess (`tokio::process`). If sudo is needed a `CredentialPrompt` is sent
+///   and the credential is piped to `sudo -S`.
 /// - **Foreground** (`background: false`): `tmux send-keys` dispatches to the
 ///   user's working pane. If sudo is detected the daemon switches focus to that
 ///   pane and waits for `pane_current_command` to leave "sudo".
@@ -784,24 +784,24 @@ async fn handle_client(stream: UnixStream, cache: Arc<SessionCache>, sessions: S
                                 // is captured and returned to the AI invisibly.
                                 let needs_sudo = command_has_sudo(cmd);
                                 let (exec_cmd, opt_password) = if needs_sudo {
-                                    // Ask the client for the sudo password before running.
-                                    send_response_split(&mut tx, Response::SudoPrompt {
+                                    // Ask the client for the credential before running.
+                                    send_response_split(&mut tx, Response::CredentialPrompt {
                                         id: id.clone(),
-                                        command: cmd.clone(),
+                                        prompt: format!("[sudo] password required for: {}", cmd),
                                     }).await?;
 
-                                    let mut sudo_line = String::new();
-                                    let password = match tokio::time::timeout(
-                                        Duration::from_secs(30),
-                                        rx.read_line(&mut sudo_line),
+                                    let mut cred_line = String::new();
+                                    let credential = match tokio::time::timeout(
+                                        Duration::from_secs(120),
+                                        rx.read_line(&mut cred_line),
                                     ).await {
-                                        Ok(Ok(_)) => match serde_json::from_str::<Request>(sudo_line.trim()) {
-                                            Ok(Request::SudoPassword { password, .. }) => password,
+                                        Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
+                                            Ok(Request::CredentialResponse { credential, .. }) => credential,
                                             _ => String::new(),
                                         },
                                         _ => String::new(),
                                     };
-                                    (inject_sudo_flags(cmd), Some(password))
+                                    (inject_sudo_flags(cmd), Some(credential))
                                 } else {
                                     (cmd.clone(), None)
                                 };
