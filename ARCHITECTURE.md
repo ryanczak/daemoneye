@@ -92,14 +92,14 @@ graph TD
   - `Shutdown` — graceful stop.
   - `Ask { query, tmux_pane, session_id }` — start or continue a conversation turn.
   - `ToolCallResponse { id, approved }` — user's approval decision for a proposed command.
-  - `SudoPassword { id, password }` — user-supplied sudo password for an approved background command.
+  - `CredentialResponse { id, credential }` — user-supplied sudo password for an approved background command, sent in response to `CredentialPrompt`.
 - **Response types**:
   - `Ok` — signals successful completion of a turn.
   - `Error(String)` — error from the daemon or AI provider.
   - `SessionInfo { message_count }` — sent once before streaming; carries prior turn count.
   - `Token(String)` — streaming AI response token.
   - `ToolCallPrompt { id, command, background }` — daemon requests user approval for a command.
-  - `SudoPrompt { id, command }` — daemon requests the sudo password for an approved background command.
+  - `CredentialPrompt { id, prompt }` — daemon requests the sudo password for an approved background command; `prompt` is a human-readable message (e.g. `"[sudo] password required for: sudo apt upgrade"`).
   - `SystemMsg(String)` — daemon notification (e.g., sudo prompt detected, pane switch). Rendered in the chat interface with an amber ⚙ prefix.
   - `ToolResult(String)` — captured output of an approved command, sent before the AI continues. Rendered as a dimmed bordered panel (capped at 10 rows).
 - Each client connection handles exactly one request/response lifecycle. `Ask` connections receive a token stream (interleaved with zero or more tool-call approval round-trips) terminated by `Ok` or `Error`.
@@ -109,7 +109,7 @@ graph TD
 - **AI Agent Engine** (`daemon.rs`): Orchestrates the full request lifecycle — loads session history, builds the prompt (host context + execution context on first turn, terminal snapshot on subsequent turns), streams AI events, handles tool call approval and execution, and persists conversation history.
 - **Execution Context Detector** (`daemon.rs`): On the first turn of each session, detects the daemon's local hostname (via `/proc/sys/kernel/hostname`) and whether the user's tmux pane is running `ssh` or `mosh` (via `tmux display-message #{pane_current_command}`). Injects a structured `## Execution Context` block into the prompt so the AI knows which machine each execution mode targets.
 - **Dual Command Execution** (`daemon.rs`):
-  - *Background mode* (`background=true`): Runs as a daemon subprocess via `tokio::process::Command`. stdout/stderr are collected via independent async tasks so the child process can be killed independently. A 30-second `tokio::time::timeout` wraps the wait; on expiry `child.kill().await` is called and an error is returned to the AI. `pre_exec()` sets conservative resource limits before `exec`: `RLIMIT_AS` = 512 MiB (virtual address space), `RLIMIT_NOFILE` = 256 (open file descriptors). Sudo is handled via a `SudoPrompt` / `SudoPassword` IPC round-trip; the password is piped to `sudo -S -p ""` and never stored.
+  - *Background mode* (`background=true`): Runs as a daemon subprocess via `tokio::process::Command`. stdout/stderr are collected via independent async tasks so the child process can be killed independently. A 30-second `tokio::time::timeout` wraps the wait; on expiry `child.kill().await` is called and an error is returned to the AI. `pre_exec()` sets conservative resource limits before `exec`: `RLIMIT_AS` = 512 MiB (virtual address space), `RLIMIT_NOFILE` = 256 (open file descriptors). Sudo is handled via a `CredentialPrompt` / `CredentialResponse` IPC round-trip; the daemon sends a human-readable `CredentialPrompt`, the client reads the password with echo disabled (clearing `O_NONBLOCK` on fd 0 for the synchronous read, then restoring it) and returns a `CredentialResponse`. The password is piped to `sudo -S -p ""` and never stored. The credential timeout is 120 seconds.
   - *Foreground mode* (`background=false`): Injects the command into the user's active tmux pane via `tmux send-keys`. Completion is detected by polling `pane_current_command` until it returns to the pre-command idle shell value (`idle_cmd`) AND two consecutive identical `capture_pane` snapshots confirm output has stabilised (the two-tick stability check prevents false-positive completion when `idle_cmd` matches a subshell, e.g. `bash script.sh`). Sudo commands trigger a `SystemMsg` notification and pane-focus switch; a poll loop on `pane_current_command != "sudo"` detects password entry without relying on scrollback-retained prompt text.
 - **Command Audit Logger** (`daemon.rs`): Appends a single-line structured record to `~/.daemoneye/commands.log` (or a user-specified path) for every tool call — approved, denied, or timed out. Each line includes timestamp, session ID, mode, pane, status, command, and a 200-character output excerpt. Logging can be disabled with `--no-command-log`.
 - **Multi-Turn Session Store**: An in-memory `HashMap<session_id, SessionEntry>` shared across connections. Entries are pruned after 30 minutes of inactivity. History is bounded to 40 messages (oldest tail + first message retained) to keep context windows manageable.
@@ -137,7 +137,7 @@ graph TD
 6. The API client streams tokens back; the daemon forwards each as a `Token` response to the client, which prints them as they arrive.
 7. If the LLM invokes a tool call (e.g., `journalctl -u nginx.service`), the daemon sends a `ToolCallPrompt` response. The client displays the command with its execution mode (`daemon · runs silently` or `terminal · visible to you`) and waits up to 60 seconds for the user to approve (`y`) or deny.
 8. On approval:
-   - *Background*: The daemon runs the command as a subprocess and captures stdout/stderr. If the command requires `sudo`, the daemon first sends a `SudoPrompt`; the client reads the password with echo disabled and returns it via `SudoPassword`; the daemon runs `sudo -S -p ""` with the password piped to stdin.
+   - *Background*: The daemon runs the command as a subprocess and captures stdout/stderr. If the command requires `sudo`, the daemon first sends a `CredentialPrompt { id, prompt }`; the client reads the password with echo disabled and returns it via `CredentialResponse { id, credential }`; the daemon runs `sudo -S -p ""` with the password piped to stdin.
    - *Foreground*: The daemon injects the command into the user's tmux pane via `tmux send-keys`. If `sudo` is detected the client is notified to type the password in the pane; the daemon waits up to 30 seconds instead of 3. After waiting, it captures 200 lines from the pane.
    - The execution record is appended to `~/.daemoneye/commands.log`.
 9. The LLM receives the tool result and continues its response. This loop repeats until the LLM produces a final answer with no further tool calls.
