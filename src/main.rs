@@ -5,7 +5,6 @@ mod daemon;
 mod ipc;
 mod tmux;
 mod client;
-mod pty_exec;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

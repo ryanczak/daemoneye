@@ -1,6 +1,6 @@
 # DaemonEye - The AI Powered Operator 
 
-DaemonEye is a lightweight background daemon that integrates with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware senior principal site reliability engineer that actively monitors your active terminal to help troubleshoot issues, execute complex tasks, and manage your hosts, applications and services. 
+DaemonEye is a lightweight background daemon that integrates with `tmux` to embed an AI assistant directly into your existing terminal workflow. It acts as an intelligent, context-aware senior principal site reliability engineer.
 
 ---
 
@@ -11,7 +11,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Embedded AI Assistant** — Streams responses from Anthropic Claude, OpenAI, or Google Gemini with automatic context capture and sensitive-data masking.
 - **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Each tool call presents a three-option prompt: `[y]es` (approve once), `[a]pprove session` (auto-approve all commands of this class for the rest of the session), or `[N]o`. Two independent approval classes exist — *regular* and *sudo* — so sudo commands always prompt separately until explicitly session-approved. Two execution modes: *background* (daemon subprocess, output summarized in chat and logged) and *foreground* (injected into your tmux active pane via `send-keys`, visible and interactive. Output summary is returned in chat and logged).
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
-- **Interactive Credential Handling** — Background commands run inside a PTY so the AI can execute any interactive command — `sudo`, `su`, SSH, GPG, and more. Credential prompts (password, passphrase, PIN) trigger an echo-disabled prompt in the chat interface; SSH host-key and other yes/no confirmations display a brief inline prompt. For foreground commands run in your terminal pane, a `PromptDetector` monitors the pane output; when a credential or confirmation prompt is detected the pane is made active automatically so you can type your response, then focus returns to the chat pane once the prompting process exits.
+- **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
 - **Command Audit Logging** — Every executed command is appended to `~/.daemoneye/commands.log` as a single structured line, including timestamp, session ID, execution mode, pane target, approval status, and output excerpt.
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session.
 - **Readline-style Chat Input** — The chat input box supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). The viewport scrolls horizontally for long inputs. History persists for the lifetime of the chat session.
@@ -216,9 +216,6 @@ src/
 ├── tmux/
 │   ├── mod.rs       # tmux interoperability layer (capture-pane, send-keys, list-panes, etc.)
 │   └── cache.rs     # Background poller that caches and summarizes all tmux panes
-├── pty_exec/
-│   ├── mod.rs       # PTY executor: openpty, child spawn, AsyncFd drive loop, strip_ansi
-│   └── prompt.rs    # PromptDetector: credential and confirmation pattern matching
 ├── config.rs        # ~/.daemoneye/config.toml parsing and prompt loading
 └── ai/
     ├── mod.rs
@@ -263,19 +260,14 @@ Masked values are replaced with placeholder tokens (`<REDACTED>`, `<JWT>`, `<DB_
 
 To register organisation-specific patterns, add them to your config (see [masking] below). Built-in patterns always run — user patterns extend the set, never replace it.
 
-### Interactive credentials
+### Sudo passwords
 
-Background commands run inside a PTY. When any credential is required (sudo password,
-SSH passphrase, GPG key PIN, etc.), the chat interface presents an echo-disabled
-prompt; the credential is written directly into the PTY and is never logged, stored
-on disk, or sent to the AI. SSH host-key and other yes/no confirmations are handled
-similarly with an inline prompt.
+When the AI requests a background command that requires `sudo`, the chat interface
+prompts you for your password with terminal echo disabled. The password is piped
+directly to `sudo -S` and is never written to disk, logged, or sent to the AI.
 
-For foreground commands run in your terminal pane, you type credentials directly
-into the pane. DaemonEye detects the presence of a credential prompt via its
-`PromptDetector` and switches pane focus to your working pane automatically, then
-returns focus to the chat pane once the prompting process exits. The credential
-itself is never seen by DaemonEye.
+For foreground commands run in your terminal pane, you type the password directly
+into the pane — DaemonEye never sees it.
 
 ---
 
