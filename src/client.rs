@@ -805,10 +805,11 @@ async fn run_chat_inner() -> Result<()> {
             " ".repeat((chat_width.saturating_sub(vis_len)) / 2)
         };
         println!();
-        // visible lengths (no ANSI): 22, 23, 26
-        println!("{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",   center(22));
-        println!("{}\x1b[96m/clear\x1b[0m to reset session",                   center(23));
-        println!("{}\x1b[96m/refresh\x1b[0m to resync context",                center(26));
+        // visible lengths (no ANSI): 22, 23, 26, 30
+        println!("{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",           center(22));
+        println!("{}\x1b[96m/clear\x1b[0m to reset session",                           center(23));
+        println!("{}\x1b[96m/refresh\x1b[0m to resync context",                        center(26));
+        println!("{}\x1b[2mcontext: panes · windows · env\x1b[0m",                    center(30));
         println!();
     }
 

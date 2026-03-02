@@ -20,6 +20,14 @@ pub struct PaneState {
     pub pane_title: String,
     /// Wall-clock time of the most recent successful `capture-pane` call.
     pub last_updated: std::time::Instant,
+    /// Lines scrolled back from the visible bottom (0 = at bottom, R3).
+    pub scroll_position: usize,
+    /// Total scrollback history lines (`#{history_size}`, R3).
+    pub history_size: usize,
+    /// True when the pane is in copy/scroll mode (`#{pane_in_mode}`, R4).
+    pub in_copy_mode: bool,
+    /// True when pane input is synchronized with other panes (`#{pane_synchronized}`, R6).
+    pub synchronized: bool,
 }
 
 /// Shared, periodically-refreshed view of all panes in a tmux session.
@@ -35,6 +43,8 @@ pub struct SessionCache {
     pub active_pane: RwLock<Option<String>>,
     /// High-signal tmux session environment variables (allowlisted subset).
     pub environment: RwLock<HashMap<String, String>>,
+    /// Window-level topology for the session (P4).
+    pub windows: RwLock<Vec<tmux::WindowState>>,
 }
 
 impl SessionCache {
@@ -44,6 +54,7 @@ impl SessionCache {
             panes: RwLock::new(HashMap::new()),
             active_pane: RwLock::new(None),
             environment: RwLock::new(HashMap::new()),
+            windows: RwLock::new(Vec::new()),
         }
     }
 
@@ -73,11 +84,19 @@ impl SessionCache {
                     current_path: String::new(),
                     pane_title: String::new(),
                     last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
                 });
 
-                entry.current_cmd  = info.current_cmd;
-                entry.current_path = info.current_path;
-                entry.pane_title   = info.title;
+                entry.current_cmd     = info.current_cmd;
+                entry.current_path    = info.current_path;
+                entry.pane_title      = info.title;
+                entry.scroll_position = info.scroll_position;
+                entry.history_size    = info.history_size;
+                entry.in_copy_mode    = info.in_copy_mode;
+                entry.synchronized    = info.synchronized;
 
                 if entry.buffer != content {
                     entry.buffer = content;
@@ -93,6 +112,12 @@ impl SessionCache {
                 let mut env_lock = self.environment.write().unwrap();
                 *env_lock = env;
             }
+        }
+
+        // Window topology (P4) — best-effort; ignore errors.
+        if let Ok(wins) = tmux::list_windows(&self.session_name) {
+            let mut win_lock = self.windows.write().unwrap();
+            *win_lock = wins;
         }
 
         Ok(())
@@ -149,6 +174,23 @@ impl SessionCache {
     pub fn get_labeled_context(&self, source_pane: Option<&str>) -> String {
         let mut out = String::new();
 
+        // Window topology (P4) — prepend if session has ≥2 windows.
+        {
+            let wins = self.windows.read().unwrap_or_else(|e| e.into_inner());
+            if wins.len() >= 2 {
+                let count = wins.len();
+                let parts: Vec<String> = wins.iter().map(|w| {
+                    let mut desc = w.window_name.clone();
+                    desc.push_str(&format!(" ({} pane{}", w.pane_count, if w.pane_count == 1 { "" } else { "s" }));
+                    if w.active { desc.push_str(", active"); }
+                    if w.zoomed { desc.push_str(", zoomed"); }
+                    desc.push(')');
+                    desc
+                }).collect();
+                out.push_str(&format!("[SESSION TOPOLOGY] {} windows — {}\n", count, parts.join(", ")));
+            }
+        }
+
         // Session environment block (P5) — prepend if any vars are present.
         {
             let env = self.environment.read().unwrap_or_else(|e| e.into_inner());
@@ -166,18 +208,38 @@ impl SessionCache {
 
         // Active pane — full capture, explicitly labelled.
         if let Some(pane_id) = source_pane {
-            let content = crate::tmux::capture_pane(pane_id, 200)
-                .unwrap_or_else(|_| "(pane unavailable)".to_string());
-            // Include CWD for the active pane from cache if available.
-            let cwd = {
+            // Pull CWD, scroll position, and mode flags from cache in one lock.
+            let (cwd, scroll_pos, in_copy_mode) = {
                 let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
-                panes.get(pane_id).map(|p| p.current_path.clone()).unwrap_or_default()
+                if let Some(p) = panes.get(pane_id) {
+                    (p.current_path.clone(), p.scroll_position, p.in_copy_mode)
+                } else {
+                    (String::new(), 0usize, false)
+                }
             };
-            let cwd_label = if cwd.is_empty() { String::new() } else { format!(" | cwd: {}", cwd) };
+
+            // R3: if the pane is scrolled back, capture content at that position.
+            let content = if scroll_pos > 0 {
+                crate::tmux::capture_pane_at_scroll(pane_id, scroll_pos, 200)
+                    .or_else(|_| crate::tmux::capture_pane(pane_id, 200))
+                    .unwrap_or_else(|_| "(pane unavailable)".to_string())
+            } else {
+                crate::tmux::capture_pane(pane_id, 200)
+                    .unwrap_or_else(|_| "(pane unavailable)".to_string())
+            };
+
+            let cwd_label   = if cwd.is_empty() { String::new() } else { format!(" | cwd: {}", cwd) };
+            // R3: annotate when scrolled so the AI knows it's not looking at the bottom.
+            let scroll_note = if scroll_pos > 0 { format!(" | scrolled {} lines up", scroll_pos) } else { String::new() };
+            // R4: flag copy/scroll mode explicitly.
+            let copy_note   = if in_copy_mode { " | copy mode".to_string() } else { String::new() };
+
             out.push_str(&format!(
-                "[ACTIVE PANE {}{}]\n{}\n",
+                "[ACTIVE PANE {}{}{}{}]\n{}\n",
                 pane_id,
                 cwd_label,
+                scroll_note,
+                copy_note,
                 mask_sensitive(&content),
             ));
         }
@@ -200,12 +262,15 @@ impl SessionCache {
             } else {
                 format!(" ({})", mask_sensitive(&state.pane_title))
             };
+            // R6: warn the AI that input to this pane broadcasts to all synced panes.
+            let sync_part = if state.synchronized { " [synchronized]" } else { "" };
             out.push_str(&format!(
-                "[BACKGROUND PANE {}{}{}{}]: {}\n",
+                "[BACKGROUND PANE {}{}{}{}{}]: {}\n",
                 id,
                 format!(" — {}", state.current_cmd),
                 cwd_part,
                 title_part,
+                sync_part,
                 mask_sensitive(&state.summary),
             ));
         }
@@ -303,6 +368,10 @@ mod tests {
                 current_path: String::new(),
                 pane_title: String::new(),
                 last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
             });
             panes.insert("%1".to_string(), PaneState {
                 buffer: "bar".to_string(),
@@ -311,12 +380,63 @@ mod tests {
                 current_path: String::new(),
                 pane_title: String::new(),
                 last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
             });
         }
         let ctx = c.get_labeled_context(None);
         let pos1 = ctx.find("%1").unwrap();
         let pos3 = ctx.find("%3").unwrap();
         assert!(pos1 < pos3, "panes should be sorted by ID");
+    }
+
+    #[test]
+    fn get_labeled_context_session_topology() {
+        let c = cache();
+        {
+            let mut wins = c.windows.write().unwrap();
+            wins.push(tmux::WindowState {
+                window_id: "@1".to_string(),
+                window_name: "nginx".to_string(),
+                active: true,
+                pane_count: 2,
+                zoomed: false,
+                last_active: false,
+            });
+            wins.push(tmux::WindowState {
+                window_id: "@2".to_string(),
+                window_name: "postgres".to_string(),
+                active: false,
+                pane_count: 1,
+                zoomed: false,
+                last_active: true,
+            });
+        }
+        let ctx = c.get_labeled_context(None);
+        assert!(ctx.contains("[SESSION TOPOLOGY]"), "expected topology block, got: {ctx}");
+        assert!(ctx.contains("nginx"), "expected nginx in topology");
+        assert!(ctx.contains("2 panes"), "expected pane count in topology");
+        assert!(ctx.contains("postgres"), "expected postgres in topology");
+    }
+
+    #[test]
+    fn get_labeled_context_single_window_no_topology() {
+        let c = cache();
+        {
+            let mut wins = c.windows.write().unwrap();
+            wins.push(tmux::WindowState {
+                window_id: "@1".to_string(),
+                window_name: "main".to_string(),
+                active: true,
+                pane_count: 1,
+                zoomed: false,
+                last_active: false,
+            });
+        }
+        let ctx = c.get_labeled_context(None);
+        assert!(!ctx.contains("[SESSION TOPOLOGY]"), "single-window session should not have topology block");
     }
 
     #[test]
@@ -331,6 +451,10 @@ mod tests {
                 current_path: String::new(),
                 pane_title: String::new(),
                 last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
             });
         }
         // When %5 is the source pane it should NOT appear in BACKGROUND PANE list.
@@ -338,5 +462,55 @@ mod tests {
         //  tmux isn't running so capture_pane returns an error, which is fine.)
         let ctx = c.get_labeled_context(Some("%5"));
         assert!(!ctx.contains("[BACKGROUND PANE %5]"));
+    }
+
+    #[test]
+    fn get_labeled_context_copy_mode_annotated() {
+        let c = cache();
+        {
+            let mut panes = c.panes.write().unwrap();
+            panes.insert("%7".to_string(), PaneState {
+                buffer: "some output".to_string(),
+                summary: "Active: some output".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 42,
+                history_size: 1000,
+                in_copy_mode: true,
+                synchronized: false,
+            });
+        }
+        // get_labeled_context reads from cache; capture_pane won't run (no tmux).
+        // Assert that the BACKGROUND PANE line for %7 contains no copy-mode marker
+        // (that's only on the ACTIVE PANE header) but that the pane is listed.
+        let ctx = c.get_labeled_context(None);
+        assert!(ctx.contains("%7"), "pane %7 should appear in context");
+        // Synchronized flag should NOT appear (synchronized=false).
+        assert!(!ctx.contains("[synchronized]"), "non-synchronized pane should have no sync marker");
+    }
+
+    #[test]
+    fn get_labeled_context_synchronized_pane_noted() {
+        let c = cache();
+        {
+            let mut panes = c.panes.write().unwrap();
+            panes.insert("%9".to_string(), PaneState {
+                buffer: "some output".to_string(),
+                summary: "Active: doing things".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/tmp".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 500,
+                in_copy_mode: false,
+                synchronized: true,
+            });
+        }
+        let ctx = c.get_labeled_context(None);
+        assert!(ctx.contains("[synchronized]"), "synchronized pane should have [synchronized] marker");
+        assert!(ctx.contains("%9"), "pane %9 should be listed");
     }
 }

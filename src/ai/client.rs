@@ -103,6 +103,8 @@ pub enum AiEvent {
     ListScripts { id: String },
     /// Read the content of a named script.
     ReadScript { id: String, script_name: String },
+    /// Passively watch a background pane for output changes (P8).
+    WatchPane { id: String, pane_id: String, timeout_secs: u64 },
     /// The stream finished normally; no more events will follow.
     Done,
     /// A non-retryable error terminated the stream.
@@ -248,6 +250,18 @@ fn get_tool_definition() -> Value {
                 },
                 "required": ["script_name"]
             }
+        },
+        {
+            "name": "watch_pane",
+            "description": "Passively monitor a background tmux pane for output changes. Blocks until the pane content changes or timeout_secs elapses, then returns the pane's updated content. Use this to wait for a long-running process to produce output (e.g. a build, test run, or log tail) without polling manually.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pane_id": {"type": "string", "description": "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from [BACKGROUND PANE] context blocks."},
+                    "timeout_secs": {"type": "integer", "description": "Maximum seconds to wait for output. Defaults to 300 (5 minutes)."}
+                },
+                "required": ["pane_id"]
+            }
         }
     ])
 }
@@ -345,6 +359,21 @@ fn get_openai_tool_definition() -> Value {
                     "required": ["script_name"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "watch_pane",
+                "description": "Monitor a background tmux pane for output changes. Returns when activity is detected or timeout expires.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pane_id": {"type": "string", "description": "Tmux pane ID (e.g. \"%3\") from [BACKGROUND PANE] context blocks."},
+                        "timeout_secs": {"type": "integer", "description": "Max seconds to wait. Defaults to 300."}
+                    },
+                    "required": ["pane_id"]
+                }
+            }
         }
     ])
 }
@@ -386,6 +415,11 @@ fn dispatch_tool_event(id: &str, name: &str, args: &Value) -> Option<AiEvent> {
         "read_script" => Some(AiEvent::ReadScript {
             id: id.to_string(),
             script_name: args["script_name"].as_str().unwrap_or("").to_string(),
+        }),
+        "watch_pane" => Some(AiEvent::WatchPane {
+            id: id.to_string(),
+            pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
+            timeout_secs: args["timeout_secs"].as_u64().unwrap_or(300),
         }),
         _ => None,
     }
@@ -859,6 +893,18 @@ impl AiClient for GeminiClient {
                                 "type": "OBJECT",
                                 "properties": {"script_name": {"type": "STRING"}},
                                 "required": ["script_name"]
+                            }
+                        },
+                        {
+                            "name": "watch_pane",
+                            "description": "Monitor a background tmux pane for output changes. Returns when activity is detected or timeout expires.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "pane_id": {"type": "STRING", "description": "Tmux pane ID (e.g. \"%3\") from BACKGROUND PANE context."},
+                                    "timeout_secs": {"type": "INTEGER", "description": "Max seconds to wait. Defaults to 300."}
+                                },
+                                "required": ["pane_id"]
                             }
                         }
                     ]

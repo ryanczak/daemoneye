@@ -20,6 +20,14 @@ pub struct RichPaneInfo {
     pub dead: bool,
     /// Exit code of the foreground process if `dead` is true.
     pub dead_status: Option<i32>,
+    /// Lines scrolled back from the visible bottom (0 = at bottom, R3).
+    pub scroll_position: usize,
+    /// Total scrollback history lines available (`#{history_size}`, R3).
+    pub history_size: usize,
+    /// True when the pane is in copy/scroll mode (`#{pane_in_mode}`, R4).
+    pub in_copy_mode: bool,
+    /// True when pane input is synchronized with other panes (`#{pane_synchronized}`, R6).
+    pub synchronized: bool,
 }
 
 /// List all panes in the session with rich metadata using a single tmux call.
@@ -30,7 +38,7 @@ pub fn list_panes_detailed(session: &str) -> Result<Vec<RichPaneInfo>> {
     let output = Command::new("tmux")
         .args([
             "list-panes", "-s", "-t", session, "-F",
-            "#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}",
+            "#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}",
         ])
         .output()?;
 
@@ -41,7 +49,7 @@ pub fn list_panes_detailed(session: &str) -> Result<Vec<RichPaneInfo>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut panes = Vec::new();
     for line in stdout.lines() {
-        let fields: Vec<&str> = line.splitn(6, '\t').collect();
+        let fields: Vec<&str> = line.splitn(10, '\t').collect();
         if fields.len() < 5 {
             continue;
         }
@@ -52,12 +60,16 @@ pub fn list_panes_detailed(session: &str) -> Result<Vec<RichPaneInfo>> {
             None
         };
         panes.push(RichPaneInfo {
-            pane_id:      fields[0].to_string(),
-            current_cmd:  fields[1].to_string(),
-            current_path: fields[2].to_string(),
-            title:        fields[3].to_string(),
+            pane_id:         fields[0].to_string(),
+            current_cmd:     fields[1].to_string(),
+            current_path:    fields[2].to_string(),
+            title:           fields[3].to_string(),
             dead,
             dead_status,
+            scroll_position: fields.get(6).and_then(|s| s.trim().parse::<usize>().ok()).unwrap_or(0),
+            history_size:    fields.get(7).and_then(|s| s.trim().parse::<usize>().ok()).unwrap_or(0),
+            in_copy_mode:    fields.get(8).map(|s| s.trim() == "1").unwrap_or(false),
+            synchronized:    fields.get(9).map(|s| s.trim() == "1").unwrap_or(false),
         });
     }
     Ok(panes)
@@ -201,6 +213,30 @@ pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
 }
 
 
+/// Capture pane content anchored at a historical scroll position (R3).
+///
+/// `scroll_pos` is the value of `#{scroll_position}` — lines scrolled back
+/// from the current bottom.  0 means the pane is at the bottom (use the
+/// regular [`capture_pane`] instead).  `depth` is how many lines to capture.
+pub fn capture_pane_at_scroll(pane_id: &str, scroll_pos: usize, depth: usize) -> Result<String> {
+    // In tmux line numbering, 0 is the visible bottom; negative numbers go up
+    // into scrollback.  When scrolled back N lines, the visible bottom is at
+    // offset -(scroll_pos) and the visible top is depth lines above that.
+    let end:   i64 = -(scroll_pos as i64);
+    let start: i64 = end - depth as i64;
+    let output = Command::new("tmux")
+        .args([
+            "capture-pane", "-p", "-t", pane_id,
+            "-S", &start.to_string(),
+            "-E", &end.to_string(),
+        ])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to capture pane '{}' at scroll position {}", pane_id, scroll_pos);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// Return the PID of the shell process that owns the given pane.
 pub fn pane_pid(pane_id: &str) -> Result<u32> {
     let output = Command::new("tmux")
@@ -334,6 +370,97 @@ pub fn create_job_window(session: &str, name: &str) -> Result<String> {
 pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
     let _ = Command::new("tmux")
         .args(["kill-window", "-t", &format!("{}:{}", session, name)])
+        .output();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Window inventory (P4)
+// ---------------------------------------------------------------------------
+
+pub struct WindowState {
+    pub window_id: String,
+    pub window_name: String,
+    pub active: bool,
+    pub pane_count: usize,
+    pub zoomed: bool,
+    pub last_active: bool,
+}
+
+/// Single tmux call; tab-separated format string:
+/// "#{window_id}\t#{window_name}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_last_flag}"
+pub fn list_windows(session: &str) -> Result<Vec<WindowState>> {
+    let output = Command::new("tmux")
+        .args([
+            "list-windows", "-t", session, "-F",
+            "#{window_id}\t#{window_name}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_last_flag}",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to list windows for session '{}'", session);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut windows = Vec::new();
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.splitn(6, '\t').collect();
+        if fields.len() < 6 {
+            continue;
+        }
+        windows.push(WindowState {
+            window_id:   fields[0].to_string(),
+            window_name: fields[1].to_string(),
+            active:      fields[2] == "1",
+            pane_count:  fields[3].parse::<usize>().unwrap_or(1),
+            zoomed:      fields[4] == "1",
+            last_active: fields[5] == "1",
+        });
+    }
+    Ok(windows)
+}
+
+// ---------------------------------------------------------------------------
+// Foreground activity hooks (P6)
+// ---------------------------------------------------------------------------
+
+pub fn set_monitor_activity(pane_id: &str, enable: bool) -> Result<()> {
+    let value = if enable { "on" } else { "off" };
+    let output = Command::new("tmux")
+        .args(["set-option", "-t", pane_id, "monitor-activity", value])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to set monitor-activity for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+pub fn unset_monitor_activity(pane_id: &str) -> Result<()> {
+    let output = Command::new("tmux")
+        .args(["set-option", "-u", "-t", pane_id, "monitor-activity"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to unset monitor-activity for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+pub fn install_activity_hook(session: &str, hook_index: usize, daemon_pid: u32) -> Result<()> {
+    let hook_name = format!("alert-activity[{}]", hook_index);
+    let cmd = format!("run-shell 'kill -USR1 {}'", daemon_pid);
+    let output = Command::new("tmux")
+        .args(["set-hook", "-t", session, &hook_name, &cmd])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to install activity hook for session '{}'", session);
+    }
+    Ok(())
+}
+
+pub fn remove_activity_hook(session: &str, hook_index: usize) -> Result<()> {
+    let hook_name = format!("alert-activity[{}]", hook_index);
+    let _ = Command::new("tmux")
+        .args(["set-hook", "-u", "-t", session, &hook_name])
         .output();
     Ok(())
 }

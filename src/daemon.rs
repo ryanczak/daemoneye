@@ -35,6 +35,21 @@ const FALLBACK_SESSION: &str = "daemoneye";
 const MAX_HISTORY: usize = 40;
 
 // ---------------------------------------------------------------------------
+// P6: Global foreground-completion signal channel
+// ---------------------------------------------------------------------------
+
+static FG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<()>> =
+    std::sync::OnceLock::new();
+static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+fn fg_done_subscribe() -> tokio::sync::broadcast::Receiver<()> {
+    FG_DONE_TX
+        .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
+        .subscribe()
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -276,6 +291,8 @@ enum PendingCall {
     ListScripts { id: String },
     /// `read_script` — return a script's content.
     ReadScript { id: String, script_name: String },
+    /// `watch_pane` — passively monitor a pane for output changes (P8).
+    WatchPane { id: String, pane_id: String, timeout_secs: u64 },
 }
 
 impl PendingCall {
@@ -328,6 +345,11 @@ impl PendingCall {
                 name: "read_script".to_string(),
                 arguments: serde_json::json!({"script_name": script_name}).to_string(),
             },
+            PendingCall::WatchPane { id, pane_id, timeout_secs } => ToolCall {
+                id: id.clone(),
+                name: "watch_pane".to_string(),
+                arguments: serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs}).to_string(),
+            },
         }
     }
 
@@ -341,6 +363,7 @@ impl PendingCall {
             PendingCall::WriteScript { id, .. } => id,
             PendingCall::ListScripts { id } => id,
             PendingCall::ReadScript { id, .. } => id,
+            PendingCall::WatchPane { id, .. } => id,
         }
     }
 }
@@ -674,14 +697,32 @@ async fn open_chat_pane(session_name: String) {
 
     let chat_cmd = format!("{} chat", daemon_bin);
 
-    let result = std::process::Command::new("tmux")
-        .args([
-            "split-window", "-h",
-            "-t", &pane_target,
-            "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
-            &chat_cmd,
-        ])
-        .output();
+    // R7: split-window is rejected when the window is zoomed — use new-window instead.
+    let zoomed = std::process::Command::new("tmux")
+        .args(["display-message", "-t", &pane_target, "-p", "#{window_zoomed_flag}"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
+        .unwrap_or(false);
+
+    let result = if zoomed {
+        std::process::Command::new("tmux")
+            .args([
+                "new-window",
+                "-t", &session_name,
+                "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
+                &chat_cmd,
+            ])
+            .output()
+    } else {
+        std::process::Command::new("tmux")
+            .args([
+                "split-window", "-h",
+                "-t", &pane_target,
+                "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
+                &chat_cmd,
+            ])
+            .output()
+    };
 
     match result {
         Ok(o) if o.status.success() => {
@@ -863,6 +904,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
         .context("Failed to install SIGTERM handler")?;
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("Failed to install SIGINT handler")?;
+
+    // P6: SIGUSR1 → broadcast to all foreground completion waiters.
+    let _ = FG_DONE_TX.get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel::<()>(32); tx });
+    let fg_sigusr1_tx = FG_DONE_TX.get().unwrap().clone();
+    tokio::spawn(async move {
+        let mut sigusr1 = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::user_defined1()
+        ).expect("Failed to install SIGUSR1 handler");
+        loop { sigusr1.recv().await; let _ = fg_sigusr1_tx.send(()); }
+    });
 
     loop {
         tokio::select! {
@@ -1113,6 +1164,9 @@ async fn handle_client(
                 AiEvent::ReadScript { id, script_name } => {
                     pending_calls.push(PendingCall::ReadScript { id, script_name });
                 }
+                AiEvent::WatchPane { id, pane_id, timeout_secs } => {
+                    pending_calls.push(PendingCall::WatchPane { id, pane_id, timeout_secs });
+                }
                 AiEvent::Error(e) => {
                     send_response_split(&mut tx, Response::Error(e)).await?;
                     return Ok(());
@@ -1238,6 +1292,24 @@ async fn handle_client(
                                     if target_str.is_empty() {
                                         "No active pane found.".to_string()
                                     } else {
+                                        // R6: Reject commands targeting synchronized panes —
+                                        // they would broadcast to ALL synced panes simultaneously.
+                                        let is_synchronized = {
+                                            let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+                                            panes.get(target_str).map(|p| p.synchronized).unwrap_or(false)
+                                        };
+                                        if is_synchronized {
+                                            let msg = format!(
+                                                "Pane {} has synchronized input enabled — sending a command \
+                                                 would broadcast to all synchronized panes simultaneously. \
+                                                 Disable synchronization first:\n  \
+                                                 tmux set-option -t {} synchronize-panes off",
+                                                target_str, target_str
+                                            );
+                                            send_response_split(&mut tx, Response::SystemMsg(msg.clone())).await?;
+                                            msg
+                                        } else {
+
                                         let shell_pid = tmux::pane_pid(target_str).ok();
                                         let idle_cmd = tmux::pane_current_command(target_str)
                                             .unwrap_or_default();
@@ -1293,12 +1365,20 @@ async fn handle_client(
                                                         if waited >= cmd_timeout { break; }
                                                     }
                                                 } else {
-                                                    let poll = Duration::from_millis(20);
-                                                    let mut waited = Duration::ZERO;
+                                                    let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                                    let daemon_pid = std::process::id();
+                                                    let hook_active = tmux::set_monitor_activity(target_str, true).is_ok()
+                                                        && tmux::install_activity_hook(&session_name, hook_idx, daemon_pid).is_ok();
+                                                    let mut fg_rx = fg_done_subscribe();
+
                                                     let mut saw_child = false;
+                                                    let start = std::time::Instant::now();
                                                     loop {
-                                                        tokio::time::sleep(poll).await;
-                                                        waited += poll;
+                                                        tokio::select! {
+                                                            _ = fg_rx.recv() => {}
+                                                            _ = tokio::time::sleep(Duration::from_millis(20)) => {}
+                                                        }
+                                                        let waited = start.elapsed();
 
                                                         let has_child = shell_pid.map(|pid| {
                                                             std::fs::read_to_string(format!(
@@ -1318,6 +1398,11 @@ async fn handle_client(
                                                             || (!saw_child && back && waited >= Duration::from_millis(100))
                                                             || waited >= cmd_timeout;
                                                         if done { break; }
+                                                    }
+
+                                                    if hook_active {
+                                                        let _ = tmux::remove_activity_hook(&session_name, hook_idx);
+                                                        let _ = tmux::unset_monitor_activity(target_str);
                                                     }
                                                 }
                                                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1346,6 +1431,8 @@ async fn handle_client(
                                                 msg
                                             }
                                         }
+
+                                        } // end R6 else (not synchronized)
                                     }
                                 }
                             }
@@ -1508,6 +1595,80 @@ async fn handle_client(
                                 match scripts::read_script(script_name) {
                                     Ok(content) => content,
                                     Err(e) => format!("Error reading script '{}': {}", script_name, e),
+                                }
+                            }
+
+                            PendingCall::WatchPane { id, pane_id, timeout_secs } => {
+                                // Request consent — watching is low-risk but explicit approval
+                                // ensures the AI doesn't silently install hooks.
+                                send_response_split(&mut tx, Response::ToolCallPrompt {
+                                    id: id.clone(),
+                                    command: format!("watch pane {} for {} seconds", pane_id, timeout_secs),
+                                    background: true,
+                                }).await?;
+
+                                let mut line = String::new();
+                                let read_result = tokio::time::timeout(
+                                    Duration::from_secs(60),
+                                    rx.read_line(&mut line),
+                                ).await;
+
+                                if matches!(read_result, Ok(Ok(0))) { return Ok(()); }
+
+                                let timed_out = read_result.is_err();
+                                let approved = match read_result {
+                                    Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+                                        Ok(Request::ToolCallResponse { id: resp_id, approved }) if resp_id == *id => approved,
+                                        _ => false,
+                                    },
+                                    _ => false,
+                                };
+
+                                if !approved {
+                                    if timed_out {
+                                        "Approval timed out (60 s); watch not started.".to_string()
+                                    } else {
+                                        "User denied watch".to_string()
+                                    }
+                                } else {
+                                    send_response_split(&mut tx, Response::SystemMsg(
+                                        format!("Watching pane {} for up to {} seconds…", pane_id, timeout_secs)
+                                    )).await?;
+
+                                    let baseline = tmux::capture_pane(pane_id, 50).unwrap_or_default();
+
+                                    let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    let daemon_pid = std::process::id();
+                                    let hook_active = tmux::set_monitor_activity(pane_id, true).is_ok()
+                                        && tmux::install_activity_hook(&session_name, hook_idx, daemon_pid).is_ok();
+                                    let mut watch_rx = fg_done_subscribe();
+
+                                    let deadline = tokio::time::Instant::now() + Duration::from_secs(*timeout_secs);
+                                    let mut changed = false;
+                                    loop {
+                                        tokio::select! {
+                                            _ = watch_rx.recv() => {}
+                                            _ = tokio::time::sleep_until(deadline) => { break; }
+                                        }
+                                        if tokio::time::Instant::now() >= deadline { break; }
+                                        let snap = tmux::capture_pane(pane_id, 50).unwrap_or_default();
+                                        if snap != baseline {
+                                            changed = true;
+                                            break;
+                                        }
+                                    }
+
+                                    if hook_active {
+                                        let _ = tmux::remove_activity_hook(&session_name, hook_idx);
+                                        let _ = tmux::unset_monitor_activity(pane_id);
+                                    }
+
+                                    if changed {
+                                        let content = tmux::capture_pane(pane_id, 100).unwrap_or_default();
+                                        format!("Pane {} output changed:\n{}", pane_id, mask_sensitive(&content))
+                                    } else {
+                                        format!("Pane {} had no output changes in {} seconds.", pane_id, timeout_secs)
+                                    }
                                 }
                             }
                         };
