@@ -26,10 +26,10 @@ pub fn create_session(session_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Get the active pane ID in the format 'session:window.pane'
+/// Get the active pane ID in `#{pane_id}` format (e.g. `%5`).
 pub fn get_active_pane(session_name: &str) -> Result<String> {
     let output = Command::new("tmux")
-        .args(["display-message", "-t", session_name, "-p", "#S:#I.#P"])
+        .args(["display-message", "-t", session_name, "-p", "#{pane_id}"])
         .output()?;
         
     if !output.status.success() {
@@ -39,10 +39,10 @@ pub fn get_active_pane(session_name: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// List all panes in the session with their IDs and current titles/commands
+/// List all panes in the session using `#{pane_id}` format (e.g. `%3`, `%5`).
 pub fn list_panes(session_name: &str) -> Result<Vec<String>> {
     let output = Command::new("tmux")
-        .args(["list-panes", "-s", "-t", session_name, "-F", "#S:#I.#P"])
+        .args(["list-panes", "-s", "-t", session_name, "-F", "#{pane_id}"])
         .output()?;
         
     if !output.status.success() {
@@ -161,10 +161,45 @@ pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
     let output = Command::new("tmux")
         .args(["send-keys", "-t", pane_id, cmd, "C-m"])
         .output()?;
-        
+
     if !output.status.success() {
         anyhow::bail!("Failed to send keys to pane '{}'", pane_id);
     }
-    
+
+    Ok(())
+}
+
+/// Create a new detached background window in `session` with the given `name`.
+///
+/// If a window with that name already exists it is killed first.
+/// Returns the pane ID of the new window (e.g. `%12`).
+pub fn create_job_window(session: &str, name: &str) -> Result<String> {
+    // Silently kill any pre-existing window with that name.
+    let _ = Command::new("tmux")
+        .args(["kill-window", "-t", &format!("{}:{}", session, name)])
+        .output();
+
+    let output = Command::new("tmux")
+        .args([
+            "new-window", "-d",
+            "-n", name,
+            "-t", session,
+            "-P", "-F", "#{pane_id}",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to create job window '{}': {}", name, err.trim());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Kill a background window by name.  Silently ignores missing windows.
+pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
+    let _ = Command::new("tmux")
+        .args(["kill-window", "-t", &format!("{}:{}", session, name)])
+        .output();
     Ok(())
 }

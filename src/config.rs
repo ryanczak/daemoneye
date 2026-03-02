@@ -12,6 +12,18 @@ pub struct Config {
     pub masking: MaskingConfig,
     #[serde(default)]
     pub context: ContextConfig,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
+}
+
+/// Notification hooks for scheduler/watchdog alerts.
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+pub struct NotificationsConfig {
+    /// Shell command to run when a watchdog alert fires.
+    /// Available env vars: `$DAEMONEYE_JOB` (job name), `$DAEMONEYE_MSG` (alert message).
+    /// Example: `notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'`
+    #[serde(default)]
+    pub on_alert: String,
 }
 
 /// Runtime environment declaration — tells the AI how to calibrate caution,
@@ -165,6 +177,21 @@ impl Config {
         Ok(cfg)
     }
 
+    /// Return the path to the scripts directory: `~/.daemoneye/scripts/`.
+    pub fn scripts_dir() -> PathBuf {
+        config_dir().join("scripts")
+    }
+
+    /// Return the path to the runbooks directory: `~/.daemoneye/runbooks/`.
+    pub fn runbooks_dir() -> PathBuf {
+        config_dir().join("runbooks")
+    }
+
+    /// Return the path to the schedules JSON store: `~/.daemoneye/schedules.json`.
+    pub fn schedules_path() -> PathBuf {
+        config_dir().join("schedules.json")
+    }
+
     /// Ensure the config directory, example config, and default prompt exist.
     pub fn ensure_dirs() -> Result<()> {
         let dir = config_dir();
@@ -172,6 +199,8 @@ impl Config {
         let pd = prompts_dir();
         std::fs::create_dir_all(&pd)?;
         std::fs::create_dir_all(sessions_dir())?;
+        std::fs::create_dir_all(Self::scripts_dir())?;
+        std::fs::create_dir_all(Self::runbooks_dir())?;
 
         let cfg_path = dir.join("config.toml");
         if !cfg_path.exists() {
@@ -192,6 +221,11 @@ prompt   = "sre"
 # Add org-specific patterns to redact before context is sent to the AI.
 # Built-in patterns (AWS keys, JWTs, DB URLs, private keys, etc.) always run.
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
+
+# [notifications]
+# Shell command to run when a watchdog alert fires.
+# Available env vars: $DAEMONEYE_JOB (job name), $DAEMONEYE_MSG (alert message).
+# on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
 "#,
             )?;
         }

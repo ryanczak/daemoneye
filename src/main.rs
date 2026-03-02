@@ -5,6 +5,9 @@ mod daemon;
 mod ipc;
 mod tmux;
 mod client;
+mod scheduler;
+mod runbook;
+mod scripts;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -51,6 +54,23 @@ enum Commands {
     Setup,
     /// List available prompts in ~/.daemoneye/prompts/
     Prompts,
+    /// List scripts in ~/.daemoneye/scripts/
+    Scripts,
+    /// Manage scheduled jobs
+    Sched {
+        #[command(subcommand)]
+        cmd: SchedCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SchedCommands {
+    /// List all scheduled jobs
+    List,
+    /// Cancel a scheduled job by UUID
+    Cancel { id: String },
+    /// List leftover de-* tmux windows from failed scheduled jobs
+    Windows,
 }
 
 // main() is a plain synchronous function so we can fork() before the tokio
@@ -136,6 +156,20 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Prompts => {
             client::run_prompts()?;
         }
+        Commands::Scripts => {
+            client::run_scripts()?;
+        }
+        Commands::Sched { cmd } => match cmd {
+            SchedCommands::List => {
+                client::run_sched_list()?;
+            }
+            SchedCommands::Cancel { id } => {
+                client::run_sched_cancel(id)?;
+            }
+            SchedCommands::Windows => {
+                client::run_sched_windows()?;
+            }
+        },
     }
 
     Ok(())

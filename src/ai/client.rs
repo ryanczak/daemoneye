@@ -14,7 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 static TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Generate the next unique tool call ID (process-scoped, not session-scoped).
-fn next_tool_id() -> String {
+pub fn next_tool_id() -> String {
     format!("tc_{}", TOOL_CALL_ID.fetch_add(1, Ordering::Relaxed))
 }
 
@@ -81,8 +81,28 @@ pub struct Message {
 pub enum AiEvent {
     /// A partial response token to forward to the client immediately.
     Token(String),
-    /// A complete tool call extracted from the stream: (id, command, background).
-    ToolCall(String, String, bool),
+    /// A complete `run_terminal_command` tool call: (id, command, background, target_pane).
+    ToolCall(String, String, bool, Option<String>),
+    /// Schedule a command to run once or on a repeating interval.
+    ScheduleCommand {
+        id: String,
+        name: String,
+        command: String,
+        is_script: bool,
+        run_at: Option<String>,
+        interval: Option<String>,
+        runbook: Option<String>,
+    },
+    /// Request the current list of scheduled jobs.
+    ListSchedules { id: String },
+    /// Cancel a scheduled job by UUID.
+    CancelSchedule { id: String, job_id: String },
+    /// Write (create or update) a script in `~/.daemoneye/scripts/`.
+    WriteScript { id: String, script_name: String, content: String },
+    /// Request the list of scripts in `~/.daemoneye/scripts/`.
+    ListScripts { id: String },
+    /// Read the content of a named script.
+    ReadScript { id: String, script_name: String },
     /// The stream finished normally; no more events will follow.
     Done,
     /// A non-retryable error terminated the stream.
@@ -151,15 +171,82 @@ fn get_tool_definition() -> Value {
         {
             "name": "run_terminal_command",
             "description": "Execute a bash command in one of two modes:\n\
-             - background=true: Runs as a subprocess on the DAEMON HOST. Output is captured silently and returned to you. Use for read-only diagnostics (ls, ps, cat, grep, df, curl, etc.). If the user is SSH'd into a remote host, this still runs locally on the daemon machine. Supports sudo: the user will be prompted for their password in the chat interface.\n\
+             - background=true: Runs in a dedicated tmux window on the DAEMON HOST. Output is captured silently and returned to you. Use for read-only diagnostics (ls, ps, cat, grep, df, curl, etc.). If the user is SSH'd into a remote host, this still runs locally on the daemon machine. Supports sudo: the user will be prompted for their password in the chat interface.\n\
              - background=false (default): Injects the command into the USER'S TERMINAL PANE via tmux send-keys. The command is visible and interactive. Use for state-changing commands, service restarts, file edits, or anything that must run on the user's active host. If the user's pane is SSH'd to a remote machine, the command runs there. Supports sudo: the user types their password directly in the terminal pane.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The bash command to execute."},
-                    "background": {"type": "boolean", "default": false, "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote). Defaults to false."}
+                    "background": {"type": "boolean", "default": false, "description": "true = daemon host tmux window (captured output); false = user's terminal pane (visible, interactive, possibly remote). Defaults to false."},
+                    "target_pane": {"type": "string", "description": "Optional: tmux pane ID (e.g. \"%3\") to target for foreground commands. Only specify when context shows multiple panes and the command must run in a specific one. Background commands always run on the daemon host — do not set target_pane for them."}
                 },
                 "required": ["command"]
+            }
+        },
+        {
+            "name": "schedule_command",
+            "description": "Schedule a shell command (or named script) to run once at a specific UTC time or repeatedly on an interval. For watchdog monitoring, specify a runbook name to enable AI analysis of the output.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Human-readable name for this scheduled job."},
+                    "command": {"type": "string", "description": "Shell command to run, or script name if is_script=true."},
+                    "is_script": {"type": "boolean", "default": false, "description": "If true, 'command' is a script name in ~/.daemoneye/scripts/ to execute."},
+                    "run_at": {"type": "string", "description": "ISO 8601 UTC datetime for a one-shot job, e.g. '2026-03-01T15:00:00Z'. Omit if using interval."},
+                    "interval": {"type": "string", "description": "ISO 8601 duration for repeating jobs, e.g. PT5M (5 min), PT1H (1 hour), P1D (1 day). Omit if using run_at."},
+                    "runbook": {"type": "string", "description": "Optional name of a runbook in ~/.daemoneye/runbooks/ for watchdog AI analysis of command output."}
+                },
+                "required": ["name", "command"]
+            }
+        },
+        {
+            "name": "list_schedules",
+            "description": "Return the current list of scheduled jobs with their status, schedule, and next run time.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "cancel_schedule",
+            "description": "Cancel a scheduled job by its UUID. The job will no longer fire.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "UUID of the scheduled job to cancel."}
+                },
+                "required": ["id"]
+            }
+        },
+        {
+            "name": "write_script",
+            "description": "Create or update a reusable script in ~/.daemoneye/scripts/. The user will be shown the full content and must approve before it is written. Scripts are saved with chmod 700.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "script_name": {"type": "string", "description": "Filename for the script (e.g. 'check-disk.sh')."},
+                    "content": {"type": "string", "description": "Full content of the script, including the shebang line."}
+                },
+                "required": ["script_name", "content"]
+            }
+        },
+        {
+            "name": "list_scripts",
+            "description": "Return the list of scripts in ~/.daemoneye/scripts/ with their sizes.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "read_script",
+            "description": "Read the content of a script from ~/.daemoneye/scripts/.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "script_name": {"type": "string", "description": "Name of the script to read."}
+                },
+                "required": ["script_name"]
             }
         }
     ])
@@ -172,19 +259,136 @@ fn get_openai_tool_definition() -> Value {
             "function": {
                 "name": "run_terminal_command",
                 "description": "Execute a bash command in one of two modes:\n\
-                 - background=true: Runs as a subprocess on the DAEMON HOST. Output is captured silently. Use for read-only diagnostics. If the user is SSH'd to a remote host, this still runs on the daemon machine. Supports sudo via chat interface.\n\
-                 - background=false (default): Injects the command into the USER'S TERMINAL PANE via tmux. Visible and interactive. Use for state-changing commands or anything needing the user's active host. If the pane is SSH'd, the command runs remotely. Sudo requires the user to type their password in the pane.",
+                 - background=true: Runs in a dedicated tmux window on the DAEMON HOST. Output captured silently. Use for read-only diagnostics. Supports sudo via chat interface.\n\
+                 - background=false (default): Injects the command into the USER'S TERMINAL PANE via tmux. Visible and interactive. Use for state-changing commands. Sudo requires the user to type password in the pane.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "The bash command to execute."},
-                        "background": {"type": "boolean", "default": false, "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, interactive, possibly remote). Defaults to false."}
+                        "background": {"type": "boolean", "default": false, "description": "true = daemon host tmux window (captured); false = user's terminal pane (visible, interactive). Defaults to false."},
+                        "target_pane": {"type": "string", "description": "Optional: tmux pane ID (e.g. \"%3\") to target for foreground commands."}
                     },
                     "required": ["command"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "schedule_command",
+                "description": "Schedule a command or script to run once or on a repeating interval.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "command": {"type": "string"},
+                        "is_script": {"type": "boolean", "default": false},
+                        "run_at": {"type": "string"},
+                        "interval": {"type": "string"},
+                        "runbook": {"type": "string"}
+                    },
+                    "required": ["name", "command"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_schedules",
+                "description": "Return the current list of scheduled jobs.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "cancel_schedule",
+                "description": "Cancel a scheduled job by UUID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_script",
+                "description": "Create or update a reusable script in ~/.daemoneye/scripts/ (requires user approval).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "script_name": {"type": "string"},
+                        "content": {"type": "string"}
+                    },
+                    "required": ["script_name", "content"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_scripts",
+                "description": "Return the list of scripts in ~/.daemoneye/scripts/.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_script",
+                "description": "Read the content of a named script.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"script_name": {"type": "string"}},
+                    "required": ["script_name"]
+                }
+            }
         }
     ])
+}
+
+// ---------------------------------------------------------------------------
+// Tool event dispatcher (shared by all three provider backends)
+// ---------------------------------------------------------------------------
+
+/// Given a tool call ID, name, and parsed arguments, produce the corresponding
+/// [`AiEvent`].  Returns `None` for unrecognised tool names.
+fn dispatch_tool_event(id: &str, name: &str, args: &Value) -> Option<AiEvent> {
+    match name {
+        "run_terminal_command" => {
+            let cmd = args["command"].as_str()?;
+            let bg = args["background"].as_bool().unwrap_or(false);
+            let target = args["target_pane"].as_str().map(|s| s.to_string());
+            Some(AiEvent::ToolCall(id.to_string(), cmd.to_string(), bg, target))
+        }
+        "schedule_command" => Some(AiEvent::ScheduleCommand {
+            id: id.to_string(),
+            name: args["name"].as_str().unwrap_or("unnamed").to_string(),
+            command: args["command"].as_str().unwrap_or("").to_string(),
+            is_script: args["is_script"].as_bool().unwrap_or(false),
+            run_at: args["run_at"].as_str().map(|s| s.to_string()),
+            interval: args["interval"].as_str().map(|s| s.to_string()),
+            runbook: args["runbook"].as_str().map(|s| s.to_string()),
+        }),
+        "list_schedules" => Some(AiEvent::ListSchedules { id: id.to_string() }),
+        "cancel_schedule" => Some(AiEvent::CancelSchedule {
+            id: id.to_string(),
+            job_id: args["id"].as_str().unwrap_or("").to_string(),
+        }),
+        "write_script" => Some(AiEvent::WriteScript {
+            id: id.to_string(),
+            script_name: args["script_name"].as_str().unwrap_or("").to_string(),
+            content: args["content"].as_str().unwrap_or("").to_string(),
+        }),
+        "list_scripts" => Some(AiEvent::ListScripts { id: id.to_string() }),
+        "read_script" => Some(AiEvent::ReadScript {
+            id: id.to_string(),
+            script_name: args["script_name"].as_str().unwrap_or("").to_string(),
+        }),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +482,7 @@ impl AiClient for AnthropicClient {
 
         let mut stream = response.bytes_stream();
         let mut tool_id = String::new();
+        let mut tool_name = String::new();
         let mut tool_args = String::new();
         let mut leftover = String::new();
 
@@ -300,6 +505,8 @@ impl AiClient for AnthropicClient {
                             if v["content_block"]["type"] == "tool_use" {
                                 if let Some(id) = v["content_block"]["id"].as_str() {
                                     tool_id = id.to_string();
+                                    tool_name = v["content_block"]["name"]
+                                        .as_str().unwrap_or("").to_string();
                                     tool_args.clear();
                                 }
                             }
@@ -317,13 +524,13 @@ impl AiClient for AnthropicClient {
                             }
                         } else if msg_type == "content_block_stop" {
                             if !tool_id.is_empty() {
-                                if let Ok(args_json) = serde_json::from_str::<Value>(&tool_args) {
-                                    if let Some(cmd) = args_json["command"].as_str() {
-                                        let bg = args_json["background"].as_bool().unwrap_or(false);
-                                        let _ = tx.send(AiEvent::ToolCall(tool_id.clone(), cmd.to_string(), bg));
+                                if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
+                                    if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args) {
+                                        let _ = tx.send(ev);
                                     }
                                 }
                                 tool_id.clear();
+                                tool_name.clear();
                                 tool_args.clear();
                             }
                         }
@@ -424,6 +631,7 @@ impl AiClient for OpenAiClient {
 
         let mut stream = response.bytes_stream();
         let mut tool_id = String::new();
+        let mut tool_name = String::new();
         let mut tool_args = String::new();
         let mut leftover = String::new();
 
@@ -450,10 +658,10 @@ impl AiClient for OpenAiClient {
                                 if let Some(tc) = tool_calls.get(0) {
                                     if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
                                         if !tool_id.is_empty() && tool_id != id {
-                                            if let Ok(args_json) = serde_json::from_str::<Value>(&tool_args) {
-                                                if let Some(cmd) = args_json["command"].as_str() {
-                                                    let bg = args_json["background"].as_bool().unwrap_or(false);
-                                                    let _ = tx.send(AiEvent::ToolCall(tool_id.clone(), cmd.to_string(), bg));
+                                            // Flush previous tool call
+                                            if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
+                                                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args) {
+                                                    let _ = tx.send(ev);
                                                 }
                                             }
                                         }
@@ -461,6 +669,9 @@ impl AiClient for OpenAiClient {
                                         tool_args.clear();
                                     }
                                     if let Some(f) = tc.get("function") {
+                                        if let Some(n) = f.get("name").and_then(|n| n.as_str()) {
+                                            if !n.is_empty() { tool_name = n.to_string(); }
+                                        }
                                         if let Some(args) = f.get("arguments").and_then(|a| a.as_str()) {
                                             tool_args.push_str(args);
                                         }
@@ -475,10 +686,9 @@ impl AiClient for OpenAiClient {
 
         // Final flush of any buffered tool call
         if !tool_id.is_empty() {
-            if let Ok(args_json) = serde_json::from_str::<Value>(&tool_args) {
-                if let Some(cmd) = args_json["command"].as_str() {
-                    let bg = args_json["background"].as_bool().unwrap_or(false);
-                    let _ = tx.send(AiEvent::ToolCall(tool_id.clone(), cmd.to_string(), bg));
+            if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
+                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args) {
+                    let _ = tx.send(ev);
                 }
             }
         }
@@ -584,14 +794,71 @@ impl AiClient for GeminiClient {
                     "function_declarations": [
                         {
                             "name": "run_terminal_command",
-                            "description": "Execute a bash command in one of two modes:\n- background=true: Runs on the DAEMON HOST as a subprocess. Output captured silently. Use for read-only diagnostics. Supports sudo via chat.\n- background=false (default): Runs in the USER'S TERMINAL PANE via tmux send-keys. Visible and interactive. If the user is SSH'd, runs remotely. Sudo requires the user to type password in the pane.",
+                            "description": "Execute a bash command in one of two modes:\n- background=true: Runs in a dedicated tmux window on the DAEMON HOST. Output captured silently. Use for read-only diagnostics. Supports sudo via chat.\n- background=false (default): Runs in the USER'S TERMINAL PANE via tmux send-keys. Visible and interactive. If the user is SSH'd, runs remotely. Sudo requires the user to type password in the pane.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
                                     "command": {"type": "STRING", "description": "The bash command to execute."},
-                                    "background": {"type": "BOOLEAN", "description": "true = daemon host subprocess (invisible); false = user's terminal pane (visible, possibly remote). Defaults to false."}
+                                    "background": {"type": "BOOLEAN", "description": "true = daemon host tmux window (captured); false = user's terminal pane (visible, possibly remote). Defaults to false."},
+                                    "target_pane": {"type": "STRING", "description": "Optional: tmux pane ID for foreground commands."}
                                 },
                                 "required": ["command"]
+                            }
+                        },
+                        {
+                            "name": "schedule_command",
+                            "description": "Schedule a command or script to run once or on a repeating interval.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "name": {"type": "STRING"},
+                                    "command": {"type": "STRING"},
+                                    "is_script": {"type": "BOOLEAN"},
+                                    "run_at": {"type": "STRING"},
+                                    "interval": {"type": "STRING"},
+                                    "runbook": {"type": "STRING"}
+                                },
+                                "required": ["name", "command"]
+                            }
+                        },
+                        {
+                            "name": "list_schedules",
+                            "description": "Return the current list of scheduled jobs.",
+                            "parameters": {"type": "OBJECT", "properties": {}}
+                        },
+                        {
+                            "name": "cancel_schedule",
+                            "description": "Cancel a scheduled job by UUID.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {"id": {"type": "STRING"}},
+                                "required": ["id"]
+                            }
+                        },
+                        {
+                            "name": "write_script",
+                            "description": "Create or update a reusable script (requires user approval).",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "script_name": {"type": "STRING"},
+                                    "content": {"type": "STRING"}
+                                },
+                                "required": ["script_name", "content"]
+                            }
+                        },
+                        {
+                            "name": "list_scripts",
+                            "description": "Return the list of scripts in ~/.daemoneye/scripts/.",
+                            "parameters": {"type": "OBJECT", "properties": {}}
+                        },
+                        {
+                            "name": "read_script",
+                            "description": "Read the content of a named script.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {"script_name": {"type": "STRING"}},
+                                "required": ["script_name"]
                             }
                         }
                     ]
@@ -629,7 +896,7 @@ impl AiClient for GeminiClient {
                                         .and_then(|m| m.as_str())
                                     {
                                         if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
-                                            let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd, bg));
+                                            let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd, bg, None));
                                         } else {
                                             let _ = tx.send(AiEvent::Error(format!(
                                                 "Gemini produced a malformed function call \
@@ -650,11 +917,11 @@ impl AiClient for GeminiClient {
                                             }
                                         }
                                         if let Some(call) = part.get("functionCall") {
-                                            if call["name"] == "run_terminal_command" {
-                                                if let Some(args) = call.get("args") {
-                                                    let cmd = args["command"].as_str().unwrap_or_default();
-                                                    let bg = args["background"].as_bool().unwrap_or(false);
-                                                    let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd.to_string(), bg));
+                                            let fn_name = call["name"].as_str().unwrap_or("");
+                                            if let Some(args) = call.get("args") {
+                                                let id = next_tool_id();
+                                                if let Some(ev) = dispatch_tool_event(&id, fn_name, args) {
+                                                    let _ = tx.send(ev);
                                                 }
                                             }
                                         }

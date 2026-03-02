@@ -28,7 +28,12 @@ graph TD
         LogFile[(daemon.log)]
         CmdLog[(commands.log)]
         ConfigToml[(config.toml)]
+        Scripts[(scripts/)]
+        Runbooks[(runbooks/)]
+        SchedStore[(schedules.json)]
     end
+
+    Scheduler[(Scheduler Task)]
 
     Cloud(("Anthropic / OpenAI / Gemini API"))
 
@@ -65,6 +70,13 @@ graph TD
     IPCServer -.->|Write| LogFile
     IPCServer -.->|Append execution record| CmdLog
     ConfigToml -.->|Read| AgentEngine
+
+    %% Scheduler
+    Scheduler -->|create de-<id> window| TmuxInterop
+    Scheduler -->|watchdog analysis| AgentEngine
+    Scheduler <-->|persist jobs| SchedStore
+    Scripts -.->|resolve script path| Scheduler
+    Runbooks -.->|load runbook| Scheduler
 ```
 
 ## 2. Core Components
@@ -93,6 +105,7 @@ graph TD
   - `Ask { query, tmux_pane, session_id }` — start or continue a conversation turn.
   - `ToolCallResponse { id, approved }` — user's approval decision for a proposed command.
   - `CredentialResponse { id, credential }` — user-supplied sudo password for an approved background command, sent in response to `CredentialPrompt`.
+  - `ScriptWriteResponse { id, approved }` — user's approval decision for a proposed script write, sent in response to `ScriptWritePrompt`.
 - **Response types**:
   - `Ok` — signals successful completion of a turn.
   - `Error(String)` — error from the daemon or AI provider.
@@ -102,6 +115,9 @@ graph TD
   - `CredentialPrompt { id, prompt }` — daemon requests the sudo password for an approved background command; `prompt` is a human-readable message (e.g. `"[sudo] password required for: sudo apt upgrade"`).
   - `SystemMsg(String)` — daemon notification (e.g., sudo prompt detected, pane switch). Rendered in the chat interface with an amber ⚙ prefix.
   - `ToolResult(String)` — captured output of an approved command, sent before the AI continues. Rendered as a dimmed bordered panel (capped at 10 rows).
+  - `ScriptWritePrompt { id, script_name, content }` — daemon shows full script content to user before writing; requires `ScriptWriteResponse`.
+  - `ScheduleList { jobs: Vec<ScheduleListItem> }` — list of scheduled jobs with id, name, kind, action, status, last_run, next_run.
+  - `ScriptList { scripts: Vec<ScriptListItem> }` — list of scripts in `~/.daemoneye/scripts/` with name and size.
 - Each client connection handles exactly one request/response lifecycle. `Ask` connections receive a token stream (interleaved with zero or more tool-call approval round-trips) terminated by `Ok` or `Error`.
 
 ### 2.3 DaemonEye Background Daemon
@@ -109,7 +125,7 @@ graph TD
 - **AI Agent Engine** (`daemon.rs`): Orchestrates the full request lifecycle — loads session history, builds the prompt (host context + execution context on first turn, terminal snapshot on subsequent turns), streams AI events, handles tool call approval and execution, and persists conversation history.
 - **Execution Context Detector** (`daemon.rs`): On the first turn of each session, detects the daemon's local hostname (via `/proc/sys/kernel/hostname`) and whether the user's tmux pane is running `ssh` or `mosh` (via `tmux display-message #{pane_current_command}`). Injects a structured `## Execution Context` block into the prompt so the AI knows which machine each execution mode targets.
 - **Dual Command Execution** (`daemon.rs`):
-  - *Background mode* (`background=true`): Runs as a daemon subprocess via `tokio::process::Command`. stdout/stderr are collected via independent async tasks so the child process can be killed independently. A 30-second `tokio::time::timeout` wraps the wait; on expiry `child.kill().await` is called and an error is returned to the AI. `pre_exec()` sets conservative resource limits before `exec`: `RLIMIT_AS` = 512 MiB (virtual address space), `RLIMIT_NOFILE` = 256 (open file descriptors). Sudo is handled via a `CredentialPrompt` / `CredentialResponse` IPC round-trip; the daemon sends a human-readable `CredentialPrompt`, the client reads the password with echo disabled (clearing `O_NONBLOCK` on fd 0 for the synchronous read, then restoring it) and returns a `CredentialResponse`. The password is piped to `sudo -S -p ""` and never stored. The credential timeout is 120 seconds.
+  - *Background mode* (`background=true`): Runs in a dedicated tmux window (`de-bg-<id_short>`) on the daemon host. The command is sent via `tmux send-keys` and appended with `; echo '__DE_EXIT__'$?`. `capture_until_sentinel()` polls `capture-pane` every 200 ms until the sentinel appears (up to 300 s). The exit code is extracted from the sentinel line and the window is always killed after output is captured. This gives the command access to the user's full shell environment (PATH, aliases, functions). If the command contains `sudo`, the daemon first sends a `CredentialPrompt` IPC response; the client reads the password with echo disabled and returns it via `CredentialResponse`; the credential is injected into the window via `send-keys` after detecting the sudo password prompt in `capture-pane` output. The credential is never logged or transmitted to the AI.
   - *Foreground mode* (`background=false`): Injects the command (unmodified) into the user's active tmux pane via `tmux send-keys`. Completion is detected by watching `/proc/<shell_pid>/task/<shell_pid>/children` — a Linux kernel file that lists the shell's direct child PIDs. The daemon polls this file every 20 ms; when a child PID appears (`saw_child = true`) and then disappears with `pane_current_command` back to the idle shell name, the command is complete. A 100 ms grace-period fallback handles commands that finish before the first poll tick. For sudo commands, `pane_current_command` is polled at 100 ms intervals (up to 3 s, with early exit if the pane returns to idle for NOPASSWD/cached-credential runs) to detect whether a password prompt appears; if one is found, a `SystemMsg` notification is sent and the working pane is focused. The shell PID is obtained via `tmux display-message -p "#{pane_pid}"` before the command is injected.
 - **Command Audit Logger** (`daemon.rs`): Appends a single-line structured record to `~/.daemoneye/commands.log` (or a user-specified path) for every tool call — approved, denied, or timed out. Each line includes timestamp, session ID, mode, pane, status, command, and a 200-character output excerpt. Logging can be disabled with `--no-command-log`.
 - **Multi-Turn Session Store**: An in-memory `HashMap<session_id, SessionEntry>` shared across connections. Entries are pruned after 30 minutes of inactivity. History is bounded to 40 messages (oldest tail + first message retained) to keep context windows manageable.
@@ -118,7 +134,10 @@ graph TD
 - **System Context Collector** (`sys_context.rs`): Runs once per daemon lifetime (via `OnceLock`). Captures OS release, uptime, memory, load average, top CPU processes, shell environment (curated safe variables only), and shell history. Prepended to the AI context on the first turn of each conversation.
 - **Security & Data Masking Filter** (`ai/filter.rs`): Applied to all terminal context and user queries before transmission. Built-in patterns cover: AWS access key IDs, PEM private key blocks, GCP service-account JSON `"private_key"` fields, JWT bearer tokens, GitHub PATs (classic and fine-grained), database/broker connection URLs with embedded credentials, password/token/API-key assignments, URL query-param secrets, credit card numbers, and SSNs. Patterns are compiled once at daemon startup via `init_masking()`, which also incorporates any `extra_patterns` the user has added to `config.toml` — built-in patterns cannot be disabled. 16 unit tests cover the full pattern set.
 - **Prompt Engine Manager** (`config.rs`): Loads named system prompts from `~/.daemoneye/prompts/<name>.toml`. Falls back to the compiled-in SRE prompt if no file is found. The built-in SRE prompt includes a `## Command Execution Modes` section that instructs the AI when to use background vs foreground execution. `config.toml` also carries a `[masking]` section (`MaskingConfig`) with an optional `extra_patterns` list of user-defined regex patterns appended to the built-in masking set at daemon startup.
-- **LLM API Client** (`ai/client.rs`): Implements `AiClient` trait for Anthropic, OpenAI, and Gemini with SSE streaming. Uses a process-wide `reqwest::Client` for connection reuse. Emits `Token`, `ToolCall`, `Error`, and `Done` events over an unbounded channel. Tool descriptions for all three providers document the daemon-host vs user-pane execution semantics.
+- **LLM API Client** (`ai/client.rs`): Implements `AiClient` trait for Anthropic, OpenAI, and Gemini with SSE streaming. Uses a process-wide `reqwest::Client` for connection reuse. Emits `Token`, `ToolCall`, `ScheduleCommand`, `ListSchedules`, `CancelSchedule`, `WriteScript`, `ListScripts`, `ReadScript`, `Error`, and `Done` events over an unbounded channel. Tool descriptions for all three providers document the daemon-host vs user-pane execution semantics plus all six scheduler/script tools.
+- **Schedule Store** (`scheduler.rs`): Thread-safe, file-backed store for scheduled jobs. Persistence is atomic: writes go to `.tmp` then rename over `~/.daemoneye/schedules.json`. Provides `add`, `cancel`, `list`, `take_due`, `mark_done` operations.
+- **Scripts Module** (`scripts.rs`): Manages `~/.daemoneye/scripts/` — executable scripts (chmod 700). Provides `list_scripts`, `write_script`, `read_script`, `resolve_script` operations.
+- **Runbook Loader** (`runbook.rs`): Loads TOML runbook files from `~/.daemoneye/runbooks/<name>.toml`. Builds the AI system prompt for watchdog analysis via `watchdog_system_prompt()`.
 
 ### 2.4 Daemon Lifecycle
 
@@ -126,6 +145,27 @@ graph TD
 - **Logging**: All output (`println!`/`eprintln!`) is redirected to `~/.daemoneye/daemon.log` (or `--log-file FILE`) via `dup2` at startup. Use `--console` to keep output on the terminal. View live with `daemoneye logs`.
 - **Command audit log**: Written to `~/.daemoneye/commands.log` by default. Override with `--command-log-file FILE` or disable entirely with `--no-command-log`.
 - **Shutdown**: `daemoneye stop` sends a `Shutdown` IPC request — the daemon responds `Ok`, removes the socket file, and exits. SIGTERM and SIGINT are also handled gracefully via `tokio::signal::unix`, removing the socket file before exit.
+
+### 2.5 Scheduler and Watchdog
+
+The scheduler runs as a background tokio task that polls `ScheduleStore::take_due()` every second. When a job fires, `run_scheduled_job()` is spawned:
+
+1. **Action resolution**: `ActionOn::Script(name)` resolves to a full path via `scripts::resolve_script()`; `ActionOn::Command(cmd)` is used directly; `ActionOn::Alert` emits a `SystemMsg` and fires the notification hook without running any command.
+2. **Execution**: A dedicated tmux window (`de-<id_short>`) is created with `tmux::create_job_window()`. The command is sent via `tmux send-keys` with an `__DE_EXIT__$?` sentinel appended. `capture_until_sentinel()` polls until the sentinel appears (up to 300 s).
+3. **Window lifecycle**: On success the window is killed; on failure the window is **left open** (`de-<id>`) for the user to inspect.
+4. **Watchdog AI analysis**: If the job has a `runbook` set, the captured output is passed to the configured LLM using `watchdog_system_prompt()` built from the runbook's context. If the AI response contains "ALERT", a `SystemMsg` is broadcast to connected clients and `fire_notification()` is called.
+5. **Rescheduling**: `Every` jobs have their `next_run` advanced by `interval_secs` and transition back to `Pending`; `Once` jobs remain `Succeeded`/`Failed`.
+6. **Notification hook**: `fire_notification()` runs the user-configured `[notifications] on_alert` shell command (from `config.toml`) with `$DAEMONEYE_JOB` and `$DAEMONEYE_MSG` environment variables.
+
+### 2.6 Scripts Directory
+
+`~/.daemoneye/scripts/` holds executable scripts managed by the daemon. Key properties:
+
+- All scripts are written with `chmod 700` (owner-only, no group/other access).
+- The AI can **write** scripts via the `write_script` tool, which triggers a `ScriptWritePrompt` IPC round-trip: the client displays the full script content and prompts the user to approve or deny. The daemon only writes the file on approval.
+- The AI can **list** and **read** scripts without approval (read-only operations).
+- Scripts can be referenced by scheduled jobs (`ActionOn::Script(name)`) and are resolved to their full path at job execution time.
+- Script names are validated to reject path traversal (no `/`, `\0`, `.`, or `..`).
 
 ## 3. Data Flow Example: Troubleshooting an Error
 
@@ -137,7 +177,7 @@ graph TD
 6. The API client streams tokens back; the daemon forwards each as a `Token` response to the client, which prints them as they arrive.
 7. If the LLM invokes a tool call (e.g., `journalctl -u nginx.service`), the daemon sends a `ToolCallPrompt` response. The client displays the command with its execution mode (`daemon · runs silently` or `terminal · visible to you`) and waits up to 60 seconds for the user to approve (`y`) or deny.
 8. On approval:
-   - *Background*: The daemon runs the command as a subprocess and captures stdout/stderr. If the command requires `sudo`, the daemon first sends a `CredentialPrompt { id, prompt }`; the client reads the password with echo disabled and returns it via `CredentialResponse { id, credential }`; the daemon runs `sudo -S -p ""` with the password piped to stdin.
+   - *Background*: The daemon creates a dedicated tmux window (`de-bg-<id>`) and sends the command appended with `; echo '__DE_EXIT__'$?`. `capture_until_sentinel()` polls until the exit sentinel appears, then the window is killed. If the command requires `sudo`, a `CredentialPrompt` IPC round-trip collects the password first; it is injected into the window via `send-keys` after detecting the password prompt in `capture-pane` output.
    - *Foreground*: The daemon injects the command unmodified and polls `/proc/<shell_pid>/task/<shell_pid>/children` every 20 ms to detect when the child process exits (30-second overall timeout). If `sudo` is detected during a brief 3 s polling window, a `SystemMsg` switches focus to the working pane for password entry. After completion, 200 lines are captured from the pane.
    - The execution record is appended to `~/.daemoneye/commands.log`.
 9. The LLM receives the tool result and continues its response. This loop repeats until the LLM produces a final answer with no further tool calls.

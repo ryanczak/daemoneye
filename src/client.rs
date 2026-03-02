@@ -593,6 +593,115 @@ pub fn run_prompts() -> Result<()> {
     Ok(())
 }
 
+/// List scripts in ~/.daemoneye/scripts/ (read directly, no daemon needed).
+pub fn run_scripts() -> Result<()> {
+    let scripts = crate::scripts::list_scripts()?;
+    if scripts.is_empty() {
+        let dir = crate::scripts::scripts_dir();
+        println!("No scripts found in {}", dir.display());
+        println!("Ask the AI to write a script, or place one there manually.");
+        return Ok(());
+    }
+    let name_w = scripts.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
+    println!("\x1b[1mScripts\x1b[0m  ({})", crate::scripts::scripts_dir().display());
+    println!();
+    for s in &scripts {
+        println!("  \x1b[1m\x1b[96m{:<width$}\x1b[0m  {} bytes", s.name, s.size, width = name_w);
+    }
+    println!();
+    Ok(())
+}
+
+/// List scheduled jobs (reads schedules.json directly, no daemon needed).
+pub fn run_sched_list() -> Result<()> {
+    let path = crate::config::Config::schedules_path();
+    let store = crate::scheduler::ScheduleStore::load_or_create(path)?;
+    let jobs = store.list();
+    if jobs.is_empty() {
+        println!("No scheduled jobs.");
+        return Ok(());
+    }
+    let name_w = jobs.iter().map(|j| j.name.len()).max().unwrap_or(4).max(4);
+    println!("\x1b[1mScheduled Jobs\x1b[0m");
+    println!();
+    println!("  {:<8}  {:<name_w$}  {:<16}  {:<12}  {}",
+        "ID", "Name", "Schedule", "Status", "Next Run", name_w = name_w);
+    println!("  {}  {}  {}  {}  {}",
+        "─".repeat(8), "─".repeat(name_w), "─".repeat(16), "─".repeat(12), "─".repeat(24));
+    for job in &jobs {
+        let id_short = &job.id[..job.id.len().min(8)];
+        let next = job.kind.next_run()
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "—".to_string());
+        println!("  \x1b[96m{:<8}\x1b[0m  {:<name_w$}  {:<16}  {:<12}  {}",
+            id_short, job.name, job.kind.describe(), job.status.describe(), next,
+            name_w = name_w);
+    }
+    println!();
+    Ok(())
+}
+
+/// Cancel a scheduled job by UUID prefix (reads/writes schedules.json directly).
+pub fn run_sched_cancel(id: String) -> Result<()> {
+    let path = crate::config::Config::schedules_path();
+    let store = crate::scheduler::ScheduleStore::load_or_create(path)?;
+    // Support prefix matching
+    let jobs = store.list();
+    let matched: Vec<&crate::scheduler::ScheduledJob> = jobs.iter()
+        .filter(|j| j.id.starts_with(&id))
+        .collect();
+    match matched.len() {
+        0 => {
+            eprintln!("No job found with ID starting with '{}'", id);
+            std::process::exit(1);
+        }
+        1 => {
+            let full_id = matched[0].id.clone();
+            store.cancel(&full_id)?;
+            println!("Cancelled job {} ({})", full_id, matched[0].name);
+        }
+        _ => {
+            eprintln!("Ambiguous ID prefix '{}' — matches {} jobs. Use more characters.", id, matched.len());
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+/// List leftover de-* tmux windows (from failed scheduled jobs).
+pub fn run_sched_windows() -> Result<()> {
+    // Use tmux list-windows to find de-* windows
+    let output = std::process::Command::new("tmux")
+        .args(["list-windows", "-a", "-F", "#{session_name}:#{window_name}"])
+        .output();
+    match output {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            let de_windows: Vec<&str> = text.lines()
+                .filter(|l| {
+                    let name = l.splitn(2, ':').nth(1).unwrap_or("");
+                    name.starts_with("de-")
+                })
+                .collect();
+            if de_windows.is_empty() {
+                println!("No leftover de-* tmux windows found.");
+            } else {
+                println!("\x1b[1mLeftover scheduled job windows:\x1b[0m");
+                println!();
+                for w in &de_windows {
+                    println!("  \x1b[96m{}\x1b[0m", w);
+                }
+                println!();
+                println!("Kill a window:  tmux kill-window -t <session>:<window>");
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to list tmux windows: {}", e);
+        }
+    }
+    Ok(())
+}
+
 pub async fn run_chat() -> Result<()> {
     let result = run_chat_inner().await;
     if let Err(ref e) = result {
@@ -1076,6 +1185,109 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
                 let credential = read_password_silent("   \x1b[33mPassword:\x1b[0m ").unwrap_or_default();
                 md.reset();
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
+            }
+            Response::PaneSelectPrompt { id, panes } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                println!("  \x1b[33m⚙\x1b[0m \x1b[1mWhich pane should receive this command?\x1b[0m");
+                println!();
+                for (i, pane) in panes.iter().enumerate() {
+                    println!("  \x1b[32m[{}]\x1b[0m  {} — {} — {}",
+                        i + 1, pane.id, pane.current_cmd, pane.summary);
+                }
+                println!();
+                print!("  Select pane \x1b[32m›\x1b[0m ");
+                std::io::stdout().flush()?;
+                let input = stdin.read_line().await.unwrap_or_default();
+                let pane_id = input.trim().parse::<usize>()
+                    .ok()
+                    .and_then(|n| panes.get(n.saturating_sub(1)))
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| panes.first().map(|p| p.id.clone()).unwrap_or_default());
+                md.reset();
+                send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
+            }
+            Response::ScriptWritePrompt { id, script_name, content } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to write script:\x1b[0m \x1b[96m{}\x1b[0m", script_name);
+                println!();
+                // Show up to 40 lines of the script content
+                let lines: Vec<&str> = content.lines().collect();
+                let show = lines.len().min(40);
+                for line in &lines[..show] {
+                    println!("  \x1b[2m{}\x1b[0m", line);
+                }
+                if lines.len() > 40 {
+                    println!("  \x1b[2m… ({} more lines)\x1b[0m", lines.len() - 40);
+                }
+                println!();
+                print!("  Approve writing to ~/.daemoneye/scripts/{}? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", script_name);
+                std::io::stdout().flush()?;
+                let input = stdin.read_line().await.unwrap_or_default();
+                let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
+                md.reset();
+                send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
+            }
+            Response::ScheduleList { jobs } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                if jobs.is_empty() {
+                    println!("  No scheduled jobs.");
+                } else {
+                    println!("  \x1b[1mScheduled Jobs\x1b[0m");
+                    println!();
+                    let id_w = jobs.iter().map(|j| j.id.len().min(8)).max().unwrap_or(8);
+                    let name_w = jobs.iter().map(|j| j.name.len()).max().unwrap_or(4).max(4);
+                    let kind_w = jobs.iter().map(|j| j.kind.len()).max().unwrap_or(8).max(8);
+                    println!("  {:<id_w$}  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
+                        "ID", "Name", "Schedule", "Status", "Next Run",
+                        id_w = id_w, name_w = name_w, kind_w = kind_w);
+                    println!("  {}  {}  {}  {}  {}",
+                        "─".repeat(id_w), "─".repeat(name_w), "─".repeat(kind_w),
+                        "─".repeat(12), "─".repeat(24));
+                    for job in &jobs {
+                        let id_short = &job.id[..job.id.len().min(8)];
+                        let next = job.next_run.as_deref().unwrap_or("—");
+                        println!("  \x1b[96m{:<id_w$}\x1b[0m  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
+                            id_short, job.name, job.kind, job.status, next,
+                            id_w = id_w, name_w = name_w, kind_w = kind_w);
+                    }
+                }
+                println!();
+                md.reset();
+            }
+            Response::ScriptList { scripts } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                if scripts.is_empty() {
+                    println!("  No scripts in ~/.daemoneye/scripts/");
+                } else {
+                    println!("  \x1b[1mScripts\x1b[0m  (~/.daemoneye/scripts/)");
+                    println!();
+                    let name_w = scripts.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
+                    for s in &scripts {
+                        println!("  \x1b[96m{:<name_w$}\x1b[0m  {} bytes", s.name, s.size, name_w = name_w);
+                    }
+                }
+                println!();
+                md.reset();
             }
         }
     }

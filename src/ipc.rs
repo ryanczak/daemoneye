@@ -3,6 +3,37 @@ use serde::{Deserialize, Serialize};
 /// The default path for the DaemonEye IPC socket.
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/daemoneye.sock";
 
+/// A snapshot of a single tmux pane, sent in `PaneSelectPrompt` so the client
+/// can display a numbered list for the user to choose from.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PaneInfo {
+    pub id: String,
+    pub current_cmd: String,
+    pub summary: String,
+}
+
+/// Summary of a scheduled job for the `ScheduleList` response.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScheduleListItem {
+    pub id: String,
+    pub name: String,
+    /// Human-readable schedule kind (e.g. "every 5m", "once at 2026-03-01 12:00 UTC").
+    pub kind: String,
+    /// Human-readable action description.
+    pub action: String,
+    /// Human-readable status.
+    pub status: String,
+    pub last_run: Option<String>,
+    pub next_run: Option<String>,
+}
+
+/// Summary of a script file for the `ScriptList` response.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScriptListItem {
+    pub name: String,
+    pub size: u64,
+}
+
 /// Messages sent from the CLI client to the daemon.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -30,11 +61,15 @@ pub enum Request {
     /// Approve or deny a tool call.
     ToolCallResponse { id: String, approved: bool },
     /// User-supplied credential (password / passphrase) in response to
-    /// `Response::CredentialPrompt`. The daemon pipes it to the subprocess stdin.
+    /// `Response::CredentialPrompt`. The daemon injects it into the background tmux window.
     CredentialResponse { id: String, credential: String },
+    /// User's pane selection in response to `Response::PaneSelectPrompt`.
+    PaneSelectResponse { id: String, pane_id: String },
     /// Re-collect the system context (OS info, memory, processes, history).
     /// Daemon responds with Response::Ok when done.
     Refresh,
+    /// Approve or deny a script write proposed by the AI.
+    ScriptWriteResponse { id: String, approved: bool },
 }
 
 /// Messages sent from the daemon back to the CLI client.
@@ -60,6 +95,16 @@ pub enum Response {
     /// The output captured after an approved tool call completes.
     /// Sent to the client so it can display a dimmed result block.
     ToolResult(String),
+    /// Daemon cannot determine the target pane and needs the user to choose.
+    /// Client displays the list and returns a `Request::PaneSelectResponse`.
+    PaneSelectPrompt { id: String, panes: Vec<PaneInfo> },
+    /// The AI wants to write a script; the client MUST show the content and
+    /// prompt the user for approval, then return `Request::ScriptWriteResponse`.
+    ScriptWritePrompt { id: String, script_name: String, content: String },
+    /// The current list of scheduled jobs.
+    ScheduleList { jobs: Vec<ScheduleListItem> },
+    /// The current list of scripts in `~/.daemoneye/scripts/`.
+    ScriptList { scripts: Vec<ScriptListItem> },
 }
 
 #[cfg(test)]
@@ -241,6 +286,112 @@ mod tests {
         let resp = Response::ToolResult("output here".to_string());
         match roundtrip_resp(&resp) {
             Response::ToolResult(s) => assert_eq!(s, "output here"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_pane_select_response_roundtrip() {
+        let req = Request::PaneSelectResponse { id: "ps_1".to_string(), pane_id: "%3".to_string() };
+        match roundtrip_req(&req) {
+            Request::PaneSelectResponse { id, pane_id } => {
+                assert_eq!(id, "ps_1");
+                assert_eq!(pane_id, "%3");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_pane_select_prompt_roundtrip() {
+        let resp = Response::PaneSelectPrompt {
+            id: "ps_2".to_string(),
+            panes: vec![
+                PaneInfo { id: "%1".to_string(), current_cmd: "bash".to_string(), summary: "idle shell".to_string() },
+                PaneInfo { id: "%3".to_string(), current_cmd: "vim".to_string(), summary: "editing file".to_string() },
+            ],
+        };
+        match roundtrip_resp(&resp) {
+            Response::PaneSelectPrompt { id, panes } => {
+                assert_eq!(id, "ps_2");
+                assert_eq!(panes.len(), 2);
+                assert_eq!(panes[0].id, "%1");
+                assert_eq!(panes[0].current_cmd, "bash");
+                assert_eq!(panes[1].id, "%3");
+                assert_eq!(panes[1].current_cmd, "vim");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_script_write_response_roundtrip() {
+        let req = Request::ScriptWriteResponse { id: "sw_1".to_string(), approved: true };
+        match roundtrip_req(&req) {
+            Request::ScriptWriteResponse { id, approved } => {
+                assert_eq!(id, "sw_1");
+                assert!(approved);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_script_write_prompt_roundtrip() {
+        let resp = Response::ScriptWritePrompt {
+            id: "sw_2".to_string(),
+            script_name: "check-disk.sh".to_string(),
+            content: "#!/bin/bash\ndf -h".to_string(),
+        };
+        match roundtrip_resp(&resp) {
+            Response::ScriptWritePrompt { id, script_name, content } => {
+                assert_eq!(id, "sw_2");
+                assert_eq!(script_name, "check-disk.sh");
+                assert!(content.contains("df -h"));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_schedule_list_roundtrip() {
+        let resp = Response::ScheduleList {
+            jobs: vec![
+                ScheduleListItem {
+                    id: "job-1".to_string(),
+                    name: "disk-check".to_string(),
+                    kind: "every 5m".to_string(),
+                    action: "cmd: df -h".to_string(),
+                    status: "pending".to_string(),
+                    last_run: None,
+                    next_run: Some("2026-03-01 12:00 UTC".to_string()),
+                }
+            ],
+        };
+        match roundtrip_resp(&resp) {
+            Response::ScheduleList { jobs } => {
+                assert_eq!(jobs.len(), 1);
+                assert_eq!(jobs[0].name, "disk-check");
+                assert_eq!(jobs[0].next_run, Some("2026-03-01 12:00 UTC".to_string()));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_script_list_roundtrip() {
+        let resp = Response::ScriptList {
+            scripts: vec![
+                ScriptListItem { name: "check-disk.sh".to_string(), size: 42 },
+                ScriptListItem { name: "monitor.sh".to_string(), size: 128 },
+            ],
+        };
+        match roundtrip_resp(&resp) {
+            Response::ScriptList { scripts } => {
+                assert_eq!(scripts.len(), 2);
+                assert_eq!(scripts[0].name, "check-disk.sh");
+                assert_eq!(scripts[0].size, 42);
+            }
             _ => panic!("wrong variant"),
         }
     }

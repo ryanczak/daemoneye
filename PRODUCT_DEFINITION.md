@@ -33,7 +33,9 @@ DaemonEye elevates the command-line experience by embedding AI agents like Googl
 - **Instant Activation**: Summon an AI agent instantly via a tmux keybinding or CLI command. This opens an interactive AI session in a dynamically positioned tmux pane.
 - **AI-Powered Capabilities**:
   - **Pair-Programming & Troubleshooting**: The AI doesn't just suggest commands; it uses Tool Calling to propose executing commands directly in your active tmux session. Each proposed command presents a three-option approval prompt — approve once, approve the entire class of commands for the session, or deny. This session-level approval (independent for regular and sudo command classes) eliminates repetitive prompts in trusted automated sequences while keeping privilege-escalation commands under separate control.
-  - **Dual Execution Modes**: The AI chooses between two command execution modes. *Background mode* runs the command as a daemon subprocess — capturing output and returning it to the AI for analysis and the summarized to the chat for visibility. *Foreground mode* injects the command directly into your active terminal pane, making it visible and interactive. The AI knows your daemon's hostname and whether your pane is SSH'd to a remote machine, and selects the mode accordingly.
+  - **Dual Execution Modes**: The AI chooses between two command execution modes. *Background mode* runs the command in a dedicated tmux window (`de-bg-*`) on the daemon host using the user's configured shell — capturing output via `capture-pane` and returning it to the AI; the window is always cleaned up after the result is captured. *Foreground mode* injects the command directly into your active terminal pane, making it visible and interactive. The AI knows your daemon's hostname and whether your pane is SSH'd to a remote machine, and selects the mode accordingly.
+  - **Command Scheduler & Watchdog**: The AI can schedule commands to run once at a specific UTC time or repeatedly on an interval. Watchdog jobs run a command on a schedule and pass the output to the AI for analysis using a named runbook — triggering alerts when issues are detected. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Alerts can be forwarded to an external notification command via `[notifications] on_alert`.
+  - **Scripts Directory**: The AI can author, update, and list reusable shell scripts in `~/.daemoneye/scripts/`. Script writes require a user approval step that shows the full content before writing. Scripts can be referenced by name in scheduled jobs.
   - **Sudo Integration**: Commands requiring elevated privileges are handled gracefully in both modes. Background sudo prompts appear in the chat interface with echo-disabled password input. Foreground sudo commands notify you to type your password in the terminal pane.
   - **Task Automation & Fleet Management**: Generate scripts or run on-the-fly automation commands to manage single host configurations or automated fleet deployments. The AI agent acts as an expert sysadmin.
   - **Security Auditing**: Have the AI agent analyze system states, running processes, or security scan outputs to recommend and automatically apply remediation solutions.
@@ -62,7 +64,15 @@ DaemonEye elevates the command-line experience by embedding AI agents like Googl
 2. They open the AI agent pane and ask: *"exexcute an ssh-keyscan loop to update my known_hosts for the 15 web servers listed in `fleet.txt`, then write a command to update Nginx on all of them."*
 3. The AI agent provides the exact bash loops and the sysadmin executes them. The sysadmin can also have the AI agent execute the commands for them.
 
-### Workflow 3: Security Remediation
+### Workflow 3: Watchdog Monitoring
+
+1. A user asks the AI: *"Set up a watchdog that checks disk usage every 10 minutes using the disk-usage runbook."*
+2. The AI creates a scheduled job (`de-<id>` window) that runs `df -h` on a 10-minute interval, referencing the `disk-usage` runbook.
+3. When the job fires, the daemon captures the output, passes it to the AI along with the runbook's alert criteria, and the AI analyzes it.
+4. If disk usage exceeds the threshold defined in the runbook, the AI emits a `SystemMsg` notification in the chat pane. If `[notifications] on_alert` is configured (e.g. `notify-send`), the alert is also sent there.
+5. On success the window is cleaned up; on failure it is left in place for inspection.
+
+### Workflow 4: Security Remediation
 
 1. The user runs a vulnerability scanner (`lynis` or `chkrootkit`) on a server.
 2. The output is massive. The user hits the AI agent keybinding: *"Summarize the critical vulnerabilities found and generate the commands to patch them."*

@@ -11,6 +11,8 @@ pub struct PaneState {
     pub buffer: String,
     /// Human-readable one-line summary derived from `buffer` by heuristics.
     pub summary: String,
+    /// Foreground process name as reported by `#{pane_current_command}`.
+    pub current_cmd: String,
     /// Wall-clock time of the most recent successful `capture-pane` call.
     pub last_updated: std::time::Instant,
 }
@@ -50,13 +52,16 @@ impl SessionCache {
         for id in pane_ids {
             // Capture the last 100 lines for now
             if let Ok(content) = tmux::capture_pane(&id, 100) {
+                let current_cmd = tmux::pane_current_command(&id).unwrap_or_default();
                 let mut panes = self.panes.write().unwrap();
                 let entry = panes.entry(id.clone()).or_insert_with(|| PaneState {
                     buffer: String::new(),
                     summary: String::new(),
+                    current_cmd: String::new(),
                     last_updated: std::time::Instant::now(),
                 });
-                
+
+                entry.current_cmd = current_cmd;
                 if entry.buffer != content {
                     entry.buffer = content;
                     entry.summary = self.summarize(&entry.buffer);
@@ -138,8 +143,9 @@ impl SessionCache {
         bg.sort_by_key(|(id, _)| id.as_str());
         for (id, state) in bg {
             out.push_str(&format!(
-                "[BACKGROUND PANE {}]: {}\n",
+                "[BACKGROUND PANE {} — {}]: {}\n",
                 id,
+                state.current_cmd,
                 mask_sensitive(&state.summary),
             ));
         }
@@ -233,11 +239,13 @@ mod tests {
             panes.insert("%3".to_string(), PaneState {
                 buffer: "foo".to_string(),
                 summary: "summary3".to_string(),
+                current_cmd: String::new(),
                 last_updated: std::time::Instant::now(),
             });
             panes.insert("%1".to_string(), PaneState {
                 buffer: "bar".to_string(),
                 summary: "summary1".to_string(),
+                current_cmd: String::new(),
                 last_updated: std::time::Instant::now(),
             });
         }
@@ -255,6 +263,7 @@ mod tests {
             panes.insert("%5".to_string(), PaneState {
                 buffer: "active content".to_string(),
                 summary: "active summary".to_string(),
+                current_cmd: String::new(),
                 last_updated: std::time::Instant::now(),
             });
         }
