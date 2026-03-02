@@ -1453,7 +1453,7 @@ fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) {
     let border_bottom = height.saturating_sub(1).max(1);
     let inner = width.saturating_sub(2);
 
-    let title_left  = "─ DaemonEye  AI  Agent ";
+    let title_left  = "─ DaemonEye ───────────";
     let title_right = format!(" up {} ─", fmt_uptime(start.elapsed()));
     let anchors     = visual_len(title_left) + visual_len(&title_right);
     let top = if inner >= anchors {
