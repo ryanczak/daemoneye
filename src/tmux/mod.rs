@@ -349,11 +349,14 @@ pub fn create_job_window(session: &str, name: &str) -> Result<String> {
         .args(["kill-window", "-t", &format!("{}:{}", session, name)])
         .output();
 
+    // Use "session:" (trailing colon) so tmux picks the next available window
+    // index rather than defaulting to 0 and colliding with existing windows.
+    let target = format!("{}:", session);
     let output = Command::new("tmux")
         .args([
             "new-window", "-d",
             "-n", name,
-            "-t", session,
+            "-t", &target,
             "-P", "-F", "#{pane_id}",
         ])
         .output()?;

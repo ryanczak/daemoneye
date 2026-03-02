@@ -704,11 +704,12 @@ async fn open_chat_pane(session_name: String) {
         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
         .unwrap_or(false);
 
+    let zoomed_target = format!("{}:", session_name);
     let result = if zoomed {
         std::process::Command::new("tmux")
             .args([
                 "new-window",
-                "-t", &session_name,
+                "-t", &zoomed_target,
                 "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
                 &chat_cmd,
             ])
