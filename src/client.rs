@@ -415,7 +415,7 @@ pub fn run_setup() -> Result<()> {
 
     let service_content = "\
 [Unit]
-Description=DaemonEye AI Tmux Daemon
+Description=DaemonEye Tmux Daemon
 After=network.target
 
 [Service]
@@ -1445,7 +1445,7 @@ fn fmt_uptime(elapsed: std::time::Duration) -> String {
 /// The top border carries the app name and current uptime; the bottom border
 /// is plain.  Uses DEC save/restore cursor so it is safe to call at any point
 /// without disturbing the scroll-region cursor position.
-///   row (height-3): ╭─ DaemonEye  AI  Agent ──────────── up 4m 12s ─╮
+///   row (height-3): ╭─ DaemonEye ─────────────────────── up 4m 12s ─╮
 ///   row (height-1): ╰────────────────────────────────────────────╯
 fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) {
     use std::io::Write;
