@@ -1,7 +1,141 @@
 pub mod cache;
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::process::Command;
+
+// ---------------------------------------------------------------------------
+// Rich pane metadata (P1 + P2 + P3)
+// ---------------------------------------------------------------------------
+
+/// Metadata for a single tmux pane, fetched in one `list-panes` call.
+pub struct RichPaneInfo {
+    pub pane_id: String,
+    pub current_cmd: String,
+    /// Absolute path of the shell's working directory (`#{pane_current_path}`).
+    pub current_path: String,
+    /// Terminal title set by the running application via OSC sequences (`#{pane_title}`).
+    pub title: String,
+    /// True when the pane's foreground process has exited.
+    pub dead: bool,
+    /// Exit code of the foreground process if `dead` is true.
+    pub dead_status: Option<i32>,
+}
+
+/// List all panes in the session with rich metadata using a single tmux call.
+///
+/// Fields are tab-separated in the format string.  Tab characters cannot appear
+/// in pane paths or command names, making `\t` a safe delimiter.
+pub fn list_panes_detailed(session: &str) -> Result<Vec<RichPaneInfo>> {
+    let output = Command::new("tmux")
+        .args([
+            "list-panes", "-s", "-t", session, "-F",
+            "#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}",
+        ])
+        .output()?;
+
+    if !output.status.success() {
+        anyhow::bail!("Failed to list panes for session '{}'", session);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut panes = Vec::new();
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.splitn(6, '\t').collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        let dead = fields[4] == "1";
+        let dead_status = if dead {
+            fields.get(5).and_then(|s| s.trim().parse::<i32>().ok())
+        } else {
+            None
+        };
+        panes.push(RichPaneInfo {
+            pane_id:      fields[0].to_string(),
+            current_cmd:  fields[1].to_string(),
+            current_path: fields[2].to_string(),
+            title:        fields[3].to_string(),
+            dead,
+            dead_status,
+        });
+    }
+    Ok(panes)
+}
+
+// ---------------------------------------------------------------------------
+// Session environment (P5)
+// ---------------------------------------------------------------------------
+
+/// Fetch the tmux session environment and return high-signal variables.
+///
+/// Only variables on the allowlist are returned.  Values are passed back
+/// as-is; callers should run them through `mask_sensitive` before sending to
+/// the AI.  Lines prefixed with `-` (unset variables) are skipped.
+pub fn session_environment(session: &str) -> Result<HashMap<String, String>> {
+    const ALLOWLIST: &[&str] = &[
+        // Cloud / infra
+        "AWS_PROFILE", "AWS_DEFAULT_REGION", "AWS_REGION",
+        "KUBECONFIG", "KUBE_CONTEXT", "KUBECTL_CONTEXT",
+        "VAULT_ADDR",
+        "DOCKER_HOST", "DOCKER_CONTEXT",
+        // App environment tier
+        "ENVIRONMENT", "APP_ENV", "NODE_ENV", "RAILS_ENV", "RACK_ENV",
+        // Language runtimes
+        "VIRTUAL_ENV", "CONDA_DEFAULT_ENV",
+        "GOPATH", "GOENV",
+        "JAVA_HOME",
+        // Locale
+        "LANG", "LC_ALL",
+    ];
+
+    let output = Command::new("tmux")
+        .args(["show-environment", "-t", session])
+        .output()?;
+
+    // Not a hard error if unavailable (e.g. session not found).
+    if !output.status.success() {
+        return Ok(HashMap::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut env = HashMap::new();
+    for line in stdout.lines() {
+        if line.starts_with('-') {
+            continue; // variable unset in this session
+        }
+        if let Some(eq) = line.find('=') {
+            let key = &line[..eq];
+            let val = &line[eq + 1..];
+            if ALLOWLIST.contains(&key) {
+                env.insert(key.to_string(), val.to_string());
+            }
+        }
+    }
+    Ok(env)
+}
+
+// ---------------------------------------------------------------------------
+// Pane dead-status (P7)
+// ---------------------------------------------------------------------------
+
+/// Query the exit status of the foreground process in a pane.
+///
+/// Returns `Some(code)` if the pane's foreground process has exited, `None`
+/// if the pane is still alive or the status cannot be determined.
+pub fn pane_dead_status(pane_id: &str) -> Option<i32> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_dead}\t#{pane_dead_status}"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&output.stdout);
+    let mut parts = s.trim().splitn(2, '\t');
+    let dead = parts.next()? == "1";
+    if !dead {
+        return None;
+    }
+    parts.next().and_then(|s| s.parse::<i32>().ok())
+}
 
 /// Check if a tmux session exists.
 pub fn has_session(session_name: &str) -> bool {

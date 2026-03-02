@@ -221,9 +221,17 @@ async fn run_background_in_window(
     }
 
     let raw = capture_until_sentinel(&pane_id, Duration::from_secs(300)).await;
-    let _ = tmux::kill_job_window(session, &win_name);
 
-    let (clean, exit_code) = parse_exit_sentinel(&raw);
+    // P7: if the sentinel was never written (e.g. the process was killed or
+    // the window died before the timeout), fall back to pane_dead_status.
+    let (clean, exit_code) = if raw.is_empty() {
+        let code = tmux::pane_dead_status(&pane_id).unwrap_or(124);
+        (String::new(), code)
+    } else {
+        parse_exit_sentinel(&raw)
+    };
+
+    let _ = tmux::kill_job_window(session, &win_name);
     let normalized = normalize_output(&clean);
     let body = if normalized.is_empty() {
         "(no output)".to_string()
@@ -396,7 +404,16 @@ async fn run_scheduled_job(
     }
 
     let raw = capture_until_sentinel(&pane_id, Duration::from_secs(300)).await;
-    let (clean, exit_code) = parse_exit_sentinel(&raw);
+
+    // P7: if the sentinel never appeared (killed process / window died),
+    // query pane_dead_status directly rather than reporting a false success.
+    let (clean, exit_code) = if raw.is_empty() {
+        let code = tmux::pane_dead_status(&pane_id).unwrap_or(124);
+        (String::new(), code)
+    } else {
+        parse_exit_sentinel(&raw)
+    };
+
     let output = normalize_output(&clean);
 
     let success = exit_code == 0;

@@ -4,6 +4,7 @@ use anyhow::Result;
 use crate::tmux;
 use crate::ai::filter::mask_sensitive;
 
+
 /// Cached state for a single tmux pane, refreshed every 2 seconds.
 #[derive(Debug, Clone)]
 pub struct PaneState {
@@ -13,6 +14,10 @@ pub struct PaneState {
     pub summary: String,
     /// Foreground process name as reported by `#{pane_current_command}`.
     pub current_cmd: String,
+    /// Current working directory of the shell (`#{pane_current_path}`).
+    pub current_path: String,
+    /// Terminal title set by the running application via OSC (`#{pane_title}`).
+    pub pane_title: String,
     /// Wall-clock time of the most recent successful `capture-pane` call.
     pub last_updated: std::time::Instant,
 }
@@ -28,6 +33,8 @@ pub struct SessionCache {
     pub panes: RwLock<HashMap<String, PaneState>>,
     /// The currently-active pane ID as reported by `tmux display-message`.
     pub active_pane: RwLock<Option<String>>,
+    /// High-signal tmux session environment variables (allowlisted subset).
+    pub environment: RwLock<HashMap<String, String>>,
 }
 
 impl SessionCache {
@@ -36,32 +43,42 @@ impl SessionCache {
             session_name: session_name.to_string(),
             panes: RwLock::new(HashMap::new()),
             active_pane: RwLock::new(None),
+            environment: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Refresh the cache by listing panes and capturing their content.
+    /// Refresh the cache.
+    ///
+    /// Uses a single `list-panes` call to fetch all pane metadata (P3), then
+    /// issues one `capture-pane` per pane for buffer content.  Session
+    /// environment is refreshed on each cycle (P5).
     pub fn refresh(&self) -> Result<()> {
+        // Active pane.
         let active = tmux::get_active_pane(&self.session_name)?;
         {
             let mut active_lock = self.active_pane.write().unwrap();
             *active_lock = Some(active);
         }
 
-        let pane_ids = tmux::list_panes(&self.session_name)?;
-        
-        for id in pane_ids {
-            // Capture the last 100 lines for now
-            if let Ok(content) = tmux::capture_pane(&id, 100) {
-                let current_cmd = tmux::pane_current_command(&id).unwrap_or_default();
+        // All pane metadata in one tmux call (P1 + P2 + P3).
+        let rich_panes = tmux::list_panes_detailed(&self.session_name)?;
+
+        for info in rich_panes {
+            if let Ok(content) = tmux::capture_pane(&info.pane_id, 100) {
                 let mut panes = self.panes.write().unwrap();
-                let entry = panes.entry(id.clone()).or_insert_with(|| PaneState {
+                let entry = panes.entry(info.pane_id.clone()).or_insert_with(|| PaneState {
                     buffer: String::new(),
                     summary: String::new(),
                     current_cmd: String::new(),
+                    current_path: String::new(),
+                    pane_title: String::new(),
                     last_updated: std::time::Instant::now(),
                 });
 
-                entry.current_cmd = current_cmd;
+                entry.current_cmd  = info.current_cmd;
+                entry.current_path = info.current_path;
+                entry.pane_title   = info.title;
+
                 if entry.buffer != content {
                     entry.buffer = content;
                     entry.summary = self.summarize(&entry.buffer);
@@ -69,7 +86,15 @@ impl SessionCache {
                 }
             }
         }
-        
+
+        // Session environment (P5) — best-effort; ignore errors.
+        if let Ok(env) = tmux::session_environment(&self.session_name) {
+            if !env.is_empty() {
+                let mut env_lock = self.environment.write().unwrap();
+                *env_lock = env;
+            }
+        }
+
         Ok(())
     }
 
@@ -119,22 +144,45 @@ impl SessionCache {
     /// The source pane (the user's working pane, identified by `DAEMONEYE_SOURCE_PANE`) is
     /// captured at full depth and tagged `[ACTIVE PANE]` so the AI immediately knows
     /// which pane is the user's current focus.  All other cached panes are included as
-    /// brief summaries tagged `[BACKGROUND PANE]`.
+    /// brief summaries tagged `[BACKGROUND PANE]` with CWD and terminal title.
+    /// A `[SESSION ENVIRONMENT]` block is prepended when any high-signal env vars are set.
     pub fn get_labeled_context(&self, source_pane: Option<&str>) -> String {
         let mut out = String::new();
+
+        // Session environment block (P5) — prepend if any vars are present.
+        {
+            let env = self.environment.read().unwrap_or_else(|e| e.into_inner());
+            if !env.is_empty() {
+                let mut pairs: Vec<_> = env.iter().collect();
+                pairs.sort_by_key(|(k, _)| k.as_str());
+                let line = pairs
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, mask_sensitive(v)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                out.push_str(&format!("[SESSION ENVIRONMENT] {}\n", line));
+            }
+        }
 
         // Active pane — full capture, explicitly labelled.
         if let Some(pane_id) = source_pane {
             let content = crate::tmux::capture_pane(pane_id, 200)
                 .unwrap_or_else(|_| "(pane unavailable)".to_string());
+            // Include CWD for the active pane from cache if available.
+            let cwd = {
+                let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
+                panes.get(pane_id).map(|p| p.current_path.clone()).unwrap_or_default()
+            };
+            let cwd_label = if cwd.is_empty() { String::new() } else { format!(" | cwd: {}", cwd) };
             out.push_str(&format!(
-                "[ACTIVE PANE {}]\n{}\n",
+                "[ACTIVE PANE {}{}]\n{}\n",
                 pane_id,
+                cwd_label,
                 mask_sensitive(&content),
             ));
         }
 
-        // Background panes — summaries only, sorted for deterministic ordering.
+        // Background panes — summaries with cmd, cwd, and title, sorted for deterministic ordering.
         let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
         let mut bg: Vec<_> = panes
             .iter()
@@ -142,10 +190,22 @@ impl SessionCache {
             .collect();
         bg.sort_by_key(|(id, _)| id.as_str());
         for (id, state) in bg {
+            let cwd_part = if state.current_path.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", state.current_path)
+            };
+            let title_part = if state.pane_title.is_empty() || state.pane_title == state.current_cmd {
+                String::new()
+            } else {
+                format!(" ({})", mask_sensitive(&state.pane_title))
+            };
             out.push_str(&format!(
-                "[BACKGROUND PANE {} — {}]: {}\n",
+                "[BACKGROUND PANE {}{}{}{}]: {}\n",
                 id,
-                state.current_cmd,
+                format!(" — {}", state.current_cmd),
+                cwd_part,
+                title_part,
                 mask_sensitive(&state.summary),
             ));
         }
@@ -240,12 +300,16 @@ mod tests {
                 buffer: "foo".to_string(),
                 summary: "summary3".to_string(),
                 current_cmd: String::new(),
+                current_path: String::new(),
+                pane_title: String::new(),
                 last_updated: std::time::Instant::now(),
             });
             panes.insert("%1".to_string(), PaneState {
                 buffer: "bar".to_string(),
                 summary: "summary1".to_string(),
                 current_cmd: String::new(),
+                current_path: String::new(),
+                pane_title: String::new(),
                 last_updated: std::time::Instant::now(),
             });
         }
@@ -264,6 +328,8 @@ mod tests {
                 buffer: "active content".to_string(),
                 summary: "active summary".to_string(),
                 current_cmd: String::new(),
+                current_path: String::new(),
+                pane_title: String::new(),
                 last_updated: std::time::Instant::now(),
             });
         }
