@@ -43,6 +43,7 @@ The polling loop runs every 2 seconds; foreground completion is detected via `/p
 **What**: Include `#{pane_title}` in `list-panes -F`. This is the terminal title string set by running programs via OSC escape sequences.
 
 **Why**: Many programs set the terminal title to something semantically rich:
+
 - `vim` sets it to the filename being edited
 - `ssh` sets it to `user@host`
 - `k9s` / `kubectl` set it to the cluster/namespace
@@ -85,6 +86,7 @@ This is a free signal that directly describes what the pane is doing without any
 **What**: Call `tmux show-environment -t session` once per session (or per refresh) and include high-signal variables in the AI context.
 
 **Why**: Users frequently set environment variables in their tmux session that are invisible to DaemonEye but directly relevant to what the AI should do:
+
 - `AWS_PROFILE` / `AWS_DEFAULT_REGION` — which cloud account is active
 - `KUBECONFIG` / `KUBE_CONTEXT` — which k8s cluster
 - `VAULT_ADDR` / `VAULT_TOKEN` — Vault endpoint
@@ -117,7 +119,7 @@ or more precisely, use `pane-died` on a wrapper pane, or `after-send-keys` to tr
 
 ---
 
-### P7 — `pane_dead_status` for instant failure awareness
+### P7 — `pane_dead_status` for instant failure awareness (COMPLETED)
 
 **What**: After a foreground command completes (via P6 hook or existing polling), query `#{pane_dead_status}` to get the exit code without parsing sentinel output.
 
@@ -136,10 +138,12 @@ or more precisely, use `pane-died` on a wrapper pane, or `after-send-keys` to tr
 **Why**: DaemonEye currently only observes panes it is explicitly asked about. A user might ask "let me know when the build finishes" — today the daemon would need to poll. With `alert-activity`, tmux itself watches and notifies. Similarly, `alert-silence` (a pane went quiet after being active) is a natural "command finished" signal.
 
 **How**:
+
 ```
 tmux set-option -t session:window monitor-activity on
 tmux set-hook -t session alert-activity "run-shell 'daemoneye-notify activity #{pane_id}'"
 ```
+
 The daemon exposes a lightweight IPC endpoint (or listens on a tmpfile/pipe) for these notifications and can relay them to the active chat session as `SystemMsg` events.
 
 **Complexity**: Medium — requires hook registration/cleanup lifecycle, new notification path.

@@ -185,19 +185,7 @@ pub fn get_active_pane(session_name: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// List all panes in the session using `#{pane_id}` format (e.g. `%3`, `%5`).
-pub fn list_panes(session_name: &str) -> Result<Vec<String>> {
-    let output = Command::new("tmux")
-        .args(["list-panes", "-s", "-t", session_name, "-F", "#{pane_id}"])
-        .output()?;
-        
-    if !output.status.success() {
-        anyhow::bail!("Failed to list panes for session '{}'", session_name);
-    }
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.lines().map(|s| s.to_string()).collect())
-}
+
 
 /// Capture the content of a specific pane.
 pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
@@ -444,6 +432,18 @@ pub fn unset_monitor_activity(pane_id: &str) -> Result<()> {
         .output()?;
     if !output.status.success() {
         anyhow::bail!("Failed to unset monitor-activity for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+/// Set the `remain-on-exit` option for a specific pane.
+pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {
+    let value = if enable { "on" } else { "off" };
+    let output = Command::new("tmux")
+        .args(["set-option", "-t", pane_id, "remain-on-exit", value])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to set remain-on-exit for pane '{}'", pane_id);
     }
     Ok(())
 }

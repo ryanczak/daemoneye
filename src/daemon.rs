@@ -84,16 +84,7 @@ fn command_has_sudo(cmd: &str) -> bool {
     re.is_match(cmd)
 }
 
-/// Rewrite a command that starts with `sudo` to add `-S -p ""` so the
-/// password can be piped in via stdin without an interactive prompt.
-fn inject_sudo_flags(cmd: &str) -> String {
-    let t = cmd.trim();
-    if let Some(rest) = t.strip_prefix("sudo ") {
-        format!(r#"sudo -S -p "" {}"#, rest)
-    } else {
-        cmd.to_string()
-    }
-}
+
 
 /// Map a process exit code to a human-readable label for AI consumption.
 /// Covers the most common POSIX exit codes; anything else becomes "non-zero exit".
@@ -155,36 +146,21 @@ fn normalize_output(s: &str) -> String {
 // tmux-window background execution
 // ---------------------------------------------------------------------------
 
-/// Strip the `__DE_EXIT__<N>` sentinel from the captured pane output.
-/// Returns `(clean_output, exit_code)`.
-fn parse_exit_sentinel(output: &str) -> (String, i32) {
-    let lines: Vec<&str> = output.lines().collect();
-    if let Some(pos) = lines.iter().rposition(|l| l.contains("__DE_EXIT__")) {
-        let exit_code = lines[pos]
-            .split("__DE_EXIT__")
-            .nth(1)
-            .and_then(|s| s.trim().parse::<i32>().ok())
-            .unwrap_or(0);
-        let clean = lines[..pos].join("\n");
-        return (clean, exit_code);
-    }
-    (output.to_string(), 0)
-}
-
-/// Poll a tmux pane until its output contains `__DE_EXIT__` or the timeout expires.
-async fn capture_until_sentinel(pane_id: &str, timeout: Duration) -> String {
+/// Poll a tmux pane until its output is marked dead or the timeout expires.
+/// Returns `Some(exit_code)` if the pane died, or `None` if it timed out.
+async fn poll_until_dead(pane_id: &str, timeout: Duration) -> Option<i32> {
     let poll = Duration::from_millis(200);
     let mut waited = Duration::ZERO;
     loop {
         tokio::time::sleep(poll).await;
         waited += poll;
-        if let Ok(snap) = tmux::capture_pane(pane_id, 5000) {
-            if snap.contains("__DE_EXIT__") {
-                return snap;
-            }
+        
+        if let Some(exit_code) = tmux::pane_dead_status(pane_id) {
+            return Some(exit_code);
         }
+        
         if waited >= timeout {
-            return String::new();
+            return None;
         }
     }
 }
@@ -202,12 +178,15 @@ async fn run_background_in_window(
 ) -> String {
     let id_short = &tool_id[..tool_id.len().min(8)];
     let win_name = format!("de-bg-{}", id_short);
-    let wrapped = format!("{}; echo '__DE_EXIT__'$?", cmd);
+    let wrapped = format!("{}; exit $?", cmd);
 
     let pane_id = match tmux::create_job_window(session, &win_name) {
         Ok(p) => p,
         Err(e) => return format!("Failed to create background window: {}", e),
     };
+    
+    // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
+    let _ = tmux::set_remain_on_exit(&pane_id, true);
 
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
         let _ = tmux::kill_job_window(session, &win_name);
@@ -229,25 +208,17 @@ async fn run_background_in_window(
                 let _ = tmux::send_keys(&pane_id, cred);
                 break;
             }
-            if waited >= prompt_timeout || snap.contains("__DE_EXIT__") {
+            if waited >= prompt_timeout || tmux::pane_dead_status(&pane_id).is_some() {
                 break;
             }
         }
     }
 
-    let raw = capture_until_sentinel(&pane_id, Duration::from_secs(300)).await;
-
-    // P7: if the sentinel was never written (e.g. the process was killed or
-    // the window died before the timeout), fall back to pane_dead_status.
-    let (clean, exit_code) = if raw.is_empty() {
-        let code = tmux::pane_dead_status(&pane_id).unwrap_or(124);
-        (String::new(), code)
-    } else {
-        parse_exit_sentinel(&raw)
-    };
+    let exit_code = poll_until_dead(&pane_id, Duration::from_secs(300)).await.unwrap_or(124);
+    let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
 
     let _ = tmux::kill_job_window(session, &win_name);
-    let normalized = normalize_output(&clean);
+    let normalized = normalize_output(&raw);
     let body = if normalized.is_empty() {
         "(no output)".to_string()
     } else {
@@ -407,7 +378,7 @@ async fn run_scheduled_job(
         },
     };
 
-    let wrapped = format!("{}; echo '__DE_EXIT__'$?", cmd);
+    let wrapped = format!("{}; exit $?", cmd);
 
     let pane_id = match tmux::create_job_window(&session, &win_name) {
         Ok(p) => p,
@@ -418,6 +389,9 @@ async fn run_scheduled_job(
             return;
         }
     };
+    
+    // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
+    let _ = tmux::set_remain_on_exit(&pane_id, true);
 
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
         let msg = format!("Scheduled job '{}': failed to send keys: {}", job.name, e);
@@ -426,18 +400,10 @@ async fn run_scheduled_job(
         return;
     }
 
-    let raw = capture_until_sentinel(&pane_id, Duration::from_secs(300)).await;
+    let exit_code = poll_until_dead(&pane_id, Duration::from_secs(300)).await.unwrap_or(124);
+    let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
 
-    // P7: if the sentinel never appeared (killed process / window died),
-    // query pane_dead_status directly rather than reporting a false success.
-    let (clean, exit_code) = if raw.is_empty() {
-        let code = tmux::pane_dead_status(&pane_id).unwrap_or(124);
-        (String::new(), code)
-    } else {
-        parse_exit_sentinel(&raw)
-    };
-
-    let output = normalize_output(&clean);
+    let output = normalize_output(&raw);
 
     let success = exit_code == 0;
 
@@ -1772,26 +1738,7 @@ mod tests {
         assert_eq!(classify_exit_code(255), "non-zero exit");
     }
 
-    // ── inject_sudo_flags ────────────────────────────────────────────────────
 
-    #[test]
-    fn inject_sudo_flags_rewrites_sudo_prefix() {
-        let out = inject_sudo_flags("sudo apt update");
-        assert!(out.starts_with("sudo -S -p \"\""));
-        assert!(out.contains("apt update"));
-    }
-
-    #[test]
-    fn inject_sudo_flags_leaves_non_sudo_unchanged() {
-        let cmd = "ls -la /etc";
-        assert_eq!(inject_sudo_flags(cmd), cmd);
-    }
-
-    #[test]
-    fn inject_sudo_flags_trims_leading_whitespace() {
-        let out = inject_sudo_flags("  sudo reboot");
-        assert!(out.starts_with("sudo -S -p \"\""));
-    }
 
     // ── command_has_sudo ─────────────────────────────────────────────────────
 
