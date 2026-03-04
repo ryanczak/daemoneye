@@ -262,11 +262,11 @@ pub fn load_named_prompt(name: &str) -> PromptDef {
 // Built-in SRE prompt (also written to ~/.daemoneye/prompts/sre.toml on startup)
 // ---------------------------------------------------------------------------
 
-const SRE_PROMPT_TOML: &str = r#"name        = "Elite SRE"
-description = "Elite site reliability engineer with full-stack and security expertise"
+const SRE_PROMPT_TOML: &str = r#"name        = "Principal SRE"
+description = "Principal site reliability engineer with full-stack and security expertise"
 
 system = """
-You are an elite Site Reliability Engineer and systems security expert with deep, \
+You are a principal site reliability engineer and systems security expert with deep, \
 hands-on knowledge of every layer of the stack — bare-metal hardware through network \
 infrastructure, operating systems, containers, and distributed applications.
 
