@@ -702,6 +702,19 @@ pub fn run_sched_windows() -> Result<()> {
     Ok(())
 }
 
+pub async fn run_notify_activity(pane_id: String) -> Result<()> {
+    match connect().await {
+        Err(_) => Ok(()), // Silently abort if daemon is not running (e.g. hook fires but daemon was killed)
+        Ok(stream) => {
+            let (rx, mut tx) = stream.into_split();
+            let mut rx = BufReader::new(rx);
+            send_request(&mut tx, Request::NotifyActivity { pane_id }).await?;
+            let _ = recv(&mut rx).await; // Consume Response::Ok
+            Ok(())
+        }
+    }
+}
+
 pub async fn run_chat() -> Result<()> {
     let result = run_chat_inner().await;
     if let Err(ref e) = result {

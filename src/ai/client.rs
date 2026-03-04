@@ -253,7 +253,7 @@ fn get_tool_definition() -> Value {
         },
         {
             "name": "watch_pane",
-            "description": "Passively monitor a background tmux pane for output changes. Blocks until the pane content changes or timeout_secs elapses, then returns the pane's updated content. Use this to wait for a long-running process to produce output (e.g. a build, test run, or log tail) without polling manually.",
+            "description": "Passively monitor a background tmux pane for output changes. The tool returns immediately, and an out-of-band [System] Activity detected message will be injected into this chat session when the pane produces new output. Use this instead of polling to be notified when a long-running process (e.g. build, test, log tail) finishes or produces new output.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -364,7 +364,7 @@ fn get_openai_tool_definition() -> Value {
             "type": "function",
             "function": {
                 "name": "watch_pane",
-                "description": "Monitor a background tmux pane for output changes. Returns when activity is detected or timeout expires.",
+                "description": "Passively monitor a background tmux pane for output changes. The monitoring runs asynchronously and notifies you out-of-band via a [System] chat message when activity occurs.",
                 "parameters": {
                     "type": "object",
                     "properties": {

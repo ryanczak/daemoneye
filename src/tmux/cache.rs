@@ -181,9 +181,10 @@ impl SessionCache {
                 let count = wins.len();
                 let parts: Vec<String> = wins.iter().map(|w| {
                     let mut desc = w.window_name.clone();
-                    desc.push_str(&format!(" ({} pane{}", w.pane_count, if w.pane_count == 1 { "" } else { "s" }));
+                    desc.push_str(&format!(" (ID: {}, {} pane{}", w.window_id, w.pane_count, if w.pane_count == 1 { "" } else { "s" }));
                     if w.active { desc.push_str(", active"); }
                     if w.zoomed { desc.push_str(", zoomed"); }
+                    if w.last_active { desc.push_str(", last active"); }
                     desc.push(')');
                     desc
                 }).collect();
@@ -416,9 +417,10 @@ mod tests {
         }
         let ctx = c.get_labeled_context(None);
         assert!(ctx.contains("[SESSION TOPOLOGY]"), "expected topology block, got: {ctx}");
-        assert!(ctx.contains("nginx"), "expected nginx in topology");
+        assert!(ctx.contains("nginx (ID: @1"), "expected nginx in topology with ID @1");
         assert!(ctx.contains("2 panes"), "expected pane count in topology");
         assert!(ctx.contains("postgres"), "expected postgres in topology");
+        assert!(ctx.contains("last active"), "expected postgres to be marked as last active");
     }
 
     #[test]

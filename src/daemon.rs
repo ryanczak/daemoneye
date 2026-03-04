@@ -25,6 +25,8 @@ struct SessionEntry {
     messages: Vec<Message>,
     /// Wall-clock time of the last `Ask` request; used to prune idle sessions.
     last_accessed: Instant,
+    /// The tmux pane where the chat is occurring.
+    chat_pane: Option<String>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -1005,6 +1007,29 @@ async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
+        Request::NotifyActivity { pane_id } => {
+            let msg = format!("Activity detected in background pane {}!", pane_id);
+            {
+                let mut store = sessions.lock().unwrap_or_else(|e| e.into_inner());
+                for (id, session) in store.iter_mut() {
+                    session.messages.push(Message {
+                        role: "user".to_string(), // the AI reads this as context
+                        content: format!("[System] {}", msg),
+                        tool_calls: None,
+                        tool_results: None,
+                    });
+                    write_session_file(id, &session.messages);
+                    if let Some(ref cp) = session.chat_pane {
+                        // Alert the user instantly with an overlay
+                        let _ = std::process::Command::new("tmux")
+                            .args(["display-message", "-d", "4000", "-t", cp, &msg])
+                            .output();
+                    }
+                }
+            }
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
         _ => return Ok(()),
     };
 
@@ -1022,6 +1047,15 @@ async fn handle_client(
                 .filter(|v| !v.is_empty())
         })
         .unwrap_or_default();
+
+    // Preserve the chat_pane in the session store so we can send out-of-band alerts
+    if let Some(ref id) = session_id {
+        if let Ok(mut store) = sessions.lock() {
+            if let Some(entry) = store.get_mut(id) {
+                entry.chat_pane = chat_pane.clone();
+            }
+        }
+    }
 
     // Trim history to keep the context window bounded.
     // Layout after trim: [messages[0]] [placeholder] [tail...]
@@ -1157,6 +1191,7 @@ async fn handle_client(
                                 store.insert(id.clone(), SessionEntry {
                                     messages: messages.clone(),
                                     last_accessed: Instant::now(),
+                                    chat_pane: chat_pane.clone(),
                                 });
                             }
                             write_session_file(id, &messages);
@@ -1598,43 +1633,13 @@ async fn handle_client(
                                         "User denied watch".to_string()
                                     }
                                 } else {
-                                    send_response_split(&mut tx, Response::SystemMsg(
-                                        format!("Watching pane {} for up to {} seconds…", pane_id, timeout_secs)
-                                    )).await?;
-
-                                    let baseline = tmux::capture_pane(pane_id, 50).unwrap_or_default();
-
-                                    let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    let daemon_pid = std::process::id();
-                                    let hook_active = tmux::set_monitor_activity(pane_id, true).is_ok()
-                                        && tmux::install_activity_hook(&session_name, hook_idx, daemon_pid).is_ok();
-                                    let mut watch_rx = fg_done_subscribe();
-
-                                    let deadline = tokio::time::Instant::now() + Duration::from_secs(*timeout_secs);
-                                    let mut changed = false;
-                                    loop {
-                                        tokio::select! {
-                                            _ = watch_rx.recv() => {}
-                                            _ = tokio::time::sleep_until(deadline) => { break; }
-                                        }
-                                        if tokio::time::Instant::now() >= deadline { break; }
-                                        let snap = tmux::capture_pane(pane_id, 50).unwrap_or_default();
-                                        if snap != baseline {
-                                            changed = true;
-                                            break;
-                                        }
-                                    }
-
-                                    if hook_active {
-                                        let _ = tmux::remove_activity_hook(&session_name, hook_idx);
-                                        let _ = tmux::unset_monitor_activity(pane_id);
-                                    }
-
-                                    if changed {
-                                        let content = tmux::capture_pane(pane_id, 100).unwrap_or_default();
-                                        format!("Pane {} output changed:\n{}", pane_id, mask_sensitive(&content))
+                                    if tmux::set_monitor_activity(pane_id, true).is_ok()
+                                        && tmux::install_passive_activity_hook(&session_name, pane_id).is_ok() {
+                                        format!("Passive watch started for pane {}. You will be notified out-of-band when output appears.", pane_id)
                                     } else {
-                                        format!("Pane {} had no output changes in {} seconds.", pane_id, timeout_secs)
+                                        let _ = tmux::unset_monitor_activity(pane_id);
+                                        let _ = tmux::remove_passive_activity_hook(&session_name, pane_id);
+                                        format!("Failed to install passive watcher for pane {}.", pane_id)
                                     }
                                 }
                             }

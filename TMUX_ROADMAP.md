@@ -69,7 +69,7 @@ This is a free signal that directly describes what the pane is doing without any
 
 ---
 
-### P4 — Window-level inventory via `list-windows -F`
+### P4 — Window-level inventory via `list-windows -F` (COMPLETED)
 
 **What**: Add a `WindowState` struct and a `windows` map to `SessionCache`. Populate it from `tmux list-windows -t session -F "#{window_index}|#{window_id}|#{window_name}|#{window_active}|#{window_panes}|#{window_zoomed_flag}|#{window_last_flag}"`.
 

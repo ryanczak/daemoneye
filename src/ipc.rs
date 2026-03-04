@@ -70,6 +70,8 @@ pub enum Request {
     Refresh,
     /// Approve or deny a script write proposed by the AI.
     ScriptWriteResponse { id: String, approved: bool },
+    /// Notify the daemon of an event (e.g. background pane activity from a tmux hook).
+    NotifyActivity { pane_id: String },
 }
 
 /// Messages sent from the daemon back to the CLI client.
@@ -213,6 +215,17 @@ mod tests {
             Request::CredentialResponse { id, credential } => {
                 assert_eq!(id, "tc_2");
                 assert_eq!(credential, "hunter2");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_notify_activity_roundtrip() {
+        let req = Request::NotifyActivity { pane_id: "%3".to_string() };
+        match roundtrip_req(&req) {
+            Request::NotifyActivity { pane_id } => {
+                assert_eq!(pane_id, "%3");
             }
             _ => panic!("wrong variant"),
         }

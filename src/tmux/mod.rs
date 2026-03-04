@@ -467,3 +467,23 @@ pub fn remove_activity_hook(session: &str, hook_index: usize) -> Result<()> {
         .output();
     Ok(())
 }
+
+pub fn install_passive_activity_hook(session: &str, pane_id: &str) -> Result<()> {
+    let hook_name = format!("alert-activity[{pane_id}]");
+    let cmd = format!("run-shell 'daemoneye notify activity {pane_id}'");
+    let output = Command::new("tmux")
+        .args(["set-hook", "-t", session, &hook_name, &cmd])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to install passive activity hook for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+pub fn remove_passive_activity_hook(session: &str, pane_id: &str) -> Result<()> {
+    let hook_name = format!("alert-activity[{pane_id}]");
+    let _ = Command::new("tmux")
+        .args(["set-hook", "-u", "-t", session, &hook_name])
+        .output();
+    Ok(())
+}

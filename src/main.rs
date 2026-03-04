@@ -61,6 +61,20 @@ enum Commands {
         #[command(subcommand)]
         cmd: SchedCommands,
     },
+    /// Internal out-of-band notifications (e.g. from tmux hooks)
+    Notify {
+        #[command(subcommand)]
+        cmd: NotifyCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum NotifyCommands {
+    /// Notify that a monitored pane has produced output
+    Activity {
+        /// Target pane ID (e.g. %3)
+        pane_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -168,6 +182,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             SchedCommands::Windows => {
                 client::run_sched_windows()?;
+            }
+        },
+        Commands::Notify { cmd } => match cmd {
+            NotifyCommands::Activity { pane_id } => {
+                client::run_notify_activity(pane_id).await?;
             }
         },
     }
