@@ -186,7 +186,11 @@ pub async fn run_ping() -> Result<()> {
 pub async fn run_ask(query: String) -> Result<()> {
     let stdin = AsyncStdin::new()?;
     let mut approval = SessionApproval::default(); // never persists; single-shot has no session
-    ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval).await
+    
+    let old = crate::cli::input::set_raw_mode()?;
+    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old).await;
+    crate::cli::input::restore_termios(old);
+    result
 }
 
 /// List all available prompts from ~/.daemoneye/prompts/.
@@ -383,14 +387,9 @@ async fn run_chat_inner() -> Result<()> {
     let session_id = new_session_id();
     // None = use daemon's configured default prompt; Some(name) = override.
     let current_prompt: Option<String> = None;
-    let approval = SessionApproval::default();
-
-    // Single AsyncStdin owns the fd 0 epoll registration for the whole session.
-    // Shared by the interactive line editor (raw mode) and tool-call approval
-    // prompts (cooked mode); they never run concurrently.
     let stdin = crate::cli::input::AsyncStdin::new()?;
     let mut input_state = InputState::new();
-
+    let mut approval = SessionApproval::default();
     // Register the SIGWINCH listener before doing anything that depends on
     // terminal size.  tokio queues signals from the moment the listener is
     // created, so no resize event can slip through the gap between process
@@ -500,7 +499,7 @@ async fn run_chat_inner() -> Result<()> {
     let result = run_chat_inner_raw(
         &mut input_state, &stdin, &mut sigwinch,
         chat_width, chat_height, start_time, session_id,
-        current_prompt, current_status, approval,
+        current_prompt, &mut approval, old_termios,
     ).await;
 
     crate::cli::input::restore_termios(old_termios);
@@ -516,8 +515,8 @@ async fn run_chat_inner_raw(
     start_time:     std::time::Instant,
     mut session_id: String,
     mut current_prompt: Option<String>,
-    mut current_status: &'static str,
-    mut approval:   SessionApproval,
+    approval:   &mut SessionApproval,
+    old_termios:    libc::termios,
 ) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
 
@@ -534,11 +533,11 @@ async fn run_chat_inner_raw(
     }
 
     // A client is now attached — switch to "thinking…" and send the greeting.
-    current_status = "thinking…";
+    let mut current_status = "thinking…";
     let hint = approval.hint();
     draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
-    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
+    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
         eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
@@ -586,7 +585,7 @@ async fn run_chat_inner_raw(
         if query == "exit" || query == "quit" { break; }
         if query == "/clear" {
             session_id = new_session_id();
-            approval = SessionApproval::default();
+            *approval = SessionApproval::default();
             current_prompt = None;
             let label = format!(" session cleared · new session:{} ", &session_id[..8]);
             let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
@@ -604,7 +603,7 @@ async fn run_chat_inner_raw(
                 println!("\x1b[31m✗\x1b[0m  Unknown prompt \x1b[1m{}\x1b[0m — run \x1b[1mdaemoneye prompts\x1b[0m to list available prompts.", name);
             } else {
                 session_id = new_session_id();
-                approval = SessionApproval::default();
+                *approval = SessionApproval::default();
                 current_prompt = Some(name.clone());
                 let label = format!(" prompt: {}  ·  new session:{} ", name, &session_id[..8]);
                 let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
@@ -620,7 +619,7 @@ async fn run_chat_inner_raw(
             match send_refresh().await {
                 Ok(()) => {
                     session_id = new_session_id();
-                    approval = SessionApproval::default();
+                    *approval = SessionApproval::default();
                     let label = format!(" context refreshed  ·  new session:{} ", &session_id[..8]);
                     let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
@@ -636,7 +635,7 @@ async fn run_chat_inner_raw(
         current_status = "thinking…";
         let hint = approval.hint();
         draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
-        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
+        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
         // Turn completed: reset the double-tap exit timer.
@@ -658,7 +657,7 @@ async fn run_chat_inner_raw(
 }
 
 
-async fn ask_with_session(query: String, display_query: &str, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &AsyncStdin, chat_width: Option<usize>, approval: &mut SessionApproval) -> Result<()> {
+async fn ask_with_session(query: String, display_query: &str, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &AsyncStdin, chat_width: Option<usize>, approval: &mut SessionApproval, old_termios: libc::termios) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
 
@@ -818,7 +817,12 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
                          \x1b[32m›\x1b[0m "
                     );
                     std::io::stdout().flush()?;
+                    
+                    // Temporarily revert to cooked mode for the tool approval prompt.
+                    crate::cli::input::restore_termios(old_termios);
                     let input = stdin.read_line().await.unwrap_or_default();
+                    crate::cli::input::set_raw_mode()?; // back to raw mode for turn trap
+
                     let trimmed = input.trim();
                     let approve_session = trimmed.eq_ignore_ascii_case("a");
                     let approved_once = trimmed.eq_ignore_ascii_case("y") || approve_session;
