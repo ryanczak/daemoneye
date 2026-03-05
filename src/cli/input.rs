@@ -305,32 +305,34 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
 /// so the input row repaints correctly after a terminal resize.
 /// Returns `None` on EOF or Ctrl+D with an empty buffer.
 pub async fn read_input_line(
-    state:       &mut InputState,
-    stdin:       &AsyncStdin,
-    sigwinch:    &mut tokio::signal::unix::Signal,
-    chat_width:  &mut usize,
-    chat_height: &mut usize,
-    start_time:  std::time::Instant,
-    session_id:  &str,
-    status:      &str,
+    state:          &mut InputState,
+    stdin:          &AsyncStdin,
+    sigwinch:       &mut tokio::signal::unix::Signal,
+    chat_width:     &mut usize,
+    chat_height:    &mut usize,
+    start_time:     std::time::Instant,
+    session_id:     &str,
+    status:         &str,
+    approval_hint:  &str,
 ) -> anyhow::Result<Option<String>> {
     let old = set_raw_mode()?;
     let result = read_input_line_inner(
-        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, status,
+        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, status, approval_hint,
     ).await;
     restore_termios(old);
     result
 }
 
 async fn read_input_line_inner(
-    state:       &mut InputState,
-    stdin:       &AsyncStdin,
-    sigwinch:    &mut tokio::signal::unix::Signal,
-    chat_width:  &mut usize,
-    chat_height: &mut usize,
-    start_time:  std::time::Instant,
-    session_id:  &str,
-    status:      &str,
+    state:          &mut InputState,
+    stdin:          &AsyncStdin,
+    sigwinch:       &mut tokio::signal::unix::Signal,
+    chat_width:     &mut usize,
+    chat_height:    &mut usize,
+    start_time:     std::time::Instant,
+    session_id:     &str,
+    status:         &str,
+    approval_hint:  &str,
 ) -> anyhow::Result<Option<String>> {
     // Initial render of the (empty or restored) input row.
     render_input_row(&state.current, chat_height.saturating_sub(2).max(1), *chat_width);
@@ -343,7 +345,7 @@ async fn read_input_line_inner(
                 *chat_height = terminal_height();
                 setup_scroll_region(*chat_height);
                 draw_input_frame(*chat_height, *chat_width, start_time);
-                draw_status_bar(*chat_height, *chat_width, session_id, status);
+                draw_status_bar(*chat_height, *chat_width, session_id, status, approval_hint);
                 render_input_row(&state.current, chat_height.saturating_sub(2).max(1), *chat_width);
             }
             key = read_key(stdin) => {

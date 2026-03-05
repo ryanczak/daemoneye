@@ -267,18 +267,37 @@ pub fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) 
 /// Render (or refresh) the status bar in the bottom row.
 /// Uses DEC save/restore cursor (\x1b7 / \x1b8) so this is safe to call
 /// at any point without disturbing the scroll-region cursor position.
-pub fn draw_status_bar(height: usize, width: usize, session_id: &str, status: &str) {
+///
+/// `approval_hint` — a label describing the current session approval state.
+/// Shown in bold amber so it stands out.
+pub fn draw_status_bar(height: usize, width: usize, session_id: &str, status: &str, approval_hint: &str) {
     use std::io::Write;
-    let left = format!(
-        " ⬡ daemoneye  ·  session:{}  ·  {}",
+    let base = format!(
+        " ⬡ daemoneye  ·  session:{} ",
         &session_id[..8.min(session_id.len())],
-        status,
     );
-    let vis = visual_len(&left);
+
+    let hint_str = format!(" ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m", approval_hint);
+    let status_str = format!(" ·  {}", status);
+    
+    // Assemble the full sequence. Note that we start with \x1b[2m (dim).
+    let full = format!("{}{}{}", base, hint_str, status_str);
+    let mut vis = visual_len(&full);
+
+    // If it's too long, drop the hint.
+    let out = if vis > width {
+        let fallback = format!("{} ·  {}", base, status);
+        vis = visual_len(&fallback);
+        fallback
+    } else {
+        full
+    };
+
     let pad = " ".repeat(width.saturating_sub(vis));
+
     print!("\x1b7");                    // DEC save cursor
     print!("\x1b[{height};1H");        // move to status bar row
-    print!("\x1b[2m{}{}\x1b[0m", left, pad);
+    print!("\x1b[2m{}{}\x1b[0m", out, pad);
     print!("\x1b8");                    // DEC restore cursor
     std::io::stdout().flush().ok();
 }

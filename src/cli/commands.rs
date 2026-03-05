@@ -27,10 +27,22 @@ pub fn command_is_sudo(cmd: &str) -> bool {
 /// Per-session auto-approval flags for the two command classes.
 /// Once set, the corresponding class is approved without prompting
 /// for the rest of the chat session.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct SessionApproval {
     regular: bool, // auto-approve non-sudo commands
     sudo: bool,    // auto-approve sudo commands
+}
+
+impl SessionApproval {
+    /// Build the status-bar hint string.
+    fn hint(&self) -> String {
+        match (self.regular, self.sudo) {
+            (false, false) => "auto-approve: disabled".to_string(),
+            (true, false)  => "⚡ auto-approve: regular  ·  Ctrl+C to stop".to_string(),
+            (false, true)  => "⚡ auto-approve: sudo  ·  Ctrl+C to stop".to_string(),
+            (true, true)   => "⚡ auto-approve: all  ·  Ctrl+C to stop".to_string(),
+        }
+    }
 }
 
 pub fn run_setup() -> Result<()> {
@@ -479,7 +491,8 @@ async fn run_chat_inner() -> Result<()> {
     // session), #{session_attached} is already ≥ 1 so the loop exits on the
     // first check with no perceptible delay.
     let mut current_status = "ready";
-    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+    let hint = approval.hint();
+    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
     loop {
         let attached = std::process::Command::new("tmux")
@@ -495,7 +508,8 @@ async fn run_chat_inner() -> Result<()> {
 
     // A client is now attached — switch to "thinking…" and send the greeting.
     current_status = "thinking…";
-    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+    let hint = approval.hint();
+    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
     if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
@@ -509,15 +523,17 @@ async fn run_chat_inner() -> Result<()> {
     chat_height = terminal_height();
     setup_scroll_region(chat_height);
     current_status = "ready";
+    let hint = approval.hint();
     draw_input_frame(chat_height, chat_width, start_time);
-    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
+        let hint = approval.hint();
         let line_opt = read_input_line(
             &mut input_state, &stdin, &mut sigwinch,
             &mut chat_width, &mut chat_height,
-            start_time, &session_id, current_status,
+            start_time, &session_id, current_status, &hint,
         ).await?;
 
         let Some(line) = line_opt else { break }; // EOF or Ctrl+D on empty line
@@ -548,8 +564,9 @@ async fn run_chat_inner() -> Result<()> {
             let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
             current_status = "ready";
+            let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(chat_height, chat_width, &session_id, current_status);
+            draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
@@ -566,7 +583,8 @@ async fn run_chat_inner() -> Result<()> {
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                 current_status = "ready";
                 draw_input_frame(chat_height, chat_width, start_time);
-                draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                let hint = approval.hint();
+                draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
             }
             continue;
         }
@@ -580,14 +598,16 @@ async fn run_chat_inner() -> Result<()> {
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                     current_status = "ready";
                     draw_input_frame(chat_height, chat_width, start_time);
-                    draw_status_bar(chat_height, chat_width, &session_id, current_status);
+                    let hint = approval.hint();
+                    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
             continue;
         }
         current_status = "thinking…";
-        draw_status_bar(chat_height, chat_width, &session_id, current_status);
+        let hint = approval.hint();
+        draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
         if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
@@ -597,7 +617,8 @@ async fn run_chat_inner() -> Result<()> {
         setup_scroll_region(chat_height);
         current_status = "ready";
         draw_input_frame(chat_height, chat_width, start_time);
-        draw_status_bar(chat_height, chat_width, &session_id, current_status);
+        let hint = approval.hint();
+        draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
     }
 
     teardown_scroll_region(chat_height);
@@ -654,24 +675,53 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
         // timeout so we can animate the spinner between each check.
         let msg = if !response_started {
             loop {
-                match tokio::time::timeout(Duration::from_millis(80), recv(&mut rx)).await {
-                    Err(_timeout) => {
-                        print!("\r\x1b[36m{}\x1b[0m \x1b[2mThinking…\x1b[0m", SPINNER[spin]);
-                        std::io::stdout().flush()?;
-                        spin = (spin + 1) % SPINNER.len();
+                tokio::select! {
+                    biased;
+                    byte = stdin.read_byte() => {
+                        if byte == Some(0x03) { // Ctrl+C during spinner
+                            md.flush();
+                            println!("\r\x1b[K\n\x1b[33m⚠ Interrupted\x1b[0m  Session approval revoked.");
+                            *approval = SessionApproval::default();
+                            return Ok(());
+                        }
                     }
-                    Ok(r) => break r?,
+                    result = tokio::time::timeout(Duration::from_millis(80), recv(&mut rx)) => {
+                        match result {
+                            Err(_timeout) => {
+                                print!("\r\x1b[36m{}\x1b[0m \x1b[2mThinking…\x1b[0m", SPINNER[spin]);
+                                std::io::stdout().flush()?;
+                                spin = (spin + 1) % SPINNER.len();
+                            }
+                            Ok(r) => break r?,
+                        }
+                    }
                 }
             }
         } else {
-            // Phase 2 — streaming: wait with a 60 s inter-token deadline so a
-            // daemon that stops responding mid-stream produces a clear error.
-            tokio::time::timeout(
-                Duration::from_secs(60),
-                recv(&mut rx),
-            )
-            .await
-            .context("Daemon stopped responding (60 s inter-token timeout)")??
+            // Phase 2 — streaming: race recv against Ctrl+C with a 60 s per-token deadline.
+            let result = tokio::time::timeout(Duration::from_secs(60), async {
+                loop {
+                    tokio::select! {
+                        biased;
+                        byte = stdin.read_byte() => {
+                            if byte == Some(0x03) { return Ok(None); } // Ctrl+C
+                            // any other key while streaming is ignored
+                        }
+                        msg = recv(&mut rx) => { break msg.map(Some); }
+                    }
+                }
+            }).await;
+            match result {
+                Ok(Ok(Some(msg))) => msg,
+                Ok(Ok(None)) => {
+                    md.flush();
+                    println!("\n\x1b[33m⚠ Interrupted\x1b[0m  Session approval revoked.");
+                    *approval = SessionApproval::default();
+                    return Ok(());
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => anyhow::bail!("Daemon stopped responding (60 s inter-token timeout)"),
+            }
         };
 
         match msg {
