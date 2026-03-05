@@ -1,12 +1,6 @@
-use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
-use crate::config::Config;
+
 use crate::cli::render::*;
-use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
 
 // ── Async stdin wrapper ───────────────────────────────────────────────────────
 

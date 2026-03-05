@@ -1,12 +1,12 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{json, Value};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::{AiClient, next_tool_id, send_with_retry, http};
-use crate::ai::types::{AiEvent, Message, ToolCall, ToolResult};
+use crate::ai::{AiClient, send_with_retry, http};
+use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::{dispatch_tool_event, get_tool_definition};
 
 /// Anthropic API backend (Claude family).

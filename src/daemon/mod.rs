@@ -1,25 +1,17 @@
 
-use crate::daemon::session::*;
-use crate::daemon::utils::*;
-use crate::daemon::server::*;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 use std::time::Duration;
-use crate::ipc::{PaneInfo, Request, Response, ScheduleListItem, ScriptListItem, DEFAULT_SOCKET_PATH};
+use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
-use crate::ai::{make_client, next_tool_id, AiEvent, Message, ToolCall, ToolResult};
-use crate::ai::filter::mask_sensitive;
-use crate::config::{Config, load_named_prompt};
-use crate::sys_context::get_or_init_sys_context;
-use crate::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
-use crate::runbook;
-use crate::scripts;
+use crate::config::Config;
+use crate::scheduler::ScheduleStore;
 
 
 pub mod session;
@@ -201,6 +193,25 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
 
     let (session_name, session_was_created) = detect_or_create_session()?;
     println!("Monitoring tmux session: {}", session_name);
+
+    // Install session-wide pane-died and alert-bell hooks to catch background job activity natively
+    let hook_exe_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "daemoneye".to_string());
+    
+    // We use the raw #{pane_id} template formatting string so tmux expands it automatically per-pane.
+    let notify_cmd = format!("run-shell -b '{} notify activity #{{pane_id}} 0 \"{}\"'", hook_exe_path, session_name);
+    
+    // pane-died is a global hook, so we must set it globally (-g).
+    // We overwrite to prevent duplicate run-shell commands proliferating if the daemon restarts.
+    let _ = std::process::Command::new("tmux")
+        .args(["set-hook", "-g", "pane-died", &notify_cmd])
+        .output();
+        
+    // alert-bell can be set per session (-t)
+    let _ = std::process::Command::new("tmux")
+        .args(["set-hook", "-t", &session_name, "alert-bell", &notify_cmd])
+        .output();
 
     let cache = Arc::new(SessionCache::new(&session_name));
 

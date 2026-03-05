@@ -138,6 +138,7 @@ pub fn install_passive_activity_hook(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn remove_passive_activity_hook(pane_id: &str) -> Result<()> {
     let _ = Command::new("tmux")
         .args(["set-window-option", "-t", pane_id, "monitor-activity", "off"])

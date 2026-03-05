@@ -1,26 +1,13 @@
 
-use crate::daemon::utils::*;
-use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
-use std::time::Duration;
-use crate::ipc::{PaneInfo, Request, Response, ScheduleListItem, ScriptListItem, DEFAULT_SOCKET_PATH};
-use crate::tmux;
-use crate::tmux::cache::SessionCache;
-use crate::ai::{make_client, next_tool_id, AiEvent, Message, ToolCall, ToolResult};
-use crate::ai::filter::mask_sensitive;
-use crate::config::{Config, load_named_prompt};
-use crate::sys_context::get_or_init_sys_context;
-use crate::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
-use crate::runbook;
-use crate::scripts;
+
+use crate::ai::Message;
 
 /// In-memory record of an active chat session.
 /// Evicted by the cleanup task after 30 minutes of inactivity.
+#[allow(dead_code)]
 pub struct SessionEntry {
     pub id: String,
     /// Full trimmed message history for this session (bounded to `MAX_HISTORY`).

@@ -3,12 +3,11 @@ use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use anyhow::Result;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::BufReader;
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixStream;
 use std::time::Duration;
 use crate::ipc::{PaneInfo, Request, Response, ScheduleListItem, ScriptListItem, DEFAULT_SOCKET_PATH};
 use crate::tmux;
@@ -23,6 +22,7 @@ use crate::scripts;
 
 /// Poll a tmux pane until its output is marked dead or the timeout expires.
 /// Returns `Some(exit_code)` if the pane died, or `None` if it timed out.
+#[allow(dead_code)]
 pub async fn poll_until_dead(pane_id: &str, timeout: Duration) -> Option<i32> {
     let poll = Duration::from_millis(200);
     let mut waited = Duration::ZERO;
@@ -66,16 +66,7 @@ pub async fn run_background_in_window(
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
     let _ = tmux::set_remain_on_exit(&pane_id, true);
 
-    // Install pane-died and alert-bell hooks
-    let hook_died = format!("pane-died[{}]", pane_id);
-    let hook_bell = format!("alert-bell[{}]", pane_id);
-    let notify_cmd = format!("run-shell 'daemoneye notify activity {}'", pane_id);
-    let _ = std::process::Command::new("tmux").args(["set-hook", "-t", session, &hook_died, &notify_cmd]).output();
-    let _ = std::process::Command::new("tmux").args(["set-hook", "-t", session, &hook_bell, &notify_cmd]).output();
-
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
-        let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", session, &hook_died]).output();
-        let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", session, &hook_bell]).output();
         let _ = tmux::kill_job_window(session, &win_name);
         return format!("Failed to send command to window: {}", e);
     }
@@ -132,66 +123,88 @@ pub async fn run_background_in_window(
             }
         };
 
-        let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
-
-        // Archive logs
-        let logs_dir = crate::config::config_dir().join("pane_logs");
-        let _ = std::fs::create_dir_all(&logs_dir);
-        let _ = tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_owned)));
-
-        let normalized = normalize_output(&raw);
-        let body = if normalized.is_empty() {
-            "(no output)".to_string()
-        } else {
-            mask_sensitive(&normalized)
-        };
-
-        // Notify active session UI and append context to history
-        if let Some(ref sid) = session_id {
-            if let Ok(mut store) = sessions.lock() {
-                if let Some(entry) = store.get_mut(sid) {
-                    let msg = format!(
-                        "Background command `{}` in window {} finished with exit code {}.\n<output>\n{}\n</output>",
-                        cmd_owned, win_owned, exit_code, body
-                    );
-                    entry.messages.push(Message {
-                        role: "user".to_string(), // AI context
-                        content: format!("[Background Task Completed]\n{}", msg),
-                        tool_calls: None,
-                        tool_results: None,
-                    });
-                    crate::daemon::session::write_session_file(sid, &entry.messages);
-
-                    // Alert the user via tmux
-                    if let Some(ref cp) = entry.chat_pane {
-                        let alert_msg = format!("Background job finished: {}", win_owned);
-                        let _ = std::process::Command::new("tmux")
-                            .args(["display-message", "-d", "4000", "-t", cp, &alert_msg])
-                            .output();
-                    }
-                }
-            }
-        }
-
-        // Background GC
-        if exit_code == 0 {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        } else {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-        }
-        let _ = tmux::kill_job_window(&session_owned, &win_owned);
-
-        let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", &session_owned, &hook_died]).output();
-        let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", &session_owned, &hook_bell]).output();
+        notify_job_completion(pane_id, cmd_owned, win_owned, session_owned, exit_code, session_id, sessions, None).await;
     });
 
     format!("Started background command in window {}", win_name)
 }
 
+/// Shared completion handler: called after any background pane exits.
+///
+/// Handles:
+/// - Capture + normalize + mask pane output
+/// - Archive to `pane_logs`
+/// - Inject AI context message into session history (if `session_id` is set)
+/// - Send `tmux display-message` overlay to the chat pane (if known)
+/// - Send `Response::SystemMsg` via `notify_tx` (if set)
+/// - GC: kill the job window after a delay
+pub async fn notify_job_completion(
+    pane_id: String,
+    cmd: String,
+    win_name: String,
+    session: String,
+    exit_code: i32,
+    session_id: Option<String>,
+    sessions: SessionStore,
+    notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+) {
+    let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
+
+    // Archive logs
+    let logs_dir = crate::config::config_dir().join("pane_logs");
+    let _ = std::fs::create_dir_all(&logs_dir);
+    let _ = tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name)));
+
+    let normalized = normalize_output(&raw);
+    let body = if normalized.is_empty() {
+        "(no output)".to_string()
+    } else {
+        mask_sensitive(&normalized)
+    };
+
+    let status_word = if exit_code == 0 { "succeeded" } else { "failed" };
+    let alert_msg = format!("`{}` {} in pane {}", cmd, status_word, pane_id);
+
+    // Inject AI context + tmux display-message (if a session is associated)
+    if let Some(ref sid) = session_id {
+        if let Ok(mut store) = sessions.lock() {
+            if let Some(entry) = store.get_mut(sid) {
+                let history_msg = format!(
+                    "Background command `{}` in window {} finished with exit code {}.\n<output>\n{}\n</output>",
+                    cmd, win_name, exit_code, body
+                );
+                entry.messages.push(Message {
+                    role: "user".to_string(),
+                    content: format!("[Background Task Completed]\n{}", history_msg),
+                    tool_calls: None,
+                    tool_results: None,
+                });
+                crate::daemon::session::write_session_file(sid, &entry.messages);
+
+                if let Some(ref cp) = entry.chat_pane {
+                    let _ = std::process::Command::new("tmux")
+                        .args(["display-message", "-d", "5000", "-t", cp, &alert_msg])
+                        .output();
+                }
+            }
+        }
+    }
+
+    // Also send as a SystemMsg to any listening chat client
+    if let Some(ref tx) = notify_tx {
+        let _ = tx.send(Response::SystemMsg(alert_msg));
+    }
+
+    // GC: kill window after a delay (keep failed windows open longer for inspection)
+    let gc_delay = if exit_code == 0 { Duration::from_secs(5) } else { Duration::from_secs(60) };
+    tokio::time::sleep(gc_delay).await;
+    let _ = tmux::kill_job_window(&session, &win_name);
+}
+
 /// A tool call collected during AI streaming, to be executed after `Done`.
 pub enum PendingCall {
     Foreground { id: String, thought_signature: Option<String>, cmd: String, target: Option<String> },
-    Background { id: String, thought_signature: Option<String>, cmd: String, credential: Option<String> },
+    Background { id: String, thought_signature: Option<String>, cmd: String, _credential: Option<String> },
     ScheduleCommand {
         id: String,
         thought_signature: Option<String>,
@@ -353,16 +366,7 @@ pub async fn run_scheduled_job(
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
     let _ = tmux::set_remain_on_exit(&pane_id, true);
 
-    // Install pane-died and alert-bell hooks
-    let hook_died = format!("pane-died[{}]", pane_id);
-    let hook_bell = format!("alert-bell[{}]", pane_id);
-    let notify_cmd = format!("run-shell 'daemoneye notify activity {}'", pane_id);
-    let _ = std::process::Command::new("tmux").args(["set-hook", "-t", &session, &hook_died, &notify_cmd]).output();
-    let _ = std::process::Command::new("tmux").args(["set-hook", "-t", &session, &hook_bell, &notify_cmd]).output();
-
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
-        let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", &session, &hook_died]).output();
-        let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", &session, &hook_bell]).output();
         let msg = format!("Scheduled job '{}': failed to send keys: {}", job.name, e);
         store.mark_done(&job.id, false, Some(e.to_string()));
         if let Some(ref tx) = notify_tx { let _ = tx.send(Response::SystemMsg(msg)); }
@@ -396,31 +400,10 @@ pub async fn run_scheduled_job(
     };
 
     let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
-
-    // Archive logs
-    let logs_dir = crate::config::config_dir().join("pane_logs");
-    let _ = std::fs::create_dir_all(&logs_dir);
-    let _ = tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name)));
-
     let output = normalize_output(&raw);
     let success = exit_code == 0;
 
-    // Background GC
-    let session_owned = session.clone();
-    let win_owned = win_name.clone();
-    tokio::spawn(async move {
-        if success {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-        } else {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-        }
-        let _ = tmux::kill_job_window(&session_owned, &win_owned);
-    });
-
-    let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", &session, &hook_died]).output();
-    let _ = std::process::Command::new("tmux").args(["set-hook", "-u", "-t", &session, &hook_bell]).output();
-
-    // If there's a runbook, ask the AI to analyze the output.
+    // Runbook / watchdog AI analysis (scheduled-job specific; runs before GC so the pane is still alive)
     if let Some(ref rb_name) = job.runbook {
         if let Ok(rb) = runbook::load_runbook(rb_name) {
             let api_key = if !config.ai.api_key.is_empty() {
@@ -458,13 +441,9 @@ pub async fn run_scheduled_job(
         Some(format!("exit code {}", exit_code))
     });
 
-    if !success {
-        let msg = format!(
-            "Scheduled job '{}' failed (exit {}). Window {} left open for inspection.",
-            job.name, exit_code, win_name
-        );
-        if let Some(ref tx) = notify_tx { let _ = tx.send(Response::SystemMsg(msg)); }
-    }
+    // Hand off to the shared notification + GC handler (non-blocking)
+    let cmd_str = cmd.to_string();
+    tokio::spawn(notify_job_completion(pane_id, cmd_str, win_name, session, exit_code, None, Default::default(), notify_tx));
 }
 
 /// Handle one client connection end-to-end.
@@ -708,7 +687,7 @@ pub async fn handle_client(
                 }
                 AiEvent::ToolCall(id, cmd, bg, target, thought_signature) => {
                     if bg {
-                        pending_calls.push(PendingCall::Background { id, cmd, credential: None, thought_signature: thought_signature.clone() });
+                        pending_calls.push(PendingCall::Background { id, cmd, _credential: None, thought_signature: thought_signature.clone() });
                     } else {
                         pending_calls.push(PendingCall::Foreground { id, cmd, target, thought_signature: thought_signature.clone() });
                     }

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use std::process::Command;
-use std::collections::HashMap;
 
 /// Metadata for a single tmux pane, fetched in one `list-panes` call.
+#[allow(dead_code)]
 pub struct RichPaneInfo {
     pub session_name: String,
     pub window_name: String,
@@ -185,6 +185,7 @@ pub fn capture_pane_to_file(pane_id: &str, out_path: &std::path::Path) -> Result
 }
 
 /// Return the PID of the shell process that owns the given pane.
+#[allow(dead_code)]
 pub fn pane_pid(pane_id: &str) -> Result<u32> {
     let output = Command::new("tmux")
         .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])

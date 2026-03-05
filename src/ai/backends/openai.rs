@@ -1,12 +1,11 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::{AiClient, next_tool_id, send_with_retry, http};
-use crate::ai::types::{AiEvent, Message, ToolCall, ToolResult};
+use crate::ai::{AiClient, send_with_retry, http};
+use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::{dispatch_tool_event, get_openai_tool_definition};
 
 /// OpenAI-compatible API backend (GPT family, or any OpenAI-compatible endpoint).
@@ -169,6 +168,7 @@ impl AiClient for OpenAiClient {
 ///   `Malformed function call: print(default_api.run_terminal_command(command='cat README.md', background=false))`
 ///
 /// Returns `(command, background)` if parsing succeeds, `None` otherwise.
+#[allow(dead_code)]
 fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
     use regex::Regex;
     use std::sync::OnceLock;

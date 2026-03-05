@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::process::Command;
-use std::path::Path;
 
 pub struct WindowState {
     pub window_id: String,
@@ -93,6 +92,7 @@ pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
 /// - Top-Right: tail activity.log
 /// - Bottom-Left: tail commands.log
 /// - Bottom-Right: interactive shell
+#[allow(dead_code)]
 pub fn ensure_info_window(
     session: &str,
     daemon_log: &std::path::Path,
