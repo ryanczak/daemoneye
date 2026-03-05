@@ -38,7 +38,9 @@ pub struct ContextConfig {
 
 impl Default for ContextConfig {
     fn default() -> Self {
-        Self { environment: default_environment() }
+        Self {
+            environment: default_environment(),
+        }
     }
 }
 
@@ -406,6 +408,7 @@ When presenting commands as text:
 - Add inline comments to non-obvious one-liners
 - If a series of commands must run in order, number them and explain each step
 - If a command requires elevated privileges, say so explicitly
+- Avoid or disable pagination whenever possible (e.g., use `--no-pager` with `systemctl` or `journalctl`. Do NOT use less, use cat or grep)
 
 ## Command Execution Modes
 
@@ -415,7 +418,8 @@ environments and have different return semantics:
 
 **background=true (Daemon Host)**
 - Runs as a tmux background window on the machine running the DaemonEye daemon
-- Output is captured silently and returned to you
+- Command is started silently and its pane ID (e.g., `%9`) is returned immediately
+- You MUST use the `watch_pane` tool to monitor the command to completion and read its output
 - If the user is SSH'd into a remote machine, this STILL runs on the local daemon host
 - Supports `sudo`: the user will be prompted for their password in the chat interface
 - Commands must start with `sudo` for sudo support (e.g. `sudo cat /etc/shadow`)
@@ -433,26 +437,31 @@ environments and have different return semantics:
   active pane
 
 **watch_pane (passive pane monitor)**
-- Watches a specific background pane for any output change, then returns the \
-  updated content when activity is detected or the timeout expires
+- Installs a passive background monitor on a tmux pane that detects output changes
+- The tool returns immediately so you can continue the interactive chat session
+- When the pane produces output, an out-of-band `[System] Activity detected` message \
+  will be injected into the chat context to alert you
 - Use this instead of polling manually when waiting for a long-running process \
-  (build, test run, log line, replication sync) in a background pane
+  (build, test run, target server startup) in a background pane
 - `pane_id`: tmux pane ID from a `[BACKGROUND PANE]` context block (e.g. `%3`)
-- `timeout_secs`: maximum wait in seconds (default 300 / 5 minutes)
-- Returns the pane's captured content on change, or a "no change" message on timeout
+- `timeout_secs`: maximum seconds to maintain the activity monitor before it is removed
 
 **Tool vs. text heuristic**
-- Use the tool proactively for read-only diagnostics: run the command and reason \
-  over the returned output rather than asking the user to paste results back
-- Present state-changing or destructive operations as text suggestions: the user \
-  should consciously type or approve them rather than having them injected silently
-- When uncertain whether a command is safe, describe what it will do and ask first
+- Use the tool proactively for all commands, including state-changing or destructive operations.
+- Do NOT ask for permission to run a command or use a tool. Just call the tool directly; \
+- Do not present commands as text suggestions for the user to copy-paste.
+
+**scheduler_command heuristc**
+- `schedule_command`: Use to schedule repetitive tasks or one-off tasks in the future.
+- `list_schedules`: Use to list all active, cancelled, or done task metadata.
+- `cancel_schedule`: Use to stop a repeating or future task from running again, but KEEP its history in the schedule list.
+- `delete_schedule`: Use ONLY when the user explicitly asks to "remove", "delete", or "clear" a job, erasing it permanently.
 
 **Decision rule:** Default to background=false for commands targeting the system \
 the user is working on — you get the output back and it runs in the right \
 environment (local or remote). Use background=true when you explicitly need to \
 query or act on the local daemon host, such as reading local files while the \
-user is SSH'd elsewhere, or running daemon-side scripts.
+user is SSH'd elsewhere, or creating, or running daemon-side scripts.
 """
 "#;
 
@@ -576,4 +585,3 @@ mod tests {
         assert!(!def.system.is_empty());
     }
 }
-

@@ -1,13 +1,14 @@
 mod ai;
+mod cli;
 mod config;
-mod sys_context;
 mod daemon;
+mod log;
 mod ipc;
-mod tmux;
-mod client;
-mod scheduler;
 mod runbook;
+mod scheduler;
 mod scripts;
+mod sys_context;
+mod tmux;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -57,7 +58,7 @@ enum Commands {
     /// List scripts in ~/.daemoneye/scripts/
     Scripts,
     /// Manage scheduled jobs
-    Sched {
+    Schedule {
         #[command(subcommand)]
         cmd: SchedCommands,
     },
@@ -74,6 +75,10 @@ enum NotifyCommands {
     Activity {
         /// Target pane ID (e.g. %3)
         pane_id: String,
+        /// The integer index of the alert-activity hook
+        hook_index: usize,
+        /// Target session name where the hook was set
+        session_name: String,
     },
 }
 
@@ -83,6 +88,8 @@ enum SchedCommands {
     List,
     /// Cancel a scheduled job by UUID
     Cancel { id: String },
+    /// Permanently delete a scheduled job by UUID
+    Delete { id: String },
     /// List leftover de-* tmux windows from failed scheduled jobs
     Windows,
 }
@@ -135,7 +142,12 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Daemon { log_file, console, command_log_file, no_command_log } => {
+        Commands::Daemon {
+            log_file,
+            console,
+            command_log_file,
+            no_command_log,
+        } => {
             let log_file = if console {
                 None
             } else {
@@ -150,43 +162,50 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Logs { log_file } => {
             let path = log_file.unwrap_or_else(config::default_log_path);
-            client::run_logs(path)?;
+            cli::run_logs(path)?;
         }
         Commands::Chat => {
-            client::run_chat().await?;
+            cli::run_chat().await?;
         }
         Commands::Ask { query } => {
-            client::run_ask(query).await?;
+            cli::run_ask(query).await?;
         }
         Commands::Ping => {
-            client::run_ping().await?;
+            cli::run_ping().await?;
         }
         Commands::Stop => {
-            client::run_stop().await?;
+            cli::run_stop().await?;
         }
         Commands::Setup => {
-            client::run_setup()?;
+            cli::run_setup()?;
         }
         Commands::Prompts => {
-            client::run_prompts()?;
+            cli::run_prompts()?;
         }
         Commands::Scripts => {
-            client::run_scripts()?;
+            cli::run_scripts()?;
         }
-        Commands::Sched { cmd } => match cmd {
+        Commands::Schedule { cmd } => match cmd {
             SchedCommands::List => {
-                client::run_sched_list()?;
+                cli::run_sched_list()?;
             }
             SchedCommands::Cancel { id } => {
-                client::run_sched_cancel(id)?;
+                cli::run_sched_cancel(id)?;
+            }
+            SchedCommands::Delete { id } => {
+                cli::run_sched_delete(id)?;
             }
             SchedCommands::Windows => {
-                client::run_sched_windows()?;
+                cli::run_sched_windows()?;
             }
         },
         Commands::Notify { cmd } => match cmd {
-            NotifyCommands::Activity { pane_id } => {
-                client::run_notify_activity(pane_id).await?;
+            NotifyCommands::Activity {
+                pane_id,
+                hook_index,
+                session_name,
+            } => {
+                cli::run_notify_activity(pane_id, hook_index, session_name).await?;
             }
         },
     }

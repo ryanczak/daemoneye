@@ -65,8 +65,8 @@ fn collect() -> SystemContext {
 /// Only variables in `SAFE_VARS` are included — credentials and tokens are excluded.
 fn curated_env() -> String {
     const SAFE_VARS: &[&str] = &[
-        "SHELL", "USER", "LOGNAME", "HOME", "PATH", "PWD",
-        "TERM", "LANG", "LC_ALL", "EDITOR", "VISUAL",
+        "SHELL", "USER", "LOGNAME", "HOME", "PATH", "PWD", "TERM", "LANG", "LC_ALL", "EDITOR",
+        "VISUAL",
     ];
     SAFE_VARS
         .iter()
@@ -233,6 +233,9 @@ mod tests {
         };
         let text = ctx.format_for_ai();
         assert!(text.contains("Linux"), "should trim OS info");
-        assert!(!text.contains("  Linux  "), "should not have surrounding spaces");
+        assert!(
+            !text.contains("  Linux  "),
+            "should not have surrounding spaces"
+        );
     }
 }

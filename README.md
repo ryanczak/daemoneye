@@ -9,14 +9,14 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Native tmux Integration** — DaemonEye runs as a background process and interacts directly with your active `tmux` server.
 - **Session State Caching** — The daemon actively monitors your `tmux` session, summarizing output from all panes to provide the AI with a global, real-time context of your terminal environment. Each pane summary includes the shell's current working directory and its OSC terminal title (set by applications like vim, ssh, and k9s). High-signal tmux session environment variables (cloud account, Kubernetes cluster, runtime tier, language runtime, etc.) are captured via `tmux show-environment` against a curated allowlist and prepended as a `[SESSION ENVIRONMENT]` block to every AI context snapshot.
 - **Embedded AI Assistant** — Streams responses from Anthropic Claude, OpenAI, or Google Gemini with automatic context capture and sensitive-data masking.
-- **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Each tool call presents a three-option prompt: `[y]es` (approve once), `[a]pprove session` (auto-approve all commands of this class for the rest of the session), or `[N]o`. Two independent approval classes exist — *regular* and *sudo* — so sudo commands always prompt separately until explicitly session-approved. Two execution modes: *background* (runs in a dedicated tmux window `de-bg-*` on the daemon host using the user's configured shell; output is captured and summarized in chat; the window is always cleaned up after the result is captured) and *foreground* (injected into your tmux active pane via `send-keys`, visible and interactive; the AI receives the output the moment the command finishes). Completion is detected automatically via Linux `/proc` child-process tracking so the injected command appears unmodified in your pane.
+- **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Each tool call presents a three-option prompt: `[y]es` (approve once), `[a]pprove session` (auto-approve all commands of this class for the rest of the session), or `[N]o`. Two independent approval classes exist — *regular* and *sudo* — so sudo commands always prompt separately until explicitly session-approved. Two execution modes: *background* (runs in a dedicated tmux window `de-bg-<session_name>-...` on the daemon host using the user's configured shell; output is captured and saved to `~/.daemoneye/pane_logs/` before the window is automatically garbage collected) and *foreground* (injected into your tmux active pane via `send-keys`, visible and interactive; the AI receives the output the moment the command finishes). Completion is detected automatically via Linux `/proc` child-process tracking so the injected command appears unmodified in your pane.
 - **Command Scheduler & Watchdog** — Schedule commands to run once at a time or on a repeating interval. Set up watchdog monitors with AI-powered runbook analysis. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Watchdog jobs can trigger alerts via a configurable notification hook (`[notifications] on_alert`).
-- **Passive Pane Monitoring** — The AI can set up an asynchronous passive monitor on any background tmux pane. When the pane produces output (e.g. a long-running compile finishes or a server starts), the daemon notifies you out-of-band in your interactive chat session without blocking the AI from answering other questions.
+- **Passive Pane Monitoring** — The AI can execute long-running background commands which the daemon automatically tracks via `tmux pane-died` and `alert-bell` hooks. When the background pane finishes or explicitly emits a bell, the daemon cleans up the window through an automatic Garbage Collection lifecycle and interrupts your chat session with an out-of-band `[System]` alert.
 - **Scripts Directory** — AI and users can create and manage reusable scripts in `~/.daemoneye/scripts/`. Script writes require an approval step showing the full content. Scripts can be referenced by name in scheduled jobs.
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
 - **Command Audit Logging** — Every executed command is appended to `~/.daemoneye/commands.log` as a single structured line, including timestamp, session ID, execution mode, pane target, approval status, and output excerpt.
-- **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session.
+- **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session. The turn count and session lifetime are seamlessly embedded into the bottom border of the user input panel.
 - **Readline-style Chat Input** — The chat input box supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). The viewport scrolls horizontally for long inputs. History persists for the lifetime of the chat session.
 - **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`/tmp/daemoneye.sock`) for instant, non-blocking interaction.
 
@@ -71,7 +71,7 @@ DaemonEye requires the daemon to be running in the background.
 daemoneye daemon
 ```
 
-Daemon output (startup messages, errors) is written to `~/.daemoneye/daemon.log` by default. To stream it live:
+To stream the logs alongside activity and commands log in a three-pane layout in a dedicated `tmux` Information Window (`de-info`):
 
 ```sh
 daemoneye logs
@@ -137,15 +137,14 @@ daemoneye chat
 | `daemoneye daemon --command-log-file FILE` | Write command audit log to `FILE` |
 | `daemoneye daemon --no-command-log` | Disable command audit logging |
 | `daemoneye stop` | Stop the daemon gracefully |
-| `daemoneye ping` | Check whether the daemon is running |
-| `daemoneye logs [--log-file FILE]` | Tail the daemon log (wraps `tail -f`) |
+| `daemoneye logs` | Spawns/attaches to the `de-info` 3-pane tmux window containing `daemon.log`, `activity.log`, and `commands.log` |
 | `daemoneye chat` | Start an interactive multi-turn chat session |
 | `daemoneye ask <query>` | Send a single question to the AI |
 | `daemoneye setup` | Print the systemd service file and recommended tmux config |
 | `daemoneye scripts` | List scripts in `~/.daemoneye/scripts/` |
-| `daemoneye sched list` | List scheduled jobs and their status |
-| `daemoneye sched cancel <id>` | Cancel a scheduled job |
-| `daemoneye sched windows` | List leftover tmux windows from failed scheduled jobs (`de-*`) |
+| `daemoneye schedule list` | List scheduled jobs and their status |
+| `daemoneye schedule cancel <id>` | Cancel a scheduled job |
+| `daemoneye schedule windows` | List leftover tmux windows from failed scheduled jobs (`de-*`) |
 
 ---
 
@@ -229,8 +228,8 @@ extra_patterns = [
 ```
 src/
 ├── main.rs          # CLI entry point — parses subcommands (daemon, stop, ping, logs, chat, ask, setup, scripts, sched)
-├── daemon.rs        # Background process: IPC server, AI orchestration, tool execution, scheduler task
-├── client.rs        # IPC client: chat, ask, ping, stop, logs, scripts, sched list/cancel/windows
+├── daemon/          # Background process: IPC server, session memory, background execution
+├── cli/             # IPC client: chat interface, terminal rendering, subcommands
 ├── ipc.rs           # Shared data structures for Unix Socket communication
 ├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus
 ├── runbook.rs       # Runbook TOML loader; watchdog AI system prompt builder
@@ -242,7 +241,7 @@ src/
 ├── config.rs        # ~/.daemoneye/config.toml parsing, prompt loading, directory helpers
 └── ai/
     ├── mod.rs
-    ├── client.rs    # AiClient trait + Anthropic/OpenAI/Gemini streaming + 6 scheduler/script tools
+    ├── backends/    # Anthropic/OpenAI/Gemini streaming
     └── filter.rs    # Sensitive-data masking before API submission
 ```
 

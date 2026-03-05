@@ -10,6 +10,7 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize, Clone)]
 pub struct Runbook {
     pub name: String,
+    #[allow(dead_code)]
     pub description: String,
     /// Injected into the watchdog AI system prompt as context.
     pub context: String,
@@ -43,7 +44,12 @@ pub fn watchdog_system_prompt(runbook: &Runbook) -> String {
          Respond with OK if everything looks normal.",
         runbook.name,
         runbook.context,
-        runbook.alert_on.iter().map(|p| format!("- {}", p)).collect::<Vec<_>>().join("\n")
+        runbook
+            .alert_on
+            .iter()
+            .map(|p| format!("- {}", p))
+            .collect::<Vec<_>>()
+            .join("\n")
     )
 }
 

@@ -94,9 +94,8 @@ mod tests {
         let mut result: std::borrow::Cow<str> = std::borrow::Cow::Borrowed(text);
         for (re, rep) in &pats {
             if re.is_match(&result) {
-                result = std::borrow::Cow::Owned(
-                    re.replace_all(&result, rep.as_str()).into_owned(),
-                );
+                result =
+                    std::borrow::Cow::Owned(re.replace_all(&result, rep.as_str()).into_owned());
             }
         }
         result.into_owned()
@@ -141,9 +140,7 @@ mod tests {
 
     #[test]
     fn db_url_postgres() {
-        assert!(
-            mask("postgresql://admin:hunter2@db.example.com:5432/mydb").contains("<DB_URL>")
-        );
+        assert!(mask("postgresql://admin:hunter2@db.example.com:5432/mydb").contains("<DB_URL>"));
     }
 
     #[test]
@@ -215,7 +212,10 @@ mod tests {
     fn multiple_secrets_in_one_string() {
         let text = "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE and password=hunter2";
         let out = mask(text);
-        assert!(!out.contains("AKIAIOSFODNN7EXAMPLE"), "AWS key should be masked");
+        assert!(
+            !out.contains("AKIAIOSFODNN7EXAMPLE"),
+            "AWS key should be masked"
+        );
         assert!(!out.contains("hunter2"), "password should be masked");
     }
 
@@ -236,9 +236,13 @@ mod tests {
 
     #[test]
     fn ssh_key_pem_masked() {
-        let text = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----";
+        let text =
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----";
         let out = mask(text);
-        assert!(!out.contains("MIIEpAIBAAKCAQEA"), "PEM body should be masked");
+        assert!(
+            !out.contains("MIIEpAIBAAKCAQEA"),
+            "PEM body should be masked"
+        );
     }
 
     #[test]
