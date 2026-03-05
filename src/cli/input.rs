@@ -162,7 +162,7 @@ enum Key {
 
 /// Switch stdin to raw (non-canonical, no-echo) mode.
 /// Returns the saved termios for later restoration via `restore_termios`.
-fn set_raw_mode() -> anyhow::Result<libc::termios> {
+pub fn set_raw_mode() -> anyhow::Result<libc::termios> {
     unsafe {
         let mut old = std::mem::MaybeUninit::<libc::termios>::uninit();
         if libc::tcgetattr(libc::STDIN_FILENO, old.as_mut_ptr()) != 0 {
@@ -170,13 +170,8 @@ fn set_raw_mode() -> anyhow::Result<libc::termios> {
         }
         let old = old.assume_init();
         let mut raw = old;
-        // Disable: CR→NL, flow control, parity, strip, break-int.
-        raw.c_iflag &= !(libc::BRKINT | libc::ICRNL | libc::INPCK | libc::ISTRIP | libc::IXON);
-        // Disable output processing (so \n doesn't become \r\n).
-        raw.c_oflag &= !libc::OPOST;
-        // 8-bit characters.
-        raw.c_cflag = (raw.c_cflag & !libc::CSIZE) | libc::CS8;
         // Disable: echo, canonical mode, extended processing, signal generation.
+        // This ensures Ctrl+C is read as 0x03 instead of generating SIGINT.
         raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::IEXTEN | libc::ISIG);
         // Return after each byte, no timeout.
         raw.c_cc[libc::VMIN  as usize] = 1;
@@ -188,7 +183,7 @@ fn set_raw_mode() -> anyhow::Result<libc::termios> {
     }
 }
 
-fn restore_termios(old: libc::termios) {
+pub fn restore_termios(old: libc::termios) {
     unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old); }
 }
 
@@ -314,13 +309,11 @@ pub async fn read_input_line(
     session_id:     &str,
     status:         &str,
     approval_hint:  &str,
+    last_ctrl_c:    &mut Option<std::time::Instant>,
 ) -> anyhow::Result<Option<String>> {
-    let old = set_raw_mode()?;
-    let result = read_input_line_inner(
-        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, status, approval_hint,
-    ).await;
-    restore_termios(old);
-    result
+    read_input_line_inner(
+        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, status, approval_hint, last_ctrl_c,
+    ).await
 }
 
 async fn read_input_line_inner(
@@ -333,6 +326,7 @@ async fn read_input_line_inner(
     session_id:     &str,
     status:         &str,
     approval_hint:  &str,
+    last_ctrl_c:    &mut Option<std::time::Instant>,
 ) -> anyhow::Result<Option<String>> {
     // Initial render of the (empty or restored) input row.
     render_input_row(&state.current, chat_height.saturating_sub(2).max(1), *chat_width);
@@ -358,10 +352,20 @@ async fn read_input_line_inner(
                         render_input_row(&state.current, row, *chat_width);
                     }
                     Key::CtrlC  => {
-                        // Clear the current line; history nav position is reset.
+                        if let Some(t) = last_ctrl_c {
+                            if t.elapsed() < std::time::Duration::from_millis(1000) {
+                                return Ok(None); // Double Ctrl+C: exit chat
+                            }
+                        }
+                        *last_ctrl_c = Some(std::time::Instant::now());
+
+                        // Clear the current line
                         state.current = InputLine::new();
                         state.history_idx = None;
                         render_input_row(&state.current, row, *chat_width);
+                        
+                        // Show exit hint in status bar
+                        draw_status_bar(*chat_height, *chat_width, session_id, "ready (Press Ctrl+C again to exit)", approval_hint);
                     }
                     Key::Char(c) if c != '\0' => {
                         state.current.insert(c);

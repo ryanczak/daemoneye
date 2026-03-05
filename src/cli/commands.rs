@@ -380,15 +380,15 @@ pub async fn run_chat() -> Result<()> {
 
 async fn run_chat_inner() -> Result<()> {
     let start_time = std::time::Instant::now();
-    let mut session_id = new_session_id();
+    let session_id = new_session_id();
     // None = use daemon's configured default prompt; Some(name) = override.
-    let mut current_prompt: Option<String> = None;
-    let mut approval = SessionApproval::default();
+    let current_prompt: Option<String> = None;
+    let approval = SessionApproval::default();
 
     // Single AsyncStdin owns the fd 0 epoll registration for the whole session.
     // Shared by the interactive line editor (raw mode) and tool-call approval
     // prompts (cooked mode); they never run concurrently.
-    let stdin = AsyncStdin::new()?;
+    let stdin = crate::cli::input::AsyncStdin::new()?;
     let mut input_state = InputState::new();
 
     // Register the SIGWINCH listener before doing anything that depends on
@@ -490,9 +490,36 @@ async fn run_chat_inner() -> Result<()> {
     // In the normal keybinding workflow (user already inside an active tmux
     // session), #{session_attached} is already ≥ 1 so the loop exits on the
     // first check with no perceptible delay.
-    let mut current_status = "ready";
+    let current_status = "ready";
     let hint = approval.hint();
     draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+
+    // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
+    let old_termios = crate::cli::input::set_raw_mode()?;
+
+    let result = run_chat_inner_raw(
+        &mut input_state, &stdin, &mut sigwinch,
+        chat_width, chat_height, start_time, session_id,
+        current_prompt, current_status, approval,
+    ).await;
+
+    crate::cli::input::restore_termios(old_termios);
+    result
+}
+
+async fn run_chat_inner_raw(
+    input_state:    &mut InputState,
+    stdin:          &AsyncStdin,
+    sigwinch:       &mut tokio::signal::unix::Signal,
+    mut chat_width: usize,
+    mut chat_height: usize,
+    start_time:     std::time::Instant,
+    mut session_id: String,
+    mut current_prompt: Option<String>,
+    mut current_status: &'static str,
+    mut approval:   SessionApproval,
+) -> Result<()> {
+    let mut last_ctrl_c: Option<std::time::Instant> = None;
 
     loop {
         let attached = std::process::Command::new("tmux")
@@ -523,17 +550,18 @@ async fn run_chat_inner() -> Result<()> {
     chat_height = terminal_height();
     setup_scroll_region(chat_height);
     current_status = "ready";
-    let hint = approval.hint();
     draw_input_frame(chat_height, chat_width, start_time);
+    let hint = approval.hint();
     draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
         let hint = approval.hint();
         let line_opt = read_input_line(
-            &mut input_state, &stdin, &mut sigwinch,
+            input_state, stdin, sigwinch,
             &mut chat_width, &mut chat_height,
             start_time, &session_id, current_status, &hint,
+            &mut last_ctrl_c,
         ).await?;
 
         let Some(line) = line_opt else { break }; // EOF or Ctrl+D on empty line
@@ -611,6 +639,9 @@ async fn run_chat_inner() -> Result<()> {
         if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
+        // Turn completed: reset the double-tap exit timer.
+        last_ctrl_c = None;
+
         // Re-sync dimensions after the (potentially long) streaming response.
         chat_width  = terminal_width();
         chat_height = terminal_height();
