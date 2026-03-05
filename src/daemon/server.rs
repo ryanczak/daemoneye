@@ -921,15 +921,23 @@ pub async fn handle_client(
                                                         if waited >= cmd_timeout { break; }
                                                     }
                                                 } else {
-                                                    // Poll pane_current_command every 50 ms:
-                                                    //   1. Wait for it to change away from idle_cmd  → command started
-                                                    //   2. Wait for it to return to idle_cmd         → command complete
-                                                    // This is completely invisible to the user — no suffix in the pane.
-                                                    let poll = Duration::from_millis(50);
-                                                    let start_timeout  = Duration::from_secs(10);
-                                                    let cmd_timeout    = Duration::from_secs(45);
+                                                    // Detect foreground command completion via pane_current_command polling.
+                                                    //
+                                                    // Phase 1: wait up to 300ms for the child process to become visible.
+                                                    //   - Fast commands and bash builtins (echo, cd, ls) finish in <50ms;
+                                                    //     pane_current_command stays as the shell the whole time, so the
+                                                    //     transition is never seen → saw_child = false → capture immediately.
+                                                    //   - Long-running external processes (sleep, grep, make) will be
+                                                    //     visible in pane_current_command within the 300ms window →
+                                                    //     saw_child = true → proceed to Phase 2.
+                                                    //
+                                                    // Phase 2: poll every 25ms until pane_current_command returns to the
+                                                    //   shell name (the subprocess exited).
+                                                    let poll          = Duration::from_millis(25);
+                                                    let start_timeout = Duration::from_millis(300);
+                                                    let cmd_timeout   = Duration::from_secs(45);
 
-                                                    // Phase 1: wait for child to appear
+                                                    // Phase 1: wait for child process to appear
                                                     let saw_child = tokio::time::timeout(start_timeout, async {
                                                         loop {
                                                             tokio::time::sleep(poll).await;
@@ -939,7 +947,8 @@ pub async fn handle_client(
                                                         }
                                                     }).await.is_ok();
 
-                                                    // Phase 2: wait for the shell to return (child exited)
+                                                    // Phase 2: if we saw a child, wait for the shell to reclaim the pane.
+                                                    // If saw_child is false the command already finished — capture immediately.
                                                     if saw_child {
                                                         tokio::time::timeout(cmd_timeout, async {
                                                             loop {
