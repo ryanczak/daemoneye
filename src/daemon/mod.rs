@@ -326,7 +326,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             result = listener.accept() => {
                 match result {
                     Ok((stream, _addr)) => {
-                        log::debug!("Client connected");
                         let cache_conn = Arc::clone(&cache);
                         let sessions_conn = Arc::clone(&sessions);
                         let sched_conn = Arc::clone(&schedule_store);
