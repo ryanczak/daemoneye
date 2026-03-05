@@ -37,6 +37,18 @@ pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
     println!("\x1b[1m\x1b[96m╰{}\x1b[22m╯\x1b[0m", "─".repeat(inner));
 }
 
+/// Return `user@hostname` for the local machine, used as the label in the
+/// user query border.  Reads `$USER` and `$HOSTNAME` from the environment
+/// (bash sets both automatically; daemoneye inherits them from its shell).
+/// Falls back gracefully if either is missing.
+fn local_user_host() -> String {
+    let user = std::env::var("USER").unwrap_or_else(|_| "you".to_string());
+    let host = std::env::var("HOSTNAME").unwrap_or_default();
+    // Strip domain suffix: `scrappy.local` → `scrappy`
+    let host = host.split('.').next().unwrap_or("").to_string();
+    if host.is_empty() { user } else { format!("{}@{}", user, host) }
+}
+
 /// Render a user query as a bordered box in the chat history scroll region.
 ///
 /// The box uses the same bold-cyan `╭╮╰╯` style as the input frame and the
@@ -52,9 +64,10 @@ pub fn print_user_query(query: &str, turn: usize, message_count: usize) {
     let w     = terminal_width().max(44);
     let inner = w - 2; // visible chars between corner glyphs
 
-    // ── Top border: ╭─ You ──────────────────────────╮ ─────────────
-    let tpart = "─ You ";
-    let fill  = inner.saturating_sub(visual_len(tpart) + 1); // +1 for ─ before ╮
+    // ── Top border: ╭─ matt@scrappy ──────────────────╮ ─────────────
+    let identity = local_user_host();
+    let tpart = format!("─ {} ", identity);
+    let fill  = inner.saturating_sub(visual_len(&tpart) + 1); // +1 for ─ before ╮
     println!("\x1b[1m\x1b[96m╭{tpart}{}─╮\x1b[0m", "─".repeat(fill));
 
     // ── Body lines (word-wrap aware) ──────────────────────────────────
