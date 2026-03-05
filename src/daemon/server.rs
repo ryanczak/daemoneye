@@ -637,7 +637,7 @@ pub async fn handle_client(
     let is_first_turn = messages.is_empty();
 
     // Build labeled terminal context: active pane at full depth, background panes as summaries.
-    let session_summary = cache.get_labeled_context(client_pane.as_deref());
+    let session_summary = cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
     let safe_query = mask_sensitive(&initial_query);
 
     // First turn: include full host context. Subsequent turns: fresh terminal
@@ -854,13 +854,15 @@ pub async fn handle_client(
                                         "decision": "approved",
                                     }));
                                     let ai_target = target.as_deref().and_then(|tp: &str| {
+                                        // Never inject into the chat pane itself.
+                                        if chat_pane.as_deref() == Some(tp) { return None; }
                                         let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
                                         if panes.contains_key(tp) { Some(tp.to_string()) } else { None::<String> }
                                     });
 
                                     let target_owned: String = if let Some(tp) = ai_target {
                                         tp
-                                    } else if let Some(cp) = client_pane.as_deref() {
+                                    } else if let Some(cp) = client_pane.as_deref().filter(|cp| chat_pane.as_deref() != Some(cp)) {
                                         cp.to_string()
                                     } else {
                                         let pane_list: Vec<PaneInfo> = {

@@ -179,7 +179,11 @@ impl SessionCache {
     /// which pane is the user's current focus.  All other cached panes are included as
     /// brief summaries tagged `[BACKGROUND PANE]` with CWD and terminal title.
     /// A `[SESSION ENVIRONMENT]` block is prepended when any high-signal env vars are set.
-    pub fn get_labeled_context(&self, source_pane: Option<&str>) -> String {
+    ///
+    /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
+    /// background pane listing so the AI cannot accidentally target it with foreground
+    /// commands.
+    pub fn get_labeled_context(&self, source_pane: Option<&str>, chat_pane: Option<&str>) -> String {
         let mut out = String::new();
 
         // Window topology (P4) — prepend if session has ≥2 windows.
@@ -294,6 +298,7 @@ impl SessionCache {
         let mut bg: Vec<_> = panes
             .iter()
             .filter(|(id, _)| source_pane.map_or(true, |s| s != id.as_str()))
+            .filter(|(id, _)| chat_pane.map_or(true, |c| c != id.as_str()))
             .collect();
         bg.sort_by_key(|(id, _)| id.as_str());
         for (id, state) in bg {
@@ -401,7 +406,7 @@ mod tests {
     #[test]
     fn get_labeled_context_no_panes_no_source_returns_fallback() {
         let c = cache();
-        let ctx = c.get_labeled_context(None);
+        let ctx = c.get_labeled_context(None, None);
         assert!(ctx.contains("no terminal context available"));
     }
 
@@ -441,7 +446,7 @@ mod tests {
                 },
             );
         }
-        let ctx = c.get_labeled_context(None);
+        let ctx = c.get_labeled_context(None, None);
         let pos1 = ctx.find("%1").unwrap();
         let pos3 = ctx.find("%3").unwrap();
         assert!(pos1 < pos3, "panes should be sorted by ID");
@@ -469,7 +474,7 @@ mod tests {
                 last_active: true,
             });
         }
-        let ctx = c.get_labeled_context(None);
+        let ctx = c.get_labeled_context(None, None);
         assert!(
             ctx.contains("[SESSION TOPOLOGY]"),
             "expected topology block, got: {ctx}"
@@ -500,7 +505,7 @@ mod tests {
                 last_active: false,
             });
         }
-        let ctx = c.get_labeled_context(None);
+        let ctx = c.get_labeled_context(None, None);
         assert!(
             !ctx.contains("[SESSION TOPOLOGY]"),
             "single-window session should not have topology block"
@@ -531,7 +536,7 @@ mod tests {
         // When %5 is the source pane it should NOT appear in BACKGROUND PANE list.
         // (It will appear as ACTIVE PANE if capture-pane succeeds — but in tests
         //  tmux isn't running so capture_pane returns an error, which is fine.)
-        let ctx = c.get_labeled_context(Some("%5"));
+        let ctx = c.get_labeled_context(Some("%5"), None);
         assert!(!ctx.contains("[BACKGROUND PANE %5]"));
     }
 
@@ -559,7 +564,7 @@ mod tests {
         // get_labeled_context reads from cache; capture_pane won't run (no tmux).
         // Assert that the BACKGROUND PANE line for %7 contains no copy-mode marker
         // (that's only on the ACTIVE PANE header) but that the pane is listed.
-        let ctx = c.get_labeled_context(None);
+        let ctx = c.get_labeled_context(None, None);
         assert!(ctx.contains("%7"), "pane %7 should appear in context");
         // Synchronized flag should NOT appear (synchronized=false).
         assert!(
@@ -589,11 +594,56 @@ mod tests {
                 },
             );
         }
-        let ctx = c.get_labeled_context(None);
+        let ctx = c.get_labeled_context(None, None);
         assert!(
             ctx.contains("[synchronized]"),
             "synchronized pane should have [synchronized] marker"
         );
         assert!(ctx.contains("%9"), "pane %9 should be listed");
+    }
+
+    #[test]
+    fn get_labeled_context_chat_pane_excluded_from_background() {
+        let c = cache();
+        {
+            let mut panes = c.panes.write().unwrap();
+            // Pane running the user's shell.
+            panes.insert(
+                "%1".to_string(),
+                PaneState {
+                    buffer: "user shell".to_string(),
+                    summary: "Idle shell at: $".to_string(),
+                    current_cmd: "bash".to_string(),
+                    current_path: "/home/user".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                },
+            );
+            // Pane running daemoneye chat.
+            panes.insert(
+                "%2".to_string(),
+                PaneState {
+                    buffer: "chat output".to_string(),
+                    summary: "Active: chat output".to_string(),
+                    current_cmd: "daemoneye".to_string(),
+                    current_path: "/home/user".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                },
+            );
+        }
+        // %1 is source, %2 is chat — chat pane must not appear in background listing.
+        let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
+        assert!(!ctx.contains("[BACKGROUND PANE %2"), "chat pane should be excluded");
+        // Source pane also shouldn't be in background listing (existing behaviour).
+        assert!(!ctx.contains("[BACKGROUND PANE %1"), "source pane should be excluded too");
     }
 }

@@ -397,8 +397,13 @@ async fn run_chat_inner() -> Result<()> {
         let target_w = crate::tmux::query_window_width(pane_id)
             .map(|w| (w * 25 / 100).max(20))
             .unwrap_or(100);
-        let _ = crate::tmux::resize_pane_width(pane_id, target_w);
-        chat_width  = crate::tmux::query_pane_width(pane_id).unwrap_or(target_w);
+        let current_w = crate::tmux::query_pane_width(pane_id).unwrap_or(0);
+        if current_w < target_w {
+            let _ = crate::tmux::resize_pane_width(pane_id, target_w);
+            chat_width = crate::tmux::query_pane_width(pane_id).unwrap_or(target_w);
+        } else {
+            chat_width = current_w;
+        }
         chat_height = crate::tmux::query_pane_height(pane_id).unwrap_or_else(|_| terminal_height());
     } else {
         chat_width  = terminal_width();
@@ -686,9 +691,12 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
             }
             Response::SessionInfo { message_count } => {
                 // Print the user query as a bordered box with turn/context in the bottom border.
+                // Skip for the greeting turn (display_query is empty).
                 let turn = (message_count / 2) + 1; // each turn = 1 user + 1 assistant msg
                 print!("\r\x1b[K"); // erase spinner line
-                print_user_query(&display_query, turn, message_count);
+                if !display_query.is_empty() {
+                    print_user_query(&display_query, turn, message_count);
+                }
             }
             Response::Token(t) => {
                 if !response_started {

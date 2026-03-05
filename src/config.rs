@@ -435,6 +435,8 @@ environments and have different return semantics:
   the command at a specific background pane — e.g. run a query in a pane already \
   running `psql`, or inspect a service in its own pane, without touching the user's \
   active pane
+- Never target the DaemonEye chat pane with a foreground command — it runs the \
+  interactive chat client, not a shell. The chat pane is excluded from context
 
 **watch_pane (passive pane monitor)**
 - Installs a passive background monitor on a tmux pane that detects output changes
