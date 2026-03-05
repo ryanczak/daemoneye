@@ -40,7 +40,7 @@ DaemonEye elevates the command-line experience by embedding AI agents like Googl
   - **Sudo Integration**: Commands requiring elevated privileges are handled gracefully in both modes. Background sudo prompts appear in the chat interface with echo-disabled password input. Foreground sudo commands notify you to type your password in the terminal pane.
   - **Task Automation & Fleet Management**: Generate scripts or run on-the-fly automation commands to manage single host configurations or automated fleet deployments. The AI agent acts as an expert sysadmin.
   - **Security Auditing**: Have the AI agent analyze system states, running processes, or security scan outputs to recommend and automatically apply remediation solutions.
-  - **Command Audit Log**: Every command the AI executes is written to `~/.daemoneye/commands.log` — a tamper-evident, single-line-per-event log with timestamp, session ID, execution mode, approval status, and output excerpt.
+  - **Structured Event Log**: Every command the AI executes, AI usage metrics, and system events are written to `~/.daemoneye/events.jsonl` as structured JSON objects.
   - **Prompt Library**: A library of pre-defined prompts for common tasks. Users can also create and save their own prompts. The prompts are stored in the user's home directory in the `.daemoneye/prompts` directory.
 
 ### 3.3 Extensibility & Community Ecosystem

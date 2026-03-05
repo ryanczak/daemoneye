@@ -62,13 +62,13 @@ pub async fn open_chat_pane(session_name: String) {
     {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(e) => {
-            eprintln!("Warning: could not read shell pane ID: {e}");
+            log::warn!("Could not read shell pane ID: {e}");
             return;
         }
     };
 
     if shell_pane_id.is_empty() {
-        eprintln!("Warning: empty shell pane ID, skipping chat pane setup");
+        log::warn!("Empty shell pane ID, skipping chat pane setup");
         return;
     }
 
@@ -114,11 +114,11 @@ pub async fn open_chat_pane(session_name: String) {
         }
         Ok(o) => {
             let err = String::from_utf8_lossy(&o.stderr);
-            eprintln!("Warning: could not open chat pane: {}", err.trim());
-            eprintln!("Attach manually with:  tmux attach -t {}  then run `daemoneye chat`", session_name);
+            log::warn!("Could not open chat pane: {}", err.trim());
+            log::info!("Attach manually with:  tmux attach -t {}  then run `daemoneye chat`", session_name);
         }
         Err(e) => {
-            eprintln!("Warning: could not open chat pane: {e}");
+            log::warn!("Could not open chat pane: {e}");
         }
     }
 }
@@ -157,7 +157,13 @@ pub async fn daemon_is_running() -> bool {
 /// 5. Bind the Unix domain socket and enter the accept loop.
 /// 6. Optionally open the chat pane if the daemon just created the tmux session.
 /// 7. Shut down cleanly on SIGTERM or SIGINT.
-pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>) -> Result<()> {
+pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
+    // Initialise env_logger once.  DAEMONEYE_LOG=debug|info|warn|error controls verbosity.
+    // Default is `info` which shows lifecycle events, connections, and command execution.
+    let _ = env_logger::Builder::from_env(
+        env_logger::Env::new().filter_or("DAEMONEYE_LOG", "info")
+    ).try_init();
+
     if let Some(ref path) = log_file {
         let file = std::fs::OpenOptions::new()
             .create(true)
@@ -189,10 +195,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
             env_var = env_var,
         );
     }
-    println!("Provider: {} / {}", startup_config.ai.provider, startup_config.ai.model);
+    log::info!("Provider: {} / {}", startup_config.ai.provider, startup_config.ai.model);
 
     let (session_name, session_was_created) = detect_or_create_session()?;
-    println!("Monitoring tmux session: {}", session_name);
+    log::info!("Monitoring tmux session: {}", session_name);
+    log_event("daemon_start", serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "session": session_name,
+        "pid":     std::process::id(),
+        "socket":  DEFAULT_SOCKET_PATH,
+    }));
 
     // Install session-wide pane-died and alert-bell hooks to catch background job activity natively
     let hook_exe_path = std::env::current_exe()
@@ -215,25 +227,26 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
 
     let cache = Arc::new(SessionCache::new(&session_name));
 
+    log::info!("Cache poller started");
     let cache_monitor = Arc::clone(&cache);
     tokio::spawn(async move {
         loop {
             if let Err(e) = cache_monitor.refresh() {
-                eprintln!("Failed to refresh tmux cache: {}", e);
+                log::warn!("Failed to refresh tmux cache: {}", e);
+                log_event("cache_refresh_error", serde_json::json!({ "error": e.to_string() }));
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     });
 
     let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
-    let command_log = Arc::new(command_log);
 
     // Load or create the schedule store.
     let schedules_path = Config::schedules_path();
     let schedule_store = Arc::new(
         ScheduleStore::load_or_create(schedules_path)
             .unwrap_or_else(|e| {
-                eprintln!("Warning: could not load schedules: {e}");
+                log::warn!("Could not load schedules: {e}");
                 ScheduleStore::load_or_create(
                     std::env::temp_dir().join("daemoneye_schedules.json")
                 ).expect("fallback schedule store")
@@ -293,7 +306,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
     let listener = UnixListener::bind(socket_path)
         .with_context(|| format!("Failed to bind to socket at {}", DEFAULT_SOCKET_PATH))?;
 
-    println!("Daemon listening on {}", DEFAULT_SOCKET_PATH);
+    log::info!("Daemon listening on {}", DEFAULT_SOCKET_PATH);
 
     // If the daemon just created the tmux session, open the chat pane inside
     // it now that the socket is ready. Users can then simply
@@ -313,28 +326,30 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
             result = listener.accept() => {
                 match result {
                     Ok((stream, _addr)) => {
+                        log::debug!("Client connected");
                         let cache_conn = Arc::clone(&cache);
                         let sessions_conn = Arc::clone(&sessions);
-                        let cmd_log_conn = Arc::clone(&command_log);
                         let sched_conn = Arc::clone(&schedule_store);
                         let sn = session_name.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, cmd_log_conn, sched_conn, sn).await {
-                                eprintln!("Error handling client: {}", e);
+                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, sched_conn, sn).await {
+                                log::error!("Error handling client: {}", e);
                             }
                         });
                     }
                     Err(e) => {
-                        eprintln!("Failed to accept incoming connection: {}", e);
+                        log::error!("Failed to accept incoming connection: {}", e);
                     }
                 }
             }
             _ = sigterm.recv() => {
-                println!("Received SIGTERM, shutting down.");
+                log::info!("Received SIGTERM, shutting down.");
+                log_event("daemon_stop", serde_json::json!({ "reason": "SIGTERM" }));
                 break;
             }
             _ = sigint.recv() => {
-                println!("Received SIGINT, shutting down.");
+                log::info!("Received SIGINT, shutting down.");
+                log_event("daemon_stop", serde_json::json!({ "reason": "SIGINT" }));
                 break;
             }
         }

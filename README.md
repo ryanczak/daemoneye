@@ -15,7 +15,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Scripts Directory** — AI and users can create and manage reusable scripts in `~/.daemoneye/scripts/`. Script writes require an approval step showing the full content. Scripts can be referenced by name in scheduled jobs.
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
-- **Command Audit Logging** — Every executed command is appended to `~/.daemoneye/commands.log` as a single structured line, including timestamp, session ID, execution mode, pane target, approval status, and output excerpt.
+- **Structured Event Logging** — Every executed command, AI turn usage, and lifecycle event is appended to `~/.daemoneye/events.jsonl` as a single structured JSON object.
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session. The turn count and session lifetime are seamlessly embedded into the bottom border of the user input panel.
 - **Readline-style Chat Input** — The chat input box supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). The viewport scrolls horizontally for long inputs. History persists for the lifetime of the chat session.
 - **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`/tmp/daemoneye.sock`) for instant, non-blocking interaction.
@@ -89,12 +89,7 @@ To write daemon logs to a custom path:
 daemoneye daemon --log-file /var/log/daemoneye.log
 ```
 
-Command execution events are written to `~/.daemoneye/commands.log` by default. To change the path or disable the audit log:
-
-```sh
-daemoneye daemon --command-log-file /var/log/daemoneye-commands.log
-daemoneye daemon --no-command-log
-```
+Event records (command history, AI turn counts, lifecycle info) are written to `~/.daemoneye/events.jsonl` by default.
 
 You can also manage the daemon with systemd — run `daemoneye setup` for the service file.
 
@@ -134,10 +129,8 @@ daemoneye chat
 | `daemoneye daemon` | Start the background daemon |
 | `daemoneye daemon --console` | Start daemon with output on the console (troubleshooting) |
 | `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/daemon.log` |
-| `daemoneye daemon --command-log-file FILE` | Write command audit log to `FILE` |
-| `daemoneye daemon --no-command-log` | Disable command audit logging |
 | `daemoneye stop` | Stop the daemon gracefully |
-| `daemoneye logs` | Spawns/attaches to the `de-info` 3-pane tmux window containing `daemon.log`, `activity.log`, and `commands.log` |
+| `daemoneye logs` | Tails the `daemon.log` file |
 | `daemoneye chat` | Start an interactive multi-turn chat session |
 | `daemoneye ask <query>` | Send a single question to the AI |
 | `daemoneye setup` | Print the systemd service file and recommended tmux config |
@@ -249,7 +242,7 @@ src/
 
 ## Command Audit Log
 
-Every command the AI proposes — whether approved, denied, or timed out — is recorded as a single line in `~/.daemoneye/commands.log`:
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in `~/.daemoneye/events.jsonl`:
 
 ```
 [1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...

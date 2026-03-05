@@ -183,6 +183,7 @@ impl AiClient for GeminiClient {
 
         let mut stream = response.bytes_stream();
         let mut leftover = String::new();
+        let mut usage = crate::ai::types::AiUsage::default();
 
         while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
@@ -242,11 +243,15 @@ impl AiClient for GeminiClient {
                                 }
                             }
                         }
+                        if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
+                            usage.prompt_tokens = u.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            usage.completion_tokens = u.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        }
                     }
                 }
             }
         }
-        let _ = tx.send(AiEvent::Done);
+        let _ = tx.send(AiEvent::Done(usage));
         Ok(())
     }
 }
@@ -260,7 +265,7 @@ impl AiClient for GeminiClient {
 mod tests {
     use super::*;
     use crate::ai::backends::anthropic::AnthropicClient;
-    use crate::ai::make_client;
+    use crate::ai::{make_client, ToolCall, ToolResult};
 
     fn user_msg(content: &str) -> Message {
         Message { role: "user".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }

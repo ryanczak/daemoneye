@@ -8,8 +8,10 @@ anyhow = "1.0.102"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
 futures-util = "0.3"
 libc = "0.2"
+log = "0.4"
 nix = "0.31.1"
 regex = "1"
 reqwest = { version = "0.13.2", features = ["json", "stream"] }

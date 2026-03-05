@@ -90,14 +90,13 @@ pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
 /// If not, it creates it with four panes in a 2x2 grid:
 /// - Top-Left: tail daemon.log
 /// - Top-Right: tail activity.log
-/// - Bottom-Left: tail commands.log
+/// - Bottom-Left: tail events.jsonl
 /// - Bottom-Right: interactive shell
 #[allow(dead_code)]
 pub fn ensure_info_window(
     session: &str,
     daemon_log: &std::path::Path,
-    activity_log: &std::path::Path,
-    commands_log: &std::path::Path,
+    events_log: &std::path::Path,
 ) -> Result<()> {
     let check = Command::new("tmux")
         .args(["list-windows", "-t", session, "-F", "#{window_name}"])
@@ -116,15 +115,10 @@ pub fn ensure_info_window(
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(activity_log);
-    let _ = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(commands_log);
+        .open(events_log);
 
     let d_log_str = daemon_log.to_string_lossy();
-    let a_log_str = activity_log.to_string_lossy();
-    let c_log_str = commands_log.to_string_lossy();
+    let e_log_str = events_log.to_string_lossy();
 
     // 1. Create the window with pane 0 tailing the daemon log
     let cmd1 = format!("tail -f '{}'", d_log_str);
@@ -143,8 +137,8 @@ pub fn ensure_info_window(
         anyhow::bail!("Failed to create de-info window");
     }
 
-    // 2. Split it vertically (creates a full-width bottom pane) for commands log
-    let cmd2 = format!("tail -f '{}'", c_log_str);
+    // 2. Split it vertically (creates a full-width bottom pane) for events log
+    let cmd2 = format!("tail -f '{}'", e_log_str);
     let out2 = Command::new("tmux")
         .args([
             "split-window",
@@ -157,22 +151,6 @@ pub fn ensure_info_window(
         .output()?;
     if !out2.status.success() {
         anyhow::bail!("Failed to split de-info window (vertical)");
-    }
-
-    // 3. Split the top pane horizontally (creates top-right pane) for activity log
-    let cmd3 = format!("tail -f '{}'", a_log_str);
-    let out3 = Command::new("tmux")
-        .args([
-            "split-window",
-            "-d",
-            "-t",
-            &format!("{}:de-info.0", session),
-            "-h",
-            &cmd3,
-        ])
-        .output()?;
-    if !out3.status.success() {
-        anyhow::bail!("Failed to split de-info top pane (horizontal)");
     }
 
     // Turn off remain-on-exit for these panes so if tail dies the pane cleans up

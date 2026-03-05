@@ -26,6 +26,12 @@ pub struct Message {
     pub tool_results: Option<Vec<ToolResult>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AiUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+}
+
 #[derive(Debug)]
 pub enum AiEvent {
     Token(String),
@@ -47,6 +53,6 @@ pub enum AiEvent {
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, script_name: String, thought_signature: Option<String> },
     WatchPane { id: String, pane_id: String, thought_signature: Option<String> },
-    Done,
+    Done(AiUsage),
     Error(String),
 }

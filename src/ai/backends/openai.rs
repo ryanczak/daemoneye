@@ -79,6 +79,7 @@ impl AiClient for OpenAiClient {
             "model": self.model,
             "max_tokens": 4096,
             "stream": true,
+            "stream_options": { "include_usage": true },
             "messages": full_messages,
             "tools": get_openai_tool_definition()
         });
@@ -95,6 +96,7 @@ impl AiClient for OpenAiClient {
         let mut tool_name = String::new();
         let mut tool_args = String::new();
         let mut leftover = String::new();
+        let mut usage = crate::ai::types::AiUsage::default();
 
         'outer: while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
@@ -109,7 +111,7 @@ impl AiClient for OpenAiClient {
                         break 'outer;
                     }
                     if let Ok(v) = serde_json::from_str::<Value>(data) {
-                        if let Some(delta) = v["choices"][0]["delta"].as_object() {
+                        if let Some(delta) = v["choices"].get(0).and_then(|c| c["delta"].as_object()) {
                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                                 if !content.is_empty() {
                                     let _ = tx.send(AiEvent::Token(content.to_string()));
@@ -140,6 +142,10 @@ impl AiClient for OpenAiClient {
                                 }
                             }
                         }
+                        if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
+                            usage.prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            usage.completion_tokens = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        }
                     }
                 }
             }
@@ -154,7 +160,7 @@ impl AiClient for OpenAiClient {
             }
         }
 
-        let _ = tx.send(AiEvent::Done);
+        let _ = tx.send(AiEvent::Done(usage));
         Ok(())
     }
 }

@@ -3,7 +3,7 @@ use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use anyhow::Result;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::BufReader;
@@ -63,6 +63,9 @@ pub async fn run_background_in_window(
         Err(e) => return format!("Failed to create background window: {}", e),
     };
     
+    let started_at = tokio::time::Instant::now();
+    let pane_id_log = pane_id.clone();
+    
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
     let _ = tmux::set_remain_on_exit(&pane_id, true);
 
@@ -96,6 +99,7 @@ pub async fn run_background_in_window(
     let win_owned = win_name.clone();
     let cmd_owned = cmd.to_string();
 
+    let session_id_clone = session_id.clone();
     tokio::spawn(async move {
         let mut rx = bg_done_subscribe();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3600); // 1 hour max
@@ -123,8 +127,18 @@ pub async fn run_background_in_window(
             }
         };
 
-        notify_job_completion(pane_id, cmd_owned, win_owned, session_owned, exit_code, session_id, sessions, None).await;
+        notify_job_completion(
+            pane_id, cmd_owned, win_owned, session_owned, exit_code,
+            session_id_clone, sessions, None, started_at
+        ).await;
     });
+
+    log_event("job_start", serde_json::json!({
+        "session": session_id.as_deref().unwrap_or("-"),
+        "job_id": id_short,
+        "job_name": win_name,
+        "pane": pane_id_log,
+    }));
 
     format!("Started background command in window {}", win_name)
 }
@@ -137,6 +151,7 @@ pub async fn run_background_in_window(
 /// - Inject AI context message into session history (if `session_id` is set)
 /// - Send `tmux display-message` overlay to the chat pane (if known)
 /// - Send `Response::SystemMsg` via `notify_tx` (if set)
+/// - Emits `job_complete` and `gc_window` events.
 /// - GC: kill the job window after a delay
 pub async fn notify_job_completion(
     pane_id: String,
@@ -147,8 +162,18 @@ pub async fn notify_job_completion(
     session_id: Option<String>,
     sessions: SessionStore,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    started_at: tokio::time::Instant,
 ) {
     let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
+    let duration_ms = started_at.elapsed().as_millis() as u64;
+
+    log_event("job_complete", serde_json::json!({
+        "session": session_id.as_deref().unwrap_or("-"),
+        "job_id": win_name.split('-').last().unwrap_or(""),
+        "job_name": win_name,
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+    }));
 
     // Archive logs
     let logs_dir = crate::config::config_dir().join("pane_logs");
@@ -198,6 +223,14 @@ pub async fn notify_job_completion(
     // GC: kill window after a delay (keep failed windows open longer for inspection)
     let gc_delay = if exit_code == 0 { Duration::from_secs(5) } else { Duration::from_secs(60) };
     tokio::time::sleep(gc_delay).await;
+
+    let reason = if exit_code == 0 { "done" } else if exit_code == 124 { "timeout" } else { "error" };
+    log_event("gc_window", serde_json::json!({
+        "session": session_id.as_deref().unwrap_or("-"),
+        "win_name": win_name,
+        "pane": pane_id,
+        "reason": reason,
+    }));
     let _ = tmux::kill_job_window(&session, &win_name);
 }
 
@@ -443,7 +476,8 @@ pub async fn run_scheduled_job(
 
     // Hand off to the shared notification + GC handler (non-blocking)
     let cmd_str = cmd.to_string();
-    tokio::spawn(notify_job_completion(pane_id, cmd_str, win_name, session, exit_code, None, Default::default(), notify_tx));
+    let started_at = tokio::time::Instant::now() - Duration::from_secs(60);
+    tokio::spawn(notify_job_completion(pane_id, cmd_str, win_name, session, exit_code, None, Default::default(), notify_tx, started_at));
 }
 
 /// Handle one client connection end-to-end.
@@ -472,24 +506,12 @@ pub async fn handle_client(
     stream: UnixStream,
     cache: Arc<SessionCache>,
     sessions: SessionStore,
-    command_log: Arc<Option<PathBuf>>,
     schedule_store: Arc<ScheduleStore>,
     session_name: String,
 ) -> Result<()> {
     let mut config = Config::load().unwrap_or_else(|_| {
-        eprintln!("Warning: failed to load config, using defaults");
-        Config {
-            ai: crate::config::AiConfig {
-                provider: "anthropic".to_string(),
-                api_key: String::new(),
-                model: "claude-sonnet-4-6".to_string(),
-                prompt: "sre".to_string(),
-                position: "right".to_string(),
-            },
-            masking: Default::default(),
-            context: Default::default(),
-            notifications: Default::default(),
-        }
+        log::warn!("Failed to load config, using defaults");
+        Config::default()
     });
     // If the config file has no key, fall back to the provider's env var.
     if config.ai.api_key.is_empty() {
@@ -721,7 +743,7 @@ pub async fn handle_client(
                     send_response_split(&mut tx, Response::Error(e)).await?;
                     return Ok(());
                 }
-                AiEvent::Done => {
+                AiEvent::Done(usage) => {
                     if pending_calls.is_empty() {
                         // No tool calls — this is the final answer.
                         if !full_response.is_empty() {
@@ -732,6 +754,14 @@ pub async fn handle_client(
                                 tool_results: None,
                             });
                         }
+                        
+                        log_event("ai_turn", serde_json::json!({
+                            "session": session_id.as_deref().unwrap_or("-"),
+                            "model": config.ai.model,
+                            "prompt_tokens": usage.prompt_tokens,
+                            "completion_tokens": usage.completion_tokens,
+                        }));
+                        
                         // Persist the conversation for the next turn.
                         // In-memory: fast lookup within the same daemon run.
                         // On-disk: survives daemon restarts.
@@ -756,6 +786,13 @@ pub async fn handle_client(
                         send_response_split(&mut tx, Response::Ok).await?;
                         return Ok(());
                     }
+
+                    log_event("ai_turn", serde_json::json!({
+                        "session": session_id.as_deref().unwrap_or("-"),
+                        "model": config.ai.model,
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                    }));
 
                     // Push one assistant message listing all tool calls.
                     messages.push(Message {
@@ -794,14 +831,28 @@ pub async fn handle_client(
                                 };
 
                                 if !approved {
-                                    let mode = if timed_out { "timeout" } else { "denied" };
-                                    log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "foreground", "", cmd, mode, "");
+                                    let decision = if timed_out { "timeout" } else { "denied" };
+                                    log::info!("Foreground command {}: {}", decision, cmd);
+                                    log_event("command_approval", serde_json::json!({
+                                        "session": session_id.as_deref().unwrap_or("-"),
+                                        "mode": "foreground",
+                                        "cmd": cmd,
+                                        "decision": decision,
+                                    }));
+                                    log_command(session_id.as_deref(), "foreground", "", cmd, decision, "");
                                     if timed_out {
                                         "Approval timed out (60 s); command not executed.".to_string()
                                     } else {
                                         "User denied execution".to_string()
                                     }
                                 } else {
+                                    log::info!("Foreground command approved: {}", cmd);
+                                    log_event("command_approval", serde_json::json!({
+                                        "session": session_id.as_deref().unwrap_or("-"),
+                                        "mode": "foreground",
+                                        "cmd": cmd,
+                                        "decision": "approved",
+                                    }));
                                     let ai_target = target.as_deref().and_then(|tp: &str| {
                                         let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
                                         if panes.contains_key(tp) { Some(tp.to_string()) } else { None::<String> }
@@ -977,12 +1028,12 @@ pub async fn handle_client(
                                                 }
 
                                                 send_response_split(&mut tx, Response::ToolResult(output.clone())).await?;
-                                                log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "foreground", target_str, cmd, "approved", &output);
+                                                log_command(session_id.as_deref(), "foreground", target_str, cmd, "approved", &output);
                                                 output
                                             }
                                             Err(e) => {
                                                 let msg = format!("Failed to send command: {}", e);
-                                                log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "foreground", target_str, cmd, "send-failed", &msg);
+                                                log_command(session_id.as_deref(), "foreground", target_str, cmd, "send-failed", &msg);
                                                 msg
                                             }
                                         }
@@ -1017,14 +1068,28 @@ pub async fn handle_client(
                                 };
 
                                 if !approved {
-                                    let mode = if timed_out { "timeout" } else { "denied" };
-                                    log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "background", "", cmd, mode, "");
+                                    let decision = if timed_out { "timeout" } else { "denied" };
+                                    log::info!("Background command {}: {}", decision, cmd);
+                                    log_event("command_approval", serde_json::json!({
+                                        "session": session_id.as_deref().unwrap_or("-"),
+                                        "mode": "background",
+                                        "cmd": cmd,
+                                        "decision": decision,
+                                    }));
+                                    log_command(session_id.as_deref(), "background", "", cmd, decision, "");
                                     if timed_out {
                                         "Approval timed out (60 s); command not executed.".to_string()
                                     } else {
                                         "User denied execution".to_string()
                                     }
                                 } else {
+                                    log::info!("Background command approved: {}", cmd);
+                                    log_event("command_approval", serde_json::json!({
+                                        "session": session_id.as_deref().unwrap_or("-"),
+                                        "mode": "background",
+                                        "cmd": cmd,
+                                        "decision": "approved",
+                                    }));
                                     let credential = if command_has_sudo(cmd) {
                                         send_response_split(&mut tx, Response::CredentialPrompt {
                                             id: id.clone(),
@@ -1054,7 +1119,7 @@ pub async fn handle_client(
                                         sessions.clone(),
                                     ).await;
                                     send_response_split(&mut tx, Response::ToolResult(output.clone())).await?;
-                                    log_command(command_log.as_ref().as_deref(), session_id.as_deref(), "background", "", cmd, "approved", &output);
+                                    log_command(session_id.as_deref(), "background", "", cmd, "approved", &output);
                                     output
                                 }
                             }
@@ -1099,12 +1164,27 @@ pub async fn handle_client(
                                 };
 
                                 if approved {
-                                    let job = ScheduledJob::new(name.clone(), kind, action, runbook.clone());
+                                    let job = ScheduledJob::new(name.clone(), kind.clone(), action, runbook.clone());
                                     match schedule_store.add(job) {
-                                        Ok(job_id) => format!("Scheduled job '{}' created (id: {})", name, &job_id[..8]),
+                                        Ok(job_id) => {
+                                            log::info!("Job scheduled: '{}' ({})", name, &job_id[..8]);
+                                            log_event("job_scheduled", serde_json::json!({
+                                                "session": session_id.as_deref().unwrap_or("-"),
+                                                "job_id": &job_id,
+                                                "job_name": name,
+                                                "kind": kind.describe(),
+                                            }));
+                                            format!("Scheduled job '{}' created (id: {})", name, &job_id[..8])
+                                        }
                                         Err(e) => format!("Failed to schedule job: {}", e),
                                     }
                                 } else {
+                                    log_event("command_approval", serde_json::json!({
+                                        "session": session_id.as_deref().unwrap_or("-"),
+                                        "mode": "schedule",
+                                        "cmd": command,
+                                        "decision": "denied",
+                                    }));
                                     "Job scheduling denied by user".to_string()
                                 }
                             }
@@ -1127,17 +1207,31 @@ pub async fn handle_client(
 
                             PendingCall::CancelSchedule { id: _, job_id, .. } => {
                                 match schedule_store.cancel(job_id) {
-                                    Ok(true) => format!("Job {} cancelled", &job_id[..job_id.len().min(8)]),
+                                    Ok(true) => {
+                                        log::info!("Job canceled: {}", &job_id[..job_id.len().min(8)]);
+                                        log_event("job_canceled", serde_json::json!({
+                                            "session": session_id.as_deref().unwrap_or("-"),
+                                            "job_id": job_id,
+                                        }));
+                                        format!("Job {} cancelled", &job_id[..job_id.len().min(8)])
+                                    }
                                     Ok(false) => format!("Job {} not found", job_id),
-                                    Err(e) => format!("Failed to cancel job: {}", e),
+                                    Err(e)  => format!("Failed to cancel job: {}", e),
                                 }
                             }
 
                             PendingCall::DeleteSchedule { id: _, job_id, .. } => {
                                 match schedule_store.delete(job_id) {
-                                    Ok(true) => format!("Job {} deleted permanently", &job_id[..job_id.len().min(8)]),
+                                    Ok(true) => {
+                                        log::info!("Job deleted: {}", &job_id[..job_id.len().min(8)]);
+                                        log_event("job_deleted", serde_json::json!({
+                                            "session": session_id.as_deref().unwrap_or("-"),
+                                            "job_id": job_id,
+                                        }));
+                                        format!("Job {} deleted permanently", &job_id[..job_id.len().min(8)])
+                                    }
                                     Ok(false) => format!("Job {} not found", job_id),
-                                    Err(e) => format!("Failed to delete job: {}", e),
+                                    Err(e)  => format!("Failed to delete job: {}", e),
                                 }
                             }
 

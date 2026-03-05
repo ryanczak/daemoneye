@@ -99,6 +99,7 @@ impl AiClient for AnthropicClient {
         let mut tool_name = String::new();
         let mut tool_args = String::new();
         let mut leftover = String::new();
+        let mut usage = crate::ai::types::AiUsage::default();
 
         'outer: while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
@@ -147,12 +148,20 @@ impl AiClient for AnthropicClient {
                                 tool_name.clear();
                                 tool_args.clear();
                             }
+                        } else if msg_type == "message_start" {
+                            if let Some(u) = v["message"]["usage"].as_object() {
+                                usage.prompt_tokens = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            }
+                        } else if msg_type == "message_delta" {
+                            if let Some(u) = v["usage"].as_object() {
+                                usage.completion_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            }
                         }
                     }
                 }
             }
         }
-        let _ = tx.send(AiEvent::Done);
+        let _ = tx.send(AiEvent::Done(usage));
         Ok(())
     }
 }

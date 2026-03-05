@@ -33,10 +33,45 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     re.is_match(cmd)
 }
 
-/// Append a single-line execution record to the command log.
-/// Does nothing when `log_path` is `None` (logging disabled).
+/// Write a structured JSONL event record to `~/.daemoneye/events.jsonl`.
+///
+/// Each call appends one JSON object per line.  The top-level fields
+/// `ts` (ISO-8601 UTC) and `event` (event type name) are always present.
+/// Additional fields are provided by the caller as a `serde_json::Value`
+/// object and merged in.
+///
+/// Errors are silently discarded — logging must never crash the daemon.
+pub fn log_event(event: &str, mut fields: serde_json::Value) {
+    use std::io::Write;
+
+    let path = crate::config::config_dir().join("events.jsonl");
+    let ts = chrono::Utc::now().to_rfc3339();
+
+    if let Some(obj) = fields.as_object_mut() {
+        // Prepend ts + event so they appear first in the line.
+        let mut record = serde_json::Map::new();
+        record.insert("ts".to_string(),    serde_json::Value::String(ts));
+        record.insert("event".to_string(), serde_json::Value::String(event.to_string()));
+        
+        // Take ownership of the fields from the caller's object
+        let drained = std::mem::take(obj);
+        for (k, v) in drained {
+            record.insert(k, v);
+        }
+
+        let mut line = serde_json::to_string(&record).unwrap_or_default();
+        line.push('\n');
+
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
+/// Back-compat shim — existing call sites in server.rs still compile while
+/// the migration to `log_event` is in progress.  New code should call
+/// `log_event` directly.
 pub fn log_command(
-    log_path: Option<&std::path::Path>,
     session_id: Option<&str>,
     mode: &str,
     pane: &str,
@@ -44,30 +79,19 @@ pub fn log_command(
     status: &str,
     output_excerpt: &str,
 ) {
-    let Some(path) = log_path else { return; };
-
-    use std::io::Write;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let session = session_id.unwrap_or("-");
-    // Escape embedded newlines so each log event stays on one line.
     let cmd: String = command.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-    let out: String = output_excerpt
-        .chars()
-        .take(200)
-        .map(|c| if c == '\n' { ' ' } else { c })
-        .collect();
-    let line = format!(
-        "[{ts}] session={session} mode={mode} pane={pane} status={status} cmd={cmd} out={out}\n"
-    );
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        let _ = f.write_all(line.as_bytes());
-    }
+    let out: String = output_excerpt.chars().take(200)
+        .map(|c| if c == '\n' { ' ' } else { c }).collect();
+    log_event("command", serde_json::json!({
+        "session": session_id.unwrap_or("-"),
+        "mode":    mode,
+        "pane":    pane,
+        "cmd":     cmd,
+        "status":  status,
+        "out":     out,
+    }));
 }
+
 
 /// Conventional environment variable for each provider's API key.
 pub fn api_key_env_var(provider: &str) -> &'static str {
