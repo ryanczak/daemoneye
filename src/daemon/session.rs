@@ -30,26 +30,15 @@ pub const FALLBACK_SESSION: &str = "daemoneye";
 /// Maximum number of messages retained per session (in memory and on disk).
 pub const MAX_HISTORY: usize = 40;
 
-pub static FG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<()>> =
-    std::sync::OnceLock::new();
-
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
-
-pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
-pub fn fg_done_subscribe() -> tokio::sync::broadcast::Receiver<()> {
-    FG_DONE_TX
-        .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
-        .subscribe()
-}
 
 pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
     BG_DONE_TX
         .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
         .subscribe()
 }
+
 
 /// Path to the JSONL file storing a session's message history.
 pub fn session_file(id: &str) -> std::path::PathBuf {

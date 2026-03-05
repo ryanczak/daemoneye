@@ -921,32 +921,34 @@ pub async fn handle_client(
                                                         if waited >= cmd_timeout { break; }
                                                     }
                                                 } else {
-                                                    let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                                    let exe_path = std::env::current_exe()
-                                                        .map(|p| p.to_string_lossy().into_owned())
-                                                        .unwrap_or_else(|_| "daemoneye".to_string());
-                                                        
-                                                    let mut fg_rx = fg_done_subscribe();
-                                                    
-                                                    // Suffix the command with an explicit IPC notification back to this daemon
-                                                    let suffixed_cmd = format!("; {} notify activity {} {} \"{}\"", exe_path, target_str, hook_idx, session_name);
-                                                    let _ = tmux::send_keys(target_str, &suffixed_cmd);
-
-                                                    let cmd_timeout = Duration::from_secs(45);
-                                                    let mut waited = Duration::ZERO;
+                                                    // Poll pane_current_command every 50 ms:
+                                                    //   1. Wait for it to change away from idle_cmd  → command started
+                                                    //   2. Wait for it to return to idle_cmd         → command complete
+                                                    // This is completely invisible to the user — no suffix in the pane.
                                                     let poll = Duration::from_millis(50);
-                                                    loop {
-                                                        tokio::select! {
-                                                            _ = fg_rx.recv() => {
-                                                                break; // Event received exactly when the command finishes
-                                                            }
-                                                            _ = tokio::time::sleep(poll) => {
-                                                                waited += poll;
-                                                                if waited >= cmd_timeout {
-                                                                    break;
-                                                                }
-                                                            }
+                                                    let start_timeout  = Duration::from_secs(10);
+                                                    let cmd_timeout    = Duration::from_secs(45);
+
+                                                    // Phase 1: wait for child to appear
+                                                    let saw_child = tokio::time::timeout(start_timeout, async {
+                                                        loop {
+                                                            tokio::time::sleep(poll).await;
+                                                            let cur = tmux::pane_current_command(target_str)
+                                                                .unwrap_or_default();
+                                                            if cur != idle_cmd { break; }
                                                         }
+                                                    }).await.is_ok();
+
+                                                    // Phase 2: wait for the shell to return (child exited)
+                                                    if saw_child {
+                                                        tokio::time::timeout(cmd_timeout, async {
+                                                            loop {
+                                                                tokio::time::sleep(poll).await;
+                                                                let cur = tmux::pane_current_command(target_str)
+                                                                    .unwrap_or_default();
+                                                                if cur == idle_cmd { break; }
+                                                            }
+                                                        }).await.ok();
                                                     }
                                                 }
                                                 tokio::time::sleep(Duration::from_millis(50)).await;

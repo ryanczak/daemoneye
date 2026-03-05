@@ -174,7 +174,7 @@ pub async fn run_ping() -> Result<()> {
 pub async fn run_ask(query: String) -> Result<()> {
     let stdin = AsyncStdin::new()?;
     let mut approval = SessionApproval::default(); // never persists; single-shot has no session
-    ask_with_session(query, None, None, &stdin, Some(terminal_width()), &mut approval).await
+    ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval).await
 }
 
 /// List all available prompts from ~/.daemoneye/prompts/.
@@ -492,7 +492,7 @@ async fn run_chat_inner() -> Result<()> {
     current_status = "thinking…";
     draw_status_bar(chat_height, chat_width, &session_id, current_status);
 
-    if let Err(e) = ask_with_session("Hello!".to_string(), Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
+    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
         eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
@@ -581,11 +581,9 @@ async fn run_chat_inner() -> Result<()> {
             }
             continue;
         }
-        // Echo the query at the bottom of the scroll region.
-        println!("\x1b[92m❯\x1b[0m {}", query);
         current_status = "thinking…";
         draw_status_bar(chat_height, chat_width, &session_id, current_status);
-        if let Err(e) = ask_with_session(query, Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
+        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), &mut approval).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
         // Re-sync dimensions after the (potentially long) streaming response.
@@ -603,7 +601,7 @@ async fn run_chat_inner() -> Result<()> {
 }
 
 
-async fn ask_with_session(query: String, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &AsyncStdin, chat_width: Option<usize>, approval: &mut SessionApproval) -> Result<()> {
+async fn ask_with_session(query: String, display_query: &str, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &AsyncStdin, chat_width: Option<usize>, approval: &mut SessionApproval) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
 
@@ -643,6 +641,7 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
     // applies ANSI styling, and word-wraps prose at the current terminal width.
     // Shared across the whole response (including tool-call sub-turns) so that
     // column position and code-block state remain consistent throughout.
+    let display_query = display_query.to_string();
     let mut md = MarkdownRenderer::new();
 
     loop {
@@ -686,22 +685,10 @@ async fn ask_with_session(query: String, session_id: Option<&str>, prompt_overri
                 break;
             }
             Response::SessionInfo { message_count } => {
-                // Print a subtle turn/context indicator, then let the spinner resume.
+                // Print the user query as a bordered box with turn/context in the bottom border.
                 let turn = (message_count / 2) + 1; // each turn = 1 user + 1 assistant msg
-                let ctx_label = if message_count == 0 {
-                    "new session".to_string()
-                } else {
-                    format!("{} message{} in context",
-                        message_count,
-                        if message_count == 1 { "" } else { "s" })
-                };
-                let w = terminal_width();
-                let label = format!(" turn {} · {} ", turn, ctx_label);
-                let dashes = w.min(72).saturating_sub(visual_len(&label) + 1);
-                print!("\r\x1b[K"); // erase spinner
-                println!("\x1b[2m─{}{}\x1b[0m",
-                    label,
-                    "─".repeat(dashes));
+                print!("\r\x1b[K"); // erase spinner line
+                print_user_query(&display_query, turn, message_count);
             }
             Response::Token(t) => {
                 if !response_started {

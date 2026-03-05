@@ -308,16 +308,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, command_log: Option<PathBuf>)
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("Failed to install SIGINT handler")?;
 
-    // P6: SIGUSR1 → broadcast to all foreground completion waiters.
-    let _ = FG_DONE_TX.get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel::<()>(32); tx });
-    let fg_sigusr1_tx = FG_DONE_TX.get().unwrap().clone();
-    tokio::spawn(async move {
-        let mut sigusr1 = tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::user_defined1()
-        ).expect("Failed to install SIGUSR1 handler");
-        loop { sigusr1.recv().await; let _ = fg_sigusr1_tx.send(()); }
-    });
-
     loop {
         tokio::select! {
             result = listener.accept() => {

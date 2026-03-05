@@ -37,6 +37,54 @@ pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
     println!("\x1b[1m\x1b[96m╰{}\x1b[22m╯\x1b[0m", "─".repeat(inner));
 }
 
+/// Render a user query as a bordered box in the chat history scroll region.
+///
+/// The box uses the same bold-cyan `╭╮╰╯` style as the input frame and the
+/// tool panel.  Long lines are word-wrapped.  The turn/context info is
+/// right-justified into the bottom border, mirroring where `SessionInfo`
+/// was previously printed as a leading horizontal rule.
+///
+/// `query`         — raw user text (may contain newlines and special chars)
+/// `turn`          — 1-based turn number
+/// `message_count` — number of messages in context before this query
+pub fn print_user_query(query: &str, turn: usize, message_count: usize) {
+    use std::io::Write;
+    let w     = terminal_width().max(44);
+    let inner = w - 2; // visible chars between corner glyphs
+
+    // ── Top border: ╭─ You ──────────────────────────╮ ─────────────
+    let tpart = "─ You ";
+    let fill  = inner.saturating_sub(visual_len(tpart) + 1); // +1 for ─ before ╮
+    println!("\x1b[1m\x1b[96m╭{tpart}{}─╮\x1b[0m", "─".repeat(fill));
+
+    // ── Body lines (word-wrap aware) ──────────────────────────────────
+    let avail = inner.saturating_sub(2); // 2 for the "  " indent
+    for raw_line in query.lines() {
+        // Escape every \ so wrap_line_hard sees literal characters, not ANSI
+        // codes. The query text is plain UTF-8, no escape sequences to consider.
+        for wrapped in wrap_line_hard(raw_line, avail) {
+            let vis = visual_len(&wrapped);
+            let pad = " ".repeat(inner.saturating_sub(2 + vis));
+            println!("\x1b[1m\x1b[96m│\x1b[0m  {wrapped}{pad}\x1b[1m\x1b[96m│\x1b[0m");
+        }
+    }
+
+    // ── Bottom border with right-justified turn/context label ──────────
+    let ctx_label = if message_count == 0 {
+        "new session".to_string()
+    } else {
+        format!("{} message{} in context",
+            message_count,
+            if message_count == 1 { "" } else { "s" })
+    };
+    let label     = format!(" turn {} · {} ", turn, ctx_label);
+    let label_vis = visual_len(&label);
+    // Fill the dashes: total inner width minus label minus 1 for the ─ prefix on label side
+    let dashes = inner.saturating_sub(label_vis + 1);
+    println!("\x1b[1m\x1b[96m╰{}\x1b[2m{label}\x1b[0m\x1b[1m\x1b[96m─╯\x1b[0m",
+        "─".repeat(dashes));
+    std::io::stdout().flush().ok();
+}
 
 /// Count the visible (printable) characters in a string, skipping ANSI escape
 /// sequences.  Used to measure word width correctly when the pending word
