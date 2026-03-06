@@ -941,6 +941,21 @@ pub async fn handle_client(
                                         let idle_cmd = tmux::pane_current_command(target_str)
                                             .unwrap_or_default();
                                         let is_remote_pane = get_pane_remote_host(target_str).is_some();
+
+                                        let current_exe = std::env::current_exe()
+                                            .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
+                                        let hook_idx = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() % 10000;
+                                        let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
+                                        let notify_cmd = format!(
+                                            "run-shell -b '{} notify activity {} 0 \"{}\"'",
+                                            current_exe.display(), target_str, session_name
+                                        );
+                                        let _ = std::process::Command::new("tmux")
+                                            .args(["set-hook", "-t", target_str, &hook_name, &notify_cmd])
+                                            .output();
+
+                                        let mut fg_rx = bg_done_subscribe();
+
                                         match tmux::send_keys(target_str, cmd) {
                                             Ok(()) => {
                                                 let mut switched_to_working = false;
@@ -973,63 +988,76 @@ pub async fn handle_client(
                                                 if is_remote_pane {
                                                     let mut prev_snap = String::new();
                                                     let mut stable_ticks = 0u32;
-                                                    let poll = Duration::from_millis(200);
-                                                    let mut waited = Duration::ZERO;
+                                                    let poll = Duration::from_millis(500); // Slower fallback poll
                                                     let cmd_timeout = Duration::from_secs(30);
+                                                    let deadline = tokio::time::Instant::now() + cmd_timeout;
+                                                    
                                                     loop {
-                                                        tokio::time::sleep(poll).await;
-                                                        waited += poll;
-                                                        let snap = tmux::capture_pane(target_str, 10)
-                                                            .unwrap_or_default();
-                                                        if snap == prev_snap {
-                                                            stable_ticks += 1;
-                                                            if stable_ticks >= 2 { break; }
-                                                        } else {
-                                                            stable_ticks = 0;
-                                                            prev_snap = snap;
+                                                        if tokio::time::Instant::now() >= deadline { break; }
+                                                        tokio::select! {
+                                                            result = fg_rx.recv() => {
+                                                                if let Ok(notified_pane) = result {
+                                                                    if notified_pane == target_str {
+                                                                        // Title changed. Reset stability check to evaluate new state
+                                                                        stable_ticks = 0;
+                                                                    }
+                                                                }
+                                                            }
+                                                            _ = tokio::time::sleep(poll) => {
+                                                                let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                                                if snap == prev_snap && !snap.is_empty() {
+                                                                    stable_ticks += 1;
+                                                                    if stable_ticks >= 2 { break; }
+                                                                } else {
+                                                                    stable_ticks = 0;
+                                                                    prev_snap = snap;
+                                                                }
+                                                            }
                                                         }
-                                                        if waited >= cmd_timeout { break; }
                                                     }
                                                 } else {
-                                                    // Detect foreground command completion via pane_current_command polling.
-                                                    //
-                                                    // Phase 1: wait up to 300ms for the child process to become visible.
-                                                    //   - Fast commands and bash builtins (echo, cd, ls) finish in <50ms;
-                                                    //     pane_current_command stays as the shell the whole time, so the
-                                                    //     transition is never seen → saw_child = false → capture immediately.
-                                                    //   - Long-running external processes (sleep, grep, make) will be
-                                                    //     visible in pane_current_command within the 300ms window →
-                                                    //     saw_child = true → proceed to Phase 2.
-                                                    //
-                                                    // Phase 2: poll every 25ms until pane_current_command returns to the
-                                                    //   shell name (the subprocess exited).
-                                                    let poll          = Duration::from_millis(25);
+                                                    let fast_poll = Duration::from_millis(25);
                                                     let start_timeout = Duration::from_millis(300);
-                                                    let cmd_timeout   = Duration::from_secs(45);
+                                                    let cmd_timeout = Duration::from_secs(45);
+                                                    let deadline = tokio::time::Instant::now() + cmd_timeout;
 
-                                                    // Phase 1: wait for child process to appear
+                                                    // Phase 1: Wait up to 300ms for child process to appear.
                                                     let saw_child = tokio::time::timeout(start_timeout, async {
                                                         loop {
-                                                            tokio::time::sleep(poll).await;
-                                                            let cur = tmux::pane_current_command(target_str)
-                                                                .unwrap_or_default();
+                                                            tokio::time::sleep(fast_poll).await;
+                                                            let cur = tmux::pane_current_command(target_str).unwrap_or_default();
                                                             if cur != idle_cmd { break; }
                                                         }
                                                     }).await.is_ok();
 
-                                                    // Phase 2: if we saw a child, wait for the shell to reclaim the pane.
-                                                    // If saw_child is false the command already finished — capture immediately.
+                                                    // Phase 2: If we saw a child, wait for it to finish using event-driven hook
                                                     if saw_child {
-                                                        tokio::time::timeout(cmd_timeout, async {
-                                                            loop {
-                                                                tokio::time::sleep(poll).await;
-                                                                let cur = tmux::pane_current_command(target_str)
-                                                                    .unwrap_or_default();
-                                                                if cur == idle_cmd { break; }
+                                                        let slow_poll = Duration::from_millis(500);
+                                                        loop {
+                                                            if tokio::time::Instant::now() >= deadline { break; }
+                                                            tokio::select! {
+                                                                result = fg_rx.recv() => {
+                                                                    if let Ok(notified_pane) = result {
+                                                                        if notified_pane == target_str {
+                                                                            let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+                                                                            if cur == idle_cmd { break; }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                _ = tokio::time::sleep(slow_poll) => {
+                                                                    let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+                                                                    if cur == idle_cmd { break; }
+                                                                }
                                                             }
-                                                        }).await.ok();
+                                                        }
                                                     }
                                                 }
+                                                
+                                                // Cleanup the hook
+                                                let _ = std::process::Command::new("tmux")
+                                                    .args(["set-hook", "-u", "-t", target_str, &hook_name])
+                                                    .output();
+
                                                 tokio::time::sleep(Duration::from_millis(50)).await;
 
                                                 let output = match tmux::capture_pane(target_str, 200) {
