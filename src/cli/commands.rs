@@ -467,7 +467,7 @@ async fn run_chat_inner() -> Result<()> {
         let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
         println!();
         for line in &logo_lines {
-            println!("{pad}\x1b[1m\x1b[96m{line}\x1b[0m");
+            println!("{pad}\x1b[1m\x1b[97m{line}\x1b[0m");
         }
         println!("{pad}\x1b[2m{subtitle}\x1b[0m");
     }
