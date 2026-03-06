@@ -20,6 +20,14 @@ pub mod server;
 pub mod executor;
 pub mod background;
 
+/// Shared prefix for all daemon-managed tmux windows.  Used by the CLI to
+/// filter windows from `tmux list-windows` output.
+pub const DAEMON_WINDOW_PREFIX: &str = "de-";
+/// Window-name prefix for background execution windows (`de-bg-<session>-<ts>-<id>`).
+pub const BG_WINDOW_PREFIX: &str = "de-bg-";
+/// Window-name prefix for scheduled-job windows (`de-sched-<ts>-<id>`).
+pub const SCHED_WINDOW_PREFIX: &str = "de-sched-";
+
 pub use session::*;
 pub use utils::*;
 pub use server::*;

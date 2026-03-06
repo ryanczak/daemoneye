@@ -18,33 +18,34 @@ mod tests {
     use crate::cli::commands::*;
     use crate::cli::render::*;
     use crate::cli::input::*;
+    use crate::daemon::utils::command_has_sudo;
 
-    // ── command_is_sudo ───────────────────────────────────────────────────────
+    // ── command_has_sudo ──────────────────────────────────────────────────────
 
     #[test]
-    fn command_is_sudo_simple() {
-        assert!(command_is_sudo("sudo apt install vim"));
+    fn command_has_sudo_simple_cli() {
+        assert!(command_has_sudo("sudo apt install vim"));
     }
 
     #[test]
-    fn command_is_sudo_in_pipeline() {
-        assert!(command_is_sudo("echo hi | sudo tee /etc/hosts"));
+    fn command_has_sudo_in_pipeline_cli() {
+        assert!(command_has_sudo("echo hi | sudo tee /etc/hosts"));
     }
 
     #[test]
-    fn command_is_sudo_after_semicolon() {
-        assert!(command_is_sudo("cd /tmp; sudo rm -rf foo"));
+    fn command_has_sudo_after_semicolon_cli() {
+        assert!(command_has_sudo("cd /tmp; sudo rm -rf foo"));
     }
 
     #[test]
-    fn command_is_sudo_false_positive_guard() {
+    fn command_has_sudo_false_positive_guard_cli() {
         // "sudoers" is not "sudo" — word-boundary must hold.
-        assert!(!command_is_sudo("cat /etc/sudoers"));
+        assert!(!command_has_sudo("cat /etc/sudoers"));
     }
 
     #[test]
-    fn command_is_sudo_no_sudo() {
-        assert!(!command_is_sudo("ls -la /home"));
+    fn command_has_sudo_no_sudo_cli() {
+        assert!(!command_has_sudo("ls -la /home"));
     }
 
     // ── visual_len ────────────────────────────────────────────────────────────

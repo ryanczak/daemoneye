@@ -35,7 +35,7 @@ pub async fn run_scheduled_job(
 ) {
     let id_short = &job.id[..job.id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let win_name = format!("de-sched-{}-{}", now, id_short);
+    let win_name = format!("{}{}-{}", crate::daemon::SCHED_WINDOW_PREFIX, now, id_short);
     let cmd = match &job.action {
         ActionOn::Alert => {
             // Pure alert: no command to run.

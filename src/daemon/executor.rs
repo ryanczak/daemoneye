@@ -11,6 +11,33 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 
+// ---------------------------------------------------------------------------
+// Timing constants — all durations used by tool execution in one place.
+// ---------------------------------------------------------------------------
+
+/// How long a user has to approve or deny a foreground/background tool call.
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a user has to respond to a credential or write prompt (sudo password, schedule, script).
+const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+/// Poll interval when detecting whether a sudo password prompt has appeared.
+const SUDO_POLL_INTERVAL: Duration = Duration::from_millis(100);
+/// Window within which a sudo password prompt must appear before giving up.
+const SUDO_DETECT_WINDOW: Duration = Duration::from_secs(3);
+/// Poll interval for remote-pane (SSH/mosh) output-stability check.
+const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
+/// Max time to wait for a command to complete in a remote pane.
+const REMOTE_CMD_TIMEOUT: Duration = Duration::from_secs(30);
+/// Fast poll used to detect that a child process has started in a local pane.
+const LOCAL_CHILD_POLL: Duration = Duration::from_millis(25);
+/// Window within which a child process must appear before falling back to hook-only wait.
+const LOCAL_CHILD_START_WINDOW: Duration = Duration::from_millis(300);
+/// Max time to wait for a command to complete in a local pane.
+const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
+/// Slow poll used while waiting for a local command to return to the shell prompt.
+const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
+/// Delay after command completion before capturing output, to let the shell flush.
+const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
+
 async fn find_best_target_pane(
     target: Option<&str>,
     chat_pane: Option<&str>,
@@ -116,7 +143,7 @@ pub async fn execute_tool_call(
 
             let mut line = String::new();
             let read_result = tokio::time::timeout(
-                Duration::from_secs(60),
+                APPROVAL_TIMEOUT,
                 rx.read_line(&mut line),
             ).await;
 
@@ -142,7 +169,7 @@ pub async fn execute_tool_call(
                 }));
                 log_command(session_id, "foreground", "", cmd, decision, "");
                 if timed_out {
-                    "Approval timed out (60 s); command not executed.".to_string()
+                    format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
                 } else {
                     "User denied execution".to_string()
                 }
@@ -185,7 +212,8 @@ pub async fn execute_tool_call(
 
                         let current_exe = std::env::current_exe()
                             .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
-                        let hook_idx = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() % 10000;
+                        let hook_idx = crate::daemon::session::FG_HOOK_COUNTER
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
                         let notify_cmd = format!(
                             "run-shell -b '{} notify activity {} 0 \"{}\"'",
@@ -202,9 +230,9 @@ pub async fn execute_tool_call(
                                 let mut switched_to_working = false;
 
                                 if command_has_sudo(cmd) {
-                                    let poll = Duration::from_millis(100);
+                                    let poll = SUDO_POLL_INTERVAL;
                                     let mut waited = Duration::ZERO;
-                                    let prompt_timeout = Duration::from_secs(3);
+                                    let prompt_timeout = SUDO_DETECT_WINDOW;
                                     let needs_password = loop {
                                         tokio::time::sleep(poll).await;
                                         waited += poll;
@@ -229,8 +257,8 @@ pub async fn execute_tool_call(
                                 if is_remote_pane {
                                     let mut prev_snap = String::new();
                                     let mut stable_ticks = 0u32;
-                                    let poll = Duration::from_millis(500); // Slower fallback poll
-                                    let cmd_timeout = Duration::from_secs(30);
+                                    let poll = REMOTE_POLL_INTERVAL;
+                                    let cmd_timeout = REMOTE_CMD_TIMEOUT;
                                     let deadline = tokio::time::Instant::now() + cmd_timeout;
                                     
                                     loop {
@@ -256,9 +284,9 @@ pub async fn execute_tool_call(
                                         }
                                     }
                                 } else {
-                                    let fast_poll = Duration::from_millis(25);
-                                    let start_timeout = Duration::from_millis(300);
-                                    let cmd_timeout = Duration::from_secs(45);
+                                    let fast_poll = LOCAL_CHILD_POLL;
+                                    let start_timeout = LOCAL_CHILD_START_WINDOW;
+                                    let cmd_timeout = LOCAL_CMD_TIMEOUT;
                                     let deadline = tokio::time::Instant::now() + cmd_timeout;
 
                                     let saw_child = tokio::time::timeout(start_timeout, async {
@@ -270,7 +298,7 @@ pub async fn execute_tool_call(
                                     }).await.is_ok();
 
                                     if saw_child {
-                                        let slow_poll = Duration::from_millis(500);
+                                        let slow_poll = LOCAL_SLOW_POLL;
                                         loop {
                                             if tokio::time::Instant::now() >= deadline { break; }
                                             tokio::select! {
@@ -295,7 +323,7 @@ pub async fn execute_tool_call(
                                     .args(["set-hook", "-u", "-t", target_str, &hook_name])
                                     .output();
 
-                                tokio::time::sleep(Duration::from_millis(50)).await;
+                                tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
 
                                 let output = match tmux::capture_pane(target_str, 200) {
                                     Ok(snap) => {
@@ -335,7 +363,7 @@ pub async fn execute_tool_call(
 
             let mut line = String::new();
             let read_result = tokio::time::timeout(
-                Duration::from_secs(60),
+                APPROVAL_TIMEOUT,
                 rx.read_line(&mut line),
             ).await;
 
@@ -361,7 +389,7 @@ pub async fn execute_tool_call(
                 }));
                 log_command(session_id, "background", "", cmd, decision, "");
                 if timed_out {
-                    "Approval timed out (60 s); command not executed.".to_string()
+                    format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
                 } else {
                     "User denied execution".to_string()
                 }
@@ -380,7 +408,7 @@ pub async fn execute_tool_call(
                     }).await?;
                     let mut cred_line = String::new();
                     match tokio::time::timeout(
-                        Duration::from_secs(120),
+                        USER_PROMPT_TIMEOUT,
                         rx.read_line(&mut cred_line),
                     ).await {
                         Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
@@ -435,7 +463,7 @@ pub async fn execute_tool_call(
 
             let mut line = String::new();
             let read_result = tokio::time::timeout(
-                Duration::from_secs(120),
+                USER_PROMPT_TIMEOUT,
                 rx.read_line(&mut line),
             ).await;
             if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
@@ -528,7 +556,7 @@ pub async fn execute_tool_call(
 
             let mut line = String::new();
             let read_result = tokio::time::timeout(
-                Duration::from_secs(120),
+                USER_PROMPT_TIMEOUT,
                 rx.read_line(&mut line),
             ).await;
             if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }

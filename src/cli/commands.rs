@@ -7,22 +7,9 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use crate::config::Config;
 use crate::cli::render::*;
 use crate::cli::input::*;
+use crate::daemon::utils::command_has_sudo;
 use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
 
-// ── Async stdin wrapper ───────────────────────────────────────────────────────
-
-/// Non-owning handle to fd 0 used with `AsyncFd`.  Does not close the fd on
-/// drop — closing stdin would break the process.
-/// True if the command string contains `sudo` as a standalone word.
-/// Mirrors the same check in daemon.rs so the client classifies commands
-/// identically for session-level approval.
-pub fn command_is_sudo(cmd: &str) -> bool {
-    use regex::Regex;
-    use std::sync::OnceLock;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap());
-    re.is_match(cmd)
-}
 
 /// Per-session auto-approval flags for the two command classes.
 /// Once set, the corresponding class is approved without prompting
@@ -323,7 +310,7 @@ pub fn run_sched_windows() -> Result<()> {
             let de_windows: Vec<&str> = text.lines()
                 .filter(|l| {
                     let name = l.splitn(2, ':').nth(1).unwrap_or("");
-                    name.starts_with("de-")
+                    name.starts_with(crate::daemon::DAEMON_WINDOW_PREFIX)
                 })
                 .collect();
             if de_windows.is_empty() {
@@ -802,7 +789,7 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
                 let cmd_line = format!("$ {}", command);
                 print_tool_panel(where_label, &[&cmd_line], false);
 
-                let is_sudo = command_is_sudo(&command);
+                let is_sudo = command_has_sudo(&command);
                 let auto_approved = if is_sudo { approval.sudo } else { approval.regular };
 
                 let approved = if auto_approved {

@@ -21,7 +21,7 @@ pub async fn run_background_in_window(
 ) -> String {
     let id_short = &tool_id[..tool_id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let win_name = format!("de-bg-{}-{}-{}", session, now, id_short);
+    let win_name = format!("{}{}-{}-{}", crate::daemon::BG_WINDOW_PREFIX, session, now, id_short);
     let wrapped = format!("{}; exit $?", cmd);
 
     let pane_id = match tmux::create_job_window(session, &win_name) {

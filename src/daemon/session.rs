@@ -32,6 +32,12 @@ pub const MAX_HISTORY: usize = 40;
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
 
+/// Monotonically-incrementing counter used to generate unique `pane-title-changed`
+/// hook slot names (`@de_fg_N`) for concurrent foreground command executions.
+/// Using a counter avoids the timestamp-modulo collision risk.
+pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
     BG_DONE_TX
         .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
