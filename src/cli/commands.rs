@@ -478,9 +478,13 @@ async fn run_chat_inner() -> Result<()> {
                 9 => "▀██▀",    // line 10 — pupil highlight
                 _ => "",
             };
-            let s = if let Some(p) = line.find(eye) {
-                format!("{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
-                        &line[..p], &line[p + eye.len()..])
+            let s = if !eye.is_empty() {
+                if let Some(p) = line.find(eye) {
+                    format!("{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
+                            &line[..p], &line[p + eye.len()..])
+                } else {
+                    format!("{blood_red}{line}\x1b[0m")
+                }
             } else if i >= 18 {
                 format!("\x1b[1m\x1b[97m{line}\x1b[0m")
             } else {
