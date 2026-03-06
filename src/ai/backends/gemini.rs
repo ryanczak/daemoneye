@@ -57,12 +57,16 @@ impl GeminiClient {
                 }
                 for tc in tcs {
                     let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
-                    parts.push(json!({
+                    let mut fc_part = json!({
                         "functionCall": {
                             "name": tc.name,
                             "args": args
                         }
-                    }));
+                    });
+                    if let Some(ts) = &tc.thought_signature {
+                        fc_part["thoughtSignature"] = json!(ts);
+                    }
+                    parts.push(fc_part);
                 }
                 result.push(json!({
                     "role": "model",
@@ -234,7 +238,10 @@ impl AiClient for GeminiClient {
                                             let fn_name = call["name"].as_str().unwrap_or("");
                                             if let Some(args) = call.get("args") {
                                                 let id = next_tool_id();
-                                                if let Some(ev) = dispatch_tool_event(&id, fn_name, args, None) {
+                                                let thought_sig = part.get("thoughtSignature")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(String::from);
+                                                if let Some(ev) = dispatch_tool_event(&id, fn_name, args, thought_sig) {
                                                     let _ = tx.send(ev);
                                                 }
                                             }
@@ -265,7 +272,8 @@ impl AiClient for GeminiClient {
 mod tests {
     use super::*;
     use crate::ai::backends::anthropic::AnthropicClient;
-    use crate::ai::{make_client, ToolCall, ToolResult};
+    use crate::ai::{make_client, ToolResult};
+    use crate::ai::types::ToolCall;
 
     fn user_msg(content: &str) -> Message {
         Message { role: "user".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }

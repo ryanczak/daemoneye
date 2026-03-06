@@ -124,15 +124,10 @@ impl Default for AiConfig {
 // Prompt definitions
 // ---------------------------------------------------------------------------
 
-/// A loaded prompt definition (name, optional description, system message).
+/// A loaded prompt definition (system message).
 /// Loaded from `~/.daemoneye/prompts/<name>.toml` or falling back to built-ins.
 #[derive(Debug, Deserialize, Clone)]
 pub struct PromptDef {
-    #[allow(dead_code)]
-    pub name: String,
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub description: String,
     pub system: String,
 }
 
@@ -140,8 +135,6 @@ impl PromptDef {
     /// Fallback used when no prompt file can be found.
     pub fn builtin_minimal() -> Self {
         PromptDef {
-            name: "Default".to_string(),
-            description: "Basic terminal assistant".to_string(),
             system: "You are a helpful terminal assistant. \
                      When suggesting commands put each on its own line."
                 .to_string(),
@@ -409,7 +402,7 @@ When `| scrolled N lines up` appears, the user is viewing older history and the 
 captured content reflects that position — not the current bottom. When `| copy mode` \
 appears, the user has tmux copy/scroll mode active; they may be examining past output.
 
-`[BACKGROUND PANE <id> — <cmd> — <cwd> (<title>) [synchronized]]` \
+`[BACKGROUND PANE <id> — <cmd> — <cwd> (<title>) [synchronized] [dead: N]]` \
 One-line summary per background pane with foreground command, working directory, \
 and terminal application title. Reference these when the user mentions a service, \
 log tail, or editor running in another pane. The pane IDs (e.g. `%3`) can be \
@@ -417,7 +410,9 @@ passed as the `target` parameter to `run_terminal_command` to direct a command \
 at that specific pane rather than the user's active pane. \
 When `[synchronized]` appears, the pane has tmux synchronized input — any command \
 sent there broadcasts to ALL synchronized panes simultaneously. Do NOT send \
-commands to a synchronized pane without an explicit warning to the user.
+commands to a synchronized pane without an explicit warning to the user. \
+`[dead: N]` — the pane's foreground process exited with code N (remain-on-exit mode). \
+Content reflects terminal state at exit.
 
 When presenting commands as text:
 - Put each command on its own line so it can be executed directly

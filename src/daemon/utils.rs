@@ -296,21 +296,6 @@ pub async fn send_response_split(tx: &mut tokio::net::unix::OwnedWriteHalf, resp
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn classify_exit_code(code: i32) -> &'static str {
-    match code {
-        1   => "generic failure",
-        2   => "misuse of shell built-in",
-        126 => "permission denied (not executable)",
-        127 => "command not found",
-        128 => "invalid exit argument",
-        130 => "interrupted (Ctrl-C)",
-        137 => "killed (SIGKILL / OOM)",
-        143 => "terminated (SIGTERM)",
-        _   => "non-zero exit",
-    }
-}
-
 pub fn fire_notification(job_name: &str, msg: &str, config: &crate::config::Config) {
     let cmd = &config.notifications.on_alert;
     if cmd.is_empty() { return; }

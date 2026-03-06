@@ -10,8 +10,6 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize, Clone)]
 pub struct Runbook {
     pub name: String,
-    #[allow(dead_code)]
-    pub description: String,
     /// Injected into the watchdog AI system prompt as context.
     pub context: String,
     /// Keywords or patterns in command output that trigger an alert.
@@ -61,7 +59,6 @@ mod tests {
     fn watchdog_prompt_contains_runbook_name() {
         let rb = Runbook {
             name: "disk-check".to_string(),
-            description: "Check disk usage".to_string(),
             context: "Normal disk usage is below 80%".to_string(),
             alert_on: vec!["9[0-9]%".to_string(), "100%".to_string()],
         };

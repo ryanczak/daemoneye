@@ -14,7 +14,6 @@ use tokio::io::AsyncBufReadExt;
 async fn find_best_target_pane(
     target: Option<&str>,
     chat_pane: Option<&str>,
-    client_pane: Option<&str>,
     cache: &Arc<SessionCache>,
     sessions: &SessionStore,
     session_id: Option<&str>,
@@ -103,7 +102,6 @@ pub async fn execute_tool_call(
     session_id: Option<&str>,
     session_name: &str,
     chat_pane: Option<&str>,
-    client_pane: Option<&str>,
     cache: &Arc<SessionCache>,
     sessions: &SessionStore,
     schedule_store: &Arc<ScheduleStore>,
@@ -157,7 +155,7 @@ pub async fn execute_tool_call(
                     "decision": "approved",
                 }));
                 
-                let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, client_pane, cache, sessions, session_id, tx, rx).await {
+                let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, cache, sessions, session_id, tx, rx).await {
                     Ok(tp) => tp,
                     Err(_) => return Err(anyhow::anyhow!("EOF")),
                 };

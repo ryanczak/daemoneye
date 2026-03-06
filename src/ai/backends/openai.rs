@@ -164,29 +164,3 @@ impl AiClient for OpenAiClient {
         Ok(())
     }
 }
-
-// ---------------------------------------------------------------------------
-// Gemini
-// ---------------------------------------------------------------------------
-
-/// Parse a Python-style function call from a Gemini `MALFORMED_FUNCTION_CALL`
-/// `finishMessage`, e.g.:
-///   `Malformed function call: print(default_api.run_terminal_command(command='cat README.md', background=false))`
-///
-/// Returns `(command, background)` if parsing succeeds, `None` otherwise.
-#[allow(dead_code)]
-fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
-    use regex::Regex;
-    use std::sync::OnceLock;
-    // Captures the command string (allowing escaped single quotes) and the background bool.
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"run_terminal_command\(command='((?:[^'\\]|\\.)*)'\s*,\s*background=(true|false)\)"#)
-            .expect("valid regex")
-    });
-    let caps = re.captures(msg)?;
-    let cmd = caps[1].replace("\\'", "'");
-    let bg  = &caps[2] == "true";
-    Some((cmd, bg))
-}
-

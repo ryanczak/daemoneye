@@ -21,26 +21,6 @@ use crate::runbook;
 use crate::scripts;
 use crate::daemon::background::notify_job_completion;
 
-/// Poll a tmux pane until its output is marked dead or the timeout expires.
-/// Returns `Some(exit_code)` if the pane died, or `None` if it timed out.
-#[allow(dead_code)]
-pub async fn poll_until_dead(pane_id: &str, timeout: Duration) -> Option<i32> {
-    let poll = Duration::from_millis(200);
-    let mut waited = Duration::ZERO;
-    loop {
-        tokio::time::sleep(poll).await;
-        waited += poll;
-        
-        if let Some(exit_code) = tmux::pane_dead_status(pane_id) {
-            return Some(exit_code);
-        }
-        
-        if waited >= timeout {
-            return None;
-        }
-    }
-}
-
 /// Run a single scheduled job in a dedicated tmux window.
 ///
 /// - Success: window killed, job marked `Succeeded` (or rescheduled for `Every`).
@@ -473,11 +453,9 @@ pub async fn handle_client(
                         if let Some(ref id) = session_id {
                             if let Ok(mut store) = sessions.lock() {
                                 let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
-                                    id: id.clone(),
                                     messages: Vec::new(),
                                     last_accessed: Instant::now(),
                                     chat_pane: chat_pane.clone(),
-                                    info_pane: None,
                                     default_target_pane: None,
                                     watched_panes: Default::default(),
                                 });
@@ -513,7 +491,7 @@ pub async fn handle_client(
                         let call_id = call.id().to_string();
                         let result = match crate::daemon::executor::execute_tool_call(
                             call, &mut tx, &mut rx, session_id.as_deref(), &session_name,
-                            chat_pane.as_deref(), client_pane.as_deref(), &cache, &sessions, &schedule_store
+                            chat_pane.as_deref(), &cache, &sessions, &schedule_store
                         ).await {
                             Ok(res) => res,
                             Err(_) => return Ok(()),

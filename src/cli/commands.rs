@@ -214,7 +214,8 @@ pub fn run_prompts() -> Result<()> {
                 .to_string_lossy()
                 .to_string();
             let def = load_named_prompt(&name);
-            entries.push((name, def.description));
+            let preview: String = def.system.chars().take(60).collect();
+            entries.push((name, preview));
         }
     }
 

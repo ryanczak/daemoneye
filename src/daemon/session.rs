@@ -7,16 +7,13 @@ use crate::ai::Message;
 
 /// In-memory record of an active chat session.
 /// Evicted by the cleanup task after 30 minutes of inactivity.
-#[allow(dead_code)]
 pub struct SessionEntry {
-    pub id: String,
     /// Full trimmed message history for this session (bounded to `MAX_HISTORY`).
     pub messages: Vec<Message>,
     /// Wall-clock time of the last `Ask` request; used to prune idle sessions.
     pub last_accessed: Instant,
     /// The tmux pane where the chat is occurring.
     pub chat_pane: Option<String>,
-    pub info_pane: Option<String>,
     /// A user-selected default pane for foreground execution when the AI doesn't specify one.
     pub default_target_pane: Option<String>,
     /// Panes currently flagged for passive alert-activity monitoring.

@@ -27,6 +27,12 @@ pub struct PaneState {
     pub in_copy_mode: bool,
     /// True when pane input is synchronized with other panes (`#{pane_synchronized}`, R6).
     pub synchronized: bool,
+    /// Name of the tmux window containing this pane (`#{window_name}`).
+    pub window_name: String,
+    /// True when the pane's foreground process has exited (remain-on-exit mode).
+    pub dead: bool,
+    /// Exit code of the foreground process if `dead` is true.
+    pub dead_status: Option<i32>,
 }
 
 /// Shared, periodically-refreshed view of all panes in a tmux session.
@@ -92,6 +98,9 @@ impl SessionCache {
                         history_size: 0,
                         in_copy_mode: false,
                         synchronized: false,
+                        window_name: String::new(),
+                        dead: false,
+                        dead_status: None,
                     });
 
                 entry.current_cmd = info.current_cmd;
@@ -101,6 +110,9 @@ impl SessionCache {
                 entry.history_size = info.history_size;
                 entry.in_copy_mode = info.in_copy_mode;
                 entry.synchronized = info.synchronized;
+                entry.window_name = info.window_name.clone();
+                entry.dead = info.dead;
+                entry.dead_status = info.dead_status;
 
                 if entry.buffer != content {
                     entry.buffer = content;
@@ -150,26 +162,6 @@ impl SessionCache {
         } else {
             format!("Active: {}", last_line.chars().take(50).collect::<String>())
         }
-    }
-
-    /// Get a full context summary for the AI.
-    #[allow(dead_code)]
-    pub fn get_context_summary(&self) -> String {
-        let panes = self.panes.read().unwrap();
-        let active_id = self.active_pane.read().unwrap();
-
-        let mut summary = String::from("Current Tmux Session State:\n");
-        for (id, state) in panes.iter() {
-            let marker = if Some(id) == active_id.as_ref() {
-                " (ACTIVE)"
-            } else {
-                ""
-            };
-            let masked_summary = mask_sensitive(&state.summary);
-            summary.push_str(&format!("- Pane {}{}: {}\n", id, marker, masked_summary));
-        }
-
-        summary
     }
 
     /// Build a labeled terminal context block for the AI.
@@ -315,17 +307,24 @@ impl SessionCache {
             };
             // R6: warn the AI that input to this pane broadcasts to all synced panes.
             let sync_part = if state.synchronized {
-                " [synchronized]"
+                " [synchronized]".to_string()
             } else {
-                ""
+                String::new()
+            };
+            // Step 12: surface dead pane state so AI knows the process has exited.
+            let dead_part = if state.dead {
+                format!(" [dead: {}]", state.dead_status.unwrap_or(0))
+            } else {
+                String::new()
             };
             out.push_str(&format!(
-                "[BACKGROUND PANE {}{}{}{}{}]: {}\n",
+                "[BACKGROUND PANE {}{}{}{}{}{}]: {}\n",
                 id,
                 format!(" — {}", state.current_cmd),
                 cwd_part,
                 title_part,
                 sync_part,
+                dead_part,
                 mask_sensitive(&state.summary),
             ));
         }
@@ -428,6 +427,9 @@ mod tests {
                     history_size: 0,
                     in_copy_mode: false,
                     synchronized: false,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
             panes.insert(
@@ -443,6 +445,9 @@ mod tests {
                     history_size: 0,
                     in_copy_mode: false,
                     synchronized: false,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
         }
@@ -530,6 +535,9 @@ mod tests {
                     history_size: 0,
                     in_copy_mode: false,
                     synchronized: false,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
         }
@@ -558,6 +566,9 @@ mod tests {
                     history_size: 1000,
                     in_copy_mode: true,
                     synchronized: false,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
         }
@@ -591,6 +602,9 @@ mod tests {
                     history_size: 500,
                     in_copy_mode: false,
                     synchronized: true,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
         }
@@ -600,6 +614,38 @@ mod tests {
             "synchronized pane should have [synchronized] marker"
         );
         assert!(ctx.contains("%9"), "pane %9 should be listed");
+    }
+
+    #[test]
+    fn get_labeled_context_dead_pane_noted() {
+        let c = cache();
+        {
+            let mut panes = c.panes.write().unwrap();
+            panes.insert(
+                "%11".to_string(),
+                PaneState {
+                    buffer: "some output".to_string(),
+                    summary: "Active: job finished".to_string(),
+                    current_cmd: "bash".to_string(),
+                    current_path: "/tmp".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 100,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "de-bg-myjob".to_string(),
+                    dead: true,
+                    dead_status: Some(1),
+                },
+            );
+        }
+        let ctx = c.get_labeled_context(None, None);
+        assert!(
+            ctx.contains("[dead: 1]"),
+            "dead pane should have [dead: 1] marker, got: {ctx}"
+        );
+        assert!(ctx.contains("%11"), "pane %11 should be listed");
     }
 
     #[test]
@@ -621,6 +667,9 @@ mod tests {
                     history_size: 0,
                     in_copy_mode: false,
                     synchronized: false,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
             // Pane running daemoneye chat.
@@ -637,6 +686,9 @@ mod tests {
                     history_size: 0,
                     in_copy_mode: false,
                     synchronized: false,
+                    window_name: String::new(),
+                    dead: false,
+                    dead_status: None,
                 },
             );
         }

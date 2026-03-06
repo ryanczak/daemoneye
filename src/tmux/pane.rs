@@ -2,7 +2,6 @@ use anyhow::Result;
 use std::process::Command;
 
 /// Metadata for a single tmux pane, fetched in one `list-panes` call.
-#[allow(dead_code)]
 pub struct RichPaneInfo {
     pub session_name: String,
     pub window_name: String,
@@ -182,21 +181,6 @@ pub fn capture_pane_to_file(pane_id: &str, out_path: &std::path::Path) -> Result
     // Clean up the tmux internal buffer
     let _ = Command::new("tmux").args(["delete-buffer"]).output();
     Ok(())
-}
-
-/// Return the PID of the shell process that owns the given pane.
-#[allow(dead_code)]
-pub fn pane_pid(pane_id: &str) -> Result<u32> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!("Failed to query pane_pid for '{}'", pane_id);
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse::<u32>()
-        .map_err(|e| anyhow::anyhow!("Could not parse pane pid: {}", e))
 }
 
 /// Return the name of the foreground process running in a pane.
