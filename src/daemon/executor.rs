@@ -11,6 +11,67 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 
+async fn find_best_target_pane(
+    target: Option<&str>,
+    chat_pane: Option<&str>,
+    client_pane: Option<&str>,
+    cache: &Arc<SessionCache>,
+    tx: &mut tokio::net::unix::OwnedWriteHalf,
+    rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
+) -> anyhow::Result<String> {
+    let ai_target = target.and_then(|tp: &str| {
+        if chat_pane == Some(tp) { return None; }
+        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+        if panes.contains_key(tp) { Some(tp.to_string()) } else { None::<String> }
+    });
+
+    if let Some(tp) = ai_target {
+        return Ok(tp);
+    }
+    
+    if let Some(cp) = client_pane.filter(|cp| chat_pane != Some(*cp)) {
+        return Ok(cp.to_string());
+    }
+
+    let pane_list: Vec<PaneInfo> = {
+        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+        let mut v: Vec<PaneInfo> = panes.iter()
+            .map(|(pid, state)| PaneInfo {
+                id: pid.clone(),
+                current_cmd: state.current_cmd.clone(),
+                summary: state.summary.clone(),
+            })
+            .collect();
+        v.sort_by(|a, b| a.id.cmp(&b.id));
+        v
+    };
+    
+    if pane_list.is_empty() {
+        send_response_split(tx, Response::Error(
+            "No tmux panes available".to_string()
+        )).await?;
+        return Err(anyhow::anyhow!("No active pane found."));
+    }
+    
+    let prompt_id = next_tool_id();
+    send_response_split(tx, Response::PaneSelectPrompt {
+        id: prompt_id.clone(),
+        panes: pane_list,
+    }).await?;
+    
+    let mut pane_line = String::new();
+    rx.read_line(&mut pane_line).await?;
+    match serde_json::from_str::<Request>(pane_line.trim()) {
+        Ok(Request::PaneSelectResponse { pane_id, .. }) => Ok(pane_id),
+        _ => {
+            send_response_split(tx, Response::Error(
+                "Expected PaneSelectResponse".to_string()
+            )).await?;
+            Err(anyhow::anyhow!("User aborted or invalid response"))
+        }
+    }
+}
+
 pub async fn execute_tool_call(
     call: &PendingCall,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
@@ -71,52 +132,12 @@ pub async fn execute_tool_call(
                     "cmd": cmd,
                     "decision": "approved",
                 }));
-                let ai_target = target.as_deref().and_then(|tp: &str| {
-                    if chat_pane == Some(tp) { return None; }
-                    let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
-                    if panes.contains_key(tp) { Some(tp.to_string()) } else { None::<String> }
-                });
-
-                let target_owned: String = if let Some(tp) = ai_target {
-                    tp
-                } else if let Some(cp) = client_pane.filter(|cp| chat_pane != Some(*cp)) {
-                    cp.to_string()
-                } else {
-                    let pane_list: Vec<PaneInfo> = {
-                        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
-                        let mut v: Vec<PaneInfo> = panes.iter()
-                            .map(|(pid, state)| PaneInfo {
-                                id: pid.clone(),
-                                current_cmd: state.current_cmd.clone(),
-                                summary: state.summary.clone(),
-                            })
-                            .collect();
-                        v.sort_by(|a, b| a.id.cmp(&b.id));
-                        v
-                    };
-                    if pane_list.is_empty() {
-                        send_response_split(tx, Response::Error(
-                            "No tmux panes available".to_string()
-                        )).await?;
-                        return Err(anyhow::anyhow!("EOF"));
-                    }
-                    let prompt_id = next_tool_id();
-                    send_response_split(tx, Response::PaneSelectPrompt {
-                        id: prompt_id.clone(),
-                        panes: pane_list,
-                    }).await?;
-                    let mut pane_line = String::new();
-                    rx.read_line(&mut pane_line).await?;
-                    match serde_json::from_str::<Request>(pane_line.trim()) {
-                        Ok(Request::PaneSelectResponse { pane_id, .. }) => pane_id,
-                        _ => {
-                            send_response_split(tx, Response::Error(
-                                "Expected PaneSelectResponse".to_string()
-                            )).await?;
-                            return Err(anyhow::anyhow!("EOF"));
-                        }
-                    }
+                
+                let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, client_pane, cache, tx, rx).await {
+                    Ok(tp) => tp,
+                    Err(_) => return Err(anyhow::anyhow!("EOF")),
                 };
+                
                 let target_str = target_owned.as_str();
                 if target_str.is_empty() {
                     "No active pane found.".to_string()
