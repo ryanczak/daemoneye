@@ -71,7 +71,7 @@ DaemonEye requires the daemon to be running in the background.
 daemoneye daemon
 ```
 
-To stream the logs alongside activity and commands log in a three-pane layout in a dedicated `tmux` Information Window (`de-info`):
+To stream the daemon logs:
 
 ```sh
 daemoneye logs
