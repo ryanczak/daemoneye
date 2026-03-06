@@ -67,7 +67,9 @@ pub async fn run_background_in_window(
     let pane_id_log = pane_id.clone();
     
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
-    let _ = tmux::set_remain_on_exit(&pane_id, true);
+    if let Err(e) = tmux::set_remain_on_exit(&pane_id, true) {
+        log::warn!("Failed to set remain-on-exit for {}: {}", win_name, e);
+    }
 
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
         let _ = tmux::kill_job_window(session, &win_name);
@@ -177,8 +179,11 @@ pub async fn notify_job_completion(
 
     // Archive logs
     let logs_dir = crate::config::config_dir().join("pane_logs");
-    let _ = std::fs::create_dir_all(&logs_dir);
-    let _ = tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name)));
+    if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+        log::error!("Failed to create pane_logs directory: {}", e);
+    } else if let Err(e) = tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name))) {
+        log::error!("Failed to archive pane logs for {}: {}", win_name, e);
+    }
 
     let normalized = normalize_output(&raw);
     let body = if normalized.is_empty() {
@@ -207,9 +212,12 @@ pub async fn notify_job_completion(
                 crate::daemon::session::write_session_file(sid, &entry.messages);
 
                 if let Some(ref cp) = entry.chat_pane {
-                    let _ = std::process::Command::new("tmux")
+                    if let Err(e) = std::process::Command::new("tmux")
                         .args(["display-message", "-d", "5000", "-t", cp, &alert_msg])
-                        .output();
+                        .output()
+                    {
+                        log::error!("Failed to send tmux display-message to chat pane: {}", e);
+                    }
                 }
             }
         }
@@ -231,7 +239,13 @@ pub async fn notify_job_completion(
         "pane": pane_id,
         "reason": reason,
     }));
-    let _ = tmux::kill_job_window(&session, &win_name);
+    if let Err(e) = tmux::kill_job_window(&session, &win_name) {
+        log::error!("Failed to GC kill background window {}: {}", win_name, e);
+        if let Some(ref tx) = notify_tx {
+            let msg = format!("System warning: failed to close background window {}. You may need to close it manually.", win_name);
+            let _ = tx.send(Response::SystemMsg(msg));
+        }
+    }
 }
 
 /// A tool call collected during AI streaming, to be executed after `Done`.
@@ -397,7 +411,9 @@ pub async fn run_scheduled_job(
     };
     
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
-    let _ = tmux::set_remain_on_exit(&pane_id, true);
+    if let Err(e) = tmux::set_remain_on_exit(&pane_id, true) {
+        log::warn!("Failed to set remain-on-exit for {}: {}", win_name, e);
+    }
 
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
         let msg = format!("Scheduled job '{}': failed to send keys: {}", job.name, e);

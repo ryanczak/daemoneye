@@ -217,14 +217,20 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     
     // pane-died is a global hook, so we must set it globally (-g).
     // We overwrite to prevent duplicate run-shell commands proliferating if the daemon restarts.
-    let _ = std::process::Command::new("tmux")
+    if let Err(e) = std::process::Command::new("tmux")
         .args(["set-hook", "-g", "pane-died", &notify_cmd])
-        .output();
+        .output()
+    {
+        log::error!("Failed to register global tmux pane-died hook: {}", e);
+    }
         
     // alert-bell can be set per session (-t)
-    let _ = std::process::Command::new("tmux")
+    if let Err(e) = std::process::Command::new("tmux")
         .args(["set-hook", "-t", &session_name, "alert-bell", &notify_cmd])
-        .output();
+        .output()
+    {
+        log::error!("Failed to register session tmux alert-bell hook: {}", e);
+    }
 
     let cache = Arc::new(SessionCache::new(&session_name));
 
