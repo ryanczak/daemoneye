@@ -1,13 +1,12 @@
-use crate::daemon::server::{run_background_in_window, send_response_split, PendingCall};
 use crate::daemon::session::{bg_done_subscribe, SessionStore};
 use crate::daemon::utils::*;
+use crate::daemon::background::{run_background_in_window};
 use crate::ipc::{PaneInfo, Request, Response, ScheduleListItem, ScriptListItem};
 use crate::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
 use crate::scripts;
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
-use crate::ai::filter::mask_sensitive;
-use crate::ai::next_tool_id;
+use crate::ai::{mask_sensitive, next_tool_id, PendingCall};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;

@@ -18,6 +18,7 @@ pub mod session;
 pub mod utils;
 pub mod server;
 pub mod executor;
+pub mod background;
 
 pub use session::*;
 pub use utils::*;
@@ -265,6 +266,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         let store = Arc::clone(&schedule_store);
         let sn = session_name.clone();
         let cfg = startup_config.clone();
+        let sessions_sched = Arc::clone(&sessions);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             loop {
@@ -274,8 +276,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                     let store2 = Arc::clone(&store);
                     let sn2 = sn.clone();
                     let cfg2 = cfg.clone();
+                    let sessions2 = Arc::clone(&sessions_sched);
                     tokio::spawn(async move {
-                        run_scheduled_job(job, store2, sn2, cfg2, None).await;
+                        run_scheduled_job(job, store2, sn2, sessions2, cfg2, None).await;
                     });
                 }
             }

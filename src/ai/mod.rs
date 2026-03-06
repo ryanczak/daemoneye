@@ -9,7 +9,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 use tokio::sync::mpsc::UnboundedSender;
 
-pub use types::{AiEvent, Message, ToolCall, ToolResult};
+pub use types::{AiEvent, Message, ToolResult, PendingCall};
+pub use filter::mask_sensitive;
 
 pub use backends::anthropic::AnthropicClient;
 pub use backends::openai::OpenAiClient;

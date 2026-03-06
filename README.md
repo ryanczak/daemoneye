@@ -222,6 +222,10 @@ extra_patterns = [
 src/
 ├── main.rs          # CLI entry point — parses subcommands (daemon, stop, ping, logs, chat, ask, setup, scripts, sched)
 ├── daemon/          # Background process: IPC server, session memory, background execution
+│   ├── server.rs    # Core IPC connection loop and AI prompt orchestration
+│   ├── executor.rs  # Dispatches AI tool calls
+│   ├── background.rs # Manages dedicated tmux windows for background tasks
+│   └── ...
 ├── cli/             # IPC client: chat interface, terminal rendering, subcommands
 ├── ipc.rs           # Shared data structures for Unix Socket communication
 ├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus
