@@ -466,8 +466,15 @@ async fn run_chat_inner() -> Result<()> {
         let logo_w = logo_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
         let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
         println!();
-        for line in &logo_lines {
-            println!("{pad}\x1b[1m\x1b[97m{line}\x1b[0m");
+        for (i, line) in logo_lines.iter().enumerate() {
+            let color = if i >= 5 && i <= 9 {
+                "\x1b[1m\x1b[38;2;220;160;0m"  // deep yellow — eyeball
+            } else if i >= 18 {
+                "\x1b[1m\x1b[97m"               // bright white — text block
+            } else {
+                "\x1b[1m\x1b[38;2;180;0;0m"    // blood red — body
+            };
+            println!("{pad}{color}{line}\x1b[0m");
         }
         println!("{pad}\x1b[2m{subtitle}\x1b[0m");
     }
