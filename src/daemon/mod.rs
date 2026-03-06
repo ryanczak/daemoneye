@@ -17,6 +17,7 @@ use crate::scheduler::ScheduleStore;
 pub mod session;
 pub mod utils;
 pub mod server;
+pub mod executor;
 
 pub use session::*;
 pub use utils::*;
@@ -186,8 +187,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
 
-    if resolve_api_key(&startup_config).is_empty() {
-        let env_var = api_key_env_var(&startup_config.ai.provider);
+    if startup_config.ai.resolve_api_key().is_empty() {
+        let env_var = startup_config.ai.api_key_env_var();
         anyhow::bail!(
             "No API key found for provider '{provider}'.\n\
              Set 'api_key' in ~/.daemoneye/config.toml  or  export {env_var}=<your-key>",

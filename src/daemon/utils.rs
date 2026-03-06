@@ -1,6 +1,5 @@
 
 
-use crate::config::Config;
 
 /// Return the hostname of the machine running the daemon.
 pub fn daemon_hostname() -> String {
@@ -92,23 +91,6 @@ pub fn log_command(
     }));
 }
 
-
-/// Conventional environment variable for each provider's API key.
-pub fn api_key_env_var(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "OPENAI_API_KEY",
-        "gemini" => "GEMINI_API_KEY",
-        _ => "ANTHROPIC_API_KEY",
-    }
-}
-
-/// Return the effective API key: config value if non-empty, else the env var.
-pub fn resolve_api_key(config: &Config) -> String {
-    if !config.ai.api_key.is_empty() {
-        return config.ai.api_key.clone();
-    }
-    std::env::var(api_key_env_var(&config.ai.provider)).unwrap_or_default()
-}
 
 /// Extract the output produced by a foreground command from a post-run pane snapshot.
 ///

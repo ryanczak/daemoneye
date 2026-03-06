@@ -91,6 +91,23 @@ fn default_position() -> String {
     "bottom".to_string()
 }
 
+impl AiConfig {
+    pub fn api_key_env_var(&self) -> &'static str {
+        match self.provider.as_str() {
+            "openai" => "OPENAI_API_KEY",
+            "gemini" => "GEMINI_API_KEY",
+            _ => "ANTHROPIC_API_KEY",
+        }
+    }
+
+    pub fn resolve_api_key(&self) -> String {
+        if !self.api_key.is_empty() {
+            return self.api_key.clone();
+        }
+        std::env::var(self.api_key_env_var()).unwrap_or_default()
+    }
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
