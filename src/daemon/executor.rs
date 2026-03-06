@@ -16,6 +16,8 @@ async fn find_best_target_pane(
     chat_pane: Option<&str>,
     client_pane: Option<&str>,
     cache: &Arc<SessionCache>,
+    sessions: &SessionStore,
+    session_id: Option<&str>,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
 ) -> anyhow::Result<String> {
@@ -29,8 +31,20 @@ async fn find_best_target_pane(
         return Ok(tp);
     }
     
-    if let Some(cp) = client_pane.filter(|cp| chat_pane != Some(*cp)) {
-        return Ok(cp.to_string());
+    // Check for a user-selected default target pane in the session
+    if let Some(sid) = session_id {
+        if let Ok(store) = sessions.lock() {
+            if let Some(entry) = store.get(sid) {
+                if let Some(ref dtp) = entry.default_target_pane {
+                    if chat_pane.as_deref() != Some(dtp.as_str()) {
+                        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+                        if panes.contains_key(dtp) {
+                            return Ok(dtp.clone());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     let pane_list: Vec<PaneInfo> = {
@@ -62,7 +76,17 @@ async fn find_best_target_pane(
     let mut pane_line = String::new();
     rx.read_line(&mut pane_line).await?;
     match serde_json::from_str::<Request>(pane_line.trim()) {
-        Ok(Request::PaneSelectResponse { pane_id, .. }) => Ok(pane_id),
+        Ok(Request::PaneSelectResponse { pane_id, .. }) => {
+            // Save user choice as default for the session
+            if let Some(sid) = session_id {
+                if let Ok(mut store) = sessions.lock() {
+                    if let Some(entry) = store.get_mut(sid) {
+                        entry.default_target_pane = Some(pane_id.clone());
+                    }
+                }
+            }
+            Ok(pane_id)
+        },
         _ => {
             send_response_split(tx, Response::Error(
                 "Expected PaneSelectResponse".to_string()
@@ -133,7 +157,7 @@ pub async fn execute_tool_call(
                     "decision": "approved",
                 }));
                 
-                let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, client_pane, cache, tx, rx).await {
+                let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, client_pane, cache, sessions, session_id, tx, rx).await {
                     Ok(tp) => tp,
                     Err(_) => return Err(anyhow::anyhow!("EOF")),
                 };

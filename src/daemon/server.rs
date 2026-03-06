@@ -478,6 +478,7 @@ pub async fn handle_client(
                                     last_accessed: Instant::now(),
                                     chat_pane: chat_pane.clone(),
                                     info_pane: None,
+                                    default_target_pane: None,
                                     watched_panes: Default::default(),
                                 });
                                 entry.messages = messages.clone();

@@ -17,6 +17,8 @@ pub struct SessionEntry {
     /// The tmux pane where the chat is occurring.
     pub chat_pane: Option<String>,
     pub info_pane: Option<String>,
+    /// A user-selected default pane for foreground execution when the AI doesn't specify one.
+    pub default_target_pane: Option<String>,
     /// Panes currently flagged for passive alert-activity monitoring.
     pub watched_panes: std::collections::HashSet<String>,
 }
