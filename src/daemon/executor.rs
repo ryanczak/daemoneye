@@ -38,6 +38,65 @@ const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
 /// Delay after command completion before capturing output, to let the shell flush.
 const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
 
+/// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
+/// the user's [`Request::ToolCallResponse`], and log the outcome.
+///
+/// Returns `Ok(None)` when the user approves.  Returns `Ok(Some(msg))` when
+/// the user denies or the wait times out — the caller should use `msg` as the
+/// tool result.  Returns `Err` on connection EOF.
+async fn prompt_and_await_approval(
+    id: &str,
+    cmd: &str,
+    background: bool,
+    session_id: Option<&str>,
+    tx: &mut tokio::net::unix::OwnedWriteHalf,
+    rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
+) -> anyhow::Result<Option<String>> {
+    let mode = if background { "background" } else { "foreground" };
+    send_response_split(tx, Response::ToolCallPrompt {
+        id: id.to_string(),
+        command: cmd.to_string(),
+        background,
+    }).await?;
+
+    let mut line = String::new();
+    let read_result = tokio::time::timeout(APPROVAL_TIMEOUT, rx.read_line(&mut line)).await;
+
+    if matches!(read_result, Ok(Ok(0))) {
+        return Err(anyhow::anyhow!("EOF"));
+    }
+
+    let timed_out = read_result.is_err();
+    let approved = match read_result {
+        Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+            Ok(Request::ToolCallResponse { id: resp_id, approved }) if resp_id == id => approved,
+            _ => false,
+        },
+        _ => false,
+    };
+
+    let decision = if approved { "approved" } else if timed_out { "timeout" } else { "denied" };
+    log::info!("{} command {}: {}", mode, decision, cmd);
+    log_event("command_approval", serde_json::json!({
+        "session": session_id.unwrap_or("-"),
+        "mode": mode,
+        "cmd": cmd,
+        "decision": decision,
+    }));
+
+    if !approved {
+        log_command(session_id, mode, "", cmd, decision, "");
+        let msg = if timed_out {
+            format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
+        } else {
+            "User denied execution".to_string()
+        };
+        return Ok(Some(msg));
+    }
+
+    Ok(None)
+}
+
 async fn find_best_target_pane(
     target: Option<&str>,
     chat_pane: Option<&str>,
@@ -135,54 +194,10 @@ pub async fn execute_tool_call(
 ) -> anyhow::Result<String> {
     let result: String = match call {
         PendingCall::Foreground { id, cmd, target, .. } => {
-            send_response_split(tx, Response::ToolCallPrompt {
-                id: id.clone(),
-                command: cmd.clone(),
-                background: false,
-            }).await?;
-
-            let mut line = String::new();
-            let read_result = tokio::time::timeout(
-                APPROVAL_TIMEOUT,
-                rx.read_line(&mut line),
-            ).await;
-
-            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
-
-            let timed_out = read_result.is_err();
-            let approved = match read_result {
-                Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
-                    Ok(Request::ToolCallResponse { id: resp_id, approved }) if resp_id == *id => approved,
-                    _ => false,
-                },
-                _ => false,
-            };
-
-            if !approved {
-                let decision = if timed_out { "timeout" } else { "denied" };
-                log::info!("Foreground command {}: {}", decision, cmd);
-                log_event("command_approval", serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": "foreground",
-                    "cmd": cmd,
-                    "decision": decision,
-                }));
-                log_command(session_id, "foreground", "", cmd, decision, "");
-                if timed_out {
-                    format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
-                } else {
-                    "User denied execution".to_string()
-                }
-            } else {
-                log::info!("Foreground command approved: {}", cmd);
-                log_event("command_approval", serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": "foreground",
-                    "cmd": cmd,
-                    "decision": "approved",
-                }));
-                
-                let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, cache, sessions, session_id, tx, rx).await {
+            if let Some(denial) = prompt_and_await_approval(id, cmd, false, session_id, tx, rx).await? {
+                return Ok(denial);
+            }
+            let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, cache, sessions, session_id, tx, rx).await {
                     Ok(tp) => tp,
                     Err(_) => return Err(anyhow::anyhow!("EOF")),
                 };
@@ -217,7 +232,7 @@ pub async fn execute_tool_call(
                         let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
                         let notify_cmd = format!(
                             "run-shell -b '{} notify activity {} 0 \"{}\"'",
-                            current_exe.display(), target_str, session_name
+                            current_exe.display(), target_str, shell_escape_arg(session_name)
                         );
                         let _ = std::process::Command::new("tmux")
                             .args(["set-hook", "-t", target_str, &hook_name, &notify_cmd])
@@ -351,57 +366,13 @@ pub async fn execute_tool_call(
                         }
                     }
                 }
-            }
         }
 
         PendingCall::Background { id, cmd, .. } => {
-            send_response_split(tx, Response::ToolCallPrompt {
-                id: id.clone(),
-                command: cmd.clone(),
-                background: true,
-            }).await?;
-
-            let mut line = String::new();
-            let read_result = tokio::time::timeout(
-                APPROVAL_TIMEOUT,
-                rx.read_line(&mut line),
-            ).await;
-
-            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
-
-            let timed_out = read_result.is_err();
-            let approved = match read_result {
-                Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
-                    Ok(Request::ToolCallResponse { id: resp_id, approved }) if resp_id == *id => approved,
-                    _ => false,
-                },
-                _ => false,
-            };
-
-            if !approved {
-                let decision = if timed_out { "timeout" } else { "denied" };
-                log::info!("Background command {}: {}", decision, cmd);
-                log_event("command_approval", serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": "background",
-                    "cmd": cmd,
-                    "decision": decision,
-                }));
-                log_command(session_id, "background", "", cmd, decision, "");
-                if timed_out {
-                    format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
-                } else {
-                    "User denied execution".to_string()
-                }
-            } else {
-                log::info!("Background command approved: {}", cmd);
-                log_event("command_approval", serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": "background",
-                    "cmd": cmd,
-                    "decision": "approved",
-                }));
-                let credential = if command_has_sudo(cmd) {
+            if let Some(denial) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
+                return Ok(denial);
+            }
+            let credential = if command_has_sudo(cmd) {
                     send_response_split(tx, Response::CredentialPrompt {
                         id: id.clone(),
                         prompt: format!("[sudo] password required for: {}", cmd),
@@ -433,7 +404,6 @@ pub async fn execute_tool_call(
                 send_response_split(tx, Response::ToolResult(output.clone())).await?;
                 log_command(session_id, "background", "", cmd, "approved", &output);
                 output
-            }
         }
 
         PendingCall::ScheduleCommand { id: call_id, name, command, is_script, run_at, interval, runbook, .. } => {

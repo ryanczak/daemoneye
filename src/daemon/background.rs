@@ -1,4 +1,4 @@
-use crate::daemon::session::{bg_done_subscribe, SessionStore, write_session_file};
+use crate::daemon::session::{bg_done_subscribe, SessionStore, append_session_message};
 use crate::daemon::utils::{log_event, normalize_output};
 use crate::ipc::Response;
 use crate::tmux;
@@ -169,13 +169,14 @@ pub async fn notify_job_completion(
                     "Background command `{}` in window {} finished with exit code {}.\n<output>\n{}\n</output>",
                     cmd, win_name, exit_code, body
                 );
-                entry.messages.push(Message {
+                let completion_msg = Message {
                     role: "user".to_string(),
                     content: format!("[Background Task Completed]\n{}", history_msg),
                     tool_calls: None,
                     tool_results: None,
-                });
-                write_session_file(sid, &entry.messages);
+                };
+                append_session_message(sid, &completion_msg);
+                entry.messages.push(completion_msg);
 
                 if let Some(ref cp) = entry.chat_pane {
                     if let Err(e) = std::process::Command::new("tmux")

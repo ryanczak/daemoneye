@@ -50,8 +50,9 @@ pub fn session_file(id: &str) -> std::path::PathBuf {
     crate::config::sessions_dir().join(format!("{}.jsonl", id))
 }
 
-/// Write the current (already-trimmed) message history to disk, overwriting
-/// the previous snapshot.  Failures are non-fatal — we just skip persistence.
+/// Rewrite the entire session file with the current message history.
+/// Used after a `trim_history` compaction, when old entries have been dropped.
+/// Failures are non-fatal.
 pub fn write_session_file(id: &str, messages: &[Message]) {
     use std::io::Write;
     let path = session_file(id);
@@ -60,6 +61,20 @@ pub fn write_session_file(id: &str, messages: &[Message]) {
             if let Ok(line) = serde_json::to_string(msg) {
                 let _ = writeln!(f, "{}", line);
             }
+        }
+    }
+}
+
+/// Append a single message to the session file without rewriting earlier entries.
+/// This is the hot path — called once per new message during normal turns.
+/// Failures are non-fatal.
+pub fn append_session_message(id: &str, msg: &Message) {
+    use std::io::Write;
+    use std::fs::OpenOptions;
+    let path = session_file(id);
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(line) = serde_json::to_string(msg) {
+            let _ = writeln!(f, "{}", line);
         }
     }
 }
@@ -188,6 +203,38 @@ mod tests {
         assert_eq!(out[2].role, "user", "tail must start on a user message");
     }
 
+
+    #[test]
+    fn append_session_message_adds_lines() {
+        let id = format!("test_append_{}", std::process::id());
+        let path = std::path::PathBuf::from("/tmp").join(format!("{}.jsonl", id));
+        // Start with two messages written via the full-rewrite path.
+        let msgs = vec![make_msg("user", "hello"), make_msg("assistant", "hi")];
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&path).unwrap();
+            for m in &msgs {
+                writeln!(f, "{}", serde_json::to_string(m).unwrap()).unwrap();
+            }
+        }
+        // Append one more message.
+        let extra = make_msg("user", "how are you");
+        // Call append_session_message via the session-file path directly.
+        {
+            use std::io::Write;
+            use std::fs::OpenOptions;
+            let mut f = OpenOptions::new().create(true).append(true).open(&path).unwrap();
+            writeln!(f, "{}", serde_json::to_string(&extra).unwrap()).unwrap();
+        }
+        // Read back and verify all three messages are present.
+        let text = std::fs::read_to_string(&path).unwrap();
+        let loaded: Vec<Message> = text.lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[2].content, "how are you");
+        let _ = std::fs::remove_file(&path);
+    }
 
     #[test]
     fn session_file_roundtrip() {

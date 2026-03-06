@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::process::Command;
+use crate::daemon::utils::shell_escape_arg;
 use std::collections::HashMap;
 
 /// Fetch the tmux session environment and return high-signal variables.
@@ -118,7 +119,7 @@ pub fn install_passive_activity_hook(
     // 0 is a dummy hook index since we don't strictly need one for passive watching
     let cmd = format!(
         "run-shell -b '{} notify activity {} 0 \"{}\"'",
-        exe_path, pane_id, session
+        exe_path, pane_id, shell_escape_arg(session)
     );
 
     let out1 = Command::new("tmux")

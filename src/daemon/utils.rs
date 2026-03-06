@@ -23,6 +23,22 @@ pub fn get_pane_remote_host(pane_id: &str) -> Option<String> {
     }
 }
 
+/// Escape `s` for safe embedding between `"…"` inside a tmux single-quoted
+/// `run-shell` argument.
+///
+/// The shell processes the double-quoted region, so four characters are
+/// special there: `\`, `"`, `$`, and `` ` ``.  Each is prefixed with `\`.
+///
+/// Note: session names containing a literal `'` are not handled — a `'` would
+/// prematurely close tmux's outer single-quote context.  In practice, tmux
+/// discourages single-quotes in session names and they are extremely rare.
+pub fn shell_escape_arg(s: &str) -> String {
+    s.replace('\\', "\\\\")
+     .replace('"',  "\\\"")
+     .replace('$',  "\\$")
+     .replace('`',  "\\`")
+}
+
 /// True if the command string contains `sudo` as a standalone word.
 pub fn command_has_sudo(cmd: &str) -> bool {
     use regex::Regex;
@@ -213,6 +229,40 @@ mod tests {
     #[test]
     fn command_has_sudo_no_sudo() {
         assert!(!command_has_sudo("ls -la /home"));
+    }
+
+
+    // ── shell_escape_arg ──────────────────────────────────────────────────────
+
+    #[test]
+    fn shell_escape_arg_plain_passthrough() {
+        assert_eq!(shell_escape_arg("my-session"), "my-session");
+    }
+
+    #[test]
+    fn shell_escape_arg_double_quote() {
+        assert_eq!(shell_escape_arg(r#"a"b"#), r#"a\"b"#);
+    }
+
+    #[test]
+    fn shell_escape_arg_dollar() {
+        assert_eq!(shell_escape_arg("a$HOME"), r"a\$HOME");
+    }
+
+    #[test]
+    fn shell_escape_arg_backtick() {
+        assert_eq!(shell_escape_arg("a`cmd`"), r"a\`cmd\`");
+    }
+
+    #[test]
+    fn shell_escape_arg_backslash() {
+        assert_eq!(shell_escape_arg(r"a\b"), r"a\\b");
+    }
+
+    #[test]
+    fn shell_escape_arg_spaces_unchanged() {
+        // Spaces are safe inside "..." — no escaping needed.
+        assert_eq!(shell_escape_arg("my session"), "my session");
     }
 
 

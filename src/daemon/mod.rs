@@ -222,7 +222,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         .unwrap_or_else(|_| "daemoneye".to_string());
     
     // We use the raw #{pane_id} template formatting string so tmux expands it automatically per-pane.
-    let notify_cmd = format!("run-shell -b '{} notify activity #{{pane_id}} 0 \"{}\"'", hook_exe_path, session_name);
+    let notify_cmd = format!("run-shell -b '{} notify activity #{{pane_id}} 0 \"{}\"'", hook_exe_path, crate::daemon::utils::shell_escape_arg(&session_name));
     
     // pane-died is a global hook, so we must set it globally (-g).
     // We overwrite to prevent duplicate run-shell commands proliferating if the daemon restarts.

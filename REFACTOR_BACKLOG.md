@@ -15,9 +15,9 @@ Items identified during the March 2026 code-review sprint. Work through in order
 
 | # | What | Notes |
 |---|------|-------|
-| 5 | Append-only session history file | Full history `Vec` is rewritten on every message. Switch to an append-only JSONL write (one object per turn) and read the tail on session resume. |
-| 6 | Extract approval gate helper | `timeout → read_line → parse ToolCallResponse → check ID` is repeated verbatim for foreground and background approval in `executor.rs`. A ~15-line `async fn` eliminates the duplication. |
-| 7 | Shell-escape session names in hook strings | Spaces/special chars in tmux session names can break the `run-shell` command embedded in hooks. Use `shlex`-style escaping or restrict allowed chars. |
+| 5 | Append-only session history file | ✅ Done. Added `append_session_message()` in `session.rs`. Main turn, background completion, and watch_pane all use append-only. Full rewrite (`write_session_file`) now reserved for post-trim compaction only. |
+| 6 | Extract approval gate helper | ✅ Done. `prompt_and_await_approval()` in `executor.rs` encapsulates send-prompt → timeout → parse → log. Both foreground and background arms now use `if let Some(denial) = ... { return Ok(denial); }`. |
+| 7 | Shell-escape session names in hook strings | ✅ Done. Added `shell_escape_arg()` in `daemon/utils.rs`; escapes `\`, `"`, `$`, `` ` `` at all three `run-shell` format sites (`daemon/mod.rs`, `executor.rs`, `tmux/session.rs`). 6 tests added. |
 
 ## Larger Refactors — TODO
 

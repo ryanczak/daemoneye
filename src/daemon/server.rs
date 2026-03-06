@@ -237,13 +237,14 @@ pub async fn handle_client(
                     // Alert any session that is watching this pane
                     if entry.watched_panes.contains(&pane_id) {
                         let msg = format!("Activity detected in monitored pane: {}", pane_id);
-                        entry.messages.push(Message {
+                        let watch_msg = Message {
                             role: "user".to_string(), // Injected as user context for the next turn
                             content: format!("[System] Activity detected in monitored pane {}. Please analyze the new output and inform the user of any results.", pane_id),
                             tool_calls: None,
                             tool_results: None,
-                        });
-                        crate::daemon::session::write_session_file(sid, &entry.messages);
+                        };
+                        crate::daemon::session::append_session_message(sid, &watch_msg);
+                        entry.messages.push(watch_msg);
 
                         if let Some(ref cp) = entry.chat_pane {
                             notify_client = Some((cp.clone(), msg));
@@ -317,7 +318,12 @@ pub async fn handle_client(
     // tail_start is snapped to an even index so the tail always starts on a
     // user message, which keeps alternation valid regardless of how many
     // messages are dropped.
+    let pre_trim_len = messages.len();
     messages = trim_history(messages);
+    // If trim dropped messages the on-disk file must be fully rewritten to remove
+    // the stale entries.  Otherwise we can append-only at the end of each turn.
+    let needs_compaction = messages.len() < pre_trim_len;
+    let post_trim_len = messages.len();
 
     let is_first_turn = messages.is_empty();
 
@@ -465,7 +471,13 @@ pub async fn handle_client(
                                     entry.chat_pane = chat_pane.clone();
                                 }
                             }
-                            write_session_file(id, &messages);
+                            if needs_compaction {
+                                write_session_file(id, &messages);
+                            } else {
+                                for msg in &messages[post_trim_len..] {
+                                    crate::daemon::session::append_session_message(id, msg);
+                                }
+                            }
                         }
                         send_response_split(&mut tx, Response::Ok).await?;
                         return Ok(());
