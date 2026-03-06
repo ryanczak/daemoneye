@@ -555,13 +555,15 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
-        Request::NotifyActivity { pane_id, hook_index: _, session_name: _ } => {
+        Request::NotifyActivity { pane_id, hook_index: _, session_name } => {
             if let Some(tx) = BG_DONE_TX.get() {
                 let _ = tx.send(pane_id.clone());
             }
 
             // Passive monitoring check
             let mut notify_client = None;
+            let mut alerted_sessions = Vec::new();
+
             if let Ok(mut store) = sessions.lock() {
                 for (sid, entry) in store.iter_mut() {
                     // Alert any session that is watching this pane
@@ -583,14 +585,29 @@ pub async fn handle_client(
                         // The user/AI can re-engage watch_pane if they want to monitor for another cycle.
                         entry.watched_panes.remove(&pane_id);
                         let _ = crate::tmux::remove_passive_activity_hook(&pane_id);
+                        alerted_sessions.push(sid.clone());
                         break; // assumed one session watching
                     }
                 }
             }
 
-            if let Some((chat_pane, msg)) = notify_client {
+            if let Some((_chat_pane, msg)) = notify_client {
+                log::info!("Activity detected in monitored pane {}; alerting session(s): {:?}", pane_id, alerted_sessions);
+                for sid in &alerted_sessions {
+                    log_event("watch_alert", serde_json::json!({
+                        "session": sid,
+                        "pane_id": pane_id,
+                        "status": "alerted"
+                    }));
+                }
+
+                // Trigger external notification hook (e.g. notify-send)
+                fire_notification(&format!("watch:{}", pane_id), &msg, &config);
+
+                // Send alert to the tmux status bar. We target the session name from the request
+                // so the message is visible even if the user is in a different window.
                 let _ = std::process::Command::new("tmux")
-                    .args(["display-message", "-d", "4000", "-t", &chat_pane, &msg])
+                    .args(["display-message", "-d", "5000", "-t", &session_name, &msg])
                     .output();
             }
 
@@ -1288,8 +1305,26 @@ pub async fn handle_client(
                             PendingCall::WatchPane { id: _, pane_id, .. } => {
                                 let session_owned = session_name.clone();
                                 match crate::tmux::install_passive_activity_hook(&pane_id, &session_owned) {
-                                    Ok(_) => format!("Pane {} has been flagged for passive monitoring. You will be notified out-of-band via a [System] message when it produces output.", pane_id),
-                                    Err(e) => format!("Failed to monitor pane {}: {}", pane_id, e),
+                                    Ok(_) => {
+                                        if let Some(ref sid) = session_id {
+                                            if let Ok(mut store) = sessions.lock() {
+                                                if let Some(entry) = store.get_mut(sid) {
+                                                    entry.watched_panes.insert(pane_id.clone());
+                                                }
+                                            }
+                                        }
+                                        log::info!("Watch placed on pane {} for session {}", pane_id, session_id.as_deref().unwrap_or("-"));
+                                        log_event("watch_pane", serde_json::json!({
+                                            "session": session_id.as_deref().unwrap_or("-"),
+                                            "pane_id": pane_id,
+                                            "status": "active"
+                                        }));
+                                        format!("Pane {} has been flagged for passive monitoring. You will be notified out-of-band via a [System] message when it produces output.", pane_id)
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to monitor pane {}: {}", pane_id, e);
+                                        format!("Failed to monitor pane {}: {}", pane_id, e)
+                                    }
                                 }
                             }
 

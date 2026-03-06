@@ -898,7 +898,10 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
                 println!();
                 print!("  Select pane \x1b[32m›\x1b[0m ");
                 std::io::stdout().flush()?;
+                // Temporarily revert to cooked mode for user input
+                crate::cli::input::restore_termios(old_termios);
                 let input = stdin.read_line().await.unwrap_or_default();
+                let _ = crate::cli::input::set_raw_mode(); // back to raw mode for turn trap
                 let pane_id = input.trim().parse::<usize>()
                     .ok()
                     .and_then(|n| panes.get(n.saturating_sub(1)))
@@ -928,7 +931,10 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
                 println!();
                 print!("  Approve writing to ~/.daemoneye/scripts/{}? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", script_name);
                 std::io::stdout().flush()?;
+                // Temporarily revert to cooked mode for user input
+                crate::cli::input::restore_termios(old_termios);
                 let input = stdin.read_line().await.unwrap_or_default();
+                let _ = crate::cli::input::set_raw_mode(); // back to raw mode for turn trap
                 let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
                 md.reset();
                 send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
@@ -947,7 +953,10 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
                 println!();
                 print!("  Approve scheduling this job? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ");
                 std::io::stdout().flush()?;
+                // Temporarily revert to cooked mode for user input
+                crate::cli::input::restore_termios(old_termios);
                 let input = stdin.read_line().await.unwrap_or_default();
+                let _ = crate::cli::input::set_raw_mode(); // back to raw mode for turn trap
                 let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
                 md.reset();
                 send_request(&mut tx, Request::ScheduleWriteResponse { id, approved }).await?;
