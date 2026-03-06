@@ -34,7 +34,8 @@ DaemonEye elevates the command-line experience by embedding AI agents like Googl
 - **AI-Powered Capabilities**:
   - **Pair-Programming & Troubleshooting**: The AI doesn't just suggest commands; it uses Tool Calling to propose executing commands directly in your active tmux session. Each proposed command presents a three-option approval prompt — approve once, approve the entire class of commands for the session, or deny. This session-level approval (independent for regular and sudo command classes) eliminates repetitive prompts in trusted automated sequences while keeping privilege-escalation commands under separate control.
   - **Dual Execution Modes**: The AI chooses between two command execution modes. *Background mode* runs the command in a dedicated tmux window (`de-bg-*`) on the daemon host using the user's configured shell — capturing output via `capture-pane` and returning it to the AI; the window is always cleaned up after the result is captured, with a `tmux display-message` overlay showing `` `cmd` succeeded/failed in pane <id> `` when complete. *Foreground mode* injects the command into your active terminal pane via `send-keys` and detects completion cleanly by attaching a temporary `pane-title-changed` tmux hook, eliminating terminal clutter while remaining completely event-driven; the command is visible and interactive in your pane. If the AI does not explicitly specify a target pane, the daemon will prompt the user to interactively select one and save that choice as the session's default pane for future commands. The AI knows your daemon's hostname and whether your pane is SSH'd to a remote machine, and selects the mode accordingly.
-  - **Command Scheduler & Watchdog**: The AI can schedule commands to run once at a specific UTC time or repeatedly on an interval. Watchdog jobs run a command on a schedule and pass the output to the AI for analysis using a named runbook — triggering alerts when issues are detected. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Alerts can be forwarded to an external notification command via `[notifications] on_alert`.
+  - **Command Scheduler & Watchdog**: The AI can schedule commands to run once at a specific UTC time or repeatedly on an interval. Watchdog jobs run a command on a schedule and pass the output to the AI for analysis using a named runbook (markdown with YAML frontmatter) — triggering alerts when issues are detected. Runbooks reference knowledge memory keys whose content is automatically injected into the watchdog prompt. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Alerts can be forwarded to an external notification command via `[notifications] on_alert`.
+  - **Knowledge System**: Three-tier AI-writable persistence. *Runbooks* (`~/.daemoneye/runbooks/`, markdown) encode watchdog procedures, alert criteria, and remediation steps; they can reference named knowledge memories. *Memory* (`~/.daemoneye/memory/`) stores durable facts in three categories: `session` entries are auto-injected into every AI turn (32 KB cap); `knowledge` entries are loaded on-demand by runbooks or the `read_memory` tool; `incident` records are historical and searchable. *Search* lets the AI locate anything across runbooks, scripts, memory, and the full event log in a single tool call. Runbook and memory writes are immediately available to the next turn without any daemon restart.
   - **Passive Pane Monitoring**: The daemon registers a global `pane-died` hook and per-session `alert-bell` hook at startup using the absolute path of the running binary. When a background pane exits, the daemon is notified via IPC, issues a `tmux display-message` overlay showing `` `<command>` succeeded/failed in pane <id> ``, injects context into the AI's session history, and cleans up the window through an automatic Garbage Collection lifecycle (5 s on success, 60 s on failure). The AI can also passively monitor arbitrary panes via `watch_pane`.
   - **Scripts Directory**: The AI can author, update, and list reusable shell scripts in `~/.daemoneye/scripts/`. Script writes require a user approval step that shows the full content before writing. Scripts can be referenced by name in scheduled jobs.
   - **Sudo Integration**: Commands requiring elevated privileges are handled gracefully in both modes. Background sudo prompts appear in the chat interface with echo-disabled password input. Foreground sudo commands notify you to type your password in the terminal pane.
@@ -67,13 +68,20 @@ DaemonEye elevates the command-line experience by embedding AI agents like Googl
 
 ### Workflow 3: Watchdog Monitoring
 
-1. A user asks the AI: *"Set up a watchdog that checks disk usage every 10 minutes using the disk-usage runbook."*
-2. The AI creates a scheduled job (`de-<id>` window) that runs `df -h` on a 10-minute interval, referencing the `disk-usage` runbook.
-3. When the job fires, the daemon captures the output, passes it to the AI along with the runbook's alert criteria, and the AI analyzes it.
-4. If disk usage exceeds the threshold defined in the runbook, the AI emits a `SystemMsg` notification in the chat pane. If `[notifications] on_alert` is configured (e.g. `notify-send`), the alert is also sent there.
-5. On success the window is cleaned up; on failure it is left in place for inspection.
+1. A user asks the AI: *"Set up a watchdog that checks disk usage every 10 minutes. Store the alert threshold in memory so we can tune it later."*
+2. The AI calls `add_memory("disk_thresholds", "Alert when usage > 85%", category="knowledge")`, then `write_runbook("disk-check", ...)` with `memories: [disk_thresholds]` in the frontmatter and the standard `## Alert Criteria` section.
+3. The user approves the runbook write in the chat interface. The AI then creates a scheduled watchdog job referencing the `disk-check` runbook.
+4. When the job fires, the daemon captures `df -h` output, loads the `disk_thresholds` knowledge memory, and builds the watchdog prompt with both the runbook content and the memory context.
+5. If disk usage exceeds the threshold, the AI emits a `SystemMsg` notification in the chat pane. If `[notifications] on_alert` is configured (e.g. `notify-send`), the alert is also sent there.
+6. On success the window is cleaned up; on failure it is left in place for inspection.
 
-### Workflow 4: Security Remediation
+### Workflow 4: Knowledge Accumulation Across Sessions
+
+1. The AI learns that a particular host runs a non-standard Postgres port. It calls `add_memory("db-host-quirks", "pg on :5433 not :5432", category="knowledge")`.
+2. In a later session the user asks about a connection failure. The AI calls `search_repository("pg", kind="memory")` and finds the quirk immediately.
+3. After resolving a major incident, the AI writes an `incident` memory with root cause, symptoms, and fix — making it available for future `search_repository` queries even though it is never auto-loaded.
+
+### Workflow 5: Security Remediation
 
 1. The user runs a vulnerability scanner (`lynis` or `chkrootkit`) on a server.
 2. The output is massive. The user hits the AI agent keybinding: *"Summarize the critical vulnerabilities found and generate the commands to patch them."*

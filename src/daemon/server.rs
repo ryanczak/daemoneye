@@ -344,6 +344,7 @@ pub async fn handle_client(
         let width_hint = chat_width
             .map(|w| format!("\n- Chat display width: {w} columns (write prose as continuous paragraphs; the terminal word-wraps automatically — do not insert hard line breaks within paragraphs)"))
             .unwrap_or_default();
+        let memory_block = crate::memory::load_session_memory_block();
         format!(
             "## Host Context\n```\n{sys_ctx}\n```\n\n\
              ## Execution Context\n\
@@ -353,6 +354,7 @@ pub async fn handle_client(
              {width_hint}\n\
              - background=true  → runs on DAEMON HOST ({daemon_host})\n\
              - background=false → runs in USER'S PANE ({pane_location})\n\n\
+             {memory_block}\
              ## Terminal Session\n```\n{session_summary}\n```\n\n\
              User: {safe_query}"
         )
@@ -428,6 +430,33 @@ pub async fn handle_client(
                 }
                 AiEvent::WatchPane { id, pane_id, thought_signature } => {
                     pending_calls.push(PendingCall::WatchPane { id, pane_id, thought_signature });
+                }
+                AiEvent::WriteRunbook { id, name, content, thought_signature } => {
+                    pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });
+                }
+                AiEvent::DeleteRunbook { id, name, thought_signature } => {
+                    pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
+                }
+                AiEvent::ReadRunbook { id, name, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
+                }
+                AiEvent::ListRunbooks { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
+                }
+                AiEvent::AddMemory { id, key, value, category, thought_signature } => {
+                    pending_calls.push(PendingCall::AddMemory { id, thought_signature, key, value, category });
+                }
+                AiEvent::DeleteMemory { id, key, category, thought_signature } => {
+                    pending_calls.push(PendingCall::DeleteMemory { id, thought_signature, key, category });
+                }
+                AiEvent::ReadMemory { id, key, category, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadMemory { id, thought_signature, key, category });
+                }
+                AiEvent::ListMemories { id, category, thought_signature } => {
+                    pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
+                }
+                AiEvent::SearchRepository { id, query, kind, thought_signature } => {
+                    pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
                 }
 
                 AiEvent::Error(e) => {

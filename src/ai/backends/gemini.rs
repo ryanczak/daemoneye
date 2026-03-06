@@ -177,6 +177,98 @@ impl AiClient for GeminiClient {
                                 },
                                 "required": ["pane_id"]
                             }
+                        },
+                        {
+                            "name": "write_runbook",
+                            "description": "Create or update a runbook (requires user approval).",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "name": {"type": "STRING"},
+                                    "content": {"type": "STRING"}
+                                },
+                                "required": ["name", "content"]
+                            }
+                        },
+                        {
+                            "name": "delete_runbook",
+                            "description": "Delete a runbook (requires user approval).",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {"name": {"type": "STRING"}},
+                                "required": ["name"]
+                            }
+                        },
+                        {
+                            "name": "read_runbook",
+                            "description": "Read the content of a named runbook.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {"name": {"type": "STRING"}},
+                                "required": ["name"]
+                            }
+                        },
+                        {
+                            "name": "list_runbooks",
+                            "description": "List all runbooks with their tags.",
+                            "parameters": {"type": "OBJECT", "properties": {}}
+                        },
+                        {
+                            "name": "add_memory",
+                            "description": "Store a persistent memory entry.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "key": {"type": "STRING"},
+                                    "value": {"type": "STRING"},
+                                    "category": {"type": "STRING"}
+                                },
+                                "required": ["key", "value", "category"]
+                            }
+                        },
+                        {
+                            "name": "delete_memory",
+                            "description": "Remove a memory entry.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "key": {"type": "STRING"},
+                                    "category": {"type": "STRING"}
+                                },
+                                "required": ["key", "category"]
+                            }
+                        },
+                        {
+                            "name": "read_memory",
+                            "description": "Read a specific memory entry by key and category.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "key": {"type": "STRING"},
+                                    "category": {"type": "STRING"}
+                                },
+                                "required": ["key", "category"]
+                            }
+                        },
+                        {
+                            "name": "list_memories",
+                            "description": "List all memory keys, optionally filtered by category.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {"category": {"type": "STRING"}}
+                            }
+                        },
+                        {
+                            "name": "search_repository",
+                            "description": "Search across runbooks, scripts, memory, or events.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "query": {"type": "STRING"},
+                                    "kind": {"type": "STRING"}
+                                },
+                                "required": ["query", "kind"]
+                            }
                         }
                     ]
                 }

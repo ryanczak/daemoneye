@@ -34,6 +34,20 @@ pub struct ScriptListItem {
     pub size: u64,
 }
 
+/// Summary of a runbook for the `RunbookList` response.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RunbookListItem {
+    pub name: String,
+    pub tags: Vec<String>,
+}
+
+/// An entry in the `MemoryList` response.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MemoryListItem {
+    pub category: String,
+    pub key: String,
+}
+
 /// Messages sent from the CLI client to the daemon.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -72,6 +86,10 @@ pub enum Request {
     ScriptWriteResponse { id: String, approved: bool },
     /// Approve or deny a job schedule proposed by the AI.
     ScheduleWriteResponse { id: String, approved: bool },
+    /// Approve or deny a runbook write proposed by the AI.
+    RunbookWriteResponse { id: String, approved: bool },
+    /// Approve or deny a runbook delete proposed by the AI.
+    RunbookDeleteResponse { id: String, approved: bool },
     /// Notify the daemon of an event (e.g. background pane activity from a tmux hook).
     NotifyActivity {
         pane_id: String,
@@ -129,6 +147,25 @@ pub enum Response {
     ScheduleList { jobs: Vec<ScheduleListItem> },
     /// The current list of scripts in `~/.daemoneye/scripts/`.
     ScriptList { scripts: Vec<ScriptListItem> },
+    /// The AI wants to write a runbook; the client MUST show the content and
+    /// prompt the user for approval, then return `Request::RunbookWriteResponse`.
+    RunbookWritePrompt {
+        id: String,
+        runbook_name: String,
+        content: String,
+    },
+    /// The AI wants to delete a runbook; the client MUST show affected jobs and
+    /// prompt the user for approval, then return `Request::RunbookDeleteResponse`.
+    RunbookDeletePrompt {
+        id: String,
+        runbook_name: String,
+        /// Names of scheduled jobs that reference this runbook.
+        active_jobs: Vec<String>,
+    },
+    /// The current list of runbooks in `~/.daemoneye/runbooks/`.
+    RunbookList { runbooks: Vec<RunbookListItem> },
+    /// The current list of memory entries.
+    MemoryList { entries: Vec<MemoryListItem> },
 }
 
 #[cfg(test)]

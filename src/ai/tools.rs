@@ -95,6 +95,107 @@ pub fn get_tool_definition() -> Value {
                 },
                 "required": ["pane_id"]
             }
+        },
+        {
+            "name": "write_runbook",
+            "description": "Create or update a runbook in ~/.daemoneye/runbooks/. Must include '# Runbook:' heading and '## Alert Criteria' section. Optionally starts with YAML frontmatter (---) containing 'tags: [...]' and 'memories: [...]'. User approval required.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Filename key for the runbook (no extension, e.g. 'disk-check')."},
+                    "content": {"type": "string", "description": "Full markdown content of the runbook, including optional YAML frontmatter."}
+                },
+                "required": ["name", "content"]
+            }
+        },
+        {
+            "name": "delete_runbook",
+            "description": "Delete a runbook from ~/.daemoneye/runbooks/. User approval required. Will warn if active scheduled jobs reference this runbook.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name of the runbook to delete (no extension)."}
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "read_runbook",
+            "description": "Read the full content of a named runbook from ~/.daemoneye/runbooks/.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Name of the runbook to read (no extension)."}
+                },
+                "required": ["name"]
+            }
+        },
+        {
+            "name": "list_runbooks",
+            "description": "List all runbooks in ~/.daemoneye/runbooks/ with their tags.",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "add_memory",
+            "description": "Store a persistent memory entry in ~/.daemoneye/memory/<category>/<key>.md. category: 'session' (loaded at every session start — keep brief), 'knowledge' (loaded on-demand via runbook references or read_memory), 'incident' (historical, searchable only).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Unique key for this memory entry (no path separators)."},
+                    "value": {"type": "string", "description": "Markdown content to store."},
+                    "category": {"type": "string", "description": "'session', 'knowledge', or 'incident'."}
+                },
+                "required": ["key", "value", "category"]
+            }
+        },
+        {
+            "name": "delete_memory",
+            "description": "Remove a memory entry from ~/.daemoneye/memory/<category>/<key>.md.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Key of the memory entry to delete."},
+                    "category": {"type": "string", "description": "'session', 'knowledge', or 'incident'."}
+                },
+                "required": ["key", "category"]
+            }
+        },
+        {
+            "name": "read_memory",
+            "description": "Read a specific memory entry by key and category.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Key of the memory entry to read."},
+                    "category": {"type": "string", "description": "'session', 'knowledge', or 'incident'."}
+                },
+                "required": ["key", "category"]
+            }
+        },
+        {
+            "name": "list_memories",
+            "description": "List all memory keys, optionally filtered by category.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "description": "Optional: 'session', 'knowledge', or 'incident'. Omit to list all."}
+                }
+            }
+        },
+        {
+            "name": "search_repository",
+            "description": "Search across runbooks, scripts, memory, or the event log for a keyword. kind: 'runbooks' | 'scripts' | 'memory' | 'events' | 'all'.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search term (case-insensitive)."},
+                    "kind": {"type": "string", "description": "'runbooks', 'scripts', 'memory', 'events', or 'all'."}
+                },
+                "required": ["query", "kind"]
+            }
         }
     ])
 }
@@ -207,6 +308,125 @@ pub fn get_openai_tool_definition() -> Value {
                     "required": ["pane_id"]
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "write_runbook",
+                "description": "Create or update a runbook (requires user approval).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "content": {"type": "string"}
+                    },
+                    "required": ["name", "content"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_runbook",
+                "description": "Delete a runbook (requires user approval).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_runbook",
+                "description": "Read the content of a named runbook.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_runbooks",
+                "description": "List all runbooks with their tags.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "add_memory",
+                "description": "Store a persistent memory entry.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "value": {"type": "string"},
+                        "category": {"type": "string"}
+                    },
+                    "required": ["key", "value", "category"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "delete_memory",
+                "description": "Remove a memory entry.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "category": {"type": "string"}
+                    },
+                    "required": ["key", "category"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_memory",
+                "description": "Read a specific memory entry by key and category.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string"},
+                        "category": {"type": "string"}
+                    },
+                    "required": ["key", "category"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "list_memories",
+                "description": "List all memory keys, optionally filtered by category.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"category": {"type": "string"}}
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_repository",
+                "description": "Search across runbooks, scripts, memory, or events.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "kind": {"type": "string"}
+                    },
+                    "required": ["query", "kind"]
+                }
+            }
         }
     ])
 }
@@ -261,6 +481,56 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
         "watch_pane" => Some(AiEvent::WatchPane {
             id: id.to_string(),
             pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
+            thought_signature: ts,
+        }),
+        "write_runbook" => Some(AiEvent::WriteRunbook {
+            id: id.to_string(),
+            name: args["name"].as_str().unwrap_or("").to_string(),
+            content: args["content"].as_str().unwrap_or("").to_string(),
+            thought_signature: ts,
+        }),
+        "delete_runbook" => Some(AiEvent::DeleteRunbook {
+            id: id.to_string(),
+            name: args["name"].as_str().unwrap_or("").to_string(),
+            thought_signature: ts,
+        }),
+        "read_runbook" => Some(AiEvent::ReadRunbook {
+            id: id.to_string(),
+            name: args["name"].as_str().unwrap_or("").to_string(),
+            thought_signature: ts,
+        }),
+        "list_runbooks" => Some(AiEvent::ListRunbooks {
+            id: id.to_string(),
+            thought_signature: ts,
+        }),
+        "add_memory" => Some(AiEvent::AddMemory {
+            id: id.to_string(),
+            key: args["key"].as_str().unwrap_or("").to_string(),
+            value: args["value"].as_str().unwrap_or("").to_string(),
+            category: args["category"].as_str().unwrap_or("knowledge").to_string(),
+            thought_signature: ts,
+        }),
+        "delete_memory" => Some(AiEvent::DeleteMemory {
+            id: id.to_string(),
+            key: args["key"].as_str().unwrap_or("").to_string(),
+            category: args["category"].as_str().unwrap_or("knowledge").to_string(),
+            thought_signature: ts,
+        }),
+        "read_memory" => Some(AiEvent::ReadMemory {
+            id: id.to_string(),
+            key: args["key"].as_str().unwrap_or("").to_string(),
+            category: args["category"].as_str().unwrap_or("knowledge").to_string(),
+            thought_signature: ts,
+        }),
+        "list_memories" => Some(AiEvent::ListMemories {
+            id: id.to_string(),
+            category: args["category"].as_str().map(|s| s.to_string()),
+            thought_signature: ts,
+        }),
+        "search_repository" => Some(AiEvent::SearchRepository {
+            id: id.to_string(),
+            query: args["query"].as_str().unwrap_or("").to_string(),
+            kind: args["kind"].as_str().unwrap_or("all").to_string(),
             thought_signature: ts,
         }),
         _ => None,

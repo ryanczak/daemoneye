@@ -30,6 +30,7 @@ graph TD
         ConfigToml[(config.toml)]
         Scripts[(scripts/)]
         Runbooks[(runbooks/)]
+        Memory[(memory/)]
         SchedStore[(schedules.json)]
     end
 
@@ -77,6 +78,10 @@ graph TD
     Scheduler <-->|persist jobs| SchedStore
     Scripts -.->|resolve script path| Scheduler
     Runbooks -.->|load runbook| Scheduler
+
+    %% Knowledge System
+    Memory -.->|session memories (first turn)| AgentEngine
+    Memory -.->|knowledge memories (watchdog)| Scheduler
 ```
 
 ## 2. Core Components
@@ -106,6 +111,8 @@ graph TD
   - `ToolCallResponse { id, approved }` — user's approval decision for a proposed command.
   - `CredentialResponse { id, credential }` — user-supplied sudo password for an approved background command, sent in response to `CredentialPrompt`.
   - `ScriptWriteResponse { id, approved }` — user's approval decision for a proposed script write, sent in response to `ScriptWritePrompt`.
+  - `RunbookWriteResponse { id, approved }` — user's approval decision for a proposed runbook write, sent in response to `RunbookWritePrompt`.
+  - `RunbookDeleteResponse { id, approved }` — user's approval decision for a proposed runbook deletion, sent in response to `RunbookDeletePrompt`.
 - **Response types**:
   - `Ok` — signals successful completion of a turn.
   - `Error(String)` — error from the daemon or AI provider.
@@ -116,8 +123,12 @@ graph TD
   - `SystemMsg(String)` — daemon notification (e.g., sudo prompt detected, pane switch). Rendered in the chat interface with an amber ⚙ prefix.
   - `ToolResult(String)` — captured output of an approved command, sent before the AI continues. Rendered as a dimmed bordered panel (capped at 10 rows).
   - `ScriptWritePrompt { id, script_name, content }` — daemon shows full script content to user before writing; requires `ScriptWriteResponse`.
+  - `RunbookWritePrompt { id, runbook_name, content }` — daemon shows full runbook content to user before writing; requires `RunbookWriteResponse`.
+  - `RunbookDeletePrompt { id, runbook_name, active_jobs }` — daemon warns if active scheduled jobs reference the runbook before deletion; requires `RunbookDeleteResponse`.
   - `ScheduleList { jobs: Vec<ScheduleListItem> }` — list of scheduled jobs with id, name, kind, action, status, last_run, next_run.
   - `ScriptList { scripts: Vec<ScriptListItem> }` — list of scripts in `~/.daemoneye/scripts/` with name and size.
+  - `RunbookList { runbooks: Vec<RunbookListItem> }` — list of runbooks in `~/.daemoneye/runbooks/` with name and tags.
+  - `MemoryList { entries: Vec<MemoryListItem> }` — list of memory entries with category and key.
 - Each client connection handles exactly one request/response lifecycle. `Ask` connections receive a token stream (interleaved with zero or more tool-call approval round-trips) terminated by `Ok` or `Error`.
 
 ### 2.3 DaemonEye Background Daemon
@@ -135,19 +146,56 @@ graph TD
 - **System Context Collector** (`sys_context.rs`): Runs once per daemon lifetime (via `OnceLock`). Captures OS release, uptime, memory, load average, top CPU processes, shell environment (curated safe variables only), and shell history. Prepended to the AI context on the first turn of each conversation.
 - **Security & Data Masking Filter** (`ai/filter.rs`): Applied to all terminal context and user queries before transmission. Built-in patterns cover: AWS access key IDs, PEM private key blocks, GCP service-account JSON `"private_key"` fields, JWT bearer tokens, GitHub PATs (classic and fine-grained), database/broker connection URLs with embedded credentials, password/token/API-key assignments, URL query-param secrets, credit card numbers, and SSNs. Patterns are compiled once at daemon startup via `init_masking()`, which also incorporates any `extra_patterns` the user has added to `config.toml` — built-in patterns cannot be disabled. 16 unit tests cover the full pattern set.
 - **Prompt Engine Manager** (`config.rs`): Loads named system prompts from `~/.daemoneye/prompts/<name>.toml`. Falls back to the compiled-in SRE prompt if no file is found. The built-in SRE prompt includes a `## Command Execution Modes` section that instructs the AI when to use background vs foreground execution. `config.toml` also carries a `[masking]` section (`MaskingConfig`) with an optional `extra_patterns` list of user-defined regex patterns appended to the built-in masking set at daemon startup.
-- **LLM API Client** (`ai/mod.rs`): Implements `AiClient` trait for Anthropic, OpenAI, and Gemini with SSE streaming. Uses a process-wide `reqwest::Client` for connection reuse. Emits `Token`, `ToolCall`, `ScheduleCommand`, `ListSchedules`, `CancelSchedule`, `WriteScript`, `ListScripts`, `ReadScript`, `Error`, and `Done` events over an unbounded channel. Tool descriptions for all three providers document the daemon-host vs user-pane execution semantics plus all six scheduler/script tools. The Gemini backend extracts `thoughtSignature` from each `functionCall` part during streaming and round-trips it back in `convert_messages` history; this is required by Gemini 2.5 thinking models for multi-turn tool use.
+- **LLM API Client** (`ai/mod.rs`, `ai/tools.rs`, `ai/backends/`): Implements `AiClient` trait for Anthropic, OpenAI, and Gemini with SSE streaming. Uses a process-wide `reqwest::Client` for connection reuse. Emits events over an unbounded channel for all supported tools: `Token`, `ToolCall` (command execution), `ScheduleCommand`, `ListSchedules`, `CancelSchedule`, `WriteScript`, `ListScripts`, `ReadScript`, `WriteRunbook`, `DeleteRunbook`, `ReadRunbook`, `ListRunbooks`, `AddMemory`, `DeleteMemory`, `ReadMemory`, `ListMemories`, `SearchRepository`, `Error`, and `Done`. Tool definitions and `dispatch_tool_event()` are in `ai/tools.rs`; Gemini definitions are inline in `ai/backends/gemini.rs`. The Gemini backend extracts `thoughtSignature` from each `functionCall` part during streaming and round-trips it back in `convert_messages` history; this is required by Gemini 2.5 thinking models for multi-turn tool use.
 - **Schedule Store** (`scheduler.rs`): Thread-safe, file-backed store for scheduled jobs. Persistence is atomic: writes go to `.tmp` then rename over `~/.daemoneye/schedules.json`. Provides `add`, `cancel`, `list`, `take_due`, `mark_done` operations.
 - **Scripts Module** (`scripts.rs`): Manages `~/.daemoneye/scripts/` — executable scripts (chmod 700). Provides `list_scripts`, `write_script`, `read_script`, `resolve_script` operations.
-- **Runbook Loader** (`runbook.rs`): Loads TOML runbook files from `~/.daemoneye/runbooks/<name>.toml`. Builds the AI system prompt for watchdog analysis via `watchdog_system_prompt()`.
+- **Runbook Module** (`runbook.rs`): Manages markdown runbook files in `~/.daemoneye/runbooks/<name>.md`. Parses YAML-style frontmatter to extract `tags: [...]` and `memories: [...]` fields. Validates content on write (requires `# Runbook:` heading and `## Alert Criteria` section). CRUD operations — `load_runbook`, `write_runbook` (approval-gated), `delete_runbook` (approval-gated, warns if active jobs reference it), `list_runbooks` — are exposed as AI tools. `watchdog_system_prompt()` loads any knowledge memory keys listed in `memories:` from `memory/knowledge/` and injects them as a `## Runbook Memory Context` block in the watchdog AI prompt.
+- **Memory Module** (`memory.rs`): Provides persistent key-value storage under `~/.daemoneye/memory/` in three categories: `session/` (loaded into every AI turn as a `## Persistent Memory` block, capped at 32 KB), `knowledge/` (loaded on-demand by runbooks or `read_memory` tool), and `incidents/` (historical records, searchable only). CRUD operations — `add_memory`, `delete_memory`, `read_memory`, `list_memories` — are exposed as AI tools without approval gates. `load_session_memory_block()` applies the sensitive-data masking filter and is called by `server.rs` on the first turn of every conversation.
+- **Search Module** (`search.rs`): Keyword search across all knowledge-base directories. `search_repository(query, kind, context_lines)` searches `runbooks/`, `scripts/`, `memory/{session,knowledge,incidents}/`, and the last 10,000 lines of `events.jsonl` depending on `kind` (`"runbooks"` \| `"scripts"` \| `"memory"` \| `"events"` \| `"all"`). Matches are case-insensitive; filenames are matched in addition to content. Results are capped at 50 and formatted with line numbers and surrounding context. Exposed as the `search_repository` AI tool.
 
-### 2.4 Daemon Lifecycle
+### 2.4 Knowledge System
+
+The knowledge system provides three inter-related persistence layers exposed to the AI as tools:
+
+**Runbooks** (`runbook.rs`, `~/.daemoneye/runbooks/`): Markdown files with YAML-style frontmatter. Serve as watchdog procedures and environment-specific reference docs. Standard format:
+```markdown
+---
+tags: [disk, storage]
+memories: [disk_thresholds]
+---
+# Runbook: disk-check
+
+## Purpose
+…
+
+## Alert Criteria
+…
+
+## Remediation Steps
+…
+
+## Notes
+…
+```
+The AI uses `write_runbook` (approval-gated), `read_runbook`, `list_runbooks`, and `delete_runbook` (approval-gated). Before writing a new runbook the AI is instructed to call `list_runbooks` to avoid duplicates.
+
+**Memory** (`memory.rs`, `~/.daemoneye/memory/`): Three-tier persistent key-value store. Each entry is a `.md` file in the appropriate category subdirectory:
+- `session/` — User preferences and recurring environment notes. Automatically loaded into every AI turn (via `load_session_memory_block()`), capped at 32 KB with masking applied.
+- `knowledge/` — Named service configs, host quirks, port tables. Loaded on-demand by watchdog runbooks (`memories:` frontmatter) or the `read_memory` tool.
+- `incidents/` — Historical incident records. Never auto-loaded; discovered via `search_repository`.
+
+**Search** (`search.rs`): Cross-corpus keyword search. `search_repository(query, kind)` covers runbooks, scripts, all three memory tiers, and the event log. Results are grouped by file, annotated with line numbers and context, and capped at 50 matches.
+
+**Session memory injection**: On the first turn of every conversation `server.rs` calls `load_session_memory_block()` and injects its output between the `## Execution Context` and `## Terminal Session` blocks. When no session memories exist the block is empty and the prompt format is unchanged.
+
+### 2.5 Daemon Lifecycle
 
 - **Startup**: `main()` is a plain synchronous function. For `daemoneye daemon` (without `--console`), `libc::fork()` is called *before* the tokio runtime starts — the parent prints the child PID and exits; the child calls `libc::setsid()` and redirects stdin from `/dev/null`, then builds the tokio runtime. Inside the runtime: validates the API key, calls `init_masking()` with any user-defined `extra_patterns` to compile the masking pattern set, detects or creates the monitored tmux session, starts the cache poller and session cleanup tasks, checks for an already-running daemon (ping probe), then binds the Unix socket. All mutex lock sites use `.unwrap_or_else(|e| e.into_inner())` to recover from a poisoned lock rather than panicking. If the daemon created a new tmux session, it automatically opens the AI chat pane using `tmux split-window` with the current binary's absolute path.
 - **Logging**: All output (`println!`/`eprintln!`) is redirected to `~/.daemoneye/daemon.log` (or `--log-file FILE`) via `dup2` at startup. Use `--console` to keep output on the terminal. View live with `daemoneye logs`.
 - **Event log**: Written to `~/.daemoneye/events.jsonl` by default.
 - **Shutdown**: `daemoneye stop` sends a `Shutdown` IPC request — the daemon responds `Ok`, removes the socket file, and exits. SIGTERM and SIGINT are also handled gracefully via `tokio::signal::unix`, removing the socket file before exit.
 
-### 2.5 Scheduler and Watchdog
+### 2.6 Scheduler and Watchdog
 
 The scheduler runs as a background tokio task that polls `ScheduleStore::take_due()` every second. When a job fires, `run_scheduled_job()` is spawned:
 
@@ -158,7 +206,7 @@ The scheduler runs as a background tokio task that polls `ScheduleStore::take_du
 5. **Rescheduling**: `Every` jobs have their `next_run` advanced by `interval_secs` and transition back to `Pending`; `Once` jobs remain `Succeeded`/`Failed`.
 6. **Notification hook**: `fire_notification()` runs the user-configured `[notifications] on_alert` shell command (from `config.toml`) with `$DAEMONEYE_JOB` and `$DAEMONEYE_MSG` environment variables.
 
-### 2.6 Scripts Directory
+### 2.7 Scripts Directory
 
 `~/.daemoneye/scripts/` holds executable scripts managed by the daemon. Key properties:
 

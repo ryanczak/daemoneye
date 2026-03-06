@@ -1001,6 +1001,106 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
                 println!();
                 md.reset();
             }
+            Response::RunbookWritePrompt { id, runbook_name, content } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to write runbook:\x1b[0m \x1b[96m{}\x1b[0m", runbook_name);
+                println!();
+                let lines: Vec<&str> = content.lines().collect();
+                let show = lines.len().min(40);
+                for line in &lines[..show] {
+                    println!("  \x1b[2m{}\x1b[0m", line);
+                }
+                if lines.len() > 40 {
+                    println!("  \x1b[2m… ({} more lines)\x1b[0m", lines.len() - 40);
+                }
+                println!();
+                print!("  Approve writing to ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", runbook_name);
+                std::io::stdout().flush()?;
+                crate::cli::input::restore_termios(old_termios);
+                let input = stdin.read_line().await.unwrap_or_default();
+                let _ = crate::cli::input::set_raw_mode();
+                let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
+                md.reset();
+                send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
+            }
+            Response::RunbookDeletePrompt { id, runbook_name, active_jobs } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to delete runbook:\x1b[0m \x1b[96m{}\x1b[0m", runbook_name);
+                if !active_jobs.is_empty() {
+                    println!();
+                    println!("  \x1b[33mWarning:\x1b[0m the following scheduled jobs reference this runbook:");
+                    for job in &active_jobs {
+                        println!("    \x1b[2m- {}\x1b[0m", job);
+                    }
+                }
+                println!();
+                print!("  Approve deleting ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", runbook_name);
+                std::io::stdout().flush()?;
+                crate::cli::input::restore_termios(old_termios);
+                let input = stdin.read_line().await.unwrap_or_default();
+                let _ = crate::cli::input::set_raw_mode();
+                let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
+                md.reset();
+                send_request(&mut tx, Request::RunbookDeleteResponse { id, approved }).await?;
+            }
+            Response::RunbookList { runbooks } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                if runbooks.is_empty() {
+                    println!("  No runbooks in ~/.daemoneye/runbooks/");
+                } else {
+                    println!("  \x1b[1mRunbooks\x1b[0m  (~/.daemoneye/runbooks/)");
+                    println!();
+                    let name_w = runbooks.iter().map(|r| r.name.len()).max().unwrap_or(4).max(4);
+                    for r in &runbooks {
+                        let tags = if r.tags.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  \x1b[2m[{}]\x1b[0m", r.tags.join(", "))
+                        };
+                        println!("  \x1b[96m{:<name_w$}\x1b[0m{}", r.name, tags, name_w = name_w);
+                    }
+                }
+                println!();
+                md.reset();
+            }
+            Response::MemoryList { entries } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                if entries.is_empty() {
+                    println!("  No memory entries in ~/.daemoneye/memory/");
+                } else {
+                    println!("  \x1b[1mMemory Entries\x1b[0m  (~/.daemoneye/memory/)");
+                    println!();
+                    let cat_w = entries.iter().map(|e| e.category.len()).max().unwrap_or(8).max(8);
+                    let key_w = entries.iter().map(|e| e.key.len()).max().unwrap_or(3).max(3);
+                    println!("  {:<cat_w$}  {}", "Category", "Key", cat_w = cat_w);
+                    println!("  {}  {}", "─".repeat(cat_w), "─".repeat(key_w));
+                    for e in &entries {
+                        println!("  \x1b[2m{:<cat_w$}\x1b[0m  \x1b[96m{}\x1b[0m", e.category, e.key, cat_w = cat_w);
+                    }
+                }
+                println!();
+                md.reset();
+            }
         }
     }
 

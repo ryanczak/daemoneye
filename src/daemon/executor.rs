@@ -1,7 +1,7 @@
 use crate::daemon::session::{bg_done_subscribe, SessionStore};
 use crate::daemon::utils::*;
 use crate::daemon::background::{run_background_in_window};
-use crate::ipc::{PaneInfo, Request, Response, ScheduleListItem, ScriptListItem};
+use crate::ipc::{MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem};
 use crate::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
 use crate::scripts;
 use crate::tmux;
@@ -589,6 +589,143 @@ pub async fn execute_tool_call(
                     format!("Failed to monitor pane {}: {}", pane_id, e)
                 }
             }
+        }
+
+        PendingCall::WriteRunbook { id, name, content, .. } => {
+            send_response_split(tx, Response::RunbookWritePrompt {
+                id: id.clone(),
+                runbook_name: name.clone(),
+                content: content.clone(),
+            }).await?;
+
+            let mut line = String::new();
+            let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
+            let approved = match read_result {
+                Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+                    Ok(Request::RunbookWriteResponse { approved, .. }) => approved,
+                    _ => false,
+                },
+                _ => false,
+            };
+
+            if approved {
+                match crate::runbook::write_runbook(name, content) {
+                    Ok(()) => {
+                        log::info!("Runbook '{}' written", name);
+                        log_event("runbook_write", serde_json::json!({
+                            "session": session_id.unwrap_or("-"),
+                            "runbook": name,
+                        }));
+                        format!("Runbook '{}' written to ~/.daemoneye/runbooks/{}.md", name, name)
+                    }
+                    Err(e) => format!("Failed to write runbook: {}", e),
+                }
+            } else {
+                "Runbook write denied by user".to_string()
+            }
+        }
+
+        PendingCall::DeleteRunbook { id, name, .. } => {
+            // Check for active scheduled jobs that reference this runbook
+            let active_jobs: Vec<String> = schedule_store.list()
+                .into_iter()
+                .filter(|j| j.runbook.as_deref() == Some(name))
+                .map(|j| j.name)
+                .collect();
+
+            send_response_split(tx, Response::RunbookDeletePrompt {
+                id: id.clone(),
+                runbook_name: name.clone(),
+                active_jobs,
+            }).await?;
+
+            let mut line = String::new();
+            let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
+            let approved = match read_result {
+                Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+                    Ok(Request::RunbookDeleteResponse { approved, .. }) => approved,
+                    _ => false,
+                },
+                _ => false,
+            };
+
+            if approved {
+                match crate::runbook::delete_runbook(name) {
+                    Ok(()) => {
+                        log::info!("Runbook '{}' deleted", name);
+                        log_event("runbook_delete", serde_json::json!({
+                            "session": session_id.unwrap_or("-"),
+                            "runbook": name,
+                        }));
+                        format!("Runbook '{}' deleted", name)
+                    }
+                    Err(e) => format!("Failed to delete runbook: {}", e),
+                }
+            } else {
+                "Runbook delete denied by user".to_string()
+            }
+        }
+
+        PendingCall::ReadRunbook { name, .. } => {
+            match crate::runbook::load_runbook(name) {
+                Ok(rb) => rb.content,
+                Err(e) => format!("Error reading runbook '{}': {}", name, e),
+            }
+        }
+
+        PendingCall::ListRunbooks { .. } => {
+            let items = crate::runbook::list_runbooks().unwrap_or_default();
+            let count = items.len();
+            let runbook_items: Vec<RunbookListItem> = items.iter()
+                .map(|r| RunbookListItem { name: r.name.clone(), tags: r.tags.clone() })
+                .collect();
+            let _ = send_response_split(tx, Response::RunbookList { runbooks: runbook_items }).await;
+            format!("{} runbook(s) in ~/.daemoneye/runbooks/", count)
+        }
+
+        PendingCall::AddMemory { key, value, category, .. } => {
+            let cat = crate::memory::MemoryCategory::from_str(category)
+                .unwrap_or(crate::memory::MemoryCategory::Knowledge);
+            match crate::memory::add_memory(key, value, cat) {
+                Ok(()) => format!("Memory '{}' stored in {}", key, category),
+                Err(e) => format!("Error storing memory: {}", e),
+            }
+        }
+
+        PendingCall::DeleteMemory { key, category, .. } => {
+            let cat = crate::memory::MemoryCategory::from_str(category)
+                .unwrap_or(crate::memory::MemoryCategory::Knowledge);
+            match crate::memory::delete_memory(key, cat) {
+                Ok(()) => format!("Memory '{}' deleted from {}", key, category),
+                Err(e) => format!("Error deleting memory: {}", e),
+            }
+        }
+
+        PendingCall::ReadMemory { key, category, .. } => {
+            let cat = crate::memory::MemoryCategory::from_str(category)
+                .unwrap_or(crate::memory::MemoryCategory::Knowledge);
+            match crate::memory::read_memory(key, cat) {
+                Ok(content) => content,
+                Err(e) => format!("Error reading memory '{}': {}", key, e),
+            }
+        }
+
+        PendingCall::ListMemories { category, .. } => {
+            let cat = category.as_deref().and_then(crate::memory::MemoryCategory::from_str);
+            let entries = crate::memory::list_memories(cat).unwrap_or_default();
+            let count = entries.len();
+            let items: Vec<MemoryListItem> = entries.iter()
+                .map(|(c, k)| MemoryListItem { category: c.clone(), key: k.clone() })
+                .collect();
+            let _ = send_response_split(tx, Response::MemoryList { entries: items }).await;
+            format!("{} memory entry/entries", count)
+        }
+
+        PendingCall::SearchRepository { query, kind, .. } => {
+            let results = crate::search::search_repository(query, kind, 2);
+            crate::search::format_results(&results)
         }
     };
     Ok(result)

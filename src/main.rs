@@ -4,14 +4,21 @@ mod config;
 mod daemon;
 mod log;
 mod ipc;
+mod memory;
 mod runbook;
 mod scheduler;
 mod scripts;
+mod search;
 mod sys_context;
 mod tmux;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+
+/// Single global lock used by tests that mutate the HOME environment variable.
+/// All test modules that call `env::set_var("HOME", ...)` must hold this lock.
+#[cfg(test)]
+pub(crate) static TEST_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

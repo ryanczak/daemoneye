@@ -52,6 +52,15 @@ pub enum PendingCall {
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, thought_signature: Option<String>, script_name: String },
     WatchPane { id: String, thought_signature: Option<String>, pane_id: String },
+    WriteRunbook { id: String, thought_signature: Option<String>, name: String, content: String },
+    DeleteRunbook { id: String, thought_signature: Option<String>, name: String },
+    ReadRunbook { id: String, thought_signature: Option<String>, name: String },
+    ListRunbooks { id: String, thought_signature: Option<String> },
+    AddMemory { id: String, thought_signature: Option<String>, key: String, value: String, category: String },
+    DeleteMemory { id: String, thought_signature: Option<String>, key: String, category: String },
+    ReadMemory { id: String, thought_signature: Option<String>, key: String, category: String },
+    ListMemories { id: String, thought_signature: Option<String>, category: Option<String> },
+    SearchRepository { id: String, thought_signature: Option<String>, query: String, kind: String },
 }
 
 impl PendingCall {
@@ -125,6 +134,60 @@ impl PendingCall {
                 name: "watch_pane".to_string(),
                 arguments: serde_json::json!({"pane_id": pane_id}).to_string(),
             },
+            PendingCall::WriteRunbook { id, thought_signature, name, content } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "write_runbook".to_string(),
+                arguments: serde_json::json!({"name": name, "content": content}).to_string(),
+            },
+            PendingCall::DeleteRunbook { id, thought_signature, name } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "delete_runbook".to_string(),
+                arguments: serde_json::json!({"name": name}).to_string(),
+            },
+            PendingCall::ReadRunbook { id, thought_signature, name } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "read_runbook".to_string(),
+                arguments: serde_json::json!({"name": name}).to_string(),
+            },
+            PendingCall::ListRunbooks { id, thought_signature } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_runbooks".to_string(),
+                arguments: "{}".to_string(),
+            },
+            PendingCall::AddMemory { id, thought_signature, key, value, category } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "add_memory".to_string(),
+                arguments: serde_json::json!({"key": key, "value": value, "category": category}).to_string(),
+            },
+            PendingCall::DeleteMemory { id, thought_signature, key, category } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "delete_memory".to_string(),
+                arguments: serde_json::json!({"key": key, "category": category}).to_string(),
+            },
+            PendingCall::ReadMemory { id, thought_signature, key, category } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "read_memory".to_string(),
+                arguments: serde_json::json!({"key": key, "category": category}).to_string(),
+            },
+            PendingCall::ListMemories { id, thought_signature, category } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_memories".to_string(),
+                arguments: serde_json::json!({"category": category}).to_string(),
+            },
+            PendingCall::SearchRepository { id, thought_signature, query, kind } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "search_repository".to_string(),
+                arguments: serde_json::json!({"query": query, "kind": kind}).to_string(),
+            },
         }
     }
 
@@ -140,6 +203,15 @@ impl PendingCall {
             PendingCall::ListScripts { id, .. } => id,
             PendingCall::ReadScript { id, .. } => id,
             PendingCall::WatchPane { id, .. } => id,
+            PendingCall::WriteRunbook { id, .. } => id,
+            PendingCall::DeleteRunbook { id, .. } => id,
+            PendingCall::ReadRunbook { id, .. } => id,
+            PendingCall::ListRunbooks { id, .. } => id,
+            PendingCall::AddMemory { id, .. } => id,
+            PendingCall::DeleteMemory { id, .. } => id,
+            PendingCall::ReadMemory { id, .. } => id,
+            PendingCall::ListMemories { id, .. } => id,
+            PendingCall::SearchRepository { id, .. } => id,
         }
     }
 }
@@ -165,6 +237,15 @@ pub enum AiEvent {
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, script_name: String, thought_signature: Option<String> },
     WatchPane { id: String, pane_id: String, thought_signature: Option<String> },
+    WriteRunbook { id: String, name: String, content: String, thought_signature: Option<String> },
+    DeleteRunbook { id: String, name: String, thought_signature: Option<String> },
+    ReadRunbook { id: String, name: String, thought_signature: Option<String> },
+    ListRunbooks { id: String, thought_signature: Option<String> },
+    AddMemory { id: String, key: String, value: String, category: String, thought_signature: Option<String> },
+    DeleteMemory { id: String, key: String, category: String, thought_signature: Option<String> },
+    ReadMemory { id: String, key: String, category: String, thought_signature: Option<String> },
+    ListMemories { id: String, category: Option<String>, thought_signature: Option<String> },
+    SearchRepository { id: String, query: String, kind: String, thought_signature: Option<String> },
     Done(AiUsage),
     Error(String),
 }

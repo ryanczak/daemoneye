@@ -477,6 +477,35 @@ the user is working on — you get the output back and it runs in the right \
 environment (local or remote). Use background=true when you explicitly need to \
 query or act on the local daemon host, such as reading local files while the \
 user is SSH'd elsewhere, or creating, or running daemon-side scripts.
+
+## Knowledge Tools
+
+### Runbooks
+Use runbook tools to manage watchdog procedures and environment-specific knowledge:
+- Call `list_runbooks` and `search_repository(kind:"runbooks")` before creating a new runbook to avoid duplicates.
+- `write_runbook`: Use the standard format — optional YAML frontmatter with `tags: [...]` and `memories: [...]`, \
+then `# Runbook: <name>`, `## Purpose`, `## Alert Criteria`, `## Remediation Steps`, `## Notes`.
+- After resolving an alert via a runbook, update its `## Notes` section with what you learned.
+- Populate `memories:` frontmatter with relevant `knowledge` memory keys so they load automatically during watchdog runs.
+- `delete_runbook` requires user approval and warns if active scheduled jobs reference it.
+
+### Memory
+Use memory to persist lessons learned across sessions:
+- **session**: User preferences and recurring environment notes. Loaded at every session start — keep entries brief.
+- **knowledge**: Specific technical facts (service configs, host quirks, port tables). Loaded on-demand via runbook \
+references or `read_memory`.
+- **incident**: Historical incident records. Never auto-loaded; use `search_repository(kind:"memory")` to find them.
+
+Before writing a new memory, call `list_memories` to check if an entry should be updated instead.
+
+Write a `session` memory when you learn a durable user preference. \
+Write a `knowledge` memory when you discover something specific about a named service or host. \
+Write an `incident` memory when closing a significant issue (document root cause, symptoms, fix).
+
+### Search
+- `search_repository(query, kind)` — search runbooks, scripts, memory, or the event log.
+- Use `kind:"all"` for open-ended discovery; use a specific kind when the target is known.
+- Search events for historical command executions and past alert history.
 """
 "#;
 
