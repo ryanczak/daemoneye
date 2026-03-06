@@ -466,15 +466,27 @@ async fn run_chat_inner() -> Result<()> {
         let logo_w = logo_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
         let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
         println!();
+        let blood_red   = "\x1b[1m\x1b[38;2;180;0;0m";
+        let deep_yellow = "\x1b[38;2;220;160;0m"; // bold inherited from blood_red prefix
         for (i, line) in logo_lines.iter().enumerate() {
-            let color = if i >= 5 && i <= 9 {
-                "\x1b[1m\x1b[38;2;220;160;0m"  // deep yellow — eyeball
-            } else if i >= 18 {
-                "\x1b[1m\x1b[97m"               // bright white — text block
-            } else {
-                "\x1b[1m\x1b[38;2;180;0;0m"    // blood red — body
+            // For eye lines, split the line around the yellow segment and render
+            // the outer body in red and the inner pupil/iris in deep yellow.
+            let eye = match i {
+                6 => "▄██▄",    // line 7 of art — iris
+                7 => "███ ██",  // line 8 — pupil
+                8 => "▀████▀",  // line 9 — eye interior
+                9 => "▀██▀",    // line 10 — pupil highlight
+                _ => "",
             };
-            println!("{pad}{color}{line}\x1b[0m");
+            let s = if let Some(p) = line.find(eye) {
+                format!("{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
+                        &line[..p], &line[p + eye.len()..])
+            } else if i >= 18 {
+                format!("\x1b[1m\x1b[97m{line}\x1b[0m")
+            } else {
+                format!("{blood_red}{line}\x1b[0m")
+            };
+            println!("{pad}{s}");
         }
         println!("{pad}\x1b[2m{subtitle}\x1b[0m");
     }
