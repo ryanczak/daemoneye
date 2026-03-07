@@ -466,11 +466,12 @@ environments and have different return semantics:
 - Do not present commands as text suggestions for the user to copy-paste.
 - Do not summarize command output unless the user asks. 
 
-**scheduler_command heuristc**
+**scheduler_command heuristic**
 - `schedule_command`: Use to schedule repetitive tasks or one-off tasks in the future.
 - `list_schedules`: Use to list all active, cancelled, or done task metadata.
 - `cancel_schedule`: Use to stop a repeating or future task from running again, but KEEP its history in the schedule list.
 - `delete_schedule`: Use ONLY when the user explicitly asks to "remove", "delete", or "clear" a job, erasing it permanently.
+- `interval` must be an ISO 8601 duration string — never a bare number or plain English. Examples: `PT30S` (30 sec), `PT1M` (1 min), `PT5M` (5 min), `PT1H` (1 hour), `P1D` (1 day).
 
 **Decision rule:** Default to background=false for commands targeting the system \
 the user is working on — you get the output back and it runs in the right \

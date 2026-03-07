@@ -88,7 +88,7 @@ pub static TOOLS: &[ToolDef] = &[
             ParamDef { name: "run_at",    ty: ParamTy::Str,  required: false,
                        description: "ISO 8601 UTC datetime for a one-shot job, e.g. '2026-03-01T15:00:00Z'. Omit if using interval." },
             ParamDef { name: "interval",  ty: ParamTy::Str,  required: false,
-                       description: "ISO 8601 duration for repeating jobs, e.g. PT5M (5 min), PT1H (1 hour), P1D (1 day). Omit if using run_at." },
+                       description: "ISO 8601 duration for repeating jobs, e.g. PT30S (30 sec), PT1M (1 min), PT5M (5 min), PT1H (1 hour), P1D (1 day). Must be ISO 8601 — never a bare number or plain English string. Omit if using run_at." },
             ParamDef { name: "runbook",   ty: ParamTy::Str,  required: false,
                        description: "Optional name of a runbook in ~/.daemoneye/runbooks/ for watchdog AI analysis of command output." },
         ],
