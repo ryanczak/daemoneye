@@ -462,7 +462,7 @@ pub async fn execute_tool_call(
                             "job_name": name,
                             "kind": kind.describe(),
                         }));
-                        format!("Scheduled job '{}' created (id: {})", name, &job_id[..8])
+                        format!("Scheduled job '{}' created (id: {})", name, job_id)
                     }
                     Err(e) => format!("Failed to schedule job: {}", e),
                 }
@@ -489,8 +489,22 @@ pub async fn execute_tool_call(
                 next_run: j.kind.next_run().map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
             }).collect();
             let count = items.len();
-            let _ = send_response_split(tx, Response::ScheduleList { jobs: items }).await;
-            format!("{} scheduled job(s)", count)
+            let _ = send_response_split(tx, Response::ScheduleList { jobs: items.clone() }).await;
+            // Build a full job listing for the AI so it has IDs for cancel/delete.
+            if count == 0 {
+                "No scheduled jobs.".to_string()
+            } else {
+                let mut lines = format!("{} scheduled job(s):\n", count);
+                for item in &items {
+                    let next = item.next_run.as_deref().unwrap_or("n/a");
+                    let last = item.last_run.as_deref().unwrap_or("never");
+                    lines.push_str(&format!(
+                        "- {} (id: {}): {}, status: {}, next: {}, last: {}\n",
+                        item.name, item.id, item.kind, item.status, next, last
+                    ));
+                }
+                lines
+            }
         }
 
         PendingCall::CancelSchedule { job_id, .. } => {
