@@ -40,8 +40,12 @@ pub struct PaneState {
 /// The daemon spawns a background task that calls [`SessionCache::refresh`]
 /// every 2 seconds.  Request handlers read from the cache without blocking on
 /// live tmux calls, keeping response latency low.
+///
+/// `session_name` is a `RwLock<String>` so it can be adopted from the first
+/// connecting client when the daemon starts without an active tmux session
+/// (e.g. launched via systemd before the user logs in).
 pub struct SessionCache {
-    pub session_name: String,
+    pub session_name: RwLock<String>,
     /// Pane ID → state map; access via the `RwLock`.
     pub panes: RwLock<HashMap<String, PaneState>>,
     /// The currently-active pane ID as reported by `tmux display-message`.
@@ -55,7 +59,7 @@ pub struct SessionCache {
 impl SessionCache {
     pub fn new(session_name: &str) -> Self {
         Self {
-            session_name: session_name.to_string(),
+            session_name: RwLock::new(session_name.to_string()),
             panes: RwLock::new(HashMap::new()),
             active_pane: RwLock::new(None),
             environment: RwLock::new(HashMap::new()),
@@ -63,14 +67,29 @@ impl SessionCache {
         }
     }
 
+    /// Update the session this cache monitors. Called when the first client
+    /// connects and tells the daemon which tmux session to observe.
+    pub fn set_session(&self, name: &str) {
+        *self.session_name.write().unwrap_or_else(|e| e.into_inner()) = name.to_string();
+        // Clear stale pane state from any previous (empty) session.
+        self.panes.write().unwrap_or_else(|e| e.into_inner()).clear();
+        self.windows.write().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+
     /// Refresh the cache.
     ///
     /// Uses a single `list-panes` call to fetch all pane metadata (P3), then
     /// issues one `capture-pane` per pane for buffer content.  Session
     /// environment is refreshed on each cycle (P5).
     pub fn refresh(&self) -> Result<()> {
+        let session = self.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+        if session.is_empty() {
+            return Ok(()); // No session adopted yet — nothing to refresh.
+        }
+
         // Active pane.
-        let active = tmux::get_active_pane(&self.session_name)?;
+        let active = tmux::get_active_pane(&session)?;
         {
             let mut active_lock = self.active_pane.write().unwrap();
             *active_lock = Some(active);
@@ -80,7 +99,7 @@ impl SessionCache {
         let rich_panes = tmux::list_panes_detailed().unwrap_or_default();
 
         for info in rich_panes {
-            if info.session_name != self.session_name {
+            if info.session_name != session {
                 continue;
             }
             if let Ok(content) = tmux::capture_pane(&info.pane_id, 100) {
@@ -123,7 +142,7 @@ impl SessionCache {
         }
 
         // Session environment (P5) — best-effort; ignore errors.
-        if let Ok(env) = tmux::session_environment(&self.session_name) {
+        if let Ok(env) = tmux::session_environment(&session) {
             if !env.is_empty() {
                 let mut env_lock = self.environment.write().unwrap();
                 *env_lock = env;
@@ -131,7 +150,7 @@ impl SessionCache {
         }
 
         // Window topology (P4) — best-effort; ignore errors.
-        if let Ok(wins) = tmux::list_windows(&self.session_name) {
+        if let Ok(wins) = tmux::list_windows(&session) {
             let mut win_lock = self.windows.write().unwrap();
             *win_lock = wins;
         }

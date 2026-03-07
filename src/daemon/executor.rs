@@ -2,7 +2,7 @@ use crate::daemon::session::{bg_done_subscribe, SessionStore};
 use crate::daemon::utils::*;
 use crate::daemon::background::{run_background_in_window};
 use crate::ipc::{MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem};
-use crate::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
+use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduledJob, ScheduleStore};
 use crate::scripts;
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
@@ -486,7 +486,14 @@ pub async fn execute_tool_call(
                 action: j.action.describe(),
                 status: j.status.describe(),
                 last_run: j.last_run.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
-                next_run: j.kind.next_run().map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
+                // Only show next_run for pending jobs; for succeeded/failed/cancelled
+                // jobs it would be a stale past timestamp that confuses the AI into
+                // thinking the job needs to be re-scheduled.
+                next_run: if matches!(j.status, JobStatus::Pending) {
+                    j.kind.next_run().map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                } else {
+                    None
+                },
             }).collect();
             let count = items.len();
             let _ = send_response_split(tx, Response::ScheduleList { jobs: items.clone() }).await;

@@ -9,17 +9,37 @@ use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::dispatch_tool_event;
 
 /// Returns `(command, background)` if parsing succeeds, `None` otherwise.
+///
+/// Gemini thinking models sometimes emit Python-style function call syntax instead of
+/// the structured JSON the API expects, e.g.:
+///   `print(default_api.run_terminal_command(background = false, command = "ls", target_pane = None))`
+///
+/// This parser handles any argument order, both quote styles, optional spaces around `=`,
+/// and wrapper expressions like `print(default_api.run_terminal_command(...))`.
 fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
     use regex::Regex;
     use std::sync::OnceLock;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"run_terminal_command\(command='((?:[^'\\]|\\.)*)'\s*,\s*background=(true|false)\)"#)
-            .expect("valid regex")
+
+    if !msg.contains("run_terminal_command(") {
+        return None;
+    }
+
+    // Match: command = "value" or command = 'value', in any position within the call.
+    static CMD_RE: OnceLock<Regex> = OnceLock::new();
+    let cmd_re = CMD_RE.get_or_init(|| {
+        Regex::new(r#"command\s*=\s*["']((?:[^"'\\]|\\.)*)["']"#).expect("valid regex")
     });
-    let caps = re.captures(msg)?;
-    let cmd = caps[1].replace("\\'", "'");
-    let bg  = &caps[2] == "true";
+    let cmd = cmd_re.captures(msg)?[1]
+        .replace("\\'", "'")
+        .replace("\\\"", "\"");
+
+    // Match: background = true|false (optional; defaults to false).
+    static BG_RE: OnceLock<Regex> = OnceLock::new();
+    let bg_re = BG_RE.get_or_init(|| {
+        Regex::new(r#"background\s*=\s*(true|false)"#).expect("valid regex")
+    });
+    let bg = bg_re.captures(msg).map(|c| &c[1] == "true").unwrap_or(false);
+
     Some((cmd, bg))
 }
 
@@ -532,5 +552,20 @@ mod tests {
     fn parse_malformed_gemini_call_unrecognised_format_returns_none() {
         let msg = "something completely different";
         assert!(parse_malformed_gemini_call(msg).is_none());
+    }
+
+    /// Real failure: args in different order, double-quoted, extra `target_pane = None`.
+    #[test]
+    fn parse_malformed_gemini_call_double_quotes_reordered_args() {
+        let msg = r#"Malformed function call: print(default_api.run_terminal_command(background = false, command = "cat ~/.daemoneye/config.toml", target_pane = None))"#;
+        let result = parse_malformed_gemini_call(msg);
+        assert_eq!(result, Some(("cat ~/.daemoneye/config.toml".to_string(), false)));
+    }
+
+    #[test]
+    fn parse_malformed_gemini_call_double_quotes_background_true() {
+        let msg = r#"run_terminal_command(command = "df -h", background = true)"#;
+        let result = parse_malformed_gemini_call(msg);
+        assert_eq!(result, Some(("df -h".to_string(), true)));
     }
 }

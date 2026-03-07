@@ -264,6 +264,38 @@ pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
 }
 
 /// Set the `remain-on-exit` option for a specific pane.
+/// Get the global window ID (`#{window_id}`, e.g. `@3`) of the window containing a pane.
+pub fn pane_window_id(pane_id: &str) -> Result<String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{window_id}"])
+        .output()?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// List the pane IDs of all panes in a tmux window.
+///
+/// `window_id` is the global window ID (e.g. `@3`), not the session-relative index.
+pub fn list_panes_in_window(window_id: &str) -> Result<Vec<String>> {
+    let output = Command::new("tmux")
+        .args(["list-panes", "-t", window_id, "-F", "#{pane_id}"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
+}
+
+/// Returns true if the given pane ID still exists in any tmux session.
+pub fn pane_exists(pane_id: &str) -> bool {
+    Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_id}"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {
     let value = if enable { "on" } else { "off" };
     let output = Command::new("tmux")

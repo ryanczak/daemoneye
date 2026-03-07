@@ -5,12 +5,14 @@ mod daemon;
 mod log;
 mod ipc;
 mod memory;
+mod pane_prefs;
 mod runbook;
 mod scheduler;
 mod scripts;
 mod search;
 mod sys_context;
 mod tmux;
+mod webhook;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

@@ -176,7 +176,7 @@ pub async fn handle_client(
     cache: Arc<SessionCache>,
     sessions: SessionStore,
     schedule_store: Arc<ScheduleStore>,
-    session_name: String,
+    bg_session: Arc<std::sync::Mutex<String>>,
 ) -> Result<()> {
     let mut config = Config::load().unwrap_or_else(|_| {
         log::warn!("Failed to load config, using defaults");
@@ -206,7 +206,7 @@ pub async fn handle_client(
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);
 
-    let (initial_query, client_pane, session_id, chat_pane, prompt_override, chat_width) = match request {
+    let (initial_query, client_pane, session_id, chat_pane, prompt_override, chat_width, client_tmux_session, client_target_pane) = match request {
         Request::Ping => {
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
@@ -217,7 +217,8 @@ pub async fn handle_client(
             let _ = std::fs::remove_file(socket_path);
             std::process::exit(0);
         }
-        Request::Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width } => (query, tmux_pane, session_id, chat_pane, prompt, chat_width),
+        Request::Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane } =>
+            (query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane),
         Request::Refresh => {
             crate::sys_context::refresh_sys_context();
             send_response_split(&mut tx, Response::Ok).await?;
@@ -286,6 +287,29 @@ pub async fn handle_client(
         _ => return Ok(()),
     };
 
+    // Derive the tmux session name: prefer what the client told us, fall back
+    // to whatever is already stored in bg_session (e.g. detected at startup).
+    let session_name: String = client_tmux_session
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| bg_session.lock().unwrap_or_else(|e| e.into_inner()).clone());
+
+    // Adopt the session if the daemon doesn't have one yet (systemd startup case).
+    if !session_name.is_empty() {
+        let mut current = bg_session.lock().unwrap_or_else(|e| e.into_inner());
+        if current.is_empty() {
+            *current = session_name.clone();
+            drop(current);
+            cache.set_session(&session_name);
+            let hook_exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "daemoneye".to_string());
+            crate::daemon::install_session_hooks(&session_name, &hook_exe);
+            log::info!("Adopted tmux session from client: {}", session_name);
+        }
+    }
+
     // Load existing message history for this session (if any).
     // Fast path: in-memory store (same daemon run).
     // Slow path: file on disk (survives daemon restarts).
@@ -301,11 +325,20 @@ pub async fn handle_client(
         })
         .unwrap_or_default();
 
-    // Preserve the chat_pane in the session store so we can send out-of-band alerts
+    // Upsert the session entry: create it with the client-resolved target pane if
+    // new, or refresh chat_pane and adopt client_target_pane if not yet set.
     if let Some(ref id) = session_id {
         if let Ok(mut store) = sessions.lock() {
-            if let Some(entry) = store.get_mut(id) {
-                entry.chat_pane = chat_pane.clone();
+            let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
+                messages: Vec::new(),
+                last_accessed: Instant::now(),
+                chat_pane: chat_pane.clone(),
+                default_target_pane: client_target_pane.clone(),
+                watched_panes: Default::default(),
+            });
+            entry.chat_pane = chat_pane.clone();
+            if entry.default_target_pane.is_none() {
+                entry.default_target_pane = client_target_pane.clone();
             }
         }
     }
@@ -487,17 +520,12 @@ pub async fn handle_client(
                         // On-disk: survives daemon restarts.
                         if let Some(ref id) = session_id {
                             if let Ok(mut store) = sessions.lock() {
-                                let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
-                                    messages: Vec::new(),
-                                    last_accessed: Instant::now(),
-                                    chat_pane: chat_pane.clone(),
-                                    default_target_pane: None,
-                                    watched_panes: Default::default(),
-                                });
-                                entry.messages = messages.clone();
-                                entry.last_accessed = Instant::now();
-                                if chat_pane.is_some() {
-                                    entry.chat_pane = chat_pane.clone();
+                                if let Some(entry) = store.get_mut(id) {
+                                    entry.messages = messages.clone();
+                                    entry.last_accessed = Instant::now();
+                                    if chat_pane.is_some() {
+                                        entry.chat_pane = chat_pane.clone();
+                                    }
                                 }
                             }
                             if needs_compaction {

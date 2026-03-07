@@ -35,6 +35,7 @@ graph TD
     end
 
     Scheduler[(Scheduler Task)]
+    WebhookServer[(Webhook HTTP :9393)]
 
     Cloud(("Anthropic / OpenAI / Gemini API"))
 
@@ -82,6 +83,11 @@ graph TD
     %% Knowledge System
     Memory -.->|session memories (first turn)| AgentEngine
     Memory -.->|knowledge memories (watchdog)| Scheduler
+
+    %% Webhook
+    WebhookServer -->|inject alert messages| SessionStore
+    WebhookServer -->|tmux display-message| TmuxInterop
+    WebhookServer -->|watchdog analysis| AgentEngine
 ```
 
 ## 2. Core Components
@@ -99,7 +105,7 @@ graph TD
   - `SystemMsg` responses rendered with an amber ⚙ prefix.
   - `ToolResult` responses rendered as a dimmed bordered panel capped at 10 rows with a truncation indicator.
   - **Session-level command approval**: `ToolCallPrompt` responses display a three-option prompt — `[Y]es` (once), `[A]pprove for session` (session-wide), `[N]o` (deny). Two independent approval classes are tracked in `SessionApproval { regular: bool, sudo: bool }`, stored in `run_chat_inner` and passed into `ask_with_session`. `daemon::utils::command_has_sudo` (regex `(?:^|[;&|])\s*sudo\b`) classifies each command — the CLI and daemon share a single implementation with no duplication. Once a class is session-approved, subsequent commands in that class display `✓ auto-approved (session)` without prompting. Approval state resets on `/clear`, `/prompt`, and `/refresh`.
-  - **Interactive line editor**: The chat input runs in raw terminal mode via `set_raw_mode` / `restore_termios` (libc `tcsetattr`). An `AsyncStdin` wrapper (`AsyncFd<StdinRawFd>`) registers fd 0 once with tokio's epoll reactor and serves both the raw editor and cooked-mode tool-approval prompts sequentially. `InputLine` holds the character buffer and cursor; `InputState` wraps it with a navigable `Vec<String>` history. `read_key` parses escape sequences (CSI, SS3) with 30 ms inter-byte timeouts. `render_input_row` redraws the input box on every keystroke with a horizontal viewport that scrolls to keep the cursor visible. SIGWINCH is handled inside the input loop so resizes repaint correctly while the user is typing. Supported: ←/→ cursor, ↑/↓ history, Home/End, Ctrl+A/E/K/U, Backspace, Delete, Ctrl+C (clear line), Ctrl+D (delete-forward or EOF on empty).
+  - **Interactive line editor**: The chat input runs in raw terminal mode via `set_raw_mode` / `restore_termios` (libc `tcsetattr`). An `AsyncStdin` wrapper (`AsyncFd<StdinRawFd>`) registers fd 0 once with tokio's epoll reactor and serves both the raw editor and cooked-mode tool-approval prompts sequentially. `InputLine` holds the character buffer and cursor; `InputState` wraps it with a navigable `Vec<String>` history. `read_key` parses escape sequences (CSI, SS3) with 30 ms inter-byte timeouts. `render_input_multiline` redraws the word-wrapped input area on every keystroke: the area grows dynamically from 1 to a maximum of 5 rows as the buffer length exceeds the available width, consuming rows from the scroll region upward; `resize_input_area` handles the scroll-region resize (`setup_scroll_region_n` / `draw_input_frame_n`), clearing any rows that transition between scroll-region and input-area roles; `collapse_input_area` restores the 1-row layout before returning so callers always see a clean state. The input frame top border displays `user@host` (via `local_user_host()`, same as the chat history query borders) rather than a static label. SIGWINCH is handled inside the input loop so resizes repaint correctly while the user is typing. Pane-selection prompts (`offer_no_sibling_options`, `pick_sibling_pane`) use `sync_read_line()` which temporarily clears `O_NONBLOCK` on fd 0 before the synchronous read and restores it afterward, preventing the prompt from racing past immediately. Supported: ←/→ cursor, ↑/↓ history, Home/End, Ctrl+A/E/K/U, Backspace, Delete, Ctrl+C (clear line), Ctrl+D (delete-forward or EOF on empty).
 
 ### 2.2 IPC Layer
 
@@ -146,7 +152,7 @@ graph TD
 - **System Context Collector** (`sys_context.rs`): Runs once per daemon lifetime (via `OnceLock`). Captures OS release, uptime, memory, load average, top CPU processes, shell environment (curated safe variables only), and shell history. Prepended to the AI context on the first turn of each conversation.
 - **Security & Data Masking Filter** (`ai/filter.rs`): Applied to all terminal context and user queries before transmission. Built-in patterns cover: AWS access key IDs, PEM private key blocks, GCP service-account JSON `"private_key"` fields, JWT bearer tokens, GitHub PATs (classic and fine-grained), database/broker connection URLs with embedded credentials, password/token/API-key assignments, URL query-param secrets, credit card numbers, and SSNs. Patterns are compiled once at daemon startup via `init_masking()`, which also incorporates any `extra_patterns` the user has added to `config.toml` — built-in patterns cannot be disabled. 16 unit tests cover the full pattern set.
 - **Prompt Engine Manager** (`config.rs`): Loads named system prompts from `~/.daemoneye/prompts/<name>.toml`. Falls back to the compiled-in SRE prompt if no file is found. The built-in SRE prompt includes a `## Command Execution Modes` section that instructs the AI when to use background vs foreground execution. `config.toml` also carries a `[masking]` section (`MaskingConfig`) with an optional `extra_patterns` list of user-defined regex patterns appended to the built-in masking set at daemon startup.
-- **LLM API Client** (`ai/mod.rs`, `ai/tools.rs`, `ai/backends/`): Implements `AiClient` trait for Anthropic, OpenAI, and Gemini with SSE streaming. Uses a process-wide `reqwest::Client` for connection reuse. Emits events over an unbounded channel for all supported tools: `Token`, `ToolCall` (command execution), `ScheduleCommand`, `ListSchedules`, `CancelSchedule`, `WriteScript`, `ListScripts`, `ReadScript`, `WriteRunbook`, `DeleteRunbook`, `ReadRunbook`, `ListRunbooks`, `AddMemory`, `DeleteMemory`, `ReadMemory`, `ListMemories`, `SearchRepository`, `Error`, and `Done`. Tool definitions and `dispatch_tool_event()` are in `ai/tools.rs`; Gemini definitions are inline in `ai/backends/gemini.rs`. The Gemini backend extracts `thoughtSignature` from each `functionCall` part during streaming and round-trips it back in `convert_messages` history; this is required by Gemini 2.5 thinking models for multi-turn tool use.
+- **LLM API Client** (`ai/mod.rs`, `ai/tools.rs`, `ai/backends/`): Implements `AiClient` trait for Anthropic, OpenAI, and Gemini with SSE streaming. Uses a process-wide `reqwest::Client` for connection reuse. Emits events over an unbounded channel for all supported tools: `Token`, `ToolCall` (command execution), `ScheduleCommand`, `ListSchedules`, `CancelSchedule`, `WriteScript`, `ListScripts`, `ReadScript`, `WriteRunbook`, `DeleteRunbook`, `ReadRunbook`, `ListRunbooks`, `AddMemory`, `DeleteMemory`, `ReadMemory`, `ListMemories`, `SearchRepository`, `Error`, and `Done`. Tool definitions and `dispatch_tool_event()` are in `ai/tools.rs`; Gemini definitions are inline in `ai/backends/gemini.rs`. The Gemini backend extracts `thoughtSignature` from each `functionCall` part during streaming and round-trips it back in `convert_messages` history; this is required by Gemini 2.5 thinking models for multi-turn tool use. Gemini thinking models occasionally emit Python-style function call syntax (e.g. `print(default_api.run_terminal_command(background = false, command = "...", target_pane = None))`) instead of a structured `functionCall` JSON block; the API signals this with `finishReason: MALFORMED_FUNCTION_CALL`. `parse_malformed_gemini_call()` recovers by extracting `command` and `background` via two independent regexes that handle any argument order, both single- and double-quoted values, and optional spaces around `=`.
 - **Schedule Store** (`scheduler.rs`): Thread-safe, file-backed store for scheduled jobs. Persistence is atomic: writes go to `.tmp` then rename over `~/.daemoneye/schedules.json`. Provides `add`, `cancel`, `list`, `take_due`, `mark_done` operations.
 - **Scripts Module** (`scripts.rs`): Manages `~/.daemoneye/scripts/` — executable scripts (chmod 700). Provides `list_scripts`, `write_script`, `read_script`, `resolve_script` operations.
 - **Runbook Module** (`runbook.rs`): Manages markdown runbook files in `~/.daemoneye/runbooks/<name>.md`. Parses YAML-style frontmatter to extract `tags: [...]` and `memories: [...]` fields. Validates content on write (requires `# Runbook:` heading and `## Alert Criteria` section). CRUD operations — `load_runbook`, `write_runbook` (approval-gated), `delete_runbook` (approval-gated, warns if active jobs reference it), `list_runbooks` — are exposed as AI tools. `watchdog_system_prompt()` loads any knowledge memory keys listed in `memories:` from `memory/knowledge/` and injects them as a `## Runbook Memory Context` block in the watchdog AI prompt.
@@ -190,7 +196,7 @@ The AI uses `write_runbook` (approval-gated), `read_runbook`, `list_runbooks`, a
 
 ### 2.5 Daemon Lifecycle
 
-- **Startup**: `main()` is a plain synchronous function. For `daemoneye daemon` (without `--console`), `libc::fork()` is called *before* the tokio runtime starts — the parent prints the child PID and exits; the child calls `libc::setsid()` and redirects stdin from `/dev/null`, then builds the tokio runtime. Inside the runtime: validates the API key, calls `init_masking()` with any user-defined `extra_patterns` to compile the masking pattern set, detects or creates the monitored tmux session, starts the cache poller and session cleanup tasks, checks for an already-running daemon (ping probe), then binds the Unix socket. All mutex lock sites use `.unwrap_or_else(|e| e.into_inner())` to recover from a poisoned lock rather than panicking. If the daemon created a new tmux session, it automatically opens the AI chat pane using `tmux split-window` with the current binary's absolute path.
+- **Startup**: `main()` is a plain synchronous function. For `daemoneye daemon` (without `--console`), `libc::fork()` is called *before* the tokio runtime starts — the parent prints the child PID and exits; the child calls `libc::setsid()` and redirects stdin from `/dev/null`, then builds the tokio runtime. Inside the runtime: validates the API key, calls `init_masking()` with any user-defined `extra_patterns` to compile the masking pattern set, detects or creates the monitored tmux session, starts the cache poller and session cleanup tasks, checks for an already-running daemon (ping probe), then binds the Unix socket. If `[webhook] enabled = true` in `config.toml`, the webhook HTTP server is spawned as an additional tokio task. All mutex lock sites use `.unwrap_or_else(|e| e.into_inner())` to recover from a poisoned lock rather than panicking. If the daemon created a new tmux session, it automatically opens the AI chat pane using `tmux split-window` with the current binary's absolute path.
 - **Logging**: All output (`println!`/`eprintln!`) is redirected to `~/.daemoneye/daemon.log` (or `--log-file FILE`) via `dup2` at startup. Use `--console` to keep output on the terminal. View live with `daemoneye logs`.
 - **Event log**: Written to `~/.daemoneye/events.jsonl` by default.
 - **Shutdown**: `daemoneye stop` sends a `Shutdown` IPC request — the daemon responds `Ok`, removes the socket file, and exits. SIGTERM and SIGINT are also handled gracefully via `tokio::signal::unix`, removing the socket file before exit.
@@ -215,6 +221,35 @@ The scheduler runs as a background tokio task that polls `ScheduleStore::take_du
 - The AI can **list** and **read** scripts without approval (read-only operations).
 - Scripts can be referenced by scheduled jobs (`ActionOn::Script(name)`) and are resolved to their full path at job execution time.
 - Script names are validated to reject path traversal (no `/`, `\0`, `.`, or `..`).
+
+### 2.8 Webhook Ingestion
+
+The webhook server (`webhook.rs`) is an optional axum HTTP server spawned as a daemon-side tokio task when `[webhook] enabled = true` in `config.toml`. It is disabled by default.
+
+**HTTP server**: Listens on `0.0.0.0:<port>` (default 9393). Two routes:
+- `POST /webhook` — alert ingestion
+- `GET /health` — liveness probe (returns `"ok"`)
+
+**Authentication**: When `[webhook] secret` is non-empty, every `POST /webhook` request must include `Authorization: Bearer <secret>`. Requests without a valid token are rejected with `401 Unauthorized`.
+
+**Payload format detection and parsers** (`parse_payload()`):
+1. **Alertmanager / Grafana unified** — detected by a top-level `"alerts"` array. Extracts per-alert `labels` (including `alertname`, `severity`), `annotations.summary`, `annotations.description`, `fingerprint` field (or SHA of sorted labels), and `status`.
+2. **Grafana legacy** — detected by a top-level `"state"` string without `"alerts"`. Maps `ruleName`/`title` → alert name, `message` → description, `"ok"` → Resolved.
+3. **Generic fallback** — tries `alertname`/`name`/`title` for the name, `severity`/`level`/`priority` for severity, `summary`/`message` for summary. If nothing matches, the full JSON body is used as the description.
+
+**Processing pipeline** (runs asynchronously; handler returns `200 OK` immediately):
+1. **Deduplication** — alert fingerprint checked against `WebhookState.dedup` (a `Mutex<HashMap<fingerprint, last_seen_secs>>`). Suppressed if seen within `dedup_window_secs`. Fingerprint comes from the Alertmanager payload or is computed from sorted `key=value` label pairs.
+2. **Masking** — `mask_sensitive()` applied to `summary` and `description` before any further use.
+3. **Formatting** — human-readable single or multi-line message assembled from status, name, summary, description, and source.
+4. **Event log** — `log_event("webhook_alert", {...})` appends a record to `events.jsonl`.
+5. **Session injection** — `inject_into_sessions()` appends a `[Webhook Alert]` `Message` to every active session's JSONL file via `append_session_message()`.
+6. **Chat pane notification** — `notify_chat_panes()` calls `tmux display-message -d 8000 -t <chat_pane> "<first line>"` for every active chat pane.
+7. **Severity gate** — if `severity_rank(alert.severity) >= severity_rank(config.severity_threshold)`, `fire_notification()` is called (runs `[notifications] on_alert`). If `auto_analyze = true`, runbook analysis is also triggered.
+
+**Runbook auto-analysis** (rate-limited per alert name within `dedup_window_secs`):
+- `find_runbook_for_alert()` tries kebab-case, lower-case, and exact-case variants of the alert name (e.g. `"HighDiskUsage"` → `"high-disk-usage"`, `"highdiskusage"`, `"HighDiskUsage"`).
+- If a runbook is found, `watchdog_system_prompt()` builds the watchdog prompt and the configured LLM analyses the formatted alert message.
+- If the AI response contains `"ALERT"`, the analysis is injected into all sessions, displayed in chat panes, and logged to `events.jsonl` as `"webhook_analysis"`.
 
 ## 3. Data Flow Example: Troubleshooting an Error
 

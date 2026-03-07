@@ -14,6 +14,8 @@ pub struct Config {
     pub context: ContextConfig,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub webhook: WebhookConfig,
 }
 
 /// Notification hooks for scheduler/watchdog alerts.
@@ -24,6 +26,50 @@ pub struct NotificationsConfig {
     /// Example: `notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'`
     #[serde(default)]
     pub on_alert: String,
+}
+
+/// Webhook ingestion configuration.
+/// When enabled, DaemonEye listens for HTTP POST alerts from Prometheus
+/// Alertmanager, Grafana, or any generic JSON alerting tool.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct WebhookConfig {
+    /// Whether the webhook endpoint is active. Disabled by default.
+    #[serde(default)]
+    pub enabled: bool,
+    /// TCP port to listen on. Default 9393.
+    #[serde(default = "default_webhook_port")]
+    pub port: u16,
+    /// Bearer token for authentication. Empty = no auth required.
+    #[serde(default)]
+    pub secret: String,
+    /// Run runbook-based AI analysis when a matching runbook is found.
+    #[serde(default = "default_true")]
+    pub auto_analyze: bool,
+    /// Minimum severity to trigger AI analysis and fire_notification.
+    /// "info" | "warning" | "critical"
+    #[serde(default = "default_severity_threshold")]
+    pub severity_threshold: String,
+    /// Seconds to suppress duplicate alerts by fingerprint. Default 300.
+    #[serde(default = "default_dedup_window")]
+    pub dedup_window_secs: u64,
+}
+
+fn default_webhook_port() -> u16 { 9393 }
+fn default_true() -> bool { true }
+fn default_severity_threshold() -> String { "warning".to_string() }
+fn default_dedup_window() -> u64 { 300 }
+
+impl Default for WebhookConfig {
+    fn default() -> Self {
+        WebhookConfig {
+            enabled: false,
+            port: default_webhook_port(),
+            secret: String::new(),
+            auto_analyze: default_true(),
+            severity_threshold: default_severity_threshold(),
+            dedup_window_secs: default_dedup_window(),
+        }
+    }
 }
 
 /// Runtime environment declaration — tells the AI how to calibrate caution,
@@ -238,6 +284,14 @@ prompt   = "sre"
 # Shell command to run when a watchdog alert fires.
 # Available env vars: $DAEMONEYE_JOB (job name), $DAEMONEYE_MSG (alert message).
 # on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+
+# [webhook]
+# enabled = false
+# port = 9393
+# secret = ""            # Bearer token; empty = no auth
+# auto_analyze = true
+# severity_threshold = "warning"   # "info" | "warning" | "critical"
+# dedup_window_secs = 300
 "#,
             )?;
         }
@@ -482,7 +536,7 @@ user is SSH'd elsewhere, or creating, or running daemon-side scripts.
 ## Knowledge Tools
 
 ### Runbooks
-Use runbook tools to manage watchdog procedures and environment-specific knowledge:
+Use runbook tools to manage webhook events, watchdog procedures and environment-specific knowledge:
 - Call `list_runbooks` and `search_repository(kind:"runbooks")` before creating a new runbook to avoid duplicates.
 - `write_runbook`: Use the standard format — optional YAML frontmatter with `tags: [...]` and `memories: [...]`, \
 then `# Runbook: <name>`, `## Purpose`, `## Alert Criteria`, `## Remediation Steps`, `## Notes`.
@@ -507,6 +561,164 @@ Write an `incident` memory when closing a significant issue (document root cause
 - `search_repository(query, kind)` — search runbooks, scripts, memory, or the event log.
 - Use `kind:"all"` for open-ended discovery; use a specific kind when the target is known.
 - Search events for historical command executions and past alert history.
+
+## Webhook Alerts
+
+DaemonEye has a built-in HTTP webhook endpoint (default port 9393, disabled by default). \
+When enabled, external monitoring systems push alerts directly here — making DaemonEye \
+a true on-call responder that acts without user intervention. You can both receive \
+inbound alerts AND configure upstream systems to send them.
+
+### Receiving alerts
+
+When `[Webhook Alert]` appears in the conversation history, an external monitoring \
+system fired an alert and DaemonEye injected it automatically.
+
+- Treat it as an on-call page — prioritize it over any current task.
+- Call `search_repository(alert_name, kind:"all")` to find related incidents and runbooks.
+- If a matching runbook exists, read it and follow the remediation steps immediately.
+- After closing a significant alert, write an `incident` memory with root cause + fix.
+- For resolved alerts, confirm the fix held and update the runbook's `## Notes` section.
+
+### Finding the webhook URL
+
+Read `~/.daemoneye/config.toml` to get `webhook.port` (default 9393) and \
+`webhook.secret` (if set). The daemon hostname is in your execution context. \
+Endpoint: `http://<daemon-host>:<port>/webhook` — liveness: `http://<daemon-host>:<port>/health`
+
+### Runbook naming convention (critical)
+
+Prometheus alertnames are CamelCase (e.g. `HighDiskUsage`). DaemonEye auto-analysis \
+looks up runbooks by converting to kebab-case: `HighDiskUsage` → `high-disk-usage`. \
+**Always create the runbook BEFORE configuring the alert rule** so analysis fires \
+on the very first page. The runbook name must be the kebab-case form of the alertname.
+
+### Full self-setup workflow
+
+When asked to set up monitoring for anything, do ALL of these in order:
+
+1. `write_runbook("kebab-name", content)` — create the runbook with Purpose, Alert \
+   Criteria, Remediation Steps, and any relevant `memories:` references in frontmatter.
+2. Configure the Prometheus alert rule with the matching CamelCase alertname (see below).
+3. Configure Alertmanager or Grafana to route to the DaemonEye webhook URL.
+4. Optionally add a `schedule_command` watchdog as a belt-and-suspenders fallback.
+5. Send a test alert via curl to confirm end-to-end delivery (see Testing below).
+
+### Prometheus alert rule
+
+Create or edit `/etc/prometheus/rules/<topic>.yml` (or a Kubernetes PrometheusRule CRD). \
+Name the alert in CamelCase so its kebab-case form matches the runbook:
+
+```yaml
+groups:
+  - name: daemoneye
+    rules:
+      - alert: HighDiskUsage
+        expr: >
+          (node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}
+           - node_filesystem_free_bytes{fstype!~"tmpfs|overlay"})
+          / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"} > 0.90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk usage above 90% on {{ $labels.instance }}"
+          description: "{{ $labels.mountpoint }} is at {{ $value | humanizePercentage }}"
+```
+
+Reload Prometheus: `curl -X POST http://localhost:9090/-/reload`
+
+### Alertmanager receiver
+
+Add a DaemonEye receiver to `/etc/alertmanager/alertmanager.yml`. \
+Route all alerts (or only specific severities) to it:
+
+```yaml
+receivers:
+  - name: daemoneye
+    webhook_configs:
+      - url: 'http://<daemon-host>:9393/webhook'
+        send_resolved: true
+        # If webhook.secret is set in config.toml:
+        # http_config:
+        #   authorization:
+        #     credentials: '<secret>'
+
+route:
+  receiver: daemoneye
+  routes:
+    - matchers:
+        - severity =~ "warning|critical"
+      receiver: daemoneye
+```
+
+Reload Alertmanager: `curl -X POST http://localhost:9093/-/reload` \
+Verify config first: `amtool check-config /etc/alertmanager/alertmanager.yml`
+
+### Grafana unified alerting
+
+In Grafana → Alerting → Contact points, create a **Webhook** contact point:
+- URL: `http://<daemon-host>:9393/webhook`
+- HTTP method: POST
+- If `webhook.secret` is set: add `Authorization: Bearer <secret>` as a custom header.
+
+Then in Alerting → Notification policies, add a policy routing to this contact point. \
+Grafana unified alerting sends the same `"alerts"` array format as Alertmanager — \
+both are auto-detected by DaemonEye.
+
+Via the Grafana API (automation-friendly):
+
+```bash
+curl -X POST http://localhost:3000/api/v1/provisioning/contact-points \
+  -H 'Content-Type: application/json' \
+  -u admin:admin \
+  -d '{
+    "name": "daemoneye",
+    "type": "webhook",
+    "settings": {
+      "url": "http://<daemon-host>:9393/webhook",
+      "httpMethod": "POST"
+    }
+  }'
+```
+
+### Grafana legacy alerting (older Grafana < 9)
+
+In Alert Rules → Notifications, add a Webhook notification channel: \
+URL `http://<daemon-host>:9393/webhook`. Legacy payloads have a top-level `"state"` \
+field — DaemonEye detects and parses these automatically.
+
+### Testing the pipeline
+
+Send a synthetic Alertmanager-format payload to verify end-to-end delivery:
+
+```bash
+curl -s -X POST http://localhost:9393/webhook \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "alerts": [{
+      "status": "firing",
+      "labels": {"alertname": "TestAlert", "severity": "warning"},
+      "annotations": {"summary": "Integration test", "description": "Verify DaemonEye webhook is working"},
+      "fingerprint": "test-001"
+    }]
+  }'
+```
+
+Expected: `200` response, `tmux display-message` overlay in your chat pane, \
+`webhook_alert` record in `~/.daemoneye/events.jsonl`.
+
+If `webhook.secret` is set, add: `-H 'Authorization: Bearer <secret>'`
+
+Check recent webhook events: \
+`search_repository("webhook_alert", kind:"events")`
+
+### Enabling the webhook endpoint
+
+If `webhook.enabled = false` (the default), check `~/.daemoneye/config.toml`, \
+then inform the user they need to add `[webhook]\nenabled = true` and restart the daemon. \
+Use `run_terminal_command("grep -A5 '\\[webhook\\]' ~/.daemoneye/config.toml || echo 'not configured'")` \
+to check the current state without reading the full file.
 """
 "#;
 

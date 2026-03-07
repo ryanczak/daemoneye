@@ -23,8 +23,6 @@ pub struct SessionEntry {
 /// Thread-safe, shared session store passed to every client handler.
 pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
 
-pub const FALLBACK_SESSION: &str = "daemoneye";
-
 
 /// Maximum number of messages retained per session (in memory and on disk).
 pub const MAX_HISTORY: usize = 40;

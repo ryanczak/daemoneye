@@ -8,7 +8,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use std::time::Duration;
 use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
-use crate::tmux;
 use crate::tmux::cache::SessionCache;
 use crate::config::Config;
 use crate::scheduler::ScheduleStore;
@@ -32,104 +31,40 @@ pub use session::*;
 pub use utils::*;
 pub use server::*;
 
-/// Returns `(session_name, newly_created)`.
-/// If the daemon was launched from inside an existing tmux session, that
-/// session is used and `newly_created` is false.
-/// Otherwise the fallback "daemoneye" session is used; `newly_created` is true
-/// when this call actually created it (not when it already existed).
-pub fn detect_or_create_session() -> Result<(String, bool)> {
-    if std::env::var("TMUX").is_ok() {
-        let out = std::process::Command::new("tmux")
-            .args(["display-message", "-p", "#S"])
-            .output();
-        if let Ok(o) = out {
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Ok((s, false));
-            }
-        }
+/// Detect the tmux session the daemon is running in, without creating one.
+///
+/// Returns the session name when the process is already inside an active tmux
+/// session (e.g. the daemon was started manually from within tmux).  Returns
+/// `None` when launched from outside tmux — the normal case for a systemd
+/// user service that starts before the user logs in.
+pub fn detect_session() -> Option<String> {
+    if std::env::var("TMUX").is_err() {
+        return None;
     }
-    let already_exists = tmux::has_session(FALLBACK_SESSION);
-    if !already_exists {
-        tmux::create_session(FALLBACK_SESSION)?;
-    }
-    Ok((FALLBACK_SESSION.to_string(), !already_exists))
+    let out = std::process::Command::new("tmux")
+        .args(["display-message", "-p", "#S"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
 }
 
-/// After the daemon socket is bound, open the AI chat pane in the newly
-/// created session so the user sees it immediately on `tmux attach`.
-pub async fn open_chat_pane(session_name: String) {
-    // Brief pause so the accept loop is running before the chat client connects.
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    let pane_target = format!("{}:0.0", session_name);
-
-    // Resolve the global pane ID (e.g. %3) of the shell pane so we can pass
-    // it as DAEMONEYE_SOURCE_PANE — the pane where commands should be injected.
-    let shell_pane_id = match std::process::Command::new("tmux")
-        .args(["display-message", "-t", &pane_target, "-p", "#{pane_id}"])
+/// Install the per-session tmux `alert-bell` hook so the daemon is notified
+/// when background panes ring the bell.  The global `pane-died` hook must be
+/// installed separately (see `run_daemon`).
+pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
+    let notify_cmd = format!(
+        "run-shell -b '{} notify activity #{{pane_id}} 0 \"{}\"'",
+        hook_exe,
+        crate::daemon::utils::shell_escape_arg(session_name),
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-t", session_name, "alert-bell", &notify_cmd])
         .output()
     {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        Err(e) => {
-            log::warn!("Could not read shell pane ID: {e}");
-            return;
-        }
-    };
-
-    if shell_pane_id.is_empty() {
-        log::warn!("Empty shell pane ID, skipping chat pane setup");
-        return;
-    }
-
-    // Use the exact binary that is currently running so the path is always
-    // correct regardless of how the daemon was invoked.
-    let daemon_bin = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "daemoneye".to_string());
-
-    let chat_cmd = format!("{} chat", daemon_bin);
-
-    // R7: split-window is rejected when the window is zoomed — use new-window instead.
-    let zoomed = std::process::Command::new("tmux")
-        .args(["display-message", "-t", &pane_target, "-p", "#{window_zoomed_flag}"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1")
-        .unwrap_or(false);
-
-    let zoomed_target = format!("{}:", session_name);
-    let result = if zoomed {
-        std::process::Command::new("tmux")
-            .args([
-                "new-window",
-                "-t", &zoomed_target,
-                "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
-                &chat_cmd,
-            ])
-            .output()
+        log::warn!("Failed to register alert-bell hook for '{}': {}", session_name, e);
     } else {
-        std::process::Command::new("tmux")
-            .args([
-                "split-window", "-h",
-                "-t", &pane_target,
-                "-e", &format!("DAEMONEYE_SOURCE_PANE={}", shell_pane_id),
-                &chat_cmd,
-            ])
-            .output()
-    };
-
-    match result {
-        Ok(o) if o.status.success() => {
-            println!("Chat pane ready. Attach with:  tmux attach -t {}", session_name);
-        }
-        Ok(o) => {
-            let err = String::from_utf8_lossy(&o.stderr);
-            log::warn!("Could not open chat pane: {}", err.trim());
-            log::info!("Attach manually with:  tmux attach -t {}  then run `daemoneye chat`", session_name);
-        }
-        Err(e) => {
-            log::warn!("Could not open chat pane: {e}");
-        }
+        log::info!("Session hooks installed for: {}", session_name);
     }
 }
 
@@ -207,41 +142,53 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     }
     log::info!("Provider: {} / {}", startup_config.ai.provider, startup_config.ai.model);
 
-    let (session_name, session_was_created) = detect_or_create_session()?;
-    log::info!("Monitoring tmux session: {}", session_name);
+    let initial_session = detect_session();
+    match &initial_session {
+        Some(s) => log::info!("Attaching to existing tmux session: {}", s),
+        None => log::warn!(
+            "No tmux session detected at startup. \
+             DaemonEye will begin monitoring once `daemoneye chat` is run."
+        ),
+    }
+
     log_event("daemon_start", serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "session": session_name,
+        "session": initial_session.as_deref().unwrap_or(""),
         "pid":     std::process::id(),
         "socket":  DEFAULT_SOCKET_PATH,
     }));
 
-    // Install session-wide pane-died and alert-bell hooks to catch background job activity natively
     let hook_exe_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "daemoneye".to_string());
-    
-    // We use the raw #{pane_id} template formatting string so tmux expands it automatically per-pane.
-    let notify_cmd = format!("run-shell -b '{} notify activity #{{pane_id}} 0 \"{}\"'", hook_exe_path, crate::daemon::utils::shell_escape_arg(&session_name));
-    
-    // pane-died is a global hook, so we must set it globally (-g).
-    // We overwrite to prevent duplicate run-shell commands proliferating if the daemon restarts.
+
+    // pane-died is a global hook — install it regardless of whether a session
+    // is known yet, so it fires as soon as the user's session appears.
+    let global_notify_cmd = format!(
+        "run-shell -b '{} notify activity #{{pane_id}} 0 #{{session_name}}'",
+        hook_exe_path,
+    );
     if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-g", "pane-died", &notify_cmd])
+        .args(["set-hook", "-g", "pane-died", &global_notify_cmd])
         .output()
     {
         log::error!("Failed to register global tmux pane-died hook: {}", e);
     }
-        
-    // alert-bell can be set per session (-t)
-    if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", &session_name, "alert-bell", &notify_cmd])
-        .output()
-    {
-        log::error!("Failed to register session tmux alert-bell hook: {}", e);
+
+    // Install per-session alert-bell hook if we already know the session.
+    if let Some(ref sn) = initial_session {
+        install_session_hooks(sn, &hook_exe_path);
     }
 
-    let cache = Arc::new(SessionCache::new(&session_name));
+    // bg_session is the tmux session used for background/scheduled job windows.
+    // Starts empty when started by systemd; adopted from the first connecting client.
+    let bg_session: Arc<Mutex<String>> = Arc::new(Mutex::new(
+        initial_session.clone().unwrap_or_default()
+    ));
+
+    let cache = Arc::new(SessionCache::new(
+        initial_session.as_deref().unwrap_or("")
+    ));
 
     log::info!("Cache poller started");
     let cache_monitor = Arc::clone(&cache);
@@ -272,13 +219,17 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     // Scheduler task: poll every second for due jobs.
     {
         let store = Arc::clone(&schedule_store);
-        let sn = session_name.clone();
+        let bg_sn = Arc::clone(&bg_session);
         let cfg = startup_config.clone();
         let sessions_sched = Arc::clone(&sessions);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             loop {
                 tick.tick().await;
+                let sn = bg_sn.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                if sn.is_empty() {
+                    continue; // No session adopted yet; skip until a client connects.
+                }
                 let due = store.take_due();
                 for job in due {
                     let store2 = Arc::clone(&store);
@@ -291,6 +242,18 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                 }
             }
         });
+    }
+
+    // Optional webhook ingestion endpoint.
+    if startup_config.webhook.enabled {
+        let wh_config = startup_config.clone();
+        let wh_sessions = Arc::clone(&sessions);
+        tokio::spawn(async move {
+            if let Err(e) = crate::webhook::start(wh_config, wh_sessions).await {
+                log::error!("Webhook server exited: {}", e);
+            }
+        });
+        log::info!("Webhook listener enabled on port {}", startup_config.webhook.port);
     }
 
     // Prune chat sessions idle for more than 30 minutes.
@@ -326,14 +289,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
 
     log::info!("Daemon listening on {}", DEFAULT_SOCKET_PATH);
 
-    // If the daemon just created the tmux session, open the chat pane inside
-    // it now that the socket is ready. Users can then simply
-    // `tmux attach -t daemoneye` and start chatting immediately.
-    if session_was_created {
-        let sn = session_name.clone();
-        tokio::spawn(async move { open_chat_pane(sn).await });
-    }
-
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("Failed to install SIGTERM handler")?;
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
@@ -347,9 +302,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                         let cache_conn = Arc::clone(&cache);
                         let sessions_conn = Arc::clone(&sessions);
                         let sched_conn = Arc::clone(&schedule_store);
-                        let sn = session_name.clone();
+                        let bg_conn = Arc::clone(&bg_session);
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, sched_conn, sn).await {
+                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, sched_conn, bg_conn).await {
                                 log::error!("Error handling client: {}", e);
                             }
                         });

@@ -18,8 +18,9 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
 - **Structured Event Logging** — Every executed command, AI turn usage, and lifecycle event is appended to `~/.daemoneye/events.jsonl` as a single structured JSON object.
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session. The turn count and session lifetime are seamlessly embedded into the bottom border of the user input panel.
-- **Readline-style Chat Input** — The chat input box supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). The viewport scrolls horizontally for long inputs. History persists for the lifetime of the chat session.
+- **Multi-line Chat Input** — The chat input box word-wraps long text across up to 5 rows instead of scrolling horizontally; the box grows upward as you type and collapses back on submission. The top border shows your `user@host`. Supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). History persists for the lifetime of the chat session.
 - **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`/tmp/daemoneye.sock`) for instant, non-blocking interaction.
+- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
 
 ---
 
@@ -100,7 +101,7 @@ Run `daemoneye setup` to get the recommended `tmux` configuration and add the ou
 
 ```sh
 # ~/.tmux.conf
-bind-key T split-window -h -e "DAEMONEYE_SOURCE_PANE=#{pane_id}" 'daemoneye chat'
+bind-key T split-window -h 'daemoneye chat'
 ```
 
 Reload your tmux config:
@@ -157,6 +158,14 @@ prompt   = "sre"
 
 # [masking]
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
+
+# [webhook]
+# enabled = false
+# port = 9393
+# secret = ""            # Bearer token; empty = no auth
+# auto_analyze = true
+# severity_threshold = "warning"   # "info" | "warning" | "critical"
+# dedup_window_secs = 300
 ```
 
 ### `[ai]` section
@@ -186,6 +195,35 @@ Example:
 ```toml
 [notifications]
 on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+```
+
+### `[webhook]` section
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Start the HTTP webhook server on daemon startup. |
+| `port` | integer | `9393` | TCP port to listen on. |
+| `secret` | string | `""` | Bearer token for authentication. Empty = no auth. |
+| `auto_analyze` | bool | `true` | Run runbook-based AI analysis when a matching runbook exists. |
+| `severity_threshold` | string | `"warning"` | Minimum severity to trigger AI analysis and `on_alert`. One of `"info"`, `"warning"`, `"critical"`. |
+| `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
+
+#### Prometheus Alertmanager integration
+
+Add a DaemonEye receiver to your Alertmanager configuration:
+
+```yaml
+receivers:
+  - name: daemoneye
+    webhook_configs:
+      - url: http://localhost:9393/webhook
+        # If webhook.secret is set:
+        # http_config:
+        #   authorization:
+        #     credentials: <your-secret>
+
+route:
+  receiver: daemoneye
 ```
 
 Example:

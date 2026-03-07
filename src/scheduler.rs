@@ -32,7 +32,7 @@ impl ScheduleKind {
         }
     }
 
-    /// Advance `next_run` by `interval_secs` for `Every` jobs.
+    /// Advance `next_run` by one `interval_secs` for `Every` jobs.
     pub fn advance(&mut self) {
         if let ScheduleKind::Every {
             interval_secs,
@@ -40,6 +40,22 @@ impl ScheduleKind {
         } = self
         {
             *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+        }
+    }
+
+    /// After `advance()`, skip additional intervals until `next_run` is strictly
+    /// in the future.  Prevents catch-up firing when the daemon was down for
+    /// longer than one interval (or when the job itself takes longer than its interval).
+    pub fn skip_to_future(&mut self) {
+        if let ScheduleKind::Every {
+            interval_secs,
+            next_run,
+        } = self
+        {
+            let now = Utc::now();
+            while *next_run <= now {
+                *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+            }
         }
     }
 
@@ -246,7 +262,9 @@ impl ScheduleStore {
     }
 
     /// Return all jobs that are due to run now and set their status to `Running`.
-    /// Removes `Once` jobs from the queue when they are taken.
+    ///
+    /// The Running state is immediately persisted so that a daemon restart
+    /// during execution does not re-fire the job a second time.
     pub fn take_due(&self) -> Vec<ScheduledJob> {
         let now = Utc::now();
         let mut due = Vec::new();
@@ -267,6 +285,10 @@ impl ScheduleStore {
                 }
             }
         }
+        // Persist the Running status so a restart doesn't re-fire these jobs.
+        if !due.is_empty() {
+            let _ = self.save();
+        }
         due
     }
 
@@ -282,6 +304,11 @@ impl ScheduleStore {
                     match &mut job.kind {
                         ScheduleKind::Every { .. } => {
                             job.kind.advance();
+                            // Skip any intervals that are still in the past (e.g. after
+                            // a daemon restart that missed several intervals).  Without
+                            // this, take_due() would re-fire the job on every tick until
+                            // next_run finally catches up to the present.
+                            job.kind.skip_to_future();
                             job.status = JobStatus::Pending;
                         }
                         ScheduleKind::Once { .. } => {
@@ -519,5 +546,67 @@ mod tests {
 
         store.mark_done(&id, true, None);
         assert_eq!(store.list()[0].status, JobStatus::Pending);
+    }
+
+    #[test]
+    fn take_due_persists_running_state() {
+        let (store, path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = ScheduledJob::new(
+            "persist-test".to_string(),
+            ScheduleKind::Every { interval_secs: 60, next_run: past },
+            ActionOn::Alert,
+            None,
+        );
+        store.add(job).unwrap();
+        let due = store.take_due();
+        assert_eq!(due.len(), 1);
+
+        // Reload from disk — should be Running, not Pending (no double-fire on restart).
+        let reloaded = ScheduleStore::load_or_create(path).unwrap();
+        assert_eq!(reloaded.list()[0].status, JobStatus::Running);
+    }
+
+    #[test]
+    fn mark_done_skips_past_intervals_to_prevent_catchup() {
+        let (store, _path) = tmp_store();
+
+        // Simulate a job that was due 2 intervals ago (daemon was down).
+        let two_intervals_ago = Utc::now() - chrono::Duration::seconds(120);
+        let job = ScheduledJob::new(
+            "catchup-test".to_string(),
+            ScheduleKind::Every { interval_secs: 60, next_run: two_intervals_ago },
+            ActionOn::Alert,
+            None,
+        );
+        let id = store.add(job).unwrap();
+        store.take_due(); // fires and marks Running
+        store.mark_done(&id, true, None);
+
+        let jobs = store.list();
+        assert_eq!(jobs[0].status, JobStatus::Pending);
+
+        // next_run must be in the future — NOT still stuck in the past.
+        let next = match &jobs[0].kind {
+            ScheduleKind::Every { next_run, .. } => *next_run,
+            _ => panic!("expected Every"),
+        };
+        assert!(next > Utc::now(), "next_run should be in the future after catch-up skipping");
+
+        // The job must NOT be taken again immediately.
+        let due_again = store.take_due();
+        assert!(due_again.is_empty(), "job should not re-fire immediately after catch-up fix");
+    }
+
+    #[test]
+    fn skip_to_future_noop_for_once_jobs() {
+        let t = Utc::now() - chrono::Duration::seconds(10);
+        let mut kind = ScheduleKind::Once { at: t };
+        kind.skip_to_future(); // should be a no-op
+        match kind {
+            ScheduleKind::Once { at } => assert_eq!(at, t),
+            _ => panic!("expected Once"),
+        }
     }
 }

@@ -63,28 +63,6 @@ pub fn session_environment(session: &str) -> Result<HashMap<String, String>> {
     Ok(env)
 }
 
-/// Check if a tmux session exists.
-pub fn has_session(session_name: &str) -> bool {
-    Command::new("tmux")
-        .args(["has-session", "-t", session_name])
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-/// Create a new detached tmux session.
-pub fn create_session(session_name: &str) -> Result<()> {
-    let output = Command::new("tmux")
-        .args(["new-session", "-d", "-s", session_name])
-        .output()?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("Failed to create tmux session '{}': {}", session_name, err);
-    }
-
-    Ok(())
-}
 
 /// Get the active pane ID in `#{pane_id}` format (e.g. `%5`).
 pub fn get_active_pane(session_name: &str) -> Result<String> {
@@ -137,6 +115,29 @@ pub fn install_passive_activity_hook(
     }
 
     Ok(())
+}
+
+/// Return the name of the current tmux session, or `None` if not inside tmux.
+pub fn current_session_name() -> Option<String> {
+    let out = Command::new("tmux")
+        .args(["display-message", "-p", "#S"])
+        .output()
+        .ok()?;
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// List all pane IDs in a tmux session (across all windows).
+pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
+    let out = Command::new("tmux")
+        .args(["list-panes", "-s", "-t", session, "-F", "#{pane_id}"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(stdout
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
 }
 
 pub fn remove_passive_activity_hook(pane_id: &str) -> Result<()> {

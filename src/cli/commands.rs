@@ -98,10 +98,7 @@ WantedBy=default.target
 
     println!();
     println!("# Add this to your ~/.tmux.conf:");
-    println!(
-        "bind-key T split-window {} -e \"DAEMONEYE_SOURCE_PANE=#{{pane_id}}\" '{} chat'",
-        split_flag, daemon_bin
-    );
+    println!("bind-key T split-window {} '{} chat'", split_flag, daemon_bin);
     println!();
     println!("# Then reload tmux config:");
     println!("tmux source-file ~/.tmux.conf");
@@ -175,7 +172,9 @@ pub async fn run_ask(query: String) -> Result<()> {
     let mut approval = SessionApproval::default(); // never persists; single-shot has no session
     
     let old = crate::cli::input::set_raw_mode()?;
-    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old).await;
+    let tmux_session = crate::tmux::current_session_name();
+    // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
+    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old, tmux_session.as_deref(), None).await;
     crate::cli::input::restore_termios(old);
     result
 }
@@ -387,9 +386,15 @@ async fn run_chat_inner() -> Result<()> {
         signal(SignalKind::window_change())?
     };
 
-    // Initial pane dimensions — use the tmux query to set the 25%-width target
-    // and read back the exact post-resize size.
+    // Resolve the tmux session name and target pane for foreground commands
+    // before any terminal setup.  This may prompt the user once if the window
+    // has no sibling pane and they opt to split or pick from another window.
+    let tmux_session = crate::tmux::current_session_name();
     let pane_id_opt = std::env::var("TMUX_PANE").ok();
+    let target_pane: Option<String> = match (&pane_id_opt, &tmux_session) {
+        (Some(my_pane), Some(session)) => resolve_target_pane(my_pane, session),
+        _ => None,
+    };
     let mut chat_width: usize;
     let mut chat_height: usize;
     if let Some(ref pane_id) = pane_id_opt {
@@ -529,6 +534,7 @@ async fn run_chat_inner() -> Result<()> {
         &mut input_state, &stdin, &mut sigwinch,
         chat_width, chat_height, start_time, session_id,
         current_prompt, &mut approval, old_termios,
+        tmux_session, target_pane,
     ).await;
 
     crate::cli::input::restore_termios(old_termios);
@@ -546,6 +552,8 @@ async fn run_chat_inner_raw(
     mut current_prompt: Option<String>,
     approval:   &mut SessionApproval,
     old_termios:    libc::termios,
+    tmux_session:   Option<String>,
+    target_pane:    Option<String>,
 ) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
 
@@ -566,7 +574,7 @@ async fn run_chat_inner_raw(
     let hint = approval.hint();
     draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
-    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios).await {
+    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref()).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
         eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
@@ -664,7 +672,7 @@ async fn run_chat_inner_raw(
         current_status = "thinking…";
         let hint = approval.hint();
         draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
-        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios).await {
+        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref()).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
         // Turn completed: reset the double-tap exit timer.
@@ -686,7 +694,169 @@ async fn run_chat_inner_raw(
 }
 
 
-async fn ask_with_session(query: String, display_query: &str, session_id: Option<&str>, prompt_override: Option<&str>, stdin: &AsyncStdin, chat_width: Option<usize>, approval: &mut SessionApproval, old_termios: libc::termios) -> Result<()> {
+// ── Pane discovery ─────────────────────────────────────────────────────────
+
+/// Determine the target pane for foreground commands.
+///
+/// Resolution order:
+/// 1. Persisted preference from a previous session (validated that it still exists).
+/// 2. Exactly one sibling in the same window → use it automatically.
+/// 3. Multiple siblings → prompt the user to pick one.
+/// 4. No siblings (chat pane fills the whole window) → offer to split or pick
+///    from other windows in the session.
+fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<String> {
+    // 1. Check persisted preference.
+    if let Some(saved) = crate::pane_prefs::get(session) {
+        if saved != chat_pane && crate::tmux::pane_exists(&saved) {
+            return Some(saved);
+        }
+    }
+
+    // 2 & 3. Siblings in the same tmux window.
+    let window_id = crate::tmux::pane_window_id(chat_pane).unwrap_or_default();
+    let siblings: Vec<String> = if !window_id.is_empty() {
+        crate::tmux::list_panes_in_window(&window_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| p != chat_pane)
+            .collect()
+    } else {
+        vec![]
+    };
+
+    match siblings.len() {
+        0 => {
+            // 4. No siblings — offer split or cross-window pick.
+            offer_no_sibling_options(chat_pane, session)
+        }
+        1 => {
+            let target = siblings.into_iter().next().unwrap();
+            crate::pane_prefs::save(session, &target);
+            Some(target)
+        }
+        _ => pick_sibling_pane(chat_pane, siblings, session),
+    }
+}
+
+/// When the chat pane is alone in its window, offer three options:
+/// split side-by-side (default), pick from another window, or proceed with
+/// background-only mode.
+/// Read one line from stdin synchronously, temporarily clearing O_NONBLOCK so
+/// the call blocks even when AsyncStdin has already set the non-blocking flag.
+fn sync_read_line() -> String {
+    use std::io::BufRead;
+    let fd = libc::STDIN_FILENO;
+    // Save and clear O_NONBLOCK so the synchronous read blocks.
+    let saved = unsafe { libc::fcntl(fd, libc::F_GETFL, 0) };
+    if saved >= 0 {
+        unsafe { libc::fcntl(fd, libc::F_SETFL, saved & !libc::O_NONBLOCK) };
+    }
+    let mut line = String::new();
+    let _ = std::io::BufReader::new(std::io::stdin()).read_line(&mut line);
+    // Restore original flags (O_NONBLOCK) so AsyncStdin continues to work.
+    if saved >= 0 {
+        unsafe { libc::fcntl(fd, libc::F_SETFL, saved) };
+    }
+    line
+}
+
+fn offer_no_sibling_options(chat_pane: &str, session: &str) -> Option<String> {
+    use std::io::Write;
+
+    let other_panes: Vec<String> = crate::tmux::list_pane_ids_in_session(session)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| p != chat_pane)
+        .collect();
+
+    println!();
+    println!("No sibling pane in this window for foreground commands.");
+    println!("  [S]  Split this window (side by side) and use the new pane  \x1b[2m← default\x1b[0m");
+    if !other_panes.is_empty() {
+        println!("  [P]  Pick from another pane in this session ({} available)", other_panes.len());
+    }
+    println!("  [N]  No foreground target (background commands only)");
+    let opts = if other_panes.is_empty() { "S/N" } else { "S/P/N" };
+    print!("Choose [{}] (Enter = S): ", opts);
+    let _ = std::io::stdout().flush();
+
+    let input = sync_read_line();
+    let choice = input.trim().to_ascii_lowercase();
+
+    match choice.as_str() {
+        "" | "s" => {
+            let out = std::process::Command::new("tmux")
+                .args(["split-window", "-h", "-t", chat_pane, "-P", "-F", "#{pane_id}"])
+                .output()
+                .ok()?;
+            let new_pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if new_pane.is_empty() || !out.status.success() {
+                eprintln!("Failed to split window.");
+                return None;
+            }
+            println!("Using pane {} for foreground commands.", new_pane);
+            crate::pane_prefs::save(session, &new_pane);
+            Some(new_pane)
+        }
+        "p" if !other_panes.is_empty() => pick_sibling_pane(chat_pane, other_panes, session),
+        _ => {
+            println!("No foreground target set. Only background commands will run.");
+            None
+        }
+    }
+}
+
+/// Present a numbered list of candidate panes and let the user choose one.
+fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -> Option<String> {
+    use std::io::Write;
+
+    println!();
+    println!("Multiple panes available. Which should I use for foreground commands?");
+    for (i, pane_id) in candidates.iter().enumerate() {
+        let info = std::process::Command::new("tmux")
+            .args(["display-message", "-t", pane_id, "-p",
+                   "#{pane_current_command}  #{pane_current_path}"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        println!("  [{}]  {}  {}", i + 1, pane_id, info);
+    }
+    println!("  [N]  No foreground target");
+    print!("Choose [1-{}/N]: ", candidates.len());
+    let _ = std::io::stdout().flush();
+
+    let input = sync_read_line();
+    let input = input.trim().to_ascii_lowercase();
+
+    if input == "n" {
+        println!("No foreground target set.");
+        return None;
+    }
+    if let Ok(n) = input.parse::<usize>() {
+        if n >= 1 && n <= candidates.len() {
+            let chosen = candidates[n - 1].clone();
+            crate::pane_prefs::save(session, &chosen);
+            return Some(chosen);
+        }
+    }
+    println!("Invalid choice. No foreground target set.");
+    None
+}
+
+// ── AI conversation ─────────────────────────────────────────────────────────
+
+async fn ask_with_session(
+    query: String,
+    display_query: &str,
+    session_id: Option<&str>,
+    prompt_override: Option<&str>,
+    stdin: &AsyncStdin,
+    chat_width: Option<usize>,
+    approval: &mut SessionApproval,
+    old_termios: libc::termios,
+    tmux_session: Option<&str>,
+    target_pane: Option<&str>,
+) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
 
@@ -694,19 +864,17 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
     let (rx, mut tx) = stream.into_split();
     let mut rx = BufReader::new(rx);
 
-    // DAEMONEYE_SOURCE_PANE is set by the recommended tmux bind-key:
-    //   split-window -h -e "DAEMONEYE_SOURCE_PANE=#{pane_id}" 'daemoneye chat'
-    // It records the user's working pane before the split so the daemon
-    // captures context from — and injects commands into — the right pane.
-    // Falls back to TMUX_PANE, which is correct when `daemoneye chat` or
-    // `daemoneye ask` is run directly from the user's working pane.
-    let tmux_pane = std::env::var("DAEMONEYE_SOURCE_PANE")
-        .ok()
-        .or_else(|| std::env::var("TMUX_PANE").ok());
     // The chat pane is this process's own pane ($TMUX_PANE).  The daemon uses
     // it to switch focus back to the AI interface after a foreground sudo
-    // command hands control to the user's working pane.
+    // command hands control to the user's target pane.
     let chat_pane = std::env::var("TMUX_PANE").ok();
+
+    // Use the client-resolved target_pane as the source pane for AI context.
+    // Falls back to $TMUX_PANE when no target was resolved (e.g. `daemoneye ask`).
+    let tmux_pane = target_pane
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("TMUX_PANE").ok());
+
     send_request(&mut tx, Request::Ask {
         query,
         tmux_pane,
@@ -714,6 +882,8 @@ async fn ask_with_session(query: String, display_query: &str, session_id: Option
         chat_pane,
         prompt: prompt_override.map(|s| s.to_string()),
         chat_width,
+        tmux_session: tmux_session.map(|s| s.to_string()),
+        target_pane: target_pane.map(|s| s.to_string()),
     }).await?;
 
     // Braille-pattern spinner frames, updated every 80 ms while waiting for

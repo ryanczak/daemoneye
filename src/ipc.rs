@@ -71,6 +71,15 @@ pub enum Request {
         /// Passed to the AI so it formats prose for the actual display width.
         #[serde(default)]
         chat_width: Option<usize>,
+        /// The tmux session the client is running in, resolved by the client before
+        /// connecting. Used by the daemon to adopt (or confirm) the correct session
+        /// when started by systemd before any user session existed.
+        #[serde(default)]
+        tmux_session: Option<String>,
+        /// The target pane for foreground commands, resolved client-side by sibling
+        /// detection or user prompt. Eliminates mid-conversation pane picker prompts.
+        #[serde(default)]
+        target_pane: Option<String>,
     },
     /// Approve or deny a tool call.
     ToolCallResponse { id: String, approved: bool },
@@ -211,6 +220,8 @@ mod tests {
             chat_pane: Some("%4".to_string()),
             prompt: Some("sre".to_string()),
             chat_width: Some(54),
+            tmux_session: Some("mysession".to_string()),
+            target_pane: Some("%1".to_string()),
         };
         match roundtrip_req(&req) {
             Request::Ask {
@@ -220,6 +231,8 @@ mod tests {
                 chat_pane,
                 prompt,
                 chat_width,
+                tmux_session,
+                target_pane,
             } => {
                 assert_eq!(query, "what is load avg?");
                 assert_eq!(tmux_pane, Some("%3".to_string()));
@@ -227,6 +240,8 @@ mod tests {
                 assert_eq!(chat_pane, Some("%4".to_string()));
                 assert_eq!(prompt, Some("sre".to_string()));
                 assert_eq!(chat_width, Some(54));
+                assert_eq!(tmux_session, Some("mysession".to_string()));
+                assert_eq!(target_pane, Some("%1".to_string()));
             }
             _ => panic!("wrong variant"),
         }
@@ -241,6 +256,8 @@ mod tests {
             chat_pane: None,
             prompt: None,
             chat_width: None,
+            tmux_session: None,
+            target_pane: None,
         };
         match roundtrip_req(&req) {
             Request::Ask {

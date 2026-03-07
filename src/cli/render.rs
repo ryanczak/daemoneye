@@ -187,14 +187,21 @@ pub fn terminal_height() -> usize {
 }
 
 /// Install a terminal scroll region that reserves the bottom four rows:
-///   rows 1..(height-4) — scrolling content area
-///   row (height-3) — input box top border (app name + uptime)
-///   row (height-2) — input prompt
-///   row (height-1) — input box bottom border
-///   row  height    — status bar
+///   rows 1..(height-3-n) — scrolling content area  (n = input_rows, default 1)
+///   row (height-2-n)     — input box top border (app name + uptime)
+///   rows (height-1-n)..(height-2) — n input prompt rows
+///   row (height-1)       — input box bottom border
+///   row  height          — status bar
+///
+/// With n=1 this is identical to the previous fixed layout.
 pub fn setup_scroll_region(height: usize) {
+    setup_scroll_region_n(height, 1);
+}
+
+/// Like `setup_scroll_region` but reserves `input_rows` rows for the input area.
+pub fn setup_scroll_region_n(height: usize, input_rows: usize) {
     use std::io::Write;
-    let scroll_bottom = height.saturating_sub(4).max(1);
+    let scroll_bottom = height.saturating_sub(3 + input_rows).max(1);
     // DECSTBM — set scrolling region (1-indexed).
     print!("\x1b[1;{scroll_bottom}r");
     // Position cursor at the bottom of the scroll region so the first output
@@ -233,20 +240,26 @@ pub fn fmt_uptime(elapsed: std::time::Duration) -> String {
     }
 }
 
-/// Draw (or redraw) the input box borders.
+/// Draw (or redraw) the input box borders with a 1-row input area.
+pub fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) {
+    draw_input_frame_n(height, width, 1, start);
+}
+
+/// Draw (or redraw) the input box borders for `input_rows` input rows.
 ///
 /// The top border carries the app name and current uptime; the bottom border
 /// is plain.  Uses DEC save/restore cursor so it is safe to call at any point
 /// without disturbing the scroll-region cursor position.
-///   row (height-3): ╭─ DaemonEye ─────────────────────── up 4m 12s ─╮
-///   row (height-1): ╰────────────────────────────────────────────╯
-pub fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) {
+///   row (height-2-n): ╭─ DaemonEye ─────────────────────── up 4m 12s ─╮
+///   row (height-1):   ╰────────────────────────────────────────────────╯
+pub fn draw_input_frame_n(height: usize, width: usize, input_rows: usize, start: std::time::Instant) {
     use std::io::Write;
-    let border_top    = height.saturating_sub(3).max(1);
+    let border_top    = height.saturating_sub(2 + input_rows).max(1);
     let border_bottom = height.saturating_sub(1).max(1);
     let inner = width.saturating_sub(2);
 
-    let title_left  = "─ DaemonEye ───────────";
+    let label       = format!("─ {} ─", local_user_host());
+    let title_left  = label.as_str();
     let title_right = format!(" up {} ─", fmt_uptime(start.elapsed()));
     let anchors     = visual_len(title_left) + visual_len(&title_right);
     let top = if inner >= anchors {
