@@ -413,7 +413,13 @@ pub async fn execute_tool_call(
                 ActionOn::Command(command.clone())
             };
             let kind = if let Some(iso) = interval {
-                let secs = crate::scheduler::parse_iso_duration(iso).unwrap_or(3600);
+                let secs = match crate::scheduler::parse_iso_duration(iso) {
+                    Some(s) => s,
+                    None => return Ok(format!(
+                        "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
+                        iso
+                    )),
+                };
                 let next = chrono::Utc::now() + chrono::Duration::seconds(secs as i64);
                 ScheduleKind::Every { interval_secs: secs, next_run: next }
             } else if let Some(at_str) = run_at {
