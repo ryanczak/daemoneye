@@ -9,8 +9,8 @@ use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::{dispatch_tool_event, get_openai_tool_definition};
 
 /// OpenAI-compatible API backend (GPT family, or any OpenAI-compatible endpoint).
-/// The `base_url` defaults to the official OpenAI API but can be overridden for
-/// local inference servers (e.g. Ollama, vLLM) via the `OPENAI_BASE_URL` env var.
+/// Supports Ollama, LM Studio, vLLM, and any other OpenAI-API-compatible server
+/// by passing the appropriate `base_url` (e.g. `http://localhost:11434/v1`).
 pub struct OpenAiClient {
     api_key: String,
     model: String,
@@ -18,13 +18,19 @@ pub struct OpenAiClient {
 }
 
 impl OpenAiClient {
-    /// Create a new OpenAI-compatible client, reading `OPENAI_BASE_URL` for the endpoint.
-    pub fn new(api_key: String, model: String) -> Self {
+    /// Create a new OpenAI-compatible client.
+    /// `base_url` should be the full base URL including `/v1`, e.g.
+    /// `https://api.openai.com/v1` or `http://localhost:11434/v1`.
+    pub fn new(api_key: String, model: String, base_url: String) -> Self {
+        let resolved_url = if base_url.is_empty() {
+            "https://api.openai.com/v1".to_string()
+        } else {
+            base_url
+        };
         OpenAiClient {
             api_key,
             model,
-            base_url: std::env::var("OPENAI_API_BASE")
-                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            base_url: resolved_url,
         }
     }
 

@@ -542,6 +542,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         &state.config.ai.provider,
         api_key,
         state.config.ai.model.clone(),
+        state.config.ai.effective_base_url(),
     );
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();

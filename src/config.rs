@@ -108,7 +108,7 @@ pub struct MaskingConfig {
 /// AI provider settings from the `[ai]` section of `config.toml`.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AiConfig {
-    /// "anthropic" | "openai" | "gemini"
+    /// "anthropic" | "openai" | "gemini" | "ollama" | "lmstudio"
     #[serde(default = "default_provider")]
     pub provider: String,
     #[serde(default)]
@@ -122,6 +122,18 @@ pub struct AiConfig {
     /// "bottom" | "left" | "right"
     #[serde(default = "default_position")]
     pub position: String,
+    /// Override the API base URL. Useful for pointing at a custom Ollama host,
+    /// a LMStudio instance on another machine, or any OpenAI-compatible proxy.
+    /// Defaults: ollama → http://localhost:11434/v1,
+    ///           lmstudio → http://localhost:1234/v1,
+    ///           openai → https://api.openai.com/v1 (or $OPENAI_API_BASE).
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Override the model's context-window size in tokens.
+    /// Set this for local models where the automatic lookup is wrong.
+    /// Example: 8192 for a 4-bit quantised 8 B model loaded with 8 k context.
+    #[serde(default)]
+    pub context_window_tokens: Option<u32>,
 }
 
 fn default_provider() -> String {
@@ -142,6 +154,7 @@ impl AiConfig {
         match self.provider.as_str() {
             "openai" => "OPENAI_API_KEY",
             "gemini" => "GEMINI_API_KEY",
+            "ollama" | "lmstudio" => "",
             _ => "ANTHROPIC_API_KEY",
         }
     }
@@ -150,12 +163,41 @@ impl AiConfig {
         if !self.api_key.is_empty() {
             return self.api_key.clone();
         }
-        std::env::var(self.api_key_env_var()).unwrap_or_default()
+        // Local providers don't require a real key — use a dummy so the OpenAI
+        // client can still set the Authorization header without panicking.
+        match self.provider.as_str() {
+            "ollama" | "lmstudio" => return "local".to_string(),
+            _ => {}
+        }
+        let env_var = self.api_key_env_var();
+        if env_var.is_empty() {
+            return String::new();
+        }
+        std::env::var(env_var).unwrap_or_default()
+    }
+
+    /// Resolve the effective API base URL for the configured provider.
+    /// Priority: explicit `base_url` in config → provider default → env var fallback (openai).
+    pub fn effective_base_url(&self) -> String {
+        if let Some(ref u) = self.base_url {
+            return u.clone();
+        }
+        match self.provider.as_str() {
+            "ollama"   => "http://localhost:11434/v1".to_string(),
+            "lmstudio" => "http://localhost:1234/v1".to_string(),
+            "openai"   => std::env::var("OPENAI_API_BASE")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            _ => String::new(), // anthropic / gemini don't use this
+        }
     }
 
     /// Return the context-window size (in tokens) for the configured model.
-    /// Used to compute budget percentages in the CLI and token-budget warnings.
+    /// `context_window_tokens` in config always wins; otherwise a built-in table
+    /// is consulted. Local models default to 32 768 (a conservative 32 k window).
     pub fn context_window(&self) -> u32 {
+        if let Some(override_val) = self.context_window_tokens {
+            return override_val;
+        }
         let m = self.model.as_str();
         if m.starts_with("claude") {
             200_000
@@ -168,7 +210,9 @@ impl AiConfig {
         } else if m.starts_with("gpt-3.5") {
             16_000
         } else {
-            128_000 // conservative default
+            // Local / unknown models: conservative 32 k default.
+            // Users should set context_window_tokens in config.toml.
+            32_768
         }
     }
 }
@@ -181,6 +225,8 @@ impl Default for AiConfig {
             model: default_model(),
             prompt: default_prompt(),
             position: default_position(),
+            base_url: None,
+            context_window_tokens: None,
         }
     }
 }
@@ -288,6 +334,19 @@ provider = "anthropic"
 api_key  = ""
 model    = "claude-sonnet-4-6"
 prompt   = "sre"
+
+# --- Local LLM examples (no API key required) ---
+# [ai]
+# provider = "ollama"
+# model    = "llama3.2"          # any model pulled via `ollama pull`
+# # base_url = "http://localhost:11434/v1"  # default; change if Ollama runs elsewhere
+# # context_window_tokens = 8192           # set if the model uses a non-32k context
+#
+# [ai]
+# provider = "lmstudio"
+# model    = "lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF"
+# # base_url = "http://localhost:1234/v1"   # default LM Studio port
+# # context_window_tokens = 8192
 
 # [context]
 # Declare the operating environment so the AI calibrates its advice accordingly.

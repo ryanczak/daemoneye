@@ -117,7 +117,7 @@ pub async fn run_scheduled_job(
     if let Some(ref rb_name) = job.runbook {
         if let Ok(rb) = runbook::load_runbook(rb_name) {
             let api_key = config.ai.resolve_api_key();
-            let client = crate::ai::make_client(&config.ai.provider, api_key, config.ai.model.clone());
+            let client = crate::ai::make_client(&config.ai.provider, api_key, config.ai.model.clone(), config.ai.effective_base_url());
             let system = runbook::watchdog_system_prompt(&rb);
             let msgs = vec![Message {
                 role: "user".to_string(),
@@ -393,7 +393,7 @@ pub async fn handle_client(
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
-        let client_instance = make_client(&config.ai.provider, config.ai.api_key.clone(), config.ai.model.clone());
+        let client_instance = make_client(&config.ai.provider, config.ai.resolve_api_key(), config.ai.model.clone(), config.ai.effective_base_url());
         let sys_prompt_turn = sys_prompt.clone();
         let messages_clone = messages.clone();
         

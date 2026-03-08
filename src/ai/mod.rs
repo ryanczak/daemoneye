@@ -80,10 +80,12 @@ pub async fn send_with_retry(
 }
 
 /// Construct an [`AiClient`] for the given provider name.
+/// `base_url` is used by the OpenAI-compatible backend; pass an empty string
+/// for providers that ignore it (Anthropic, Gemini).
 /// Defaults to Anthropic for any unrecognised provider string.
-pub fn make_client(provider: &str, api_key: String, model: String) -> Box<dyn AiClient> {
+pub fn make_client(provider: &str, api_key: String, model: String, base_url: String) -> Box<dyn AiClient> {
     match provider {
-        "openai" => Box::new(OpenAiClient::new(api_key, model)),
+        "openai" | "ollama" | "lmstudio" => Box::new(OpenAiClient::new(api_key, model, base_url)),
         "gemini" => Box::new(GeminiClient::new(api_key, model)),
         _ => Box::new(AnthropicClient::new(api_key, model)),
     }

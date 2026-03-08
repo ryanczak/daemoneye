@@ -156,6 +156,18 @@ api_key  = "sk-ant-..."
 model    = "claude-sonnet-4-6"
 prompt   = "sre"
 
+# --- Local LLM (no API key required) ---
+# [ai]
+# provider = "ollama"
+# model    = "llama3.2"
+# # base_url = "http://localhost:11434/v1"   # default; change if Ollama runs elsewhere
+# # context_window_tokens = 8192             # set if the model's context differs from the 32k default
+
+# [ai]
+# provider = "lmstudio"
+# model    = "lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF"
+# # base_url = "http://localhost:1234/v1"    # default LM Studio port
+
 # [masking]
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
 
@@ -173,10 +185,12 @@ prompt   = "sre"
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `provider` | string | `"anthropic"` | AI backend to use. See valid values below. |
-| `api_key` | string | `""` | API key for the chosen provider. If empty, falls back to the provider's environment variable. |
+| `api_key` | string | `""` | API key for the chosen provider. If empty, falls back to the provider's environment variable. Not required for `ollama` or `lmstudio`. |
 | `model` | string | `"claude-sonnet-4-6"` | Model name passed to the provider API. |
 | `prompt` | string | `"sre"` | Name of a prompt file in `~/.daemoneye/prompts/` (without `.toml`). |
 | `position` | string | `"bottom"` | Where `daemoneye setup` places the chat pane: `"bottom"`, `"top"`, `"right"`, or `"left"`. |
+| `base_url` | string | *(provider default)* | Override the API base URL. Useful for pointing at a remote Ollama host, LM Studio instance, or any OpenAI-compatible proxy. |
+| `context_window_tokens` | integer | *(model lookup)* | Override the context-window size in tokens. Set this for local models where the automatic lookup is inaccurate. |
 
 ### `[masking]` section
 
@@ -238,11 +252,16 @@ extra_patterns = [
 
 #### Valid `provider` values
 
-| Value | Provider | API endpoint |
-|---|---|---|
-| `"anthropic"` | Anthropic (Claude) | `https://api.anthropic.com/v1/messages` |
-| `"openai"` | OpenAI (or any OpenAI-compatible API) | `https://api.openai.com/v1/chat/completions` — override with `OPENAI_API_BASE` env var |
-| `"gemini"` | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/` |
+| Value | Provider | Default API endpoint | API key required |
+|---|---|---|---|
+| `"anthropic"` | Anthropic (Claude) | `https://api.anthropic.com/v1/messages` | Yes |
+| `"openai"` | OpenAI (or any OpenAI-compatible API) | `https://api.openai.com/v1` | Yes |
+| `"gemini"` | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/` | Yes |
+| `"ollama"` | Ollama (local, OpenAI-compatible) | `http://localhost:11434/v1` | No |
+| `"lmstudio"` | LM Studio (local, OpenAI-compatible) | `http://localhost:1234/v1` | No |
+
+For `ollama`, start the server with `ollama serve` and pull a model (`ollama pull llama3.2`).
+For `lmstudio`, start the local server from the LM Studio app and load a model.
 
 ### Environment variables
 
@@ -251,7 +270,7 @@ extra_patterns = [
 | `ANTHROPIC_API_KEY` | API key for the `anthropic` provider (used if `api_key` is not set in config). |
 | `OPENAI_API_KEY` | API key for the `openai` provider (used if `api_key` is not set in config). |
 | `GEMINI_API_KEY` | API key for the `gemini` provider (used if `api_key` is not set in config). |
-| `OPENAI_API_BASE` | Override the base URL for the `openai` provider (useful for local models via Ollama, LM Studio, etc.). |
+| `OPENAI_API_BASE` | Override the base URL for the `openai` provider (fallback; prefer `base_url` in config). |
 
 ---
 

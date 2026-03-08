@@ -484,17 +484,27 @@ mod tests {
     #[test]
     fn make_client_unknown_defaults_to_anthropic() {
         // We just verify make_client doesn't panic for unknown providers.
-        let _c = make_client("unknown_provider", "key".to_string(), "model".to_string());
+        let _c = make_client("unknown_provider", "key".to_string(), "model".to_string(), String::new());
     }
 
     #[test]
     fn make_client_openai() {
-        let _c = make_client("openai", "key".to_string(), "gpt-4o".to_string());
+        let _c = make_client("openai", "key".to_string(), "gpt-4o".to_string(), String::new());
     }
 
     #[test]
     fn make_client_gemini() {
-        let _c = make_client("gemini", "key".to_string(), "gemini-2.0-flash".to_string());
+        let _c = make_client("gemini", "key".to_string(), "gemini-2.0-flash".to_string(), String::new());
+    }
+
+    #[test]
+    fn make_client_ollama() {
+        let _c = make_client("ollama", "local".to_string(), "llama3.2".to_string(), "http://localhost:11434/v1".to_string());
+    }
+
+    #[test]
+    fn make_client_lmstudio() {
+        let _c = make_client("lmstudio", "local".to_string(), "some-model".to_string(), "http://localhost:1234/v1".to_string());
     }
 
     // ── Message serialization ─────────────────────────────────────────────────
