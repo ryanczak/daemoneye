@@ -10,6 +10,7 @@
 ## Enabling
 
 Add to `~/.daemoneye/config.toml` and restart the daemon:
+
 ```toml
 [webhook]
 enabled = true
@@ -18,12 +19,14 @@ secret = ""
 ```
 
 Check current state:
+
 ```
 grep -A5 '\[webhook\]' ~/.daemoneye/config.toml || echo 'not configured'
 ```
 
 ## Prometheus Alert Rule
 
+You must be ssh'd to bender to do this.
 Create `/etc/prometheus/rules/<topic>.yml`. Alert name must be CamelCase:
 
 ```yaml
@@ -47,7 +50,9 @@ Reload: `curl -X POST http://localhost:9090/-/reload`
 
 ## Alertmanager Receiver
 
-Add to `/etc/alertmanager/alertmanager.yml`:
+You must be ssh'd to bender to do this.
+
+Add to `/etc/prometheus/alertmanager.yml`:
 
 ```yaml
 receivers:
@@ -73,11 +78,14 @@ Verify: `amtool check-config /etc/alertmanager/alertmanager.yml`
 ## Grafana Unified Alerting (Grafana 9+)
 
 In Alerting → Contact points, create a Webhook contact point:
+
 - URL: `http://<daemon-host>:9393/webhook`
 - Method: POST
 - If secret set: add `Authorization: Bearer <secret>` custom header
 
 Via API:
+You must be ssh'd to bender to do this.
+
 ```bash
 curl -X POST http://localhost:3000/api/v1/provisioning/contact-points \
   -H 'Content-Type: application/json' -u admin:admin \
@@ -90,6 +98,8 @@ Alert Rules → Notifications → add Webhook channel with URL `http://<daemon-h
 Legacy payloads (top-level `"state"` field) are detected and parsed automatically.
 
 ## Test the Pipeline
+
+You must be ssh'd to bender to do this.
 
 ```bash
 curl -s -X POST http://localhost:9393/webhook \
