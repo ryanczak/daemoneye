@@ -289,11 +289,14 @@ pub async fn handle_client(
                 chat_pane: chat_pane.clone(),
                 default_target_pane: client_target_pane.clone(),
                 bg_windows: Vec::new(),
+                last_prompt_tokens: 0,
             });
             entry.chat_pane = chat_pane.clone();
             if entry.default_target_pane.is_none() {
                 entry.default_target_pane = client_target_pane.clone();
             }
+            // Ensure the field exists on entries created before this was added.
+            // (No-op for new entries; safe for loaded-from-disk sessions.)
         }
     }
 
@@ -313,6 +316,11 @@ pub async fn handle_client(
     let post_trim_len = messages.len();
 
     let is_first_turn = messages.is_empty();
+
+    // Read last prompt token count for context-budget injection and client display.
+    let last_prompt_tokens = session_id.as_ref()
+        .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
+        .unwrap_or(0);
 
     // Build labeled terminal context: active pane at full depth, background panes as summaries.
     let session_summary = cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
@@ -346,8 +354,20 @@ pub async fn handle_client(
              User: {safe_query}"
         )
     } else {
+        // Inject a context-budget line so the AI knows how much context it has consumed.
+        let budget_note = if last_prompt_tokens > 80_000 {
+            format!("[Token Budget] Context at {}k tokens — NEAR LIMIT. Be very concise. Suggest `/clear` if appropriate.\n\n",
+                last_prompt_tokens / 1000)
+        } else if last_prompt_tokens > 50_000 {
+            format!("[Token Budget] Context at {}k tokens — prefer concise responses, avoid redundant tool calls.\n\n",
+                last_prompt_tokens / 1000)
+        } else if last_prompt_tokens > 0 {
+            format!("[Token Budget] Context at {}k tokens.\n\n", last_prompt_tokens / 1000)
+        } else {
+            String::new()
+        };
         format!(
-            "## Terminal Session (updated)\n```\n{session_summary}\n```\n\n\
+            "{budget_note}## Terminal Session (updated)\n```\n{session_summary}\n```\n\n\
              User: {safe_query}"
         )
     };
@@ -477,6 +497,7 @@ pub async fn handle_client(
                                 if let Some(entry) = store.get_mut(id) {
                                     entry.messages = messages.clone();
                                     entry.last_accessed = Instant::now();
+                                    entry.last_prompt_tokens = usage.prompt_tokens;
                                     if chat_pane.is_some() {
                                         entry.chat_pane = chat_pane.clone();
                                     }
@@ -490,6 +511,9 @@ pub async fn handle_client(
                                 }
                             }
                         }
+                        send_response_split(&mut tx, Response::UsageUpdate {
+                            prompt_tokens: usage.prompt_tokens,
+                        }).await?;
                         send_response_split(&mut tx, Response::Ok).await?;
                         return Ok(());
                     }
@@ -501,6 +525,16 @@ pub async fn handle_client(
                         "completion_tokens": usage.completion_tokens,
                     }));
 
+                    // Update session token tracking so the budget line in the next
+                    // prompt reflects the actual context size of this turn.
+                    if let Some(ref id) = session_id {
+                        if let Ok(mut store) = sessions.lock() {
+                            if let Some(entry) = store.get_mut(id) {
+                                entry.last_prompt_tokens = usage.prompt_tokens;
+                            }
+                        }
+                    }
+
                     // Push one assistant message listing all tool calls.
                     messages.push(Message {
                         role: "assistant".to_string(),
@@ -509,9 +543,47 @@ pub async fn handle_client(
                         tool_results: None,
                     });
 
+                    // Per-turn tool-call loop guard.
+                    // Prevents the AI from looping endlessly through the same tools.
+                    const MAX_SAME_TOOL: u32 = 2;
+                    const MAX_TOTAL_CALLS: u32 = 12;
+                    let mut tool_call_counts: std::collections::HashMap<&'static str, u32> = std::collections::HashMap::new();
+
                     let mut tool_results = Vec::new();
-                    for call in &pending_calls {
+                    for (call_idx, call) in pending_calls.iter().enumerate() {
                         let call_id = call.id().to_string();
+
+                        // Hard total cap: block all calls beyond the limit.
+                        if call_idx as u32 >= MAX_TOTAL_CALLS {
+                            log::warn!("Turn tool-call total limit ({MAX_TOTAL_CALLS}) reached; blocking call {}", call_idx + 1);
+                            tool_results.push(ToolResult {
+                                tool_call_id: call_id,
+                                content: format!(
+                                    "Error: turn tool-call limit ({MAX_TOTAL_CALLS}) reached. \
+                                     This call was not executed. Stop calling tools and \
+                                     respond to the user with what you have."
+                                ),
+                            });
+                            continue;
+                        }
+
+                        // Per-tool cap: block repeated calls to the same tool.
+                        let tool_name = call.tool_name();
+                        let count = tool_call_counts.entry(tool_name).or_insert(0);
+                        *count += 1;
+                        if *count > MAX_SAME_TOOL {
+                            log::warn!("Per-tool limit for `{tool_name}` reached ({MAX_SAME_TOOL}); blocking call");
+                            tool_results.push(ToolResult {
+                                tool_call_id: call_id,
+                                content: format!(
+                                    "Error: `{tool_name}` has been called {MAX_SAME_TOOL} times \
+                                     this turn. This call was not executed. Proceed with the \
+                                     information already gathered and do not call this tool again."
+                                ),
+                            });
+                            continue;
+                        }
+
                         let result = match crate::daemon::executor::execute_tool_call(
                             call, &mut tx, &mut rx, session_id.as_deref(), &session_name,
                             chat_pane.as_deref(), &cache, &sessions, &schedule_store
@@ -522,12 +594,33 @@ pub async fn handle_client(
                         tool_results.push(ToolResult { tool_call_id: call_id, content: result });
                     }
 
+                    // Truncate tool results before storing in history.
+                    // The full output was already delivered to the AI as the live result;
+                    // only the history copy needs to be capped to prevent context bloat.
+                    const MAX_TOOL_RESULT_CHARS: usize = 4_000;
+                    let history_results: Vec<ToolResult> = tool_results.into_iter().map(|r| {
+                        if r.content.len() <= MAX_TOOL_RESULT_CHARS {
+                            r
+                        } else {
+                            // Snap to a valid UTF-8 char boundary.
+                            let mut end = MAX_TOOL_RESULT_CHARS;
+                            while !r.content.is_char_boundary(end) { end -= 1; }
+                            ToolResult {
+                                tool_call_id: r.tool_call_id,
+                                content: format!(
+                                    "{}\n[truncated — {} chars total; full output archived in pane log]",
+                                    &r.content[..end], r.content.len()
+                                ),
+                            }
+                        }
+                    }).collect();
+
                     // Push one message with all results so message history is valid.
                     messages.push(Message {
                         role: "user".to_string(),
                         content: String::new(),
                         tool_calls: None,
-                        tool_results: Some(tool_results),
+                        tool_results: Some(history_results),
                     });
                     break; // break inner loop; outer loop makes the next AI call
                 }

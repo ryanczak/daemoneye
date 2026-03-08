@@ -35,6 +35,9 @@ pub struct SessionEntry {
     pub default_target_pane: Option<String>,
     /// Background windows spawned during this session (capped at `MAX_BG_WINDOWS_PER_SESSION`).
     pub bg_windows: Vec<BgWindowInfo>,
+    /// Prompt token count from the most recent AI turn — represents current context pressure.
+    /// Updated after every `AiEvent::Done`; sent to the client as `Response::UsageUpdate`.
+    pub last_prompt_tokens: u32,
 }
 
 /// Thread-safe, shared session store passed to every client handler.

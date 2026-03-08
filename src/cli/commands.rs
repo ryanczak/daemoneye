@@ -916,6 +916,9 @@ async fn ask_with_session(
     const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let mut spin = 0usize;
     let mut response_started = false;
+    // Prompt token count from the most recent UsageUpdate — drives the context-budget
+    // display in the user query box. Starts at 0 (new session) and is updated each turn.
+    let mut prompt_tokens: u32 = 0;
 
     // Markdown renderer — parses inline markdown and block-level elements,
     // applies ANSI styling, and word-wraps prose at the current terminal width.
@@ -994,13 +997,16 @@ async fn ask_with_session(
                 break;
             }
             Response::SessionInfo { message_count } => {
-                // Print the user query as a bordered box with turn/context in the bottom border.
+                // Print the user query as a bordered box with token budget in the bottom border.
                 // Skip for the greeting turn (display_query is empty).
                 let turn = (message_count / 2) + 1; // each turn = 1 user + 1 assistant msg
                 print!("\r\x1b[K"); // erase spinner line
                 if !display_query.is_empty() {
-                    print_user_query(&display_query, turn, message_count);
+                    print_user_query(&display_query, turn, prompt_tokens);
                 }
+            }
+            Response::UsageUpdate { prompt_tokens: pt } => {
+                prompt_tokens = pt;
             }
             Response::Token(t) => {
                 if !response_started {

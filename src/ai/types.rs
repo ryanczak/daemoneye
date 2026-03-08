@@ -214,6 +214,30 @@ impl PendingCall {
             PendingCall::SearchRepository { id, .. } => id,
         }
     }
+
+    /// Returns the canonical tool name for this call, used for per-turn rate limiting.
+    pub fn tool_name(&self) -> &'static str {
+        match self {
+            PendingCall::Foreground { .. } | PendingCall::Background { .. } => "run_terminal_command",
+            PendingCall::ScheduleCommand { .. } => "schedule_command",
+            PendingCall::ListSchedules { .. } => "list_schedules",
+            PendingCall::CancelSchedule { .. } => "cancel_schedule",
+            PendingCall::DeleteSchedule { .. } => "delete_schedule",
+            PendingCall::WriteScript { .. } => "write_script",
+            PendingCall::ListScripts { .. } => "list_scripts",
+            PendingCall::ReadScript { .. } => "read_script",
+            PendingCall::WatchPane { .. } => "watch_pane",
+            PendingCall::WriteRunbook { .. } => "write_runbook",
+            PendingCall::DeleteRunbook { .. } => "delete_runbook",
+            PendingCall::ReadRunbook { .. } => "read_runbook",
+            PendingCall::ListRunbooks { .. } => "list_runbooks",
+            PendingCall::AddMemory { .. } => "add_memory",
+            PendingCall::DeleteMemory { .. } => "delete_memory",
+            PendingCall::ReadMemory { .. } => "read_memory",
+            PendingCall::ListMemories { .. } => "list_memories",
+            PendingCall::SearchRepository { .. } => "search_repository",
+        }
+    }
 }
 
 #[derive(Debug)]

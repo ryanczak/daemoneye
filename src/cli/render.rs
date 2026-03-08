@@ -58,8 +58,8 @@ fn local_user_host() -> String {
 ///
 /// `query`         — raw user text (may contain newlines and special chars)
 /// `turn`          — 1-based turn number
-/// `message_count` — number of messages in context before this query
-pub fn print_user_query(query: &str, turn: usize, message_count: usize) {
+/// `prompt_tokens` — prompt token count from the most recent AI turn (0 = new session)
+pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32) {
     use std::io::Write;
     let w     = terminal_width().max(44);
     let inner = w - 2; // visible chars between corner glyphs
@@ -73,8 +73,6 @@ pub fn print_user_query(query: &str, turn: usize, message_count: usize) {
     // ── Body lines (word-wrap aware) ──────────────────────────────────
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
     for raw_line in query.lines() {
-        // Escape every \ so wrap_line_hard sees literal characters, not ANSI
-        // codes. The query text is plain UTF-8, no escape sequences to consider.
         for wrapped in wrap_line_hard(raw_line, avail) {
             let vis = visual_len(&wrapped);
             let pad = " ".repeat(inner.saturating_sub(2 + vis));
@@ -82,19 +80,21 @@ pub fn print_user_query(query: &str, turn: usize, message_count: usize) {
         }
     }
 
-    // ── Bottom border with right-justified turn/context label ──────────
-    let ctx_label = if message_count == 0 {
-        "new session".to_string()
+    // ── Bottom border with right-justified context-budget label ───────
+    // Show prompt token count with a progressive pressure indicator.
+    let (budget_label, budget_color) = if prompt_tokens == 0 {
+        ("new session".to_string(), "\x1b[2m")         // dim — neutral
+    } else if prompt_tokens > 80_000 {
+        (format!("{}k tokens ⚠", prompt_tokens / 1000), "\x1b[1m\x1b[31m") // bold red
+    } else if prompt_tokens > 50_000 {
+        (format!("{}k tokens !", prompt_tokens / 1000), "\x1b[33m")         // yellow
     } else {
-        format!("{} message{} in context",
-            message_count,
-            if message_count == 1 { "" } else { "s" })
+        (format!("{}k tokens", prompt_tokens / 1000), "\x1b[2m")           // dim — ok
     };
-    let label     = format!(" turn {} · {} ", turn, ctx_label);
+    let label     = format!(" turn {} · {} ", turn, budget_label);
     let label_vis = visual_len(&label);
-    // Fill the dashes: total inner width minus label minus 1 for the ─ prefix on label side
-    let dashes = inner.saturating_sub(label_vis + 1);
-    println!("\x1b[1m\x1b[96m╰{}\x1b[2m{label}\x1b[0m\x1b[1m\x1b[96m─╯\x1b[0m",
+    let dashes    = inner.saturating_sub(label_vis + 1);
+    println!("\x1b[1m\x1b[96m╰{}\x1b[0m{budget_color}{label}\x1b[0m\x1b[1m\x1b[96m─╯\x1b[0m",
         "─".repeat(dashes));
     std::io::stdout().flush().ok();
 }
