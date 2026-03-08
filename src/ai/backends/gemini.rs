@@ -289,6 +289,14 @@ impl AiClient for GeminiClient {
                                 },
                                 "required": ["query", "kind"]
                             }
+                        },
+                        {
+                            "name": "get_terminal_context",
+                            "description": "Capture a fresh snapshot of the current tmux session: active pane contents, background panes, session topology, and environment. Call this when you need to see what is on the user's screen or check live command output. The terminal snapshot is NOT automatically included — call this tool to get it on demand.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {}
+                            }
                         }
                     ]
                 }

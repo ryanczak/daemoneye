@@ -152,6 +152,25 @@ impl AiConfig {
         }
         std::env::var(self.api_key_env_var()).unwrap_or_default()
     }
+
+    /// Return the context-window size (in tokens) for the configured model.
+    /// Used to compute budget percentages in the CLI and token-budget warnings.
+    pub fn context_window(&self) -> u32 {
+        let m = self.model.as_str();
+        if m.starts_with("claude") {
+            200_000
+        } else if m.starts_with("gemini-1.5-pro") {
+            2_000_000
+        } else if m.starts_with("gemini") {
+            1_000_000
+        } else if m.starts_with("gpt-4o") || m.starts_with("gpt-4-turbo") {
+            128_000
+        } else if m.starts_with("gpt-3.5") {
+            16_000
+        } else {
+            128_000 // conservative default
+        }
+    }
 }
 
 impl Default for AiConfig {

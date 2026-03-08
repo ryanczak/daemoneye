@@ -234,6 +234,16 @@ pub static TOOLS: &[ToolDef] = &[
                        description: "'runbooks', 'scripts', 'memory', 'events', or 'all'." },
         ],
     },
+    ToolDef {
+        name: "get_terminal_context",
+        description: "Capture a fresh snapshot of the current tmux session: active pane contents, \
+                      background panes, session topology, and environment variables. \
+                      Call this when you need to see what is on the user's screen, check live \
+                      command output, or understand the current terminal state. \
+                      The terminal snapshot is NOT automatically included in every message — \
+                      call this tool to get it on demand.",
+        params: &[],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -409,6 +419,10 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             id: id.to_string(),
             query: args["query"].as_str().unwrap_or("").to_string(),
             kind: args["kind"].as_str().unwrap_or("all").to_string(),
+            thought_signature: ts,
+        }),
+        "get_terminal_context" => Some(AiEvent::GetTerminalContext {
+            id: id.to_string(),
             thought_signature: ts,
         }),
         _ => None,

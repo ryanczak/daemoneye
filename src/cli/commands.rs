@@ -174,7 +174,7 @@ pub async fn run_ask(query: String) -> Result<()> {
     let old = crate::cli::input::set_raw_mode()?;
     let tmux_session = crate::tmux::current_session_name();
     // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
-    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old, tmux_session.as_deref(), None).await;
+    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old, tmux_session.as_deref(), None, &mut 0, 0).await;
     crate::cli::input::restore_termios(old);
     result
 }
@@ -581,6 +581,11 @@ async fn run_chat_inner_raw(
     target_pane:    Option<String>,
 ) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
+    // Accumulated prompt token count — carried across turns so the query box
+    // shows the context size from the *previous* completed turn.
+    let mut prompt_tokens: u32 = 0;
+    // Context window for the configured model — used to show % remaining in the query border.
+    let context_window = Config::load().map(|c| c.ai.context_window()).unwrap_or(128_000);
 
     loop {
         let attached = std::process::Command::new("tmux")
@@ -599,7 +604,7 @@ async fn run_chat_inner_raw(
     let hint = approval.hint();
     draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
 
-    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref()).await {
+    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
         eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
@@ -697,7 +702,7 @@ async fn run_chat_inner_raw(
         current_status = "thinking…";
         let hint = approval.hint();
         draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
-        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref()).await {
+        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
         // Turn completed: reset the double-tap exit timer.
@@ -881,6 +886,8 @@ async fn ask_with_session(
     old_termios: libc::termios,
     tmux_session: Option<&str>,
     target_pane: Option<&str>,
+    prompt_tokens: &mut u32,
+    context_window: u32,
 ) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
@@ -916,9 +923,8 @@ async fn ask_with_session(
     const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let mut spin = 0usize;
     let mut response_started = false;
-    // Prompt token count from the most recent UsageUpdate — drives the context-budget
-    // display in the user query box. Starts at 0 (new session) and is updated each turn.
-    let mut prompt_tokens: u32 = 0;
+    // prompt_tokens is passed in from the outer loop so the value from the
+    // previous turn is visible when print_user_query renders the query box.
 
     // Markdown renderer — parses inline markdown and block-level elements,
     // applies ANSI styling, and word-wraps prose at the current terminal width.
@@ -1002,11 +1008,11 @@ async fn ask_with_session(
                 let turn = (message_count / 2) + 1; // each turn = 1 user + 1 assistant msg
                 print!("\r\x1b[K"); // erase spinner line
                 if !display_query.is_empty() {
-                    print_user_query(&display_query, turn, prompt_tokens);
+                    print_user_query(&display_query, turn, *prompt_tokens, context_window);
                 }
             }
             Response::UsageUpdate { prompt_tokens: pt } => {
-                prompt_tokens = pt;
+                *prompt_tokens = pt;
             }
             Response::Token(t) => {
                 if !response_started {

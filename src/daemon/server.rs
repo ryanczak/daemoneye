@@ -322,13 +322,13 @@ pub async fn handle_client(
         .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
         .unwrap_or(0);
 
-    // Build labeled terminal context: active pane at full depth, background panes as summaries.
-    let session_summary = cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
     let safe_query = mask_sensitive(&initial_query);
 
-    // First turn: include full host context. Subsequent turns: fresh terminal
-    // snapshot only (sys_ctx is already in the conversation history).
+    // First turn: include full host context + terminal snapshot.
+    // Subsequent turns: budget note + query only. The AI calls get_terminal_context
+    // when it needs a fresh snapshot, keeping mid-turn messages lean.
     let prompt = if is_first_turn {
+        let session_summary = cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
         let sys_ctx = get_or_init_sys_context().format_for_ai();
         let daemon_host = daemon_hostname();
         let environment = &config.context.environment;
@@ -355,20 +355,25 @@ pub async fn handle_client(
         )
     } else {
         // Inject a context-budget line so the AI knows how much context it has consumed.
-        let budget_note = if last_prompt_tokens > 80_000 {
-            format!("[Token Budget] Context at {}k tokens — NEAR LIMIT. Be very concise. Suggest `/clear` if appropriate.\n\n",
-                last_prompt_tokens / 1000)
-        } else if last_prompt_tokens > 50_000 {
-            format!("[Token Budget] Context at {}k tokens — prefer concise responses, avoid redundant tool calls.\n\n",
-                last_prompt_tokens / 1000)
+        // Use percentage thresholds so the signal is meaningful regardless of model.
+        let context_window = config.ai.context_window();
+        let pct_used = if context_window > 0 {
+            (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
+        } else { 0 };
+        let budget_note = if pct_used >= 75 {
+            format!("[Token Budget] Context at {}k / {}k tokens ({}% used) — NEAR LIMIT. Be very concise. Suggest `/clear` if the task is complete.\n\n",
+                last_prompt_tokens / 1000, context_window / 1000, pct_used)
+        } else if pct_used >= 50 {
+            format!("[Token Budget] Context at {}k / {}k tokens ({}% used) — prefer concise responses, avoid redundant tool calls.\n\n",
+                last_prompt_tokens / 1000, context_window / 1000, pct_used)
         } else if last_prompt_tokens > 0 {
-            format!("[Token Budget] Context at {}k tokens.\n\n", last_prompt_tokens / 1000)
+            format!("[Token Budget] Context at {}k / {}k tokens ({}% used).\n\n",
+                last_prompt_tokens / 1000, context_window / 1000, pct_used)
         } else {
             String::new()
         };
         format!(
-            "{budget_note}## Terminal Session (updated)\n```\n{session_summary}\n```\n\n\
-             User: {safe_query}"
+            "{budget_note}User: {safe_query}"
         )
     };
 
@@ -464,6 +469,9 @@ pub async fn handle_client(
                 }
                 AiEvent::SearchRepository { id, query, kind, thought_signature } => {
                     pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
+                }
+                AiEvent::GetTerminalContext { id, thought_signature } => {
+                    pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
                 }
 
                 AiEvent::Error(e) => {

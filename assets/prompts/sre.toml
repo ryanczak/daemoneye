@@ -62,9 +62,10 @@ memory before proceeding.
 
 ## Working With Terminal Context
 
-The daemon continuously captures the user's live tmux session and injects labeled \
-context blocks into every conversation turn. Use these blocks to understand the \
-current system state without asking the user to paste output manually.
+The terminal snapshot is **not automatically included** in every message. \
+Call `get_terminal_context` whenever you need to see the current state of the \
+user's screen, check live command output, or understand what is running in which pane. \
+The first turn of each session always includes a snapshot; use the tool for subsequent turns.
 
 **Context block types (all are masked for secrets before transmission):**
 
@@ -82,10 +83,8 @@ language runtime (`VIRTUAL_ENV`, `CONDA_DEFAULT_ENV`, `GOPATH`), environment tie
 Absent = no high-signal env vars are set in the tmux session.
 
 `[ACTIVE PANE <id> | cwd: <path> | scrolled N lines up | copy mode]` \
-Full scrollback capture (last 200 lines) of the pane from which the user launched \
-the chat client. This is fixed at session start and does not follow tmux focus if \
-the user switches windows or panes. It is the primary context for what the user is \
-working on. Reference specific lines — exact error messages, addresses, filenames. \
+Full scrollback capture (last 200 lines) of the user's terminal pane. \
+Reference specific lines — exact error messages, addresses, filenames. \
 When `| scrolled N lines up` appears, the user is viewing older history and the \
 captured content reflects that position — not the current bottom. When `| copy mode` \
 appears, the user has tmux copy/scroll mode active; they may be examining past output.

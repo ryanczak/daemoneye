@@ -56,10 +56,11 @@ fn local_user_host() -> String {
 /// right-justified into the bottom border, mirroring where `SessionInfo`
 /// was previously printed as a leading horizontal rule.
 ///
-/// `query`         — raw user text (may contain newlines and special chars)
-/// `turn`          — 1-based turn number
-/// `prompt_tokens` — prompt token count from the most recent AI turn (0 = new session)
-pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32) {
+/// `query`          — raw user text (may contain newlines and special chars)
+/// `turn`           — 1-based turn number
+/// `prompt_tokens`  — prompt token count from the most recent AI turn (0 = new session)
+/// `context_window` — model context window in tokens (used to show % remaining)
+pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_window: u32) {
     use std::io::Write;
     let w     = terminal_width().max(44);
     let inner = w - 2; // visible chars between corner glyphs
@@ -81,15 +82,23 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32) {
     }
 
     // ── Bottom border with right-justified context-budget label ───────
-    // Show prompt token count with a progressive pressure indicator.
+    // Show used/total tokens with % remaining, coloured by pressure.
     let (budget_label, budget_color) = if prompt_tokens == 0 {
-        ("new session".to_string(), "\x1b[2m")         // dim — neutral
-    } else if prompt_tokens > 80_000 {
-        (format!("{}k tokens ⚠", prompt_tokens / 1000), "\x1b[1m\x1b[31m") // bold red
-    } else if prompt_tokens > 50_000 {
-        (format!("{}k tokens !", prompt_tokens / 1000), "\x1b[33m")         // yellow
+        ("new session".to_string(), "\x1b[2m")
     } else {
-        (format!("{}k tokens", prompt_tokens / 1000), "\x1b[2m")           // dim — ok
+        let pct_used = (prompt_tokens as f64 / context_window.max(1) as f64 * 100.0) as u32;
+        let pct_left = 100u32.saturating_sub(pct_used);
+        let used_k   = prompt_tokens / 1000;
+        let win_k    = context_window / 1000;
+        let label    = format!("{}k / {}k tokens · {}% remaining", used_k, win_k, pct_left);
+        let color = if pct_used >= 75 {
+            "\x1b[1m\x1b[31m" // bold red — high pressure
+        } else if pct_used >= 50 {
+            "\x1b[33m"        // yellow — moderate pressure
+        } else {
+            "\x1b[2m"         // dim — comfortable
+        };
+        (label, color)
     };
     let label     = format!(" turn {} · {} ", turn, budget_label);
     let label_vis = visual_len(&label);

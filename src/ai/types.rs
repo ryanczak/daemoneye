@@ -61,6 +61,7 @@ pub enum PendingCall {
     ReadMemory { id: String, thought_signature: Option<String>, key: String, category: String },
     ListMemories { id: String, thought_signature: Option<String>, category: Option<String> },
     SearchRepository { id: String, thought_signature: Option<String>, query: String, kind: String },
+    GetTerminalContext { id: String, thought_signature: Option<String> },
 }
 
 impl PendingCall {
@@ -188,6 +189,12 @@ impl PendingCall {
                 name: "search_repository".to_string(),
                 arguments: serde_json::json!({"query": query, "kind": kind}).to_string(),
             },
+            PendingCall::GetTerminalContext { id, thought_signature } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "get_terminal_context".to_string(),
+                arguments: "{}".to_string(),
+            },
         }
     }
 
@@ -212,6 +219,7 @@ impl PendingCall {
             PendingCall::ReadMemory { id, .. } => id,
             PendingCall::ListMemories { id, .. } => id,
             PendingCall::SearchRepository { id, .. } => id,
+            PendingCall::GetTerminalContext { id, .. } => id,
         }
     }
 
@@ -236,6 +244,7 @@ impl PendingCall {
             PendingCall::ReadMemory { .. } => "read_memory",
             PendingCall::ListMemories { .. } => "list_memories",
             PendingCall::SearchRepository { .. } => "search_repository",
+            PendingCall::GetTerminalContext { .. } => "get_terminal_context",
         }
     }
 }
@@ -270,6 +279,7 @@ pub enum AiEvent {
     ReadMemory { id: String, key: String, category: String, thought_signature: Option<String> },
     ListMemories { id: String, category: Option<String>, thought_signature: Option<String> },
     SearchRepository { id: String, query: String, kind: String, thought_signature: Option<String> },
+    GetTerminalContext { id: String, thought_signature: Option<String> },
     Done(AiUsage),
     Error(String),
 }

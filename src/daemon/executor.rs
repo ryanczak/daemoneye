@@ -902,6 +902,10 @@ pub async fn execute_tool_call(
             let results = crate::search::search_repository(query, kind, 2);
             crate::search::format_results(&results)
         }
+
+        PendingCall::GetTerminalContext { .. } => {
+            cache.get_labeled_context(chat_pane, chat_pane)
+        }
     };
     Ok(result)
 }
