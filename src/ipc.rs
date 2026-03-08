@@ -105,6 +105,13 @@ pub enum Request {
         hook_index: usize,
         session_name: String,
     },
+    /// Notify the daemon that a background command finished.
+    /// Carries the exit code directly so no scrollback scan is needed.
+    NotifyComplete {
+        pane_id: String,
+        exit_code: i32,
+        session_name: String,
+    },
 }
 
 /// Messages sent from the daemon back to the CLI client.
@@ -329,6 +336,22 @@ mod tests {
         match roundtrip_req(&req) {
             Request::NotifyActivity { pane_id, .. } => {
                 assert_eq!(pane_id, "%3");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_notify_complete_roundtrip() {
+        let req = Request::NotifyComplete {
+            pane_id: "%5".to_string(),
+            exit_code: 42,
+            session_name: "test_session".to_string(),
+        };
+        match roundtrip_req(&req) {
+            Request::NotifyComplete { pane_id, exit_code, .. } => {
+                assert_eq!(pane_id, "%5");
+                assert_eq!(exit_code, 42);
             }
             _ => panic!("wrong variant"),
         }

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use std::process::Command;
-use crate::daemon::utils::shell_escape_arg;
 use std::collections::HashMap;
 
 /// Fetch the tmux session environment and return high-signal variables.
@@ -78,44 +77,6 @@ pub fn get_active_pane(session_name: &str) -> Result<String> {
 }
 
 
-pub fn install_passive_activity_hook(
-    pane_id: &str,
-    session: &str,
-) -> Result<()> {
-    // 1. Turn on monitor-activity for the window containing this pane
-    let out0 = Command::new("tmux")
-        .args(["set-window-option", "-t", pane_id, "monitor-activity", "on"])
-        .output()?;
-    if !out0.status.success() {
-        anyhow::bail!("Failed to enable monitor-activity for pane '{}'", pane_id);
-    }
-
-    let exe_path = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "daemoneye".to_string());
-
-    // 0 is a dummy hook index since we don't strictly need one for passive watching
-    let cmd = format!(
-        "run-shell -b '{} notify activity {} 0 \"{}\"'",
-        exe_path, pane_id, shell_escape_arg(session)
-    );
-
-    let out1 = Command::new("tmux")
-        .args(["set-hook", "-t", pane_id, "alert-activity", &cmd])
-        .output()?;
-    if !out1.status.success() {
-        anyhow::bail!("Failed to install alert-activity hook for pane '{}'", pane_id);
-    }
-
-    let out2 = Command::new("tmux")
-        .args(["set-hook", "-t", pane_id, "alert-silence", &cmd])
-        .output()?;
-    if !out2.status.success() {
-        anyhow::bail!("Failed to install alert-silence hook for pane '{}'", pane_id);
-    }
-
-    Ok(())
-}
 
 /// Return the name of the current tmux session, or `None` if not inside tmux.
 pub fn current_session_name() -> Option<String> {
@@ -140,16 +101,4 @@ pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
         .collect())
 }
 
-pub fn remove_passive_activity_hook(pane_id: &str) -> Result<()> {
-    let _ = Command::new("tmux")
-        .args(["set-window-option", "-t", pane_id, "monitor-activity", "off"])
-        .output();
-    let _ = Command::new("tmux")
-        .args(["set-hook", "-u", "-t", pane_id, "alert-activity"])
-        .output();
-    let _ = Command::new("tmux")
-        .args(["set-hook", "-u", "-t", pane_id, "alert-silence"])
-        .output();
-    Ok(())
-}
 

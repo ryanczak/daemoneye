@@ -51,7 +51,7 @@ pub enum PendingCall {
     WriteScript { id: String, thought_signature: Option<String>, script_name: String, content: String },
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, thought_signature: Option<String>, script_name: String },
-    WatchPane { id: String, thought_signature: Option<String>, pane_id: String },
+    WatchPane { id: String, thought_signature: Option<String>, pane_id: String, timeout_secs: u64 },
     WriteRunbook { id: String, thought_signature: Option<String>, name: String, content: String },
     DeleteRunbook { id: String, thought_signature: Option<String>, name: String },
     ReadRunbook { id: String, thought_signature: Option<String>, name: String },
@@ -128,11 +128,11 @@ impl PendingCall {
                 name: "read_script".to_string(),
                 arguments: serde_json::json!({"script_name": script_name}).to_string(),
             },
-            PendingCall::WatchPane { id, thought_signature, pane_id } => ToolCall {
+            PendingCall::WatchPane { id, thought_signature, pane_id, timeout_secs } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "watch_pane".to_string(),
-                arguments: serde_json::json!({"pane_id": pane_id}).to_string(),
+                arguments: serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs}).to_string(),
             },
             PendingCall::WriteRunbook { id, thought_signature, name, content } => ToolCall {
                 id: id.clone(),
@@ -236,7 +236,7 @@ pub enum AiEvent {
     WriteScript { id: String, script_name: String, content: String, thought_signature: Option<String> },
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, script_name: String, thought_signature: Option<String> },
-    WatchPane { id: String, pane_id: String, thought_signature: Option<String> },
+    WatchPane { id: String, pane_id: String, timeout_secs: u64, thought_signature: Option<String> },
     WriteRunbook { id: String, name: String, content: String, thought_signature: Option<String> },
     DeleteRunbook { id: String, name: String, thought_signature: Option<String> },
     ReadRunbook { id: String, name: String, thought_signature: Option<String> },

@@ -1,4 +1,4 @@
-use crate::daemon::session::{bg_done_subscribe, SessionStore};
+use crate::daemon::session::{bg_done_subscribe, append_session_message, FG_HOOK_COUNTER, SessionStore};
 use crate::daemon::utils::*;
 use crate::daemon::background::{run_background_in_window};
 use crate::ipc::{MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem};
@@ -37,6 +37,15 @@ const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
 const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
 /// Delay after command completion before capturing output, to let the shell flush.
 const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
+
+/// Return true when `cmd` is a shell name, meaning the pane is at a prompt.
+fn is_shell_prompt(cmd: &str) -> bool {
+    matches!(
+        cmd.trim(),
+        "bash" | "zsh" | "fish" | "sh" | "ksh" | "csh" | "tcsh" | "dash"
+            | "nu" | "pwsh" | "elvish" | "xonsh" | "yash"
+    )
+}
 
 /// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
 /// the user's [`Request::ToolCallResponse`], and log the outcome.
@@ -369,6 +378,46 @@ pub async fn execute_tool_call(
         }
 
         PendingCall::Background { id, cmd, .. } => {
+            // Enforce per-session cap on open background windows.
+            // All lock work is done inside this block so the guard is dropped before any await.
+            const MAX_BG_WINDOWS_PER_SESSION: usize = 5;
+            let cap_denial: Option<String> = {
+                let mut denial = None;
+                if let Some(sid) = session_id {
+                    if let Ok(mut store) = sessions.lock() {
+                        if let Some(entry) = store.get_mut(sid) {
+                            if entry.bg_windows.len() >= MAX_BG_WINDOWS_PER_SESSION {
+                                let evict_idx = entry.bg_windows.iter()
+                                    .position(|w| w.exit_code.is_some());
+                                match evict_idx {
+                                    Some(i) => {
+                                        let evicted = entry.bg_windows.remove(i);
+                                        log::info!("Evicting completed bg window {} to stay under cap", evicted.window_name);
+                                        if let Err(e) = crate::tmux::kill_job_window(&evicted.tmux_session, &evicted.window_name) {
+                                            log::warn!("Failed to evict bg window {}: {}", evicted.window_name, e);
+                                        }
+                                    }
+                                    None => {
+                                        denial = Some(format!(
+                                            "Background window cap ({}) reached and all windows are still running. \
+                                             Wait for one to complete, or ask the user to close one of the open \
+                                             background windows ({}) before starting another.",
+                                            MAX_BG_WINDOWS_PER_SESSION,
+                                            entry.bg_windows.iter().map(|w| w.window_name.as_str()).collect::<Vec<_>>().join(", ")
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                denial
+            };
+            if let Some(msg) = cap_denial {
+                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                return Ok(msg);
+            }
+
             if let Some(denial) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
                 return Ok(denial);
             }
@@ -592,30 +641,129 @@ pub async fn execute_tool_call(
             }
         }
 
-        PendingCall::WatchPane { pane_id, .. } => {
-            let session_owned = session_name.to_string();
-            match crate::tmux::install_passive_activity_hook(pane_id, &session_owned) {
-                Ok(_) => {
-                    if let Some(sid) = session_id {
-                        if let Ok(mut store) = sessions.lock() {
-                            if let Some(entry) = store.get_mut(sid) {
-                                entry.watched_panes.insert(pane_id.clone());
+        PendingCall::WatchPane { pane_id, timeout_secs, .. } => {
+            // Sample the current foreground command so we know when the shell returns to a prompt.
+            let initial_cmd = tmux::pane_current_command(pane_id).unwrap_or_default();
+
+            // Install a pane-title-changed hook as a fast-path IPC signal.
+            let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let hook_name = format!("pane-title-changed[@de_wp_{}]", hook_idx);
+            let current_exe = std::env::current_exe()
+                .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
+            let notify_cmd = format!(
+                "run-shell -b '{} notify activity {} 0 \"{}\"'",
+                current_exe.display(), pane_id, shell_escape_arg(session_name)
+            );
+            let _ = std::process::Command::new("tmux")
+                .args(["set-hook", "-t", pane_id, &hook_name, &notify_cmd])
+                .output();
+
+            // Subscribe before spawning to avoid missing early signals.
+            let mut wp_rx = bg_done_subscribe();
+
+            let pane_id_owned = pane_id.to_string();
+            let session_id_owned = session_id.unwrap_or("-").to_string();
+            let sessions_clone = Arc::clone(sessions);
+            let timeout = Duration::from_secs(*timeout_secs);
+
+            log::info!("watch_pane: monitoring {} (initial_cmd={:?}) for session {}", pane_id, initial_cmd, session_id_owned);
+            log_event("watch_pane", serde_json::json!({
+                "session": session_id_owned,
+                "pane_id": pane_id,
+                "status": "active"
+            }));
+
+            tokio::spawn(async move {
+                let slow_poll = Duration::from_millis(500);
+                let start_wait = Duration::from_secs(5);
+
+                let completed = tokio::time::timeout(timeout, async {
+                    // If the pane is already at a shell prompt, first wait up to 5s for a
+                    // command to start before we start watching for completion.
+                    if is_shell_prompt(&initial_cmd) {
+                        let _ = tokio::time::timeout(start_wait, async {
+                            loop {
+                                tokio::time::sleep(slow_poll).await;
+                                let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                if !is_shell_prompt(&cur) { break; }
+                            }
+                        }).await;
+                    }
+
+                    // Race: pane-title-changed IPC signal vs 500 ms poll.
+                    // Stop when pane_current_command returns to a shell name (command is done).
+                    loop {
+                        tokio::select! {
+                            result = wp_rx.recv() => {
+                                if let Ok(notified_pane) = result {
+                                    if notified_pane == pane_id_owned {
+                                        let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                        if is_shell_prompt(&cur) { break; }
+                                    }
+                                }
+                            }
+                            _ = tokio::time::sleep(slow_poll) => {
+                                let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                if is_shell_prompt(&cur) { break; }
                             }
                         }
                     }
-                    log::info!("Watch placed on pane {} for session {}", pane_id, session_id.unwrap_or("-"));
-                    log_event("watch_pane", serde_json::json!({
-                        "session": session_id.unwrap_or("-"),
-                        "pane_id": pane_id,
-                        "status": "active"
-                    }));
-                    format!("Pane {} has been flagged for passive monitoring. You will be notified out-of-band via a [System] message when it produces output.", pane_id)
+                }).await.is_ok();
+
+                // Remove the pane-title-changed hook.
+                let _ = std::process::Command::new("tmux")
+                    .args(["set-hook", "-u", "-t", &pane_id_owned, &hook_name])
+                    .output();
+
+                // Capture and mask pane output.
+                let raw = tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
+                let body = crate::ai::filter::mask_sensitive(&normalize_output(&raw));
+
+                let content = if completed {
+                    format!(
+                        "[Watch Pane Complete] Command finished in pane {}.\n<output>\n{}\n</output>",
+                        pane_id_owned, body
+                    )
+                } else {
+                    format!(
+                        "[Watch Pane Timeout] Timed out waiting for command in pane {} to finish.\n<output>\n{}\n</output>",
+                        pane_id_owned, body
+                    )
+                };
+
+                let watch_msg = crate::ai::Message {
+                    role: "user".to_string(),
+                    content,
+                    tool_calls: None,
+                    tool_results: None,
+                };
+
+                if let Ok(mut store) = sessions_clone.lock() {
+                    if let Some(entry) = store.get_mut(&session_id_owned) {
+                        append_session_message(&session_id_owned, &watch_msg);
+                        entry.messages.push(watch_msg);
+
+                        let alert = if completed {
+                            format!("Watched pane {} command completed", pane_id_owned)
+                        } else {
+                            format!("Watched pane {} timed out", pane_id_owned)
+                        };
+                        if let Some(ref cp) = entry.chat_pane {
+                            let _ = std::process::Command::new("tmux")
+                                .args(["display-message", "-d", "5000", "-t", cp, &alert])
+                                .output();
+                        }
+                    }
                 }
-                Err(e) => {
-                    log::warn!("Failed to monitor pane {}: {}", pane_id, e);
-                    format!("Failed to monitor pane {}: {}", pane_id, e)
-                }
-            }
+                log::info!("watch_pane {}: {}", pane_id_owned, if completed { "completed" } else { "timed out" });
+            });
+
+            format!(
+                "Now watching pane {} for command completion. \
+                 You will receive a [Watch Pane Complete] context message when the command finishes, \
+                 or [Watch Pane Timeout] if it doesn't complete within {} seconds.",
+                pane_id, timeout_secs
+            )
         }
 
         PendingCall::WriteRunbook { id, name, content, .. } => {

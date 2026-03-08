@@ -126,7 +126,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     }
     // Validate API key before binding the socket so the error is immediate
     // and obvious rather than surfacing as a cryptic 401 mid-conversation.
-    let startup_config = Config::load().unwrap_or_default();
+    let startup_config = match Config::load() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            log::error!("Failed to load config, using defaults: {e}");
+            Config::default()
+        }
+    };
 
     // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
@@ -253,7 +259,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                 log::error!("Webhook server exited: {}", e);
             }
         });
-        log::info!("Webhook listener enabled on port {}", startup_config.webhook.port);
+        if startup_config.webhook.secret.is_empty() {
+            log::warn!("Webhook listener enabled on port {} — no auth (set webhook.secret in config.toml to require a Bearer token)", startup_config.webhook.port);
+        } else {
+            log::info!("Webhook listener enabled on port {} — Bearer token auth required", startup_config.webhook.port);
+        }
     }
 
     // Prune chat sessions idle for more than 30 minutes.
@@ -265,7 +275,14 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             sessions_cleanup
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .retain(|_, v| now.duration_since(v.last_accessed()) < Duration::from_secs(1800));
+                .retain(|_, v| {
+                    if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
+                        v.cleanup_bg_windows();
+                        false
+                    } else {
+                        true
+                    }
+                });
         }
     });
 

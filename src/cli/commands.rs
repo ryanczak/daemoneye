@@ -356,6 +356,31 @@ pub async fn run_notify_activity(
     }
 }
 
+pub async fn run_notify_complete(
+    pane_id: String,
+    exit_code: i32,
+    session_name: String,
+) -> Result<()> {
+    match connect().await {
+        Err(_) => Ok(()), // Silently abort if daemon is not running
+        Ok(stream) => {
+            let (rx, mut tx) = stream.into_split();
+            let mut rx = BufReader::new(rx);
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifyComplete {
+                    pane_id,
+                    exit_code,
+                    session_name,
+                },
+            )
+            .await?;
+            let _ = recv(&mut rx).await; // Consume Response::Ok
+            Ok(())
+        }
+    }
+}
+
 pub async fn run_chat() -> Result<()> {
     let result = run_chat_inner().await;
     if let Err(ref e) = result {

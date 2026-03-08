@@ -83,6 +83,15 @@ enum NotifyCommands {
         /// Target session name where the hook was set
         session_name: String,
     },
+    /// Notify that a background command finished (carries exit code)
+    Complete {
+        /// Target pane ID (e.g. %3)
+        pane_id: String,
+        /// Exit code of the finished command
+        exit_code: i32,
+        /// Target session name
+        session_name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -202,6 +211,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 session_name,
             } => {
                 cli::run_notify_activity(pane_id, hook_index, session_name).await?;
+            }
+            NotifyCommands::Complete {
+                pane_id,
+                exit_code,
+                session_name,
+            } => {
+                cli::run_notify_complete(pane_id, exit_code, session_name).await?;
             }
         },
     }

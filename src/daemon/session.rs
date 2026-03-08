@@ -5,6 +5,23 @@ use std::time::Instant;
 
 use crate::ai::Message;
 
+/// Metadata for a background tmux window spawned during a chat session.
+#[allow(dead_code)]
+pub struct BgWindowInfo {
+    /// tmux pane ID (e.g. `%7`) — can be passed to `watch_pane` or used as foreground target.
+    pub pane_id: String,
+    /// Full tmux window name (e.g. `de-bg-main-20240101120000-abc12345`).
+    pub window_name: String,
+    /// The command that was run.
+    pub command: String,
+    /// The tmux session the window belongs to (needed to kill it on eviction).
+    pub tmux_session: String,
+    /// When the window was created; used for LRU eviction.
+    pub started_at: std::time::Instant,
+    /// `None` while still running; `Some(code)` after the pane exits.
+    pub exit_code: Option<i32>,
+}
+
 /// In-memory record of an active chat session.
 /// Evicted by the cleanup task after 30 minutes of inactivity.
 pub struct SessionEntry {
@@ -16,8 +33,8 @@ pub struct SessionEntry {
     pub chat_pane: Option<String>,
     /// A user-selected default pane for foreground execution when the AI doesn't specify one.
     pub default_target_pane: Option<String>,
-    /// Panes currently flagged for passive alert-activity monitoring.
-    pub watched_panes: std::collections::HashSet<String>,
+    /// Background windows spawned during this session (capped at `MAX_BG_WINDOWS_PER_SESSION`).
+    pub bg_windows: Vec<BgWindowInfo>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -30,6 +47,11 @@ pub const MAX_HISTORY: usize = 40;
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
 
+/// Broadcast channel for background command completion via IPC.
+/// Carries `(pane_id, exit_code)` delivered directly by the command wrapper.
+pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(String, i32)>> =
+    std::sync::OnceLock::new();
+
 /// Monotonically-incrementing counter used to generate unique `pane-title-changed`
 /// hook slot names (`@de_fg_N`) for concurrent foreground command executions.
 /// Using a counter avoids the timestamp-modulo collision risk.
@@ -38,6 +60,12 @@ pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize =
 
 pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
     BG_DONE_TX
+        .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
+        .subscribe()
+}
+
+pub fn complete_subscribe() -> tokio::sync::broadcast::Receiver<(String, i32)> {
+    COMPLETE_TX
         .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
         .subscribe()
 }
@@ -275,5 +303,15 @@ mod tests {
 impl SessionEntry {
     pub fn last_accessed(&self) -> std::time::Instant {
         self.last_accessed
+    }
+
+    /// Kill all background windows that are still open for this session.
+    /// Called when the session is evicted from the store.
+    pub fn cleanup_bg_windows(&self) {
+        for win in &self.bg_windows {
+            if let Err(e) = crate::tmux::kill_job_window(&win.tmux_session, &win.window_name) {
+                log::warn!("GC bg window {} on session eviction: {}", win.window_name, e);
+            }
+        }
     }
 }

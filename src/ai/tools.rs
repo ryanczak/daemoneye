@@ -358,6 +358,7 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
         "watch_pane" => Some(AiEvent::WatchPane {
             id: id.to_string(),
             pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
+            timeout_secs: args["timeout_secs"].as_u64().unwrap_or(300),
             thought_signature: ts,
         }),
         "write_runbook" => Some(AiEvent::WriteRunbook {

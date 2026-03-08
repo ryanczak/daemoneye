@@ -224,63 +224,17 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
-        Request::NotifyActivity { pane_id, hook_index: _, session_name } => {
+        Request::NotifyActivity { pane_id, hook_index: _, session_name: _ } => {
             if let Some(tx) = BG_DONE_TX.get() {
                 let _ = tx.send(pane_id.clone());
             }
-
-            // Passive monitoring check
-            let mut notify_client = None;
-            let mut alerted_sessions = Vec::new();
-
-            if let Ok(mut store) = sessions.lock() {
-                for (sid, entry) in store.iter_mut() {
-                    // Alert any session that is watching this pane
-                    if entry.watched_panes.contains(&pane_id) {
-                        let msg = format!("Activity detected in monitored pane: {}", pane_id);
-                        let watch_msg = Message {
-                            role: "user".to_string(), // Injected as user context for the next turn
-                            content: format!("[System] Activity detected in monitored pane {}. Please analyze the new output and inform the user of any results.", pane_id),
-                            tool_calls: None,
-                            tool_results: None,
-                        };
-                        crate::daemon::session::append_session_message(sid, &watch_msg);
-                        entry.messages.push(watch_msg);
-
-                        if let Some(ref cp) = entry.chat_pane {
-                            notify_client = Some((cp.clone(), msg));
-                        }
-                        
-                        // Remove from watched list so we don't alert on every single new line.
-                        // The user/AI can re-engage watch_pane if they want to monitor for another cycle.
-                        entry.watched_panes.remove(&pane_id);
-                        let _ = crate::tmux::remove_passive_activity_hook(&pane_id);
-                        alerted_sessions.push(sid.clone());
-                        break; // assumed one session watching
-                    }
-                }
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
+        Request::NotifyComplete { pane_id, exit_code, session_name: _ } => {
+            if let Some(tx) = crate::daemon::session::COMPLETE_TX.get() {
+                let _ = tx.send((pane_id, exit_code));
             }
-
-            if let Some((_chat_pane, msg)) = notify_client {
-                log::info!("Activity detected in monitored pane {}; alerting session(s): {:?}", pane_id, alerted_sessions);
-                for sid in &alerted_sessions {
-                    log_event("watch_alert", serde_json::json!({
-                        "session": sid,
-                        "pane_id": pane_id,
-                        "status": "alerted"
-                    }));
-                }
-
-                // Trigger external notification hook (e.g. notify-send)
-                fire_notification(&format!("watch:{}", pane_id), &msg, &config);
-
-                // Send alert to the tmux status bar. We target the session name from the request
-                // so the message is visible even if the user is in a different window.
-                let _ = std::process::Command::new("tmux")
-                    .args(["display-message", "-d", "5000", "-t", &session_name, &msg])
-                    .output();
-            }
-
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
@@ -334,7 +288,7 @@ pub async fn handle_client(
                 last_accessed: Instant::now(),
                 chat_pane: chat_pane.clone(),
                 default_target_pane: client_target_pane.clone(),
-                watched_panes: Default::default(),
+                bg_windows: Vec::new(),
             });
             entry.chat_pane = chat_pane.clone();
             if entry.default_target_pane.is_none() {
@@ -461,8 +415,8 @@ pub async fn handle_client(
                 AiEvent::ReadScript { id, script_name, thought_signature } => {
                     pending_calls.push(PendingCall::ReadScript { id, script_name, thought_signature });
                 }
-                AiEvent::WatchPane { id, pane_id, thought_signature } => {
-                    pending_calls.push(PendingCall::WatchPane { id, pane_id, thought_signature });
+                AiEvent::WatchPane { id, pane_id, timeout_secs, thought_signature } => {
+                    pending_calls.push(PendingCall::WatchPane { id, pane_id, timeout_secs, thought_signature });
                 }
                 AiEvent::WriteRunbook { id, name, content, thought_signature } => {
                     pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });

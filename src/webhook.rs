@@ -306,22 +306,27 @@ pub fn parse_payload(body: &Value) -> Vec<InternalAlert> {
 // HTTP handler
 // ---------------------------------------------------------------------------
 
+/// Returns true if the request is authorized for the given secret.
+/// When `secret` is empty, all requests are allowed.
+fn is_authorized(secret: &str, headers: &HeaderMap) -> bool {
+    if secret.is_empty() {
+        return true;
+    }
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    auth == format!("Bearer {}", secret)
+}
+
 async fn handle_webhook(
     State(state): State<Arc<WebhookState>>,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> StatusCode {
-    // Bearer token authentication.
-    if !state.config.webhook.secret.is_empty() {
-        let auth = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        let expected = format!("Bearer {}", state.config.webhook.secret);
-        if auth != expected {
-            log::warn!("Webhook: rejected request — invalid or missing Bearer token");
-            return StatusCode::UNAUTHORIZED;
-        }
+    if !is_authorized(&state.config.webhook.secret, &headers) {
+        log::warn!("Webhook: rejected request — invalid or missing Bearer token");
+        return StatusCode::UNAUTHORIZED;
     }
 
     let alerts = parse_payload(&body);
@@ -835,5 +840,47 @@ mod tests {
             fingerprint_from_labels(&labels1),
             fingerprint_from_labels(&labels2)
         );
+    }
+
+    // ── Bearer token authentication ───────────────────────────────────────
+
+    fn headers_with_bearer(token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        h
+    }
+
+    #[test]
+    fn auth_empty_secret_always_allows() {
+        assert!(is_authorized("", &HeaderMap::new()));
+        assert!(is_authorized("", &headers_with_bearer("anything")));
+    }
+
+    #[test]
+    fn auth_correct_token_allows() {
+        assert!(is_authorized("mysecret", &headers_with_bearer("mysecret")));
+    }
+
+    #[test]
+    fn auth_missing_header_denies() {
+        assert!(!is_authorized("mysecret", &HeaderMap::new()));
+    }
+
+    #[test]
+    fn auth_wrong_token_denies() {
+        assert!(!is_authorized("mysecret", &headers_with_bearer("wrongtoken")));
+    }
+
+    #[test]
+    fn auth_token_without_bearer_prefix_denies() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            axum::http::header::AUTHORIZATION,
+            "mysecret".parse().unwrap(),
+        );
+        assert!(!is_authorized("mysecret", &h));
     }
 }
