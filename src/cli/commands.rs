@@ -24,7 +24,7 @@ impl SessionApproval {
     /// Build the status-bar hint string.
     fn hint(&self) -> String {
         match (self.regular, self.sudo) {
-            (false, false) => String::new(),
+            (false, false) => "auto-approve: off".to_string(),
             (true, false)  => "⚡ auto-approve: regular  ·  Ctrl+C to stop".to_string(),
             (false, true)  => "⚡ auto-approve: sudo  ·  Ctrl+C to stop".to_string(),
             (true, true)   => "⚡ auto-approve: all  ·  Ctrl+C to stop".to_string(),
@@ -559,7 +559,7 @@ async fn run_chat_inner() -> Result<()> {
 
     let result = run_chat_inner_raw(
         &mut input_state, &stdin, &mut sigwinch,
-        chat_width, chat_height, start_time, session_id,
+        chat_width, start_time, session_id,
         current_prompt, &mut approval, old_termios,
         tmux_session, target_pane,
     ).await;
@@ -573,7 +573,6 @@ async fn run_chat_inner_raw(
     stdin:          &AsyncStdin,
     sigwinch:       &mut tokio::signal::unix::Signal,
     mut chat_width: usize,
-    mut chat_height: usize,
     start_time:     std::time::Instant,
     mut session_id: String,
     mut current_prompt: Option<String>,
@@ -611,8 +610,8 @@ async fn run_chat_inner_raw(
 
     // Greeting is done.  Re-query dimensions in case the pane was resized
     // while it streamed, then draw the full chrome for the first time.
-    chat_width  = terminal_width();
-    chat_height = terminal_height();
+    chat_width          = terminal_width();
+    let mut chat_height = terminal_height();
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
