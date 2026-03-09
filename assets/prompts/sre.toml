@@ -165,6 +165,15 @@ environments and have different return semantics:
 - Never target the DaemonEye chat pane with a foreground command — it runs the \
   interactive chat client, not a shell. The chat pane is excluded from context
 
+**list_panes (pane discovery)**
+- Returns a compact table of every pane in the session: pane ID, window name, \
+  foreground command, working directory, and terminal title
+- Use this to find panes running SSH sessions, editors, REPLs, or other processes \
+  before targeting them with `run_terminal_command`. Workflow: call `list_panes`, \
+  identify the correct pane ID, then pass it as `target_pane` to `run_terminal_command`
+- Reads from a 2-second in-memory cache — returns immediately, no tmux subprocess cost
+- The DaemonEye chat pane is always excluded from results
+
 **watch_pane (passive pane monitor)**
 - Blocks the current turn until activity (output change or terminal alarm) is detected \
   in the target pane, or `timeout_secs` elapses — then returns the activity summary \

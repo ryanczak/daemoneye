@@ -473,6 +473,9 @@ pub async fn handle_client(
                 AiEvent::GetTerminalContext { id, thought_signature } => {
                     pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
                 }
+                AiEvent::ListPanes { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListPanes { id, thought_signature });
+                }
 
                 AiEvent::Error(e) => {
                     send_response_split(&mut tx, Response::Error(e)).await?;

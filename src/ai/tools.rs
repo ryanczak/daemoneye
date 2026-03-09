@@ -244,6 +244,18 @@ pub static TOOLS: &[ToolDef] = &[
                       call this tool to get it on demand.",
         params: &[],
     },
+    ToolDef {
+        name: "list_panes",
+        description: "List all active panes in the current tmux session with their pane ID, \
+                      window name, foreground command, working directory, and terminal title. \
+                      Use this to discover which panes exist — especially to find panes running \
+                      SSH sessions, editors, REPLs, or other processes that can be targeted with \
+                      run_terminal_command. After identifying the right pane ID, pass it as the \
+                      target_pane argument to run_terminal_command to execute a command there. \
+                      This tool reads from an in-memory cache (refreshed every 2 s) and returns \
+                      immediately with no tmux subprocess overhead.",
+        params: &[],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -422,6 +434,10 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             thought_signature: ts,
         }),
         "get_terminal_context" => Some(AiEvent::GetTerminalContext {
+            id: id.to_string(),
+            thought_signature: ts,
+        }),
+        "list_panes" => Some(AiEvent::ListPanes {
             id: id.to_string(),
             thought_signature: ts,
         }),

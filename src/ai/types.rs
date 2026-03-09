@@ -62,6 +62,7 @@ pub enum PendingCall {
     ListMemories { id: String, thought_signature: Option<String>, category: Option<String> },
     SearchRepository { id: String, thought_signature: Option<String>, query: String, kind: String },
     GetTerminalContext { id: String, thought_signature: Option<String> },
+    ListPanes { id: String, thought_signature: Option<String> },
 }
 
 impl PendingCall {
@@ -195,6 +196,12 @@ impl PendingCall {
                 name: "get_terminal_context".to_string(),
                 arguments: "{}".to_string(),
             },
+            PendingCall::ListPanes { id, thought_signature } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_panes".to_string(),
+                arguments: "{}".to_string(),
+            },
         }
     }
 
@@ -220,6 +227,7 @@ impl PendingCall {
             PendingCall::ListMemories { id, .. } => id,
             PendingCall::SearchRepository { id, .. } => id,
             PendingCall::GetTerminalContext { id, .. } => id,
+            PendingCall::ListPanes { id, .. } => id,
         }
     }
 
@@ -245,6 +253,7 @@ impl PendingCall {
             PendingCall::ListMemories { .. } => "list_memories",
             PendingCall::SearchRepository { .. } => "search_repository",
             PendingCall::GetTerminalContext { .. } => "get_terminal_context",
+            PendingCall::ListPanes { .. } => "list_panes",
         }
     }
 }
@@ -280,6 +289,7 @@ pub enum AiEvent {
     ListMemories { id: String, category: Option<String>, thought_signature: Option<String> },
     SearchRepository { id: String, query: String, kind: String, thought_signature: Option<String> },
     GetTerminalContext { id: String, thought_signature: Option<String> },
+    ListPanes { id: String, thought_signature: Option<String> },
     Done(AiUsage),
     Error(String),
 }

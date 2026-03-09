@@ -951,6 +951,59 @@ pub async fn execute_tool_call(
         PendingCall::GetTerminalContext { .. } => {
             cache.get_labeled_context(chat_pane, chat_pane)
         }
+
+        PendingCall::ListPanes { .. } => {
+            let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+            let session = cache.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+
+            // Collect panes, excluding the chat pane (never a valid command target).
+            let mut rows: Vec<_> = panes
+                .iter()
+                .filter(|(id, _)| chat_pane.map_or(true, |c| c != id.as_str()))
+                .collect();
+            rows.sort_by_key(|(id, _)| id.as_str());
+
+            if rows.is_empty() {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "No targetable panes found in session '{}'.", session
+                )));
+            }
+
+            let mut out = format!(
+                "{} pane{} in session '{}' (chat pane excluded):\n",
+                rows.len(),
+                if rows.len() == 1 { "" } else { "s" },
+                session
+            );
+            for (id, state) in &rows {
+                // Title: omit when it's identical to the command (redundant).
+                let title_part = if !state.pane_title.is_empty() && state.pane_title != state.current_cmd {
+                    format!("  title:{}", mask_sensitive(&state.pane_title))
+                } else {
+                    String::new()
+                };
+                let sync_part  = if state.synchronized { "  [synchronized]" } else { "" };
+                let dead_part  = if state.dead {
+                    format!("  [dead: {}]", state.dead_status.unwrap_or(0))
+                } else {
+                    String::new()
+                };
+                out.push_str(&format!(
+                    "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}\n",
+                    id,
+                    state.window_name,
+                    state.current_cmd,
+                    state.current_path,
+                    title_part,
+                    sync_part,
+                    dead_part,
+                ));
+            }
+            out.push_str(
+                "\nUse the pane ID as target_pane in run_terminal_command to execute a command there."
+            );
+            out
+        }
     };
     Ok(ToolCallOutcome::Result(result))
 }
