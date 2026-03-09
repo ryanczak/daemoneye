@@ -22,7 +22,9 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 1. User runs `daemoneye chat` or `daemoneye ask` — the CLI client reads `$TMUX_PANE`, connects to the socket, and sends a `Request::Ask`.
 2. The daemon captures the user's pane via `tmux capture-pane`, applies the masking filter (`ai/filter.rs`), assembles the system prompt + context snapshot, and streams tokens from the configured LLM.
-3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. The client prompts the user (`[Y]es / [A]pprove session / [N]o`) and returns `Request::ToolCallResponse`.
+3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. The client prompts the user: `[Y]es / [A]pprove session / [N]o / or type a message to redirect`. The client returns `Request::ToolCallResponse`.
+   - **Y / A / N**: standard approve/session-approve/deny flow.
+   - **Typed message**: `approved: false` with `user_message: Some(text)`. The daemon aborts the entire pending tool chain (omitting it from history), injects the text as a plain user turn, and re-enters the AI loop so the model can course-correct without seeing a synthetic tool error.
 4. Approved commands run in one of two modes: **background** (dedicated `de-bg-*` tmux window on the daemon host, monitored via `pane-died` hook) or **foreground** (injected into the user's active pane via `send-keys`, completion detected via a temporary `pane-title-changed` hook).
 5. The daemon sends `Response::ToolResult` with captured output, the LLM continues, and the loop repeats until the LLM produces a final answer.
 
@@ -33,7 +35,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/main.rs` | CLI entry point; forks daemon, routes subcommands |
 | `src/ipc.rs` | `Request` / `Response` enums — the full wire protocol |
 | `src/daemon/server.rs` | IPC server loop; AI prompt assembly; session store (`HashMap<session_id, SessionEntry>`) |
-| `src/daemon/executor.rs` | Tool call dispatch; approval gate; background/foreground execution coordination |
+| `src/daemon/executor.rs` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination |
 | `src/daemon/background.rs` | `run_background_in_window`, `notify_job_completion`, GC lifecycle |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo` helper |

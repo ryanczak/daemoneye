@@ -81,8 +81,17 @@ pub enum Request {
         #[serde(default)]
         target_pane: Option<String>,
     },
-    /// Approve or deny a tool call.
-    ToolCallResponse { id: String, approved: bool },
+    /// Approve or deny a tool call.  When `approved` is false and `user_message`
+    /// is `Some`, the daemon discards the pending tool chain and injects the
+    /// message as a new user turn so the AI can course-correct.
+    ToolCallResponse {
+        id: String,
+        approved: bool,
+        /// Optional corrective message typed at the approval prompt.
+        /// Present only when the user wants to redirect the agent.
+        #[serde(default)]
+        user_message: Option<String>,
+    },
     /// User-supplied credential (password / passphrase) in response to
     /// `Response::CredentialPrompt`. The daemon injects it into the background tmux window.
     CredentialResponse { id: String, credential: String },
@@ -304,12 +313,42 @@ mod tests {
         let req = Request::ToolCallResponse {
             id: "tc_1".to_string(),
             approved: true,
+            user_message: None,
         };
         match roundtrip_req(&req) {
-            Request::ToolCallResponse { id, approved } => {
+            Request::ToolCallResponse { id, approved, user_message } => {
                 assert_eq!(id, "tc_1");
                 assert!(approved);
+                assert!(user_message.is_none());
             }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_tool_call_response_with_user_message_roundtrip() {
+        let req = Request::ToolCallResponse {
+            id: "tc_2".to_string(),
+            approved: false,
+            user_message: Some("don't do that, try a safer approach".to_string()),
+        };
+        match roundtrip_req(&req) {
+            Request::ToolCallResponse { id, approved, user_message } => {
+                assert_eq!(id, "tc_2");
+                assert!(!approved);
+                assert_eq!(user_message.as_deref(), Some("don't do that, try a safer approach"));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_tool_call_response_backward_compat_no_user_message() {
+        // Old clients omit user_message; default should be None.
+        let json = r#"{"ToolCallResponse":{"id":"tc_3","approved":false}}"#;
+        let parsed: Request = serde_json::from_str(json).expect("backward-compat deserialize");
+        match parsed {
+            Request::ToolCallResponse { user_message, .. } => assert!(user_message.is_none()),
             _ => panic!("wrong variant"),
         }
     }

@@ -11,6 +11,17 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
 
+/// The outcome of a single tool call execution.
+pub enum ToolCallOutcome {
+    /// Normal result string to feed back to the AI.
+    Result(String),
+    /// The user typed a corrective message at the approval prompt.
+    /// The caller must abort the current tool chain and inject this text as a
+    /// new user turn so the AI can course-correct without seeing a synthetic
+    /// tool error.
+    UserMessage(String),
+}
+
 // ---------------------------------------------------------------------------
 // Timing constants — all durations used by tool execution in one place.
 // ---------------------------------------------------------------------------
@@ -50,9 +61,13 @@ fn is_shell_prompt(cmd: &str) -> bool {
 /// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
 /// the user's [`Request::ToolCallResponse`], and log the outcome.
 ///
-/// Returns `Ok(None)` when the user approves.  Returns `Ok(Some(msg))` when
-/// the user denies or the wait times out — the caller should use `msg` as the
-/// tool result.  Returns `Err` on connection EOF.
+/// Returns `Ok(None)` when the user approves.
+/// Returns `Ok(Some(ToolCallOutcome::Result(msg)))` when the user denies or
+/// the wait times out — the caller should propagate this as the tool result.
+/// Returns `Ok(Some(ToolCallOutcome::UserMessage(text)))` when the user typed
+/// a corrective message; the caller should abort the tool chain and inject the
+/// text as a new user turn.
+/// Returns `Err` on connection EOF.
 async fn prompt_and_await_approval(
     id: &str,
     cmd: &str,
@@ -60,7 +75,7 @@ async fn prompt_and_await_approval(
     session_id: Option<&str>,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<ToolCallOutcome>> {
     let mode = if background { "background" } else { "foreground" };
     send_response_split(tx, Response::ToolCallPrompt {
         id: id.to_string(),
@@ -76,34 +91,64 @@ async fn prompt_and_await_approval(
     }
 
     let timed_out = read_result.is_err();
-    let approved = match read_result {
+
+    // Parse the response, checking for a user_message redirect first.
+    enum Parsed { Approved, Denied, UserMessage(String) }
+    let parsed = match read_result {
         Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
-            Ok(Request::ToolCallResponse { id: resp_id, approved }) if resp_id == id => approved,
-            _ => false,
+            Ok(Request::ToolCallResponse { id: resp_id, approved, user_message }) if resp_id == id => {
+                if let Some(msg) = user_message {
+                    Parsed::UserMessage(msg)
+                } else if approved {
+                    Parsed::Approved
+                } else {
+                    Parsed::Denied
+                }
+            }
+            _ => Parsed::Denied,
         },
-        _ => false,
+        _ => Parsed::Denied,
     };
 
-    let decision = if approved { "approved" } else if timed_out { "timeout" } else { "denied" };
-    log::info!("{} command {}: {}", mode, decision, cmd);
-    log_event("command_approval", serde_json::json!({
-        "session": session_id.unwrap_or("-"),
-        "mode": mode,
-        "cmd": cmd,
-        "decision": decision,
-    }));
-
-    if !approved {
-        log_command(session_id, mode, "", cmd, decision, "");
-        let msg = if timed_out {
-            format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
-        } else {
-            "User denied execution".to_string()
-        };
-        return Ok(Some(msg));
+    match parsed {
+        Parsed::Approved => {
+            log::info!("{} command approved: {}", mode, cmd);
+            log_event("command_approval", serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "mode": mode,
+                "cmd": cmd,
+                "decision": "approved",
+            }));
+            Ok(None)
+        }
+        Parsed::Denied => {
+            let decision = if timed_out { "timeout" } else { "denied" };
+            log::info!("{} command {}: {}", mode, decision, cmd);
+            log_event("command_approval", serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "mode": mode,
+                "cmd": cmd,
+                "decision": decision,
+            }));
+            log_command(session_id, mode, "", cmd, decision, "");
+            let msg = if timed_out {
+                format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
+            } else {
+                "User denied execution".to_string()
+            };
+            Ok(Some(ToolCallOutcome::Result(msg)))
+        }
+        Parsed::UserMessage(text) => {
+            log::info!("{} command redirected by user message: {}", mode, cmd);
+            log_event("command_approval", serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "mode": mode,
+                "cmd": cmd,
+                "decision": "user_message",
+            }));
+            Ok(Some(ToolCallOutcome::UserMessage(text)))
+        }
     }
-
-    Ok(None)
 }
 
 async fn find_best_target_pane(
@@ -200,11 +245,11 @@ pub async fn execute_tool_call(
     cache: &Arc<SessionCache>,
     sessions: &SessionStore,
     schedule_store: &Arc<ScheduleStore>,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<ToolCallOutcome> {
     let result: String = match call {
         PendingCall::Foreground { id, cmd, target, .. } => {
-            if let Some(denial) = prompt_and_await_approval(id, cmd, false, session_id, tx, rx).await? {
-                return Ok(denial);
+            if let Some(outcome) = prompt_and_await_approval(id, cmd, false, session_id, tx, rx).await? {
+                return Ok(outcome);
             }
             let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, cache, sessions, session_id, tx, rx).await {
                     Ok(tp) => tp,
@@ -415,11 +460,11 @@ pub async fn execute_tool_call(
             };
             if let Some(msg) = cap_denial {
                 send_response_split(tx, Response::ToolResult(msg.clone())).await?;
-                return Ok(msg);
+                return Ok(ToolCallOutcome::Result(msg));
             }
 
-            if let Some(denial) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
-                return Ok(denial);
+            if let Some(outcome) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
+                return Ok(outcome);
             }
             let credential = if command_has_sudo(cmd) {
                     send_response_split(tx, Response::CredentialPrompt {
@@ -464,10 +509,10 @@ pub async fn execute_tool_call(
             let kind = if let Some(iso) = interval {
                 let secs = match crate::scheduler::parse_iso_duration(iso) {
                     Some(s) => s,
-                    None => return Ok(format!(
+                    None => return Ok(ToolCallOutcome::Result(format!(
                         "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
                         iso
-                    )),
+                    ))),
                 };
                 let next = chrono::Utc::now() + chrono::Duration::seconds(secs as i64);
                 ScheduleKind::Every { interval_secs: secs, next_run: next }
@@ -907,5 +952,5 @@ pub async fn execute_tool_call(
             cache.get_labeled_context(chat_pane, chat_pane)
         }
     };
-    Ok(result)
+    Ok(ToolCallOutcome::Result(result))
 }

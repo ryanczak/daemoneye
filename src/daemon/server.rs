@@ -558,6 +558,7 @@ pub async fn handle_client(
                     let mut tool_call_counts: std::collections::HashMap<&'static str, u32> = std::collections::HashMap::new();
 
                     let mut tool_results = Vec::new();
+                    let mut user_message_redirect: Option<String> = None;
                     for (call_idx, call) in pending_calls.iter().enumerate() {
                         let call_id = call.id().to_string();
 
@@ -592,14 +593,40 @@ pub async fn handle_client(
                             continue;
                         }
 
-                        let result = match crate::daemon::executor::execute_tool_call(
+                        let outcome = match crate::daemon::executor::execute_tool_call(
                             call, &mut tx, &mut rx, session_id.as_deref(), &session_name,
                             chat_pane.as_deref(), &cache, &sessions, &schedule_store
                         ).await {
                             Ok(res) => res,
                             Err(_) => return Ok(()),
                         };
-                        tool_results.push(ToolResult { tool_call_id: call_id, content: result });
+
+                        match outcome {
+                            crate::daemon::executor::ToolCallOutcome::UserMessage(text) => {
+                                // User typed a corrective message at the approval prompt.
+                                // Abort the tool chain: pop the assistant message we just pushed
+                                // (it referenced tool calls that will never complete), then inject
+                                // the user's text as a plain user turn so the AI can course-correct.
+                                user_message_redirect = Some(text);
+                                break;
+                            }
+                            crate::daemon::executor::ToolCallOutcome::Result(result) => {
+                                tool_results.push(ToolResult { tool_call_id: call_id, content: result });
+                            }
+                        }
+                    }
+
+                    // If the user interrupted with a message, discard the tool chain and inject
+                    // the message as a new user turn instead.
+                    if let Some(user_msg) = user_message_redirect {
+                        messages.pop(); // remove the assistant message that listed the tool calls
+                        messages.push(Message {
+                            role: "user".to_string(),
+                            content: user_msg,
+                            tool_calls: None,
+                            tool_results: None,
+                        });
+                        break; // restart outer loop — AI will see the user message next
                     }
 
                     // Truncate tool results before storing in history.

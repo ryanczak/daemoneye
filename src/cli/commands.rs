@@ -1040,43 +1040,61 @@ async fn ask_with_session(
                 let is_sudo = command_has_sudo(&command);
                 let auto_approved = if is_sudo { approval.sudo } else { approval.regular };
 
-                let approved = if auto_approved {
+                // Outcome of the approval prompt.
+                enum ApprovalDecision {
+                    Approved,
+                    ApprovedSession,
+                    Denied,
+                    UserMessage(String),
+                }
+
+                let decision = if auto_approved {
                     println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
-                    true
+                    ApprovalDecision::Approved
                 } else {
                     let session_label = if is_sudo { "sudo session" } else { "session" };
                     print!(
                         "  \x1b[32mApprove?\x1b[0m \
                          [\x1b[1;92mY\x1b[0m]es  \
                          [\x1b[1;91mN\x1b[0m]o  \
-                         [\x1b[1;93mA\x1b[0m]pprove for {session_label} \
+                         [\x1b[1;93mA\x1b[0m]pprove for {session_label}  \
+                         or type a message to redirect \
                          \x1b[32m›\x1b[0m "
                     );
                     std::io::stdout().flush()?;
-                    
+
                     // Temporarily revert to cooked mode for the tool approval prompt.
                     crate::cli::input::restore_termios(old_termios);
                     let input = stdin.read_line().await.unwrap_or_default();
                     crate::cli::input::set_raw_mode()?; // back to raw mode for turn trap
 
                     let trimmed = input.trim();
-                    let approve_session = trimmed.eq_ignore_ascii_case("a");
-                    let approved_once = trimmed.eq_ignore_ascii_case("y") || approve_session;
-
-                    if approve_session {
+                    if trimmed.eq_ignore_ascii_case("y") {
+                        println!("  \x1b[32m✓ approved\x1b[0m");
+                        ApprovalDecision::Approved
+                    } else if trimmed.eq_ignore_ascii_case("a") {
                         if is_sudo { approval.sudo = true; } else { approval.regular = true; }
                         println!("  \x1b[32m✓ approved — all {} commands auto-approved for this session\x1b[0m",
                                  if is_sudo { "sudo" } else { "regular" });
-                    } else if approved_once {
-                        println!("  \x1b[32m✓ approved\x1b[0m");
-                    } else {
+                        ApprovalDecision::ApprovedSession
+                    } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {
                         println!("  \x1b[2m✗ skipped\x1b[0m");
+                        ApprovalDecision::Denied
+                    } else {
+                        // Anything else is treated as a corrective message to the AI.
+                        println!("  \x1b[33m↩ redirecting agent with your message…\x1b[0m");
+                        ApprovalDecision::UserMessage(trimmed.to_string())
                     }
-                    approved_once
+                };
+
+                let (approved, user_message) = match decision {
+                    ApprovalDecision::Approved | ApprovalDecision::ApprovedSession => (true, None),
+                    ApprovalDecision::Denied => (false, None),
+                    ApprovalDecision::UserMessage(msg) => (false, Some(msg)),
                 };
 
                 md.reset();
-                send_request(&mut tx, Request::ToolCallResponse { id, approved }).await?;
+                send_request(&mut tx, Request::ToolCallResponse { id, approved, user_message }).await?;
             }
             Response::SystemMsg(msg) => {
                 if !response_started {
