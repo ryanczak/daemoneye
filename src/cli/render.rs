@@ -292,26 +292,70 @@ pub fn draw_input_frame_n(height: usize, width: usize, input_rows: usize, start:
 ///
 /// `approval_hint` — a label describing the current session approval state.
 /// Shown in bold amber so it stands out.
-pub fn draw_status_bar(height: usize, width: usize, session_id: &str, approval_hint: &str) {
+/// Render (or refresh) the status bar in the bottom row.
+/// Uses DEC save/restore cursor (\x1b7 / \x1b8) so this is safe to call
+/// at any point without disturbing the scroll-region cursor position.
+///
+/// Layout (left to right, progressively dropped when the terminal is narrow):
+///   base: ` ⬡ daemoneye  ·  session:XXXXXXXX `
+///   + model name
+///   + token budget (`12k / 200k`)
+///   + approval hint (bold amber, only when auto-approve is active)
+pub fn draw_status_bar(
+    height: usize,
+    width: usize,
+    session_id: &str,
+    approval_hint: &str,
+    model: &str,
+    prompt_tokens: u32,
+    context_window: u32,
+) {
     use std::io::Write;
     let base = format!(
         " ⬡ daemoneye  ·  session:{} ",
         &session_id[..8.min(session_id.len())],
     );
 
-    let hint_str = format!(" ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m", approval_hint);
-
-    // Assemble the full sequence. Note that we start with \x1b[2m (dim).
-    let full = format!("{}{}", base, hint_str);
-    let mut vis = visual_len(&full);
-
-    // If it's too long, drop the approval hint.
-    let out = if vis > width {
-        vis = visual_len(&base);
-        base.clone()
+    // Optional segments assembled right-to-left in priority order.
+    let model_str = if model.is_empty() {
+        String::new()
     } else {
-        full
+        format!(" ·  {} ", model)
     };
+
+    let token_str = if prompt_tokens > 0 && context_window > 0 {
+        let used_k = (prompt_tokens + 500) / 1000;
+        let win_k  = (context_window + 500) / 1000;
+        format!(" ·  {}k / {}k ", used_k, win_k)
+    } else {
+        String::new()
+    };
+
+    let hint_str = if approval_hint.is_empty() {
+        String::new()
+    } else {
+        format!(" ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ", approval_hint)
+    };
+
+    // Try progressively shorter combinations until one fits.
+    let candidates: &[&dyn Fn() -> String] = &[
+        &|| format!("{}{}{}{}", base, model_str, token_str, hint_str),
+        &|| format!("{}{}{}", base, model_str, hint_str),
+        &|| format!("{}{}", base, hint_str),
+        &|| base.clone(),
+    ];
+
+    let mut out = base.clone();
+    let mut vis = visual_len(&base);
+    for candidate in candidates {
+        let s = candidate();
+        let v = visual_len(&s);
+        if v <= width {
+            out = s;
+            vis = v;
+            break;
+        }
+    }
 
     let pad = " ".repeat(width.saturating_sub(vis));
 

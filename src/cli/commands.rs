@@ -24,7 +24,7 @@ impl SessionApproval {
     /// Build the status-bar hint string.
     fn hint(&self) -> String {
         match (self.regular, self.sudo) {
-            (false, false) => "auto-approve: disabled".to_string(),
+            (false, false) => String::new(),
             (true, false)  => "⚡ auto-approve: regular  ·  Ctrl+C to stop".to_string(),
             (false, true)  => "⚡ auto-approve: sudo  ·  Ctrl+C to stop".to_string(),
             (true, true)   => "⚡ auto-approve: all  ·  Ctrl+C to stop".to_string(),
@@ -548,8 +548,11 @@ async fn run_chat_inner() -> Result<()> {
     // In the normal keybinding workflow (user already inside an active tmux
     // session), #{session_attached} is already ≥ 1 so the loop exits on the
     // first check with no perceptible delay.
+    let config = Config::load().unwrap_or_default();
+    let model_pre  = config.ai.model.clone();
+    let ctx_pre    = config.ai.context_window();
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, &hint);
+    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model_pre, 0, ctx_pre);
 
     // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
     let old_termios = crate::cli::input::set_raw_mode()?;
@@ -583,8 +586,9 @@ async fn run_chat_inner_raw(
     // Accumulated prompt token count — carried across turns so the query box
     // shows the context size from the *previous* completed turn.
     let mut prompt_tokens: u32 = 0;
-    // Context window for the configured model — used to show % remaining in the query border.
-    let context_window = Config::load().map(|c| c.ai.context_window()).unwrap_or(128_000);
+    let config = Config::load().unwrap_or_default();
+    let context_window = config.ai.context_window();
+    let model = config.ai.model.clone();
 
     loop {
         let attached = std::process::Command::new("tmux")
@@ -612,7 +616,7 @@ async fn run_chat_inner_raw(
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, &hint);
+    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
@@ -620,7 +624,7 @@ async fn run_chat_inner_raw(
         let line_opt = read_input_line(
             input_state, stdin, sigwinch,
             &mut chat_width, &mut chat_height,
-            start_time, &session_id, &hint,
+            start_time, &session_id, &hint, &model, prompt_tokens, context_window,
             &mut last_ctrl_c,
         ).await?;
 
@@ -653,7 +657,7 @@ async fn run_chat_inner_raw(
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
             let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(chat_height, chat_width, &session_id, &hint);
+            draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
@@ -670,7 +674,7 @@ async fn run_chat_inner_raw(
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                 draw_input_frame(chat_height, chat_width, start_time);
                 let hint = approval.hint();
-                draw_status_bar(chat_height, chat_width, &session_id, &hint);
+                draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
             }
             continue;
         }
@@ -684,7 +688,7 @@ async fn run_chat_inner_raw(
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                     draw_input_frame(chat_height, chat_width, start_time);
                     let hint = approval.hint();
-                    draw_status_bar(chat_height, chat_width, &session_id, &hint);
+                    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
@@ -702,7 +706,7 @@ async fn run_chat_inner_raw(
         setup_scroll_region(chat_height);
         draw_input_frame(chat_height, chat_width, start_time);
         let hint = approval.hint();
-        draw_status_bar(chat_height, chat_width, &session_id, &hint);
+        draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
     }
 
     teardown_scroll_region(chat_height);
