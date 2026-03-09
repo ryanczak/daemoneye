@@ -548,9 +548,8 @@ async fn run_chat_inner() -> Result<()> {
     // In the normal keybinding workflow (user already inside an active tmux
     // session), #{session_attached} is already ≥ 1 so the loop exits on the
     // first check with no perceptible delay.
-    let current_status = "ready";
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+    draw_status_bar(chat_height, chat_width, &session_id, &hint);
 
     // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
     let old_termios = crate::cli::input::set_raw_mode()?;
@@ -599,11 +598,7 @@ async fn run_chat_inner_raw(
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
-    // A client is now attached — switch to "thinking…" and send the greeting.
-    let mut current_status = "thinking…";
-    let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
-
+    // A client is now attached — send the greeting.
     if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
         eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
         eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
@@ -615,10 +610,9 @@ async fn run_chat_inner_raw(
     chat_width  = terminal_width();
     chat_height = terminal_height();
     setup_scroll_region(chat_height);
-    current_status = "ready";
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+    draw_status_bar(chat_height, chat_width, &session_id, &hint);
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
@@ -626,7 +620,7 @@ async fn run_chat_inner_raw(
         let line_opt = read_input_line(
             input_state, stdin, sigwinch,
             &mut chat_width, &mut chat_height,
-            start_time, &session_id, current_status, &hint,
+            start_time, &session_id, &hint,
             &mut last_ctrl_c,
         ).await?;
 
@@ -657,10 +651,9 @@ async fn run_chat_inner_raw(
             let label = format!(" session cleared · new session:{} ", &session_id[..8]);
             let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-            current_status = "ready";
             let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+            draw_status_bar(chat_height, chat_width, &session_id, &hint);
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
@@ -675,10 +668,9 @@ async fn run_chat_inner_raw(
                 let label = format!(" prompt: {}  ·  new session:{} ", name, &session_id[..8]);
                 let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                current_status = "ready";
                 draw_input_frame(chat_height, chat_width, start_time);
                 let hint = approval.hint();
-                draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+                draw_status_bar(chat_height, chat_width, &session_id, &hint);
             }
             continue;
         }
@@ -690,18 +682,14 @@ async fn run_chat_inner_raw(
                     let label = format!(" context refreshed  ·  new session:{} ", &session_id[..8]);
                     let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                    current_status = "ready";
                     draw_input_frame(chat_height, chat_width, start_time);
                     let hint = approval.hint();
-                    draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+                    draw_status_bar(chat_height, chat_width, &session_id, &hint);
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
             continue;
         }
-        current_status = "thinking…";
-        let hint = approval.hint();
-        draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
         if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
             eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
         }
@@ -712,10 +700,9 @@ async fn run_chat_inner_raw(
         chat_width  = terminal_width();
         chat_height = terminal_height();
         setup_scroll_region(chat_height);
-        current_status = "ready";
         draw_input_frame(chat_height, chat_width, start_time);
         let hint = approval.hint();
-        draw_status_bar(chat_height, chat_width, &session_id, current_status, &hint);
+        draw_status_bar(chat_height, chat_width, &session_id, &hint);
     }
 
     teardown_scroll_region(chat_height);
@@ -1128,6 +1115,8 @@ async fn ask_with_session(
                 let body_refs: Vec<&str> = body.iter().map(|s| s.as_str()).collect();
                 print_tool_panel("output", &body_refs, true);
                 md.reset();
+                // Reset so the spinner re-appears while the AI processes the tool result.
+                response_started = false;
             }
             Response::CredentialPrompt { id, prompt } => {
                 md.flush();

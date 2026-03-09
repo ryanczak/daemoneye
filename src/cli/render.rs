@@ -292,7 +292,7 @@ pub fn draw_input_frame_n(height: usize, width: usize, input_rows: usize, start:
 ///
 /// `approval_hint` — a label describing the current session approval state.
 /// Shown in bold amber so it stands out.
-pub fn draw_status_bar(height: usize, width: usize, session_id: &str, status: &str, approval_hint: &str) {
+pub fn draw_status_bar(height: usize, width: usize, session_id: &str, approval_hint: &str) {
     use std::io::Write;
     let base = format!(
         " ⬡ daemoneye  ·  session:{} ",
@@ -300,17 +300,15 @@ pub fn draw_status_bar(height: usize, width: usize, session_id: &str, status: &s
     );
 
     let hint_str = format!(" ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m", approval_hint);
-    let status_str = format!(" ·  {}", status);
-    
+
     // Assemble the full sequence. Note that we start with \x1b[2m (dim).
-    let full = format!("{}{}{}", base, hint_str, status_str);
+    let full = format!("{}{}", base, hint_str);
     let mut vis = visual_len(&full);
 
-    // If it's too long, drop the hint.
+    // If it's too long, drop the approval hint.
     let out = if vis > width {
-        let fallback = format!("{} ·  {}", base, status);
-        vis = visual_len(&fallback);
-        fallback
+        vis = visual_len(&base);
+        base.clone()
     } else {
         full
     };

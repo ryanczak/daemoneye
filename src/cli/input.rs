@@ -248,7 +248,6 @@ fn resize_input_area(
     new_rows: usize,
     start_time: std::time::Instant,
     session_id: &str,
-    status: &str,
     approval_hint: &str,
 ) {
     use std::io::Write;
@@ -270,7 +269,7 @@ fn resize_input_area(
 
     setup_scroll_region_n(height, new_rows);
     draw_input_frame_n(height, width, new_rows, start_time);
-    draw_status_bar(height, width, session_id, status, approval_hint);
+    draw_status_bar(height, width, session_id, approval_hint);
 }
 
 /// Collapse the input area back to 1 row (called before returning from the
@@ -281,11 +280,10 @@ fn collapse_input_area(
     input_rows: usize,
     start_time: std::time::Instant,
     session_id: &str,
-    status: &str,
     approval_hint: &str,
 ) {
     if input_rows <= 1 { return; }
-    resize_input_area(height, width, input_rows, 1, start_time, session_id, status, approval_hint);
+    resize_input_area(height, width, input_rows, 1, start_time, session_id, approval_hint);
 }
 
 /// Read and parse one key event from raw-mode stdin.
@@ -377,12 +375,11 @@ pub async fn read_input_line(
     chat_height:    &mut usize,
     start_time:     std::time::Instant,
     session_id:     &str,
-    status:         &str,
     approval_hint:  &str,
     last_ctrl_c:    &mut Option<std::time::Instant>,
 ) -> anyhow::Result<Option<String>> {
     read_input_line_inner(
-        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, status, approval_hint, last_ctrl_c,
+        state, stdin, sigwinch, chat_width, chat_height, start_time, session_id, approval_hint, last_ctrl_c,
     ).await
 }
 
@@ -394,7 +391,6 @@ async fn read_input_line_inner(
     chat_height:    &mut usize,
     start_time:     std::time::Instant,
     session_id:     &str,
-    status:         &str,
     approval_hint:  &str,
     last_ctrl_c:    &mut Option<std::time::Instant>,
 ) -> anyhow::Result<Option<String>> {
@@ -410,7 +406,7 @@ async fn read_input_line_inner(
             let needed = input_rows_needed(&state.current, *chat_width);
             if needed != input_rows {
                 resize_input_area(*chat_height, *chat_width, input_rows, needed,
-                                  start_time, session_id, status, approval_hint);
+                                  start_time, session_id, approval_hint);
                 input_rows = needed;
             }
             render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);
@@ -446,26 +442,26 @@ async fn read_input_line_inner(
 
                 setup_scroll_region_n(*chat_height, input_rows);
                 draw_input_frame_n(*chat_height, *chat_width, input_rows, start_time);
-                draw_status_bar(*chat_height, *chat_width, session_id, status, approval_hint);
+                draw_status_bar(*chat_height, *chat_width, session_id, approval_hint);
                 render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);
             }
             key = read_key(stdin) => {
                 let Some(key) = key else {
                     collapse_input_area(*chat_height, *chat_width, input_rows,
-                                        start_time, session_id, status, approval_hint);
+                                        start_time, session_id, approval_hint);
                     return Ok(None);
                 };
                 match key {
                     Key::Enter => {
                         let s = state.current.as_string();
                         collapse_input_area(*chat_height, *chat_width, input_rows,
-                                            start_time, session_id, status, approval_hint);
+                                            start_time, session_id, approval_hint);
                         return Ok(Some(s));
                     }
                     Key::CtrlD => {
                         if state.current.buf.is_empty() {
                             collapse_input_area(*chat_height, *chat_width, input_rows,
-                                                start_time, session_id, status, approval_hint);
+                                                start_time, session_id, approval_hint);
                             return Ok(None);
                         }
                         state.current.delete();
@@ -475,7 +471,7 @@ async fn read_input_line_inner(
                         if let Some(t) = last_ctrl_c {
                             if t.elapsed() < std::time::Duration::from_millis(1000) {
                                 collapse_input_area(*chat_height, *chat_width, input_rows,
-                                                    start_time, session_id, status, approval_hint);
+                                                    start_time, session_id, approval_hint);
                                 return Ok(None); // Double Ctrl+C: exit chat
                             }
                         }
@@ -483,8 +479,14 @@ async fn read_input_line_inner(
                         state.current = InputLine::new();
                         state.history_idx = None;
                         render!();
-                        draw_status_bar(*chat_height, *chat_width, session_id,
-                                        "ready (Press Ctrl+C again to exit)", approval_hint);
+                        // Show a brief hint in the scroll area (above the frame) using
+                        // DEC save/restore so the input cursor is not disturbed.
+                        {
+                            use std::io::Write;
+                            let hint_row = (*chat_height).saturating_sub(3 + input_rows).max(1);
+                            print!("\x1b7\x1b[{hint_row};1H\x1b[2m  (press Ctrl+C again to exit)\x1b[K\x1b[0m\x1b8");
+                            std::io::stdout().flush().ok();
+                        }
                     }
                     Key::Char(c) if c != '\0' => { state.current.insert(c);       render!(); }
                     Key::Backspace             => { state.current.backspace();     render!(); }
