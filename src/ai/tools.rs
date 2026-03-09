@@ -140,7 +140,7 @@ pub static TOOLS: &[ToolDef] = &[
                       (e.g. build, test, log tail) finishes or produces new output.",
         params: &[
             ParamDef { name: "pane_id",      ty: ParamTy::Str, required: true,
-                       description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from [BACKGROUND PANE] context blocks." },
+                       description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from [BACKGROUND PANE] context blocks, background=true tool results, or list_panes." },
             ParamDef { name: "timeout_secs", ty: ParamTy::Int, required: false,
                        description: "Maximum seconds to wait for output. Defaults to 300 (5 minutes)." },
         ],
