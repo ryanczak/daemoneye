@@ -420,10 +420,30 @@ async fn read_input_line_inner(
     loop {
         tokio::select! {
             _ = sigwinch.recv() => {
+                // Save previous frame geometry so we can erase the old rows.
+                let old_height     = *chat_height;
+                let old_input_rows = input_rows;
+
                 *chat_width  = terminal_width();
                 *chat_height = terminal_height();
                 // Recalculate rows for new width — may change without input change.
                 input_rows = input_rows_needed(&state.current, *chat_width);
+
+                // On resize, the terminal emulator (or tmux) may reset DECSTBM,
+                // causing the old fixed frame rows to appear as regular scrollable
+                // content above the new frame.  Erase those rows explicitly before
+                // re-establishing the scroll region to prevent border artifacts.
+                {
+                    use std::io::Write;
+                    // Reset scroll region so CUP can reach any row.
+                    print!("\x1b[r");
+                    let old_frame_top = old_height.saturating_sub(2 + old_input_rows).max(1);
+                    for r in old_frame_top..=old_height {
+                        print!("\x1b[{r};1H\x1b[2K");
+                    }
+                    std::io::stdout().flush().ok();
+                }
+
                 setup_scroll_region_n(*chat_height, input_rows);
                 draw_input_frame_n(*chat_height, *chat_width, input_rows, start_time);
                 draw_status_bar(*chat_height, *chat_width, session_id, status, approval_hint);
