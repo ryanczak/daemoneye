@@ -105,9 +105,17 @@ pub async fn daemon_is_running() -> bool {
 pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     // Initialise env_logger once.  DAEMONEYE_LOG=debug|info|warn|error controls verbosity.
     // Default is `info` which shows lifecycle events, connections, and command execution.
+    // Color is disabled and a human-readable UTC timestamp is prepended to every line.
     let _ = env_logger::Builder::from_env(
         env_logger::Env::new().filter_or("DAEMONEYE_LOG", "info")
-    ).try_init();
+    )
+    .write_style(env_logger::WriteStyle::Never)
+    .format(|buf, record| {
+        use std::io::Write;
+        let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+        writeln!(buf, "{} {:5} {}", ts, record.level(), record.args())
+    })
+    .try_init();
 
     if let Some(ref path) = log_file {
         let file = std::fs::OpenOptions::new()
