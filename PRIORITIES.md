@@ -45,6 +45,14 @@
   derived from `query_pane_width` to avoid `TIOCGWINSZ` race conditions.
 - **`/clear` in-session command** — Generates a new session ID so the next message starts
   a clean context; prints a dim separator line.
+- **Status bar: model name, token budget, approval state** — Bottom status bar now shows the active model name, session token usage (`Xk / Yk · Z%` with progressive fallback at narrow widths), and auto-approve state (always visible: dimmed "auto-approve: off" when inactive, bold amber with ⚡ prefix when active).
+- **User message redirect at approval** — Typing freeform text at a tool-call approval prompt aborts the pending tool chain, pops the assistant message from history, and injects the text as a new user turn for course-correction. `ToolCallResponse.user_message: Option<String>` carries the redirect text; `ToolCallOutcome::UserMessage` propagates it from executor to server.
+- **Terminal resize artifact fix** — SIGWINCH handler now erases old input frame rows at their previous geometry before redrawing at the new size, eliminating visible border artifacts after pane resize.
+
+### tmux Integration
+
+- **Pane reclassification: VISIBLE / BACKGROUND / SESSION** — `get_labeled_context()` now classifies non-active panes by their `window_name` (already in cache): `[VISIBLE PANE]` for the same window as the chat interface, `[BACKGROUND PANE]` for daemon-launched `de-bg-*`/`de-sched-*` windows, `[SESSION PANE]` for other user windows. No new tmux calls required.
+- **`list_panes` AI tool** — New zero-argument tool returns a compact table of all session panes from the in-memory SessionCache (no tmux subprocess). Enables the agent to discover panes by command/title/cwd and target them via `run_terminal_command(target_pane=...)`. Documented in sre.toml with a "Call this when:" decision rule.
 
 ---
 
