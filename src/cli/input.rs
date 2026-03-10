@@ -252,6 +252,7 @@ fn resize_input_area(
     model: &str,
     prompt_tokens: u32,
     context_window: u32,
+    daemon_up: bool,
 ) {
     use std::io::Write;
     if old_rows == new_rows { return; }
@@ -272,7 +273,7 @@ fn resize_input_area(
 
     setup_scroll_region_n(height, new_rows);
     draw_input_frame_n(height, width, new_rows, start_time);
-    draw_status_bar(height, width, session_id, approval_hint, model, prompt_tokens, context_window);
+    draw_status_bar(height, width, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
 }
 
 /// Collapse the input area back to 1 row (called before returning from the
@@ -287,9 +288,10 @@ fn collapse_input_area(
     model: &str,
     prompt_tokens: u32,
     context_window: u32,
+    daemon_up: bool,
 ) {
     if input_rows <= 1 { return; }
-    resize_input_area(height, width, input_rows, 1, start_time, session_id, approval_hint, model, prompt_tokens, context_window);
+    resize_input_area(height, width, input_rows, 1, start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
 }
 
 /// Read and parse one key event from raw-mode stdin.
@@ -386,10 +388,11 @@ pub async fn read_input_line(
     prompt_tokens:  u32,
     context_window: u32,
     last_ctrl_c:    &mut Option<std::time::Instant>,
+    daemon_up:      bool,
 ) -> anyhow::Result<Option<String>> {
     read_input_line_inner(
         state, stdin, sigwinch, chat_width, chat_height, start_time,
-        session_id, approval_hint, model, prompt_tokens, context_window, last_ctrl_c,
+        session_id, approval_hint, model, prompt_tokens, context_window, last_ctrl_c, daemon_up,
     ).await
 }
 
@@ -406,6 +409,7 @@ async fn read_input_line_inner(
     prompt_tokens:  u32,
     context_window: u32,
     last_ctrl_c:    &mut Option<std::time::Instant>,
+    daemon_up:      bool,
 ) -> anyhow::Result<Option<String>> {
     let mut input_rows = input_rows_needed(&state.current, *chat_width);
 
@@ -419,7 +423,7 @@ async fn read_input_line_inner(
             let needed = input_rows_needed(&state.current, *chat_width);
             if needed != input_rows {
                 resize_input_area(*chat_height, *chat_width, input_rows, needed,
-                                  start_time, session_id, approval_hint, model, prompt_tokens, context_window);
+                                  start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                 input_rows = needed;
             }
             render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);
@@ -455,26 +459,26 @@ async fn read_input_line_inner(
 
                 setup_scroll_region_n(*chat_height, input_rows);
                 draw_input_frame_n(*chat_height, *chat_width, input_rows, start_time);
-                draw_status_bar(*chat_height, *chat_width, session_id, approval_hint, model, prompt_tokens, context_window);
+                draw_status_bar(*chat_height, *chat_width, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                 render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);
             }
             key = read_key(stdin) => {
                 let Some(key) = key else {
                     collapse_input_area(*chat_height, *chat_width, input_rows,
-                                        start_time, session_id, approval_hint, model, prompt_tokens, context_window);
+                                        start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                     return Ok(None);
                 };
                 match key {
                     Key::Enter => {
                         let s = state.current.as_string();
                         collapse_input_area(*chat_height, *chat_width, input_rows,
-                                            start_time, session_id, approval_hint, model, prompt_tokens, context_window);
+                                            start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                         return Ok(Some(s));
                     }
                     Key::CtrlD => {
                         if state.current.buf.is_empty() {
                             collapse_input_area(*chat_height, *chat_width, input_rows,
-                                                start_time, session_id, approval_hint, model, prompt_tokens, context_window);
+                                                start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                             return Ok(None);
                         }
                         state.current.delete();
@@ -484,7 +488,7 @@ async fn read_input_line_inner(
                         if let Some(t) = last_ctrl_c {
                             if t.elapsed() < std::time::Duration::from_millis(1000) {
                                 collapse_input_area(*chat_height, *chat_width, input_rows,
-                                                    start_time, session_id, approval_hint, model, prompt_tokens, context_window);
+                                                    start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                                 return Ok(None); // Double Ctrl+C: exit chat
                             }
                         }

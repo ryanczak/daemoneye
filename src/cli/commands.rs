@@ -552,7 +552,7 @@ async fn run_chat_inner() -> Result<()> {
     let model_pre  = config.ai.model.clone();
     let ctx_pre    = config.ai.context_window();
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model_pre, 0, ctx_pre);
+    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model_pre, 0, ctx_pre, false);
 
     // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
     let old_termios = crate::cli::input::set_raw_mode()?;
@@ -582,6 +582,7 @@ async fn run_chat_inner_raw(
     target_pane:    Option<String>,
 ) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
+    let mut daemon_up = false;
     // Accumulated prompt token count — carried across turns so the query box
     // shows the context size from the *previous* completed turn.
     let mut prompt_tokens: u32 = 0;
@@ -602,10 +603,13 @@ async fn run_chat_inner_raw(
     }
 
     // A client is now attached — send the greeting.
-    if let Err(e) = ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
-        eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
-        eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
-        eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
+    match ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
+        Ok(()) => daemon_up = true,
+        Err(e) => {
+            eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
+            eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
+            eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
+        }
     }
 
     // Greeting is done.  Re-query dimensions in case the pane was resized
@@ -615,7 +619,7 @@ async fn run_chat_inner_raw(
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
+    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
@@ -624,7 +628,7 @@ async fn run_chat_inner_raw(
             input_state, stdin, sigwinch,
             &mut chat_width, &mut chat_height,
             start_time, &session_id, &hint, &model, prompt_tokens, context_window,
-            &mut last_ctrl_c,
+            &mut last_ctrl_c, daemon_up,
         ).await?;
 
         let Some(line) = line_opt else { break }; // EOF or Ctrl+D on empty line
@@ -656,7 +660,7 @@ async fn run_chat_inner_raw(
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
             let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
+            draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
@@ -673,7 +677,7 @@ async fn run_chat_inner_raw(
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                 draw_input_frame(chat_height, chat_width, start_time);
                 let hint = approval.hint();
-                draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
+                draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
             }
             continue;
         }
@@ -687,14 +691,15 @@ async fn run_chat_inner_raw(
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                     draw_input_frame(chat_height, chat_width, start_time);
                     let hint = approval.hint();
-                    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
+                    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
             continue;
         }
-        if let Err(e) = ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
-            eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
+        match ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
+            Ok(()) => daemon_up = true,
+            Err(e) => eprintln!("\n\x1b[31m✗\x1b[0m {}", e),
         }
         // Turn completed: reset the double-tap exit timer.
         last_ctrl_c = None;
@@ -705,7 +710,7 @@ async fn run_chat_inner_raw(
         setup_scroll_region(chat_height);
         draw_input_frame(chat_height, chat_width, start_time);
         let hint = approval.hint();
-        draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window);
+        draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
     }
 
     teardown_scroll_region(chat_height);
@@ -910,7 +915,14 @@ async fn ask_with_session(
 
     // Braille-pattern spinner frames, updated every 80 ms while waiting for
     // the first response from the daemon.
-    const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const SPINNER: &[&str] = &[
+        "\x1b[31m(\x1b[33m─\x1b[31m)\x1b[0m",
+        "\x1b[31m(\x1b[33m○\x1b[31m)\x1b[0m",
+        "\x1b[31m(\x1b[33m◎\x1b[31m)\x1b[0m",
+        "\x1b[31m(\x1b[33m◉\x1b[31m)\x1b[0m",
+        "\x1b[31m(\x1b[33m◎\x1b[31m)\x1b[0m",
+        "\x1b[31m(\x1b[33m○\x1b[31m)\x1b[0m",
+    ];
     let mut spin = 0usize;
     let mut response_started = false;
     // prompt_tokens is passed in from the outer loop so the value from the
@@ -941,7 +953,7 @@ async fn ask_with_session(
                     result = tokio::time::timeout(Duration::from_millis(80), recv(&mut rx)) => {
                         match result {
                             Err(_timeout) => {
-                                print!("\r\x1b[36m{}\x1b[0m \x1b[2mThinking…\x1b[0m", SPINNER[spin]);
+                                print!("\r{} \x1b[2mscrying…\x1b[0m", SPINNER[spin]);
                                 std::io::stdout().flush()?;
                                 spin = (spin + 1) % SPINNER.len();
                             }

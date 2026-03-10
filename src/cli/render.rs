@@ -309,10 +309,17 @@ pub fn draw_status_bar(
     model: &str,
     prompt_tokens: u32,
     context_window: u32,
+    daemon_up: bool,
 ) {
     use std::io::Write;
+    let icon = if daemon_up {
+        "\x1b[0m\x1b[1m\x1b[31m(\x1b[33m◉\x1b[31m)\x1b[0m\x1b[2m"
+    } else {
+        "\x1b[0m\x1b[2m(◉)\x1b[0m\x1b[2m"
+    };
     let base = format!(
-        " ⬡ daemoneye  ·  session:{} ",
+        " {} ·  session:{} ",
+        icon,
         &session_id[..8.min(session_id.len())],
     );
 
@@ -324,17 +331,22 @@ pub fn draw_status_bar(
     };
 
     let token_str = if prompt_tokens > 0 && context_window > 0 {
-        let used_k = (prompt_tokens + 500) / 1000;
-        let win_k  = (context_window + 500) / 1000;
-        format!(" ·  {}k / {}k ", used_k, win_k)
+        let used_k   = (prompt_tokens + 500) / 1000;
+        let win_k    = (context_window + 500) / 1000;
+        let pct_used = (prompt_tokens as u64 * 100 / context_window.max(1) as u64) as u32;
+        let pct_left = 100u32.saturating_sub(pct_used);
+        format!(" ·  {}k / {}k · {}% ", used_k, win_k, pct_left)
     } else {
         String::new()
     };
 
+    // Active auto-approve: bold amber.  Inactive ("auto-approve: off"): dim.
     let hint_str = if approval_hint.is_empty() {
         String::new()
-    } else {
+    } else if approval_hint.starts_with('⚡') {
         format!(" ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ", approval_hint)
+    } else {
+        format!(" ·  \x1b[2m{}\x1b[0m ", approval_hint)
     };
 
     // Try progressively shorter combinations until one fits.
