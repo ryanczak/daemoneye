@@ -304,15 +304,35 @@ impl SessionCache {
             ));
         }
 
-        // Background panes — summaries with cmd, cwd, and title, sorted for deterministic ordering.
+        // Non-active panes — classified by their relationship to the chat window.
+        //
+        // - VISIBLE PANE:    same window as the chat pane (user can see it in the split)
+        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sched-*)
+        // - SESSION PANE:    any other user window (SSH sessions, editors, etc.)
         let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
-        let mut bg: Vec<_> = panes
+
+        // Determine which window contains the chat pane so we can identify visible peers.
+        let chat_window: Option<&str> = chat_pane
+            .and_then(|cp| panes.get(cp))
+            .map(|p| p.window_name.as_str())
+            .filter(|w| !w.is_empty());
+
+        let mut others: Vec<_> = panes
             .iter()
             .filter(|(id, _)| source_pane.map_or(true, |s| s != id.as_str()))
             .filter(|(id, _)| chat_pane.map_or(true, |c| c != id.as_str()))
             .collect();
-        bg.sort_by_key(|(id, _)| id.as_str());
-        for (id, state) in bg {
+        others.sort_by_key(|(id, _)| id.as_str());
+        for (id, state) in others {
+            let pane_label = if chat_window.map_or(false, |cw| cw == state.window_name) {
+                "VISIBLE PANE"
+            } else if state.window_name.starts_with("de-bg-")
+                || state.window_name.starts_with("de-sched-")
+            {
+                "BACKGROUND PANE"
+            } else {
+                "SESSION PANE"
+            };
             let cwd_part = if state.current_path.is_empty() {
                 String::new()
             } else {
@@ -324,20 +344,19 @@ impl SessionCache {
             } else {
                 format!(" ({})", mask_sensitive(&state.pane_title))
             };
-            // R6: warn the AI that input to this pane broadcasts to all synced panes.
             let sync_part = if state.synchronized {
                 " [synchronized]".to_string()
             } else {
                 String::new()
             };
-            // Step 12: surface dead pane state so AI knows the process has exited.
             let dead_part = if state.dead {
                 format!(" [dead: {}]", state.dead_status.unwrap_or(0))
             } else {
                 String::new()
             };
             out.push_str(&format!(
-                "[BACKGROUND PANE {}{}{}{}{}{}]: {}\n",
+                "[{} {}{}{}{}{}{}]: {}\n",
+                pane_label,
                 id,
                 format!(" — {}", state.current_cmd),
                 cwd_part,
@@ -716,5 +735,55 @@ mod tests {
         assert!(!ctx.contains("[BACKGROUND PANE %2"), "chat pane should be excluded");
         // Source pane also shouldn't be in background listing (existing behaviour).
         assert!(!ctx.contains("[BACKGROUND PANE %1"), "source pane should be excluded too");
+    }
+
+    #[test]
+    fn get_labeled_context_pane_classification() {
+        let c = cache();
+        {
+            let mut panes = c.panes.write().unwrap();
+            // Chat pane — window "work".
+            panes.insert("%2".to_string(), PaneState {
+                buffer: String::new(), summary: String::new(),
+                current_cmd: "daemoneye".to_string(), current_path: String::new(),
+                pane_title: String::new(), last_updated: std::time::Instant::now(),
+                scroll_position: 0, history_size: 0, in_copy_mode: false,
+                synchronized: false, window_name: "work".to_string(),
+                dead: false, dead_status: None,
+            });
+            // Visible peer — same window as chat.
+            panes.insert("%3".to_string(), PaneState {
+                buffer: String::new(), summary: "shell".to_string(),
+                current_cmd: "bash".to_string(), current_path: "/home/user".to_string(),
+                pane_title: String::new(), last_updated: std::time::Instant::now(),
+                scroll_position: 0, history_size: 0, in_copy_mode: false,
+                synchronized: false, window_name: "work".to_string(),
+                dead: false, dead_status: None,
+            });
+            // Daemon-launched background window.
+            panes.insert("%5".to_string(), PaneState {
+                buffer: String::new(), summary: "running".to_string(),
+                current_cmd: "bash".to_string(), current_path: "/tmp".to_string(),
+                pane_title: String::new(), last_updated: std::time::Instant::now(),
+                scroll_position: 0, history_size: 0, in_copy_mode: false,
+                synchronized: false, window_name: "de-bg-myjob".to_string(),
+                dead: false, dead_status: None,
+            });
+            // User's session pane in a different window.
+            panes.insert("%7".to_string(), PaneState {
+                buffer: String::new(), summary: "ssh idle".to_string(),
+                current_cmd: "ssh".to_string(), current_path: "~".to_string(),
+                pane_title: "web01".to_string(), last_updated: std::time::Instant::now(),
+                scroll_position: 0, history_size: 0, in_copy_mode: false,
+                synchronized: false, window_name: "servers".to_string(),
+                dead: false, dead_status: None,
+            });
+        }
+        // No source pane; chat pane is %2.
+        let ctx = c.get_labeled_context(None, Some("%2"));
+        assert!(!ctx.contains("%2"), "chat pane should be excluded entirely");
+        assert!(ctx.contains("[VISIBLE PANE %3"),   "peer in same window should be VISIBLE PANE");
+        assert!(ctx.contains("[BACKGROUND PANE %5"), "de-bg-* window should be BACKGROUND PANE");
+        assert!(ctx.contains("[SESSION PANE %7"),   "other user window should be SESSION PANE");
     }
 }

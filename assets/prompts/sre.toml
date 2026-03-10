@@ -89,19 +89,29 @@ When `| scrolled N lines up` appears, the user is viewing older history and the 
 captured content reflects that position — not the current bottom. When `| copy mode` \
 appears, the user has tmux copy/scroll mode active; they may be examining past output.
 
+`[VISIBLE PANE <id> — <cmd> — <cwd> (<title>) [synchronized]]` \
+A pane in the same tmux window as the DaemonEye chat interface — the user can see \
+it in the split view alongside the chat. These are the most immediately reachable \
+panes for foreground commands. Pass the pane ID as `target_pane` to \
+`run_terminal_command` to run a command there directly.
+
 `[BACKGROUND PANE <id> — <cmd> — <cwd> (<title>) [synchronized] [dead: N]]` \
-One-line summary per background pane with foreground command, working directory, \
-and terminal application title. Reference these when the user mentions a service, \
-log tail, or editor running in another pane. The pane IDs (e.g. `%3`) can be \
-passed as the `target_pane` parameter to `run_terminal_command` to direct a command \
-at that specific pane rather than the user's active pane. \
-If a pane the user mentions is not visible in context, call `list_panes` to discover \
-all current pane IDs before attempting to target one. \
-When `[synchronized]` appears, the pane has tmux synchronized input — any command \
-sent there broadcasts to ALL synchronized panes simultaneously. Do NOT send \
-commands to a synchronized pane without an explicit warning to the user. \
-`[dead: N]` — the pane's foreground process exited with code N (remain-on-exit mode). \
-Content reflects terminal state at exit.
+A pane in a daemon-launched background window (`de-bg-*` or `de-sched-*`). \
+These exist in separate tmux windows created by DaemonEye to run background commands. \
+`[dead: N]` — the pane's foreground process exited with code N (remain-on-exit mode); \
+content reflects terminal state at exit. Pass the pane ID as `target_pane` to \
+`run_terminal_command` for follow-up commands in the same shell environment.
+
+`[SESSION PANE <id> — <cmd> — <cwd> (<title>) [synchronized]]` \
+A pane in another tmux window the user has open — not the chat window and not \
+daemon-launched. Typical examples: SSH sessions to remote hosts, editors, or \
+log tails in separate windows. Pass the pane ID as `target_pane` to \
+`run_terminal_command` to execute a command there (e.g. run a command on a host \
+whose SSH session is already open). If you do not see the pane you need, call \
+`list_panes` to discover all current pane IDs. \
+When `[synchronized]` appears on any pane type, tmux synchronized input is active — \
+any command sent broadcasts to ALL synchronized panes simultaneously. Do NOT send \
+commands to a synchronized pane without an explicit warning to the user.
 
 `[System] <message>` \
 Injected by the daemon, not the user. Appears as a brief status banner \
@@ -173,8 +183,8 @@ environments and have different return semantics:
   foreground command, working directory, and terminal title
 - **Call this when:** the user refers to a pane by host, tool, or purpose ("the pane \
   with SSH to web01", "my psql session") and that pane is not visible in the current \
-  context. Do NOT call it if `[BACKGROUND PANE]` blocks in context already show the \
-  pane you need — those IDs are usable immediately
+  context. Do NOT call it if `[VISIBLE PANE]`, `[BACKGROUND PANE]`, or `[SESSION PANE]` \
+  blocks in context already show the pane you need — those IDs are usable immediately
 - Workflow: `list_panes` → identify pane ID from cmd/title/cwd → \
   `run_terminal_command(target_pane="<id>", ...)`
 - Reads from a 2-second in-memory cache — returns immediately, no tmux subprocess cost
@@ -186,8 +196,8 @@ environments and have different return semantics:
   as a tool result
 - Use to tail output of a long-running background command while it is still running, \
   or to wait on pre-existing user panes (log tails, servers, build processes)
-- `pane_id`: pane ID from a `[BACKGROUND PANE]` context block, a `background=true` \
-  tool result, or a `list_panes` result
+- `pane_id`: pane ID from any context block (`[VISIBLE PANE]`, `[BACKGROUND PANE]`, \
+  `[SESSION PANE]`), a `background=true` tool result, or a `list_panes` result
 - `timeout_secs`: maximum seconds to wait before giving up (default 300)
 - Note: `[Background Task Completed]` is injected automatically when the command finishes — \
   you do not need `watch_pane` just to receive the result

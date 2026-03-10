@@ -67,9 +67,10 @@ pub static TOOLS: &[ToolDef] = &[
             ParamDef {
                 name: "target_pane", ty: ParamTy::Str, required: false,
                 description: "Optional: tmux pane ID (e.g. \"%3\") to target for foreground \
-                              commands. Only specify when context shows multiple panes and the \
-                              command must run in a specific one. Background commands always run \
-                              on the daemon host — do not set target_pane for them.",
+                              commands. Get IDs from [VISIBLE PANE], [BACKGROUND PANE], or \
+                              [SESSION PANE] context blocks, or call list_panes to discover them. \
+                              Background commands always run on the daemon host — do not set \
+                              target_pane for them.",
             },
         ],
     },
@@ -140,7 +141,7 @@ pub static TOOLS: &[ToolDef] = &[
                       (e.g. build, test, log tail) finishes or produces new output.",
         params: &[
             ParamDef { name: "pane_id",      ty: ParamTy::Str, required: true,
-                       description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from [BACKGROUND PANE] context blocks, background=true tool results, or list_panes." },
+                       description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), background=true tool results, or list_panes." },
             ParamDef { name: "timeout_secs", ty: ParamTy::Int, required: false,
                        description: "Maximum seconds to wait for output. Defaults to 300 (5 minutes)." },
         ],
