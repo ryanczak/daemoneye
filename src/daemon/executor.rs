@@ -927,7 +927,7 @@ pub async fn execute_tool_call(
             let cat = crate::memory::MemoryCategory::from_str(category)
                 .unwrap_or(crate::memory::MemoryCategory::Knowledge);
             match crate::memory::read_memory(key, cat) {
-                Ok(content) => content,
+                Ok(content) => crate::ai::filter::mask_sensitive(&content),
                 Err(e) => format!("Error reading memory '{}': {}", key, e),
             }
         }
@@ -940,7 +940,14 @@ pub async fn execute_tool_call(
                 .map(|(c, k)| MemoryListItem { category: c.clone(), key: k.clone() })
                 .collect();
             let _ = send_response_split(tx, Response::MemoryList { entries: items }).await;
-            format!("{} memory entry/entries", count)
+            if count == 0 {
+                "No memory entries found.".to_string()
+            } else {
+                let lines: Vec<String> = entries.iter()
+                    .map(|(c, k)| format!("[{}] {}", c, k))
+                    .collect();
+                format!("{} memory entries:\n{}", count, lines.join("\n"))
+            }
         }
 
         PendingCall::SearchRepository { query, kind, .. } => {
