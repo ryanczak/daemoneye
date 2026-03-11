@@ -906,8 +906,17 @@ pub async fn execute_tool_call(
         }
 
         PendingCall::AddMemory { key, value, category, .. } => {
-            let cat = crate::memory::MemoryCategory::from_str(category)
-                .unwrap_or(crate::memory::MemoryCategory::Knowledge);
+            let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+                    category
+                )));
+            };
+            if value.trim().is_empty() {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: memory value cannot be empty.".to_string(),
+                ));
+            }
             match crate::memory::add_memory(key, value, cat) {
                 Ok(()) => format!("Memory '{}' stored in {}", key, category),
                 Err(e) => format!("Error storing memory: {}", e),
@@ -915,8 +924,12 @@ pub async fn execute_tool_call(
         }
 
         PendingCall::DeleteMemory { key, category, .. } => {
-            let cat = crate::memory::MemoryCategory::from_str(category)
-                .unwrap_or(crate::memory::MemoryCategory::Knowledge);
+            let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+                    category
+                )));
+            };
             match crate::memory::delete_memory(key, cat) {
                 Ok(()) => format!("Memory '{}' deleted from {}", key, category),
                 Err(e) => format!("Error deleting memory: {}", e),
@@ -924,8 +937,12 @@ pub async fn execute_tool_call(
         }
 
         PendingCall::ReadMemory { key, category, .. } => {
-            let cat = crate::memory::MemoryCategory::from_str(category)
-                .unwrap_or(crate::memory::MemoryCategory::Knowledge);
+            let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+                    category
+                )));
+            };
             match crate::memory::read_memory(key, cat) {
                 Ok(content) => crate::ai::filter::mask_sensitive(&content),
                 Err(e) => format!("Error reading memory '{}': {}", key, e),
@@ -933,7 +950,16 @@ pub async fn execute_tool_call(
         }
 
         PendingCall::ListMemories { category, .. } => {
-            let cat = category.as_deref().and_then(crate::memory::MemoryCategory::from_str);
+            let cat = match category.as_deref() {
+                None => None,
+                Some(s) => match crate::memory::MemoryCategory::from_str(s) {
+                    Some(c) => Some(c),
+                    None => return Ok(ToolCallOutcome::Result(format!(
+                        "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+                        s
+                    ))),
+                },
+            };
             let entries = crate::memory::list_memories(cat).unwrap_or_default();
             let count = entries.len();
             let items: Vec<MemoryListItem> = entries.iter()
