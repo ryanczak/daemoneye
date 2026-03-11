@@ -923,6 +923,20 @@ async fn ask_with_session(
         "\x1b[31m(\x1b[33m◎\x1b[31m)\x1b[0m",
         "\x1b[31m(\x1b[33m○\x1b[31m)\x1b[0m",
     ];
+    // Verbs rotate every ~30 s (375 ticks × 80 ms = 30 000 ms).
+    const VERBS: &[&str] = &[
+        "scrying",
+        "divining",
+        "auguring",
+        "communing",
+        "pondering",
+        "cogitating",
+        "attuning",
+        "consulting",
+        "channeling",
+        "deliberating",
+    ];
+    const TICKS_PER_VERB: usize = 375;
     let mut spin = 0usize;
     let mut response_started = false;
     // prompt_tokens is passed in from the outer loop so the value from the
@@ -953,9 +967,10 @@ async fn ask_with_session(
                     result = tokio::time::timeout(Duration::from_millis(80), recv(&mut rx)) => {
                         match result {
                             Err(_timeout) => {
-                                print!("\r{} \x1b[2mscrying…\x1b[0m", SPINNER[spin]);
+                                let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
+                                print!("\r{} \x1b[2m{}…\x1b[0m", SPINNER[spin % SPINNER.len()], verb);
                                 std::io::stdout().flush()?;
-                                spin = (spin + 1) % SPINNER.len();
+                                spin = spin.wrapping_add(1);
                             }
                             Ok(r) => break r?,
                         }
