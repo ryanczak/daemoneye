@@ -130,7 +130,7 @@ pub fn load_session_memory_block() -> String {
 
     let mut parts = Vec::new();
     let mut total = 0usize;
-    let mut omitted = 0usize;
+    let mut omitted_keys: Vec<String> = Vec::new();
 
     for key in &entries {
         let path = dir.join(format!("{}.md", key));
@@ -141,7 +141,7 @@ pub fn load_session_memory_block() -> String {
                 total += chunk.len();
                 parts.push(chunk);
             } else {
-                omitted += 1;
+                omitted_keys.push(key.clone());
             }
         }
     }
@@ -151,11 +151,12 @@ pub fn load_session_memory_block() -> String {
     }
 
     let mut body = parts.join("");
-    if omitted > 0 {
+    if !omitted_keys.is_empty() {
         body.push_str(&format!(
-            "[{} session {} omitted — use list_memories to find them]\n",
-            omitted,
-            if omitted == 1 { "memory" } else { "memories" }
+            "[{} session {} omitted due to size cap: {} — use read_memory to load individually]\n",
+            omitted_keys.len(),
+            if omitted_keys.len() == 1 { "memory" } else { "memories" },
+            omitted_keys.join(", ")
         ));
     }
 
@@ -255,6 +256,7 @@ mod tests {
             let block = load_session_memory_block();
             assert!(block.len() <= 32_768 + 200, "block should be capped near 32 KB");
             assert!(block.contains("omitted"), "should mention omitted entries");
+            assert!(block.contains("entry_"), "should name at least one omitted key");
         });
     }
 }
