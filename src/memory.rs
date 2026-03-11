@@ -110,7 +110,11 @@ pub fn load_session_memory_block() -> String {
     if !dir.exists() {
         return String::new();
     }
-    let mut entries: Vec<String> = match std::fs::read_dir(&dir) {
+    // Collect entries with their modification times so we can load the most
+    // recently updated ones first. When the cap is reached, older entries are
+    // dropped — entries you've actively written/updated are more likely to be
+    // relevant than ones that haven't been touched in a long time.
+    let mut entries: Vec<(String, std::time::SystemTime)> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
             .filter_map(|e| {
@@ -118,12 +122,18 @@ pub fn load_session_memory_block() -> String {
                 if !path.is_file() {
                     return None;
                 }
-                path.file_stem().map(|s| s.to_string_lossy().to_string())
+                let mtime = e.metadata().ok()?.modified().ok()?;
+                let stem = path.file_stem()?.to_string_lossy().to_string();
+                Some((stem, mtime))
             })
             .collect(),
         Err(_) => return String::new(),
     };
-    entries.sort();
+    // Newest first; ties broken alphabetically.
+    entries.sort_by(|(a_key, a_mtime), (b_key, b_mtime)| {
+        b_mtime.cmp(a_mtime).then_with(|| a_key.cmp(b_key))
+    });
+    let entries: Vec<String> = entries.into_iter().map(|(k, _)| k).collect();
     if entries.is_empty() {
         return String::new();
     }
