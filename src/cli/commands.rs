@@ -926,15 +926,15 @@ async fn ask_with_session(
     // Verbs rotate every ~30 s (375 ticks × 80 ms = 30 000 ms).
     const VERBS: &[&str] = &[
         "scrying",
-        "divining",
-        "auguring",
-        "communing",
-        "pondering",
-        "cogitating",
-        "attuning",
-        "consulting",
-        "channeling",
-        "deliberating",
+        "peering",
+        "gazing",
+        "surveying",
+        "scanning",
+        "beholding",
+        "watching",
+        "glimpsing",
+        "piercing",
+        "discerning",
     ];
     const TICKS_PER_VERB: usize = 375;
     let mut spin = 0usize;
