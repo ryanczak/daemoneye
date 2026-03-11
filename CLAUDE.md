@@ -25,7 +25,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. The client prompts the user: `[Y]es / [A]pprove session / [N]o / or type a message to redirect`. The client returns `Request::ToolCallResponse`.
    - **Y / A / N**: standard approve/session-approve/deny flow.
    - **Typed message**: `approved: false` with `user_message: Some(text)`. The daemon aborts the entire pending tool chain (omitting it from history), injects the text as a plain user turn, and re-enters the AI loop so the model can course-correct without seeing a synthetic tool error.
-4. Approved commands run in one of two modes: **background** (dedicated `de-bg-*` tmux window on the daemon host, monitored via `pane-died` hook) or **foreground** (injected into the user's active pane via `send-keys`, completion detected via a temporary `pane-title-changed` hook).
+4. Approved commands run in one of two modes: **background** (dedicated `de-bg-*` tmux window on the daemon host, monitored via `pane-died` hook) or **foreground** (injected into the user's active pane via `send-keys`, completion detected via a three-way branch: interactive commands like `ssh`/`mosh`/`telnet`/`screen` use prompt-pattern detection and return immediately once connected; remote panes use output-stability polling; local panes poll `pane_current_command`).
 5. The daemon sends `Response::ToolResult` with captured output, the LLM continues, and the loop repeats until the LLM produces a final answer.
 
 ### Key files
@@ -38,7 +38,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/executor.rs` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination |
 | `src/daemon/background.rs` | `run_background_in_window`, `notify_job_completion`, GC lifecycle |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
-| `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo` helper |
+| `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo`, `is_interactive_command`, `interactive_destination` helpers |
 | `src/ai/types.rs` | `PendingCall` enum (one variant per AI tool), `AiEvent`, `Message`, `AiUsage` |
 | `src/ai/mod.rs` | `AiClient` trait; `dispatch_tool_event()` |
 | `src/ai/tools.rs` | Tool definitions for all three providers (Anthropic / OpenAI / Gemini) |
