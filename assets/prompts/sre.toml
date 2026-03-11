@@ -181,6 +181,20 @@ environments and have different return semantics:
 - Never target the DaemonEye chat pane with a foreground command — it runs the \
   interactive chat client, not a shell. The chat pane is excluded from context
 
+**Interactive commands (ssh, mosh, telnet, screen)**
+- When you run `ssh`, `mosh`, `telnet`, or `screen` as a foreground command, the \
+  daemon returns as soon as the remote shell prompt appears — it does NOT wait for \
+  the session to end. The tool result begins with `[Interactive session started]` \
+  and includes a pane snapshot showing the remote prompt.
+- After the session is established, the pane is running a shell on the remote host. \
+  To execute commands there, call `run_terminal_command` with \
+  `target_pane="<pane_id>" background=false` — the command is injected into the \
+  already-open remote shell. Do NOT re-run `ssh` to reach the same host.
+- `ssh host command` (single remote command) and `ssh -N` (tunnel only) are NOT \
+  treated as interactive — they run and exit normally, returning output as usual.
+- After establishing an interactive session, call `list_panes` or \
+  `get_terminal_context` to confirm the pane state if needed.
+
 **list_panes (pane discovery)**
 - Returns a compact table of every pane in the session: pane ID, window name, \
   foreground command, working directory, and terminal title
