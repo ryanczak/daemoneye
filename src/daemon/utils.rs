@@ -39,6 +39,96 @@ pub fn shell_escape_arg(s: &str) -> String {
      .replace('`',  "\\`")
 }
 
+/// Return true when `cmd` will start an interactive session in the pane
+/// rather than run a command and exit.  Such commands (ssh, mosh, telnet,
+/// screen, rlogin) occupy the pane for the duration of the session and never
+/// return the shell to an idle state.
+///
+/// Non-interactive sub-cases are excluded:
+/// - `ssh host command` — two non-flag tokens (hostname + remote command); exits normally.
+/// - `ssh -N …` or `ssh -f …` — tunnel-only / background; no shell allocated.
+pub fn is_interactive_command(cmd: &str) -> bool {
+    let mut tokens = cmd.split_whitespace();
+    let base = match tokens.next() {
+        Some(b) => b,
+        None => return false,
+    };
+    // Strip any leading path prefix (e.g. /usr/bin/ssh → ssh).
+    let base = base.rsplit('/').next().unwrap_or(base);
+
+    match base {
+        "mosh" | "telnet" | "rlogin" | "rsh" | "screen" => true,
+        "ssh" => {
+            // Flags that consume the next token as their argument.
+            const TAKES_ARG: &[&str] = &[
+                "-b", "-c", "-D", "-e", "-F", "-I", "-i", "-J", "-L",
+                "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+            ];
+            let mut non_flag_count = 0usize;
+            let mut skip_next = false;
+            for tok in tokens {
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
+                // -N = no remote command (tunnel only); -f = go to background.
+                if tok == "-N" || tok == "-f" {
+                    return false;
+                }
+                if tok.starts_with('-') {
+                    if TAKES_ARG.contains(&tok) {
+                        skip_next = true;
+                    }
+                    continue;
+                }
+                non_flag_count += 1;
+                // Two or more non-flag tokens means hostname + remote command.
+                if non_flag_count >= 2 {
+                    return false;
+                }
+            }
+            // Exactly one non-flag token (the hostname) → interactive shell.
+            non_flag_count == 1
+        }
+        _ => false,
+    }
+}
+
+/// Extract the destination host/user from an interactive command string.
+/// Returns `None` when the destination cannot be determined.
+pub fn interactive_destination(cmd: &str) -> Option<String> {
+    const SSH_TAKES_ARG: &[&str] = &[
+        "-b", "-c", "-D", "-e", "-F", "-I", "-i", "-J", "-L",
+        "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+    ];
+    let mut tokens = cmd.split_whitespace();
+    let base = tokens.next()?;
+    let base = base.rsplit('/').next().unwrap_or(base);
+    match base {
+        "ssh" => {
+            let mut skip_next = false;
+            for tok in tokens {
+                if skip_next { skip_next = false; continue; }
+                if tok.starts_with('-') {
+                    if SSH_TAKES_ARG.contains(&tok) { skip_next = true; }
+                    continue;
+                }
+                return Some(tok.to_string());
+            }
+            None
+        }
+        "mosh" | "telnet" | "rlogin" | "rsh" => {
+            for tok in tokens {
+                if !tok.starts_with('-') {
+                    return Some(tok.to_string());
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// True if the command string contains `sudo` as a standalone word.
 pub fn command_has_sudo(cmd: &str) -> bool {
     use regex::Regex;
@@ -265,6 +355,86 @@ mod tests {
         assert_eq!(shell_escape_arg("my session"), "my session");
     }
 
+
+    // ── is_interactive_command ────────────────────────────────────────────────
+
+    #[test]
+    fn interactive_plain_ssh() {
+        assert!(is_interactive_command("ssh user@host"));
+    }
+
+    #[test]
+    fn interactive_ssh_with_port_flag() {
+        assert!(is_interactive_command("ssh -p 2222 user@host"));
+    }
+
+    #[test]
+    fn interactive_ssh_with_identity_flag() {
+        assert!(is_interactive_command("ssh -i ~/.ssh/id_rsa user@host"));
+    }
+
+    #[test]
+    fn non_interactive_ssh_with_remote_command() {
+        assert!(!is_interactive_command("ssh user@host ls /tmp"));
+    }
+
+    #[test]
+    fn non_interactive_ssh_tunnel_N() {
+        assert!(!is_interactive_command("ssh -N -L 8080:localhost:80 user@host"));
+    }
+
+    #[test]
+    fn non_interactive_ssh_background_f() {
+        assert!(!is_interactive_command("ssh -f -N -R 2222:localhost:22 bastion"));
+    }
+
+    #[test]
+    fn interactive_mosh() {
+        assert!(is_interactive_command("mosh user@host"));
+    }
+
+    #[test]
+    fn interactive_telnet() {
+        assert!(is_interactive_command("telnet 10.0.0.1 23"));
+    }
+
+    #[test]
+    fn interactive_screen() {
+        assert!(is_interactive_command("screen"));
+    }
+
+    #[test]
+    fn non_interactive_ordinary_command() {
+        assert!(!is_interactive_command("ls -la /home"));
+    }
+
+    #[test]
+    fn non_interactive_empty() {
+        assert!(!is_interactive_command(""));
+    }
+
+    // ── interactive_destination ───────────────────────────────────────────────
+
+    #[test]
+    fn destination_plain_ssh() {
+        assert_eq!(interactive_destination("ssh user@host"), Some("user@host".to_string()));
+    }
+
+    #[test]
+    fn destination_ssh_with_flags() {
+        assert_eq!(interactive_destination("ssh -p 2222 -i ~/.ssh/id_rsa user@host"),
+                   Some("user@host".to_string()));
+    }
+
+    #[test]
+    fn destination_mosh() {
+        assert_eq!(interactive_destination("mosh admin@server"), Some("admin@server".to_string()));
+    }
+
+    #[test]
+    fn destination_screen_returns_none() {
+        assert_eq!(interactive_destination("screen"), None);
+    }
 
     fn pane_snap(lines: &[&str]) -> String {
         lines.join("\n")

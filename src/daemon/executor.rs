@@ -48,6 +48,13 @@ const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
 const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
 /// Delay after command completion before capturing output, to let the shell flush.
 const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
+/// Max time to wait for a shell-prompt pattern after starting an interactive
+/// command (ssh, mosh, telnet, screen). Returns as soon as the prompt appears.
+const INTERACTIVE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Poll interval used while waiting for a prompt pattern in the interactive path.
+const INTERACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// Fallback stability window when prompt detection fails (two identical snapshots).
+const INTERACTIVE_STABLE_WINDOW: Duration = Duration::from_millis(600);
 
 /// Return true when `cmd` is a shell name, meaning the pane is at a prompt.
 fn is_shell_prompt(cmd: &str) -> bool {
@@ -56,6 +63,24 @@ fn is_shell_prompt(cmd: &str) -> bool {
         "bash" | "zsh" | "fish" | "sh" | "ksh" | "csh" | "tcsh" | "dash"
             | "nu" | "pwsh" | "elvish" | "xonsh" | "yash"
     )
+}
+
+/// Return true when the last non-empty line of a pane snapshot ends with a
+/// recognisable shell-prompt character, indicating the remote shell is ready.
+/// Intentionally permissive — a false positive just causes slightly early
+/// capture, which is safe; false negatives fall through to the stability check.
+fn looks_like_shell_prompt(snap: &str) -> bool {
+    snap.lines()
+        .filter(|l| !l.trim().is_empty())
+        .last()
+        .map(|l| {
+            let t = l.trim_end();
+            t.ends_with("$ ") || t.ends_with("# ") || t.ends_with("% ")
+                || t.ends_with("> ")
+                || t.ends_with('$') || t.ends_with('#')
+                || t.ends_with('%') || t.ends_with('>')
+        })
+        .unwrap_or(false)
 }
 
 /// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
@@ -297,6 +322,7 @@ pub async fn execute_tool_call(
                         match tmux::send_keys(target_str, cmd) {
                             Ok(()) => {
                                 let mut switched_to_working = false;
+                                let mut is_interactive = false;
 
                                 if command_has_sudo(cmd) {
                                     let poll = SUDO_POLL_INTERVAL;
@@ -323,13 +349,63 @@ pub async fn execute_tool_call(
                                     }
                                 }
 
-                                if is_remote_pane {
+                                if is_interactive_command(cmd) {
+                                    // Interactive session path (ssh, mosh, telnet, screen).
+                                    // Wait up to INTERACTIVE_CONNECT_TIMEOUT for a shell
+                                    // prompt pattern to appear in the pane, then return
+                                    // immediately rather than waiting for the session to exit.
+                                    is_interactive = true;
+                                    let deadline = tokio::time::Instant::now() + INTERACTIVE_CONNECT_TIMEOUT;
+                                    let mut prompt_found = false;
+
+                                    'connect: loop {
+                                        if tokio::time::Instant::now() >= deadline { break; }
+                                        tokio::select! {
+                                            result = fg_rx.recv() => {
+                                                if let Ok(notified_pane) = result {
+                                                    if notified_pane == target_str {
+                                                        // Hook fired — check for prompt immediately.
+                                                        if let Ok(snap) = tmux::capture_pane(target_str, 20) {
+                                                            if looks_like_shell_prompt(&snap) {
+                                                                prompt_found = true;
+                                                                break 'connect;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
+                                                if let Ok(snap) = tmux::capture_pane(target_str, 20) {
+                                                    if looks_like_shell_prompt(&snap) {
+                                                        prompt_found = true;
+                                                        break 'connect;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Fallback: if no prompt was detected, wait for output
+                                    // to stabilise (two consecutive identical snapshots)
+                                    // so we don't capture mid-handshake noise.
+                                    if !prompt_found {
+                                        let stable_deadline = tokio::time::Instant::now() + INTERACTIVE_STABLE_WINDOW;
+                                        let mut prev = String::new();
+                                        loop {
+                                            if tokio::time::Instant::now() >= stable_deadline { break; }
+                                            tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
+                                            let snap = tmux::capture_pane(target_str, 20).unwrap_or_default();
+                                            if snap == prev && !snap.is_empty() { break; }
+                                            prev = snap;
+                                        }
+                                    }
+                                } else if is_remote_pane {
                                     let mut prev_snap = String::new();
                                     let mut stable_ticks = 0u32;
                                     let poll = REMOTE_POLL_INTERVAL;
                                     let cmd_timeout = REMOTE_CMD_TIMEOUT;
                                     let deadline = tokio::time::Instant::now() + cmd_timeout;
-                                    
+
                                     loop {
                                         if tokio::time::Instant::now() >= deadline { break; }
                                         tokio::select! {
@@ -387,7 +463,7 @@ pub async fn execute_tool_call(
                                         }
                                     }
                                 }
-                                
+
                                 let _ = std::process::Command::new("tmux")
                                     .args(["set-hook", "-u", "-t", target_str, &hook_name])
                                     .output();
@@ -395,6 +471,27 @@ pub async fn execute_tool_call(
                                 tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
 
                                 let output = match tmux::capture_pane(target_str, 200) {
+                                    Ok(snap) if is_interactive => {
+                                        let destination = interactive_destination(cmd)
+                                            .unwrap_or_else(|| "the remote host".to_string());
+                                        let pane_snap = mask_sensitive(
+                                            &normalize_output(&extract_command_output(&snap, cmd))
+                                        );
+                                        format!(
+                                            "[Interactive session started]\n\
+                                             `{cmd}` opened an interactive session in pane \
+                                             {target_str} — now connected to {destination}.\n\
+                                             The command did not exit; the pane is running an \
+                                             interactive shell on the remote host.\n\
+                                             To run commands there, use \
+                                             `run_terminal_command(target_pane=\"{target_str}\", \
+                                             background=false)` — each call is injected into \
+                                             the open remote shell.\n\
+                                             Do NOT call `{cmd}` again — the session is already \
+                                             established.\n\
+                                             <pane_snapshot>\n{pane_snap}\n</pane_snapshot>"
+                                        )
+                                    }
                                     Ok(snap) => {
                                         let extracted = extract_command_output(&snap, cmd);
                                         mask_sensitive(&normalize_output(&extracted))
