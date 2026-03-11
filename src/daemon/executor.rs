@@ -783,7 +783,7 @@ pub async fn execute_tool_call(
             }
         }
 
-        PendingCall::WatchPane { pane_id, timeout_secs, .. } => {
+        PendingCall::WatchPane { pane_id, timeout_secs, pattern, .. } => {
             // Sample the current foreground command so we know when the shell returns to a prompt.
             let initial_cmd = tmux::pane_current_command(pane_id).unwrap_or_default();
 
@@ -807,11 +807,13 @@ pub async fn execute_tool_call(
             let session_id_owned = session_id.unwrap_or("-").to_string();
             let sessions_clone = Arc::clone(sessions);
             let timeout = Duration::from_secs(*timeout_secs);
+            let pattern_owned = pattern.clone();
 
             log::info!("watch_pane: monitoring {} (initial_cmd={:?}) for session {}", pane_id, initial_cmd, session_id_owned);
             log_event("watch_pane", serde_json::json!({
                 "session": session_id_owned,
                 "pane_id": pane_id,
+                "pattern": pattern,
                 "status": "active"
             }));
 
@@ -819,34 +821,61 @@ pub async fn execute_tool_call(
                 let slow_poll = Duration::from_millis(500);
                 let start_wait = Duration::from_secs(5);
 
-                let completed = tokio::time::timeout(timeout, async {
-                    // If the pane is already at a shell prompt, first wait up to 5s for a
-                    // command to start before we start watching for completion.
-                    if is_shell_prompt(&initial_cmd) {
-                        let _ = tokio::time::timeout(start_wait, async {
-                            loop {
-                                tokio::time::sleep(slow_poll).await;
-                                let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
-                                if !is_shell_prompt(&cur) { break; }
-                            }
-                        }).await;
-                    }
+                // Pre-compile pattern regex once so the watch loop doesn't recompile each tick.
+                let pattern_re = pattern_owned.as_deref().and_then(|p| {
+                    regex::Regex::new(p).ok()
+                });
 
-                    // Race: pane-title-changed IPC signal vs 500 ms poll.
-                    // Stop when pane_current_command returns to a shell name (command is done).
-                    loop {
-                        tokio::select! {
-                            result = wp_rx.recv() => {
-                                if let Ok(notified_pane) = result {
-                                    if notified_pane == pane_id_owned {
-                                        let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
-                                        if is_shell_prompt(&cur) { break; }
+                let completed = tokio::time::timeout(timeout, async {
+                    if let Some(ref re) = pattern_re {
+                        // Pattern mode: return as soon as the regex matches any pane output.
+                        // Don't wait for the command to exit — the event we care about may
+                        // arrive while the process is still running.
+                        loop {
+                            tokio::select! {
+                                result = wp_rx.recv() => {
+                                    if let Ok(notified_pane) = result {
+                                        if notified_pane == pane_id_owned {
+                                            let snap = tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
+                                            if re.is_match(&snap) { break; }
+                                        }
                                     }
                                 }
+                                _ = tokio::time::sleep(slow_poll) => {
+                                    let snap = tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
+                                    if re.is_match(&snap) { break; }
+                                }
                             }
-                            _ = tokio::time::sleep(slow_poll) => {
-                                let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
-                                if is_shell_prompt(&cur) { break; }
+                        }
+                    } else {
+                        // Completion mode: return when pane_current_command returns to a shell.
+                        // If the pane is already at a shell prompt, first wait up to 5s for a
+                        // command to start before we start watching for completion.
+                        if is_shell_prompt(&initial_cmd) {
+                            let _ = tokio::time::timeout(start_wait, async {
+                                loop {
+                                    tokio::time::sleep(slow_poll).await;
+                                    let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                    if !is_shell_prompt(&cur) { break; }
+                                }
+                            }).await;
+                        }
+
+                        // Race: pane-title-changed IPC signal vs 500 ms poll.
+                        loop {
+                            tokio::select! {
+                                result = wp_rx.recv() => {
+                                    if let Ok(notified_pane) = result {
+                                        if notified_pane == pane_id_owned {
+                                            let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                            if is_shell_prompt(&cur) { break; }
+                                        }
+                                    }
+                                }
+                                _ = tokio::time::sleep(slow_poll) => {
+                                    let cur = tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                    if is_shell_prompt(&cur) { break; }
+                                }
                             }
                         }
                     }
@@ -862,13 +891,20 @@ pub async fn execute_tool_call(
                 let body = crate::ai::filter::mask_sensitive(&normalize_output(&raw));
 
                 let content = if completed {
-                    format!(
-                        "[Watch Pane Complete] Command finished in pane {}.\n<output>\n{}\n</output>",
-                        pane_id_owned, body
-                    )
+                    if let Some(ref pat) = pattern_owned {
+                        format!(
+                            "[Watch Pane Match] Pattern `{}` matched in pane {}.\n<output>\n{}\n</output>",
+                            pat, pane_id_owned, body
+                        )
+                    } else {
+                        format!(
+                            "[Watch Pane Complete] Command finished in pane {}.\n<output>\n{}\n</output>",
+                            pane_id_owned, body
+                        )
+                    }
                 } else {
                     format!(
-                        "[Watch Pane Timeout] Timed out waiting for command in pane {} to finish.\n<output>\n{}\n</output>",
+                        "[Watch Pane Timeout] Timed out waiting in pane {}.\n<output>\n{}\n</output>",
                         pane_id_owned, body
                     )
                 };
@@ -900,11 +936,164 @@ pub async fn execute_tool_call(
                 log::info!("watch_pane {}: {}", pane_id_owned, if completed { "completed" } else { "timed out" });
             });
 
+            if let Some(pat) = pattern {
+                format!(
+                    "Now watching pane {} for pattern `{}`. \
+                     You will receive [Watch Pane Match] when the pattern appears, \
+                     or [Watch Pane Timeout] after {} seconds.",
+                    pane_id, pat, timeout_secs
+                )
+            } else {
+                format!(
+                    "Now watching pane {} for command completion. \
+                     You will receive [Watch Pane Complete] when the command finishes, \
+                     or [Watch Pane Timeout] after {} seconds.",
+                    pane_id, timeout_secs
+                )
+            }
+        }
+
+        PendingCall::ReadFile { path, offset, limit, pattern, .. } => {
+            // Reject path traversal attempts.
+            if path.contains("..") {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: path must not contain '..'.".to_string()
+                ));
+            }
+            let std_path = std::path::Path::new(path.as_str());
+            if !std_path.is_absolute() {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: path must be absolute (e.g. /var/log/syslog).".to_string()
+                ));
+            }
+            let raw = match std::fs::read_to_string(std_path) {
+                Ok(s) => s,
+                Err(e) => return Ok(ToolCallOutcome::Result(
+                    format!("Error reading {}: {}", path, e)
+                )),
+            };
+
+            const MAX_LINES: usize = 500;
+            const DEFAULT_LINES: usize = 200;
+            let limit_n = match limit {
+                Some(n) if *n > 0 => (*n as usize).min(MAX_LINES),
+                _ => DEFAULT_LINES,
+            };
+            let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
+
+            // Collect lines, apply offset and limit.
+            let all_lines: Vec<&str> = raw.lines().collect();
+            let total = all_lines.len();
+            let sliced = &all_lines[offset_n.min(total)..];
+            let limited: Vec<&str> = sliced.iter().take(limit_n).copied().collect();
+
+            // Optional pattern filter (grep mode).
+            let filtered: Vec<&str> = if let Some(pat) = pattern {
+                match regex::Regex::new(pat) {
+                    Ok(re) => limited.into_iter().filter(|l| re.is_match(l)).collect(),
+                    Err(e) => return Ok(ToolCallOutcome::Result(
+                        format!("Error: invalid pattern regex: {}", e)
+                    )),
+                }
+            } else {
+                limited
+            };
+
+            if filtered.is_empty() {
+                return Ok(ToolCallOutcome::Result(
+                    format!("{}: no lines matched (total {} lines in file)", path, total)
+                ));
+            }
+
+            let body = mask_sensitive(&filtered.join("\n"));
             format!(
-                "Now watching pane {} for command completion. \
-                 You will receive a [Watch Pane Complete] context message when the command finishes, \
-                 or [Watch Pane Timeout] if it doesn't complete within {} seconds.",
-                pane_id, timeout_secs
+                "{} (lines {}-{} of {}):\n{}",
+                path,
+                offset_n + 1,
+                (offset_n + filtered.len()).min(total),
+                total,
+                body
+            )
+        }
+
+        PendingCall::EditFile { id, path, old_string, new_string, .. } => {
+            // Reject path traversal.
+            if path.contains("..") {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: path must not contain '..'.".to_string()
+                ));
+            }
+            let std_path = std::path::Path::new(path.as_str());
+            if !std_path.is_absolute() {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: path must be absolute.".to_string()
+                ));
+            }
+            if old_string.is_empty() {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: old_string cannot be empty.".to_string()
+                ));
+            }
+
+            let original = match std::fs::read_to_string(std_path) {
+                Ok(s) => s,
+                Err(e) => return Ok(ToolCallOutcome::Result(
+                    format!("Error reading {}: {}", path, e)
+                )),
+            };
+
+            let count = original.matches(old_string.as_str()).count();
+            if count == 0 {
+                return Ok(ToolCallOutcome::Result(
+                    format!("Error: old_string not found in {}.", path)
+                ));
+            }
+            if count > 1 {
+                return Ok(ToolCallOutcome::Result(
+                    format!(
+                        "Error: old_string appears {} times in {}. \
+                         Add more surrounding context to make it unique.",
+                        count, path
+                    )
+                ));
+            }
+
+            // Build the approval prompt showing the diff.
+            let approval_cmd = format!(
+                "edit_file {}\n--- old\n{}\n+++ new\n{}",
+                path, old_string, new_string
+            );
+            if let Some(outcome) = prompt_and_await_approval(
+                id, &approval_cmd, false, session_id, tx, rx
+            ).await? {
+                return Ok(outcome);
+            }
+
+            // Apply replacement and write atomically.
+            let updated = original.replacen(old_string.as_str(), new_string.as_str(), 1);
+            let tmp_path = format!("{}.de_tmp", path);
+            if let Err(e) = std::fs::write(&tmp_path, &updated) {
+                return Ok(ToolCallOutcome::Result(
+                    format!("Error writing temp file: {}", e)
+                ));
+            }
+            if let Err(e) = std::fs::rename(&tmp_path, std_path) {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Ok(ToolCallOutcome::Result(
+                    format!("Error committing edit: {}", e)
+                ));
+            }
+
+            log_event("file_edit", serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "path": path,
+            }));
+
+            let old_lines = old_string.lines().count();
+            let new_lines = new_string.lines().count();
+            format!(
+                "Edited {}: replaced {} line(s) with {} line(s).",
+                path, old_lines, new_lines
             )
         }
 

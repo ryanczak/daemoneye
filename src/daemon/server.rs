@@ -440,8 +440,14 @@ pub async fn handle_client(
                 AiEvent::ReadScript { id, script_name, thought_signature } => {
                     pending_calls.push(PendingCall::ReadScript { id, script_name, thought_signature });
                 }
-                AiEvent::WatchPane { id, pane_id, timeout_secs, thought_signature } => {
-                    pending_calls.push(PendingCall::WatchPane { id, pane_id, timeout_secs, thought_signature });
+                AiEvent::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature } => {
+                    pending_calls.push(PendingCall::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature });
+                }
+                AiEvent::ReadFile { id, path, offset, limit, pattern, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern });
+                }
+                AiEvent::EditFile { id, path, old_string, new_string, thought_signature } => {
+                    pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string });
                 }
                 AiEvent::WriteRunbook { id, name, content, thought_signature } => {
                     pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });

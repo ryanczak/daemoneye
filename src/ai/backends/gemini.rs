@@ -188,12 +188,13 @@ impl AiClient for GeminiClient {
                         },
                         {
                             "name": "watch_pane",
-                            "description": "Monitor a background tmux pane for output changes. Returns when activity is detected or timeout expires.",
+                            "description": "Monitor a background tmux pane. Returns when the optional regex pattern matches pane output, or when activity is detected (no pattern), or when timeout expires.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
-                                    "pane_id": {"type": "STRING", "description": "Tmux pane ID (e.g. \"%3\") from BACKGROUND PANE context."},
-                                    "timeout_secs": {"type": "INTEGER", "description": "Max seconds to wait. Defaults to 300."}
+                                    "pane_id": {"type": "STRING", "description": "Tmux pane ID (e.g. \"%3\") from context blocks or list_panes."},
+                                    "timeout_secs": {"type": "INTEGER", "description": "Max seconds to wait. Defaults to 300."},
+                                    "pattern": {"type": "STRING", "description": "Optional regex. When set, returns as soon as the pattern matches a line in pane output. Example: 'listening on port \\d+'."}
                                 },
                                 "required": ["pane_id"]
                             }
@@ -296,6 +297,41 @@ impl AiClient for GeminiClient {
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {}
+                            }
+                        },
+                        {
+                            "name": "list_panes",
+                            "description": "List all active panes in the current tmux session with their pane ID, window name, foreground command, working directory, and terminal title. Use this to discover pane IDs for targeting with run_terminal_command or watch_pane.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {}
+                            }
+                        },
+                        {
+                            "name": "read_file",
+                            "description": "Read a file directly from the daemon host filesystem, bypassing the tmux pane. Supports line-range pagination and optional grep filtering. Sensitive data is masked. NOTE: reads files on the DAEMON HOST only — for remote SSH files use run_terminal_command.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "path": {"type": "STRING", "description": "Absolute path to the file."},
+                                    "offset": {"type": "INTEGER", "description": "Line number to start reading from (1-based). Omit to start from beginning."},
+                                    "limit": {"type": "INTEGER", "description": "Maximum number of lines to return. Defaults to 200, max 500."},
+                                    "pattern": {"type": "STRING", "description": "Optional regex pattern. When set, only matching lines are returned (like grep)."}
+                                },
+                                "required": ["path"]
+                            }
+                        },
+                        {
+                            "name": "edit_file",
+                            "description": "Safely replace an exact string in a file on the daemon host filesystem. old_string must appear exactly once. User approval is required before the write is committed. NOTE: edits files on the DAEMON HOST only — for remote files use run_terminal_command.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "path": {"type": "STRING", "description": "Absolute path to the file to edit."},
+                                    "old_string": {"type": "STRING", "description": "Exact string to find and replace. Must appear exactly once in the file."},
+                                    "new_string": {"type": "STRING", "description": "Replacement string."}
+                                },
+                                "required": ["path", "old_string", "new_string"]
                             }
                         }
                     ]

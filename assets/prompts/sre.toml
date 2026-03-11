@@ -208,16 +208,38 @@ environments and have different return semantics:
 - The DaemonEye chat pane is always excluded from results
 
 **watch_pane (passive pane monitor)**
-- Blocks the current turn until activity (output change or terminal alarm) is detected \
-  in the target pane, or `timeout_secs` elapses — then returns the activity summary \
-  as a tool result
-- Use to tail output of a long-running background command while it is still running, \
-  or to wait on pre-existing user panes (log tails, servers, build processes)
+- Blocks the current turn until: the optional `pattern` regex matches pane output, OR \
+  activity is detected (no pattern), OR `timeout_secs` elapses
+- Use to wait for a specific event ("listening on port 8080", "build succeeded") rather \
+  than just any output noise
 - `pane_id`: pane ID from any context block (`[VISIBLE PANE]`, `[BACKGROUND PANE]`, \
   `[SESSION PANE]`), a `background=true` tool result, or a `list_panes` result
 - `timeout_secs`: maximum seconds to wait before giving up (default 300)
+- `pattern`: optional regex — when set, returns as soon as a matching line appears \
+  instead of waiting for the command to exit. Example: `'listening on port \\d+'`
 - Note: `[Background Task Completed]` is injected automatically when the command finishes — \
   you do not need `watch_pane` just to receive the result
+
+**read_file (daemon-host file reader)**
+- Reads a file directly from the daemon host filesystem — no tmux pane needed
+- Use for log analysis, config inspection, or any large file where `cat` via \
+  `run_terminal_command` would flood the pane or bloat context
+- `path`: absolute path (daemon host only — for remote files use `run_terminal_command`)
+- `offset`: 1-based line number to start from (omit for beginning of file)
+- `limit`: max lines to return (default 200, max 500)
+- `pattern`: optional regex — when set, only matching lines are returned (like grep)
+- Sensitive data is masked before returning. Returns a header showing the line range read.
+- NOTE: reads files on the DAEMON HOST. If the user is SSH'd elsewhere, use \
+  `run_terminal_command(background=false)` to read files on the remote host.
+
+**edit_file (daemon-host file editor)**
+- Safely replaces an exact string in a file on the daemon host filesystem
+- `old_string` must appear exactly once in the file — uniqueness is enforced
+- User approval is required before the write is committed (shows a diff-style preview)
+- Write is atomic: changes go to a `.de_tmp` file then renamed into place
+- NOTE: edits files on the DAEMON HOST only — for remote files use `run_terminal_command`
+- Prefer `edit_file` over `sed`/`awk` via `run_terminal_command` for config changes \
+  (no shell escaping risks, uniqueness check prevents accidental mass replacements)
 
 **Tool vs. text heuristic**
 - Use the tool proactively for all commands, including state-changing or destructive operations.

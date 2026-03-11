@@ -134,16 +134,59 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "watch_pane",
-        description: "Passively monitor a background tmux pane for output changes. The tool \
-                      returns immediately, and an out-of-band [System] Activity detected message \
-                      will be injected into this chat session when the pane produces new output. \
-                      Use this instead of polling to be notified when a long-running process \
-                      (e.g. build, test, log tail) finishes or produces new output.",
+        description: "Passively monitor a background tmux pane. Blocks until the pane's \
+                      command completes (returns to shell prompt), or until a specific string \
+                      or regex pattern appears in the pane output (if `pattern` is set), or \
+                      until `timeout_secs` elapses. Use for build completion, service startup \
+                      events, or any output-triggered condition.",
         params: &[
             ParamDef { name: "pane_id",      ty: ParamTy::Str, required: true,
                        description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), background=true tool results, or list_panes." },
             ParamDef { name: "timeout_secs", ty: ParamTy::Int, required: false,
-                       description: "Maximum seconds to wait for output. Defaults to 300 (5 minutes)." },
+                       description: "Maximum seconds to wait. Defaults to 300 (5 minutes)." },
+            ParamDef { name: "pattern",      ty: ParamTy::Str, required: false,
+                       description: "Optional regex pattern. When set, returns as soon as the \
+                                     pattern matches any line in the pane output — does not wait \
+                                     for the command to exit. Example: 'listening on port \\d+' \
+                                     or 'build (succeeded|failed)'." },
+        ],
+    },
+    ToolDef {
+        name: "read_file",
+        description: "Read a file directly from the daemon host filesystem, bypassing the tmux \
+                      pane. Supports line-range pagination and optional grep filtering. \
+                      Sensitive data is masked before returning. \
+                      NOTE: reads files on the DAEMON HOST only — for files on a remote SSH host \
+                      use run_terminal_command instead.",
+        params: &[
+            ParamDef { name: "path",    ty: ParamTy::Str, required: true,
+                       description: "Absolute path to the file to read." },
+            ParamDef { name: "offset",  ty: ParamTy::Int, required: false,
+                       description: "Line number to start reading from (1-based). Omit to read from the beginning." },
+            ParamDef { name: "limit",   ty: ParamTy::Int, required: false,
+                       description: "Maximum number of lines to return. Defaults to 200, capped at 500." },
+            ParamDef { name: "pattern", ty: ParamTy::Str, required: false,
+                       description: "Optional regex pattern. When set, only lines matching the \
+                                     pattern are returned (like grep). Applied after offset/limit." },
+        ],
+    },
+    ToolDef {
+        name: "edit_file",
+        description: "Safely replace an exact string in a file on the daemon host filesystem. \
+                      Finds `old_string` in the file (must appear exactly once), replaces it \
+                      with `new_string`, and writes the result atomically. \
+                      User approval is required before the write is committed. \
+                      NOTE: edits files on the DAEMON HOST only — for remote files use \
+                      run_terminal_command with sed/awk, or ssh into the host first.",
+        params: &[
+            ParamDef { name: "path",       ty: ParamTy::Str, required: true,
+                       description: "Absolute path to the file to edit." },
+            ParamDef { name: "old_string", ty: ParamTy::Str, required: true,
+                       description: "Exact text to find in the file. Must appear exactly once. \
+                                     Include enough surrounding context (e.g. the whole line) to \
+                                     be unique." },
+            ParamDef { name: "new_string", ty: ParamTy::Str, required: true,
+                       description: "Replacement text. Use empty string to delete old_string." },
         ],
     },
     ToolDef {
@@ -382,6 +425,22 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             id: id.to_string(),
             pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
             timeout_secs: args["timeout_secs"].as_u64().unwrap_or(300),
+            pattern: args["pattern"].as_str().map(|s| s.to_string()),
+            thought_signature: ts,
+        }),
+        "read_file" => Some(AiEvent::ReadFile {
+            id: id.to_string(),
+            path: args["path"].as_str().unwrap_or("").to_string(),
+            offset: args["offset"].as_u64(),
+            limit: args["limit"].as_u64(),
+            pattern: args["pattern"].as_str().map(|s| s.to_string()),
+            thought_signature: ts,
+        }),
+        "edit_file" => Some(AiEvent::EditFile {
+            id: id.to_string(),
+            path: args["path"].as_str().unwrap_or("").to_string(),
+            old_string: args["old_string"].as_str().unwrap_or("").to_string(),
+            new_string: args["new_string"].as_str().unwrap_or("").to_string(),
             thought_signature: ts,
         }),
         "write_runbook" => Some(AiEvent::WriteRunbook {
