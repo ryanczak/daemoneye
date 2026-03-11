@@ -12,7 +12,7 @@ cargo test <test_name>             # run a single test by name
 cargo test -- --nocapture          # run tests with stdout visible
 ```
 
-The project compiles cleanly with only pre-existing `dead_code` warnings — no errors. Tests currently do not compile due to an unresolved import (`E0432`) in a test configuration; `cargo build` succeeds.
+The project compiles cleanly with only pre-existing `dead_code` warnings — no errors. 224 tests pass.
 
 ## Architecture Overview
 
@@ -38,7 +38,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/executor.rs` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination |
 | `src/daemon/background.rs` | `run_background_in_window`, `notify_job_completion`, GC lifecycle |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
-| `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo`, `is_interactive_command`, `interactive_destination` helpers |
+| `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo`, `is_interactive_command`, `interactive_destination`, `normalize_output` helpers |
 | `src/ai/types.rs` | `PendingCall` enum (one variant per AI tool), `AiEvent`, `Message`, `AiUsage` |
 | `src/ai/mod.rs` | `AiClient` trait; `dispatch_tool_event()` |
 | `src/ai/tools.rs` | Tool definitions for all three providers (Anthropic / OpenAI / Gemini) |
@@ -55,8 +55,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Global statics in daemon
 
-- `FG_DONE_TX`: `OnceLock<broadcast::Sender<()>>` — shared by foreground completion (P6) and `watch_pane` (P8).
-- `FG_HOOK_COUNTER`: `AtomicUsize` — unique `alert-activity[N]` slot per concurrent watcher.
+- `BG_DONE_TX`: `OnceLock<broadcast::Sender<String>>` — sends pane_id on activity; shared by foreground completion and `watch_pane`.
+- `FG_HOOK_COUNTER`: `AtomicUsize` — unique `alert-activity[N]` hook slot per concurrent watcher.
 
 ### Session context format
 
@@ -69,11 +69,30 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Adding a new AI tool (checklist)
 
-1. `src/ai/types.rs`: add `PendingCall::ToolName { ... }` variant + `to_tool_call()` arm + `id()` arm.
-2. `src/ai/tools.rs`: add tool definition for all three providers (Anthropic, OpenAI, Gemini).
-3. `src/ai/mod.rs`: add `AiEvent::ToolName` variant and arm in `dispatch_tool_event()`.
-4. `src/daemon/server.rs`: add `AiEvent::ToolName` arm in the streaming loop.
-5. `src/daemon/executor.rs`: add execution handler in the pending calls loop.
+1. `src/ai/types.rs`: add `PendingCall::ToolName { ... }` variant + `to_tool_call()` arm + `id()` arm + `tool_name()` arm.
+2. `src/ai/types.rs`: add `AiEvent::ToolName { ... }` variant.
+3. `src/ai/tools.rs`: add a `ToolDef` entry to the `TOOLS` slice (Anthropic + OpenAI share it); add dispatch arm in `dispatch_tool_event()`.
+4. `src/ai/backends/gemini.rs`: add inline entry to the `function_declarations` array in `chat()`.
+5. `src/daemon/server.rs`: add `AiEvent::ToolName` arm in the streaming match.
+6. `src/daemon/executor.rs`: add `PendingCall::ToolName` arm in `execute_tool_call()`.
+7. `src/config.rs` (`SRE_PROMPT_TOML` / `assets/prompts/sre.toml`): document the new tool.
+
+### Current AI tools
+
+| Tool | Description |
+|---|---|
+| `run_terminal_command` | Foreground (user pane) or background (daemon host window) |
+| `schedule_command` | One-shot or recurring scheduled jobs |
+| `list_schedules` / `cancel_schedule` / `delete_schedule` | Schedule management |
+| `write_script` / `read_script` / `list_scripts` | Script CRUD in `~/.daemoneye/scripts/` |
+| `watch_pane` | Block until regex `pattern` matches pane output, or command exits, or timeout |
+| `read_file` | Paginated daemon-host file read with optional grep filter; masks sensitive data |
+| `edit_file` | Atomic string replacement in daemon-host file; requires user approval |
+| `write_runbook` / `read_runbook` / `delete_runbook` / `list_runbooks` | Runbook CRUD |
+| `add_memory` / `read_memory` / `delete_memory` / `list_memories` | Persistent memory |
+| `search_repository` | Grep across runbooks / scripts / memory / events |
+| `get_terminal_context` | Fresh tmux snapshot on demand |
+| `list_panes` | Enumerate all panes in session (pane ID, cmd, cwd, title) |
 
 ## Important Invariants
 

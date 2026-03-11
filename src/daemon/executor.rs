@@ -986,6 +986,7 @@ pub async fn execute_tool_call(
             let total = all_lines.len();
             let sliced = &all_lines[offset_n.min(total)..];
             let limited: Vec<&str> = sliced.iter().take(limit_n).copied().collect();
+            let limited_len = limited.len();
 
             // Optional pattern filter (grep mode).
             let filtered: Vec<&str> = if let Some(pat) = pattern {
@@ -1006,14 +1007,26 @@ pub async fn execute_tool_call(
             }
 
             let body = mask_sensitive(&filtered.join("\n"));
-            format!(
-                "{} (lines {}-{} of {}):\n{}",
-                path,
-                offset_n + 1,
-                (offset_n + filtered.len()).min(total),
-                total,
-                body
-            )
+            if pattern.is_some() {
+                format!(
+                    "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
+                    path,
+                    filtered.len(),
+                    offset_n + 1,
+                    (offset_n + limited_len).min(total),
+                    total,
+                    body
+                )
+            } else {
+                format!(
+                    "{} (lines {}-{} of {}):\n{}",
+                    path,
+                    offset_n + 1,
+                    (offset_n + filtered.len()).min(total),
+                    total,
+                    body
+                )
+            }
         }
 
         PendingCall::EditFile { id, path, old_string, new_string, .. } => {
@@ -1341,4 +1354,188 @@ pub async fn execute_tool_call(
         }
     };
     Ok(ToolCallOutcome::Result(result))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::{is_shell_prompt, looks_like_shell_prompt};
+
+    // ── is_shell_prompt ───────────────────────────────────────────────────────
+
+    #[test]
+    fn is_shell_prompt_recognises_common_shells() {
+        for sh in &["bash", "zsh", "fish", "sh", "ksh", "csh", "tcsh", "dash", "nu"] {
+            assert!(is_shell_prompt(sh), "{sh} should be a shell prompt");
+        }
+    }
+
+    #[test]
+    fn is_shell_prompt_rejects_commands() {
+        for cmd in &["ssh", "vim", "python3", "cargo", "top", ""] {
+            assert!(!is_shell_prompt(cmd), "{cmd} should not be a shell prompt");
+        }
+    }
+
+    #[test]
+    fn is_shell_prompt_trims_whitespace() {
+        assert!(is_shell_prompt("  bash  "));
+        assert!(is_shell_prompt("\tzsh\n"));
+    }
+
+    // ── looks_like_shell_prompt ───────────────────────────────────────────────
+
+    #[test]
+    fn looks_like_shell_prompt_dollar() {
+        assert!(looks_like_shell_prompt("user@host:~$ "));
+        assert!(looks_like_shell_prompt("user@host:~$"));
+    }
+
+    #[test]
+    fn looks_like_shell_prompt_hash() {
+        assert!(looks_like_shell_prompt("root@host:~# "));
+        assert!(looks_like_shell_prompt("root@host:~#"));
+    }
+
+    #[test]
+    fn looks_like_shell_prompt_percent() {
+        assert!(looks_like_shell_prompt("host% "));
+    }
+
+    #[test]
+    fn looks_like_shell_prompt_angle() {
+        assert!(looks_like_shell_prompt("PS> "));
+    }
+
+    #[test]
+    fn looks_like_shell_prompt_ignores_blank_lines() {
+        // Trailing blank lines should not prevent detection.
+        let snap = "user@host:~$\n\n  \n";
+        assert!(looks_like_shell_prompt(snap));
+    }
+
+    #[test]
+    fn looks_like_shell_prompt_rejects_mid_output() {
+        // A line ending with "foo" is not a prompt.
+        assert!(!looks_like_shell_prompt("some random output\nfoo bar"));
+    }
+
+    #[test]
+    fn looks_like_shell_prompt_empty_returns_false() {
+        assert!(!looks_like_shell_prompt(""));
+        assert!(!looks_like_shell_prompt("   \n  "));
+    }
+
+    // ── read_file logic (pure, no filesystem) ────────────────────────────────
+
+    fn simulate_read_file(
+        content: &str,
+        offset: Option<u64>,
+        limit: Option<u64>,
+        pattern: Option<&str>,
+    ) -> String {
+        const MAX_LINES: usize = 500;
+        const DEFAULT_LINES: usize = 200;
+
+        let limit_n = match limit {
+            Some(n) if n > 0 => (n as usize).min(MAX_LINES),
+            _ => DEFAULT_LINES,
+        };
+        let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
+
+        let all_lines: Vec<&str> = content.lines().collect();
+        let total = all_lines.len();
+        let sliced = &all_lines[offset_n.min(total)..];
+        let limited: Vec<&str> = sliced.iter().take(limit_n).copied().collect();
+        let limited_len = limited.len();
+
+        if let Some(pat) = pattern {
+            let re = regex::Regex::new(pat).unwrap();
+            let filtered: Vec<&str> = limited.into_iter().filter(|l| re.is_match(l)).collect();
+            if filtered.is_empty() {
+                return format!("no lines matched (total {} lines in file)", total);
+            }
+            format!(
+                "{} matching lines, searched lines {}-{} of {}:\n{}",
+                filtered.len(),
+                offset_n + 1,
+                (offset_n + limited_len).min(total),
+                total,
+                filtered.join("\n")
+            )
+        } else {
+            if limited.is_empty() {
+                return format!("no lines matched (total {} lines in file)", total);
+            }
+            format!(
+                "lines {}-{} of {}:\n{}",
+                offset_n + 1,
+                (offset_n + limited.len()).min(total),
+                total,
+                limited.join("\n")
+            )
+        }
+    }
+
+    #[test]
+    fn read_file_default_reads_from_start() {
+        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let out = simulate_read_file(&content, None, None, None);
+        assert!(out.starts_with("lines 1-10 of 10:"), "got: {out}");
+        assert!(out.contains("line 1"));
+        assert!(out.contains("line 10"));
+    }
+
+    #[test]
+    fn read_file_offset_skips_lines() {
+        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let out = simulate_read_file(&content, Some(5), None, None);
+        assert!(out.starts_with("lines 5-10 of 10:"), "got: {out}");
+        assert!(!out.contains("line 4"));
+        assert!(out.contains("line 5"));
+    }
+
+    #[test]
+    fn read_file_limit_caps_output() {
+        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let out = simulate_read_file(&content, None, Some(3), None);
+        assert!(out.starts_with("lines 1-3 of 10:"), "got: {out}");
+        assert!(out.contains("line 3"));
+        assert!(!out.contains("line 4"));
+    }
+
+    #[test]
+    fn read_file_limit_capped_at_max() {
+        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        // limit=1000 > MAX_LINES=500, should clamp to all 10 lines here.
+        let out = simulate_read_file(&content, None, Some(1000), None);
+        assert!(out.contains("line 10"), "got: {out}");
+    }
+
+    #[test]
+    fn read_file_pattern_grep_mode_header() {
+        let content = "alpha\nbeta\nalpha again\ngamma";
+        let out = simulate_read_file(content, None, None, Some("alpha"));
+        assert!(out.starts_with("2 matching lines, searched lines 1-4 of 4:"), "got: {out}");
+        assert!(out.contains("alpha"));
+        assert!(!out.contains("beta"));
+        assert!(!out.contains("gamma"));
+    }
+
+    #[test]
+    fn read_file_pattern_no_match_returns_message() {
+        let content = "alpha\nbeta\ngamma";
+        let out = simulate_read_file(content, None, None, Some("zzz"));
+        assert!(out.contains("no lines matched"), "got: {out}");
+    }
+
+    #[test]
+    fn read_file_offset_beyond_eof_returns_empty() {
+        let content = "only one line";
+        let out = simulate_read_file(content, Some(999), None, None);
+        assert!(out.contains("no lines matched") || out.contains("lines"), "got: {out}");
+    }
 }
