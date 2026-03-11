@@ -8,11 +8,22 @@ pub enum MemoryCategory {
 }
 
 impl MemoryCategory {
+    /// Filesystem directory name under ~/.daemoneye/memory/.
     pub fn dir_name(&self) -> &'static str {
         match self {
             MemoryCategory::Session => "session",
             MemoryCategory::Knowledge => "knowledge",
             MemoryCategory::Incident => "incidents",
+        }
+    }
+
+    /// The canonical name used in tool arguments and displayed to the AI.
+    /// Always singular to match the tool description ('incident', not 'incidents').
+    pub fn canonical_name(&self) -> &'static str {
+        match self {
+            MemoryCategory::Session => "session",
+            MemoryCategory::Knowledge => "knowledge",
+            MemoryCategory::Incident => "incident",
         }
     }
 
@@ -95,7 +106,7 @@ pub fn list_memories(category: Option<MemoryCategory>) -> Result<Vec<(String, St
             .collect();
         entries.sort();
         for name in entries {
-            results.push((cat.dir_name().to_string(), name));
+            results.push((cat.canonical_name().to_string(), name));
         }
     }
     Ok(results)
@@ -250,7 +261,7 @@ mod tests {
             let cats: Vec<_> = all.iter().map(|(c, _)| c.as_str()).collect();
             assert!(cats.contains(&"session"));
             assert!(cats.contains(&"knowledge"));
-            assert!(cats.contains(&"incidents"));
+            assert!(cats.contains(&"incident"));
         });
     }
 
