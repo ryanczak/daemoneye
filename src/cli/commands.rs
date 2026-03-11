@@ -923,7 +923,7 @@ async fn ask_with_session(
         "\x1b[31m(\x1b[33m◎\x1b[31m)\x1b[0m",
         "\x1b[31m(\x1b[33m○\x1b[31m)\x1b[0m",
     ];
-    // Verbs rotate every ~30 s (375 ticks × 80 ms = 30 000 ms).
+    // Verbs rotate every ~5 s (62 ticks × 80 ms = 4 960 ms).
     const VERBS: &[&str] = &[
         "scrying",
         "peering",
@@ -936,7 +936,7 @@ async fn ask_with_session(
         "piercing",
         "discerning",
     ];
-    const TICKS_PER_VERB: usize = 375;
+    const TICKS_PER_VERB: usize = 62;
     let mut spin = 0usize;
     let mut response_started = false;
     // prompt_tokens is passed in from the outer loop so the value from the
