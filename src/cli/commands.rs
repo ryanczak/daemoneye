@@ -937,7 +937,12 @@ async fn ask_with_session(
         "discerning",
     ];
     const TICKS_PER_VERB: usize = 62;
-    let mut spin = 0usize;
+    // Start at a random verb so consecutive invocations feel varied.
+    let verb_offset = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as usize) % VERBS.len();
+    let mut spin = verb_offset * TICKS_PER_VERB;
     let mut response_started = false;
     // prompt_tokens is passed in from the outer loop so the value from the
     // previous turn is visible when print_user_query renders the query box.
