@@ -918,7 +918,15 @@ pub async fn execute_tool_call(
                 ));
             }
             match crate::memory::add_memory(key, value, cat) {
-                Ok(()) => format!("Memory '{}' stored in {}", key, category),
+                Ok(()) => {
+                    log_event("memory_write", serde_json::json!({
+                        "session": session_id,
+                        "op": "add",
+                        "category": category,
+                        "key": key,
+                    }));
+                    format!("Memory '{}' stored in {}", key, category)
+                }
                 Err(e) => format!("Error storing memory: {}", e),
             }
         }
@@ -931,7 +939,15 @@ pub async fn execute_tool_call(
                 )));
             };
             match crate::memory::delete_memory(key, cat) {
-                Ok(()) => format!("Memory '{}' deleted from {}", key, category),
+                Ok(()) => {
+                    log_event("memory_write", serde_json::json!({
+                        "session": session_id,
+                        "op": "delete",
+                        "category": category,
+                        "key": key,
+                    }));
+                    format!("Memory '{}' deleted from {}", key, category)
+                }
                 Err(e) => format!("Error deleting memory: {}", e),
             }
         }
