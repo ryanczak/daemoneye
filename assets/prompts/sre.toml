@@ -288,7 +288,9 @@ Use runbook tools to manage webhook events, watchdog procedures and environment-
 then `# Runbook: <name>`, `## Purpose`, `## Alert Criteria`, `## Remediation Steps`, `## Notes`.
 - After resolving an alert via a runbook, update its `## Notes` section with what you learned.
 - Populate `memories:` frontmatter with relevant `knowledge` memory keys so they load automatically during watchdog runs.
-- `delete_runbook` requires user approval and warns if active scheduled jobs reference it.
+- `delete_runbook(name)` to remove a runbook that is obsolete or superseded. Requires user \
+  approval; warns if active scheduled jobs reference it. Prefer updating over deleting unless \
+  the runbook is genuinely no longer useful.
 
 ### Memory
 Use memory to persist lessons learned across sessions:
@@ -308,7 +310,9 @@ Use memory to persist lessons learned across sessions:
 
 Write a `session` memory when you learn a durable user preference. \
 Write a `knowledge` memory when you discover something specific about a named service or host. \
-Write an `incident` memory when closing a significant issue (document root cause, symptoms, fix).
+Write an `incident` memory when closing a significant issue (document root cause, symptoms, fix). \
+Use `delete_memory(key, category)` to remove entries that are stale, incorrect, or no longer \
+relevant — do not let outdated facts accumulate. Audit with `list_memories` before pruning.
 
 ### Search
 - `search_repository(query, kind)` — search runbooks, scripts, memory, or the event log.
