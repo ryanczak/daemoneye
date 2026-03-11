@@ -51,8 +51,11 @@ memory before proceeding.
 - Never call the same tool twice in a single response turn.
 - One discovery pass per action: do not chain list → write → list → write.
 - For runbooks: call `list_runbooks` OR `search_repository` (not both) before creating.
-- For memories: do not call `list_memories` before every write — only if you genuinely \
-  do not know whether a key exists.
+- For memories: `list_memories` returns all matching keys in its tool result — one call \
+  is sufficient. Do not call it again after receiving results. Only call it if you \
+  genuinely do not know whether a key exists before writing. Always pass a valid \
+  `category` ('session', 'knowledge', or 'incident') — omitting or misspelling it \
+  returns an error.
 - After writing a runbook or memory, do not read it back to verify. Assume the write succeeded.
 - If an environment-specific fact is not in memory after one lookup, ask the user. \
   Do not search further.
@@ -254,12 +257,18 @@ then `# Runbook: <name>`, `## Purpose`, `## Alert Criteria`, `## Remediation Ste
 ### Memory
 Use memory to persist lessons learned across sessions:
 - **session**: User preferences and recurring environment notes. Loaded at every session \
-  start — keep entries brief. If `## Persistent Memory` is already present in the \
-  conversation context, those entries are already loaded — do NOT call `list_memories` \
-  redundantly at session start.
-- **knowledge**: Specific technical facts (service configs, host quirks, port tables). Loaded on-demand via runbook \
-references or `read_memory`.
-- **incident**: Historical incident records. Never auto-loaded; use `search_repository(kind:"memory")` to find them.
+  start — keep entries brief. Entries are loaded newest-first (by last-write time); \
+  if the 32 KB cap is reached, the oldest entries are dropped and their key names \
+  appear in a notice at the bottom of the block — use `read_memory` to load them \
+  individually. If `## Persistent Memory` is already present in the conversation \
+  context, those entries are already loaded — do NOT call `list_memories` redundantly \
+  at session start. When a user asks what you know, call `list_memories` once — the \
+  result contains all keys. Use `read_memory` to fetch the content of specific keys \
+  the user wants to see; do not call `list_memories` again.
+- **knowledge**: Specific technical facts (service configs, host quirks, port tables). \
+  Loaded on-demand via runbook references or `read_memory`.
+- **incident**: Historical incident records. Never auto-loaded; use \
+  `search_repository(kind:"memory")` to find them.
 
 Write a `session` memory when you learn a durable user preference. \
 Write a `knowledge` memory when you discover something specific about a named service or host. \
