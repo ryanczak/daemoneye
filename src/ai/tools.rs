@@ -153,40 +153,48 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "read_file",
-        description: "Read a file directly from the daemon host filesystem, bypassing the tmux \
-                      pane. Supports line-range pagination and optional grep filtering. \
-                      Sensitive data is masked before returning. \
-                      NOTE: reads files on the DAEMON HOST only — for files on a remote SSH host \
-                      use run_terminal_command instead.",
+        description: "Read a file with line-range pagination and optional grep filtering. \
+                      Sensitive data is masked. \
+                      Without target_pane: reads directly from the DAEMON HOST filesystem. \
+                      With target_pane: runs sed/grep in that pane — use this when the file \
+                      is on a remote SSH host the user is connected to.",
         params: &[
-            ParamDef { name: "path",    ty: ParamTy::Str, required: true,
+            ParamDef { name: "path",        ty: ParamTy::Str, required: true,
                        description: "Absolute path to the file to read." },
-            ParamDef { name: "offset",  ty: ParamTy::Int, required: false,
+            ParamDef { name: "offset",      ty: ParamTy::Int, required: false,
                        description: "Line number to start reading from (1-based). Omit to read from the beginning." },
-            ParamDef { name: "limit",   ty: ParamTy::Int, required: false,
+            ParamDef { name: "limit",       ty: ParamTy::Int, required: false,
                        description: "Maximum number of lines to return. Defaults to 200, capped at 500." },
-            ParamDef { name: "pattern", ty: ParamTy::Str, required: false,
+            ParamDef { name: "pattern",     ty: ParamTy::Str, required: false,
                        description: "Optional regex pattern. When set, only lines matching the \
                                      pattern are returned (like grep). Applied after offset/limit." },
+            ParamDef { name: "target_pane", ty: ParamTy::Str, required: false,
+                       description: "Optional tmux pane ID. When set, the read runs inside that \
+                                     pane (useful for files on a remote SSH host). Omit for \
+                                     daemon-host files." },
         ],
     },
     ToolDef {
         name: "edit_file",
-        description: "Safely replace an exact string in a file on the daemon host filesystem. \
-                      Finds `old_string` in the file (must appear exactly once), replaces it \
-                      with `new_string`, and writes the result atomically. \
-                      User approval is required before the write is committed. \
-                      NOTE: edits files on the DAEMON HOST only — for remote files use \
-                      run_terminal_command with sed/awk, or ssh into the host first.",
+        description: "Safely replace an exact string in a file. Finds `old_string` (must appear \
+                      exactly once), replaces with `new_string`, writes atomically. \
+                      User approval required before the write is committed. \
+                      Without target_pane: edits on the DAEMON HOST filesystem. \
+                      With target_pane: runs a Python3/Perl replacement script in that pane — \
+                      use this for files on a remote SSH host.",
         params: &[
-            ParamDef { name: "path",       ty: ParamTy::Str, required: true,
+            ParamDef { name: "path",        ty: ParamTy::Str, required: true,
                        description: "Absolute path to the file to edit." },
-            ParamDef { name: "old_string", ty: ParamTy::Str, required: true,
+            ParamDef { name: "old_string",  ty: ParamTy::Str, required: true,
                        description: "Exact text to find in the file. Must appear exactly once. \
                                      Include enough surrounding context (e.g. the whole line) to \
                                      be unique." },
-            ParamDef { name: "new_string", ty: ParamTy::Str, required: true,
+            ParamDef { name: "new_string",  ty: ParamTy::Str, required: true,
                        description: "Replacement text. Use empty string to delete old_string." },
+            ParamDef { name: "target_pane", ty: ParamTy::Str, required: false,
+                       description: "Optional tmux pane ID. When set, the edit runs inside that \
+                                     pane via Python3 (Perl fallback) — use this for files on a \
+                                     remote SSH host. Omit for daemon-host files." },
         ],
     },
     ToolDef {
@@ -434,6 +442,7 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             offset: args["offset"].as_u64(),
             limit: args["limit"].as_u64(),
             pattern: args["pattern"].as_str().map(|s| s.to_string()),
+            target_pane: args["target_pane"].as_str().map(|s| s.to_string()),
             thought_signature: ts,
         }),
         "edit_file" => Some(AiEvent::EditFile {
@@ -441,6 +450,7 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             path: args["path"].as_str().unwrap_or("").to_string(),
             old_string: args["old_string"].as_str().unwrap_or("").to_string(),
             new_string: args["new_string"].as_str().unwrap_or("").to_string(),
+            target_pane: args["target_pane"].as_str().map(|s| s.to_string()),
             thought_signature: ts,
         }),
         "write_runbook" => Some(AiEvent::WriteRunbook {

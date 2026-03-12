@@ -443,11 +443,11 @@ pub async fn handle_client(
                 AiEvent::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature } => {
                     pending_calls.push(PendingCall::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature });
                 }
-                AiEvent::ReadFile { id, path, offset, limit, pattern, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern });
+                AiEvent::ReadFile { id, path, offset, limit, pattern, target_pane, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern, target_pane });
                 }
-                AiEvent::EditFile { id, path, old_string, new_string, thought_signature } => {
-                    pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string });
+                AiEvent::EditFile { id, path, old_string, new_string, target_pane, thought_signature } => {
+                    pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
                 }
                 AiEvent::WriteRunbook { id, name, content, thought_signature } => {
                     pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });

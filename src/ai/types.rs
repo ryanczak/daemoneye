@@ -52,8 +52,8 @@ pub enum PendingCall {
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, thought_signature: Option<String>, script_name: String },
     WatchPane { id: String, thought_signature: Option<String>, pane_id: String, timeout_secs: u64, pattern: Option<String> },
-    ReadFile { id: String, thought_signature: Option<String>, path: String, offset: Option<u64>, limit: Option<u64>, pattern: Option<String> },
-    EditFile { id: String, thought_signature: Option<String>, path: String, old_string: String, new_string: String },
+    ReadFile { id: String, thought_signature: Option<String>, path: String, offset: Option<u64>, limit: Option<u64>, pattern: Option<String>, target_pane: Option<String> },
+    EditFile { id: String, thought_signature: Option<String>, path: String, old_string: String, new_string: String, target_pane: Option<String> },
     WriteRunbook { id: String, thought_signature: Option<String>, name: String, content: String },
     DeleteRunbook { id: String, thought_signature: Option<String>, name: String },
     ReadRunbook { id: String, thought_signature: Option<String>, name: String },
@@ -138,17 +138,17 @@ impl PendingCall {
                 name: "watch_pane".to_string(),
                 arguments: serde_json::json!({"pane_id": pane_id, "timeout_secs": timeout_secs, "pattern": pattern}).to_string(),
             },
-            PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern } => ToolCall {
+            PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern, target_pane } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "read_file".to_string(),
-                arguments: serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern}).to_string(),
+                arguments: serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern, "target_pane": target_pane}).to_string(),
             },
-            PendingCall::EditFile { id, thought_signature, path, old_string, new_string } => ToolCall {
+            PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "edit_file".to_string(),
-                arguments: serde_json::json!({"path": path, "old_string": old_string, "new_string": new_string}).to_string(),
+                arguments: serde_json::json!({"path": path, "old_string": old_string, "new_string": new_string, "target_pane": target_pane}).to_string(),
             },
             PendingCall::WriteRunbook { id, thought_signature, name, content } => ToolCall {
                 id: id.clone(),
@@ -297,8 +297,8 @@ pub enum AiEvent {
     ListScripts { id: String, thought_signature: Option<String> },
     ReadScript { id: String, script_name: String, thought_signature: Option<String> },
     WatchPane { id: String, pane_id: String, timeout_secs: u64, pattern: Option<String>, thought_signature: Option<String> },
-    ReadFile { id: String, path: String, offset: Option<u64>, limit: Option<u64>, pattern: Option<String>, thought_signature: Option<String> },
-    EditFile { id: String, path: String, old_string: String, new_string: String, thought_signature: Option<String> },
+    ReadFile { id: String, path: String, offset: Option<u64>, limit: Option<u64>, pattern: Option<String>, target_pane: Option<String>, thought_signature: Option<String> },
+    EditFile { id: String, path: String, old_string: String, new_string: String, target_pane: Option<String>, thought_signature: Option<String> },
     WriteRunbook { id: String, name: String, content: String, thought_signature: Option<String> },
     DeleteRunbook { id: String, name: String, thought_signature: Option<String> },
     ReadRunbook { id: String, name: String, thought_signature: Option<String> },

@@ -309,27 +309,29 @@ impl AiClient for GeminiClient {
                         },
                         {
                             "name": "read_file",
-                            "description": "Read a file directly from the daemon host filesystem, bypassing the tmux pane. Supports line-range pagination and optional grep filtering. Sensitive data is masked. NOTE: reads files on the DAEMON HOST only — for remote SSH files use run_terminal_command.",
+                            "description": "Read a file with pagination and optional grep filtering. Without target_pane: reads from DAEMON HOST. With target_pane: runs sed/grep in that pane — use for remote SSH host files.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
                                     "path": {"type": "STRING", "description": "Absolute path to the file."},
                                     "offset": {"type": "INTEGER", "description": "Line number to start reading from (1-based). Omit to start from beginning."},
                                     "limit": {"type": "INTEGER", "description": "Maximum number of lines to return. Defaults to 200, max 500."},
-                                    "pattern": {"type": "STRING", "description": "Optional regex pattern. When set, only matching lines are returned (like grep)."}
+                                    "pattern": {"type": "STRING", "description": "Optional regex pattern. When set, only matching lines are returned (like grep)."},
+                                    "target_pane": {"type": "STRING", "description": "Optional tmux pane ID. When set, reads via that pane (for remote SSH host files)."}
                                 },
                                 "required": ["path"]
                             }
                         },
                         {
                             "name": "edit_file",
-                            "description": "Safely replace an exact string in a file on the daemon host filesystem. old_string must appear exactly once. User approval is required before the write is committed. NOTE: edits files on the DAEMON HOST only — for remote files use run_terminal_command.",
+                            "description": "Safely replace an exact string in a file. old_string must appear exactly once. User approval required. Without target_pane: edits on DAEMON HOST. With target_pane: runs Python3/Perl in that pane — use for remote SSH host files.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {
                                     "path": {"type": "STRING", "description": "Absolute path to the file to edit."},
                                     "old_string": {"type": "STRING", "description": "Exact string to find and replace. Must appear exactly once in the file."},
-                                    "new_string": {"type": "STRING", "description": "Replacement string."}
+                                    "new_string": {"type": "STRING", "description": "Replacement string."},
+                                    "target_pane": {"type": "STRING", "description": "Optional tmux pane ID. When set, edits via Python3/Perl in that pane (for remote SSH host files)."}
                                 },
                                 "required": ["path", "old_string", "new_string"]
                             }

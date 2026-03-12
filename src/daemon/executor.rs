@@ -260,6 +260,115 @@ async fn find_best_target_pane(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Remote pane helpers for read_file / edit_file
+// ---------------------------------------------------------------------------
+
+/// Hex-encode a string (no external crate required).
+fn to_hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Shell-escape a single-quoted argument by replacing `'` with `'\''`.
+fn sq_escape(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+/// Extract lines between a unique start marker and end marker from pane output.
+fn extract_marked(snap: &str, start: &str, end: &str) -> Option<String> {
+    let lines: Vec<&str> = snap.lines().collect();
+    let s_idx = lines.iter().position(|l| l.contains(start))?;
+    let e_idx = lines.iter().rposition(|l| l.contains(end))?;
+    if e_idx <= s_idx { return None; }
+    Some(lines[s_idx + 1..e_idx].join("\n"))
+}
+
+/// Send a command to a pane and poll until a completion marker appears in the
+/// captured output.  Returns the raw pane snapshot (caller extracts content).
+async fn remote_run_and_capture(pane_id: &str, cmd: &str, timeout_secs: u64) -> anyhow::Result<String> {
+    tmux::send_keys(pane_id, cmd)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if tokio::time::Instant::now() > deadline {
+            anyhow::bail!("Timed out waiting for remote command in pane {}", pane_id);
+        }
+        let snap = tmux::capture_pane(pane_id, 600).unwrap_or_default();
+        // Completion is signalled by the marker embedded in cmd.
+        if snap.contains("__DE_DONE__") {
+            return Ok(snap);
+        }
+    }
+}
+
+/// Build the shell command to read `path` from a remote pane, with optional
+/// sed pagination and grep filtering.  Output is wrapped in unique markers so
+/// it can be extracted from the pane snapshot.
+fn build_remote_read_cmd(path: &str, start: usize, end: usize, pattern: Option<&str>) -> String {
+    let safe_path = sq_escape(path);
+    let grep_part = pattern
+        .map(|p| format!(" | grep -E '{}'", sq_escape(p)))
+        .unwrap_or_default();
+    format!(
+        "echo '__DE_S__'; sed -n '{},{}p' '{}' 2>&1{}; echo '__DE_E__'; echo '__DE_DONE__'",
+        start, end, safe_path, grep_part
+    )
+}
+
+/// Build the shell command that runs a Python3-then-Perl atomic replacement
+/// in a remote pane.  Both scripts are hex-encoded into the command so no
+/// shell escaping is needed for the file contents.
+fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &str) -> String {
+    let path_hex   = to_hex(path);
+    let old_hex    = to_hex(old_string);
+    let new_hex    = to_hex(new_string);
+
+    // Python3 script — hex-encoded to avoid any quoting issues when passed
+    // to `python3 -c "exec(bytes.fromhex(...).decode())"`.
+    let py = format!(
+        "import os,sys\n\
+         p=bytes.fromhex('{path_hex}').decode()\n\
+         o=bytes.fromhex('{old_hex}').decode()\n\
+         n=bytes.fromhex('{new_hex}').decode()\n\
+         c=open(p).read()\n\
+         cnt=c.count(o)\n\
+         if cnt==0: print('DE_ERROR: old_string not found in '+p); sys.exit(1)\n\
+         if cnt>1: print('DE_ERROR: old_string appears '+str(cnt)+' times in '+p); sys.exit(1)\n\
+         t=p+'.de_tmp'\n\
+         open(t,'w').write(c.replace(o,n,1))\n\
+         os.rename(t,p)\n\
+         print('DE_OK: Edited '+p)\n"
+    );
+    let py_hex = to_hex(&py);
+
+    // Perl script — hex-encoded, decoded via pack('H*',...) and eval'd.
+    let pl = format!(
+        "my $p=pack('H*','{path_hex}');\n\
+         my $o=pack('H*','{old_hex}');\n\
+         my $n=pack('H*','{new_hex}');\n\
+         open(my $f,'<',$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my $c=do{{local $/;<$f>}};close $f;\n\
+         my @m=($c=~/\\Q$o\\E/g);\n\
+         if(!@m){{print \"DE_ERROR: not found\\n\";exit 1}}\n\
+         if(@m>1){{print \"DE_ERROR: \".scalar(@m).\" matches\\n\";exit 1}}\n\
+         $c=~s/\\Q$o\\E/$n/;\n\
+         my $t=\"$p.de_tmp\";\n\
+         open(my $g,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         print $g $c;close $g;\n\
+         rename($t,$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         print \"DE_OK: Edited $p\\n\";\n"
+    );
+    let pl_hex = to_hex(&pl);
+
+    format!(
+        "if command -v python3 >/dev/null 2>&1; then \
+            python3 -c \"exec(bytes.fromhex('{py_hex}').decode())\" 2>&1; \
+         else \
+            perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))' 2>&1; \
+         fi; echo '__DE_DONE__'"
+    )
+}
+
 pub async fn execute_tool_call(
     call: &PendingCall,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
@@ -953,25 +1062,18 @@ pub async fn execute_tool_call(
             }
         }
 
-        PendingCall::ReadFile { path, offset, limit, pattern, .. } => {
+        PendingCall::ReadFile { path, offset, limit, pattern, target_pane, .. } => {
             // Reject path traversal attempts.
             if path.contains("..") {
                 return Ok(ToolCallOutcome::Result(
                     "Error: path must not contain '..'.".to_string()
                 ));
             }
-            let std_path = std::path::Path::new(path.as_str());
-            if !std_path.is_absolute() {
+            if !std::path::Path::new(path.as_str()).is_absolute() {
                 return Ok(ToolCallOutcome::Result(
                     "Error: path must be absolute (e.g. /var/log/syslog).".to_string()
                 ));
             }
-            let raw = match std::fs::read_to_string(std_path) {
-                Ok(s) => s,
-                Err(e) => return Ok(ToolCallOutcome::Result(
-                    format!("Error reading {}: {}", path, e)
-                )),
-            };
 
             const MAX_LINES: usize = 500;
             const DEFAULT_LINES: usize = 200;
@@ -981,14 +1083,45 @@ pub async fn execute_tool_call(
             };
             let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
 
-            // Collect lines, apply offset and limit.
+            // ── Remote path: run sed/grep in target_pane ──────────────────────
+            if let Some(pane) = target_pane {
+                let start = offset_n + 1;
+                let end   = offset_n + limit_n;
+                let cmd = build_remote_read_cmd(path, start, end, pattern.as_deref());
+                let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+                    Ok(s) => s,
+                    Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+                };
+                let content = extract_marked(&snap, "__DE_S__", "__DE_E__")
+                    .unwrap_or_else(|| snap.clone());
+                if content.trim().is_empty() {
+                    return Ok(ToolCallOutcome::Result(
+                        format!("{}: no output (file may be empty or lines out of range)", path)
+                    ));
+                }
+                let body = mask_sensitive(content.trim_end());
+                let label = if pattern.is_some() {
+                    format!("{} (remote grep, lines {}-{}):\n{}", path, start, end, body)
+                } else {
+                    format!("{} (remote, lines {}-{}):\n{}", path, start, end, body)
+                };
+                return Ok(ToolCallOutcome::Result(label));
+            }
+
+            // ── Local path: read directly from daemon-host filesystem ─────────
+            let raw = match std::fs::read_to_string(std::path::Path::new(path.as_str())) {
+                Ok(s) => s,
+                Err(e) => return Ok(ToolCallOutcome::Result(
+                    format!("Error reading {}: {}", path, e)
+                )),
+            };
+
             let all_lines: Vec<&str> = raw.lines().collect();
             let total = all_lines.len();
             let sliced = &all_lines[offset_n.min(total)..];
             let limited: Vec<&str> = sliced.iter().take(limit_n).copied().collect();
             let limited_len = limited.len();
 
-            // Optional pattern filter (grep mode).
             let filtered: Vec<&str> = if let Some(pat) = pattern {
                 match regex::Regex::new(pat) {
                     Ok(re) => limited.into_iter().filter(|l| re.is_match(l)).collect(),
@@ -1010,34 +1143,26 @@ pub async fn execute_tool_call(
             if pattern.is_some() {
                 format!(
                     "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
-                    path,
-                    filtered.len(),
-                    offset_n + 1,
-                    (offset_n + limited_len).min(total),
-                    total,
-                    body
+                    path, filtered.len(), offset_n + 1,
+                    (offset_n + limited_len).min(total), total, body
                 )
             } else {
                 format!(
                     "{} (lines {}-{} of {}):\n{}",
-                    path,
-                    offset_n + 1,
-                    (offset_n + filtered.len()).min(total),
-                    total,
-                    body
+                    path, offset_n + 1,
+                    (offset_n + filtered.len()).min(total), total, body
                 )
             }
         }
 
-        PendingCall::EditFile { id, path, old_string, new_string, .. } => {
+        PendingCall::EditFile { id, path, old_string, new_string, target_pane, .. } => {
             // Reject path traversal.
             if path.contains("..") {
                 return Ok(ToolCallOutcome::Result(
                     "Error: path must not contain '..'.".to_string()
                 ));
             }
-            let std_path = std::path::Path::new(path.as_str());
-            if !std_path.is_absolute() {
+            if !std::path::Path::new(path.as_str()).is_absolute() {
                 return Ok(ToolCallOutcome::Result(
                     "Error: path must be absolute.".to_string()
                 ));
@@ -1048,6 +1173,50 @@ pub async fn execute_tool_call(
                 ));
             }
 
+            // ── Remote path: Python3/Perl replacement in target_pane ──────────
+            if let Some(pane) = target_pane {
+                let location = format!("{} (remote via pane {})", path, pane);
+                let approval_cmd = format!(
+                    "edit_file {}\n--- old\n{}\n+++ new\n{}",
+                    location, old_string, new_string
+                );
+                if let Some(outcome) = prompt_and_await_approval(
+                    id, &approval_cmd, false, session_id, tx, rx
+                ).await? {
+                    return Ok(outcome);
+                }
+
+                let cmd = build_remote_edit_cmd(path, old_string, new_string);
+                let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+                    Ok(s) => s,
+                    Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+                };
+
+                // Look for DE_OK or DE_ERROR in the captured output.
+                for line in snap.lines().rev() {
+                    if line.contains("DE_OK:") {
+                        log_event("file_edit", serde_json::json!({
+                            "session": session_id.unwrap_or("-"),
+                            "path": path,
+                            "remote_pane": pane,
+                        }));
+                        return Ok(ToolCallOutcome::Result(
+                            format!("Edited {} via pane {}.", path, pane)
+                        ));
+                    }
+                    if line.contains("DE_ERROR:") {
+                        return Ok(ToolCallOutcome::Result(
+                            format!("Error editing {}: {}", path, line.trim())
+                        ));
+                    }
+                }
+                return Ok(ToolCallOutcome::Result(
+                    format!("Edit command completed but result was unclear. Check {} manually.", path)
+                ));
+            }
+
+            // ── Local path: direct daemon-host filesystem edit ────────────────
+            let std_path = std::path::Path::new(path.as_str());
             let original = match std::fs::read_to_string(std_path) {
                 Ok(s) => s,
                 Err(e) => return Ok(ToolCallOutcome::Result(
@@ -1071,7 +1240,6 @@ pub async fn execute_tool_call(
                 ));
             }
 
-            // Build the approval prompt showing the diff.
             let approval_cmd = format!(
                 "edit_file {}\n--- old\n{}\n+++ new\n{}",
                 path, old_string, new_string
@@ -1082,7 +1250,6 @@ pub async fn execute_tool_call(
                 return Ok(outcome);
             }
 
-            // Apply replacement and write atomically.
             let updated = original.replacen(old_string.as_str(), new_string.as_str(), 1);
             let tmp_path = format!("{}.de_tmp", path);
             if let Err(e) = std::fs::write(&tmp_path, &updated) {

@@ -220,26 +220,28 @@ environments and have different return semantics:
 - Note: `[Background Task Completed]` is injected automatically when the command finishes — \
   you do not need `watch_pane` just to receive the result
 
-**read_file (daemon-host file reader)**
-- Reads a file directly from the daemon host filesystem — no tmux pane needed
-- Use for log analysis, config inspection, or any large file where `cat` via \
-  `run_terminal_command` would flood the pane or bloat context
-- `path`: absolute path (daemon host only — for remote files use `run_terminal_command`)
+**read_file (file reader — local and remote)**
+- Reads a file with line-range pagination and optional grep filtering. Sensitive data masked.
+- `path`: absolute path to the file
 - `offset`: 1-based line number to start from (omit for beginning of file)
 - `limit`: max lines to return (default 200, max 500)
 - `pattern`: optional regex — when set, only matching lines are returned (like grep)
-- Sensitive data is masked before returning. Returns a header showing the line range read.
-- NOTE: reads files on the DAEMON HOST. If the user is SSH'd elsewhere, use \
-  `run_terminal_command(background=false)` to read files on the remote host.
+- `target_pane`: optional tmux pane ID — **set this when the file is on a remote SSH host**. \
+  The tool runs `sed`/`grep` inside that pane instead of reading locally. \
+  Omit when reading files on the daemon host (reads directly, no tmux involvement).
+- **When to use target_pane:** any time the file lives on a host the user is SSH'd into. \
+  Call `list_panes` to find the right pane ID if needed.
 
-**edit_file (daemon-host file editor)**
-- Safely replaces an exact string in a file on the daemon host filesystem
-- `old_string` must appear exactly once in the file — uniqueness is enforced
-- User approval is required before the write is committed (shows a diff-style preview)
-- Write is atomic: changes go to a `.de_tmp` file then renamed into place
-- NOTE: edits files on the DAEMON HOST only — for remote files use `run_terminal_command`
-- Prefer `edit_file` over `sed`/`awk` via `run_terminal_command` for config changes \
-  (no shell escaping risks, uniqueness check prevents accidental mass replacements)
+**edit_file (file editor — local and remote)**
+- Safely replaces an exact string in a file. `old_string` must appear exactly once.
+- User approval required before the write is committed (shows a diff-style preview).
+- Write is atomic (`.de_tmp` → rename). Enforces uniqueness before writing.
+- `target_pane`: optional tmux pane ID — **set this when the file is on a remote SSH host**. \
+  The tool runs a Python3 replacement script in that pane (falls back to Perl if Python3 \
+  is unavailable). No shell escaping issues — old/new strings are hex-encoded internally. \
+  Omit when editing files on the daemon host (writes directly).
+- Prefer `edit_file` over `sed`/`awk` via `run_terminal_command` for any config or code \
+  change — no escaping risks, uniqueness check prevents accidental mass replacements.
 
 **Tool vs. text heuristic**
 - Use the tool proactively for all commands, including state-changing or destructive operations.
