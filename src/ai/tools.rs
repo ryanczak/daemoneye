@@ -72,6 +72,14 @@ pub static TOOLS: &[ToolDef] = &[
                               Background commands always run on the daemon host — do not set \
                               target_pane for them.",
             },
+            ParamDef {
+                name: "retry_in_pane", ty: ParamTy::Str, required: false,
+                description: "Optional: pane ID of a previous background window (from a \
+                              [Background Task Completed] message) to reuse for a retry. \
+                              Only valid with background=true. The command runs in the same \
+                              tmux window, keeping the failure output visible in scrollback \
+                              above the new run. Omit to create a fresh background window.",
+            },
         ],
     },
     ToolDef {
@@ -394,7 +402,8 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             let cmd = args["command"].as_str()?;
             let bg = args["background"].as_bool().unwrap_or(false);
             let target = args["target_pane"].as_str().map(|s| s.to_string());
-            Some(AiEvent::ToolCall(id.to_string(), cmd.to_string(), bg, target, ts))
+            let retry = args["retry_in_pane"].as_str().map(|s| s.to_string());
+            Some(AiEvent::ToolCall(id.to_string(), cmd.to_string(), bg, target, retry, ts))
         }
         "schedule_command" => Some(AiEvent::ScheduleCommand {
             id: id.to_string(),

@@ -293,6 +293,153 @@ pub async fn run_background_in_window(
 }
 
 // ---------------------------------------------------------------------------
+// Retry via respawn-pane (N11)
+// ---------------------------------------------------------------------------
+
+/// Re-run a command in an existing background pane using `tmux respawn-pane`.
+///
+/// Unlike [`run_background_in_window`], this does NOT create a new tmux window.
+/// It respawns a fresh shell in the existing pane (`-k` kills any running process),
+/// then sends the wrapped command.  The pane's scrollback is preserved, so the
+/// AI can see both the original failure output and the retry output in the same
+/// window.  Useful when the AI wants to retry a failed background command without
+/// cluttering the session with extra windows.
+///
+/// `pane_id` must be a valid, existing pane (caller verifies via `tmux::pane_exists`).
+/// `win_name` is the existing window name (used for logging and archive paths).
+pub async fn respawn_background_in_pane(
+    pane_id: &str,
+    win_name: &str,
+    cmd: &str,
+    session: &str,
+    session_id: Option<String>,
+    sessions: SessionStore,
+) -> String {
+    // Respawn: start a fresh shell in the pane, killing anything running.
+    let respawn_status = std::process::Command::new("tmux")
+        .args(["respawn-pane", "-k", "-t", pane_id])
+        .status();
+    if !respawn_status.map(|s| s.success()).unwrap_or(false) {
+        return format!("Error: failed to respawn pane {} (pane may no longer exist)", pane_id);
+    }
+
+    // Brief yield so tmux can start the shell before we query it.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let started_at = tokio::time::Instant::now();
+
+    // Detect shell for exit-code variable selection.
+    let shell_name = tmux::pane_current_command(pane_id).unwrap_or_default();
+    let exit_var = shell_exit_var(&shell_name);
+
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "daemoneye".to_string());
+    let notify = format!(
+        "{exe} notify complete {pane_id} $__de_ec {session}",
+        pane_id = pane_id,
+        session = shell_escape_arg(session),
+    );
+    let wrapped = if exit_var == "$status" {
+        format!("{cmd}; set __de_ec $status; {notify}")
+    } else {
+        format!("{cmd}; __de_ec=$?; {notify}")
+    };
+
+    if let Err(e) = tmux::send_keys(pane_id, &wrapped) {
+        return format!("Error: failed to send retry command to pane {}: {}", pane_id, e);
+    }
+
+    // Reset exit_code in bg_windows so the session knows it's running again.
+    if let Some(ref sid) = session_id {
+        if let Ok(mut store) = sessions.lock() {
+            if let Some(entry) = store.get_mut(sid) {
+                if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
+                    w.exit_code = None;
+                    w.command = cmd.to_string();
+                }
+            }
+        }
+    }
+
+    log_event("job_retry", serde_json::json!({
+        "session": session_id.as_deref().unwrap_or("-"),
+        "pane": pane_id,
+        "win_name": win_name,
+    }));
+
+    // Spawn completion monitor (same logic as the original run).
+    let pane_id_bg    = pane_id.to_string();
+    let win_name_bg   = win_name.to_string();
+    let cmd_bg        = cmd.to_string();
+    let session_bg    = session.to_string();
+    let session_id_bg = session_id.clone();
+    let sessions_bg   = sessions.clone();
+
+    tokio::spawn(async move {
+        let mut complete_rx = complete_subscribe();
+        let mut died_rx     = bg_done_subscribe();
+
+        let (exit_code, pane_persists) = tokio::time::timeout(
+            Duration::from_secs(3600),
+            async {
+                loop {
+                    tokio::select! {
+                        result = complete_rx.recv() => {
+                            if let Ok((pid, code)) = result {
+                                if pid == pane_id_bg { return (code, true); }
+                            }
+                        }
+                        result = died_rx.recv() => {
+                            if let Ok(pid) = result {
+                                if pid == pane_id_bg {
+                                    let code = tmux::pane_dead_status(&pane_id_bg).unwrap_or(-1);
+                                    return (code, false);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ).await.unwrap_or((124, false));
+
+        let body = capture_and_archive(&pane_id_bg, &win_name_bg);
+
+        log_event("job_complete", serde_json::json!({
+            "session": session_id_bg.as_deref().unwrap_or("-"),
+            "job_name": win_name_bg,
+            "exit_code": exit_code,
+            "duration_ms": started_at.elapsed().as_millis() as u64,
+            "pane_persists": pane_persists,
+            "retry": true,
+        }));
+
+        if let Some(ref sid) = session_id_bg {
+            notify_session(&sessions_bg, sid, &pane_id_bg, &cmd_bg, &win_name_bg, exit_code, &body, pane_persists);
+        }
+
+        if !pane_persists {
+            if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
+                log::error!("Failed to GC retried bg window {}: {}", win_name_bg, e);
+            }
+            if let Some(ref sid) = session_id_bg {
+                if let Ok(mut store) = sessions_bg.lock() {
+                    if let Some(entry) = store.get_mut(sid) {
+                        entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
+                    }
+                }
+            }
+        }
+    });
+
+    format!(
+        "Retry command sent to existing pane {pane_id} (window {win_name}). \
+         The previous output remains visible in scrollback above the new run. \
+         You will receive a [Background Task Completed] message when the retry finishes."
+    )
+}
+
+// ---------------------------------------------------------------------------
 // Scheduled / watchdog job completion handler
 // ---------------------------------------------------------------------------
 

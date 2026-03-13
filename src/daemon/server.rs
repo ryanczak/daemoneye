@@ -238,6 +238,59 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
+        // N1: pane-focus-in hook — update active pane instantly, no 2 s poll lag.
+        Request::NotifyFocus { pane_id, session_name: _ } => {
+            cache.set_active_pane(&pane_id);
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
+        // N2: session-window-changed hook — refresh window topology immediately.
+        Request::NotifyWindowChanged { session_name: _ } => {
+            cache.refresh_windows();
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
+        // N14: after-new-session hook — auto-install per-session hooks for new sessions.
+        Request::NotifySessionCreated { session_name } => {
+            let hook_exe = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "daemoneye".to_string());
+            crate::daemon::install_session_hooks(&session_name, &hook_exe);
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
+        // N15: client-detached hook — record detach time on all sessions for this tmux session.
+        Request::NotifyClientDetached { session_name } => {
+            let now = Instant::now();
+            if let Ok(mut store) = sessions.lock() {
+                for entry in store.values_mut() {
+                    if entry.tmux_session == session_name {
+                        entry.last_detach = Some(now);
+                        entry.messages_at_detach = entry.messages.len();
+                    }
+                }
+            }
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
+        // N15: client-attached hook — clear pending detach state so no catch-up brief fires.
+        Request::NotifyClientAttached { session_name } => {
+            if let Ok(mut store) = sessions.lock() {
+                for entry in store.values_mut() {
+                    if entry.tmux_session == session_name {
+                        entry.last_detach = None;
+                    }
+                }
+            }
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
+        // N8: client-resized hook — update cached viewport dimensions immediately.
+        Request::NotifyResize { width, height, session_name: _ } => {
+            cache.set_client_size(width, height);
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
         _ => return Ok(()),
     };
 
@@ -281,7 +334,8 @@ pub async fn handle_client(
 
     // Upsert the session entry: create it with the client-resolved target pane if
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
-    if let Some(ref id) = session_id {
+    // Also capture any pending catch-up brief (N15) to send after SessionInfo.
+    let catchup_brief: Option<String> = if let Some(ref id) = session_id {
         if let Ok(mut store) = sessions.lock() {
             let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
                 messages: Vec::new(),
@@ -290,15 +344,87 @@ pub async fn handle_client(
                 default_target_pane: client_target_pane.clone(),
                 bg_windows: Vec::new(),
                 last_prompt_tokens: 0,
+                tmux_session: session_name.clone(),
+                last_detach: None,
+                messages_at_detach: 0,
+                pipe_source_pane: None,
             });
             entry.chat_pane = chat_pane.clone();
+            entry.tmux_session = session_name.clone();
             if entry.default_target_pane.is_none() {
                 entry.default_target_pane = client_target_pane.clone();
             }
-            // Ensure the field exists on entries created before this was added.
-            // (No-op for new entries; safe for loaded-from-disk sessions.)
+
+            // R1: start pipe-pane for the source pane on the first Ask so we can
+            // capture full terminal output history (including content that has scrolled
+            // past the tmux scrollback buffer).  Best-effort — falls back to
+            // capture-pane silently if pipe-pane is unavailable.
+            if entry.pipe_source_pane.is_none() {
+                if let Some(ref pane_id) = client_pane {
+                    match crate::tmux::start_pipe_pane(pane_id) {
+                        Ok(_) => { entry.pipe_source_pane = Some(pane_id.clone()); }
+                        Err(e) => { log::warn!("R1: could not start pipe-pane for {}: {}", pane_id, e); }
+                    }
+                }
+            }
+
+            // N15: generate a catch-up brief if the client was detached and new
+            // messages arrived while no terminal was attached (background jobs,
+            // webhook alerts, watchdog results, etc.).
+            let brief = entry.last_detach.and_then(|detach_time| {
+                let away_secs = detach_time.elapsed().as_secs();
+                // Skip if the user was away less than 30 s — too brief to be useful.
+                if away_secs < 30 { return None; }
+
+                let new_msgs = &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
+                if new_msgs.is_empty() { return None; }
+
+                // Scan for injected event messages the AI adds to session history.
+                let events: Vec<String> = new_msgs.iter()
+                    .filter_map(|m| {
+                        let c = &m.content;
+                        if c.contains("[Background Task Completed") ||
+                           c.contains("[Webhook Alert]") ||
+                           c.contains("[Watchdog]") ||
+                           c.contains("[Watch Pane") {
+                            // Extract just the first line as a terse summary.
+                            Some(c.lines().next().unwrap_or(c.as_str()).trim().to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if events.is_empty() { return None; }
+
+                let away_str = if away_secs < 60 {
+                    format!("{}s", away_secs)
+                } else if away_secs < 3600 {
+                    format!("{}m", away_secs / 60)
+                } else {
+                    format!("{}h{}m", away_secs / 3600, (away_secs % 3600) / 60)
+                };
+                let count = events.len();
+                let lines = events.iter()
+                    .map(|e| format!("  • {}", e))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Some(format!(
+                    "[Catch-up] {} event{} while you were away ({}):\n{}",
+                    count, if count == 1 { "" } else { "s" }, away_str, lines,
+                ))
+            });
+
+            // Clear detach state regardless of whether we generated a brief.
+            entry.last_detach = None;
+
+            brief
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     // Trim history to keep the context window bounded.
     // Layout after trim: [messages[0]] [placeholder] [tail...]
@@ -390,6 +516,12 @@ pub async fn handle_client(
 
     send_response_split(&mut tx, Response::SessionInfo { message_count: history_count }).await?;
 
+    // N15: send catch-up brief as a SystemMsg immediately after SessionInfo so
+    // it appears before any streaming tokens from the AI.
+    if let Some(ref brief) = catchup_brief {
+        send_response_split(&mut tx, Response::SystemMsg(brief.clone())).await?;
+    }
+
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
@@ -412,9 +544,9 @@ pub async fn handle_client(
                     full_response.push_str(&t);
                     send_response_split(&mut tx, Response::Token(t)).await?;
                 }
-                AiEvent::ToolCall(id, cmd, bg, target, thought_signature) => {
+                AiEvent::ToolCall(id, cmd, bg, target, retry, thought_signature) => {
                     if bg {
-                        pending_calls.push(PendingCall::Background { id, cmd, _credential: None, thought_signature: thought_signature.clone() });
+                        pending_calls.push(PendingCall::Background { id, cmd, _credential: None, retry_pane: retry, thought_signature: thought_signature.clone() });
                     } else {
                         pending_calls.push(PendingCall::Foreground { id, cmd, target, thought_signature: thought_signature.clone() });
                     }

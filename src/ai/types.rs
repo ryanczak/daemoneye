@@ -34,7 +34,7 @@ pub struct AiUsage {
 /// A tool call collected during AI streaming, to be executed after `Done`.
 pub enum PendingCall {
     Foreground { id: String, thought_signature: Option<String>, cmd: String, target: Option<String> },
-    Background { id: String, thought_signature: Option<String>, cmd: String, _credential: Option<String> },
+    Background { id: String, thought_signature: Option<String>, cmd: String, _credential: Option<String>, retry_pane: Option<String> },
     ScheduleCommand {
         id: String,
         thought_signature: Option<String>,
@@ -80,11 +80,17 @@ impl PendingCall {
                     "target_pane": target
                 }).to_string(),
             },
-            PendingCall::Background { id, thought_signature, cmd, .. } => ToolCall {
+            PendingCall::Background { id, thought_signature, cmd, retry_pane, .. } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "run_terminal_command".to_string(),
-                arguments: serde_json::json!({"command": cmd, "background": true}).to_string(),
+                arguments: {
+                    let mut a = serde_json::json!({"command": cmd, "background": true});
+                    if let Some(rp) = retry_pane {
+                        a["retry_in_pane"] = serde_json::json!(rp);
+                    }
+                    a.to_string()
+                },
             },
             PendingCall::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook } => ToolCall {
                 id: id.clone(),
@@ -279,7 +285,8 @@ impl PendingCall {
 #[derive(Debug)]
 pub enum AiEvent {
     Token(String),
-    ToolCall(String, String, bool, Option<String>, Option<String>),
+    /// (id, cmd, background, target_pane, retry_in_pane, thought_signature)
+    ToolCall(String, String, bool, Option<String>, Option<String>, Option<String>),
     ScheduleCommand {
         id: String,
         name: String,

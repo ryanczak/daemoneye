@@ -1,6 +1,6 @@
-use crate::daemon::session::{bg_done_subscribe, append_session_message, FG_HOOK_COUNTER, SessionStore};
+use crate::daemon::session::{bg_done_subscribe, append_session_message, FG_HOOK_COUNTER, BUFFER_COUNTER, SessionStore};
 use crate::daemon::utils::*;
-use crate::daemon::background::{run_background_in_window};
+use crate::daemon::background::{run_background_in_window, respawn_background_in_pane};
 use crate::ipc::{MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem};
 use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduledJob, ScheduleStore};
 use crate::scripts;
@@ -48,6 +48,9 @@ const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
 const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
 /// Delay after command completion before capturing output, to let the shell flush.
 const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
+/// Seconds of pane silence before `alert-silence` fires as a secondary completion
+/// signal in the local-pane foreground path (N9).
+const SILENCE_MONITOR_SECS: u32 = 2;
 /// Max time to wait for a shell-prompt pattern after starting an interactive
 /// command (ssh, mosh, telnet, screen). Returns as soon as the prompt appears.
 const INTERACTIVE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -315,6 +318,61 @@ fn build_remote_read_cmd(path: &str, start: usize, end: usize, pattern: Option<&
     )
 }
 
+/// Build the shell command to read `path` through the tmux buffer system.
+/// The file is piped into a named tmux buffer so there is no scrollback cap.
+/// A `__DE_DONE__` marker is echoed to the pane after the load completes.
+fn build_local_buffer_read_cmd(path: &str, start: usize, end: usize,
+                                pattern: Option<&str>, buf_name: &str) -> String {
+    let safe_path = sq_escape(path);
+    let grep_part = pattern
+        .map(|p| format!(" | grep -E '{}'", sq_escape(p)))
+        .unwrap_or_default();
+    format!(
+        "sed -n '{},{}p' '{}'{}  | tmux load-buffer -b '{}' -; echo '__DE_DONE__'",
+        start, end, safe_path, grep_part, buf_name
+    )
+}
+
+/// Run a read-file command in a LOCAL target pane using `load-buffer`/`save-buffer`
+/// to bypass the 600-line scrollback cap.  Returns the file content as a String.
+async fn local_read_via_buffer(pane_id: &str, path: &str, start: usize, end: usize,
+                                pattern: Option<&str>) -> anyhow::Result<String> {
+    let idx = BUFFER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let buf_name = format!("de-rb-{}", idx);
+    let cmd = build_local_buffer_read_cmd(path, start, end, pattern, &buf_name);
+
+    // Inject command; wait for __DE_DONE__ in pane (small capture — just the prompt line).
+    tmux::send_keys(pane_id, &cmd)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if tokio::time::Instant::now() > deadline {
+            let _ = std::process::Command::new("tmux")
+                .args(["delete-buffer", "-b", &buf_name])
+                .output();
+            anyhow::bail!("Timed out waiting for buffer load in pane {}", pane_id);
+        }
+        let snap = tmux::capture_pane(pane_id, 5).unwrap_or_default();
+        if snap.contains("__DE_DONE__") {
+            break;
+        }
+    }
+
+    // Read the buffer via `tmux save-buffer`.
+    let out = std::process::Command::new("tmux")
+        .args(["save-buffer", "-b", &buf_name, "-"])
+        .output()?;
+    let _ = std::process::Command::new("tmux")
+        .args(["delete-buffer", "-b", &buf_name])
+        .output();
+
+    if !out.status.success() {
+        // Buffer may be empty (no matching lines) — treat as empty rather than error.
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Build the shell command that runs a Python3-then-Perl atomic replacement
 /// in a remote pane.  Both scripts are hex-encoded into the command so no
 /// shell escaping is needed for the file contents.
@@ -538,6 +596,18 @@ pub async fn execute_tool_call(
                                         }
                                     }
                                 } else {
+                                    // N9: install monitor-silence + alert-silence as a secondary
+                                    // completion signal for edge cases where pane_current_command
+                                    // doesn't reliably signal done (nested shells, custom prompts).
+                                    let silence_hook_name = format!("alert-silence[@de_fg_{}]", hook_idx);
+                                    let _ = std::process::Command::new("tmux")
+                                        .args(["set-hook", "-t", target_str, &silence_hook_name, &notify_cmd])
+                                        .output();
+                                    let _ = std::process::Command::new("tmux")
+                                        .args(["set-option", "-t", target_str,
+                                               "monitor-silence", &SILENCE_MONITOR_SECS.to_string()])
+                                        .output();
+
                                     let fast_poll = LOCAL_CHILD_POLL;
                                     let start_timeout = LOCAL_CHILD_START_WINDOW;
                                     let cmd_timeout = LOCAL_CMD_TIMEOUT;
@@ -571,6 +641,14 @@ pub async fn execute_tool_call(
                                             }
                                         }
                                     }
+
+                                    // N9 cleanup: remove alert-silence hook and restore monitor-silence.
+                                    let _ = std::process::Command::new("tmux")
+                                        .args(["set-hook", "-u", "-t", target_str, &silence_hook_name])
+                                        .output();
+                                    let _ = std::process::Command::new("tmux")
+                                        .args(["set-option", "-u", "-t", target_str, "monitor-silence"])
+                                        .output();
                                 }
 
                                 let _ = std::process::Command::new("tmux")
@@ -628,7 +706,49 @@ pub async fn execute_tool_call(
                 }
         }
 
-        PendingCall::Background { id, cmd, .. } => {
+        PendingCall::Background { id, cmd, retry_pane, .. } => {
+            // N11: retry path — reuse an existing background pane via respawn-pane.
+            if let Some(pane_id) = retry_pane {
+                if !tmux::pane_exists(pane_id) {
+                    let msg = format!(
+                        "Error: retry_in_pane '{}' does not exist. Use background=true without \
+                         retry_in_pane to start a fresh background window.",
+                        pane_id
+                    );
+                    send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                    return Ok(ToolCallOutcome::Result(msg));
+                }
+                // Look up the window name from bg_windows so logs use the original name.
+                let win_name: String = {
+                    let mut name = pane_id.clone();
+                    if let Some(sid) = session_id {
+                        if let Ok(store) = sessions.lock() {
+                            if let Some(entry) = store.get(sid) {
+                                if let Some(w) = entry.bg_windows.iter().find(|w| &w.pane_id == pane_id) {
+                                    name = w.window_name.clone();
+                                }
+                            }
+                        }
+                    }
+                    name
+                };
+                if let Some(outcome) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
+                    return Ok(outcome);
+                }
+                let session_id_owned = session_id.map(|s| s.to_string());
+                let output = respawn_background_in_pane(
+                    pane_id,
+                    &win_name,
+                    cmd,
+                    session_name,
+                    session_id_owned,
+                    sessions.clone(),
+                ).await;
+                send_response_split(tx, Response::ToolResult(output.clone())).await?;
+                log_command(session_id, "background_retry", "", cmd, "approved", &output);
+                return Ok(ToolCallOutcome::Result(output));
+            }
+
             // Enforce per-session cap on open background windows.
             // All lock work is done inside this block so the guard is dropped before any await.
             const MAX_BG_WINDOWS_PER_SESSION: usize = 5;
@@ -1083,27 +1203,48 @@ pub async fn execute_tool_call(
             };
             let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
 
-            // ── Remote path: run sed/grep in target_pane ──────────────────────
+            // ── Target-pane path: run sed/grep in target_pane ─────────────────
             if let Some(pane) = target_pane {
                 let start = offset_n + 1;
                 let end   = offset_n + limit_n;
-                let cmd = build_remote_read_cmd(path, start, end, pattern.as_deref());
-                let snap = match remote_run_and_capture(pane, &cmd, 30).await {
-                    Ok(s) => s,
-                    Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+
+                // N12: if the target pane is LOCAL use load-buffer/save-buffer to
+                // bypass the 600-line scrollback cap.  SSH/mosh panes fall back to
+                // the capture_pane-based approach.
+                let (content, is_remote) = if get_pane_remote_host(pane).is_none() {
+                    let raw = match local_read_via_buffer(pane, path, start, end,
+                                                          pattern.as_deref()).await {
+                        Ok(s) => s,
+                        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+                    };
+                    (raw, false)
+                } else {
+                    let cmd = build_remote_read_cmd(path, start, end, pattern.as_deref());
+                    let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+                        Ok(s) => s,
+                        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+                    };
+                    let extracted = extract_marked(&snap, "__DE_S__", "__DE_E__")
+                        .unwrap_or_else(|| snap.clone());
+                    (extracted, true)
                 };
-                let content = extract_marked(&snap, "__DE_S__", "__DE_E__")
-                    .unwrap_or_else(|| snap.clone());
+
                 if content.trim().is_empty() {
                     return Ok(ToolCallOutcome::Result(
                         format!("{}: no output (file may be empty or lines out of range)", path)
                     ));
                 }
                 let body = mask_sensitive(content.trim_end());
-                let label = if pattern.is_some() {
-                    format!("{} (remote grep, lines {}-{}):\n{}", path, start, end, body)
+                let label = if is_remote {
+                    if pattern.is_some() {
+                        format!("{} (remote grep, lines {}-{}):\n{}", path, start, end, body)
+                    } else {
+                        format!("{} (remote, lines {}-{}):\n{}", path, start, end, body)
+                    }
+                } else if pattern.is_some() {
+                    format!("{} (local grep, lines {}-{}):\n{}", path, start, end, body)
                 } else {
-                    format!("{} (remote, lines {}-{}):\n{}", path, start, end, body)
+                    format!("{} (local pane, lines {}-{}):\n{}", path, start, end, body)
                 };
                 return Ok(ToolCallOutcome::Result(label));
             }
@@ -1490,10 +1631,20 @@ pub async fn execute_tool_call(
                 if rows.len() == 1 { "" } else { "s" },
                 session
             );
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
             for (id, state) in &rows {
                 // Title: omit when it's identical to the command (redundant).
                 let title_part = if !state.pane_title.is_empty() && state.pane_title != state.current_cmd {
                     format!("  title:{}", mask_sensitive(&state.pane_title))
+                } else {
+                    String::new()
+                };
+                // N5: show start command when it differs from current command.
+                let start_part = if !state.start_cmd.is_empty() && state.start_cmd != state.current_cmd {
+                    format!("  started:{}", state.start_cmd)
                 } else {
                     String::new()
                 };
@@ -1503,15 +1654,29 @@ pub async fn execute_tool_call(
                 } else {
                     String::new()
                 };
+                let activity_part = if state.last_activity > 0 && now_secs >= state.last_activity {
+                    let age = now_secs - state.last_activity;
+                    if age < 30 {
+                        format!("  [active {}s ago]", age)
+                    } else if age < 3600 {
+                        format!("  [idle {}m]", age / 60)
+                    } else {
+                        format!("  [idle {}h{}m]", age / 3600, (age % 3600) / 60)
+                    }
+                } else {
+                    String::new()
+                };
                 out.push_str(&format!(
-                    "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}\n",
+                    "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}\n",
                     id,
                     state.window_name,
                     state.current_cmd,
                     state.current_path,
+                    start_part,
                     title_part,
                     sync_part,
                     dead_part,
+                    activity_part,
                 ));
             }
             out.push_str(

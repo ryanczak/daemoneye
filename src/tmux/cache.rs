@@ -4,6 +4,155 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+/// Maximum bytes to read from the tail of a pipe log when using it as the
+/// active-pane content source (R1).
+const PIPE_LOG_MAX_BYTES: usize = 51_200; // 50 KB
+
+
+/// Semantic color tag produced by [`annotate_ansi`].
+#[derive(Clone, Copy, PartialEq)]
+enum SpanColor {
+    Red,
+    Yellow,
+    Green,
+}
+
+/// Classify an SGR parameter string (the content between `\x1b[` and `m`).
+///
+/// Returns `Some(color)` when a foreground colour code is present, `None`
+/// when the sequence is a reset or a non-colour attribute (bold, italic, …).
+fn classify_sgr(params: &str) -> Option<SpanColor> {
+    let mut color: Option<SpanColor> = None;
+    let mut has_reset = false;
+    for part in params.split(';') {
+        match part {
+            "" | "0" => has_reset = true,
+            "31" | "91" => color = Some(SpanColor::Red),
+            "32" | "92" => color = Some(SpanColor::Green),
+            "33" | "93" => color = Some(SpanColor::Yellow),
+            _ => {}
+        }
+    }
+    // An explicit reset in the same sequence (e.g. `\x1b[0;31m`) is treated
+    // as a colour-change rather than a reset so colour wins.
+    if color.is_some() { color } else if has_reset { None } else { None }
+}
+
+/// Flush an accumulated colour span to `out` with the appropriate label.
+fn flush_span(out: &mut String, span_buf: &mut String, color: SpanColor) {
+    let text = span_buf.trim();
+    if !text.is_empty() {
+        let label = match color {
+            SpanColor::Red => "ERROR",
+            SpanColor::Yellow => "WARN",
+            SpanColor::Green => "OK",
+        };
+        out.push_str(&format!("[{}: {}]", label, text));
+    }
+    span_buf.clear();
+}
+
+/// Convert ANSI SGR colour escapes in terminal output to semantic markers (R2).
+///
+/// * Red foreground (31, 91)    → `[ERROR: text]`
+/// * Yellow foreground (33, 93) → `[WARN: text]`
+/// * Green foreground (32, 92)  → `[OK: text]`
+///
+/// All other CSI / OSC sequences (cursor movement, bold, underline, …) are
+/// stripped.  `\r\n` and lone `\r` are normalised to `\n`.
+pub(crate) fn annotate_ansi(s: &str) -> String {
+    use std::sync::OnceLock;
+    use regex::Regex;
+
+    // First branch captures SGR params (ESC [ <digits/semicolons> m).
+    // Remaining branches match other escape sequences that should be stripped.
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(concat!(
+            r"\x1b\[([0-9;]*)m",                            // group 1: SGR
+            r"|\x1b\[[0-9;?<=>!]*[A-Za-z]",                // other CSI
+            r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?",        // OSC
+            r"|\x1b[PX\^_][^\x1b]*\x1b\\",                 // DCS/SOS/PM/APC
+            r"|\x1b[()][A-Za-z0-9]",                        // Charset
+            r"|\x1b.",                                       // lone ESC + 1 byte
+        ))
+        .expect("annotate_ansi regex is valid")
+    });
+
+    let mut result = String::with_capacity(s.len());
+    let mut current_color: Option<SpanColor> = None;
+    let mut span_buf = String::new();
+    let mut last_end = 0usize;
+
+    for cap in re.captures_iter(s) {
+        let m = cap.get(0).unwrap();
+        let plain = &s[last_end..m.start()];
+        if !plain.is_empty() {
+            match current_color {
+                Some(_) => span_buf.push_str(plain),
+                None => result.push_str(plain),
+            }
+        }
+        last_end = m.end();
+
+        if let Some(sgr_params) = cap.get(1) {
+            // This is an SGR sequence.
+            match classify_sgr(sgr_params.as_str()) {
+                Some(new_color) => {
+                    if current_color.is_some() && current_color != Some(new_color) {
+                        // Colour change mid-span: flush old span first.
+                        flush_span(&mut result, &mut span_buf, current_color.unwrap());
+                    }
+                    current_color = Some(new_color);
+                }
+                None => {
+                    // Reset or non-colour SGR: close any open span.
+                    if let Some(c) = current_color {
+                        flush_span(&mut result, &mut span_buf, c);
+                        current_color = None;
+                    }
+                }
+            }
+        }
+        // Non-SGR escapes: stripped (not added to output).
+    }
+
+    // Flush any remaining plain text after the last escape.
+    let tail = &s[last_end..];
+    if !tail.is_empty() {
+        match current_color {
+            Some(_) => span_buf.push_str(tail),
+            None => result.push_str(tail),
+        }
+    }
+    // Close an open span that wasn't terminated with a reset.
+    if let Some(c) = current_color {
+        flush_span(&mut result, &mut span_buf, c);
+    }
+
+    result.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Read the last [`PIPE_LOG_MAX_BYTES`] of the pipe log for `pane_id`,
+/// annotating ANSI colour escapes as semantic markers.  Returns an empty
+/// string if the log does not exist, is empty, or cannot be read.
+fn read_pipe_log(pane_id: &str) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let path = tmux::pipe_log_path(pane_id);
+    let Ok(mut file) = std::fs::File::open(&path) else { return String::new() };
+    let Ok(meta) = file.metadata() else { return String::new() };
+    let file_size = meta.len() as usize;
+    if file_size == 0 { return String::new(); }
+    let offset = file_size.saturating_sub(PIPE_LOG_MAX_BYTES);
+    if offset > 0 && file.seek(SeekFrom::Start(offset as u64)).is_err() {
+        return String::new();
+    }
+    let mut buf = Vec::new();
+    if file.read_to_end(&mut buf).is_err() { return String::new(); }
+    let raw = String::from_utf8_lossy(&buf).into_owned();
+    annotate_ansi(&raw)
+}
+
 /// Cached state for a single tmux pane, refreshed every 2 seconds.
 #[derive(Debug, Clone)]
 pub struct PaneState {
@@ -33,6 +182,12 @@ pub struct PaneState {
     pub dead: bool,
     /// Exit code of the foreground process if `dead` is true.
     pub dead_status: Option<i32>,
+    /// Unix timestamp of the last time this pane produced output (`#{pane_activity}`, N4).
+    /// Zero when unknown or never active.
+    pub last_activity: u64,
+    /// The command the pane was originally created with (`#{pane_start_command}`, N5).
+    /// Empty when not recorded by tmux.
+    pub start_cmd: String,
 }
 
 /// Shared, periodically-refreshed view of all panes in a tmux session.
@@ -54,6 +209,10 @@ pub struct SessionCache {
     pub environment: RwLock<HashMap<String, String>>,
     /// Window-level topology for the session (P4).
     pub windows: RwLock<Vec<tmux::WindowState>>,
+    /// Width of the attached terminal client in columns (N7). Zero = unknown.
+    pub client_width: RwLock<u16>,
+    /// Height of the attached terminal client in rows (N7). Zero = unknown.
+    pub client_height: RwLock<u16>,
 }
 
 impl SessionCache {
@@ -64,6 +223,8 @@ impl SessionCache {
             active_pane: RwLock::new(None),
             environment: RwLock::new(HashMap::new()),
             windows: RwLock::new(Vec::new()),
+            client_width: RwLock::new(0),
+            client_height: RwLock::new(0),
         }
     }
 
@@ -74,6 +235,38 @@ impl SessionCache {
         // Clear stale pane state from any previous (empty) session.
         self.panes.write().unwrap_or_else(|e| e.into_inner()).clear();
         self.windows.write().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
+    /// Instantly update the active pane without waiting for the next 2 s poll.
+    ///
+    /// Called by the `NotifyFocus` handler when a `pane-focus-in` hook fires (N1).
+    pub fn set_active_pane(&self, pane_id: &str) {
+        *self.active_pane.write().unwrap_or_else(|e| e.into_inner()) = Some(pane_id.to_string());
+    }
+
+    /// Update the cached client viewport dimensions.
+    ///
+    /// Called by the `NotifyResize` handler when a `client-resized` hook fires (N8),
+    /// and at session-hook install time to seed the initial value (N7).
+    /// A width or height of 0 means "unknown" and suppresses the context block.
+    pub fn set_client_size(&self, width: u16, height: u16) {
+        *self.client_width.write().unwrap_or_else(|e| e.into_inner()) = width;
+        *self.client_height.write().unwrap_or_else(|e| e.into_inner()) = height;
+    }
+
+    /// Refresh only the window topology list.
+    ///
+    /// Called by the `NotifyWindowChanged` handler when a `session-window-changed`
+    /// hook fires (N2).  Faster than a full `refresh()` since it skips all pane
+    /// captures and environment re-reads.
+    pub fn refresh_windows(&self) {
+        let session = self.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+        if session.is_empty() {
+            return;
+        }
+        if let Ok(wins) = tmux::list_windows(&session) {
+            *self.windows.write().unwrap_or_else(|e| e.into_inner()) = wins;
+        }
     }
 
 
@@ -120,6 +313,8 @@ impl SessionCache {
                         window_name: String::new(),
                         dead: false,
                         dead_status: None,
+                        last_activity: 0,
+                        start_cmd: String::new(),
                     });
 
                 entry.current_cmd = info.current_cmd;
@@ -132,6 +327,8 @@ impl SessionCache {
                 entry.window_name = info.window_name.clone();
                 entry.dead = info.dead;
                 entry.dead_status = info.dead_status;
+                entry.last_activity = info.last_activity;
+                entry.start_cmd = info.start_cmd;
 
                 if entry.buffer != content {
                     entry.buffer = content;
@@ -248,6 +445,15 @@ impl SessionCache {
             }
         }
 
+        // Client viewport (N7) — prepend when dimensions are known.
+        {
+            let w = *self.client_width.read().unwrap_or_else(|e| e.into_inner());
+            let h = *self.client_height.read().unwrap_or_else(|e| e.into_inner());
+            if w > 0 && h > 0 {
+                out.push_str(&format!("[CLIENT VIEWPORT] {}x{}\n", w, h));
+            }
+        }
+
         // Active pane — full capture, explicitly labelled.
         if let Some(pane_id) = source_pane {
             // Pull CWD, command, title, scroll position, and mode flags from cache in one lock.
@@ -260,14 +466,34 @@ impl SessionCache {
                 }
             };
 
-            // R3: if the pane is scrolled back, capture content at that position.
+            // R1: prefer the pipe log over capture-pane when the pane is not
+            // scrolled and the log has content.  The pipe log covers all output
+            // since the chat session started, including content that has scrolled
+            // past the tmux scrollback buffer.  When the user is actively looking
+            // at a different scroll position (R3) we still use capture-pane since
+            // the user's viewport is the meaningful reference point.
+            // R2: use ANSI-escape-aware capture so colour codes are converted to
+            // semantic markers ([ERROR:], [WARN:], [OK:]).  The pipe log already
+            // contains raw ANSI (R1) and goes through annotate_ansi() in
+            // read_pipe_log().  For capture-pane paths we use the `-e` variant
+            // which asks tmux to preserve escape sequences.
             let content = if scroll_pos > 0 {
-                crate::tmux::capture_pane_at_scroll(pane_id, scroll_pos, 200)
-                    .or_else(|_| crate::tmux::capture_pane(pane_id, 200))
+                crate::tmux::capture_pane_at_scroll_with_escapes(pane_id, scroll_pos, 200)
+                    .map(|s| annotate_ansi(&s))
+                    .or_else(|_| {
+                        crate::tmux::capture_pane_with_escapes(pane_id, 200)
+                            .map(|s| annotate_ansi(&s))
+                    })
                     .unwrap_or_else(|_| "(pane unavailable)".to_string())
             } else {
-                crate::tmux::capture_pane(pane_id, 200)
-                    .unwrap_or_else(|_| "(pane unavailable)".to_string())
+                let pipe_content = read_pipe_log(pane_id);
+                if pipe_content.is_empty() {
+                    crate::tmux::capture_pane_with_escapes(pane_id, 200)
+                        .map(|s| annotate_ansi(&s))
+                        .unwrap_or_else(|_| "(pane unavailable)".to_string())
+                } else {
+                    pipe_content
+                }
             };
 
             let cwd_label = if cwd.is_empty() {
@@ -309,6 +535,10 @@ impl SessionCache {
         // - VISIBLE PANE:    same window as the chat pane (user can see it in the split)
         // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sched-*)
         // - SESSION PANE:    any other user window (SSH sessions, editors, etc.)
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
 
         // Determine which window contains the chat pane so we can identify visible peers.
@@ -354,21 +584,50 @@ impl SessionCache {
             } else {
                 String::new()
             };
+            // N4: annotate how recently the pane produced output.
+            let activity_part = if state.last_activity > 0 && now_secs >= state.last_activity {
+                let age = now_secs - state.last_activity;
+                if age < 30 {
+                    format!(" [active {}s ago]", age)
+                } else if age < 3600 {
+                    format!(" [idle {}m]", age / 60)
+                } else {
+                    format!(" [idle {}h{}m]", age / 3600, (age % 3600) / 60)
+                }
+            } else {
+                String::new()
+            };
+            // N5: show start_cmd when it differs from current_cmd (e.g. "ssh -t host bash" vs "bash").
+            let start_part = if !state.start_cmd.is_empty() && state.start_cmd != state.current_cmd {
+                format!(" (started: {})", state.start_cmd)
+            } else {
+                String::new()
+            };
             out.push_str(&format!(
-                "[{} {}{}{}{}{}{}]: {}\n",
+                "[{} {}{}{}{}{}{}{}{}]: {}\n",
                 pane_label,
                 id,
                 format!(" — {}", state.current_cmd),
+                start_part,
                 cwd_part,
                 title_part,
                 sync_part,
                 dead_part,
+                activity_part,
                 mask_sensitive(&state.summary),
             ));
         }
 
         if out.is_empty() {
             out.push_str("(no terminal context available)");
+        } else {
+            // Other sessions (N16) — append when there is already meaningful context.
+            // Skipped when out is empty so it doesn't interfere with the fallback sentinel.
+            let session_name = self.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let other_ctx = tmux::other_sessions_context(&session_name);
+            if !other_ctx.is_empty() {
+                out.push_str(&other_ctx);
+            }
         }
         out
     }
@@ -377,6 +636,101 @@ impl SessionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- annotate_ansi tests (R2, replaces old strip_ansi tests) ---
+
+    #[test]
+    fn annotate_ansi_plain_text_unchanged() {
+        assert_eq!(annotate_ansi("hello world"), "hello world");
+    }
+
+    #[test]
+    fn annotate_ansi_red_becomes_error() {
+        // ESC[31m = red fg, ESC[0m = reset
+        assert_eq!(
+            annotate_ansi("\x1b[31mfailed to connect\x1b[0m"),
+            "[ERROR: failed to connect]"
+        );
+    }
+
+    #[test]
+    fn annotate_ansi_bright_red_becomes_error() {
+        assert_eq!(
+            annotate_ansi("\x1b[91mERROR\x1b[0m"),
+            "[ERROR: ERROR]"
+        );
+    }
+
+    #[test]
+    fn annotate_ansi_yellow_becomes_warn() {
+        assert_eq!(
+            annotate_ansi("\x1b[33mDeprecated API\x1b[0m"),
+            "[WARN: Deprecated API]"
+        );
+    }
+
+    #[test]
+    fn annotate_ansi_bright_yellow_becomes_warn() {
+        assert_eq!(
+            annotate_ansi("\x1b[93mwarning: unused variable\x1b[0m"),
+            "[WARN: warning: unused variable]"
+        );
+    }
+
+    #[test]
+    fn annotate_ansi_green_becomes_ok() {
+        assert_eq!(
+            annotate_ansi("\x1b[32mAll tests passed\x1b[0m"),
+            "[OK: All tests passed]"
+        );
+    }
+
+    #[test]
+    fn annotate_ansi_mixed_colours() {
+        let input = "\x1b[32mOK\x1b[0m some text \x1b[31mERR\x1b[0m";
+        assert_eq!(annotate_ansi(input), "[OK: OK] some text [ERROR: ERR]");
+    }
+
+    #[test]
+    fn annotate_ansi_bold_attribute_stripped() {
+        // Bold (1) is not a colour — span stays open if colour was already set.
+        // Bold alone: just strip the escape.
+        assert_eq!(annotate_ansi("\x1b[1mBold text\x1b[0m"), "Bold text");
+    }
+
+    #[test]
+    fn annotate_ansi_bold_plus_color() {
+        // \x1b[1;31m = bold red — should annotate as ERROR
+        assert_eq!(
+            annotate_ansi("\x1b[1;31mCRITICAL\x1b[0m"),
+            "[ERROR: CRITICAL]"
+        );
+    }
+
+    #[test]
+    fn annotate_ansi_no_reset_at_eof() {
+        // Span not closed with explicit reset — should still emit marker
+        assert_eq!(annotate_ansi("\x1b[31mno reset"), "[ERROR: no reset]");
+    }
+
+    #[test]
+    fn annotate_ansi_cursor_movement_stripped() {
+        // CSI cursor-up stripped; \r\n normalised to \n
+        assert_eq!(annotate_ansi("a\x1b[1Ab\r\nc"), "ab\nc");
+    }
+
+    #[test]
+    fn annotate_ansi_osc_title_stripped() {
+        assert_eq!(annotate_ansi("\x1b]0;user@host\x07hello"), "hello");
+    }
+
+    #[test]
+    fn annotate_ansi_plain_text_between_spans() {
+        let input = "prefix \x1b[31merror msg\x1b[0m suffix";
+        assert_eq!(annotate_ansi(input), "prefix [ERROR: error msg] suffix");
+    }
+
+    // --- SessionCache tests ---
 
     fn cache() -> SessionCache {
         SessionCache::new("test-session")
@@ -448,6 +802,45 @@ mod tests {
     }
 
     #[test]
+    fn get_labeled_context_client_viewport_shown_when_known() {
+        let c = cache();
+        c.set_client_size(220, 50);
+        // Need at least one pane so output is non-empty.
+        {
+            let mut panes = c.panes.write().unwrap();
+            panes.insert("%1".to_string(), PaneState {
+                buffer: String::new(), summary: "shell".to_string(),
+                current_cmd: "bash".to_string(), current_path: "/home/user".to_string(),
+                pane_title: String::new(), last_updated: std::time::Instant::now(),
+                scroll_position: 0, history_size: 0, in_copy_mode: false,
+                synchronized: false, window_name: "main".to_string(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+            });
+        }
+        let ctx = c.get_labeled_context(None, None);
+        assert!(ctx.contains("[CLIENT VIEWPORT] 220x50"), "expected viewport block, got: {ctx}");
+    }
+
+    #[test]
+    fn get_labeled_context_client_viewport_absent_when_zero() {
+        let c = cache();
+        // Default is (0, 0) — no viewport block should appear.
+        {
+            let mut panes = c.panes.write().unwrap();
+            panes.insert("%1".to_string(), PaneState {
+                buffer: String::new(), summary: "shell".to_string(),
+                current_cmd: "bash".to_string(), current_path: "/home/user".to_string(),
+                pane_title: String::new(), last_updated: std::time::Instant::now(),
+                scroll_position: 0, history_size: 0, in_copy_mode: false,
+                synchronized: false, window_name: "main".to_string(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+            });
+        }
+        let ctx = c.get_labeled_context(None, None);
+        assert!(!ctx.contains("[CLIENT VIEWPORT]"), "viewport block should be absent when (0,0)");
+    }
+
+    #[test]
     fn get_labeled_context_background_panes_sorted() {
         let c = cache();
         {
@@ -468,6 +861,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
             panes.insert(
@@ -486,6 +881,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
         }
@@ -576,6 +973,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
         }
@@ -607,6 +1006,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
         }
@@ -643,6 +1044,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
         }
@@ -675,6 +1078,8 @@ mod tests {
                     window_name: "de-bg-myjob".to_string(),
                     dead: true,
                     dead_status: Some(1),
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
         }
@@ -708,6 +1113,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
             // Pane running daemoneye chat.
@@ -727,6 +1134,8 @@ mod tests {
                     window_name: String::new(),
                     dead: false,
                     dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
                 },
             );
         }
@@ -749,7 +1158,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "work".to_string(),
-                dead: false, dead_status: None,
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
             });
             // Visible peer — same window as chat.
             panes.insert("%3".to_string(), PaneState {
@@ -758,7 +1167,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "work".to_string(),
-                dead: false, dead_status: None,
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
             });
             // Daemon-launched background window.
             panes.insert("%5".to_string(), PaneState {
@@ -767,7 +1176,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "de-bg-myjob".to_string(),
-                dead: false, dead_status: None,
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
             });
             // User's session pane in a different window.
             panes.insert("%7".to_string(), PaneState {
@@ -776,7 +1185,7 @@ mod tests {
                 pane_title: "web01".to_string(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "servers".to_string(),
-                dead: false, dead_status: None,
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
             });
         }
         // No source pane; chat pane is %2.

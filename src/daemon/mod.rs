@@ -49,23 +49,69 @@ pub fn detect_session() -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
-/// Install the per-session tmux `alert-bell` hook so the daemon is notified
-/// when background panes ring the bell.  The global `pane-died` hook must be
-/// installed separately (see `run_daemon`).
+/// Install per-session tmux hooks so the daemon is notified of focus changes,
+/// window switches, and bell events without waiting for the 2 s poll cycle.
+///
+/// Hooks installed:
+/// - `alert-bell`             — background pane rang the bell (existing)
+/// - `pane-focus-in`          — instant active-pane tracking (N1)
+/// - `session-window-changed` — instant window-switch awareness (N2)
+/// - `client-resized`         — viewport dimension updates (N8)
+///
+/// The global `pane-died` and `after-new-session` hooks must be installed
+/// separately (see `run_daemon`).
 pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
-    let notify_cmd = format!(
+    let escaped = crate::daemon::utils::shell_escape_arg(session_name);
+
+    // alert-bell: fire when a background pane rings the terminal bell.
+    let bell_cmd = format!(
         "run-shell -b '{} notify activity #{{pane_id}} 0 \"{}\"'",
-        hook_exe,
-        crate::daemon::utils::shell_escape_arg(session_name),
+        hook_exe, escaped,
     );
     if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", session_name, "alert-bell", &notify_cmd])
+        .args(["set-hook", "-t", session_name, "alert-bell", &bell_cmd])
         .output()
     {
         log::warn!("Failed to register alert-bell hook for '{}': {}", session_name, e);
-    } else {
-        log::info!("Session hooks installed for: {}", session_name);
     }
+
+    // pane-focus-in (N1): update active-pane cache instantly when focus moves.
+    let focus_cmd = format!(
+        "run-shell -b '{} notify focus #{{pane_id}} \"{}\"'",
+        hook_exe, escaped,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-t", session_name, "pane-focus-in", &focus_cmd])
+        .output()
+    {
+        log::warn!("Failed to register pane-focus-in hook for '{}': {}", session_name, e);
+    }
+
+    // session-window-changed (N2): refresh window topology when the user switches windows.
+    let window_cmd = format!(
+        "run-shell -b '{} notify window-changed \"{}\"'",
+        hook_exe, escaped,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-t", session_name, "session-window-changed", &window_cmd])
+        .output()
+    {
+        log::warn!("Failed to register session-window-changed hook for '{}': {}", session_name, e);
+    }
+
+    // client-resized (N8): update cached viewport dimensions when the terminal is resized.
+    let resize_cmd = format!(
+        "run-shell -b '{} notify resize #{{client_width}} #{{client_height}} \"{}\"'",
+        hook_exe, escaped,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-t", session_name, "client-resized", &resize_cmd])
+        .output()
+    {
+        log::warn!("Failed to register client-resized hook for '{}': {}", session_name, e);
+    }
+
+    log::info!("Session hooks installed for: {}", session_name);
 }
 
 /// Returns true if a daemon is already listening and responding on the socket.
@@ -145,6 +191,18 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
 
+    // R1: clean up any pipe log files left behind by a previous daemon run so
+    // stale content from a different session is never shown to the AI.
+    if let Ok(entries) = std::fs::read_dir("/tmp") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("de-pipe-") && name_str.ends_with(".log") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
     if startup_config.ai.resolve_api_key().is_empty() {
         let env_var = startup_config.ai.api_key_env_var();
         anyhow::bail!(
@@ -189,7 +247,46 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         log::error!("Failed to register global tmux pane-died hook: {}", e);
     }
 
-    // Install per-session alert-bell hook if we already know the session.
+    // after-new-session (N14): auto-install per-session hooks for any new tmux session,
+    // so monitoring works immediately without requiring a first `daemoneye chat` invocation.
+    let session_created_cmd = format!(
+        "run-shell -b '{} notify session-created #{{session_name}}'",
+        hook_exe_path,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-g", "after-new-session", &session_created_cmd])
+        .output()
+    {
+        log::warn!("Failed to register global tmux after-new-session hook: {}", e);
+    }
+
+    // client-attached (N15): notify daemon when a terminal client re-attaches so it
+    // can clear pending detach state and suppress the catch-up brief.
+    let client_attached_cmd = format!(
+        "run-shell -b '{} notify client-attached #{{session_name}}'",
+        hook_exe_path,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-g", "client-attached", &client_attached_cmd])
+        .output()
+    {
+        log::warn!("Failed to register global tmux client-attached hook: {}", e);
+    }
+
+    // client-detached (N15): notify daemon when the terminal client detaches so it
+    // can record the time and generate a catch-up brief on the next Ask.
+    let client_detached_cmd = format!(
+        "run-shell -b '{} notify client-detached #{{session_name}}'",
+        hook_exe_path,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-g", "client-detached", &client_detached_cmd])
+        .output()
+    {
+        log::warn!("Failed to register global tmux client-detached hook: {}", e);
+    }
+
+    // Install per-session hooks if we already know the session.
     if let Some(ref sn) = initial_session {
         install_session_hooks(sn, &hook_exe_path);
     }
@@ -203,6 +300,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     let cache = Arc::new(SessionCache::new(
         initial_session.as_deref().unwrap_or("")
     ));
+
+    // N7: seed the initial client viewport dimensions now that the cache exists.
+    if let Some(ref sn) = initial_session {
+        let (w, h) = crate::tmux::client_dimensions(sn);
+        if w > 0 && h > 0 {
+            cache.set_client_size(w, h);
+            log::info!("N7: initial client viewport {}x{} for session '{}'", w, h, sn);
+        }
+    }
 
     log::info!("Cache poller started");
     let cache_monitor = Arc::clone(&cache);

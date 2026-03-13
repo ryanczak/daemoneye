@@ -125,7 +125,8 @@ impl AiClient for GeminiClient {
                                 "properties": {
                                     "command": {"type": "STRING", "description": "The bash command to execute."},
                                     "background": {"type": "BOOLEAN", "description": "true = daemon host tmux window (captured); false = user's terminal pane (visible, possibly remote). Defaults to false."},
-                                    "target_pane": {"type": "STRING", "description": "Optional: tmux pane ID for foreground commands."}
+                                    "target_pane": {"type": "STRING", "description": "Optional: tmux pane ID for foreground commands."},
+                                    "retry_in_pane": {"type": "STRING", "description": "Optional: pane ID of a previous background window to reuse for a retry (background=true only). Keeps failure output visible in scrollback."}
                                 },
                                 "required": ["command"]
                             }
@@ -372,7 +373,7 @@ impl AiClient for GeminiClient {
                                         .and_then(|m| m.as_str())
                                     {
                                         if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
-                                            let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd, bg, None, None));
+                                            let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd, bg, None, None, None));
                                         } else {
                                             let _ = tx.send(AiEvent::Error(format!(
                                                 "Gemini produced a malformed function call \

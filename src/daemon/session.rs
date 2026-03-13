@@ -38,6 +38,18 @@ pub struct SessionEntry {
     /// Prompt token count from the most recent AI turn — represents current context pressure.
     /// Updated after every `AiEvent::Done`; sent to the client as `Response::UsageUpdate`.
     pub last_prompt_tokens: u32,
+    /// The tmux session name this AI session is attached to.
+    /// Used to correlate client-detached / client-attached hook events (N15).
+    pub tmux_session: String,
+    /// When the tmux client last detached from this session (`client-detached` hook, N15).
+    /// `None` while a client is attached or before any detach has been observed.
+    pub last_detach: Option<Instant>,
+    /// Number of messages in `messages` at the time of `last_detach`.
+    /// Used to identify messages injected while no client was present (N15).
+    pub messages_at_detach: usize,
+    /// The source pane that has `pipe-pane` active for this session (R1).
+    /// `None` before the first Ask or when pipe-pane is not available.
+    pub pipe_source_pane: Option<String>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -59,6 +71,11 @@ pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(Stri
 /// hook slot names (`@de_fg_N`) for concurrent foreground command executions.
 /// Using a counter avoids the timestamp-modulo collision risk.
 pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Monotonically-incrementing counter used to generate unique tmux buffer names
+/// (`de-rb-N`) for N12 local-pane file reads via `load-buffer`/`save-buffer`.
+pub static BUFFER_COUNTER: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
@@ -315,6 +332,10 @@ impl SessionEntry {
             if let Err(e) = crate::tmux::kill_job_window(&win.tmux_session, &win.window_name) {
                 log::warn!("GC bg window {} on session eviction: {}", win.window_name, e);
             }
+        }
+        // R1: stop pipe-pane and remove the log file if one was started for this session.
+        if let Some(ref pane_id) = self.pipe_source_pane {
+            crate::tmux::stop_pipe_pane(pane_id);
         }
     }
 }

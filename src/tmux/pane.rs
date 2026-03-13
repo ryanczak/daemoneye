@@ -23,6 +23,12 @@ pub struct RichPaneInfo {
     pub in_copy_mode: bool,
     /// True when pane input is synchronized with other panes (`#{pane_synchronized}`, R6).
     pub synchronized: bool,
+    /// Unix timestamp of the last time the pane produced output (`#{pane_activity}`, N4).
+    /// Zero if tmux did not return a value.
+    pub last_activity: u64,
+    /// The command the pane was originally created with (`#{pane_start_command}`, N5).
+    /// Empty string when tmux did not record a start command.
+    pub start_cmd: String,
 }
 
 /// List all panes in the session with rich metadata using a single tmux call.
@@ -33,7 +39,7 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
     let output = Command::new("tmux")
         .args([
             "list-panes", "-a", "-F",
-            "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}",
+            "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_activity}\t#{pane_start_command}",
         ])
         .output()?;
 
@@ -44,7 +50,7 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut panes = Vec::new();
     for line in stdout.lines() {
-        let fields: Vec<&str> = line.splitn(12, '\t').collect();
+        let fields: Vec<&str> = line.splitn(14, '\t').collect();
         if fields.len() < 12 {
             continue;
         }
@@ -73,6 +79,11 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
                 .unwrap_or(0),
             in_copy_mode: fields.get(10).map(|s| s.trim() == "1").unwrap_or(false),
             synchronized: fields.get(11).map(|s| s.trim() == "1").unwrap_or(false),
+            last_activity: fields
+                .get(12)
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .unwrap_or(0),
+            start_cmd: fields.get(13).map(|s| s.trim().to_string()).unwrap_or_default(),
         });
     }
     Ok(panes)
@@ -122,21 +133,42 @@ pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Capture pane content anchored at a historical scroll position (R3).
+/// Capture the content of a specific pane, preserving ANSI escape sequences (R2).
 ///
-/// `scroll_pos` is the value of `#{scroll_position}` — lines scrolled back
-/// from the current bottom.  0 means the pane is at the bottom (use the
-/// regular [`capture_pane`] instead).  `depth` is how many lines to capture.
-pub fn capture_pane_at_scroll(pane_id: &str, scroll_pos: usize, depth: usize) -> Result<String> {
-    // In tmux line numbering, 0 is the visible bottom; negative numbers go up
-    // into scrollback.  When scrolled back N lines, the visible bottom is at
-    // offset -(scroll_pos) and the visible top is depth lines above that.
+/// Like [`capture_pane`] but passes `-e` to `tmux capture-pane`, which makes
+/// tmux retain colour and attribute escape codes in the output.  Used for
+/// semantic annotation when no pipe log is available.
+pub fn capture_pane_with_escapes(pane_id: &str, depth: usize) -> Result<String> {
+    let output = Command::new("tmux")
+        .args([
+            "capture-pane",
+            "-p",
+            "-e",
+            "-t",
+            pane_id,
+            "-S",
+            &format!("-{}", depth),
+        ])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to capture pane '{}' with escapes", pane_id);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Capture pane content at a scroll position, preserving ANSI escapes (R2/R3).
+pub fn capture_pane_at_scroll_with_escapes(
+    pane_id: &str,
+    scroll_pos: usize,
+    depth: usize,
+) -> Result<String> {
     let end: i64 = -(scroll_pos as i64);
     let start: i64 = end - depth as i64;
     let output = Command::new("tmux")
         .args([
             "capture-pane",
             "-p",
+            "-e",
             "-t",
             pane_id,
             "-S",
@@ -147,13 +179,14 @@ pub fn capture_pane_at_scroll(pane_id: &str, scroll_pos: usize, depth: usize) ->
         .output()?;
     if !output.status.success() {
         anyhow::bail!(
-            "Failed to capture pane '{}' at scroll position {}",
+            "Failed to capture pane '{}' at scroll {} with escapes",
             pane_id,
             scroll_pos
         );
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
+
 
 /// Capture the entire scrollback history of a pane and save it directly to a file.
 /// This prevents massive buffers from blowing up memory during daemon GC.
@@ -181,6 +214,50 @@ pub fn capture_pane_to_file(pane_id: &str, out_path: &std::path::Path) -> Result
     // Clean up the tmux internal buffer
     let _ = Command::new("tmux").args(["delete-buffer"]).output();
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R1 — pipe-pane selective capture
+// ---------------------------------------------------------------------------
+
+/// Derive the pipe log path for a given pane ID.
+///
+/// The pane ID (e.g. `%3`) is sanitised to a plain number so the path is a
+/// valid filename on every filesystem: `%3` → `/tmp/de-pipe-3.log`.
+pub fn pipe_log_path(pane_id: &str) -> std::path::PathBuf {
+    let safe = pane_id.trim_start_matches('%');
+    std::path::PathBuf::from(format!("/tmp/de-pipe-{}.log", safe))
+}
+
+/// Start piping all output from `pane_id` to its log file.
+///
+/// Uses `-O` to capture pane output only (not stdin keystrokes).  If a pipe
+/// is already running for the pane, tmux replaces it — the log is append-only
+/// so no content is lost.  Returns the log path on success.
+pub fn start_pipe_pane(pane_id: &str) -> Result<std::path::PathBuf> {
+    let path = pipe_log_path(pane_id);
+    let cmd = format!("cat >> {}", path.to_string_lossy());
+    let out = std::process::Command::new("tmux")
+        .args(["pipe-pane", "-O", "-t", pane_id, &cmd])
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "pipe-pane failed for {}: {}",
+            pane_id,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(path)
+}
+
+/// Stop the pipe for `pane_id` and delete its log file.
+///
+/// An empty shell-command argument stops the pipe without error.
+pub fn stop_pipe_pane(pane_id: &str) {
+    let _ = std::process::Command::new("tmux")
+        .args(["pipe-pane", "-t", pane_id])
+        .output();
+    let _ = std::fs::remove_file(pipe_log_path(pane_id));
 }
 
 /// Return the name of the foreground process running in a pane.
