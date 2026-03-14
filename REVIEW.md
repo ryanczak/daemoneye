@@ -93,10 +93,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: No maximum on incoming JSON message size. A malicious client can send an arbitrarily large payload to exhaust memory.
 - **Fix applied**: `MAX_IPC_MESSAGE_BYTES = 1 << 20` (1 MiB) constant added. After `read_line`, `line.len()` is checked before `serde_json::from_str()`; oversized messages are rejected with `Response::Error` and the connection is closed.
 
-#### S15. Unbounded SSE Leftover Buffer
+#### S15. Unbounded SSE Leftover Buffer ✓ Implemented
 - **File**: `src/ai/backends/openai.rs`
 - **Issue**: The SSE leftover buffer has no size cap. A misbehaving proxy could send unlimited data without newlines.
-- **Fix**: Cap the leftover buffer (e.g. 1 MB) and return an error if exceeded.
+- **Fix applied**: `MAX_LEFTOVER_BYTES = 1 MiB` constant added. After each chunk is appended to `leftover`, its length is checked; if exceeded, the stream is aborted with an error describing the overrun.
 
 #### S16. Webhook Dedup Window Not Validated ✓ Implemented
 - **File**: `src/webhook.rs` (`process_alert`)
@@ -114,15 +114,15 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: `tokio::spawn()` is used for cache monitor, scheduler, webhook, and client handlers. Task failures are logged but not escalated. Critical subsystems (scheduler, webhook) can die silently.
 - **Fix**: Track `JoinHandle`s for critical tasks. Use a supervisor loop that restarts failed tasks with exponential backoff. For client handlers, ensure the connection is closed cleanly on error.
 
-#### A2. Silent I/O Failures in Session Persistence
-- **Files**: `src/daemon/session.rs` lines ~102-125, `src/daemon/background.rs` line ~37
+#### A2. Silent I/O Failures in Session Persistence ✓ Implemented
+- **Files**: `src/daemon/session.rs` (A9 batch), `src/daemon/background.rs` line ~37
 - **Issue**: File write failures (disk full, permissions) are swallowed via `.ok()` with no logging. Sessions are lost silently on daemon restart.
-- **Fix**: Log all I/O errors at WARN. Consider surfacing persistent failure to the user via a `Response::SystemMsg`.
+- **Fix applied**: `session.rs` — fixed in A9 batch (`write_session_file` and `append_session_message` now log WARN on failure). `background.rs` — `create_dir_all` failure and `capture_pane_to_file` failure now both emit `log::warn!` instead of being silently ignored.
 
-#### A3. Timeout Indistinguishable from Explicit Denial
-- **File**: `src/daemon/executor.rs` lines ~117-141
+#### A3. Timeout Indistinguishable from Explicit Denial ✓ Implemented
+- **File**: `src/daemon/executor.rs` (`prompt_and_await_approval`)
 - **Issue**: Approval timeout and user denial follow the same code path. If the CLI never received the prompt (crash, tmux issue), the tool is silently denied with no indication.
-- **Fix**: Add a `Parsed::TimedOut` variant. For timeouts, inject a system message informing the user that the approval prompt was not answered.
+- **Fix applied**: In the `timed_out` branch, a `Response::SystemMsg` is sent to the client before returning the `ToolCallOutcome::Result` so the user sees a clear notification ("Approval prompt timed out after 60 s — the command was not executed.") even if their approval window closed before they could respond. The AI also receives the timeout message as the tool result so it can explain what happened.
 
 #### A4. Retry Logic Doesn't Classify Errors
 - **File**: `src/ai/mod.rs` lines ~45-80 (`send_with_retry`)
@@ -148,10 +148,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: Pipe logs grow without bound during long sessions with high output volume. The 50 KB read limit in `read_pipe_log` doesn't prevent on-disk growth.
 - **Fix**: Rotate pipe logs at a configurable size threshold (e.g. 10 MB). Clean up on pane close, not just daemon restart.
 
-#### A8. Background Window Eviction Kills Without Grace Period
-- **File**: `src/daemon/executor.rs` lines ~797-806
+#### A8. Background Window Eviction Kills Without Grace Period ✓ Implemented
+- **File**: `src/daemon/executor.rs` (bg window cap enforcement)
 - **Issue**: When the 5-window cap is hit, the oldest completed window is killed immediately via `kill_job_window()`. In-flight work in that window is lost.
-- **Fix**: Check `#{window_active}` before killing. For running windows, send SIGTERM and wait briefly before SIGKILL.
+- **Fix applied**: Before evicting a completed-command window, `pane_current_command` is checked. If the pane is still running a non-shell process (i.e. a user re-used the pane after the tracked command finished), eviction is skipped: the entry is re-inserted and a denial message is returned, same as the all-running-windows path. If the pane is idle (shell or empty), eviction proceeds as before.
 
 ---
 

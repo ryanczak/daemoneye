@@ -207,7 +207,15 @@ async fn prompt_and_await_approval(
             }));
             log_command(session_id, mode, "", cmd, decision, "");
             let msg = if timed_out {
-                format!("Approval timed out ({} s); command not executed.", APPROVAL_TIMEOUT.as_secs())
+                let notice = format!(
+                    "Approval prompt timed out after {} s — the command was not executed. \
+                     You can re-run the request if you still want it.",
+                    APPROVAL_TIMEOUT.as_secs()
+                );
+                // Notify the user directly so they know why the tool call was dropped,
+                // even if their approval window closed before they could respond (A3).
+                let _ = send_response_split(tx, Response::SystemMsg(notice.clone())).await;
+                notice
             } else {
                 "User denied execution".to_string()
             };
@@ -842,9 +850,35 @@ pub async fn execute_tool_call(
                                 match evict_idx {
                                     Some(i) => {
                                         let evicted = entry.bg_windows.remove(i);
-                                        log::info!("Evicting completed bg window {} to stay under cap", evicted.window_name);
-                                        if let Err(e) = crate::tmux::kill_job_window(&evicted.tmux_session, &evicted.window_name) {
-                                            log::warn!("Failed to evict bg window {}: {}", evicted.window_name, e);
+                                        // A8: only kill the window if the pane is no longer
+                                        // running active work (i.e. sitting at a shell prompt).
+                                        // exit_code.is_some() means the tracked command finished,
+                                        // but a user may have re-used the pane manually.
+                                        let pane_cmd = crate::tmux::pane_current_command(&evicted.pane_id)
+                                            .unwrap_or_default();
+                                        let is_idle = matches!(
+                                            pane_cmd.as_str(),
+                                            "bash" | "sh" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "csh" | ""
+                                        );
+                                        if is_idle {
+                                            log::info!("Evicting completed bg window {} to stay under cap", evicted.window_name);
+                                            if let Err(e) = crate::tmux::kill_job_window(&evicted.tmux_session, &evicted.window_name) {
+                                                log::warn!("Failed to evict bg window {}: {}", evicted.window_name, e);
+                                            }
+                                        } else {
+                                            log::warn!(
+                                                "Skipping eviction of bg window {} — pane is still running '{}'; \
+                                                 re-inserting and denying new background job.",
+                                                evicted.window_name, pane_cmd
+                                            );
+                                            entry.bg_windows.insert(i, evicted);
+                                            denial = Some(format!(
+                                                "Background window cap ({}) reached and the oldest completed window \
+                                                 is still in use. Close one of the open background windows ({}) \
+                                                 before starting another.",
+                                                MAX_BG_WINDOWS_PER_SESSION,
+                                                entry.bg_windows.iter().map(|w| w.window_name.as_str()).collect::<Vec<_>>().join(", ")
+                                            ));
                                         }
                                     }
                                     None => {

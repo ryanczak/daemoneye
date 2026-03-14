@@ -34,8 +34,10 @@ fn capture_and_archive(pane_id: &str, win_name: &str) -> String {
         mask_sensitive(&normalized)
     };
     let logs_dir = crate::config::config_dir().join("pane_logs");
-    if std::fs::create_dir_all(&logs_dir).is_ok() {
-        let _ = tmux::pane::capture_pane_to_file(pane_id, &logs_dir.join(format!("{}.log", win_name)));
+    if let Err(e) = std::fs::create_dir_all(&logs_dir) {
+        log::warn!("Failed to create pane_logs dir {}: {}", logs_dir.display(), e);
+    } else if let Err(e) = tmux::pane::capture_pane_to_file(pane_id, &logs_dir.join(format!("{}.log", win_name))) {
+        log::warn!("Failed to archive pane log for {}: {}", win_name, e);
     }
     body
 }

@@ -104,9 +104,21 @@ impl AiClient for OpenAiClient {
         let mut leftover = String::new();
         let mut usage = crate::ai::types::AiUsage::default();
 
+        /// Maximum size of the SSE leftover buffer (1 MiB). A misbehaving
+        /// proxy that sends data without newlines would otherwise grow it
+        /// without bound.
+        const MAX_LEFTOVER_BYTES: usize = 1 << 20;
+
         'outer: while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
             leftover.push_str(&String::from_utf8_lossy(&bytes));
+            if leftover.len() > MAX_LEFTOVER_BYTES {
+                return Err(anyhow::anyhow!(
+                    "SSE stream leftover buffer exceeded {} bytes without a newline; \
+                     aborting to prevent memory exhaustion",
+                    MAX_LEFTOVER_BYTES
+                ));
+            }
 
             while let Some(pos) = leftover.find('\n') {
                 let line = leftover[..pos].trim().to_string();
