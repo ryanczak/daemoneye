@@ -1,3 +1,4 @@
+use crate::util::UnpoisonExt;
 use std::process::Command;
 use std::sync::RwLock;
 
@@ -27,7 +28,7 @@ static SYS_CONTEXT: RwLock<Option<SystemContext>> = RwLock::new(None);
 /// Return the cached system context, collecting it on first call.
 pub fn get_or_init_sys_context() -> SystemContext {
     {
-        let lock = SYS_CONTEXT.read().unwrap_or_else(|e| e.into_inner());
+        let lock = SYS_CONTEXT.read().unwrap_or_log();
         if let Some(ref ctx) = *lock {
             return ctx.clone();
         }
@@ -39,7 +40,7 @@ pub fn get_or_init_sys_context() -> SystemContext {
 /// Call this when the user runs `/refresh` in the chat interface.
 pub fn refresh_sys_context() -> SystemContext {
     let ctx = collect();
-    *SYS_CONTEXT.write().unwrap_or_else(|e| e.into_inner()) = Some(ctx.clone());
+    *SYS_CONTEXT.write().unwrap_or_log() = Some(ctx.clone());
     ctx
 }
 

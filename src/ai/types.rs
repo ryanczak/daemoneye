@@ -12,6 +12,7 @@ pub struct ToolCall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,
+    pub tool_name: String,
     pub content: String,
 }
 

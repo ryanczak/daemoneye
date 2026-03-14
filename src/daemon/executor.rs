@@ -100,6 +100,7 @@ async fn prompt_and_await_approval(
     id: &str,
     cmd: &str,
     background: bool,
+    target_pane_hint: Option<&str>,
     session_id: Option<&str>,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
@@ -109,6 +110,7 @@ async fn prompt_and_await_approval(
         id: id.to_string(),
         command: cmd.to_string(),
         background,
+        target_pane: target_pane_hint.map(|s| s.to_string()),
     }).await?;
 
     let mut line = String::new();
@@ -190,7 +192,7 @@ async fn find_best_target_pane(
 ) -> anyhow::Result<String> {
     let ai_target = target.and_then(|tp: &str| {
         if chat_pane == Some(tp) { return None; }
-        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+        let panes = cache.panes.read().unwrap_or_log();
         if panes.contains_key(tp) { Some(tp.to_string()) } else { None::<String> }
     });
 
@@ -204,7 +206,7 @@ async fn find_best_target_pane(
             if let Some(entry) = store.get(sid) {
                 if let Some(ref dtp) = entry.default_target_pane {
                     if chat_pane.as_deref() != Some(dtp.as_str()) {
-                        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+                        let panes = cache.panes.read().unwrap_or_log();
                         if panes.contains_key(dtp) {
                             return Ok(dtp.clone());
                         }
@@ -215,7 +217,7 @@ async fn find_best_target_pane(
     }
 
     let pane_list: Vec<PaneInfo> = {
-        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+        let panes = cache.panes.read().unwrap_or_log();
         let mut v: Vec<PaneInfo> = panes.iter()
             .map(|(pid, state)| PaneInfo {
                 id: pid.clone(),
@@ -440,7 +442,36 @@ pub async fn execute_tool_call(
 ) -> anyhow::Result<ToolCallOutcome> {
     let result: String = match call {
         PendingCall::Foreground { id, cmd, target, .. } => {
-            if let Some(outcome) = prompt_and_await_approval(id, cmd, false, session_id, tx, rx).await? {
+            // Compute a best-guess target pane hint synchronously from the cache/session
+            // so the approval prompt can show the user which pane will be used.
+            let target_hint: Option<String> = (|| {
+                // 1. AI-specified target (if valid and not the chat pane).
+                if let Some(tp) = target.as_deref() {
+                    if chat_pane != Some(tp) {
+                        let panes = cache.panes.read().unwrap_or_log();
+                        if panes.contains_key(tp) {
+                            return Some(tp.to_string());
+                        }
+                    }
+                }
+                // 2. User's saved default target pane.
+                if let Some(sid) = session_id {
+                    if let Ok(store) = sessions.lock() {
+                        if let Some(entry) = store.get(sid) {
+                            if let Some(ref dtp) = entry.default_target_pane {
+                                if chat_pane.as_deref() != Some(dtp.as_str()) {
+                                    let panes = cache.panes.read().unwrap_or_log();
+                                    if panes.contains_key(dtp) {
+                                        return Some(dtp.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            })();
+            if let Some(outcome) = prompt_and_await_approval(id, cmd, false, target_hint.as_deref(), session_id, tx, rx).await? {
                 return Ok(outcome);
             }
             let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, cache, sessions, session_id, tx, rx).await {
@@ -453,7 +484,7 @@ pub async fn execute_tool_call(
                     "No active pane found.".to_string()
                 } else {
                     let is_synchronized = {
-                        let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
+                        let panes = cache.panes.read().unwrap_or_log();
                         panes.get(target_str).map(|p| p.synchronized).unwrap_or(false)
                     };
                     if is_synchronized {
@@ -488,6 +519,9 @@ pub async fn execute_tool_call(
 
                         match tmux::send_keys(target_str, cmd) {
                             Ok(()) => {
+                                // Highlight the target pane so the user can see which pane
+                                // the agent is using during execution.
+                                tmux::highlight_pane(target_str);
                                 let mut switched_to_working = false;
                                 let mut is_interactive = false;
 
@@ -657,6 +691,9 @@ pub async fn execute_tool_call(
 
                                 tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
 
+                                // Remove the visual highlight now that execution is complete.
+                                tmux::unhighlight_pane(target_str);
+
                                 let output = match tmux::capture_pane(target_str, 200) {
                                     Ok(snap) if is_interactive => {
                                         let destination = interactive_destination(cmd)
@@ -732,7 +769,7 @@ pub async fn execute_tool_call(
                     }
                     name
                 };
-                if let Some(outcome) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
+                if let Some(outcome) = prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
                     return Ok(outcome);
                 }
                 let session_id_owned = session_id.map(|s| s.to_string());
@@ -789,7 +826,7 @@ pub async fn execute_tool_call(
                 return Ok(ToolCallOutcome::Result(msg));
             }
 
-            if let Some(outcome) = prompt_and_await_approval(id, cmd, true, session_id, tx, rx).await? {
+            if let Some(outcome) = prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
                 return Ok(outcome);
             }
             let credential = if command_has_sudo(cmd) {
@@ -1052,7 +1089,7 @@ pub async fn execute_tool_call(
 
                 // Pre-compile pattern regex once so the watch loop doesn't recompile each tick.
                 let pattern_re = pattern_owned.as_deref().and_then(|p| {
-                    regex::Regex::new(p).ok()
+                    regex::RegexBuilder::new(p).size_limit(1 << 20).build().ok()
                 });
 
                 let completed = tokio::time::timeout(timeout, async {
@@ -1264,7 +1301,7 @@ pub async fn execute_tool_call(
             let limited_len = limited.len();
 
             let filtered: Vec<&str> = if let Some(pat) = pattern {
-                match regex::Regex::new(pat) {
+                match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
                     Ok(re) => limited.into_iter().filter(|l| re.is_match(l)).collect(),
                     Err(e) => return Ok(ToolCallOutcome::Result(
                         format!("Error: invalid pattern regex: {}", e)
@@ -1322,7 +1359,7 @@ pub async fn execute_tool_call(
                     location, old_string, new_string
                 );
                 if let Some(outcome) = prompt_and_await_approval(
-                    id, &approval_cmd, false, session_id, tx, rx
+                    id, &approval_cmd, false, None, session_id, tx, rx
                 ).await? {
                     return Ok(outcome);
                 }
@@ -1386,7 +1423,7 @@ pub async fn execute_tool_call(
                 path, old_string, new_string
             );
             if let Some(outcome) = prompt_and_await_approval(
-                id, &approval_cmd, false, session_id, tx, rx
+                id, &approval_cmd, false, None, session_id, tx, rx
             ).await? {
                 return Ok(outcome);
             }
@@ -1609,8 +1646,8 @@ pub async fn execute_tool_call(
         }
 
         PendingCall::ListPanes { .. } => {
-            let panes = cache.panes.read().unwrap_or_else(|e| e.into_inner());
-            let session = cache.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let panes = cache.panes.read().unwrap_or_log();
+            let session = cache.session_name.read().unwrap_or_log().clone();
 
             // Collect panes, excluding the chat pane (never a valid command target).
             let mut rows: Vec<_> = panes
@@ -1785,7 +1822,10 @@ mod tests {
         let limited_len = limited.len();
 
         if let Some(pat) = pattern {
-            let re = regex::Regex::new(pat).unwrap();
+            let re = match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
+                Ok(r) => r,
+                Err(e) => return format!("Error: invalid grep pattern: {}", e),
+            };
             let filtered: Vec<&str> = limited.into_iter().filter(|l| re.is_match(l)).collect();
             if filtered.is_empty() {
                 return format!("no lines matched (total {} lines in file)", total);

@@ -2,6 +2,7 @@ mod ai;
 mod cli;
 mod config;
 mod daemon;
+pub(crate) mod util;
 mod log;
 mod ipc;
 mod memory;
@@ -147,9 +148,8 @@ enum SchedCommands {
 // (only the calling thread survives in the child but mutex state from other
 // threads may be inconsistent).
 fn main() -> anyhow::Result<()> {
-    if let Err(e) = config::Config::ensure_dirs() {
-        eprintln!("Warning: could not initialise config directory: {}", e);
-    }
+    config::Config::ensure_dirs()
+        .map_err(|e| anyhow::anyhow!("Failed to initialise config directory: {}", e))?;
 
     let cli = Cli::parse();
 

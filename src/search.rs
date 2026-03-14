@@ -1,3 +1,4 @@
+use crate::util::UnpoisonExt;
 use std::path::PathBuf;
 
 /// A single search match.
@@ -279,7 +280,7 @@ mod tests {
     fn temp_home() -> TmpHome { TmpHome::new() }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
         let old = env::var("HOME").ok();
         unsafe { env::set_var("HOME", tmp.path()); }
         f();

@@ -1,6 +1,8 @@
 
 
 
+pub use crate::util::UnpoisonExt;
+
 /// Return the hostname of the machine running the daemon.
 pub fn daemon_hostname() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")

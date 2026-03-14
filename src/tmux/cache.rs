@@ -1,3 +1,4 @@
+use crate::util::UnpoisonExt;
 use crate::ai::filter::mask_sensitive;
 use crate::tmux;
 use anyhow::Result;
@@ -188,6 +189,8 @@ pub struct PaneState {
     /// The command the pane was originally created with (`#{pane_start_command}`, N5).
     /// Empty when not recorded by tmux.
     pub start_cmd: String,
+    /// Window-relative pane index (0-based) as shown by `ctrl+a q` / `tmux display-panes`.
+    pub pane_index: usize,
 }
 
 /// Shared, periodically-refreshed view of all panes in a tmux session.
@@ -231,17 +234,17 @@ impl SessionCache {
     /// Update the session this cache monitors. Called when the first client
     /// connects and tells the daemon which tmux session to observe.
     pub fn set_session(&self, name: &str) {
-        *self.session_name.write().unwrap_or_else(|e| e.into_inner()) = name.to_string();
+        *self.session_name.write().unwrap_or_log() = name.to_string();
         // Clear stale pane state from any previous (empty) session.
-        self.panes.write().unwrap_or_else(|e| e.into_inner()).clear();
-        self.windows.write().unwrap_or_else(|e| e.into_inner()).clear();
+        self.panes.write().unwrap_or_log().clear();
+        self.windows.write().unwrap_or_log().clear();
     }
 
     /// Instantly update the active pane without waiting for the next 2 s poll.
     ///
     /// Called by the `NotifyFocus` handler when a `pane-focus-in` hook fires (N1).
     pub fn set_active_pane(&self, pane_id: &str) {
-        *self.active_pane.write().unwrap_or_else(|e| e.into_inner()) = Some(pane_id.to_string());
+        *self.active_pane.write().unwrap_or_log() = Some(pane_id.to_string());
     }
 
     /// Update the cached client viewport dimensions.
@@ -250,8 +253,8 @@ impl SessionCache {
     /// and at session-hook install time to seed the initial value (N7).
     /// A width or height of 0 means "unknown" and suppresses the context block.
     pub fn set_client_size(&self, width: u16, height: u16) {
-        *self.client_width.write().unwrap_or_else(|e| e.into_inner()) = width;
-        *self.client_height.write().unwrap_or_else(|e| e.into_inner()) = height;
+        *self.client_width.write().unwrap_or_log() = width;
+        *self.client_height.write().unwrap_or_log() = height;
     }
 
     /// Refresh only the window topology list.
@@ -260,12 +263,12 @@ impl SessionCache {
     /// hook fires (N2).  Faster than a full `refresh()` since it skips all pane
     /// captures and environment re-reads.
     pub fn refresh_windows(&self) {
-        let session = self.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let session = self.session_name.read().unwrap_or_log().clone();
         if session.is_empty() {
             return;
         }
         if let Ok(wins) = tmux::list_windows(&session) {
-            *self.windows.write().unwrap_or_else(|e| e.into_inner()) = wins;
+            *self.windows.write().unwrap_or_log() = wins;
         }
     }
 
@@ -276,7 +279,7 @@ impl SessionCache {
     /// issues one `capture-pane` per pane for buffer content.  Session
     /// environment is refreshed on each cycle (P5).
     pub fn refresh(&self) -> Result<()> {
-        let session = self.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let session = self.session_name.read().unwrap_or_log().clone();
         if session.is_empty() {
             return Ok(()); // No session adopted yet — nothing to refresh.
         }
@@ -315,6 +318,7 @@ impl SessionCache {
                         dead_status: None,
                         last_activity: 0,
                         start_cmd: String::new(),
+                        pane_index: 0,
                     });
 
                 entry.current_cmd = info.current_cmd;
@@ -329,6 +333,7 @@ impl SessionCache {
                 entry.dead_status = info.dead_status;
                 entry.last_activity = info.last_activity;
                 entry.start_cmd = info.start_cmd;
+                entry.pane_index = info.pane_index;
 
                 if entry.buffer != content {
                     entry.buffer = content;
@@ -396,7 +401,7 @@ impl SessionCache {
 
         // Window topology (P4) — prepend if session has ≥2 windows.
         {
-            let wins = self.windows.read().unwrap_or_else(|e| e.into_inner());
+            let wins = self.windows.read().unwrap_or_log();
             if wins.len() >= 2 {
                 let count = wins.len();
                 let parts: Vec<String> = wins
@@ -432,7 +437,7 @@ impl SessionCache {
 
         // Session environment block (P5) — prepend if any vars are present.
         {
-            let env = self.environment.read().unwrap_or_else(|e| e.into_inner());
+            let env = self.environment.read().unwrap_or_log();
             if !env.is_empty() {
                 let mut pairs: Vec<_> = env.iter().collect();
                 pairs.sort_by_key(|(k, _)| k.as_str());
@@ -447,8 +452,8 @@ impl SessionCache {
 
         // Client viewport (N7) — prepend when dimensions are known.
         {
-            let w = *self.client_width.read().unwrap_or_else(|e| e.into_inner());
-            let h = *self.client_height.read().unwrap_or_else(|e| e.into_inner());
+            let w = *self.client_width.read().unwrap_or_log();
+            let h = *self.client_height.read().unwrap_or_log();
             if w > 0 && h > 0 {
                 out.push_str(&format!("[CLIENT VIEWPORT] {}x{}\n", w, h));
             }
@@ -456,13 +461,14 @@ impl SessionCache {
 
         // Active pane — full capture, explicitly labelled.
         if let Some(pane_id) = source_pane {
-            // Pull CWD, command, title, scroll position, and mode flags from cache in one lock.
-            let (cwd, cmd, title, scroll_pos, in_copy_mode) = {
-                let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
+            // Pull CWD, command, title, scroll position, mode flags, and pane index from cache in one lock.
+            let (cwd, cmd, title, scroll_pos, in_copy_mode, pane_idx, window_name_for_active) = {
+                let panes = self.panes.read().unwrap_or_log();
                 if let Some(p) = panes.get(pane_id) {
-                    (p.current_path.clone(), p.current_cmd.clone(), p.pane_title.clone(), p.scroll_position, p.in_copy_mode)
+                    (p.current_path.clone(), p.current_cmd.clone(), p.pane_title.clone(),
+                     p.scroll_position, p.in_copy_mode, p.pane_index, p.window_name.clone())
                 } else {
-                    (String::new(), String::new(), String::new(), 0usize, false)
+                    (String::new(), String::new(), String::new(), 0usize, false, 0usize, String::new())
                 }
             };
 
@@ -519,9 +525,15 @@ impl SessionCache {
                 String::new()
             };
 
+            let idx_label = if window_name_for_active.is_empty() {
+                format!(" | idx:{}", pane_idx)
+            } else {
+                format!(" | idx:{} in '{}'", pane_idx, window_name_for_active)
+            };
             out.push_str(&format!(
-                "[ACTIVE PANE {}{}{}{}{}]\n{}\n",
+                "[ACTIVE PANE {}{}{}{}{}{}]\n{}\n",
                 pane_id,
+                idx_label,
                 cwd_label,
                 title_label,
                 scroll_note,
@@ -539,7 +551,7 @@ impl SessionCache {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let panes = self.panes.read().unwrap_or_else(|e| e.into_inner());
+        let panes = self.panes.read().unwrap_or_log();
 
         // Determine which window contains the chat pane so we can identify visible peers.
         let chat_window: Option<&str> = chat_pane
@@ -603,10 +615,12 @@ impl SessionCache {
             } else {
                 String::new()
             };
+            let idx_part = format!(" (idx:{} in '{}')", state.pane_index, state.window_name);
             out.push_str(&format!(
-                "[{} {}{}{}{}{}{}{}{}]: {}\n",
+                "[{} {}{}{}{}{}{}{}{}{}]: {}\n",
                 pane_label,
                 id,
+                idx_part,
                 format!(" — {}", state.current_cmd),
                 start_part,
                 cwd_part,
@@ -623,7 +637,7 @@ impl SessionCache {
         } else {
             // Other sessions (N16) — append when there is already meaningful context.
             // Skipped when out is empty so it doesn't interfere with the fallback sentinel.
-            let session_name = self.session_name.read().unwrap_or_else(|e| e.into_inner()).clone();
+            let session_name = self.session_name.read().unwrap_or_log().clone();
             let other_ctx = tmux::other_sessions_context(&session_name);
             if !other_ctx.is_empty() {
                 out.push_str(&other_ctx);
@@ -814,7 +828,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "main".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
             });
         }
         let ctx = c.get_labeled_context(None, None);
@@ -833,7 +847,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "main".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
             });
         }
         let ctx = c.get_labeled_context(None, None);
@@ -863,6 +877,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
             panes.insert(
@@ -883,6 +898,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
         }
@@ -975,6 +991,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
         }
@@ -1008,6 +1025,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
         }
@@ -1046,6 +1064,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
         }
@@ -1080,6 +1099,7 @@ mod tests {
                     dead_status: Some(1),
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
         }
@@ -1115,6 +1135,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
             // Pane running daemoneye chat.
@@ -1136,6 +1157,7 @@ mod tests {
                     dead_status: None,
                     last_activity: 0,
                     start_cmd: String::new(),
+                    pane_index: 0,
                 },
             );
         }
@@ -1158,7 +1180,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "work".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
             });
             // Visible peer — same window as chat.
             panes.insert("%3".to_string(), PaneState {
@@ -1167,7 +1189,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "work".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
             });
             // Daemon-launched background window.
             panes.insert("%5".to_string(), PaneState {
@@ -1176,7 +1198,7 @@ mod tests {
                 pane_title: String::new(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "de-bg-myjob".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
             });
             // User's session pane in a different window.
             panes.insert("%7".to_string(), PaneState {
@@ -1185,7 +1207,7 @@ mod tests {
                 pane_title: "web01".to_string(), last_updated: std::time::Instant::now(),
                 scroll_position: 0, history_size: 0, in_copy_mode: false,
                 synchronized: false, window_name: "servers".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(),
+                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
             });
         }
         // No source pane; chat pane is %2.

@@ -161,6 +161,15 @@ impl AiClient for AnthropicClient {
                 }
             }
         }
+        // Flush any buffered tool call that ended without a content_block_stop event
+        // (e.g. network disconnect mid-stream).
+        if !tool_id.is_empty() {
+            if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
+                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None) {
+                    let _ = tx.send(ev);
+                }
+            }
+        }
         let _ = tx.send(AiEvent::Done(usage));
         Ok(())
     }

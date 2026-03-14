@@ -12,20 +12,20 @@ cargo test <test_name>             # run a single test by name
 cargo test -- --nocapture          # run tests with stdout visible
 ```
 
-The project compiles cleanly with only pre-existing `dead_code` warnings — no errors. 254 tests pass.
+The project compiles cleanly with only pre-existing `dead_code` warnings — no errors. 284 tests pass.
 
 ## Architecture Overview
 
-DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks into the background, binds a Unix domain socket (`/tmp/daemoneye.sock`), and communicates with CLI clients via newline-delimited JSON.
+DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks into the background, binds a Unix domain socket (`~/.daemoneye/daemoneye.sock`, resolved via `config::default_socket_path()`), and communicates with CLI clients via newline-delimited JSON.
 
 ### Request/Response lifecycle
 
-1. User runs `daemoneye chat` or `daemoneye ask` — the CLI client reads `$TMUX_PANE`, connects to the socket, and sends a `Request::Ask`.
+1. User runs `daemoneye chat` or `daemoneye ask` — the CLI client reads `$TMUX_PANE`, connects to the socket, and sends a `Request::Ask`. If the tmux client was previously detached for ≥ 30 s and new event messages arrived (background completions, webhook alerts, watchdog results, watch-pane outcomes), the daemon sends a `Response::SystemMsg` catch-up brief immediately after `Response::SessionInfo` and before the first AI token (N15).
 2. The daemon captures the user's pane via `tmux capture-pane`, applies the masking filter (`ai/filter.rs`), assembles the system prompt + context snapshot, and streams tokens from the configured LLM.
-3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. The client prompts the user: `[Y]es / [A]pprove session / [N]o / or type a message to redirect`. The client returns `Request::ToolCallResponse`.
+3. When the AI emits a tool call the daemon sends `Response::ToolCallPrompt` back to the client. For foreground commands the prompt includes a `target_pane` hint (computed synchronously from the cache before the approval wait) so the client can show the window-relative pane index and apply a visual highlight (`tmux select-pane -P bg=colour17`) to the target pane during the approval window. The client prompts the user: `[Y]es / [A]pprove session / [N]o / or type a message to redirect`. The client returns `Request::ToolCallResponse`.
    - **Y / A / N**: standard approve/session-approve/deny flow.
    - **Typed message**: `approved: false` with `user_message: Some(text)`. The daemon aborts the entire pending tool chain (omitting it from history), injects the text as a plain user turn, and re-enters the AI loop so the model can course-correct without seeing a synthetic tool error.
-4. Approved commands run in one of two modes: **background** (dedicated `de-bg-*` tmux window on the daemon host, monitored via `pane-died` hook) or **foreground** (injected into the user's active pane via `send-keys`, completion detected via a three-way branch: interactive commands like `ssh`/`mosh`/`telnet`/`screen` use prompt-pattern detection and return immediately once connected; remote panes use output-stability polling; local panes poll `pane_current_command`).
+4. Approved commands run in one of two modes: **background** (dedicated `de-bg-*` tmux window on the daemon host, monitored via `pane-died` hook) or **foreground** (injected into the user's active pane via `send-keys`, completion detected via a three-way branch: interactive commands like `ssh`/`mosh`/`telnet`/`screen` use prompt-pattern detection and return immediately once connected; remote panes use output-stability polling; local panes poll `pane_current_command`). During foreground execution the target pane is visually highlighted (`select-pane -P bg=colour17`) from `send_keys` until `capture_pane`; the highlight is removed on denial or after capture.
 5. The daemon sends `Response::ToolResult` with captured output, the LLM continues, and the loop repeats until the LLM produces a final answer.
 
 ### Key files
@@ -46,6 +46,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/ai/filter.rs` | Regex-based sensitive-data masking; `init_masking()` at daemon start |
 | `src/tmux/mod.rs` | All `tmux` subprocess calls (one function per operation) |
 | `src/tmux/cache.rs` | Background 2 s poll; `SessionCache`, `PaneState`, `get_labeled_context()` |
+| `src/tmux/session.rs` | Session-level tmux helpers: `other_sessions_context()`, `format_other_sessions()`, `client_dimensions()`, `session_environment()`, `list_sessions()` |
+| `src/util.rs` | `UnpoisonExt` trait — `unwrap_or_log()` extension on `LockResult` that logs ERROR on poison recovery |
 | `src/config.rs` | `~/.daemoneye/config.toml` parsing; `SRE_PROMPT_TOML` constant; `AiConfig::resolve_api_key()` |
 | `src/scheduler.rs` | `ScheduleStore` (atomic JSON persistence); `run_scheduled_job()` |
 | `src/scripts.rs` | Script management in `~/.daemoneye/scripts/` (chmod 700, path-traversal validation) |
@@ -61,11 +63,21 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 ### Session context format
 
 ```
-[SESSION TOPOLOGY] N windows — name (K panes, active/zoomed), …
+[SESSION TOPOLOGY] N windows — name (ID: @K, J panes, active/zoomed), …
 [SESSION ENVIRONMENT] KEY=value, …
-[ACTIVE PANE %N | cwd: /path | scrolled N lines up | copy mode]
-[BACKGROUND PANE %N — cmd — /cwd (title) [synchronized]]: summary
+[CLIENT VIEWPORT] WxH
+[ACTIVE PANE %N | idx:K in 'window' | cwd: /path | scrolled N lines up | copy mode]
+[BACKGROUND PANE %N (idx:K in 'window') — cmd — /cwd (title) [synchronized] [dead: N] [active Xs ago]]: summary
+[VISIBLE PANE %N (idx:K in 'window') — cmd — /cwd (title)]: summary
+[SESSION PANE %N (idx:K in 'window') — cmd — /cwd (title)]: summary
+[OTHER SESSIONS] name (N windows, active Xm ago, attached/detached), …
 ```
+
+`idx:K` is the 0-based window-relative pane index — the number the user sees with `ctrl+a q`. Used by the AI to communicate pane targets in human-readable terms and displayed in the tool-call approval prompt so users can visually confirm the target before approving.
+
+`[OTHER SESSIONS]` — appended by `other_sessions_context()` (`tmux/session.rs`) when two or more tmux sessions exist. Omitted in single-session setups and when there is no terminal context. Generated from `tmux list-sessions`; pure formatting extracted into `format_other_sessions()` for testability (N16).
+
+`[Catch-up]` — a `Response::SystemMsg` sent before the first AI token on the turn after a tmux client re-attaches following ≥ 30 s of detachment. Generated by `build_catchup_brief()` (`daemon/server.rs`) which scans messages added since `messages_at_detach` for event prefixes (`[Background Task Completed`, `[Webhook Alert]`, `[Watchdog]`, `[Watch Pane`). `SessionEntry.last_detach` / `messages_at_detach` are set by `NotifyClientDetached`; cleared by `NotifyClientAttached` or after brief generation (N15).
 
 ### Adding a new AI tool (checklist)
 
@@ -92,10 +104,10 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `add_memory` / `read_memory` / `delete_memory` / `list_memories` | Persistent memory |
 | `search_repository` | Grep across runbooks / scripts / memory / events |
 | `get_terminal_context` | Fresh tmux snapshot on demand |
-| `list_panes` | Enumerate all panes in session (pane ID, cmd, cwd, title) |
+| `list_panes` | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
 
 ## Important Invariants
 
 - `main()` is synchronous so `libc::fork()` can be called before the tokio runtime starts. Never move the fork inside an async context.
-- All mutex lock sites use `.unwrap_or_else(|e| e.into_inner())` to recover from poisoned locks — do not change these to `.unwrap()`.
+- All mutex lock sites use `.unwrap_or_log()` (the `UnpoisonExt` trait from `src/util.rs`) to recover from poisoned locks — do not change these to `.unwrap()`. The trait logs an ERROR before returning the inner value so poison events are visible in `daemon.log`.
 - tmux window names for daemon-managed windows use predictable prefixes: `de-bg-*` (background execution), `de-sched-*` (scheduled jobs). These are used for GC and listing.

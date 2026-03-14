@@ -1,3 +1,4 @@
+use crate::util::UnpoisonExt;
 use crate::log_event;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -192,7 +193,7 @@ impl ScheduleStore {
 
     /// Persist the current job list atomically.
     fn save(&self) -> Result<()> {
-        let jobs = self.jobs.read().unwrap_or_else(|e| e.into_inner());
+        let jobs = self.jobs.read().unwrap_or_log();
         let json = serde_json::to_string_pretty(&*jobs)?;
         let tmp = self.path.with_extension("tmp");
         std::fs::write(&tmp, &json).with_context(|| format!("writing {}", tmp.display()))?;
@@ -207,7 +208,7 @@ impl ScheduleStore {
         let name = job.name.clone();
         let kind = job.kind.describe();
         {
-            let mut jobs = self.jobs.write().unwrap_or_else(|e| e.into_inner());
+            let mut jobs = self.jobs.write().unwrap_or_log();
             jobs.push(job);
         }
         self.save()?;
@@ -220,7 +221,7 @@ impl ScheduleStore {
         let mut name = String::new();
         let found;
         {
-            let mut jobs = self.jobs.write().unwrap_or_else(|e| e.into_inner());
+            let mut jobs = self.jobs.write().unwrap_or_log();
             let initial_len = jobs.len();
             if let Some(pos) = jobs.iter().position(|j| j.id == id) {
                 name = jobs[pos].name.clone();
@@ -240,7 +241,7 @@ impl ScheduleStore {
         let mut name = String::new();
         let found;
         {
-            let mut jobs = self.jobs.write().unwrap_or_else(|e| e.into_inner());
+            let mut jobs = self.jobs.write().unwrap_or_log();
             if let Some(j) = jobs.iter_mut().find(|j| j.id == id) {
                 j.status = JobStatus::Cancelled;
                 name = j.name.clone();
@@ -258,7 +259,7 @@ impl ScheduleStore {
 
     /// Return a snapshot of all jobs for listing.
     pub fn list(&self) -> Vec<ScheduledJob> {
-        self.jobs.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.jobs.read().unwrap_or_log().clone()
     }
 
     /// Return all jobs that are due to run now and set their status to `Running`.
@@ -269,7 +270,7 @@ impl ScheduleStore {
         let now = Utc::now();
         let mut due = Vec::new();
         {
-            let mut jobs = self.jobs.write().unwrap_or_else(|e| e.into_inner());
+            let mut jobs = self.jobs.write().unwrap_or_log();
             for job in jobs.iter_mut() {
                 if job.status != JobStatus::Pending {
                     continue;
@@ -297,7 +298,7 @@ impl ScheduleStore {
         let mut job_name = String::new();
         let mut new_status_str = String::new();
         {
-            let mut jobs = self.jobs.write().unwrap_or_else(|e| e.into_inner());
+            let mut jobs = self.jobs.write().unwrap_or_log();
             if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
                 job_name = job.name.clone();
                 if success {

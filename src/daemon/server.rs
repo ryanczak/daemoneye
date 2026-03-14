@@ -3,13 +3,13 @@ use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use tokio::io::AsyncBufReadExt;
 use anyhow::Result;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 use std::time::Duration;
-use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
+use crate::ipc::{Request, Response};
+use crate::config::default_socket_path;
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
 use crate::ai::{make_client, AiEvent, Message, ToolResult, PendingCall};
@@ -20,6 +20,52 @@ use crate::scheduler::{ActionOn, ScheduledJob, ScheduleStore};
 use crate::runbook;
 use crate::scripts;
 use crate::daemon::background::notify_job_completion;
+
+/// Build the N15 catch-up brief from messages injected while the client was away.
+///
+/// `new_msgs` is the slice of messages added after detach.
+/// `away_secs` is how long the client was gone.
+/// Returns `None` when the absence was too short or no relevant events occurred.
+pub(crate) fn build_catchup_brief(new_msgs: &[crate::ai::Message], away_secs: u64) -> Option<String> {
+    // Skip if the user was away less than 30 s — too brief to be useful.
+    if away_secs < 30 { return None; }
+    if new_msgs.is_empty() { return None; }
+
+    // Scan for injected event messages the AI adds to session history.
+    let events: Vec<String> = new_msgs.iter()
+        .filter_map(|m| {
+            let c = &m.content;
+            if c.contains("[Background Task Completed") ||
+               c.contains("[Webhook Alert]") ||
+               c.contains("[Watchdog]") ||
+               c.contains("[Watch Pane") {
+                // Extract just the first line as a terse summary.
+                Some(c.lines().next().unwrap_or(c.as_str()).trim().to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if events.is_empty() { return None; }
+
+    let away_str = if away_secs < 60 {
+        format!("{}s", away_secs)
+    } else if away_secs < 3600 {
+        format!("{}m", away_secs / 60)
+    } else {
+        format!("{}h{}m", away_secs / 3600, (away_secs % 3600) / 60)
+    };
+    let count = events.len();
+    let lines = events.iter()
+        .map(|e| format!("  • {}", e))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(format!(
+        "[Catch-up] {} event{} while you were away ({}):\n{}",
+        count, if count == 1 { "" } else { "s" }, away_str, lines,
+    ))
+}
 
 /// Run a single scheduled job in a dedicated tmux window.
 ///
@@ -213,8 +259,7 @@ pub async fn handle_client(
         }
         Request::Shutdown => {
             send_response_split(&mut tx, Response::Ok).await?;
-            let socket_path = Path::new(DEFAULT_SOCKET_PATH);
-            let _ = std::fs::remove_file(socket_path);
+            let _ = std::fs::remove_file(default_socket_path());
             std::process::exit(0);
         }
         Request::Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane } =>
@@ -300,11 +345,11 @@ pub async fn handle_client(
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
-        .unwrap_or_else(|| bg_session.lock().unwrap_or_else(|e| e.into_inner()).clone());
+        .unwrap_or_else(|| bg_session.lock().unwrap_or_log().clone());
 
     // Adopt the session if the daemon doesn't have one yet (systemd startup case).
     if !session_name.is_empty() {
-        let mut current = bg_session.lock().unwrap_or_else(|e| e.into_inner());
+        let mut current = bg_session.lock().unwrap_or_log();
         if current.is_empty() {
             *current = session_name.clone();
             drop(current);
@@ -373,46 +418,8 @@ pub async fn handle_client(
             // webhook alerts, watchdog results, etc.).
             let brief = entry.last_detach.and_then(|detach_time| {
                 let away_secs = detach_time.elapsed().as_secs();
-                // Skip if the user was away less than 30 s — too brief to be useful.
-                if away_secs < 30 { return None; }
-
                 let new_msgs = &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
-                if new_msgs.is_empty() { return None; }
-
-                // Scan for injected event messages the AI adds to session history.
-                let events: Vec<String> = new_msgs.iter()
-                    .filter_map(|m| {
-                        let c = &m.content;
-                        if c.contains("[Background Task Completed") ||
-                           c.contains("[Webhook Alert]") ||
-                           c.contains("[Watchdog]") ||
-                           c.contains("[Watch Pane") {
-                            // Extract just the first line as a terse summary.
-                            Some(c.lines().next().unwrap_or(c.as_str()).trim().to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                if events.is_empty() { return None; }
-
-                let away_str = if away_secs < 60 {
-                    format!("{}s", away_secs)
-                } else if away_secs < 3600 {
-                    format!("{}m", away_secs / 60)
-                } else {
-                    format!("{}h{}m", away_secs / 3600, (away_secs % 3600) / 60)
-                };
-                let count = events.len();
-                let lines = events.iter()
-                    .map(|e| format!("  • {}", e))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                Some(format!(
-                    "[Catch-up] {} event{} while you were away ({}):\n{}",
-                    count, if count == 1 { "" } else { "s" }, away_str, lines,
-                ))
+                build_catchup_brief(new_msgs, away_secs)
             });
 
             // Clear detach state regardless of whether we generated a brief.
@@ -708,6 +715,7 @@ pub async fn handle_client(
                             log::warn!("Turn tool-call total limit ({MAX_TOTAL_CALLS}) reached; blocking call {}", call_idx + 1);
                             tool_results.push(ToolResult {
                                 tool_call_id: call_id,
+                                tool_name: call.tool_name().to_string(),
                                 content: format!(
                                     "Error: turn tool-call limit ({MAX_TOTAL_CALLS}) reached. \
                                      This call was not executed. Stop calling tools and \
@@ -725,6 +733,7 @@ pub async fn handle_client(
                             log::warn!("Per-tool limit for `{tool_name}` reached ({MAX_SAME_TOOL}); blocking call");
                             tool_results.push(ToolResult {
                                 tool_call_id: call_id,
+                                tool_name: tool_name.to_string(),
                                 content: format!(
                                     "Error: `{tool_name}` has been called {MAX_SAME_TOOL} times \
                                      this turn. This call was not executed. Proceed with the \
@@ -752,7 +761,7 @@ pub async fn handle_client(
                                 break;
                             }
                             crate::daemon::executor::ToolCallOutcome::Result(result) => {
-                                tool_results.push(ToolResult { tool_call_id: call_id, content: result });
+                                tool_results.push(ToolResult { tool_call_id: call_id, tool_name: tool_name.to_string(), content: result });
                             }
                         }
                     }
@@ -783,6 +792,7 @@ pub async fn handle_client(
                             while !r.content.is_char_boundary(end) { end -= 1; }
                             ToolResult {
                                 tool_call_id: r.tool_call_id,
+                                tool_name: r.tool_name,
                                 content: format!(
                                     "{}\n[truncated — {} chars total; full output archived in pane log]",
                                     &r.content[..end], r.content.len()
@@ -802,6 +812,104 @@ pub async fn handle_client(
                 }
             }
         }
-        
+
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::Message;
+
+    fn msg(content: &str) -> Message {
+        Message { role: "user".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+    }
+
+    // ── build_catchup_brief ───────────────────────────────────────────────────
+
+    #[test]
+    fn catchup_brief_none_when_away_less_than_30s() {
+        let msgs = vec![msg("[Background Task Completed] deploy finished")];
+        assert!(build_catchup_brief(&msgs, 29).is_none());
+    }
+
+    #[test]
+    fn catchup_brief_none_when_no_new_messages() {
+        assert!(build_catchup_brief(&[], 120).is_none());
+    }
+
+    #[test]
+    fn catchup_brief_none_when_no_matching_events() {
+        let msgs = vec![msg("User: what is load avg?"), msg("The load average is 0.5")];
+        assert!(build_catchup_brief(&msgs, 120).is_none());
+    }
+
+    #[test]
+    fn catchup_brief_detects_background_task() {
+        let msgs = vec![msg("[Background Task Completed] apt upgrade finished (exit 0)")];
+        let brief = build_catchup_brief(&msgs, 60).expect("should produce a brief");
+        assert!(brief.contains("[Catch-up]"), "missing header: {brief}");
+        assert!(brief.contains("[Background Task Completed]"), "missing event: {brief}");
+        assert!(brief.contains("1m"), "wrong away time: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_detects_webhook_alert() {
+        let msgs = vec![msg("[Webhook Alert] Disk usage at 92% on web01")];
+        let brief = build_catchup_brief(&msgs, 3600).expect("should produce a brief");
+        assert!(brief.contains("[Webhook Alert]"), "missing event: {brief}");
+        assert!(brief.contains("1h0m"), "wrong away time: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_detects_watchdog() {
+        let msgs = vec![msg("[Watchdog] nginx: 5xx rate above threshold")];
+        let brief = build_catchup_brief(&msgs, 90).expect("should produce a brief");
+        assert!(brief.contains("[Watchdog]"), "missing event: {brief}");
+        assert!(brief.contains("1m"), "wrong away time: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_detects_watch_pane() {
+        let msgs = vec![msg("[Watch Pane %3] pattern 'ready' matched after 45s")];
+        let brief = build_catchup_brief(&msgs, 120).expect("should produce a brief");
+        assert!(brief.contains("[Watch Pane"), "missing event: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_counts_events_correctly() {
+        let msgs = vec![
+            msg("[Background Task Completed] job1 (exit 0)"),
+            msg("User: check this"),
+            msg("[Webhook Alert] CPU spike on prod"),
+            msg("[Background Task Completed] job2 (exit 1)"),
+        ];
+        let brief = build_catchup_brief(&msgs, 200).expect("should produce a brief");
+        assert!(brief.contains("3 events"), "expected count 3: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_singular_event_label() {
+        let msgs = vec![msg("[Webhook Alert] single alert")];
+        let brief = build_catchup_brief(&msgs, 60).expect("should produce a brief");
+        assert!(brief.contains("1 event "), "expected singular: {brief}");
+        assert!(!brief.contains("1 events"), "should be singular: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_extracts_first_line_only() {
+        let msgs = vec![msg("[Background Task Completed] job done\nFull output:\nline 1\nline 2")];
+        let brief = build_catchup_brief(&msgs, 60).expect("should produce a brief");
+        // Only the first line should appear as the bullet
+        assert!(brief.contains("[Background Task Completed] job done"), "missing first line: {brief}");
+        assert!(!brief.contains("Full output:"), "should not include subsequent lines: {brief}");
+    }
+
+    #[test]
+    fn catchup_brief_away_time_hours_minutes() {
+        let msgs = vec![msg("[Watchdog] alert")];
+        let brief = build_catchup_brief(&msgs, 7260).expect("should produce a brief");
+        // 7260 s = 2h1m
+        assert!(brief.contains("2h1m"), "expected 2h1m: {brief}");
     }
 }

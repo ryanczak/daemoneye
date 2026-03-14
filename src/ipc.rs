@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// The default path for the DaemonEye IPC socket.
-pub const DEFAULT_SOCKET_PATH: &str = "/tmp/daemoneye.sock";
 
 /// A snapshot of a single tmux pane, sent in `PaneSelectPrompt` so the client
 /// can display a numbered list for the user to choose from.
@@ -176,6 +174,12 @@ pub enum Response {
         id: String,
         command: String,
         background: bool,
+        /// The pane ID (`%N`) that will receive the command (foreground only).
+        /// `None` for background commands (which run in a daemon-managed window).
+        /// The client uses this to show the window-relative index and to
+        /// visually highlight the pane during the approval window.
+        #[serde(default)]
+        target_pane: Option<String>,
     },
     /// The approved background command requires a credential (sudo password, etc.).
     /// The client MUST prompt the user with echo disabled and return a `CredentialResponse`.
@@ -472,17 +476,31 @@ mod tests {
             id: "tc_3".to_string(),
             command: "ls -la".to_string(),
             background: false,
+            target_pane: Some("%5".to_string()),
         };
         match roundtrip_resp(&resp) {
             Response::ToolCallPrompt {
                 id,
                 command,
                 background,
+                target_pane,
             } => {
                 assert_eq!(id, "tc_3");
                 assert_eq!(command, "ls -la");
                 assert!(!background);
+                assert_eq!(target_pane, Some("%5".to_string()));
             }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_tool_call_prompt_no_target_pane_roundtrip() {
+        // Older daemons omit target_pane; default should be None.
+        let json = r#"{"ToolCallPrompt":{"id":"tc_3","command":"ls -la","background":false}}"#;
+        let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+        match parsed {
+            Response::ToolCallPrompt { target_pane, .. } => assert!(target_pane.is_none()),
             _ => panic!("wrong variant"),
         }
     }

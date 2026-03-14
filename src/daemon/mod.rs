@@ -1,15 +1,16 @@
 
+use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use std::time::Duration;
-use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
+use crate::ipc::{Request, Response};
 use crate::tmux::cache::SessionCache;
-use crate::config::Config;
+use crate::config::{Config, default_socket_path};
 use crate::scheduler::ScheduleStore;
 
 
@@ -117,7 +118,7 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
 /// Returns true if a daemon is already listening and responding on the socket.
 /// Uses a 2-second timeout so a hung process doesn't block startup.
 pub async fn daemon_is_running() -> bool {
-    let Ok(stream) = tokio::net::UnixStream::connect(DEFAULT_SOCKET_PATH).await else {
+    let Ok(stream) = tokio::net::UnixStream::connect(default_socket_path()).await else {
         return false;
     };
     let (rx_half, mut tx) = stream.into_split();
@@ -227,7 +228,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         "version": env!("CARGO_PKG_VERSION"),
         "session": initial_session.as_deref().unwrap_or(""),
         "pid":     std::process::id(),
-        "socket":  DEFAULT_SOCKET_PATH,
+        "socket":  default_socket_path().display().to_string(),
     }));
 
     let hook_exe_path = std::env::current_exe()
@@ -346,7 +347,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             loop {
                 tick.tick().await;
-                let sn = bg_sn.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let sn = bg_sn.lock().unwrap_or_log().clone();
                 if sn.is_empty() {
                     continue; // No session adopted yet; skip until a client connects.
                 }
@@ -388,7 +389,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             let now = Instant::now();
             sessions_cleanup
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_log()
                 .retain(|_, v| {
                     if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
                         v.cleanup_bg_windows();
@@ -400,25 +401,31 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         }
     });
 
+    let socket_path: PathBuf = default_socket_path();
+
     if daemon_is_running().await {
         anyhow::bail!(
             "A daemon is already running on {}.\n\
              Stop it with:  daemoneye stop",
-            DEFAULT_SOCKET_PATH,
+            socket_path.display(),
         );
     }
 
-    let socket_path = Path::new(DEFAULT_SOCKET_PATH);
-
-    if socket_path.exists() {
-        std::fs::remove_file(socket_path)
-            .context("Failed to remove stale socket file")?;
+    // Use symlink_metadata() (does not follow symlinks) so a symlink at the
+    // socket path removes the symlink itself rather than its target (S3).
+    match socket_path.symlink_metadata() {
+        Ok(_) => {
+            std::fs::remove_file(&socket_path)
+                .context("Failed to remove stale socket file")?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).context("Failed to stat socket path"),
     }
 
-    let listener = UnixListener::bind(socket_path)
-        .with_context(|| format!("Failed to bind to socket at {}", DEFAULT_SOCKET_PATH))?;
+    let listener = UnixListener::bind(&socket_path)
+        .with_context(|| format!("Failed to bind to socket at {}", socket_path.display()))?;
 
-    log::info!("Daemon listening on {}", DEFAULT_SOCKET_PATH);
+    log::info!("Daemon listening on {}", socket_path.display());
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("Failed to install SIGTERM handler")?;

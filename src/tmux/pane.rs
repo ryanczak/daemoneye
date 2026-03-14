@@ -29,6 +29,9 @@ pub struct RichPaneInfo {
     /// The command the pane was originally created with (`#{pane_start_command}`, N5).
     /// Empty string when tmux did not record a start command.
     pub start_cmd: String,
+    /// Window-relative pane index (0-based) as shown by `ctrl+a q` / `tmux display-panes`.
+    /// This is the number the user sees in their tmux layout.
+    pub pane_index: usize,
 }
 
 /// List all panes in the session with rich metadata using a single tmux call.
@@ -39,7 +42,7 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
     let output = Command::new("tmux")
         .args([
             "list-panes", "-a", "-F",
-            "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_activity}\t#{pane_start_command}",
+            "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_activity}\t#{pane_start_command}\t#{pane_index}",
         ])
         .output()?;
 
@@ -50,7 +53,7 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut panes = Vec::new();
     for line in stdout.lines() {
-        let fields: Vec<&str> = line.splitn(14, '\t').collect();
+        let fields: Vec<&str> = line.splitn(15, '\t').collect();
         if fields.len() < 12 {
             continue;
         }
@@ -84,6 +87,10 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
                 .and_then(|s| s.trim().parse::<u64>().ok())
                 .unwrap_or(0),
             start_cmd: fields.get(13).map(|s| s.trim().to_string()).unwrap_or_default(),
+            pane_index: fields
+                .get(14)
+                .and_then(|s| s.trim().parse::<usize>().ok())
+                .unwrap_or(0),
         });
     }
     Ok(panes)
@@ -371,6 +378,24 @@ pub fn pane_exists(pane_id: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Apply a visual highlight to a pane so the user can identify it as the
+/// agent's active target.  Uses a dark-blue background tint that is clearly
+/// distinct from a typical terminal background without disrupting readability.
+/// Call [`unhighlight_pane`] to restore the default style.
+pub fn highlight_pane(pane_id: &str) {
+    let _ = Command::new("tmux")
+        .args(["select-pane", "-t", pane_id, "-P", "bg=colour17"])
+        .output();
+}
+
+/// Remove the visual highlight previously set by [`highlight_pane`], restoring
+/// the pane's style to the window default.
+pub fn unhighlight_pane(pane_id: &str) {
+    let _ = Command::new("tmux")
+        .args(["select-pane", "-t", pane_id, "-P", "default"])
+        .output();
 }
 
 pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {

@@ -24,7 +24,7 @@ use serde_json::Value;
 use crate::ai::{AiEvent, Message};
 use crate::config::Config;
 use crate::daemon::session::{append_session_message, SessionStore};
-use crate::daemon::utils::{fire_notification, log_event};
+use crate::daemon::utils::{fire_notification, log_event, UnpoisonExt};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -363,7 +363,7 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
 
     // 1. Deduplication check.
     {
-        let mut dedup = state.dedup.lock().unwrap_or_else(|e| e.into_inner());
+        let mut dedup = state.dedup.lock().unwrap_or_log();
         let now = now_secs();
         if let Some(&last_seen) = dedup.get(&alert.fingerprint) {
             if now.saturating_sub(last_seen) < cfg.dedup_window_secs {
@@ -454,7 +454,7 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
 /// file and the in-memory entry (so it appears in the next AI turn regardless
 /// of whether the session was idle or active).
 fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
-    let guard = sessions.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = sessions.lock().unwrap_or_log();
     for (sid, entry) in guard.iter() {
         append_session_message(sid, msg);
         // In-memory is intentionally NOT updated here — the next Ask request
@@ -467,7 +467,7 @@ fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
 
 /// Send a one-line alert notification to every active chat pane.
 fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
-    let guard = sessions.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = sessions.lock().unwrap_or_log();
     for entry in guard.values() {
         if let Some(ref pane) = entry.chat_pane {
             let _ = std::process::Command::new("tmux")
@@ -509,7 +509,7 @@ fn find_runbook_for_alert(alert_name: &str) -> Option<crate::runbook::Runbook> {
 async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: &WebhookState) {
     // Rate limit: skip if we analysed the same alert_name within dedup_window_secs.
     {
-        let mut rl = state.rate_limit.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rl = state.rate_limit.lock().unwrap_or_log();
         let now = now_secs();
         if let Some(&last) = rl.get(&alert.alert_name) {
             if now.saturating_sub(last) < state.config.webhook.dedup_window_secs {
@@ -590,6 +590,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
 /// Start the webhook HTTP server.  Runs until the process exits.
 pub async fn start(config: Config, sessions: SessionStore) -> anyhow::Result<()> {
     let port = config.webhook.port;
+    let bind_ip: std::net::IpAddr = config.webhook.bind_addr.parse()
+        .unwrap_or_else(|_| std::net::Ipv4Addr::LOCALHOST.into());
     let state = Arc::new(WebhookState {
         config,
         sessions,
@@ -601,11 +603,10 @@ pub async fn start(config: Config, sessions: SessionStore) -> anyhow::Result<()>
         .route("/webhook", post(handle_webhook))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .with_state(state);
-
     let listener = tokio::net::TcpListener::bind(
-        std::net::SocketAddr::from(([0, 0, 0, 0], port))
+        std::net::SocketAddr::new(bind_ip, port)
     ).await?;
-    log::info!("Webhook server listening on :{}", port);
+    log::info!("Webhook server listening on {}:{}", bind_ip, port);
     axum::serve(listener, app).await?;
     Ok(())
 }

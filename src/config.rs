@@ -52,12 +52,17 @@ pub struct WebhookConfig {
     /// Seconds to suppress duplicate alerts by fingerprint. Default 300.
     #[serde(default = "default_dedup_window")]
     pub dedup_window_secs: u64,
+    /// IP address to bind the webhook listener to. Default "127.0.0.1" (localhost only).
+    /// Set to "0.0.0.0" to accept connections from all interfaces.
+    #[serde(default = "default_webhook_bind")]
+    pub bind_addr: String,
 }
 
 fn default_webhook_port() -> u16 { 9393 }
 fn default_true() -> bool { true }
 fn default_severity_threshold() -> String { "warning".to_string() }
 fn default_dedup_window() -> u64 { 300 }
+fn default_webhook_bind() -> String { "127.0.0.1".to_string() }
 
 impl Default for WebhookConfig {
     fn default() -> Self {
@@ -68,6 +73,7 @@ impl Default for WebhookConfig {
             auto_analyze: default_true(),
             severity_threshold: default_severity_threshold(),
             dedup_window_secs: default_dedup_window(),
+            bind_addr: default_webhook_bind(),
         }
     }
 }
@@ -263,6 +269,14 @@ pub fn config_dir() -> PathBuf {
 /// Default path for the daemon log file: `~/.daemoneye/daemon.log`.
 pub fn default_log_path() -> PathBuf {
     config_dir().join("daemon.log")
+}
+
+/// Default path for the Unix domain socket: `~/.daemoneye/daemoneye.sock`.
+///
+/// Using the user's home directory rather than `/tmp` prevents other local users
+/// from pre-creating a symlink or connecting to the socket.
+pub fn default_socket_path() -> PathBuf {
+    config_dir().join("daemoneye.sock")
 }
 
 /// Directory where user prompt TOML files are stored: `~/.daemoneye/prompts/`.

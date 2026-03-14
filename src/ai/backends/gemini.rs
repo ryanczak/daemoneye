@@ -62,9 +62,9 @@ impl GeminiClient {
                 // Gemini batches all function responses into one user turn.
                 let parts: Vec<Value> = trs.into_iter().map(|tr| json!({
                     "functionResponse": {
-                        "name": "run_terminal_command",
+                        "name": tr.tool_name,
                         "response": {
-                            "name": "run_terminal_command",
+                            "name": tr.tool_name,
                             "content": tr.content
                         }
                     }
@@ -499,8 +499,10 @@ mod tests {
 
     #[test]
     fn convert_tool_results_become_user_message_with_tool_result_blocks() {
+        // Test AnthropicClient format (tool_result blocks)
         let tr = ToolResult {
             tool_call_id: "tc_1".to_string(),
+            tool_name: "list_schedules".to_string(),
             content: "output here".to_string(),
         };
         let msg = Message {
@@ -516,6 +518,30 @@ mod tests {
         assert_eq!(content[0]["type"], "tool_result");
         assert_eq!(content[0]["tool_use_id"], "tc_1");
         assert_eq!(content[0]["content"], "output here");
+    }
+
+    #[test]
+    fn gemini_convert_tool_results_uses_correct_function_name() {
+        use crate::ai::backends::gemini::GeminiClient;
+        let tr = ToolResult {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "list_schedules".to_string(),
+            content: "[]".to_string(),
+        };
+        let msg = Message {
+            role: "user".to_string(),
+            content: String::new(),
+            tool_calls: None,
+            tool_results: Some(vec![tr]),
+        };
+        let gemini = GeminiClient::new("key".to_string(), "gemini-2.0-flash".to_string());
+        let out = gemini.convert_messages(vec![msg]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "user");
+        let parts = out[0]["parts"].as_array().expect("parts array");
+        assert_eq!(parts[0]["functionResponse"]["name"], "list_schedules");
+        assert_eq!(parts[0]["functionResponse"]["response"]["name"], "list_schedules");
+        assert_eq!(parts[0]["functionResponse"]["response"]["content"], "[]");
     }
 
     // ── make_client dispatch ──────────────────────────────────────────────────

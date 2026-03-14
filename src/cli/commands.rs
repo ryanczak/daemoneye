@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
-use crate::config::Config;
+use crate::config::{Config, default_socket_path};
 use crate::cli::render::*;
 use crate::cli::input::*;
 use crate::daemon::utils::command_has_sudo;
-use crate::ipc::{Request, Response, DEFAULT_SOCKET_PATH};
+use crate::ipc::{Request, Response};
 
 
 /// Per-session auto-approval flags for the two command classes.
@@ -1128,7 +1128,7 @@ async fn ask_with_session(
                 md.feed(&t);
                 std::io::stdout().flush()?;
             }
-            Response::ToolCallPrompt { id, command, background } => {
+            Response::ToolCallPrompt { id, command, background, target_pane } => {
                 if !response_started {
                     print!("\r\x1b[K");
                     response_started = true;
@@ -1141,7 +1141,35 @@ async fn ask_with_session(
                     "terminal · visible to you"
                 };
                 let cmd_line = format!("$ {}", command);
-                print_tool_panel(where_label, &[&cmd_line], false);
+
+                // Resolve window-relative index for foreground target pane so the
+                // user can visually map the pane ID to their tmux layout.
+                let target_label = target_pane.as_deref().and_then(|tp| {
+                    let out = std::process::Command::new("tmux")
+                        .args(["display-message", "-t", tp, "-p", "#{pane_index}\t#{window_name}"])
+                        .output().ok()?;
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    let mut parts = s.trim().splitn(2, '\t');
+                    let idx = parts.next()?;
+                    let win = parts.next().unwrap_or("");
+                    Some(format!("pane {} in '{}' ({})", idx, win, tp))
+                });
+
+                let mut panel_lines: Vec<String> = vec![cmd_line];
+                if let Some(ref lbl) = target_label {
+                    panel_lines.push(format!("→ target: {}", lbl));
+                }
+                let panel_refs: Vec<&str> = panel_lines.iter().map(|s| s.as_str()).collect();
+                print_tool_panel(where_label, &panel_refs, false);
+
+                // Visually highlight the target pane while the user decides.
+                if let Some(ref tp) = target_pane {
+                    if !background {
+                        let _ = std::process::Command::new("tmux")
+                            .args(["select-pane", "-t", tp, "-P", "bg=colour17"])
+                            .output();
+                    }
+                }
 
                 let is_sudo = command_has_sudo(&command);
                 let auto_approved = if is_sudo { approval.sudo } else { approval.regular };
@@ -1198,6 +1226,18 @@ async fn ask_with_session(
                     ApprovalDecision::Denied => (false, None),
                     ApprovalDecision::UserMessage(msg) => (false, Some(msg)),
                 };
+
+                // Remove highlight when denied or redirected — daemon won't execute
+                // so it won't clean up the highlight itself.
+                if !approved {
+                    if let Some(ref tp) = target_pane {
+                        if !background {
+                            let _ = std::process::Command::new("tmux")
+                                .args(["select-pane", "-t", tp, "-P", "default"])
+                                .output();
+                        }
+                    }
+                }
 
                 md.reset();
                 send_request(&mut tx, Request::ToolCallResponse { id, approved, user_message }).await?;
@@ -1517,14 +1557,14 @@ async fn send_refresh() -> Result<()> {
 }
 
 pub async fn connect() -> Result<UnixStream> {
-    let socket_path = Path::new(DEFAULT_SOCKET_PATH);
+    let socket_path = default_socket_path();
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        UnixStream::connect(socket_path),
+        UnixStream::connect(&socket_path),
     )
     .await
-    .with_context(|| format!("Timed out connecting to daemon at {} (is it running?)", DEFAULT_SOCKET_PATH))?
-    .with_context(|| format!("Failed to connect to daemon at {}", DEFAULT_SOCKET_PATH))
+    .with_context(|| format!("Timed out connecting to daemon at {} (is it running?)", socket_path.display()))?
+    .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))
 }
 
 pub async fn send_request(tx: &mut OwnedWriteHalf, req: Request) -> Result<()> {

@@ -53,8 +53,15 @@ pub fn other_sessions_context(current_session: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    format_other_sessions(current_session, &list_sessions(), now)
+}
 
-    let sessions = list_sessions();
+/// Pure formatting helper — separated from tmux I/O for testability.
+pub(crate) fn format_other_sessions(
+    current_session: &str,
+    sessions: &[OtherSessionInfo],
+    now_secs: u64,
+) -> String {
     let others: Vec<_> = sessions.iter()
         .filter(|s| s.name != current_session)
         .collect();
@@ -64,8 +71,8 @@ pub fn other_sessions_context(current_session: &str) -> String {
     }
 
     let parts: Vec<String> = others.iter().map(|s| {
-        let age = if s.last_activity > 0 && now >= s.last_activity {
-            let secs = now - s.last_activity;
+        let age = if s.last_activity > 0 && now_secs >= s.last_activity {
+            let secs = now_secs - s.last_activity;
             if secs < 60 {
                 format!("active {}s ago", secs)
             } else if secs < 3600 {
@@ -198,6 +205,91 @@ pub fn client_dimensions(session_name: &str) -> (u16, u16) {
     let w = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     let h = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     (w, h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sess(name: &str, windows: usize, last_activity: u64, attached: bool) -> OtherSessionInfo {
+        OtherSessionInfo { name: name.to_string(), windows, last_activity, attached }
+    }
+
+    #[test]
+    fn format_other_sessions_empty_when_only_current() {
+        let sessions = vec![sess("main", 2, 1000, true)];
+        assert_eq!(format_other_sessions("main", &sessions, 1060), "");
+    }
+
+    #[test]
+    fn format_other_sessions_empty_when_no_sessions() {
+        assert_eq!(format_other_sessions("main", &[], 1000), "");
+    }
+
+    #[test]
+    fn format_other_sessions_active_seconds() {
+        let sessions = vec![sess("staging", 1, 990, false)];
+        let out = format_other_sessions("main", &sessions, 1000);
+        assert!(out.contains("[OTHER SESSIONS]"), "missing header: {out}");
+        assert!(out.contains("active 10s ago"), "wrong age format: {out}");
+        assert!(out.contains("detached"), "wrong attach state: {out}");
+        assert!(out.contains("1 window,"), "wrong window count: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_active_minutes() {
+        let sessions = vec![sess("prod", 3, 1000 - 300, true)];
+        let out = format_other_sessions("current", &sessions, 1000);
+        assert!(out.contains("active 5m ago"), "wrong age: {out}");
+        assert!(out.contains("attached"), "wrong attach state: {out}");
+        assert!(out.contains("3 windows"), "expected plural: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_idle_hours() {
+        // 2 hours 30 minutes ago: now=10000, last_activity=10000-9000=1000
+        let sessions = vec![sess("old", 1, 1000, false)];
+        let out = format_other_sessions("current", &sessions, 10000);
+        assert!(out.contains("idle 2h30m"), "wrong idle format: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_unknown_activity_when_zero() {
+        let sessions = vec![sess("fresh", 1, 0, false)];
+        let out = format_other_sessions("current", &sessions, 1000);
+        assert!(out.contains("unknown activity"), "expected unknown: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_excludes_current() {
+        let sessions = vec![
+            sess("current", 2, 900, true),
+            sess("other", 1, 950, false),
+        ];
+        let out = format_other_sessions("current", &sessions, 1000);
+        assert!(!out.contains("current ("), "current session should be excluded: {out}");
+        assert!(out.contains("other ("), "other session should be included: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_multiple_sessions_comma_separated() {
+        let sessions = vec![
+            sess("a", 1, 990, true),
+            sess("b", 2, 940, false),
+        ];
+        let out = format_other_sessions("x", &sessions, 1000);
+        // Both should appear, separated by ", "
+        assert!(out.contains(", "), "expected comma-separated list: {out}");
+        assert!(out.contains("a ("), "missing session a: {out}");
+        assert!(out.contains("b ("), "missing session b: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_ends_with_newline() {
+        let sessions = vec![sess("other", 1, 990, true)];
+        let out = format_other_sessions("current", &sessions, 1000);
+        assert!(out.ends_with('\n'), "output should end with newline: {out:?}");
+    }
 }
 
 /// List all pane IDs in a tmux session (across all windows).
