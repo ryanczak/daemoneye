@@ -157,6 +157,8 @@ pub enum Request {
         height: u16,
         session_name: String,
     },
+    /// Query the daemon's current operational status (F1).
+    Status,
 }
 
 /// Messages sent from the daemon back to the CLI client.
@@ -236,6 +238,18 @@ pub enum Response {
     /// Sent after each AI turn completes, carrying the prompt token count from
     /// that turn. The client uses this to update the context-budget display.
     UsageUpdate { prompt_tokens: u32 },
+    /// Daemon status snapshot returned in response to `Request::Status` (F1).
+    DaemonStatus {
+        uptime_secs: u64,
+        pid: u32,
+        active_sessions: usize,
+        provider: String,
+        model: String,
+        socket_path: String,
+        schedule_count: usize,
+        /// Circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
+        circuit_state: String,
+    },
 }
 
 #[cfg(test)]
@@ -736,6 +750,46 @@ mod tests {
                 assert_eq!(width, 220);
                 assert_eq!(height, 50);
                 assert_eq!(session_name, "main");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_status_roundtrip() {
+        assert!(matches!(roundtrip_req(&Request::Status), Request::Status));
+    }
+
+    #[test]
+    fn response_daemon_status_roundtrip() {
+        let resp = Response::DaemonStatus {
+            uptime_secs: 3661,
+            pid: 12345,
+            active_sessions: 2,
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-4-6".to_string(),
+            socket_path: "/tmp/daemoneye.sock".to_string(),
+            schedule_count: 3,
+            circuit_state: "closed".to_string(),
+        };
+        match roundtrip_resp(&resp) {
+            Response::DaemonStatus {
+                uptime_secs,
+                pid,
+                active_sessions,
+                provider,
+                model,
+                schedule_count,
+                circuit_state,
+                ..
+            } => {
+                assert_eq!(uptime_secs, 3661);
+                assert_eq!(pid, 12345);
+                assert_eq!(active_sessions, 2);
+                assert_eq!(provider, "anthropic");
+                assert_eq!(model, "claude-sonnet-4-6");
+                assert_eq!(schedule_count, 3);
+                assert_eq!(circuit_state, "closed");
             }
             _ => panic!("wrong variant"),
         }

@@ -295,6 +295,25 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
+        // F1: return a live status snapshot to `daemoneye status`.
+        Request::Status => {
+            let uptime_secs = crate::daemon::daemon_uptime_secs();
+            let pid = std::process::id();
+            let active_sessions = sessions.lock().unwrap_or_log().len();
+            let schedule_count = schedule_store.list().len();
+            let circuit_state = crate::ai::circuit_state_str().to_string();
+            send_response_split(&mut tx, Response::DaemonStatus {
+                uptime_secs,
+                pid,
+                active_sessions,
+                provider: config.ai.provider.clone(),
+                model: config.ai.model.clone(),
+                socket_path: default_socket_path().display().to_string(),
+                schedule_count,
+                circuit_state,
+            }).await?;
+            return Ok(());
+        }
         Request::NotifyActivity { pane_id, hook_index: _, session_name: _ } => {
             if is_valid_pane_id(&pane_id) {
                 if let Some(tx) = BG_DONE_TX.get() {

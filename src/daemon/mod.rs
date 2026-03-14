@@ -3,7 +3,7 @@ use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -12,6 +12,14 @@ use crate::ipc::{Request, Response};
 use crate::tmux::cache::SessionCache;
 use crate::config::{Config, default_socket_path};
 use crate::scheduler::ScheduleStore;
+
+/// Timestamp of when `run_daemon` started. Initialised once at daemon startup.
+static DAEMON_START: OnceLock<Instant> = OnceLock::new();
+
+/// Returns the number of seconds since the daemon started, or 0 before init.
+pub fn daemon_uptime_secs() -> u64 {
+    DAEMON_START.get().map(|t| t.elapsed().as_secs()).unwrap_or(0)
+}
 
 
 pub mod session;
@@ -164,6 +172,9 @@ pub async fn daemon_is_running() -> bool {
 /// 6. Optionally open the chat pane if the daemon just created the tmux session.
 /// 7. Shut down cleanly on SIGTERM or SIGINT.
 pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
+    // Record daemon start time for uptime reporting (F1).
+    DAEMON_START.get_or_init(Instant::now);
+
     // Initialise env_logger once.  DAEMONEYE_LOG=debug|info|warn|error controls verbosity.
     // Default is `info` which shows lifecycle events, connections, and command execution.
     // Color is disabled and a human-readable UTC timestamp is prepended to every line.

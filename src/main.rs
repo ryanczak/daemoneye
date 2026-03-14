@@ -53,6 +53,8 @@ enum Commands {
     Ask { query: String },
     /// Check whether the daemon is running
     Ping,
+    /// Show daemon status (uptime, sessions, provider, circuit breaker)
+    Status,
     /// Stop the background daemon
     Stop,
     /// Print the tmux configuration for DaemonEye
@@ -218,6 +220,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Ping => {
             cli::run_ping().await?;
+        }
+        Commands::Status => {
+            cli::run_status().await?;
         }
         Commands::Stop => {
             cli::run_stop().await?;

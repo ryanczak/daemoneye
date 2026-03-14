@@ -184,8 +184,9 @@ This document captures findings from a comprehensive security, architecture, and
 
 ## Functional Gaps
 
-#### F1. No `daemoneye status` Command
-- No way to inspect daemon uptime, active sessions, installed hooks, or resource usage without reading logs.
+#### F1. `daemoneye status` Command ✓ Implemented
+- **Files**: `src/ipc.rs`, `src/daemon/mod.rs`, `src/daemon/server.rs`, `src/main.rs`, `src/cli/commands.rs`
+- **Fix applied**: `DAEMON_START: OnceLock<Instant>` recorded at daemon startup. `Request::Status` / `Response::DaemonStatus` IPC variants added. `handle_client` handles `Status` by collecting uptime, PID, active session count, provider/model, socket path, schedule count, and circuit breaker state. `daemoneye status` CLI subcommand added with human-readable output.
 
 #### F2. Graceful Shutdown (SIGTERM/SIGINT) ✓ Implemented
 - **File**: `src/daemon/mod.rs` (end of `run_daemon`)
@@ -202,8 +203,9 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: If config directory creation fails, startup continues and all subsequent I/O silently fails. This should be a fatal error.
 - **Fix applied**: Changed from `eprintln!` warning to `?` propagation — `main()` now returns `Err` and exits non-zero if `ensure_dirs()` fails.
 
-#### F5. No Circuit Breaker for Flaky AI Backends
-- Repeated API failures cause repeated full-backoff retries. A circuit-breaker (fail fast after N consecutive errors, reset after a cooldown) would improve the user experience during outages.
+#### F5. Circuit Breaker for Flaky AI Backends ✓ Implemented
+- **File**: `src/ai/mod.rs`
+- **Fix applied**: `CircuitBreaker` struct with `consecutive_failures: AtomicU32` and `open_until: Mutex<Option<Instant>>`. Threshold: 5 consecutive failures opens the circuit. Cooldown: 60 s before allowing a probe request. `send_with_retry` renamed to `send_with_retry_inner`; the public `send_with_retry` now checks `circuit().allow()` first (returns error immediately when open), then calls `record_success()` / `record_failure()` based on the outcome. Half-open state (cooldown expired) allows one probe; success closes the circuit, failure re-opens it. Current state is exposed via `circuit_state_str()` and surfaced in `daemoneye status`. Three unit tests cover closed/open/half-open transitions.
 
 #### F6. No Session Export
 - Session history is persisted but there's no CLI command to export it to a portable format for backup or sharing.
@@ -234,3 +236,5 @@ This document captures findings from a comprehensive security, architecture, and
 | 18 | F2 | ~~SIGTERM/SIGINT graceful shutdown~~ ✓ Done | Medium |
 | 19 | F3 | ~~API key format validation at startup~~ ✓ Done | Small |
 | 20 | S11 | ~~Validate pane_id format in notify handlers~~ ✓ Done | Small |
+| 21 | F1 | ~~`daemoneye status` command~~ ✓ Done | Small |
+| 22 | F5 | ~~Circuit breaker for flaky AI backends~~ ✓ Done | Small |

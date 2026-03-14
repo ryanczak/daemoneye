@@ -167,6 +167,55 @@ pub async fn run_ping() -> Result<()> {
     Ok(())
 }
 
+pub async fn run_status() -> Result<()> {
+    match connect().await {
+        Err(_) => {
+            println!("Daemon is not running.");
+            std::process::exit(1);
+        }
+        Ok(stream) => {
+            let (rx, mut tx) = stream.into_split();
+            let mut rx = BufReader::new(rx);
+            send_request(&mut tx, Request::Status).await?;
+            match recv(&mut rx).await {
+                Ok(Response::DaemonStatus {
+                    uptime_secs,
+                    pid,
+                    active_sessions,
+                    provider,
+                    model,
+                    socket_path,
+                    schedule_count,
+                    circuit_state,
+                }) => {
+                    let hours = uptime_secs / 3600;
+                    let mins = (uptime_secs % 3600) / 60;
+                    let secs = uptime_secs % 60;
+                    let uptime_str = if hours > 0 {
+                        format!("{}h {}m {}s", hours, mins, secs)
+                    } else if mins > 0 {
+                        format!("{}m {}s", mins, secs)
+                    } else {
+                        format!("{}s", secs)
+                    };
+                    println!("PID:             {}", pid);
+                    println!("Uptime:          {}", uptime_str);
+                    println!("Socket:          {}", socket_path);
+                    println!("Provider:        {}/{}", provider, model);
+                    println!("Active sessions: {}", active_sessions);
+                    println!("Schedules:       {}", schedule_count);
+                    println!("Circuit:         {}", circuit_state);
+                }
+                _ => {
+                    println!("Daemon did not return status.");
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn run_ask(query: String) -> Result<()> {
     let stdin = AsyncStdin::new()?;
     let mut approval = SessionApproval::default(); // never persists; single-shot has no session
@@ -1528,6 +1577,9 @@ async fn ask_with_session(
                 }
                 println!();
                 md.reset();
+            }
+            Response::DaemonStatus { .. } => {
+                // Not expected in the AI streaming loop; ignore.
             }
         }
     }
