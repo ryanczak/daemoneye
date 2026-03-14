@@ -113,34 +113,45 @@ graph TD
 - **Request types**:
   - `Ping` — liveness check.
   - `Shutdown` — graceful stop.
-  - `Ask { query, tmux_pane, session_id }` — start or continue a conversation turn.
-  - `ToolCallResponse { id, approved }` — user's approval decision for a proposed command.
+  - `Status` — query daemon status (uptime, sessions, provider, circuit state); daemon responds with `DaemonStatus` (F1).
+  - `Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane }` — start or continue a conversation turn. `tmux_session` and `target_pane` are resolved client-side before connecting; `target_pane` is stored as `SessionEntry.default_target_pane` so `find_best_target_pane()` never prompts mid-conversation.
+  - `Refresh` — re-collect system context (OS, memory, processes, history) via `refresh_sys_context()`; daemon responds with `Ok`.
+  - `ToolCallResponse { id, approved, user_message }` — user's approval decision for a proposed command. When `approved=false` and `user_message` is `Some`, the daemon aborts the pending tool chain and injects the text as a new user turn so the AI can course-correct.
   - `CredentialResponse { id, credential }` — user-supplied sudo password for an approved background command, sent in response to `CredentialPrompt`.
+  - `PaneSelectResponse { id, pane_id }` — user's pane selection, sent in response to `PaneSelectPrompt`.
   - `ScriptWriteResponse { id, approved }` — user's approval decision for a proposed script write, sent in response to `ScriptWritePrompt`.
+  - `ScheduleWriteResponse { id, approved }` — user's approval decision for a proposed scheduled job, sent in response to `ScheduleWritePrompt`.
   - `RunbookWriteResponse { id, approved }` — user's approval decision for a proposed runbook write, sent in response to `RunbookWritePrompt`.
   - `RunbookDeleteResponse { id, approved }` — user's approval decision for a proposed runbook deletion, sent in response to `RunbookDeletePrompt`.
-  - `NotifyFocus { pane_id, session_name }` — signals that a pane received focus (`pane-focus-in` hook); daemon calls `cache.set_active_pane(pane_id)` to update the active-pane state immediately without waiting for the next 2 s poll.
-  - `NotifyWindowChanged { session_name }` — signals that the active window changed (`session-window-changed` hook); daemon calls `cache.refresh_windows()` to refresh window topology immediately.
-  - `NotifySessionCreated { session_name }` — signals that a new tmux session was created (`after-new-session` global hook); daemon calls `install_session_hooks()` for the new session so all per-session monitoring hooks are registered automatically.
+  - `NotifyActivity { pane_id, hook_index, session_name }` — background pane activity from a tmux hook (alert-activity or pane-died); broadcasts `pane_id` on `BG_DONE_TX`. `pane_id` is validated via `is_valid_pane_id()` before use (S11).
+  - `NotifyComplete { pane_id, exit_code, session_name }` — background command finished; broadcasts `(pane_id, exit_code)` on `COMPLETE_TX` (primary completion path for background commands).
+  - `NotifyFocus { pane_id, session_name }` — signals that a pane received focus (`pane-focus-in` hook, N1); daemon calls `cache.set_active_pane(pane_id)` to update the active-pane state immediately without waiting for the next 2 s poll.
+  - `NotifyWindowChanged { session_name }` — signals that the active window changed (`session-window-changed` hook, N2); daemon calls `cache.refresh_windows()` to refresh window topology immediately.
+  - `NotifySessionCreated { session_name }` — signals that a new tmux session was created (`after-new-session` global hook, N14); daemon calls `install_session_hooks()` for the new session so all per-session monitoring hooks are registered automatically.
+  - `NotifySessionClosed { session_name }` — signals that a tmux session was destroyed (`session-closed` per-session hook, A6); daemon calls `cleanup_bg_windows()` on all matching `SessionEntry` records and removes them from the session store.
   - `NotifyClientAttached { session_name }` — signals that a terminal client attached to a tmux session (`client-attached` global hook, N15); daemon clears `last_detach` on all `SessionEntry` records whose `tmux_session` matches, suppressing any pending catch-up brief.
   - `NotifyClientDetached { session_name }` — signals that the last terminal client detached from a tmux session (`client-detached` global hook, N15); daemon records `last_detach = now` and `messages_at_detach = messages.len()` on matching session entries so the next `Ask` can generate a catch-up brief.
+  - `NotifyResize { width, height, session_name }` — signals that the attached terminal was resized (`client-resized` per-session hook, N8); daemon calls `cache.set_client_size(width, height)` so the `[CLIENT VIEWPORT]` block stays current.
 - **Response types**:
   - `Ok` — signals successful completion of a turn.
   - `Error(String)` — error from the daemon or AI provider.
   - `SessionInfo { message_count }` — sent once before streaming; carries prior turn count.
   - `Token(String)` — streaming AI response token.
-  - `ToolCallPrompt { id, command, background, target_pane }` — daemon requests user approval for a command. `target_pane` carries the best-guess pane ID for foreground commands (computed synchronously from the cache/session before waiting for the user) so the client can resolve the window-relative index via `tmux display-message` and visually highlight the target pane during the approval window.
-  - `CredentialPrompt { id, prompt }` — daemon requests the sudo password for an approved background command; `prompt` is a human-readable message (e.g. `"[sudo] password required for: sudo apt upgrade"`).
-  - `SystemMsg(String)` — daemon notification (e.g., sudo prompt detected, pane switch). Rendered in the chat interface with an amber ⚙ prefix.
+  - `SystemMsg(String)` — daemon notification (sudo alert, pane switch, approval timeout, catch-up brief, etc.). Rendered with an amber ⚙ prefix.
+  - `ToolCallPrompt { id, command, background, target_pane }` — daemon requests user approval for a command. `target_pane` carries the best-guess pane ID for foreground commands so the client can resolve the window-relative index and visually highlight the target pane during the approval window.
+  - `CredentialPrompt { id, prompt }` — daemon requests the sudo password for an approved background command.
+  - `PaneSelectPrompt { id, panes: Vec<PaneInfo> }` — daemon cannot determine target pane; client displays the list and returns `PaneSelectResponse`.
   - `ToolResult(String)` — captured output of an approved command, sent before the AI continues. Rendered as a dimmed bordered panel (capped at 10 rows).
   - `ScriptWritePrompt { id, script_name, content }` — daemon shows full script content to user before writing; requires `ScriptWriteResponse`.
+  - `ScheduleWritePrompt { id, name, kind, action }` — daemon shows scheduled job details before creation; requires `ScheduleWriteResponse`.
   - `RunbookWritePrompt { id, runbook_name, content }` — daemon shows full runbook content to user before writing; requires `RunbookWriteResponse`.
   - `RunbookDeletePrompt { id, runbook_name, active_jobs }` — daemon warns if active scheduled jobs reference the runbook before deletion; requires `RunbookDeleteResponse`.
   - `ScheduleList { jobs: Vec<ScheduleListItem> }` — list of scheduled jobs with id, name, kind, action, status, last_run, next_run.
   - `ScriptList { scripts: Vec<ScriptListItem> }` — list of scripts in `~/.daemoneye/scripts/` with name and size.
   - `RunbookList { runbooks: Vec<RunbookListItem> }` — list of runbooks in `~/.daemoneye/runbooks/` with name and tags.
   - `MemoryList { entries: Vec<MemoryListItem> }` — list of memory entries with category and key.
-  - `UsageUpdate { prompt_tokens: u32 }` — sent once per completed AI turn (both final-answer and tool-call paths), immediately before `Ok`. Carries the `prompt_tokens` count from the last API call so the CLI can display an accurate context-budget indicator in the user query box.
+  - `UsageUpdate { prompt_tokens: u32 }` — sent once per completed AI turn immediately before `Ok`; carries the prompt token count so the CLI can display an accurate context-budget indicator.
+  - `DaemonStatus { uptime_secs, pid, active_sessions, provider, model, socket_path, schedule_count, circuit_state }` — response to `Request::Status` (F1).
 - Each client connection handles exactly one request/response lifecycle. `Ask` connections receive a token stream (interleaved with zero or more tool-call approval round-trips) terminated by `Ok` or `Error`. Incoming IPC messages are capped at 1 MiB (`MAX_IPC_MESSAGE_BYTES` in `server.rs`); oversized payloads are rejected with `Response::Error` and the connection is closed (S14).
 
 ### 2.3 DaemonEye Background Daemon
