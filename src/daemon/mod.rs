@@ -483,7 +483,29 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         }
     }
 
-    let _ = std::fs::remove_file(socket_path);
+    // ── Graceful shutdown ────────────────────────────────────────────────────
+    // 1. Remove the socket so new clients get a clean "not running" error.
+    let _ = std::fs::remove_file(&socket_path);
+
+    // 2. Uninstall global tmux hooks so they don't fire against a dead daemon.
+    for hook in &["pane-died", "after-new-session", "client-attached", "client-detached"] {
+        if let Err(e) = std::process::Command::new("tmux")
+            .args(["set-hook", "-gu", hook])
+            .output()
+        {
+            log::warn!("Failed to uninstall global tmux hook '{}': {}", hook, e);
+        }
+    }
+
+    // 3. Cleanup all active sessions: kill background windows and stop pipe logs.
+    {
+        let mut store = sessions.lock().unwrap_or_log();
+        for (_, entry) in store.iter_mut() {
+            entry.cleanup_bg_windows();
+        }
+    }
+
+    log::info!("Daemon stopped cleanly.");
     Ok(())
 }
 

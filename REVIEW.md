@@ -187,8 +187,10 @@ This document captures findings from a comprehensive security, architecture, and
 #### F1. No `daemoneye status` Command
 - No way to inspect daemon uptime, active sessions, installed hooks, or resource usage without reading logs.
 
-#### F2. No Graceful Shutdown (SIGTERM/SIGINT)
-- The daemon doesn't handle signals for clean shutdown (remove socket, uninstall global hooks, flush logs).
+#### F2. Graceful Shutdown (SIGTERM/SIGINT) ✓ Implemented
+- **File**: `src/daemon/mod.rs` (end of `run_daemon`)
+- **Issue**: On SIGTERM/SIGINT the daemon removed the socket but left global tmux hooks installed and bg windows open, so hooks would fire against a dead daemon and produce errors in tmux.
+- **Fix applied**: Shutdown sequence after the accept loop now: (1) removes the socket, (2) uninstalls all four global tmux hooks (`pane-died`, `after-new-session`, `client-attached`, `client-detached`) via `set-hook -gu`, (3) iterates all active sessions and calls `cleanup_bg_windows()` on each (kills bg windows, stops pipe-pane logs), (4) logs `"Daemon stopped cleanly."`.
 
 #### F3. No API Key Validation at Startup ✓ Implemented
 - **File**: `src/daemon/mod.rs`
@@ -229,6 +231,6 @@ This document captures findings from a comprehensive security, architecture, and
 | 15 | A1 | Task supervision for critical spawned tasks | Large |
 | 16 | F4 | ~~Fatal error on `ensure_dirs()` failure~~ ✓ Done | Trivial |
 | 17 | S5 | ~~`zeroize` crate for sudo credentials~~ ✓ Done | Small |
-| 18 | F2 | SIGTERM/SIGINT graceful shutdown | Medium |
+| 18 | F2 | ~~SIGTERM/SIGINT graceful shutdown~~ ✓ Done | Medium |
 | 19 | F3 | ~~API key format validation at startup~~ ✓ Done | Small |
 | 20 | S11 | ~~Validate pane_id format in notify handlers~~ ✓ Done | Small |
