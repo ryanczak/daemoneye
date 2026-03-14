@@ -109,10 +109,10 @@ This document captures findings from a comprehensive security, architecture, and
 
 ### Error Handling
 
-#### A1. Spawned Tasks Don't Propagate Errors
-- **File**: `src/daemon/mod.rs` lines ~315-441
+#### A1. Spawned Tasks Don't Propagate Errors ✓ Implemented
+- **File**: `src/daemon/mod.rs`
 - **Issue**: `tokio::spawn()` is used for cache monitor, scheduler, webhook, and client handlers. Task failures are logged but not escalated. Critical subsystems (scheduler, webhook) can die silently.
-- **Fix**: Track `JoinHandle`s for critical tasks. Use a supervisor loop that restarts failed tasks with exponential backoff. For client handlers, ensure the connection is closed cleanly on error.
+- **Fix applied**: `supervise()` free async function added. Takes a `factory: Fn() -> Future<Output=()>` and an `Arc<AtomicBool>` shutdown flag. Awaits each task's `JoinHandle`; on panic, logs ERROR with extracted payload and records a `task_panic` event; on clean exit, logs WARN. Both paths apply exponential backoff (1 s → 2 s → 4 s → 8 s → 16 s → 30 s cap) before restarting. The failure counter resets when a task runs stably for ≥ 60 s. Checks the shutdown flag after each task exit and after each backoff delay — exits the supervisor loop without restarting when set. All four critical tasks (cache-poller, scheduler, session-cleanup, webhook) now start under `supervise()`; per-connection client handlers remain fire-and-forget. The shutdown flag is set in both SIGTERM and SIGINT branches. Added `tokio = { features = ["test-util"] }` dev-dependency for time-paused unit tests. 2 new tests verify restart-on-panic and no-restart-on-shutdown (298 total).
 
 #### A2. Silent I/O Failures in Session Persistence ✓ Implemented
 - **Files**: `src/daemon/session.rs` (A9 batch), `src/daemon/background.rs` line ~37
@@ -230,7 +230,7 @@ This document captures findings from a comprehensive security, architecture, and
 | 12 | S4 | ~~`canonicalize()` for file path validation~~ ✓ Done | Small |
 | 13 | A9 | ~~Atomic session history writes (write-tmp-rename)~~ ✓ Done | Medium |
 | 14 | A10 | ~~Log poisoned lock recovery (`UnpoisonExt` trait, 44 sites)~~ ✓ Done | Trivial |
-| 15 | A1 | Task supervision for critical spawned tasks | Large |
+| 15 | A1 | ~~Task supervision for critical spawned tasks~~ ✓ Done | Medium |
 | 16 | F4 | ~~Fatal error on `ensure_dirs()` failure~~ ✓ Done | Trivial |
 | 17 | S5 | ~~`zeroize` crate for sudo credentials~~ ✓ Done | Small |
 | 18 | F2 | ~~SIGTERM/SIGINT graceful shutdown~~ ✓ Done | Medium |

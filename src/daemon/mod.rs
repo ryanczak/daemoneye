@@ -2,8 +2,10 @@
 use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -39,6 +41,76 @@ pub const SCHED_WINDOW_PREFIX: &str = "de-sched-";
 pub use session::*;
 pub use utils::*;
 pub use server::*;
+
+/// Supervise a long-lived daemon task, restarting it with exponential backoff
+/// on panic or unexpected exit (A1).
+///
+/// `factory` is called each time the task is (re-)started; it must produce a
+/// fresh `Future<Output = ()>`.  The supervisor exits cleanly when `shutdown`
+/// is `true` — either set before the first call or by the factory itself.
+///
+/// Backoff schedule: 1 s → 2 s → 4 s → 8 s → 16 s → 30 s (cap).
+/// The failure counter resets when a task runs stably for ≥ 60 s.
+pub async fn supervise<F, Fut>(
+    name: &'static str,
+    shutdown: Arc<AtomicBool>,
+    factory: F,
+)
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    const MAX_BACKOFF: Duration = Duration::from_secs(30);
+    const STABLE_THRESHOLD: Duration = Duration::from_secs(60);
+    let mut attempt: u32 = 0;
+
+    loop {
+        let start = Instant::now();
+        let handle = tokio::spawn(factory());
+
+        match handle.await {
+            Ok(()) => {
+                if shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                log::warn!("Supervised task '{}' exited unexpectedly — restarting.", name);
+            }
+            Err(e) if e.is_panic() => {
+                if shutdown.load(Ordering::Relaxed) {
+                    return;
+                }
+                let payload = e.into_panic();
+                let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "(non-string panic payload)".to_string()
+                };
+                log::error!("Supervised task '{}' panicked: {} — restarting.", name, msg);
+                log_event("task_panic", serde_json::json!({ "task": name, "msg": msg }));
+            }
+            Err(_) => {
+                // Task was cancelled — expected during shutdown.
+                return;
+            }
+        }
+
+        // Reset the backoff if the task ran stably long enough before failing.
+        if start.elapsed() >= STABLE_THRESHOLD {
+            attempt = 0;
+        }
+
+        let delay = MAX_BACKOFF.min(Duration::from_secs(1u64 << attempt.min(4)));
+        log::info!("Restarting task '{}' in {:?} (attempt {}).", name, delay, attempt + 1);
+        tokio::time::sleep(delay).await;
+        attempt = attempt.saturating_add(1);
+
+        if shutdown.load(Ordering::Relaxed) {
+            return;
+        }
+    }
+}
 
 /// Detect the tmux session the daemon is running in, without creating one.
 ///
@@ -354,17 +426,24 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         }
     }
 
+    // Shutdown flag shared with all supervisor tasks so they know not to restart
+    // after the accept loop exits on SIGTERM/SIGINT (A1).
+    let shutdown: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+
     log::info!("Cache poller started");
-    let cache_monitor = Arc::clone(&cache);
-    tokio::spawn(async move {
-        loop {
-            if let Err(e) = cache_monitor.refresh() {
-                log::warn!("Failed to refresh tmux cache: {}", e);
-                log_event("cache_refresh_error", serde_json::json!({ "error": e.to_string() }));
+    let cache_sup = Arc::clone(&cache);
+    tokio::spawn(supervise("cache-poller", Arc::clone(&shutdown), move || {
+        let c = Arc::clone(&cache_sup);
+        async move {
+            loop {
+                if let Err(e) = c.refresh() {
+                    log::warn!("Failed to refresh tmux cache: {}", e);
+                    log_event("cache_refresh_error", serde_json::json!({ "error": e.to_string() }));
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
         }
-    });
+    }));
 
     let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
 
@@ -382,41 +461,51 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
 
     // Scheduler task: poll every second for due jobs.
     {
-        let store = Arc::clone(&schedule_store);
-        let bg_sn = Arc::clone(&bg_session);
-        let cfg = startup_config.clone();
-        let sessions_sched = Arc::clone(&sessions);
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(1));
-            loop {
-                tick.tick().await;
-                let sn = bg_sn.lock().unwrap_or_log().clone();
-                if sn.is_empty() {
-                    continue; // No session adopted yet; skip until a client connects.
-                }
-                let due = store.take_due();
-                for job in due {
-                    let store2 = Arc::clone(&store);
-                    let sn2 = sn.clone();
-                    let cfg2 = cfg.clone();
-                    let sessions2 = Arc::clone(&sessions_sched);
-                    tokio::spawn(async move {
-                        run_scheduled_job(job, store2, sn2, sessions2, cfg2, None).await;
-                    });
+        let store_sup = Arc::clone(&schedule_store);
+        let bg_sn_sup = Arc::clone(&bg_session);
+        let cfg_sup = startup_config.clone();
+        let sessions_sup = Arc::clone(&sessions);
+        tokio::spawn(supervise("scheduler", Arc::clone(&shutdown), move || {
+            let store = Arc::clone(&store_sup);
+            let bg_sn = Arc::clone(&bg_sn_sup);
+            let cfg = cfg_sup.clone();
+            let sessions_sched = Arc::clone(&sessions_sup);
+            async move {
+                let mut tick = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    tick.tick().await;
+                    let sn = bg_sn.lock().unwrap_or_log().clone();
+                    if sn.is_empty() {
+                        continue; // No session adopted yet; skip until a client connects.
+                    }
+                    let due = store.take_due();
+                    for job in due {
+                        let store2 = Arc::clone(&store);
+                        let sn2 = sn.clone();
+                        let cfg2 = cfg.clone();
+                        let sessions2 = Arc::clone(&sessions_sched);
+                        tokio::spawn(async move {
+                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, None).await;
+                        });
+                    }
                 }
             }
-        });
+        }));
     }
 
     // Optional webhook ingestion endpoint.
     if startup_config.webhook.enabled {
-        let wh_config = startup_config.clone();
-        let wh_sessions = Arc::clone(&sessions);
-        tokio::spawn(async move {
-            if let Err(e) = crate::webhook::start(wh_config, wh_sessions).await {
-                log::error!("Webhook server exited: {}", e);
+        let wh_config_sup = startup_config.clone();
+        let wh_sessions_sup = Arc::clone(&sessions);
+        tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
+            let cfg = wh_config_sup.clone();
+            let sessions = Arc::clone(&wh_sessions_sup);
+            async move {
+                if let Err(e) = crate::webhook::start(cfg, sessions).await {
+                    log::error!("Webhook server exited: {}", e);
+                }
             }
-        });
+        }));
         if startup_config.webhook.secret.is_empty() {
             log::warn!("Webhook listener enabled on port {} — no auth (set webhook.secret in config.toml to require a Bearer token)", startup_config.webhook.port);
         } else {
@@ -425,24 +514,27 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     }
 
     // Prune chat sessions idle for more than 30 minutes.
-    let sessions_cleanup = Arc::clone(&sessions);
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            let now = Instant::now();
-            sessions_cleanup
-                .lock()
-                .unwrap_or_log()
-                .retain(|_, v| {
-                    if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
-                        v.cleanup_bg_windows();
-                        false
-                    } else {
-                        true
-                    }
-                });
+    let sessions_cleanup_sup = Arc::clone(&sessions);
+    tokio::spawn(supervise("session-cleanup", Arc::clone(&shutdown), move || {
+        let sessions_cleanup = Arc::clone(&sessions_cleanup_sup);
+        async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                let now = Instant::now();
+                sessions_cleanup
+                    .lock()
+                    .unwrap_or_log()
+                    .retain(|_, v| {
+                        if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
+                            v.cleanup_bg_windows();
+                            false
+                        } else {
+                            true
+                        }
+                    });
+            }
         }
-    });
+    }));
 
     let socket_path: PathBuf = default_socket_path();
 
@@ -498,11 +590,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             _ = sigterm.recv() => {
                 log::info!("Received SIGTERM, shutting down.");
                 log_event("daemon_stop", serde_json::json!({ "reason": "SIGTERM" }));
+                shutdown.store(true, Ordering::Relaxed);
                 break;
             }
             _ = sigint.recv() => {
                 log::info!("Received SIGINT, shutting down.");
                 log_event("daemon_stop", serde_json::json!({ "reason": "SIGINT" }));
+                shutdown.store(true, Ordering::Relaxed);
                 break;
             }
         }
@@ -534,3 +628,72 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+
+    /// Supervisor restarts the factory after a panic and exits cleanly once
+    /// the factory signals shutdown.
+    #[tokio::test(start_paused = true)]
+    async fn supervise_restarts_on_panic() {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let call_count = Arc::new(AtomicU32::new(0));
+
+        let sd = Arc::clone(&shutdown);
+        let cc = Arc::clone(&call_count);
+
+        let handle = tokio::spawn(supervise("test-restart", Arc::clone(&shutdown), move || {
+            let count = Arc::clone(&cc);
+            let sd2 = Arc::clone(&sd);
+            async move {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    panic!("deliberate test panic");
+                }
+                // Second call: signal shutdown so the supervisor exits after us.
+                sd2.store(true, Ordering::Relaxed);
+            }
+        }));
+
+        // Advance time past the 1 s backoff so the supervisor restarts.
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+
+        handle.await.expect("supervisor should complete cleanly");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "factory should be called exactly twice"
+        );
+    }
+
+    /// Supervisor does not restart when the shutdown flag is already set
+    /// at the time the managed task panics.
+    #[tokio::test(start_paused = true)]
+    async fn supervise_no_restart_when_shutdown() {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let call_count = Arc::new(AtomicU32::new(0));
+
+        let sd = Arc::clone(&shutdown);
+        let cc = Arc::clone(&call_count);
+
+        let handle = tokio::spawn(supervise("test-shutdown", Arc::clone(&shutdown), move || {
+            let count = Arc::clone(&cc);
+            let sd2 = Arc::clone(&sd);
+            async move {
+                count.fetch_add(1, Ordering::SeqCst);
+                // Signal shutdown before panicking — supervisor must not restart.
+                sd2.store(true, Ordering::Relaxed);
+                panic!("deliberate test panic");
+            }
+        }));
+
+        handle.await.expect("supervisor should complete cleanly");
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            1,
+            "factory should be called exactly once when shutdown is set"
+        );
+    }
+}
