@@ -243,10 +243,22 @@ pub async fn handle_client(
         config.ai.api_key = config.ai.resolve_api_key();
     }
 
+    /// Maximum size of a single incoming IPC message (1 MiB).
+    /// Prevents a malicious or buggy client from exhausting daemon memory by
+    /// sending an arbitrarily large JSON payload without a newline.
+    const MAX_IPC_MESSAGE_BYTES: usize = 1 << 20;
+
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     let n = reader.read_line(&mut line).await?;
     if n == 0 {
+        return Ok(());
+    }
+    if line.len() > MAX_IPC_MESSAGE_BYTES {
+        let mut stream = reader.into_inner();
+        send_response(&mut stream, Response::Error(
+            format!("Request too large ({} bytes; limit {} bytes)", line.len(), MAX_IPC_MESSAGE_BYTES)
+        )).await?;
         return Ok(());
     }
 

@@ -28,15 +28,21 @@ pub fn get_pane_remote_host(pane_id: &str) -> Option<String> {
 /// Escape `s` for safe embedding between `"…"` inside a tmux single-quoted
 /// `run-shell` argument.
 ///
-/// The shell processes the double-quoted region, so four characters are
-/// special there: `\`, `"`, `$`, and `` ` ``.  Each is prefixed with `\`.
+/// Two escaping layers are applied:
 ///
-/// Note: session names containing a literal `'` are not handled — a `'` would
-/// prematurely close tmux's outer single-quote context.  In practice, tmux
-/// discourages single-quotes in session names and they are extremely rare.
+/// 1. **tmux-level** — a literal `'` would prematurely close the outer
+///    single-quote context that tmux uses when parsing the hook command.
+///    It is replaced with `'\''` (end-single-quote, backslash-escaped `'`,
+///    begin-single-quote), which tmux's `cmd_string_parse` collapses to a
+///    single `'` character.
+///
+/// 2. **shell-level** — the value appears inside `"…"` in the sh command
+///    that `run-shell` executes, so `\`, `"`, `$`, and `` ` `` are
+///    backslash-escaped.
 pub fn shell_escape_arg(s: &str) -> String {
-    s.replace('\\', "\\\\")
-     .replace('"',  "\\\"")
+    s.replace('\\', "\\\\")   // shell-level: double backslashes first
+     .replace('\'', "'\\''")  // tmux-level: ' → '\'' (must follow \ escaping)
+     .replace('"',  "\\\"")   // shell-level
      .replace('$',  "\\$")
      .replace('`',  "\\`")
 }
@@ -355,6 +361,18 @@ mod tests {
     fn shell_escape_arg_spaces_unchanged() {
         // Spaces are safe inside "..." — no escaping needed.
         assert_eq!(shell_escape_arg("my session"), "my session");
+    }
+
+    #[test]
+    fn shell_escape_arg_single_quote() {
+        // A single-quote in the session name must be escaped as '\''
+        // so it does not prematurely close the outer tmux single-quote context.
+        assert_eq!(shell_escape_arg("my'session"), "my'\\''session");
+    }
+
+    #[test]
+    fn shell_escape_arg_multiple_single_quotes() {
+        assert_eq!(shell_escape_arg("a'b'c"), "a'\\''b'\\''c");
     }
 
 

@@ -74,10 +74,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: `pane_id` received from external hook IPC was used without validation. A crafted `daemoneye notify activity` call with an ANSI-escaped or shell-injecting pane_id could pollute the cache or broadcast channels.
 - **Fix applied**: `is_valid_pane_id()` helper added in `server.rs` — accepts only `%` followed by one or more ASCII digits (the tmux pane ID format). Applied to `NotifyActivity`, `NotifyComplete`, and `NotifyFocus` handlers; invalid IDs are logged at WARN and dropped. Six tests cover valid IDs, no-digits, no-prefix, non-digit chars, ANSI injection, and shell injection.
 
-#### S12. Single-Quote Escaping Gap in Hook Commands
+#### S12. Single-Quote Escaping Gap in Hook Commands ✓ Implemented
 - **File**: `src/daemon/utils.rs` (`shell_escape_arg`)
 - **Issue**: The function doesn't handle single quotes within single-quoted strings. A session name containing `'` breaks the quoting context in tmux hook commands.
-- **Fix**: Use `replace("'", "'\\''")` for single-quote escaping.
+- **Fix applied**: `'` is replaced with `'\''` (end-single-quote, backslash-escaped `'` outside quotes, begin-single-quote), which tmux's `cmd_string_parse` collapses to a literal `'`. The `\` replacement is applied first so the injected `\` from the `'` escaping isn't doubled. Two new tests cover single and multiple single-quotes.
 
 ---
 
@@ -88,20 +88,20 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: Webhook listener binds all interfaces, exposing it to the network on internet-facing servers.
 - **Fix applied**: `WebhookConfig.bind_addr` added with `#[serde(default = "default_webhook_bind")]` defaulting to `"127.0.0.1"`. `start()` parses the field before moving `config` into state.
 
-#### S14. No IPC Message Size Limits
+#### S14. No IPC Message Size Limits ✓ Implemented
 - **File**: `src/daemon/server.rs` (read loop)
 - **Issue**: No maximum on incoming JSON message size. A malicious client can send an arbitrarily large payload to exhaust memory.
-- **Fix**: Check `line.len()` before `serde_json::from_str()`, or use a `BufReader` with `take()`.
+- **Fix applied**: `MAX_IPC_MESSAGE_BYTES = 1 << 20` (1 MiB) constant added. After `read_line`, `line.len()` is checked before `serde_json::from_str()`; oversized messages are rejected with `Response::Error` and the connection is closed.
 
 #### S15. Unbounded SSE Leftover Buffer
 - **File**: `src/ai/backends/openai.rs`
 - **Issue**: The SSE leftover buffer has no size cap. A misbehaving proxy could send unlimited data without newlines.
 - **Fix**: Cap the leftover buffer (e.g. 1 MB) and return an error if exceeded.
 
-#### S16. Webhook Dedup Window Not Validated
-- **File**: `src/webhook.rs` lines ~362-379
+#### S16. Webhook Dedup Window Not Validated ✓ Implemented
+- **File**: `src/webhook.rs` (`process_alert`)
 - **Issue**: `dedup_window_secs` has no bounds. A value of 0 disables dedup; an extremely large value causes unbounded HashMap growth.
-- **Fix**: Clamp to `1..=86400`. Cap the dedup HashMap at a reasonable size (e.g. 10,000 entries).
+- **Fix applied**: Window is clamped to `1..=86400` at use. Dedup HashMap is capped at 10,000 entries; when the cap is reached the oldest entry (minimum timestamp) is evicted before inserting the new fingerprint.
 
 ---
 
