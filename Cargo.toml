@@ -21,3 +21,4 @@ serde_json = "1.0.149"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "signal", "time", "process"] }
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
+zeroize = "1"

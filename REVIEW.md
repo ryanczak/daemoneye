@@ -29,15 +29,15 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: Startup does `if path.exists() { remove_file(path) }`. `Path::exists()` follows symlinks. If `/tmp/daemoneye.sock` is a symlink to another file, `remove_file()` deletes the target.
 - **Fix applied**: Startup now uses `socket_path.symlink_metadata()` which does not follow symlinks. The `NotFound` error is ignored; any other stat error is propagated. Socket moved out of `/tmp` (S1 fix) eliminates the attack surface entirely.
 
-#### S4. Path Traversal via Symlinks in `read_file` / `edit_file`
-- **File**: `src/daemon/executor.rs` (file tool handlers, lines ~1338-1346)
+#### S4. Path Traversal via Symlinks in `read_file` / `edit_file` ✓ Implemented
+- **File**: `src/daemon/executor.rs` (local-path branches of ReadFile and EditFile handlers)
 - **Issue**: Path validation rejects `..` but does not resolve symlinks. A symlink at `/home/user/innocent` → `/etc/shadow` bypasses the check.
-- **Fix**: Call `std::fs::canonicalize()` on the path before applying allow/deny rules.
+- **Fix applied**: Both local-path branches now call `std::fs::canonicalize()` on the supplied path. For `read_file`, a failed canonicalize falls back to the original path (read returns a natural "not found" error). For `edit_file`, a failed canonicalize returns an early error. The tmp file for `edit_file` is now placed alongside the canonical file (via `PathBuf::with_extension("de_tmp")`) rather than alongside the symlink.
 
-#### S5. Sudo Credentials Stored as Plaintext `String`
-- **File**: `src/daemon/background.rs` lines ~170-185
+#### S5. Sudo Credentials Stored as Plaintext `String` ✓ Implemented
+- **File**: `src/daemon/executor.rs` (background credential handling)
 - **Issue**: Sudo passwords are stored in `String` which is not zeroed on drop. Heap memory retains the credential after use.
-- **Fix**: Use `zeroize::Zeroizing<String>` for credential storage. Clear immediately after the sudo command completes rather than caching.
+- **Fix applied**: Added `zeroize = "1"` to `Cargo.toml`. The extracted credential is now wrapped in `zeroize::Zeroizing<String>`, which overwrites heap memory on drop. The raw JSON line (`cred_line`) containing the password is explicitly zeroized with `Zeroize::zeroize()` immediately after parsing.
 
 #### S6. Gemini Tool Response Name Hardcoded ✓ Implemented
 - **File**: `src/ai/backends/gemini.rs` lines ~63-71
@@ -69,10 +69,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: The fallback regex matched `command = '...'` anywhere in text, including model commentary outside the call.
 - **Fix applied**: Parser now extracts the substring between the parentheses of `run_terminal_command(...)` using a paren-depth counter, then applies `CMD_RE` / `BG_RE` only to that call body. Commentary text outside the call cannot match. `log::warn!` emitted on every fallback invocation. Two new tests verify the isolation (commentary-only, and mixed commentary + real call).
 
-#### S11. Terminal Escape Code Injection via `pane_id`
-- **File**: `src/tmux/cache.rs` lines ~534, 621
-- **Issue**: `pane_id` is embedded in context output strings without sanitizing ANSI escape codes. A direct invocation of `daemoneye notify activity` with a crafted pane_id can inject escape sequences into the AI's context.
-- **Fix**: Validate pane_id matches `^%[0-9]+$` in notify handlers before use. Strip non-printable characters before embedding in context strings.
+#### S11. Terminal Escape Code Injection via `pane_id` ✓ Implemented
+- **File**: `src/daemon/server.rs` (notify handlers)
+- **Issue**: `pane_id` received from external hook IPC was used without validation. A crafted `daemoneye notify activity` call with an ANSI-escaped or shell-injecting pane_id could pollute the cache or broadcast channels.
+- **Fix applied**: `is_valid_pane_id()` helper added in `server.rs` — accepts only `%` followed by one or more ASCII digits (the tmux pane ID format). Applied to `NotifyActivity`, `NotifyComplete`, and `NotifyFocus` handlers; invalid IDs are logged at WARN and dropped. Six tests cover valid IDs, no-digits, no-prefix, non-digit chars, ANSI injection, and shell injection.
 
 #### S12. Single-Quote Escaping Gap in Hook Commands
 - **File**: `src/daemon/utils.rs` (`shell_escape_arg`)
@@ -190,8 +190,10 @@ This document captures findings from a comprehensive security, architecture, and
 #### F2. No Graceful Shutdown (SIGTERM/SIGINT)
 - The daemon doesn't handle signals for clean shutdown (remove socket, uninstall global hooks, flush logs).
 
-#### F3. No API Key Validation at Startup
-- Invalid API keys are discovered only when a user runs `ask`/`chat`, producing a cryptic error. A startup validation call (or `--validate` flag) would surface this earlier.
+#### F3. No API Key Validation at Startup ✓ Implemented
+- **File**: `src/daemon/mod.rs`
+- **Issue**: Invalid API keys are discovered only when a user runs `ask`/`chat`, producing a cryptic 401 error. Format mismatches (e.g. using an OpenAI key with the Anthropic provider) go undetected at startup.
+- **Fix applied**: After the empty-key check, the daemon now validates the key prefix for known providers: Anthropic keys must start with `sk-ant-`; OpenAI keys must start with `sk-`. A mismatch emits `log::warn!` at startup (non-fatal, to avoid breaking proxy setups with non-standard key formats). Local providers (`ollama`, `lmstudio`) are skipped.
 
 #### F4. `ensure_dirs()` Failure Doesn't Abort Startup ✓ Implemented
 - **File**: `src/main.rs` lines ~150-152
@@ -221,12 +223,12 @@ This document captures findings from a comprehensive security, architecture, and
 | 9 | A5 | RAII hook guard in foreground executor | Medium |
 | 10 | A6 | Session-closed hook for per-session hook cleanup | Medium |
 | 11 | S2 | ~~Require webhook secret~~ Won't Fix — empty secret allowed by design | — |
-| 12 | S4 | `canonicalize()` for file path validation | Small |
+| 12 | S4 | ~~`canonicalize()` for file path validation~~ ✓ Done | Small |
 | 13 | A9 | Atomic session history writes (write-tmp-rename) | Medium |
 | 14 | A10 | ~~Log poisoned lock recovery (`UnpoisonExt` trait, 44 sites)~~ ✓ Done | Trivial |
 | 15 | A1 | Task supervision for critical spawned tasks | Large |
 | 16 | F4 | ~~Fatal error on `ensure_dirs()` failure~~ ✓ Done | Trivial |
-| 17 | S5 | `zeroize` crate for sudo credentials | Small |
+| 17 | S5 | ~~`zeroize` crate for sudo credentials~~ ✓ Done | Small |
 | 18 | F2 | SIGTERM/SIGINT graceful shutdown | Medium |
-| 19 | F3 | API key validation at startup | Small |
-| 20 | S11 | Validate pane_id format in notify handlers | Small |
+| 19 | F3 | ~~API key format validation at startup~~ ✓ Done | Small |
+| 20 | S11 | ~~Validate pane_id format in notify handlers~~ ✓ Done | Small |

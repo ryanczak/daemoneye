@@ -829,22 +829,29 @@ pub async fn execute_tool_call(
             if let Some(outcome) = prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
                 return Ok(outcome);
             }
-            let credential = if command_has_sudo(cmd) {
+            // Wrap the sudo password in Zeroizing so its heap memory is
+            // overwritten when the variable drops, rather than lingering until
+            // the allocator reclaims it.
+            let credential: Option<zeroize::Zeroizing<String>> = if command_has_sudo(cmd) {
                     send_response_split(tx, Response::CredentialPrompt {
                         id: id.clone(),
                         prompt: format!("[sudo] password required for: {}", cmd),
                     }).await?;
                     let mut cred_line = String::new();
-                    match tokio::time::timeout(
+                    let result = match tokio::time::timeout(
                         USER_PROMPT_TIMEOUT,
                         rx.read_line(&mut cred_line),
                     ).await {
                         Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
-                            Ok(Request::CredentialResponse { credential, .. }) => Some(credential),
+                            Ok(Request::CredentialResponse { credential, .. }) =>
+                                Some(zeroize::Zeroizing::new(credential)),
                             _ => None,
                         },
                         _ => None,
-                    }
+                    };
+                    // Zero the raw JSON line that contained the password.
+                    zeroize::Zeroize::zeroize(&mut cred_line);
+                    result
                 } else {
                     None
                 };
@@ -854,7 +861,7 @@ pub async fn execute_tool_call(
                     session_name,
                     id,
                     cmd,
-                    credential.as_deref(),
+                    credential.as_ref().map(|z| z.as_str()),
                     session_id_owned,
                     sessions.clone(),
                 ).await;
@@ -1287,7 +1294,13 @@ pub async fn execute_tool_call(
             }
 
             // ── Local path: read directly from daemon-host filesystem ─────────
-            let raw = match std::fs::read_to_string(std::path::Path::new(path.as_str())) {
+            // Resolve symlinks so a symlink at the given path cannot point
+            // outside the user's intended location.  If the file does not
+            // exist yet, canonicalize will fail and the read below returns a
+            // natural "not found" error.
+            let real_path = std::fs::canonicalize(path.as_str())
+                .unwrap_or_else(|_| std::path::PathBuf::from(path.as_str()));
+            let raw = match std::fs::read_to_string(&real_path) {
                 Ok(s) => s,
                 Err(e) => return Ok(ToolCallOutcome::Result(
                     format!("Error reading {}: {}", path, e)
@@ -1394,8 +1407,15 @@ pub async fn execute_tool_call(
             }
 
             // ── Local path: direct daemon-host filesystem edit ────────────────
-            let std_path = std::path::Path::new(path.as_str());
-            let original = match std::fs::read_to_string(std_path) {
+            // Resolve symlinks before reading or writing so that a symlink
+            // cannot redirect the edit to an unintended location.
+            let std_path = match std::fs::canonicalize(path.as_str()) {
+                Ok(p) => p,
+                Err(e) => return Ok(ToolCallOutcome::Result(
+                    format!("Error: cannot resolve path {}: {}", path, e)
+                )),
+            };
+            let original = match std::fs::read_to_string(&std_path) {
                 Ok(s) => s,
                 Err(e) => return Ok(ToolCallOutcome::Result(
                     format!("Error reading {}: {}", path, e)
@@ -1429,13 +1449,13 @@ pub async fn execute_tool_call(
             }
 
             let updated = original.replacen(old_string.as_str(), new_string.as_str(), 1);
-            let tmp_path = format!("{}.de_tmp", path);
+            let tmp_path = std_path.with_extension("de_tmp");
             if let Err(e) = std::fs::write(&tmp_path, &updated) {
                 return Ok(ToolCallOutcome::Result(
                     format!("Error writing temp file: {}", e)
                 ));
             }
-            if let Err(e) = std::fs::rename(&tmp_path, std_path) {
+            if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
                 let _ = std::fs::remove_file(&tmp_path);
                 return Ok(ToolCallOutcome::Result(
                     format!("Error committing edit: {}", e)

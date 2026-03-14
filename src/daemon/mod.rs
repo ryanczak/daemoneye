@@ -204,7 +204,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         }
     }
 
-    if startup_config.ai.resolve_api_key().is_empty() {
+    let api_key = startup_config.ai.resolve_api_key();
+    if api_key.is_empty() {
         let env_var = startup_config.ai.api_key_env_var();
         anyhow::bail!(
             "No API key found for provider '{provider}'.\n\
@@ -212,6 +213,23 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             provider = startup_config.ai.provider,
             env_var = env_var,
         );
+    }
+    // Warn early if the key format looks wrong for known providers, so the
+    // user sees a clear message at startup rather than a cryptic 401 mid-chat.
+    match startup_config.ai.provider.as_str() {
+        "anthropic" if !api_key.starts_with("sk-ant-") => {
+            log::warn!(
+                "API key for provider 'anthropic' should start with 'sk-ant-'. \
+                 The configured key may be invalid — check your config."
+            );
+        }
+        "openai" if !api_key.starts_with("sk-") => {
+            log::warn!(
+                "API key for provider 'openai' should start with 'sk-'. \
+                 The configured key may be invalid — check your config."
+            );
+        }
+        _ => {}
     }
     log::info!("Provider: {} / {}", startup_config.ai.provider, startup_config.ai.model);
 

@@ -26,6 +26,16 @@ use crate::daemon::background::notify_job_completion;
 /// `new_msgs` is the slice of messages added after detach.
 /// `away_secs` is how long the client was gone.
 /// Returns `None` when the absence was too short or no relevant events occurred.
+/// Validate that a pane_id received from an external hook matches the tmux
+/// format `%<digits>` (e.g. `%0`, `%23`).  Rejects anything else so that
+/// crafted hook payloads cannot inject escape sequences or unexpected strings
+/// into the cache or broadcast channels.
+fn is_valid_pane_id(id: &str) -> bool {
+    id.starts_with('%')
+        && id.len() > 1
+        && id[1..].bytes().all(|b| b.is_ascii_digit())
+}
+
 pub(crate) fn build_catchup_brief(new_msgs: &[crate::ai::Message], away_secs: u64) -> Option<String> {
     // Skip if the user was away less than 30 s — too brief to be useful.
     if away_secs < 30 { return None; }
@@ -270,22 +280,34 @@ pub async fn handle_client(
             return Ok(());
         }
         Request::NotifyActivity { pane_id, hook_index: _, session_name: _ } => {
-            if let Some(tx) = BG_DONE_TX.get() {
-                let _ = tx.send(pane_id.clone());
+            if is_valid_pane_id(&pane_id) {
+                if let Some(tx) = BG_DONE_TX.get() {
+                    let _ = tx.send(pane_id.clone());
+                }
+            } else {
+                log::warn!("NotifyActivity: rejected invalid pane_id {:?}", pane_id);
             }
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
         Request::NotifyComplete { pane_id, exit_code, session_name: _ } => {
-            if let Some(tx) = crate::daemon::session::COMPLETE_TX.get() {
-                let _ = tx.send((pane_id, exit_code));
+            if is_valid_pane_id(&pane_id) {
+                if let Some(tx) = crate::daemon::session::COMPLETE_TX.get() {
+                    let _ = tx.send((pane_id, exit_code));
+                }
+            } else {
+                log::warn!("NotifyComplete: rejected invalid pane_id {:?}", pane_id);
             }
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
         // N1: pane-focus-in hook — update active pane instantly, no 2 s poll lag.
         Request::NotifyFocus { pane_id, session_name: _ } => {
-            cache.set_active_pane(&pane_id);
+            if is_valid_pane_id(&pane_id) {
+                cache.set_active_pane(&pane_id);
+            } else {
+                log::warn!("NotifyFocus: rejected invalid pane_id {:?}", pane_id);
+            }
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
@@ -911,5 +933,25 @@ mod tests {
         let brief = build_catchup_brief(&msgs, 7260).expect("should produce a brief");
         // 7260 s = 2h1m
         assert!(brief.contains("2h1m"), "expected 2h1m: {brief}");
+    }
+
+    // ── is_valid_pane_id ──────────────────────────────────────────────────────
+
+    #[test]
+    fn valid_pane_ids_accepted() {
+        assert!(is_valid_pane_id("%0"));
+        assert!(is_valid_pane_id("%1"));
+        assert!(is_valid_pane_id("%23"));
+        assert!(is_valid_pane_id("%999"));
+    }
+
+    #[test]
+    fn invalid_pane_ids_rejected() {
+        assert!(!is_valid_pane_id(""));
+        assert!(!is_valid_pane_id("%"));          // no digits
+        assert!(!is_valid_pane_id("0"));           // no leading %
+        assert!(!is_valid_pane_id("%0a"));         // non-digit character
+        assert!(!is_valid_pane_id("%23\x1b[31m")); // ANSI escape injection
+        assert!(!is_valid_pane_id("%;rm -rf /"));  // shell injection attempt
     }
 }
