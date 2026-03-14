@@ -112,6 +112,20 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
         log::warn!("Failed to register client-resized hook for '{}': {}", session_name, e);
     }
 
+    // session-closed (A6): clean up daemon state when this session is destroyed.
+    // The session name is embedded directly (escaped) rather than via #{session_name}
+    // to avoid relying on tmux format expansion after the session is already gone.
+    let closed_cmd = format!(
+        "run-shell -b '{} notify session-closed \"{}\"'",
+        hook_exe, escaped,
+    );
+    if let Err(e) = std::process::Command::new("tmux")
+        .args(["set-hook", "-t", session_name, "session-closed", &closed_cmd])
+        .output()
+    {
+        log::warn!("Failed to register session-closed hook for '{}': {}", session_name, e);
+    }
+
     log::info!("Session hooks installed for: {}", session_name);
 }
 

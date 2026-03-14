@@ -135,6 +135,11 @@ pub enum Request {
     NotifySessionCreated {
         session_name: String,
     },
+    /// Notify the daemon that a tmux session was destroyed (`session-closed` hook, A6).
+    /// The daemon cleans up bg windows and pipe-pane logs for that session.
+    NotifySessionClosed {
+        session_name: String,
+    },
     /// Notify the daemon that a tmux client attached to a session (`client-attached` hook, N15).
     /// Clears any pending detach state so the catch-up brief is not shown.
     NotifyClientAttached {
@@ -710,6 +715,15 @@ mod tests {
         let req = Request::NotifyClientDetached { session_name: "staging".to_string() };
         match roundtrip_req(&req) {
             Request::NotifyClientDetached { session_name } => assert_eq!(session_name, "staging"),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn request_notify_session_closed_roundtrip() {
+        let req = Request::NotifySessionClosed { session_name: "prod".to_string() };
+        match roundtrip_req(&req) {
+            Request::NotifySessionClosed { session_name } => assert_eq!(session_name, "prod"),
             _ => panic!("wrong variant"),
         }
     }

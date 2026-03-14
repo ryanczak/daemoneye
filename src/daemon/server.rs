@@ -329,6 +329,22 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
+        // A6: session-closed hook — clean up daemon state when a tmux session is destroyed.
+        Request::NotifySessionClosed { session_name } => {
+            if let Ok(mut store) = sessions.lock() {
+                store.retain(|_, entry| {
+                    if entry.tmux_session == session_name {
+                        entry.cleanup_bg_windows();
+                        log::info!("Cleaned up session '{}' on tmux session-closed.", session_name);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            send_response_split(&mut tx, Response::Ok).await?;
+            return Ok(());
+        }
         // N14: after-new-session hook — auto-install per-session hooks for new sessions.
         Request::NotifySessionCreated { session_name } => {
             let hook_exe = std::env::current_exe()

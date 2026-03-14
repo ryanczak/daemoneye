@@ -138,10 +138,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: N9 alert-silence and pane-title-changed hooks are installed before the foreground wait loop but only cleaned up on the normal exit path. Early returns via `?` leave stale hooks.
 - **Fix applied**: `FgHookGuard` struct added in `executor.rs` with a `Drop` impl that calls `tmux set-hook -u` for all registered hooks and `tmux set-option -u monitor-silence` if the silence option was set. The guard is created after installing the title hook; `guard.add_silence()` registers the N9 hooks. The explicit cleanup blocks are removed — the guard now drops at end of scope (or explicitly with `drop(guard)` before the capture delay, to avoid spurious re-fires during output collection).
 
-#### A6. Hook Lifecycle Not Tied to Session Lifecycle
-- **File**: `src/daemon/mod.rs` (`install_session_hooks`)
-- **Issue**: Per-session hooks (`pane-focus-in`, `session-window-changed`, `client-resized`) are installed when a session is first seen but never removed when the session is destroyed.
-- **Fix**: Install a `session-closed` hook (or use `after-kill-session`) to trigger hook cleanup for the dying session. Alternatively, audit installed hooks at startup and remove any for sessions that no longer exist.
+#### A6. Hook Lifecycle Not Tied to Session Lifecycle ✓ Implemented
+- **File**: `src/daemon/mod.rs` (`install_session_hooks`), `src/ipc.rs`, `src/main.rs`, `src/cli/commands.rs`, `src/daemon/server.rs`
+- **Issue**: Per-session hooks (`pane-focus-in`, `session-window-changed`, `client-resized`) are installed when a session is first seen but the daemon never cleaned up its own state when the tmux session is destroyed.
+- **Fix applied**: `install_session_hooks` now also installs a `session-closed` hook (per-session, `-t session_name`). The hook command embeds the session name directly (escaped via `shell_escape_arg`) rather than relying on `#{session_name}` format expansion after the session is gone. When the hook fires, it calls `daemoneye notify session-closed NAME` via IPC. The `NotifySessionClosed` handler in `server.rs` iterates the session store, calls `cleanup_bg_windows()` on all matching entries (kills bg windows, stops pipe-pane logs), removes them from the map, and logs the cleanup. Per-session hooks registered with `-t` are automatically removed by tmux when the session is destroyed, so no explicit hook teardown is needed.
 
 #### A7. Pipe Log Growth Unbounded
 - **File**: `src/tmux/mod.rs` (`start_pipe_pane`), `src/daemon/mod.rs` (startup cleanup)
@@ -223,7 +223,7 @@ This document captures findings from a comprehensive security, architecture, and
 | 7 | S7 | ~~Forward `thought_signature` in Anthropic extended thinking~~ ✓ Done | Small |
 | 8 | A4 | ~~Fail fast on 4xx in `send_with_retry`~~ ✓ Already correct | Trivial |
 | 9 | A5 | ~~RAII hook guard in foreground executor~~ ✓ Done | Medium |
-| 10 | A6 | Session-closed hook for per-session hook cleanup | Medium |
+| 10 | A6 | ~~Session-closed hook for per-session hook cleanup~~ ✓ Done | Medium |
 | 11 | S2 | ~~Require webhook secret~~ Won't Fix — empty secret allowed by design | — |
 | 12 | S4 | ~~`canonicalize()` for file path validation~~ ✓ Done | Small |
 | 13 | A9 | ~~Atomic session history writes (write-tmp-rename)~~ ✓ Done | Medium |

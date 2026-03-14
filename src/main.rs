@@ -110,6 +110,11 @@ enum NotifyCommands {
         /// Name of the newly created session
         session_name: String,
     },
+    /// Notify that a tmux session was destroyed (session-closed hook, A6)
+    SessionClosed {
+        /// Name of the closed session
+        session_name: String,
+    },
     /// Notify that a tmux client attached to a session (client-attached hook, N15)
     ClientAttached {
         /// Session name
@@ -263,6 +268,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             NotifyCommands::SessionCreated { session_name } => {
                 cli::run_notify_session_created(session_name).await?;
+            }
+            NotifyCommands::SessionClosed { session_name } => {
+                cli::run_notify_session_closed(session_name).await?;
             }
             NotifyCommands::ClientAttached { session_name } => {
                 cli::run_notify_client_attached(session_name).await?;

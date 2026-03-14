@@ -423,6 +423,20 @@ pub async fn run_notify_session_created(session_name: String) -> Result<()> {
     }
 }
 
+/// Notify the daemon that a tmux session was destroyed (`session-closed` hook, A6).
+pub async fn run_notify_session_closed(session_name: String) -> Result<()> {
+    match connect().await {
+        Err(_) => Ok(()),
+        Ok(stream) => {
+            let (rx, mut tx) = stream.into_split();
+            let mut rx = BufReader::new(rx);
+            send_request(&mut tx, crate::ipc::Request::NotifySessionClosed { session_name }).await?;
+            let _ = recv(&mut rx).await;
+            Ok(())
+        }
+    }
+}
+
 /// Notify the daemon that a tmux client attached to a session (`client-attached` hook, N15).
 pub async fn run_notify_client_attached(session_name: String) -> Result<()> {
     match connect().await {

@@ -12,7 +12,7 @@ cargo test <test_name>             # run a single test by name
 cargo test -- --nocapture          # run tests with stdout visible
 ```
 
-The project compiles cleanly with only pre-existing `dead_code` warnings — no errors. 290 tests pass.
+The project compiles cleanly with only pre-existing `dead_code` warnings — no errors. 291 tests pass.
 
 ## Architecture Overview
 
