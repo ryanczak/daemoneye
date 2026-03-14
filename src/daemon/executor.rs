@@ -51,6 +51,51 @@ const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
 /// Seconds of pane silence before `alert-silence` fires as a secondary completion
 /// signal in the local-pane foreground path (N9).
 const SILENCE_MONITOR_SECS: u32 = 2;
+
+// ---------------------------------------------------------------------------
+// RAII guard for tmux hooks installed during foreground command execution.
+// ---------------------------------------------------------------------------
+
+/// Uninstalls tmux hooks on drop so that early returns via `?` or panics
+/// never leave stale `pane-title-changed` or `alert-silence` hooks behind.
+struct FgHookGuard {
+    target: String,
+    /// Hook names to remove with `tmux set-hook -u`.
+    hooks: Vec<String>,
+    /// When true, also restores `monitor-silence` to its default on drop.
+    monitor_silence: bool,
+}
+
+impl FgHookGuard {
+    fn new(target: &str, title_hook: String) -> Self {
+        Self {
+            target: target.to_string(),
+            hooks: vec![title_hook],
+            monitor_silence: false,
+        }
+    }
+
+    /// Register the alert-silence hook and the monitor-silence option for cleanup.
+    fn add_silence(&mut self, silence_hook: String) {
+        self.hooks.push(silence_hook);
+        self.monitor_silence = true;
+    }
+}
+
+impl Drop for FgHookGuard {
+    fn drop(&mut self) {
+        for hook in &self.hooks {
+            let _ = std::process::Command::new("tmux")
+                .args(["set-hook", "-u", "-t", &self.target, hook])
+                .output();
+        }
+        if self.monitor_silence {
+            let _ = std::process::Command::new("tmux")
+                .args(["set-option", "-u", "-t", &self.target, "monitor-silence"])
+                .output();
+        }
+    }
+}
 /// Max time to wait for a shell-prompt pattern after starting an interactive
 /// command (ssh, mosh, telnet, screen). Returns as soon as the prompt appears.
 const INTERACTIVE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -514,6 +559,9 @@ pub async fn execute_tool_call(
                         let _ = std::process::Command::new("tmux")
                             .args(["set-hook", "-t", target_str, &hook_name, &notify_cmd])
                             .output();
+                        // RAII guard ensures hooks are removed on any exit path, including
+                        // early returns via `?` and the send_keys error arm.
+                        let mut fg_hook_guard = FgHookGuard::new(target_str, hook_name.clone());
 
                         let mut fg_rx = bg_done_subscribe();
 
@@ -641,6 +689,7 @@ pub async fn execute_tool_call(
                                         .args(["set-option", "-t", target_str,
                                                "monitor-silence", &SILENCE_MONITOR_SECS.to_string()])
                                         .output();
+                                    fg_hook_guard.add_silence(silence_hook_name.clone());
 
                                     let fast_poll = LOCAL_CHILD_POLL;
                                     let start_timeout = LOCAL_CHILD_START_WINDOW;
@@ -676,18 +725,11 @@ pub async fn execute_tool_call(
                                         }
                                     }
 
-                                    // N9 cleanup: remove alert-silence hook and restore monitor-silence.
-                                    let _ = std::process::Command::new("tmux")
-                                        .args(["set-hook", "-u", "-t", target_str, &silence_hook_name])
-                                        .output();
-                                    let _ = std::process::Command::new("tmux")
-                                        .args(["set-option", "-u", "-t", target_str, "monitor-silence"])
-                                        .output();
                                 }
 
-                                let _ = std::process::Command::new("tmux")
-                                    .args(["set-hook", "-u", "-t", target_str, &hook_name])
-                                    .output();
+                                // Drop the guard now so hooks are removed before the capture
+                                // delay — avoids spurious re-fires during output collection.
+                                drop(fg_hook_guard);
 
                                 tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
 

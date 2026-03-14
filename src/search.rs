@@ -1,4 +1,3 @@
-use crate::util::UnpoisonExt;
 use std::path::PathBuf;
 
 /// A single search match.
@@ -258,6 +257,7 @@ pub fn format_results(results: &[SearchResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::UnpoisonExt;
     use std::env;
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

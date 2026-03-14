@@ -98,30 +98,45 @@ pub fn session_file(id: &str) -> std::path::PathBuf {
 
 /// Rewrite the entire session file with the current message history.
 /// Used after a `trim_history` compaction, when old entries have been dropped.
-/// Failures are non-fatal.
+/// Writes atomically: tmp file → fsync → rename, so a crash mid-write leaves
+/// the old file intact rather than producing a truncated session.
+/// Failures are logged at WARN and non-fatal.
 pub fn write_session_file(id: &str, messages: &[Message]) {
     use std::io::Write;
     let path = session_file(id);
-    if let Ok(mut f) = std::fs::File::create(&path) {
+    let tmp_path = path.with_extension("jsonl.tmp");
+    let result: std::io::Result<()> = (|| {
+        let mut f = std::fs::File::create(&tmp_path)?;
         for msg in messages {
             if let Ok(line) = serde_json::to_string(msg) {
-                let _ = writeln!(f, "{}", line);
+                writeln!(f, "{}", line)?;
             }
         }
+        f.sync_all()?;
+        std::fs::rename(&tmp_path, &path)?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        log::warn!("Failed to write session file {}: {}", path.display(), e);
+        let _ = std::fs::remove_file(&tmp_path);
     }
 }
 
 /// Append a single message to the session file without rewriting earlier entries.
 /// This is the hot path — called once per new message during normal turns.
-/// Failures are non-fatal.
+/// Failures are logged at WARN and non-fatal.
 pub fn append_session_message(id: &str, msg: &Message) {
     use std::io::Write;
     use std::fs::OpenOptions;
     let path = session_file(id);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
         if let Ok(line) = serde_json::to_string(msg) {
-            let _ = writeln!(f, "{}", line);
+            if let Err(e) = writeln!(f, "{}", line) {
+                log::warn!("Failed to append to session file {}: {}", path.display(), e);
+            }
         }
+    } else {
+        log::warn!("Failed to open session file {} for append", path.display());
     }
 }
 

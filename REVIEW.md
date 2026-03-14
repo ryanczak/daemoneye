@@ -133,10 +133,10 @@ This document captures findings from a comprehensive security, architecture, and
 
 ### Resource Management
 
-#### A5. No RAII Guard for tmux Hook Cleanup
+#### A5. No RAII Guard for tmux Hook Cleanup ✓ Implemented
 - **File**: `src/daemon/executor.rs` lines ~514-690
 - **Issue**: N9 alert-silence and pane-title-changed hooks are installed before the foreground wait loop but only cleaned up on the normal exit path. Early returns via `?` leave stale hooks.
-- **Fix**: Wrap hook installation in a struct with a `Drop` impl that uninstalls hooks unconditionally.
+- **Fix applied**: `FgHookGuard` struct added in `executor.rs` with a `Drop` impl that calls `tmux set-hook -u` for all registered hooks and `tmux set-option -u monitor-silence` if the silence option was set. The guard is created after installing the title hook; `guard.add_silence()` registers the N9 hooks. The explicit cleanup blocks are removed — the guard now drops at end of scope (or explicitly with `drop(guard)` before the capture delay, to avoid spurious re-fires during output collection).
 
 #### A6. Hook Lifecycle Not Tied to Session Lifecycle
 - **File**: `src/daemon/mod.rs` (`install_session_hooks`)
@@ -157,10 +157,10 @@ This document captures findings from a comprehensive security, architecture, and
 
 ### State Consistency
 
-#### A9. Session History Write is Not Transactional
-- **File**: `src/daemon/server.rs` lines ~663-669
+#### A9. Session History Write is Not Transactional ✓ Implemented
+- **File**: `src/daemon/session.rs` (`write_session_file`, `append_session_message`)
 - **Issue**: History compaction writes to disk then updates in-memory. If the write fails (disk full), in-memory and on-disk diverge. The next restart loads the incomplete on-disk version.
-- **Fix**: Write to a `.tmp` file, `fsync`, then rename atomically. Only update in-memory state after the rename succeeds.
+- **Fix applied**: `write_session_file` now writes to `<path>.jsonl.tmp`, calls `sync_all()`, then renames atomically over the real file. On failure: WARN is logged and the tmp file is cleaned up, leaving the old on-disk file intact. `append_session_message` now logs WARN on any I/O failure instead of silently swallowing errors (A2 partial coverage).
 
 #### A10. Lock Poisoning Recovery Is Silent ✓ Implemented
 - **Files**: `src/tmux/cache.rs`, throughout codebase (44 sites across 10 files)
@@ -220,11 +220,11 @@ This document captures findings from a comprehensive security, architecture, and
 | 6 | S10 | ~~Tighten Gemini malformed-call parser~~ ✓ Done | Small |
 | 7 | S7 | ~~Forward `thought_signature` in Anthropic extended thinking~~ ✓ Done | Small |
 | 8 | A4 | ~~Fail fast on 4xx in `send_with_retry`~~ ✓ Already correct | Trivial |
-| 9 | A5 | RAII hook guard in foreground executor | Medium |
+| 9 | A5 | ~~RAII hook guard in foreground executor~~ ✓ Done | Medium |
 | 10 | A6 | Session-closed hook for per-session hook cleanup | Medium |
 | 11 | S2 | ~~Require webhook secret~~ Won't Fix — empty secret allowed by design | — |
 | 12 | S4 | ~~`canonicalize()` for file path validation~~ ✓ Done | Small |
-| 13 | A9 | Atomic session history writes (write-tmp-rename) | Medium |
+| 13 | A9 | ~~Atomic session history writes (write-tmp-rename)~~ ✓ Done | Medium |
 | 14 | A10 | ~~Log poisoned lock recovery (`UnpoisonExt` trait, 44 sites)~~ ✓ Done | Trivial |
 | 15 | A1 | Task supervision for critical spawned tasks | Large |
 | 16 | F4 | ~~Fatal error on `ensure_dirs()` failure~~ ✓ Done | Trivial |

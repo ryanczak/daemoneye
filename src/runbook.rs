@@ -1,4 +1,3 @@
-use crate::util::UnpoisonExt;
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 
@@ -204,6 +203,7 @@ pub fn watchdog_system_prompt(runbook: &Runbook) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::UnpoisonExt;
     use std::env;
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
