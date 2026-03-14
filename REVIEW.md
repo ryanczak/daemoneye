@@ -143,10 +143,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: Per-session hooks (`pane-focus-in`, `session-window-changed`, `client-resized`) are installed when a session is first seen but the daemon never cleaned up its own state when the tmux session is destroyed.
 - **Fix applied**: `install_session_hooks` now also installs a `session-closed` hook (per-session, `-t session_name`). The hook command embeds the session name directly (escaped via `shell_escape_arg`) rather than relying on `#{session_name}` format expansion after the session is gone. When the hook fires, it calls `daemoneye notify session-closed NAME` via IPC. The `NotifySessionClosed` handler in `server.rs` iterates the session store, calls `cleanup_bg_windows()` on all matching entries (kills bg windows, stops pipe-pane logs), removes them from the map, and logs the cleanup. Per-session hooks registered with `-t` are automatically removed by tmux when the session is destroyed, so no explicit hook teardown is needed.
 
-#### A7. Pipe Log Growth Unbounded
-- **File**: `src/tmux/mod.rs` (`start_pipe_pane`), `src/daemon/mod.rs` (startup cleanup)
+#### A7. Pipe Log Growth Unbounded ✓ Implemented
+- **File**: `src/tmux/cache.rs` (`read_pipe_log`)
 - **Issue**: Pipe logs grow without bound during long sessions with high output volume. The 50 KB read limit in `read_pipe_log` doesn't prevent on-disk growth.
-- **Fix**: Rotate pipe logs at a configurable size threshold (e.g. 10 MB). Clean up on pane close, not just daemon restart.
+- **Fix applied**: `PIPE_LOG_ROTATE_THRESHOLD = 10 MiB` constant added. After each `read_pipe_log` call, if `file_size > PIPE_LOG_ROTATE_THRESHOLD`, the file is truncated and the 50 KB tail we already hold is written back. tmux's `cat` process keeps the file open with `O_APPEND` so subsequent writes land at the new end cleanly. A `log::debug!` line records each rotation; `log::warn!` on write failure. The 2 s cache-poller interval means at most ~2 s of output can be lost during a rotation, which is acceptable for context-delivery purposes.
 
 #### A8. Background Window Eviction Kills Without Grace Period ✓ Implemented
 - **File**: `src/daemon/executor.rs` (bg window cap enforcement)

@@ -9,6 +9,12 @@ use std::sync::RwLock;
 /// active-pane content source (R1).
 const PIPE_LOG_MAX_BYTES: usize = 51_200; // 50 KB
 
+/// When a pipe log grows beyond this size, truncate it to the last
+/// `PIPE_LOG_MAX_BYTES` bytes after each read (A7). tmux's `cat` process
+/// holds the file open with `O_APPEND`, so subsequent writes go to the
+/// new end — no data is corrupted, and at most ~2 s of output is lost.
+const PIPE_LOG_ROTATE_THRESHOLD: usize = 10 * 1024 * 1024; // 10 MB
+
 
 /// Semantic color tag produced by [`annotate_ansi`].
 #[derive(Clone, Copy, PartialEq)]
@@ -138,7 +144,7 @@ pub(crate) fn annotate_ansi(s: &str) -> String {
 /// annotating ANSI colour escapes as semantic markers.  Returns an empty
 /// string if the log does not exist, is empty, or cannot be read.
 fn read_pipe_log(pane_id: &str) -> String {
-    use std::io::{Read, Seek, SeekFrom};
+    use std::io::{Read, Seek, SeekFrom, Write};
     let path = tmux::pipe_log_path(pane_id);
     let Ok(mut file) = std::fs::File::open(&path) else { return String::new() };
     let Ok(meta) = file.metadata() else { return String::new() };
@@ -150,6 +156,26 @@ fn read_pipe_log(pane_id: &str) -> String {
     }
     let mut buf = Vec::new();
     if file.read_to_end(&mut buf).is_err() { return String::new(); }
+
+    // A7: rotate — if the file has grown beyond the threshold, truncate it to
+    // just the tail we already hold. The tmux `cat` process keeps the file
+    // open with O_APPEND, so future writes land at the new end cleanly.
+    if file_size > PIPE_LOG_ROTATE_THRESHOLD {
+        drop(file);
+        if let Ok(mut wfile) = std::fs::OpenOptions::new()
+            .write(true).truncate(true).open(&path)
+        {
+            if let Err(e) = wfile.write_all(&buf) {
+                log::warn!("Failed to rotate pipe log {}: {}", path.display(), e);
+            } else {
+                log::debug!("Rotated pipe log {} ({} MB → {} KB)",
+                    path.display(),
+                    file_size / (1024 * 1024),
+                    buf.len() / 1024);
+            }
+        }
+    }
+
     let raw = String::from_utf8_lossy(&buf).into_owned();
     annotate_ansi(&raw)
 }
