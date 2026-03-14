@@ -1,6 +1,7 @@
 
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
+use libc;
 use tokio::io::AsyncBufReadExt;
 use anyhow::Result;
 use std::sync::Arc;
@@ -281,8 +282,11 @@ pub async fn handle_client(
         }
         Request::Shutdown => {
             send_response_split(&mut tx, Response::Ok).await?;
-            let _ = std::fs::remove_file(default_socket_path());
-            std::process::exit(0);
+            // Send SIGTERM to ourselves so the main loop's signal handler runs
+            // the full graceful shutdown sequence (hook uninstall, session cleanup,
+            // socket removal) rather than exiting here and bypassing it.
+            unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+            return Ok(());
         }
         Request::Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane } =>
             (query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane),
