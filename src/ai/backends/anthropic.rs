@@ -45,6 +45,18 @@ impl AnthropicClient {
                     content.push(json!({"type": "text", "text": m.content}));
                 }
                 for tc in tcs {
+                    // If this tool call was preceded by an extended-thinking block, echo
+                    // the full thinking block back (Anthropic requires it for multi-turn).
+                    // The block is stored as JSON: {"thinking": "...", "signature": "..."}.
+                    if let Some(ts) = &tc.thought_signature {
+                        if let Ok(block) = serde_json::from_str::<Value>(ts) {
+                            content.push(json!({
+                                "type": "thinking",
+                                "thinking": block["thinking"],
+                                "signature": block["signature"]
+                            }));
+                        }
+                    }
                     let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
                     content.push(json!({
                         "type": "tool_use",
@@ -98,6 +110,14 @@ impl AiClient for AnthropicClient {
         let mut tool_id = String::new();
         let mut tool_name = String::new();
         let mut tool_args = String::new();
+        // Extended thinking support: collect thinking text + signature so they can be
+        // echoed back in subsequent turns (Anthropic requires the full thinking block).
+        let mut in_thinking = false;
+        let mut thinking_text = String::new();
+        let mut thinking_sig = String::new();
+        // Holds the JSON-encoded thinking block from the most recent thinking content
+        // block; passed to the next tool call dispatched in this response.
+        let mut pending_thought_sig: Option<String> = None;
         let mut leftover = String::new();
         let mut usage = crate::ai::types::AiUsage::default();
 
@@ -124,6 +144,10 @@ impl AiClient for AnthropicClient {
                                         .as_str().unwrap_or("").to_string();
                                     tool_args.clear();
                                 }
+                            } else if v["content_block"]["type"] == "thinking" {
+                                in_thinking = true;
+                                thinking_text.clear();
+                                thinking_sig.clear();
                             }
                         } else if msg_type == "content_block_delta" {
                             if v["delta"]["type"] == "text_delta" {
@@ -136,11 +160,29 @@ impl AiClient for AnthropicClient {
                                 if let Some(partial) = v["delta"]["partial_json"].as_str() {
                                     tool_args.push_str(partial);
                                 }
+                            } else if v["delta"]["type"] == "thinking_delta" {
+                                if let Some(t) = v["delta"]["thinking"].as_str() {
+                                    thinking_text.push_str(t);
+                                }
+                            } else if v["delta"]["type"] == "signature_delta" {
+                                if let Some(s) = v["delta"]["signature"].as_str() {
+                                    thinking_sig.push_str(s);
+                                }
                             }
                         } else if msg_type == "content_block_stop" {
-                            if !tool_id.is_empty() {
+                            if in_thinking {
+                                // Encode both fields so convert_messages can reconstruct
+                                // the full thinking block for the round-trip.
+                                if !thinking_sig.is_empty() {
+                                    pending_thought_sig = Some(json!({
+                                        "thinking": thinking_text,
+                                        "signature": thinking_sig
+                                    }).to_string());
+                                }
+                                in_thinking = false;
+                            } else if !tool_id.is_empty() {
                                 if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                                    if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None) {
+                                    if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take()) {
                                         let _ = tx.send(ev);
                                     }
                                 }
@@ -165,7 +207,7 @@ impl AiClient for AnthropicClient {
         // (e.g. network disconnect mid-stream).
         if !tool_id.is_empty() {
             if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None) {
+                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take()) {
                     let _ = tx.send(ev);
                 }
             }

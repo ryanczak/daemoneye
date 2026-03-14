@@ -15,10 +15,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: The Unix domain socket at `/tmp/daemoneye.sock` accepts connections from any local process. Any user on the host can execute commands, read files, write scripts, and access memory via the AI.
 - **Fix applied**: Socket moved to `~/.daemoneye/daemoneye.sock` via `config::default_socket_path()`. The user's home directory is not world-writable, so other local users cannot create files there or connect to the socket. Note: same-user process isolation still requires authentication (S1 partially addressed — cross-user threat eliminated; same-user threat remains).
 
-#### S2. Unauthenticated Webhook Endpoint
+#### S2. Unauthenticated Webhook Endpoint — Won't Fix (by design)
 - **File**: `src/webhook.rs` line ~311
-- **Issue**: When `webhook.secret` is empty (the default), all POST requests are accepted. An attacker on the network can inject fake alerts and trigger AI analysis/remediation.
-- **Fix**: Require a non-empty secret when webhook is enabled. Either generate a default random secret at first run, or refuse to start the webhook listener if no secret is configured.
+- **Issue**: When `webhook.secret` is empty (the default), all POST requests are accepted.
+- **Decision**: Empty secret is intentionally supported for compatibility (local alertmanager setups, simple self-hosted configs). Combined with S13 (default bind to `127.0.0.1`), network-exposed risk is substantially reduced. Documentation should note that `secret` should be set when the endpoint is exposed on a non-loopback interface.
 
 ---
 
@@ -49,10 +49,10 @@ This document captures findings from a comprehensive security, architecture, and
 
 ### MEDIUM
 
-#### S7. `thought_signature` Dropped in Anthropic/OpenAI Backends
-- **Files**: `src/ai/backends/anthropic.rs` line ~143, `src/ai/backends/openai.rs` lines ~132/163
-- **Issue**: Both backends pass `None` for `thought_signature` to `dispatch_tool_event()`. Only Gemini correctly extracts it. Model reasoning traces are silently dropped.
-- **Fix**: Extract and forward `thought_signature` in both backends, mirroring the Gemini implementation.
+#### S7. `thought_signature` Dropped in Anthropic/OpenAI Backends ✓ Implemented
+- **Files**: `src/ai/backends/anthropic.rs`
+- **Issue**: Anthropic's extended thinking returns `thinking` content blocks with a `signature` field required for multi-turn round-trips. The backend was dropping them silently.
+- **Fix applied**: Anthropic backend now tracks `thinking` blocks during SSE streaming (`thinking_delta` / `signature_delta` events), encodes the full block as `{"thinking": "...", "signature": "..."}` JSON in `pending_thought_sig`, and passes it to `dispatch_tool_event`. `convert_messages` now emits the full `thinking` content block before each `tool_use` block when a signature is present. OpenAI has no equivalent `thought_signature` concept; `None` remains correct for that backend.
 
 #### S8. Anthropic Stream End Missing Tool Flush ✓ Implemented
 - **File**: `src/ai/backends/anthropic.rs` lines ~104-165
@@ -64,10 +64,10 @@ This document captures findings from a comprehensive security, architecture, and
 - **Issue**: User-supplied search patterns go directly to `regex::Regex::new()`. Pathological patterns cause exponential backtracking, hanging the daemon.
 - **Fix applied**: All three sites now use `regex::RegexBuilder::new(pat).size_limit(1 << 20).build()`. Error paths return a user-visible error string rather than panicking.
 
-#### S10. Gemini Malformed-Call Parser Too Permissive
+#### S10. Gemini Malformed-Call Parser Too Permissive ✓ Implemented
 - **File**: `src/ai/backends/gemini.rs` lines ~19-44 (`parse_malformed_gemini_call`)
-- **Issue**: The fallback regex matches `command = '...'` anywhere in text, including model commentary. A Gemini response saying "the user might try: `command = 'rm -rf /'`" could trigger an unintended command.
-- **Fix**: Require the full function call prefix (`run_terminal_command\s*\([^)]*command\s*=`) and only invoke the fallback if structured JSON parsing fails AND the text contains `run_terminal_command(`. Log all fallback matches as WARN.
+- **Issue**: The fallback regex matched `command = '...'` anywhere in text, including model commentary outside the call.
+- **Fix applied**: Parser now extracts the substring between the parentheses of `run_terminal_command(...)` using a paren-depth counter, then applies `CMD_RE` / `BG_RE` only to that call body. Commentary text outside the call cannot match. `log::warn!` emitted on every fallback invocation. Two new tests verify the isolation (commentary-only, and mixed commentary + real call).
 
 #### S11. Terminal Escape Code Injection via `pane_id`
 - **File**: `src/tmux/cache.rs` lines ~534, 621
@@ -215,12 +215,12 @@ This document captures findings from a comprehensive security, architecture, and
 | 3 | S6 | ~~Add `tool_name` to `ToolResult`; fix Gemini hardcoded name~~ ✓ Done | Small |
 | 4 | S8 | ~~Add final tool flush in Anthropic backend~~ ✓ Done | Trivial |
 | 5 | S9 | ~~Add `size_limit()` to regex builder (3 sites in executor.rs)~~ ✓ Done | Trivial |
-| 6 | S10 | Tighten Gemini malformed-call parser | Small |
-| 7 | S7 | Forward `thought_signature` in Anthropic/OpenAI backends | Small |
+| 6 | S10 | ~~Tighten Gemini malformed-call parser~~ ✓ Done | Small |
+| 7 | S7 | ~~Forward `thought_signature` in Anthropic extended thinking~~ ✓ Done | Small |
 | 8 | A4 | ~~Fail fast on 4xx in `send_with_retry`~~ ✓ Already correct | Trivial |
 | 9 | A5 | RAII hook guard in foreground executor | Medium |
 | 10 | A6 | Session-closed hook for per-session hook cleanup | Medium |
-| 11 | S2 | Require webhook secret by default | Small |
+| 11 | S2 | ~~Require webhook secret~~ Won't Fix — empty secret allowed by design | — |
 | 12 | S4 | `canonicalize()` for file path validation | Small |
 | 13 | A9 | Atomic session history writes (write-tmp-rename) | Medium |
 | 14 | A10 | ~~Log poisoned lock recovery (`UnpoisonExt` trait, 44 sites)~~ ✓ Done | Trivial |

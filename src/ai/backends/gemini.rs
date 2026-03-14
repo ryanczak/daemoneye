@@ -16,20 +16,41 @@ use crate::ai::tools::dispatch_tool_event;
 ///
 /// This parser handles any argument order, both quote styles, optional spaces around `=`,
 /// and wrapper expressions like `print(default_api.run_terminal_command(...))`.
+///
+/// Regexes are applied only to the argument list extracted between the parentheses of
+/// `run_terminal_command(...)`, preventing model commentary elsewhere in the message
+/// from accidentally matching `command = '...'`.
 fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
     use regex::Regex;
     use std::sync::OnceLock;
 
-    if !msg.contains("run_terminal_command(") {
-        return None;
-    }
+    // Find the start of the function call.
+    let call_start = msg.find("run_terminal_command(")?;
+    let after_open = &msg[call_start + "run_terminal_command(".len()..];
 
-    // Match: command = "value" or command = 'value', in any position within the call.
+    // Extract only the content inside the outermost parentheses.
+    let call_body = {
+        let mut depth: usize = 1;
+        let mut end = None;
+        for (i, ch) in after_open.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 { end = Some(i); break; }
+                }
+                _ => {}
+            }
+        }
+        &after_open[..end?]
+    };
+
+    // Match: command = "value" or command = 'value', within the argument list only.
     static CMD_RE: OnceLock<Regex> = OnceLock::new();
     let cmd_re = CMD_RE.get_or_init(|| {
         Regex::new(r#"command\s*=\s*["']((?:[^"'\\]|\\.)*)["']"#).expect("valid regex")
     });
-    let cmd = cmd_re.captures(msg)?[1]
+    let cmd = cmd_re.captures(call_body)?[1]
         .replace("\\'", "'")
         .replace("\\\"", "\"");
 
@@ -38,8 +59,9 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
     let bg_re = BG_RE.get_or_init(|| {
         Regex::new(r#"background\s*=\s*(true|false)"#).expect("valid regex")
     });
-    let bg = bg_re.captures(msg).map(|c| &c[1] == "true").unwrap_or(false);
+    let bg = bg_re.captures(call_body).map(|c| &c[1] == "true").unwrap_or(false);
 
+    log::warn!("Gemini MALFORMED_FUNCTION_CALL fallback invoked: cmd={:?} background={}", cmd, bg);
     Some((cmd, bg))
 }
 
@@ -635,6 +657,23 @@ mod tests {
     fn parse_malformed_gemini_call_unrecognised_format_returns_none() {
         let msg = "something completely different";
         assert!(parse_malformed_gemini_call(msg).is_none());
+    }
+
+    /// Commentary that mentions `command = 'rm -rf /'` but outside a real call must not match.
+    #[test]
+    fn parse_malformed_gemini_call_rejects_commentary_outside_call() {
+        let msg = "the user might try: command = 'rm -rf /'";
+        assert!(parse_malformed_gemini_call(msg).is_none());
+    }
+
+    /// `command = '...'` in commentary that accompanies a real (but different) call must
+    /// not bleed into the extracted command value.
+    #[test]
+    fn parse_malformed_gemini_call_uses_only_call_body() {
+        // The commentary "command = 'danger'" appears outside the parens.
+        let msg = r#"Note: command = 'danger'. run_terminal_command(command = "ls", background = false)"#;
+        let result = parse_malformed_gemini_call(msg);
+        assert_eq!(result, Some(("ls".to_string(), false)));
     }
 
     /// Real failure: args in different order, double-quoted, extra `target_pane = None`.
