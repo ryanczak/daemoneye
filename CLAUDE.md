@@ -59,6 +59,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 - `BG_DONE_TX`: `OnceLock<broadcast::Sender<String>>` — sends pane_id on activity; shared by foreground completion and `watch_pane`.
 - `FG_HOOK_COUNTER`: `AtomicUsize` — unique `alert-activity[N]` hook slot per concurrent watcher.
+- `DAEMON_START`: `OnceLock<Instant>` — recorded at daemon startup; used by `daemon_uptime_secs()` for `daemoneye status`.
+- `BUFFER_COUNTER`: `AtomicUsize` — unique tmux buffer names (`de-rb-N`) for N12 local-pane file reads via `load-buffer`/`save-buffer`.
 
 ### Session context format
 
