@@ -1120,7 +1120,14 @@ async fn ask_with_session(
                         match result {
                             Err(_timeout) => {
                                 let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
-                                print!("\r{} \x1b[2m{}…\x1b[0m", SPINNER[spin % SPINNER.len()], verb);
+                                const MAX_DOTS: usize = 10;
+                                let period = (MAX_DOTS - 1) * 2; // 18
+                                let pos = (spin % TICKS_PER_VERB) % period;
+                                let dot_count = if pos < MAX_DOTS { pos + 1 } else { period - pos + 1 };
+                                let trail = "\x1b[31m".to_string() + &".".repeat(dot_count - 1) + "\x1b[0m";
+                                let cursor = "\x1b[33m.\x1b[0m";
+                                let dots = format!("{}{}", trail, cursor);
+                                print!("\r{} \x1b[33m{}\x1b[0m{}\x1b[K", SPINNER[spin % SPINNER.len()], verb, dots);
                                 std::io::stdout().flush()?;
                                 spin = spin.wrapping_add(1);
                             }
@@ -1131,7 +1138,7 @@ async fn ask_with_session(
             }
         } else {
             // Phase 2 — streaming: race recv against Ctrl+C with a 60 s per-token deadline.
-            let result = tokio::time::timeout(Duration::from_secs(60), async {
+            let result = tokio::time::timeout(Duration::from_secs(120), async {
                 loop {
                     tokio::select! {
                         biased;
@@ -1152,11 +1159,12 @@ async fn ask_with_session(
                     return Ok(());
                 }
                 Ok(Err(e)) => return Err(e),
-                Err(_) => anyhow::bail!("Daemon stopped responding (60 s inter-token timeout)"),
+                Err(_) => anyhow::bail!("Daemon stopped responding (120 s inter-token timeout)"),
             }
         };
 
         match msg {
+            Response::KeepAlive => continue,
             Response::Ok => {
                 md.flush();
                 print!("\x1b[0m"); // reset prose tint
@@ -1225,12 +1233,19 @@ async fn ask_with_session(
                 let panel_refs: Vec<&str> = panel_lines.iter().map(|s| s.as_str()).collect();
                 print_tool_panel(where_label, &panel_refs, false);
 
-                // Visually highlight the target pane while the user decides.
+                // Visually highlight the target pane while the user decides,
+                // then immediately restore focus to the chat pane so the user
+                // does not have to manually switch back.
                 if let Some(ref tp) = target_pane {
                     if !background {
                         let _ = std::process::Command::new("tmux")
                             .args(["select-pane", "-t", tp, "-P", "bg=colour17"])
                             .output();
+                        if let Ok(my_pane) = std::env::var("TMUX_PANE") {
+                            let _ = std::process::Command::new("tmux")
+                                .args(["select-pane", "-t", &my_pane])
+                                .output();
+                        }
                     }
                 }
 

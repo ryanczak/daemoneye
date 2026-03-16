@@ -384,18 +384,34 @@ pub fn pane_exists(pane_id: &str) -> bool {
 /// agent's active target.  Uses a dark-blue background tint that is clearly
 /// distinct from a typical terminal background without disrupting readability.
 /// Call [`unhighlight_pane`] to restore the default style.
-pub fn highlight_pane(pane_id: &str) {
+///
+/// `restore_focus_to` — if provided, focus is immediately returned to that
+/// pane after setting the style, so the user's active pane is not disturbed.
+pub fn highlight_pane(pane_id: &str, restore_focus_to: Option<&str>) {
     let _ = Command::new("tmux")
         .args(["select-pane", "-t", pane_id, "-P", "bg=colour17"])
         .output();
+    if let Some(restore) = restore_focus_to {
+        let _ = Command::new("tmux")
+            .args(["select-pane", "-t", restore])
+            .output();
+    }
 }
 
 /// Remove the visual highlight previously set by [`highlight_pane`], restoring
 /// the pane's style to the window default.
-pub fn unhighlight_pane(pane_id: &str) {
+///
+/// `restore_focus_to` — if provided, focus is immediately returned to that
+/// pane after clearing the style.
+pub fn unhighlight_pane(pane_id: &str, restore_focus_to: Option<&str>) {
     let _ = Command::new("tmux")
         .args(["select-pane", "-t", pane_id, "-P", "default"])
         .output();
+    if let Some(restore) = restore_focus_to {
+        let _ = Command::new("tmux")
+            .args(["select-pane", "-t", restore])
+            .output();
+    }
 }
 
 pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {

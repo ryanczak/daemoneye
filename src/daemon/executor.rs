@@ -576,8 +576,9 @@ pub async fn execute_tool_call(
                         match tmux::send_keys(target_str, cmd) {
                             Ok(()) => {
                                 // Highlight the target pane so the user can see which pane
-                                // the agent is using during execution.
-                                tmux::highlight_pane(target_str);
+                                // the agent is using during execution.  Immediately restore
+                                // focus to the chat pane so the user is not displaced.
+                                tmux::highlight_pane(target_str, chat_pane);
                                 let mut switched_to_working = false;
                                 let mut is_interactive = false;
 
@@ -742,7 +743,7 @@ pub async fn execute_tool_call(
                                 tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
 
                                 // Remove the visual highlight now that execution is complete.
-                                tmux::unhighlight_pane(target_str);
+                                tmux::unhighlight_pane(target_str, chat_pane);
 
                                 let output = match tmux::capture_pane(target_str, 200) {
                                     Ok(snap) if is_interactive => {
