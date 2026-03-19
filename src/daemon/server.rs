@@ -327,9 +327,11 @@ pub async fn handle_client(
         }
         Request::NotifyComplete { pane_id, exit_code, session_name: _ } => {
             if is_valid_pane_id(&pane_id) {
-                if let Some(tx) = crate::daemon::session::COMPLETE_TX.get() {
-                    let _ = tx.send((pane_id, exit_code));
-                }
+                // Fix C: use get_or_init so the channel always exists, even if
+                // NotifyComplete arrives before any completion monitor has subscribed.
+                let tx = crate::daemon::session::COMPLETE_TX
+                    .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx });
+                let _ = tx.send((pane_id, exit_code));
             } else {
                 log::warn!("NotifyComplete: rejected invalid pane_id {:?}", pane_id);
             }
@@ -618,7 +620,20 @@ pub async fn handle_client(
         let mut full_response = String::new();
         let mut pending_calls: Vec<PendingCall> = Vec::new();
 
-        while let Some(event) = ai_rx.recv().await {
+        loop {
+            let event = match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                ai_rx.recv(),
+            ).await {
+                Ok(Some(ev)) => ev,
+                Ok(None) => break,
+                Err(_timeout) => {
+                    // No token in 30 s — send a keep-alive so the client doesn't
+                    // hit its per-token deadline (slow local LLMs can stall longer).
+                    send_response_split(&mut tx, Response::KeepAlive).await?;
+                    continue;
+                }
+            };
             match event {
                 AiEvent::Token(t) => {
                     full_response.push_str(&t);

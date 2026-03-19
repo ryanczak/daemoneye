@@ -238,6 +238,10 @@ pub enum Response {
     /// Sent after each AI turn completes, carrying the prompt token count from
     /// that turn. The client uses this to update the context-budget display.
     UsageUpdate { prompt_tokens: u32 },
+    /// Sent periodically while the daemon is waiting for a slow LLM to produce
+    /// the next token. The client treats this as a no-op; receiving it resets
+    /// the per-token deadline so slow local models don't trigger a timeout.
+    KeepAlive,
     /// Daemon status snapshot returned in response to `Request::Status` (F1).
     DaemonStatus {
         uptime_secs: u64,

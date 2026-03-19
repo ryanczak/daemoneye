@@ -188,13 +188,14 @@ pub fn restore_termios(old: libc::termios) {
 }
 
 /// Maximum number of rows the input area can grow to.
-const MAX_INPUT_ROWS: usize = 5;
+const MAX_INPUT_ROWS: usize = 20;
 
 /// How many display rows `line` needs at the given terminal width.
-fn input_rows_needed(line: &InputLine, chat_width: usize) -> usize {
+fn input_rows_needed(line: &InputLine, chat_width: usize, chat_height: usize) -> usize {
     let avail = chat_width.saturating_sub(5).max(1);
     let len = line.buf.len();
-    if len == 0 { 1 } else { ((len + avail - 1) / avail).min(MAX_INPUT_ROWS).max(1) }
+    let cap = MAX_INPUT_ROWS.min(chat_height / 3).max(1);
+    if len == 0 { 1 } else { ((len + avail - 1) / avail).min(cap).max(1) }
 }
 
 /// Render the word-wrapped multi-row input area.
@@ -411,7 +412,7 @@ async fn read_input_line_inner(
     last_ctrl_c:    &mut Option<std::time::Instant>,
     daemon_up:      bool,
 ) -> anyhow::Result<Option<String>> {
-    let mut input_rows = input_rows_needed(&state.current, *chat_width);
+    let mut input_rows = input_rows_needed(&state.current, *chat_width, *chat_height);
 
     // Initial render.
     render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);
@@ -420,7 +421,7 @@ async fn read_input_line_inner(
     // changed, then repaint the buffer.
     macro_rules! render {
         () => {{
-            let needed = input_rows_needed(&state.current, *chat_width);
+            let needed = input_rows_needed(&state.current, *chat_width, *chat_height);
             if needed != input_rows {
                 resize_input_area(*chat_height, *chat_width, input_rows, needed,
                                   start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
@@ -440,7 +441,7 @@ async fn read_input_line_inner(
                 *chat_width  = terminal_width();
                 *chat_height = terminal_height();
                 // Recalculate rows for new width — may change without input change.
-                input_rows = input_rows_needed(&state.current, *chat_width);
+                input_rows = input_rows_needed(&state.current, *chat_width, *chat_height);
 
                 // On resize, the terminal emulator (or tmux) may reset DECSTBM,
                 // causing the old fixed frame rows to appear as regular scrollable

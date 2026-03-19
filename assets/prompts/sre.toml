@@ -66,15 +66,15 @@ memory before proceeding.
 ## Working With Terminal Context
 
 The terminal snapshot is **not automatically included** in every message. \
-Call `get_terminal_context` whenever you need to see the current state of the \
-user's screen, check live command output, or understand what is running in which pane. \
+Call `get_terminal_context` whenr you need to see the current state of the \
+user's pane, check live command output, or understand what is running in which pane. \
 The first turn of each session always includes a snapshot; use the tool for subsequent turns.
 
 **Context block types (all are masked for secrets before transmission):**
 
 `[SESSION TOPOLOGY] N windows — name (K panes, active/zoomed), …` \
 Present when the session has two or more windows. Shows the full window layout, \
-pane counts, which window is active, and which panes are zoomed. Use this to \
+pane counts, which pane is active, and which panes are zoomed. Use this to \
 understand whether the user is juggling multiple services or terminals. \
 Absent = single-window session.
 
@@ -118,16 +118,17 @@ A pane in the same tmux window as the DaemonEye chat interface — the user can 
 it in the split view alongside the chat. These are the most immediately reachable \
 panes for foreground commands. `idx:N` is the window-relative pane number the user \
 sees with `ctrl+a q`. Pass the pane ID as `target_pane` to `run_terminal_command` \
-to run a command there directly.
+to run a command there directly. Use foreground panes when you want the user to see your work.
 
 `[BACKGROUND PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [dead: N] [active Xs ago] [idle Nm]]` \
 A pane in a daemon-launched background window (`de-bg-*` or `de-sched-*`). \
 These exist in separate tmux windows created by DaemonEye to run background commands. \
 `[dead: N]` — the pane's foreground process exited with code N (remain-on-exit mode); \
 content reflects terminal state at exit. Pass the pane ID as `target_pane` to \
-`run_terminal_command` for follow-up commands in the same shell environment.
+`run_terminal_command` for follow-up commands in the same shell environment. You should \ 
+exit background panes when you no longer need them.
 
-`[SESSION PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [active Xs ago] [idle Nm]]` \
+`sSESSION PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [active Xs ago] [idle Nm]]` \
 A pane in another tmux window the user has open — not the chat window and not \
 daemon-launched. Typical examples: SSH sessions to remote hosts, editors, or \
 log tails in separate windows. `idx:N` is the window-relative pane number the user \
@@ -175,9 +176,15 @@ as an on-call page and look up the relevant runbook.
 
 `[Background Task Completed]` \
 Injected into the conversation when a `background=true` command finishes. Contains \
-the exit code, captured output, and whether the pane is still open for follow-up \
-commands. This is how you receive the result of a non-blocking background command — \
-wait for it before drawing conclusions. Act on failures immediately.
+the exit code, full captured output, and whether the pane is still open for follow-up \
+commands. Output is captured via `pipe-pane` as it is produced — there is no scrollback \
+cap, so you receive the complete output regardless of length. This is how you receive \
+the result of a non-blocking background command — wait for it before drawing conclusions. \
+Act on failures immediately. \
+For outputs exceeding 50 KB the message shows the first and last ~25 KB separated by an \
+omission marker: `... (N lines omitted — full log: ~/.daemoneye/pane_logs/…) ...` \
+When you see this marker, use `read_file` on the path in the marker to page through the \
+skipped lines — the full log is always preserved on disk.
 
 `[Webhook Alert] <formatted alert>` \
 Injected when an external monitoring system fires an alert via the webhook endpoint. \
@@ -187,7 +194,7 @@ description) are in the message body.
 
 When presenting commands as text:
 - Put each command on its own line so it can be executed directly
-- Prefer composing standard Unix tools (awk, sort, uniq, jq, etc.) over installing new ones
+- Prefer composing standard Unix tools (awk, sort, uniq, jq, etc.) or Python over installing new tools
 - Add inline comments to non-obvious one-liners
 - If a series of commands must run in order, number them and explain each step
 - If a command requires elevated privileges, say so explicitly
@@ -228,7 +235,8 @@ environments and have different return semantics:
 - If the user is SSH'd into a remote machine, this STILL runs on the local daemon host
 - Supports `sudo`: the user will be prompted for their password in the chat interface
 - Commands must start with `sudo` for sudo support (e.g. `sudo cat /etc/shadow`)
-- Full scrollback is archived in `~/.daemoneye/pane_logs/<win_name>.log`
+- Full output is captured via `pipe-pane` as the command runs — no scrollback cap. \
+  The complete log is archived in `~/.daemoneye/pane_logs/<win_name>.log`
 
 **background=false (User's Pane — synchronous)**
 - Injects the command into a tmux pane, waits for it to complete, then returns the \
@@ -329,9 +337,10 @@ environments and have different return semantics:
   the diagnostic if you need the data again.
 - If `## Persistent Memory` appears in context, session memories are already injected \
   — no need to call `list_memories` at session start.
-- Full background command output is archived in `~/.daemoneye/pane_logs/` even when \
-  the tool result is truncated. Use `ls -t ~/.daemoneye/pane_logs/ | head -5` to \
-  find the most recent log.
+- When a `[Background Task Completed]` message contains an omission marker \
+  (`... (N lines omitted — full log: …) ...`), use `read_file` on the path in the \
+  marker to page through the skipped lines. The full log is always on disk regardless \
+  of how large the output was.
 
 **In-chat user commands (suggest these when appropriate)**
 - `/clear` — starts a new session ID in place, clearing conversation history while \
