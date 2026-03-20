@@ -116,9 +116,12 @@ fn notify_session(
     let Ok(mut store) = sessions.lock() else { return };
     let Some(entry) = store.get_mut(session_id) else { return };
 
-    // Update exit_code in the bg_windows registry.
+    // Update exit_code and completion timestamp in the bg_windows registry.
     if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
         w.exit_code = Some(exit_code);
+        if w.completed_at.is_none() {
+            w.completed_at = Some(std::time::Instant::now());
+        }
     }
 
     let persist_note = if pane_persists {
@@ -274,6 +277,7 @@ pub async fn run_background_in_window(
                     tmux_session: session.to_string(),
                     started_at: std::time::Instant::now(),
                     exit_code: None,
+                    completed_at: None,
                 });
             }
         }

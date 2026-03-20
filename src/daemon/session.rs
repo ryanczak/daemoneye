@@ -20,6 +20,8 @@ pub struct BgWindowInfo {
     pub started_at: std::time::Instant,
     /// `None` while still running; `Some(code)` after the pane exits.
     pub exit_code: Option<i32>,
+    /// When the exit code was first recorded; used for auto-GC timeout.
+    pub completed_at: Option<std::time::Instant>,
 }
 
 /// In-memory record of an active chat session.
@@ -338,6 +340,24 @@ mod tests {
 impl SessionEntry {
     pub fn last_accessed(&self) -> std::time::Instant {
         self.last_accessed
+    }
+
+    /// GC background windows that completed more than `timeout` ago.
+    /// Called by the session-cleanup loop as a safety net for windows the
+    /// agent forgot to close with `close_background_window`.
+    pub fn gc_stale_bg_windows(&mut self, timeout: std::time::Duration) {
+        let now = std::time::Instant::now();
+        let to_evict: Vec<(String, String, String)> = self.bg_windows.iter()
+            .filter(|w| w.completed_at.map_or(false, |t| now.duration_since(t) >= timeout))
+            .map(|w| (w.pane_id.clone(), w.window_name.clone(), w.tmux_session.clone()))
+            .collect();
+        for (pane_id, win_name, tmux_session) in to_evict {
+            log::info!("Auto-GC stale bg window {} (pane {})", win_name, pane_id);
+            if let Err(e) = crate::tmux::kill_job_window(&tmux_session, &win_name) {
+                log::warn!("Auto-GC: failed to kill {}: {}", win_name, e);
+            }
+            self.bg_windows.retain(|w| w.pane_id != pane_id);
+        }
     }
 
     /// Kill all background windows that are still open for this session.
