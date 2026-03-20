@@ -132,9 +132,15 @@ fn notify_session(
         )
     };
 
+    let hints = crate::manifest::related_knowledge_hints(body);
+    let hints_section = if !hints.is_empty() {
+        format!("\n{}", hints)
+    } else {
+        String::new()
+    };
     let history_content = format!(
         "Background command `{cmd}` in window {win_name} finished with exit code {exit_code}.\n\
-         {persist_note}\n<output>\n{body}\n</output>"
+         {persist_note}\n<output>\n{body}\n</output>{hints_section}"
     );
     let completion_msg = Message {
         role: "user".to_string(),

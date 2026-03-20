@@ -769,7 +769,13 @@ pub async fn execute_tool_call(
                                     }
                                     Ok(snap) => {
                                         let extracted = extract_command_output(&snap, cmd);
-                                        mask_sensitive(&normalize_output(&extracted))
+                                        let mut out = mask_sensitive(&normalize_output(&extracted));
+                                        let hints = crate::manifest::related_knowledge_hints(&out);
+                                        if !hints.is_empty() {
+                                            out.push('\n');
+                                            out.push_str(&hints);
+                                        }
+                                        out
                                     }
                                     Err(_) => "Command sent but could not capture output.".to_string(),
                                 };
@@ -1238,7 +1244,12 @@ pub async fn execute_tool_call(
 
                 // Capture and mask pane output.
                 let raw = tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
-                let body = crate::ai::filter::mask_sensitive(&normalize_output(&raw));
+                let mut body = crate::ai::filter::mask_sensitive(&normalize_output(&raw));
+                let hints = crate::manifest::related_knowledge_hints(&body);
+                if !hints.is_empty() {
+                    body.push('\n');
+                    body.push_str(&hints);
+                }
 
                 let content = if completed {
                     if let Some(ref pat) = pattern_owned {
