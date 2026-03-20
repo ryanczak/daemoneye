@@ -83,6 +83,7 @@ fn meta_path(name: &str) -> std::path::PathBuf {
 }
 
 /// Write sidecar metadata for a script to `<name>.meta.toml`.
+#[allow(dead_code)]
 pub fn write_script_meta(name: &str, meta: &ScriptMeta) -> Result<()> {
     validate_script_name(name)?;
     let quoted: Vec<String> = meta.tags.iter()
