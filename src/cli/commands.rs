@@ -223,7 +223,7 @@ pub async fn run_ask(query: String) -> Result<()> {
     let old = crate::cli::input::set_raw_mode()?;
     let tmux_session = crate::tmux::current_session_name();
     // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
-    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old, tmux_session.as_deref(), None, &mut 0, 0).await;
+    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old, tmux_session.as_deref(), None, &mut 0, 0, None, None).await;
     crate::cli::input::restore_termios(old);
     result
 }
@@ -750,19 +750,29 @@ async fn run_chat_inner_raw(
     }
 
     // A client is now attached — send the greeting.
-    match ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
-        Ok(()) => daemon_up = true,
-        Err(e) => {
-            eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
-            eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
-            eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
+    // chat_height is declared here so it can be passed to the resize context.
+    let mut chat_height = terminal_height();
+    {
+        let cw = chat_width; // copy for Request::Ask; &mut chat_width goes into resize
+        let resize = StreamResizeDims {
+            width: &mut chat_width, height: &mut chat_height,
+            start: start_time, model: model.clone(),
+            daemon_up: false, has_frame: false,
+        };
+        match ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(cw), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window, Some(sigwinch), Some(resize)).await {
+            Ok(()) => daemon_up = true,
+            Err(e) => {
+                eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
+                eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
+                eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
+            }
         }
     }
 
     // Greeting is done.  Re-query dimensions in case the pane was resized
     // while it streamed, then draw the full chrome for the first time.
-    chat_width          = terminal_width();
-    let mut chat_height = terminal_height();
+    chat_width  = terminal_width();
+    chat_height = terminal_height();
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
@@ -844,9 +854,17 @@ async fn run_chat_inner_raw(
             }
             continue;
         }
-        match ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(chat_width), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window).await {
-            Ok(()) => daemon_up = true,
-            Err(e) => eprintln!("\n\x1b[31m✗\x1b[0m {}", e),
+        {
+            let cw = chat_width; // copy for Request::Ask
+            let resize = StreamResizeDims {
+                width: &mut chat_width, height: &mut chat_height,
+                start: start_time, model: model.clone(),
+                daemon_up, has_frame: true,
+            };
+            match ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(cw), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window, Some(sigwinch), Some(resize)).await {
+                Ok(()) => daemon_up = true,
+                Err(e) => eprintln!("\n\x1b[31m✗\x1b[0m {}", e),
+            }
         }
         // Turn completed: reset the double-tap exit timer.
         last_ctrl_c = None;
@@ -1017,6 +1035,57 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
 
 // ── AI conversation ─────────────────────────────────────────────────────────
 
+/// Context for SIGWINCH handling during streaming in `ask_with_session`.
+struct StreamResizeDims<'a> {
+    width:     &'a mut usize,
+    height:    &'a mut usize,
+    start:     std::time::Instant,
+    model:     String,
+    daemon_up: bool,
+    /// True when the input frame (borders + status bar) is currently drawn.
+    /// When false, only dimensions are updated; caller redraws after streaming.
+    has_frame: bool,
+}
+
+/// Called from the SIGWINCH arms inside `ask_with_session`.
+/// Re-queries dimensions, erases the old frame if visible, and redraws.
+fn apply_stream_resize(
+    d:              &mut StreamResizeDims<'_>,
+    session_id:     Option<&str>,
+    approval:       &SessionApproval,
+    prompt_tokens:  u32,
+    context_window: u32,
+) {
+    use std::io::Write;
+    let old_height = *d.height;
+    *d.width  = terminal_width();
+    *d.height = terminal_height();
+
+    if !d.has_frame {
+        // Frame not drawn yet; caller will set up scroll region after streaming.
+        return;
+    }
+
+    // Reset scroll region so absolute cursor positioning can reach any row.
+    print!("\x1b[r");
+    // With input_rows == 1, 4 rows are reserved: top_border (height-3),
+    // input row (height-2), bottom_border (height-1), status bar (height).
+    let old_frame_top = old_height.saturating_sub(3).max(1);
+    for r in old_frame_top..=old_height {
+        print!("\x1b[{r};1H\x1b[2K");
+    }
+    std::io::stdout().flush().ok();
+
+    setup_scroll_region(*d.height);
+    draw_input_frame(*d.height, *d.width, d.start);
+    let hint = approval.hint();
+    draw_status_bar(
+        *d.height, *d.width,
+        session_id.unwrap_or(""), &hint,
+        &d.model, prompt_tokens, context_window, d.daemon_up,
+    );
+}
+
 async fn ask_with_session(
     query: String,
     display_query: &str,
@@ -1030,6 +1099,8 @@ async fn ask_with_session(
     target_pane: Option<&str>,
     prompt_tokens: &mut u32,
     context_window: u32,
+    mut sigwinch: Option<&mut tokio::signal::unix::Signal>,
+    mut resize: Option<StreamResizeDims<'_>>,
 ) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
@@ -1116,6 +1187,16 @@ async fn ask_with_session(
                             return Ok(());
                         }
                     }
+                    _ = async {
+                        match sigwinch.as_mut() {
+                            Some(sw) => { sw.recv().await; }
+                            None     => { std::future::pending::<()>().await; }
+                        }
+                    } => {
+                        if let Some(ref mut d) = resize {
+                            apply_stream_resize(d, session_id, approval, *prompt_tokens, context_window);
+                        }
+                    }
                     result = tokio::time::timeout(Duration::from_millis(80), recv(&mut rx)) => {
                         match result {
                             Err(_timeout) => {
@@ -1137,29 +1218,38 @@ async fn ask_with_session(
                 }
             }
         } else {
-            // Phase 2 — streaming: race recv against Ctrl+C with a 60 s per-token deadline.
-            let result = tokio::time::timeout(Duration::from_secs(120), async {
-                loop {
-                    tokio::select! {
-                        biased;
-                        byte = stdin.read_byte() => {
-                            if byte == Some(0x03) { return Ok(None); } // Ctrl+C
-                            // any other key while streaming is ignored
+            // Phase 2 — streaming: race recv against Ctrl+C and SIGWINCH.
+            // The timeout is per-message (120 s without any response token).
+            loop {
+                tokio::select! {
+                    biased;
+                    byte = stdin.read_byte() => {
+                        if byte == Some(0x03) { // Ctrl+C
+                            md.flush();
+                            println!("\n\x1b[33m⚠ Interrupted\x1b[0m  Session approval revoked.");
+                            *approval = SessionApproval::default();
+                            return Ok(());
                         }
-                        msg = recv(&mut rx) => { break msg.map(Some); }
+                        // any other key while streaming is ignored
+                    }
+                    _ = async {
+                        match sigwinch.as_mut() {
+                            Some(sw) => { sw.recv().await; }
+                            None     => { std::future::pending::<()>().await; }
+                        }
+                    } => {
+                        if let Some(ref mut d) = resize {
+                            apply_stream_resize(d, session_id, approval, *prompt_tokens, context_window);
+                        }
+                    }
+                    result = tokio::time::timeout(Duration::from_secs(120), recv(&mut rx)) => {
+                        match result {
+                            Ok(Ok(msg))   => break msg,
+                            Ok(Err(e))    => return Err(e),
+                            Err(_elapsed) => anyhow::bail!("Daemon stopped responding (120 s inter-token timeout)"),
+                        }
                     }
                 }
-            }).await;
-            match result {
-                Ok(Ok(Some(msg))) => msg,
-                Ok(Ok(None)) => {
-                    md.flush();
-                    println!("\n\x1b[33m⚠ Interrupted\x1b[0m  Session approval revoked.");
-                    *approval = SessionApproval::default();
-                    return Ok(());
-                }
-                Ok(Err(e)) => return Err(e),
-                Err(_) => anyhow::bail!("Daemon stopped responding (120 s inter-token timeout)"),
             }
         };
 
