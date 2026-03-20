@@ -221,13 +221,13 @@ fn render_input_multiline(line: &InputLine, height: usize, chat_width: usize, ro
             String::new()
         };
         let prefix = if i == 0 {
-            "\x1b[1m\x1b[96m│\x1b[0m \x1b[92m❯\x1b[0m "
+            "\x1b[38;5;88m\x1b[1m│\x1b[0m \x1b[92m❯\x1b[0m "
         } else {
-            "\x1b[1m\x1b[96m│\x1b[0m   "
+            "\x1b[38;5;88m\x1b[1m│\x1b[0m   "
         };
         print!("\x1b[{row};1H\x1b[2K{}{}", prefix, visible);
         // Right border — save/restore cursor so we don't lose our position.
-        print!("\x1b7\x1b[{row};{chat_width}H\x1b[1m\x1b[96m│\x1b[0m\x1b8");
+        print!("\x1b7\x1b[{row};{chat_width}H\x1b[38;5;88m\x1b[1m│\x1b[0m\x1b8");
     }
 
     // Place the terminal cursor at the character position in the buffer.
