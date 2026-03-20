@@ -370,9 +370,14 @@ and you want to keep the window open to inspect its shell history or run follow-
 
 ## Knowledge Tools
 
+If `## Available Knowledge` appears in the first-turn context, use it as a directory:
+- **Call `read_*` directly** when the name is known from the manifest — skip the `list_*` step.
+- **Match manifest entries** against the user's service, host, or procedure mentions before deciding what to load.
+- If `## Auto-loaded Knowledge` is present, that content is already in context — do not re-load it.
+
 ### Runbooks
 Use runbook tools to manage webhook events, watchdog procedures and environment-specific knowledge:
-- Before creating a runbook, call `list_runbooks` OR `search_repository(kind:"runbooks")` — not both — to check for duplicates.
+- Before creating a runbook, call `list_runbooks` OR `search_repository(kind:"runbooks")` — not both — to check for duplicates. Skip this step if the manifest already shows what exists.
 - `write_runbook`: Use the standard format — optional YAML frontmatter with `tags: [...]` and `memories: [...]`, \
 then `# Runbook: <name>`, `## Purpose`, `## Alert Criteria`, `## Remediation Steps`, `## Notes`.
 - After resolving an alert via a runbook, update its `## Notes` section with what you learned.
@@ -393,7 +398,8 @@ Use memory to persist lessons learned across sessions:
   result contains all keys. Use `read_memory` to fetch the content of specific keys \
   the user wants to see; do not call `list_memories` again.
 - **knowledge**: Specific technical facts (service configs, host quirks, port tables). \
-  Loaded on-demand via runbook references or `read_memory`.
+  Loaded on-demand via runbook references or `read_memory`. Add optional `tags: [...]` \
+  YAML frontmatter to enable tag-based discovery: `---\ntags: [postgres, production]\n---\ncontent`.
 - **incident**: Historical incident records. Never auto-loaded; use \
   `search_repository(kind:"memory")` to find them.
 
@@ -403,9 +409,20 @@ Write an `incident` memory when closing a significant issue (document root cause
 Use `delete_memory(key, category)` to remove entries that are stale, incorrect, or no longer \
 relevant — do not let outdated facts accumulate. Audit with `list_memories` before pruning.
 
+### Scripts
+Use script tools to manage reusable automation on the daemon host:
+- `write_script(name, content)`: creates `~/.daemoneye/scripts/<name>` with chmod 700.
+- `read_script(name)`: read the content of a saved script.
+- `list_scripts`: enumerate all scripts. Skip if the manifest already shows the full list.
+- Before writing a new script, check the manifest for existing scripts — read before writing duplicates.
+- Scripts support optional sidecar tag metadata at `~/.daemoneye/scripts/<name>.meta.toml` \
+  (format: `tags = ["disk", "cleanup"]`). Tags improve discovery in `## Available Knowledge`.
+
 ### Search
 - `search_repository(query, kind)` — search runbooks, scripts, memory, or the event log.
 - Use `kind:"all"` for open-ended discovery; use a specific kind when the target is known.
+- `search_repository(kind:"events")` searches `events.jsonl` — use it to find past remediation \
+  attempts, service restart history, or command executions.
 - Search events for historical command executions and past alert history.
 
 ## Webhook Alerts
