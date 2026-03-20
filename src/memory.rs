@@ -37,6 +37,48 @@ impl MemoryCategory {
     }
 }
 
+/// Memory entry with optional tags parsed from frontmatter.
+pub struct MemoryInfo {
+    pub key: String,
+    pub tags: Vec<String>,
+}
+
+/// Parse optional YAML frontmatter from a memory file.
+/// Returns `(tags, body)`. If no frontmatter, body is the full content and tags are empty.
+fn parse_memory_frontmatter(raw: &str) -> (Vec<String>, String) {
+    if !raw.starts_with("---\n") {
+        return (Vec::new(), raw.to_string());
+    }
+    let search_from = 4;
+    let end_marker = "\n---\n";
+    if let Some(rel_pos) = raw[search_from..].find(end_marker) {
+        let fm_end = search_from + rel_pos;
+        let frontmatter = &raw[search_from..fm_end];
+        let body = raw[fm_end + end_marker.len()..].to_string();
+        let tags = parse_memory_tag_field(frontmatter);
+        (tags, body)
+    } else {
+        (Vec::new(), raw.to_string())
+    }
+}
+
+fn parse_memory_tag_field(frontmatter: &str) -> Vec<String> {
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("tags:") {
+            let rest = trimmed["tags:".len()..].trim();
+            if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                return inner
+                    .split(',')
+                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
 fn memory_dir(category: &MemoryCategory) -> PathBuf {
     crate::config::config_dir().join("memory").join(category.dir_name())
 }
@@ -107,6 +149,49 @@ pub fn list_memories(category: Option<MemoryCategory>) -> Result<Vec<(String, St
         entries.sort();
         for name in entries {
             results.push((cat.canonical_name().to_string(), name));
+        }
+    }
+    Ok(results)
+}
+
+/// List memories with optional tags parsed from frontmatter.
+/// Session memories are included when `category` is None or Some(Session).
+pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<MemoryInfo>> {
+    let categories: Vec<MemoryCategory> = match category {
+        Some(c) => vec![c],
+        None => vec![
+            MemoryCategory::Session,
+            MemoryCategory::Knowledge,
+            MemoryCategory::Incident,
+        ],
+    };
+    let mut results = Vec::new();
+    for cat in &categories {
+        let dir = memory_dir(cat);
+        if !dir.exists() {
+            continue;
+        }
+        let mut entries: Vec<String> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let path = e.path();
+                if !path.is_file() { return None; }
+                path.file_stem().map(|s| s.to_string_lossy().to_string())
+            })
+            .collect();
+        entries.sort();
+        for name in entries {
+            let path = dir.join(format!("{}.md", name));
+            let tags = if let Ok(raw) = std::fs::read_to_string(&path) {
+                let (t, _) = parse_memory_frontmatter(&raw);
+                t
+            } else {
+                Vec::new()
+            };
+            results.push(MemoryInfo {
+                key: name,
+                tags,
+            });
         }
     }
     Ok(results)
@@ -263,6 +348,46 @@ mod tests {
             assert!(cats.contains(&"session"));
             assert!(cats.contains(&"knowledge"));
             assert!(cats.contains(&"incident"));
+        });
+    }
+
+    #[test]
+    fn memory_frontmatter_tags_parsed() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory(
+                "tagged-key",
+                "---\ntags: [postgres, production]\n---\nActual content",
+                MemoryCategory::Knowledge,
+            ).unwrap();
+            let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+            let info = infos.iter().find(|m| m.key == "tagged-key").expect("key not found");
+            assert!(info.tags.contains(&"postgres".to_string()), "tag missing: {:?}", info.tags);
+            assert!(info.tags.contains(&"production".to_string()), "tag missing: {:?}", info.tags);
+        });
+    }
+
+    #[test]
+    fn memory_without_frontmatter_has_no_tags() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory("plain-key", "Just plain content", MemoryCategory::Knowledge).unwrap();
+            let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+            let info = infos.iter().find(|m| m.key == "plain-key").expect("key not found");
+            assert!(info.tags.is_empty(), "expected no tags: {:?}", info.tags);
+        });
+    }
+
+    #[test]
+    fn list_memories_with_tags_returns_all() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory("k1", "v1", MemoryCategory::Knowledge).unwrap();
+            add_memory("k2", "---\ntags: [foo]\n---\nv2", MemoryCategory::Knowledge).unwrap();
+            let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+            assert_eq!(infos.len(), 2);
+            let k2 = infos.iter().find(|m| m.key == "k2").unwrap();
+            assert_eq!(k2.tags, vec!["foo"]);
         });
     }
 
