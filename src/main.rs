@@ -6,6 +6,7 @@ pub(crate) mod util;
 mod log;
 mod ipc;
 mod memory;
+mod manifest;
 mod pane_prefs;
 mod runbook;
 mod scheduler;
