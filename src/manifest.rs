@@ -667,9 +667,8 @@ mod tests {
         let tmp = TmpHome::new();
         with_home(&tmp, || {
             crate::scripts::write_script("rotate-certs.sh", "#!/bin/bash\necho done").unwrap();
-            crate::scripts::write_script_meta("rotate-certs.sh", &crate::scripts::ScriptMeta {
-                tags: vec!["certs".to_string(), "ssl".to_string()],
-            }).unwrap();
+            let meta = crate::config::config_dir().join("scripts").join("rotate-certs.sh.meta.toml");
+            std::fs::write(meta, "tags = [\"certs\", \"ssl\"]\n").unwrap();
             let m = build_knowledge_manifest();
             assert!(m.contains("rotate-certs.sh"), "script missing: {m}");
             assert!(m.contains("certs"), "tag missing: {m}");

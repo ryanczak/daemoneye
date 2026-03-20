@@ -82,18 +82,6 @@ fn meta_path(name: &str) -> std::path::PathBuf {
     scripts_dir().join(format!("{}.meta.toml", name))
 }
 
-/// Write sidecar metadata for a script to `<name>.meta.toml`.
-#[allow(dead_code)]
-pub fn write_script_meta(name: &str, meta: &ScriptMeta) -> Result<()> {
-    validate_script_name(name)?;
-    let quoted: Vec<String> = meta.tags.iter()
-        .map(|t| format!("\"{}\"", t))
-        .collect();
-    let content = format!("tags = [{}]\n", quoted.join(", "));
-    std::fs::write(meta_path(name), content)
-        .with_context(|| format!("writing script meta for {}", name))
-}
-
 /// Read the sidecar metadata for a script, if it exists.
 pub fn read_script_meta(name: &str) -> Option<ScriptMeta> {
     let path = meta_path(name);
@@ -177,9 +165,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         with_home(&tmp, || {
             write_script("my-script.sh", "#!/bin/bash\necho hi").unwrap();
-            write_script_meta("my-script.sh", &ScriptMeta {
-                tags: vec!["disk".to_string(), "cleanup".to_string()],
-            }).unwrap();
+            std::fs::write(meta_path("my-script.sh"), "tags = [\"disk\", \"cleanup\"]\n").unwrap();
             let meta = read_script_meta("my-script.sh").expect("meta not found");
             assert!(meta.tags.contains(&"disk".to_string()));
             assert!(meta.tags.contains(&"cleanup".to_string()));
@@ -205,9 +191,7 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         with_home(&tmp, || {
             write_script("tagged.sh", "#!/bin/bash\necho hi").unwrap();
-            write_script_meta("tagged.sh", &ScriptMeta {
-                tags: vec!["certs".to_string()],
-            }).unwrap();
+            std::fs::write(meta_path("tagged.sh"), "tags = [\"certs\"]\n").unwrap();
             write_script("plain.sh", "#!/bin/bash\necho hi").unwrap();
             let all = list_scripts_with_tags().unwrap();
             let tagged = all.iter().find(|(s, _)| s.name == "tagged.sh").unwrap();
