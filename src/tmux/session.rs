@@ -1,6 +1,6 @@
 use anyhow::Result;
-use std::process::Command;
 use std::collections::HashMap;
+use std::process::Command;
 
 /// Summary of another tmux session returned by [`list_sessions`].
 pub struct OtherSessionInfo {
@@ -19,7 +19,8 @@ pub struct OtherSessionInfo {
 pub fn list_sessions() -> Vec<OtherSessionInfo> {
     let out = match Command::new("tmux")
         .args([
-            "list-sessions", "-F",
+            "list-sessions",
+            "-F",
             "#{session_name}\t#{session_windows}\t#{session_activity}\t#{session_attached}",
         ])
         .output()
@@ -34,12 +35,14 @@ pub fn list_sessions() -> Vec<OtherSessionInfo> {
         .lines()
         .filter_map(|line| {
             let p: Vec<&str> = line.splitn(4, '\t').collect();
-            if p.len() < 4 { return None; }
+            if p.len() < 4 {
+                return None;
+            }
             Some(OtherSessionInfo {
-                name:          p[0].to_string(),
-                windows:       p[1].parse().unwrap_or(0),
+                name: p[0].to_string(),
+                windows: p[1].parse().unwrap_or(0),
                 last_activity: p[2].parse().unwrap_or(0),
-                attached:      p[3] == "1",
+                attached: p[3] == "1",
             })
         })
         .collect()
@@ -62,7 +65,8 @@ pub(crate) fn format_other_sessions(
     sessions: &[OtherSessionInfo],
     now_secs: u64,
 ) -> String {
-    let others: Vec<_> = sessions.iter()
+    let others: Vec<_> = sessions
+        .iter()
         .filter(|s| s.name != current_session)
         .collect();
 
@@ -70,29 +74,32 @@ pub(crate) fn format_other_sessions(
         return String::new();
     }
 
-    let parts: Vec<String> = others.iter().map(|s| {
-        let age = if s.last_activity > 0 && now_secs >= s.last_activity {
-            let secs = now_secs - s.last_activity;
-            if secs < 60 {
-                format!("active {}s ago", secs)
-            } else if secs < 3600 {
-                format!("active {}m ago", secs / 60)
+    let parts: Vec<String> = others
+        .iter()
+        .map(|s| {
+            let age = if s.last_activity > 0 && now_secs >= s.last_activity {
+                let secs = now_secs - s.last_activity;
+                if secs < 60 {
+                    format!("active {}s ago", secs)
+                } else if secs < 3600 {
+                    format!("active {}m ago", secs / 60)
+                } else {
+                    format!("idle {}h{}m", secs / 3600, (secs % 3600) / 60)
+                }
             } else {
-                format!("idle {}h{}m", secs / 3600, (secs % 3600) / 60)
-            }
-        } else {
-            "unknown activity".to_string()
-        };
-        let attach_state = if s.attached { "attached" } else { "detached" };
-        format!(
-            "{} ({} window{}, {}, {})",
-            s.name,
-            s.windows,
-            if s.windows == 1 { "" } else { "s" },
-            age,
-            attach_state,
-        )
-    }).collect();
+                "unknown activity".to_string()
+            };
+            let attach_state = if s.attached { "attached" } else { "detached" };
+            format!(
+                "{} ({} window{}, {}, {})",
+                s.name,
+                s.windows,
+                if s.windows == 1 { "" } else { "s" },
+                age,
+                attach_state,
+            )
+        })
+        .collect();
 
     format!("[OTHER SESSIONS] {}\n", parts.join(", "))
 }
@@ -157,7 +164,6 @@ pub fn session_environment(session: &str) -> Result<HashMap<String, String>> {
     Ok(env)
 }
 
-
 /// Get the active pane ID in `#{pane_id}` format (e.g. `%5`).
 pub fn get_active_pane(session_name: &str) -> Result<String> {
     let output = Command::new("tmux")
@@ -170,8 +176,6 @@ pub fn get_active_pane(session_name: &str) -> Result<String> {
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
-
-
 
 /// Return the name of the current tmux session, or `None` if not inside tmux.
 pub fn current_session_name() -> Option<String> {
@@ -191,7 +195,10 @@ pub fn current_session_name() -> Option<String> {
 pub fn client_dimensions(session_name: &str) -> (u16, u16) {
     let out = Command::new("tmux")
         .args([
-            "display-message", "-t", session_name, "-p",
+            "display-message",
+            "-t",
+            session_name,
+            "-p",
             "#{client_width}\t#{client_height}",
         ])
         .output();
@@ -212,7 +219,12 @@ mod tests {
     use super::*;
 
     fn sess(name: &str, windows: usize, last_activity: u64, attached: bool) -> OtherSessionInfo {
-        OtherSessionInfo { name: name.to_string(), windows, last_activity, attached }
+        OtherSessionInfo {
+            name: name.to_string(),
+            windows,
+            last_activity,
+            attached,
+        }
     }
 
     #[test]
@@ -262,21 +274,21 @@ mod tests {
 
     #[test]
     fn format_other_sessions_excludes_current() {
-        let sessions = vec![
-            sess("current", 2, 900, true),
-            sess("other", 1, 950, false),
-        ];
+        let sessions = vec![sess("current", 2, 900, true), sess("other", 1, 950, false)];
         let out = format_other_sessions("current", &sessions, 1000);
-        assert!(!out.contains("current ("), "current session should be excluded: {out}");
-        assert!(out.contains("other ("), "other session should be included: {out}");
+        assert!(
+            !out.contains("current ("),
+            "current session should be excluded: {out}"
+        );
+        assert!(
+            out.contains("other ("),
+            "other session should be included: {out}"
+        );
     }
 
     #[test]
     fn format_other_sessions_multiple_sessions_comma_separated() {
-        let sessions = vec![
-            sess("a", 1, 990, true),
-            sess("b", 2, 940, false),
-        ];
+        let sessions = vec![sess("a", 1, 990, true), sess("b", 2, 940, false)];
         let out = format_other_sessions("x", &sessions, 1000);
         // Both should appear, separated by ", "
         assert!(out.contains(", "), "expected comma-separated list: {out}");
@@ -288,7 +300,10 @@ mod tests {
     fn format_other_sessions_ends_with_newline() {
         let sessions = vec![sess("other", 1, 990, true)];
         let out = format_other_sessions("current", &sessions, 1000);
-        assert!(out.ends_with('\n'), "output should end with newline: {out:?}");
+        assert!(
+            out.ends_with('\n'),
+            "output should end with newline: {out:?}"
+        );
     }
 }
 
@@ -304,5 +319,3 @@ pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
         .filter(|l| !l.is_empty())
         .collect())
 }
-
-

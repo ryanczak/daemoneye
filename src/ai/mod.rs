@@ -10,12 +10,12 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub use types::{AiEvent, Message, ToolResult, PendingCall};
 pub use filter::mask_sensitive;
+pub use types::{AiEvent, Message, PendingCall, ToolResult};
 
 pub use backends::anthropic::AnthropicClient;
-pub use backends::openai::OpenAiClient;
 pub use backends::gemini::GeminiClient;
+pub use backends::openai::OpenAiClient;
 
 static TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -108,7 +108,10 @@ pub fn http() -> &'static reqwest::Client {
 }
 
 pub fn next_tool_id() -> String {
-    format!("tc_{}", TOOL_CALL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    format!(
+        "tc_{}",
+        TOOL_CALL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 
 async fn send_with_retry_inner(
@@ -179,7 +182,12 @@ pub async fn send_with_retry(
 /// `base_url` is used by the OpenAI-compatible backend; pass an empty string
 /// for providers that ignore it (Anthropic, Gemini).
 /// Defaults to Anthropic for any unrecognised provider string.
-pub fn make_client(provider: &str, api_key: String, model: String, base_url: String) -> Box<dyn AiClient> {
+pub fn make_client(
+    provider: &str,
+    api_key: String,
+    model: String,
+    base_url: String,
+) -> Box<dyn AiClient> {
     match provider {
         "openai" | "ollama" | "lmstudio" => Box::new(OpenAiClient::new(api_key, model, base_url)),
         "gemini" => Box::new(GeminiClient::new(api_key, model)),

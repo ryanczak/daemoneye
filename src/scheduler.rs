@@ -1,5 +1,5 @@
-use crate::util::UnpoisonExt;
 use crate::log_event;
+use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -63,7 +63,10 @@ impl ScheduleKind {
     /// Human-readable description.
     pub fn describe(&self) -> String {
         match self {
-            ScheduleKind::Once { at } => format!("once at {}", at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M %Z")),
+            ScheduleKind::Once { at } => format!(
+                "once at {}",
+                at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M %Z")
+            ),
             ScheduleKind::Every { interval_secs, .. } => {
                 format!("every {}", describe_secs(*interval_secs))
             }
@@ -212,7 +215,12 @@ impl ScheduleStore {
             jobs.push(job);
         }
         self.save()?;
-        log_event!("Added scheduled job '{}' [{}] (ID: {})", name, kind, &id[..8]);
+        log_event!(
+            "Added scheduled job '{}' [{}] (ID: {})",
+            name,
+            kind,
+            &id[..8]
+        );
         Ok(id)
     }
 
@@ -231,7 +239,11 @@ impl ScheduleStore {
         }
         if found {
             self.save()?;
-            log_event!("Permanently deleted scheduled job '{}' (ID: {})", name, &id[..8]);
+            log_event!(
+                "Permanently deleted scheduled job '{}' (ID: {})",
+                name,
+                &id[..8]
+            );
         }
         Ok(found)
     }
@@ -323,7 +335,12 @@ impl ScheduleStore {
                 new_status_str = job.status.describe();
             }
         }
-        log_event!("Job '{}' (ID: {}) finished. Status: {}", job_name, &id[..8.min(id.len())], new_status_str);
+        log_event!(
+            "Job '{}' (ID: {}) finished. Status: {}",
+            job_name,
+            &id[..8.min(id.len())],
+            new_status_str
+        );
         let _ = self.save();
     }
 }
@@ -556,7 +573,10 @@ mod tests {
         let past = Utc::now() - chrono::Duration::seconds(10);
         let job = ScheduledJob::new(
             "persist-test".to_string(),
-            ScheduleKind::Every { interval_secs: 60, next_run: past },
+            ScheduleKind::Every {
+                interval_secs: 60,
+                next_run: past,
+            },
             ActionOn::Alert,
             None,
         );
@@ -577,7 +597,10 @@ mod tests {
         let two_intervals_ago = Utc::now() - chrono::Duration::seconds(120);
         let job = ScheduledJob::new(
             "catchup-test".to_string(),
-            ScheduleKind::Every { interval_secs: 60, next_run: two_intervals_ago },
+            ScheduleKind::Every {
+                interval_secs: 60,
+                next_run: two_intervals_ago,
+            },
             ActionOn::Alert,
             None,
         );
@@ -593,11 +616,17 @@ mod tests {
             ScheduleKind::Every { next_run, .. } => *next_run,
             _ => panic!("expected Every"),
         };
-        assert!(next > Utc::now(), "next_run should be in the future after catch-up skipping");
+        assert!(
+            next > Utc::now(),
+            "next_run should be in the future after catch-up skipping"
+        );
 
         // The job must NOT be taken again immediately.
         let due_again = store.take_due();
-        assert!(due_again.is_empty(), "job should not re-fire immediately after catch-up fix");
+        assert!(
+            due_again.is_empty(),
+            "job should not re-fire immediately after catch-up fix"
+        );
     }
 
     #[test]

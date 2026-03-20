@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 /// A runbook loaded from `~/.daemoneye/runbooks/<name>.md`.
@@ -123,8 +123,7 @@ pub fn write_runbook(name: &str, content: &str) -> Result<()> {
     validate_runbook_content(content)?;
     ensure_runbooks_dir()?;
     let path = runbooks_dir().join(format!("{}.md", name));
-    std::fs::write(&path, content)
-        .with_context(|| format!("writing runbook at {}", path.display()))
+    std::fs::write(&path, content).with_context(|| format!("writing runbook at {}", path.display()))
 }
 
 /// Delete a runbook. No-op if the file does not exist.
@@ -177,7 +176,9 @@ pub fn watchdog_system_prompt(runbook: &Runbook) -> String {
     } else {
         let mut parts = vec!["## Runbook Memory Context".to_string()];
         for key in &runbook.memories {
-            if let Ok(val) = crate::memory::read_memory(key, crate::memory::MemoryCategory::Knowledge) {
+            if let Ok(val) =
+                crate::memory::read_memory(key, crate::memory::MemoryCategory::Knowledge)
+            {
                 parts.push(format!("### {}\n{}", key, val));
             }
         }
@@ -212,27 +213,38 @@ mod tests {
     impl TmpHome {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let p = std::env::temp_dir()
-                .join(format!("de_rb_test_{}_{}", std::process::id(), n));
+            let p = std::env::temp_dir().join(format!("de_rb_test_{}_{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TmpHome(p)
         }
-        fn path(&self) -> &std::path::Path { &self.0 }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
     }
     impl Drop for TmpHome {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
-    fn temp_home() -> TmpHome { TmpHome::new() }
+    fn temp_home() -> TmpHome {
+        TmpHome::new()
+    }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
         let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
         let old = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", tmp.path()); }
+        unsafe {
+            env::set_var("HOME", tmp.path());
+        }
         f();
         match old {
-            Some(v) => unsafe { env::set_var("HOME", v); },
-            None => unsafe { env::remove_var("HOME"); },
+            Some(v) => unsafe {
+                env::set_var("HOME", v);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
         }
     }
 

@@ -1,42 +1,46 @@
-use serde_json::{Value, json};
 use crate::ai::types::AiEvent;
+use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
 // Unified tool schema
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-pub enum ParamTy { Str, Bool, Int }
+pub enum ParamTy {
+    Str,
+    Bool,
+    Int,
+}
 
 impl ParamTy {
     fn as_str(self) -> &'static str {
         match self {
-            ParamTy::Str  => "string",
+            ParamTy::Str => "string",
             ParamTy::Bool => "boolean",
-            ParamTy::Int  => "integer",
+            ParamTy::Int => "integer",
         }
     }
 
     fn as_gemini_str(self) -> &'static str {
         match self {
-            ParamTy::Str  => "STRING",
+            ParamTy::Str => "STRING",
             ParamTy::Bool => "BOOLEAN",
-            ParamTy::Int  => "INTEGER",
+            ParamTy::Int => "INTEGER",
         }
     }
 }
 
 pub struct ParamDef {
-    pub name:        &'static str,
-    pub ty:          ParamTy,
+    pub name: &'static str,
+    pub ty: ParamTy,
     pub description: &'static str,
-    pub required:    bool,
+    pub required: bool,
 }
 
 pub struct ToolDef {
-    pub name:        &'static str,
+    pub name: &'static str,
     pub description: &'static str,
-    pub params:      &'static [ParamDef],
+    pub params: &'static [ParamDef],
 }
 
 pub static TOOLS: &[ToolDef] = &[
@@ -55,16 +59,22 @@ pub static TOOLS: &[ToolDef] = &[
              there. Supports sudo: the user types their password directly in the terminal pane.",
         params: &[
             ParamDef {
-                name: "command", ty: ParamTy::Str, required: true,
+                name: "command",
+                ty: ParamTy::Str,
+                required: true,
                 description: "The bash command to execute.",
             },
             ParamDef {
-                name: "background", ty: ParamTy::Bool, required: false,
+                name: "background",
+                ty: ParamTy::Bool,
+                required: false,
                 description: "true = daemon host tmux window (captured output); false = user's \
                               terminal pane (visible, interactive, possibly remote). Defaults to false.",
             },
             ParamDef {
-                name: "target_pane", ty: ParamTy::Str, required: false,
+                name: "target_pane",
+                ty: ParamTy::Str,
+                required: false,
                 description: "Optional: tmux pane ID (e.g. \"%3\") to target for foreground \
                               commands. Get IDs from [VISIBLE PANE], [BACKGROUND PANE], or \
                               [SESSION PANE] context blocks, or call list_panes to discover them. \
@@ -72,7 +82,9 @@ pub static TOOLS: &[ToolDef] = &[
                               target_pane for them.",
             },
             ParamDef {
-                name: "retry_in_pane", ty: ParamTy::Str, required: false,
+                name: "retry_in_pane",
+                ty: ParamTy::Str,
+                required: false,
                 description: "Optional: pane ID of a previous background window (from a \
                               [Background Task Completed] message) to reuse for a retry. \
                               Only valid with background=true. The command runs in the same \
@@ -87,18 +99,42 @@ pub static TOOLS: &[ToolDef] = &[
                       time or repeatedly on an interval. For watchdog monitoring, specify a \
                       runbook name to enable AI analysis of the output.",
         params: &[
-            ParamDef { name: "name",      ty: ParamTy::Str,  required: true,
-                       description: "Human-readable name for this scheduled job." },
-            ParamDef { name: "command",   ty: ParamTy::Str,  required: true,
-                       description: "Shell command to run, or script name if is_script=true." },
-            ParamDef { name: "is_script", ty: ParamTy::Bool, required: false,
-                       description: "If true, 'command' is a script name in ~/.daemoneye/scripts/ to execute." },
-            ParamDef { name: "run_at",    ty: ParamTy::Str,  required: false,
-                       description: "ISO 8601 UTC datetime for a one-shot job, e.g. '2026-03-01T15:00:00Z'. Omit if using interval." },
-            ParamDef { name: "interval",  ty: ParamTy::Str,  required: false,
-                       description: "ISO 8601 duration for repeating jobs, e.g. PT30S (30 sec), PT1M (1 min), PT5M (5 min), PT1H (1 hour), P1D (1 day). Must be ISO 8601 — never a bare number or plain English string. Omit if using run_at." },
-            ParamDef { name: "runbook",   ty: ParamTy::Str,  required: false,
-                       description: "Optional name of a runbook in ~/.daemoneye/runbooks/ for watchdog AI analysis of command output." },
+            ParamDef {
+                name: "name",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Human-readable name for this scheduled job.",
+            },
+            ParamDef {
+                name: "command",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Shell command to run, or script name if is_script=true.",
+            },
+            ParamDef {
+                name: "is_script",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "If true, 'command' is a script name in ~/.daemoneye/scripts/ to execute.",
+            },
+            ParamDef {
+                name: "run_at",
+                ty: ParamTy::Str,
+                required: false,
+                description: "ISO 8601 UTC datetime for a one-shot job, e.g. '2026-03-01T15:00:00Z'. Omit if using interval.",
+            },
+            ParamDef {
+                name: "interval",
+                ty: ParamTy::Str,
+                required: false,
+                description: "ISO 8601 duration for repeating jobs, e.g. PT30S (30 sec), PT1M (1 min), PT5M (5 min), PT1H (1 hour), P1D (1 day). Must be ISO 8601 — never a bare number or plain English string. Omit if using run_at.",
+            },
+            ParamDef {
+                name: "runbook",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional name of a runbook in ~/.daemoneye/runbooks/ for watchdog AI analysis of command output.",
+            },
         ],
     },
     ToolDef {
@@ -110,20 +146,24 @@ pub static TOOLS: &[ToolDef] = &[
         name: "cancel_schedule",
         description: "Cancel a scheduled job by its UUID. The job will no longer fire but \
                       remains visible in list_schedules with status 'cancelled'.",
-        params: &[
-            ParamDef { name: "id", ty: ParamTy::Str, required: true,
-                       description: "UUID of the scheduled job to cancel." },
-        ],
+        params: &[ParamDef {
+            name: "id",
+            ty: ParamTy::Str,
+            required: true,
+            description: "UUID of the scheduled job to cancel.",
+        }],
     },
     ToolDef {
         name: "delete_schedule",
         description: "Permanently delete a scheduled job by its UUID, removing it from \
                       the schedule store entirely. Unlike cancel_schedule, the job will \
                       no longer appear in list_schedules.",
-        params: &[
-            ParamDef { name: "id", ty: ParamTy::Str, required: true,
-                       description: "UUID of the scheduled job to delete." },
-        ],
+        params: &[ParamDef {
+            name: "id",
+            ty: ParamTy::Str,
+            required: true,
+            description: "UUID of the scheduled job to delete.",
+        }],
     },
     ToolDef {
         name: "write_script",
@@ -131,10 +171,18 @@ pub static TOOLS: &[ToolDef] = &[
                       be shown the full content and must approve before it is written. Scripts are \
                       saved with chmod 700.",
         params: &[
-            ParamDef { name: "script_name", ty: ParamTy::Str, required: true,
-                       description: "Filename for the script (e.g. 'check-disk.sh')." },
-            ParamDef { name: "content",     ty: ParamTy::Str, required: true,
-                       description: "Full content of the script, including the shebang line." },
+            ParamDef {
+                name: "script_name",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Filename for the script (e.g. 'check-disk.sh').",
+            },
+            ParamDef {
+                name: "content",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Full content of the script, including the shebang line.",
+            },
         ],
     },
     ToolDef {
@@ -145,10 +193,12 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "read_script",
         description: "Read the content of a script from ~/.daemoneye/scripts/.",
-        params: &[
-            ParamDef { name: "script_name", ty: ParamTy::Str, required: true,
-                       description: "Name of the script to read." },
-        ],
+        params: &[ParamDef {
+            name: "script_name",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Name of the script to read.",
+        }],
     },
     ToolDef {
         name: "watch_pane",
@@ -158,15 +208,27 @@ pub static TOOLS: &[ToolDef] = &[
                       until `timeout_secs` elapses. Use for build completion, service startup \
                       events, or any output-triggered condition.",
         params: &[
-            ParamDef { name: "pane_id",      ty: ParamTy::Str, required: true,
-                       description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), background=true tool results, or list_panes." },
-            ParamDef { name: "timeout_secs", ty: ParamTy::Int, required: false,
-                       description: "Maximum seconds to wait. Defaults to 300 (5 minutes)." },
-            ParamDef { name: "pattern",      ty: ParamTy::Str, required: false,
-                       description: "Optional regex pattern. When set, returns as soon as the \
+            ParamDef {
+                name: "pane_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Tmux pane ID to monitor (e.g. \"%3\"). Get IDs from context blocks ([VISIBLE PANE], [BACKGROUND PANE], [SESSION PANE]), background=true tool results, or list_panes.",
+            },
+            ParamDef {
+                name: "timeout_secs",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Maximum seconds to wait. Defaults to 300 (5 minutes).",
+            },
+            ParamDef {
+                name: "pattern",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex pattern. When set, returns as soon as the \
                                      pattern matches any line in the pane output — does not wait \
                                      for the command to exit. Example: 'listening on port \\d+' \
-                                     or 'build (succeeded|failed)'." },
+                                     or 'build (succeeded|failed)'.",
+            },
         ],
     },
     ToolDef {
@@ -177,19 +239,39 @@ pub static TOOLS: &[ToolDef] = &[
                       With target_pane: runs sed/grep in that pane — use this when the file \
                       is on a remote SSH host the user is connected to.",
         params: &[
-            ParamDef { name: "path",        ty: ParamTy::Str, required: true,
-                       description: "Absolute path to the file to read." },
-            ParamDef { name: "offset",      ty: ParamTy::Int, required: false,
-                       description: "Line number to start reading from (1-based). Omit to read from the beginning." },
-            ParamDef { name: "limit",       ty: ParamTy::Int, required: false,
-                       description: "Maximum number of lines to return. Defaults to 200, capped at 500." },
-            ParamDef { name: "pattern",     ty: ParamTy::Str, required: false,
-                       description: "Optional regex pattern. When set, only lines matching the \
-                                     pattern are returned (like grep). Applied after offset/limit." },
-            ParamDef { name: "target_pane", ty: ParamTy::Str, required: false,
-                       description: "Optional tmux pane ID. When set, the read runs inside that \
+            ParamDef {
+                name: "path",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Absolute path to the file to read.",
+            },
+            ParamDef {
+                name: "offset",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Line number to start reading from (1-based). Omit to read from the beginning.",
+            },
+            ParamDef {
+                name: "limit",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Maximum number of lines to return. Defaults to 200, capped at 500.",
+            },
+            ParamDef {
+                name: "pattern",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex pattern. When set, only lines matching the \
+                                     pattern are returned (like grep). Applied after offset/limit.",
+            },
+            ParamDef {
+                name: "target_pane",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional tmux pane ID. When set, the read runs inside that \
                                      pane (useful for files on a remote SSH host). Omit for \
-                                     daemon-host files." },
+                                     daemon-host files.",
+            },
         ],
     },
     ToolDef {
@@ -201,18 +283,34 @@ pub static TOOLS: &[ToolDef] = &[
                       With target_pane: runs a Python3/Perl replacement script in that pane — \
                       use this for files on a remote SSH host.",
         params: &[
-            ParamDef { name: "path",        ty: ParamTy::Str, required: true,
-                       description: "Absolute path to the file to edit." },
-            ParamDef { name: "old_string",  ty: ParamTy::Str, required: true,
-                       description: "Exact text to find in the file. Must appear exactly once. \
+            ParamDef {
+                name: "path",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Absolute path to the file to edit.",
+            },
+            ParamDef {
+                name: "old_string",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Exact text to find in the file. Must appear exactly once. \
                                      Include enough surrounding context (e.g. the whole line) to \
-                                     be unique." },
-            ParamDef { name: "new_string",  ty: ParamTy::Str, required: true,
-                       description: "Replacement text. Use empty string to delete old_string." },
-            ParamDef { name: "target_pane", ty: ParamTy::Str, required: false,
-                       description: "Optional tmux pane ID. When set, the edit runs inside that \
+                                     be unique.",
+            },
+            ParamDef {
+                name: "new_string",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Replacement text. Use empty string to delete old_string.",
+            },
+            ParamDef {
+                name: "target_pane",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional tmux pane ID. When set, the edit runs inside that \
                                      pane via Python3 (Perl fallback) — use this for files on a \
-                                     remote SSH host. Omit for daemon-host files." },
+                                     remote SSH host. Omit for daemon-host files.",
+            },
         ],
     },
     ToolDef {
@@ -222,28 +320,40 @@ pub static TOOLS: &[ToolDef] = &[
                       with YAML frontmatter (---) containing 'tags: [...]' and 'memories: [...]'. \
                       User approval required.",
         params: &[
-            ParamDef { name: "name",    ty: ParamTy::Str, required: true,
-                       description: "Filename key for the runbook (no extension, e.g. 'disk-check')." },
-            ParamDef { name: "content", ty: ParamTy::Str, required: true,
-                       description: "Full markdown content of the runbook, including optional YAML frontmatter." },
+            ParamDef {
+                name: "name",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Filename key for the runbook (no extension, e.g. 'disk-check').",
+            },
+            ParamDef {
+                name: "content",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Full markdown content of the runbook, including optional YAML frontmatter.",
+            },
         ],
     },
     ToolDef {
         name: "delete_runbook",
         description: "Delete a runbook from ~/.daemoneye/runbooks/. User approval required. \
                       Will warn if active scheduled jobs reference this runbook.",
-        params: &[
-            ParamDef { name: "name", ty: ParamTy::Str, required: true,
-                       description: "Name of the runbook to delete (no extension)." },
-        ],
+        params: &[ParamDef {
+            name: "name",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Name of the runbook to delete (no extension).",
+        }],
     },
     ToolDef {
         name: "read_runbook",
         description: "Read the full content of a named runbook from ~/.daemoneye/runbooks/.",
-        params: &[
-            ParamDef { name: "name", ty: ParamTy::Str, required: true,
-                       description: "Name of the runbook to read (no extension)." },
-        ],
+        params: &[ParamDef {
+            name: "name",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Name of the runbook to read (no extension).",
+        }],
     },
     ToolDef {
         name: "list_runbooks",
@@ -257,51 +367,89 @@ pub static TOOLS: &[ToolDef] = &[
                       'knowledge' (loaded on-demand via runbook references or read_memory), \
                       'incident' (historical, searchable only).",
         params: &[
-            ParamDef { name: "key",      ty: ParamTy::Str, required: true,
-                       description: "Unique key for this memory entry (no path separators)." },
-            ParamDef { name: "value",    ty: ParamTy::Str, required: true,
-                       description: "Markdown content to store." },
-            ParamDef { name: "category", ty: ParamTy::Str, required: true,
-                       description: "'session', 'knowledge', or 'incident'." },
+            ParamDef {
+                name: "key",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Unique key for this memory entry (no path separators).",
+            },
+            ParamDef {
+                name: "value",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Markdown content to store.",
+            },
+            ParamDef {
+                name: "category",
+                ty: ParamTy::Str,
+                required: true,
+                description: "'session', 'knowledge', or 'incident'.",
+            },
         ],
     },
     ToolDef {
         name: "delete_memory",
         description: "Remove a memory entry from ~/.daemoneye/memory/<category>/<key>.md.",
         params: &[
-            ParamDef { name: "key",      ty: ParamTy::Str, required: true,
-                       description: "Key of the memory entry to delete." },
-            ParamDef { name: "category", ty: ParamTy::Str, required: true,
-                       description: "'session', 'knowledge', or 'incident'." },
+            ParamDef {
+                name: "key",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Key of the memory entry to delete.",
+            },
+            ParamDef {
+                name: "category",
+                ty: ParamTy::Str,
+                required: true,
+                description: "'session', 'knowledge', or 'incident'.",
+            },
         ],
     },
     ToolDef {
         name: "read_memory",
         description: "Read a specific memory entry by key and category.",
         params: &[
-            ParamDef { name: "key",      ty: ParamTy::Str, required: true,
-                       description: "Key of the memory entry to read." },
-            ParamDef { name: "category", ty: ParamTy::Str, required: true,
-                       description: "'session', 'knowledge', or 'incident'." },
+            ParamDef {
+                name: "key",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Key of the memory entry to read.",
+            },
+            ParamDef {
+                name: "category",
+                ty: ParamTy::Str,
+                required: true,
+                description: "'session', 'knowledge', or 'incident'.",
+            },
         ],
     },
     ToolDef {
         name: "list_memories",
         description: "List all memory keys, optionally filtered by category.",
-        params: &[
-            ParamDef { name: "category", ty: ParamTy::Str, required: false,
-                       description: "Optional: 'session', 'knowledge', or 'incident'. Omit to list all." },
-        ],
+        params: &[ParamDef {
+            name: "category",
+            ty: ParamTy::Str,
+            required: false,
+            description: "Optional: 'session', 'knowledge', or 'incident'. Omit to list all.",
+        }],
     },
     ToolDef {
         name: "search_repository",
         description: "Search across runbooks, scripts, memory, or the event log for a keyword. \
                       kind: 'runbooks' | 'scripts' | 'memory' | 'events' | 'all'.",
         params: &[
-            ParamDef { name: "query", ty: ParamTy::Str, required: true,
-                       description: "Search term (case-insensitive)." },
-            ParamDef { name: "kind",  ty: ParamTy::Str, required: true,
-                       description: "'runbooks', 'scripts', 'memory', 'events', or 'all'." },
+            ParamDef {
+                name: "query",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Search term (case-insensitive).",
+            },
+            ParamDef {
+                name: "kind",
+                ty: ParamTy::Str,
+                required: true,
+                description: "'runbooks', 'scripts', 'memory', 'events', or 'all'.",
+            },
         ],
     },
     ToolDef {
@@ -334,14 +482,14 @@ pub static TOOLS: &[ToolDef] = &[
                       commands there. Frees the slot immediately rather than waiting \
                       for the cap eviction. Up to 5 background windows exist per session; \
                       closing idle ones proactively prevents cap exhaustion.",
-        params: &[
-            ParamDef {
-                name: "pane_id", ty: ParamTy::Str, required: true,
-                description: "Pane ID of the background window to close (e.g. \"%3\"). \
+        params: &[ParamDef {
+            name: "pane_id",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Pane ID of the background window to close (e.g. \"%3\"). \
                               Obtained from a [Background Task Completed] message or \
                               a [BACKGROUND PANE] context block.",
-            },
-        ],
+        }],
     },
 ];
 
@@ -350,57 +498,94 @@ pub static TOOLS: &[ToolDef] = &[
 // ---------------------------------------------------------------------------
 
 fn build_properties(params: &[ParamDef]) -> serde_json::Map<String, Value> {
-    params.iter().map(|p| {
-        (p.name.to_string(), json!({
-            "type": p.ty.as_str(),
-            "description": p.description,
-        }))
-    }).collect()
+    params
+        .iter()
+        .map(|p| {
+            (
+                p.name.to_string(),
+                json!({
+                    "type": p.ty.as_str(),
+                    "description": p.description,
+                }),
+            )
+        })
+        .collect()
 }
 
 fn build_gemini_properties(params: &[ParamDef]) -> serde_json::Map<String, Value> {
-    params.iter().map(|p| {
-        (p.name.to_string(), json!({
-            "type": p.ty.as_gemini_str(),
-            "description": p.description,
-        }))
-    }).collect()
+    params
+        .iter()
+        .map(|p| {
+            (
+                p.name.to_string(),
+                json!({
+                    "type": p.ty.as_gemini_str(),
+                    "description": p.description,
+                }),
+            )
+        })
+        .collect()
 }
 
 fn required_names(params: &[ParamDef]) -> Vec<&'static str> {
-    params.iter().filter(|p| p.required).map(|p| p.name).collect()
+    params
+        .iter()
+        .filter(|p| p.required)
+        .map(|p| p.name)
+        .collect()
 }
 
 fn render_anthropic(tools: &[ToolDef]) -> Value {
-    Value::Array(tools.iter().map(|t| {
-        let props = build_properties(t.params);
-        let req   = required_names(t.params);
-        let mut schema = json!({ "type": "object", "properties": props });
-        if !req.is_empty() { schema["required"] = json!(req); }
-        json!({ "name": t.name, "description": t.description, "input_schema": schema })
-    }).collect())
+    Value::Array(
+        tools
+            .iter()
+            .map(|t| {
+                let props = build_properties(t.params);
+                let req = required_names(t.params);
+                let mut schema = json!({ "type": "object", "properties": props });
+                if !req.is_empty() {
+                    schema["required"] = json!(req);
+                }
+                json!({ "name": t.name, "description": t.description, "input_schema": schema })
+            })
+            .collect(),
+    )
 }
 
 fn render_openai(tools: &[ToolDef]) -> Value {
-    Value::Array(tools.iter().map(|t| {
-        let props = build_properties(t.params);
-        let req   = required_names(t.params);
-        let mut params = json!({ "type": "object", "properties": props });
-        if !req.is_empty() { params["required"] = json!(req); }
-        json!({ "type": "function", "function": {
-            "name": t.name, "description": t.description, "parameters": params
-        }})
-    }).collect())
+    Value::Array(
+        tools
+            .iter()
+            .map(|t| {
+                let props = build_properties(t.params);
+                let req = required_names(t.params);
+                let mut params = json!({ "type": "object", "properties": props });
+                if !req.is_empty() {
+                    params["required"] = json!(req);
+                }
+                json!({ "type": "function", "function": {
+                    "name": t.name, "description": t.description, "parameters": params
+                }})
+            })
+            .collect(),
+    )
 }
 
 pub fn render_gemini(tools: &[ToolDef]) -> Value {
-    Value::Array(tools.iter().map(|t| {
-        let props = build_gemini_properties(t.params);
-        let req   = required_names(t.params);
-        let mut params = json!({ "type": "OBJECT", "properties": props });
-        if !req.is_empty() { params["required"] = json!(req); }
-        json!({ "name": t.name, "description": t.description, "parameters": params })
-    }).collect())
+    Value::Array(
+        tools
+            .iter()
+            .map(|t| {
+                let props = build_gemini_properties(t.params);
+                let req = required_names(t.params);
+                let mut params = json!({ "type": "OBJECT", "properties": props });
+                if !req.is_empty() {
+                    params["required"] = json!(req);
+                }
+                json!({ "name": t.name, "description": t.description, "parameters": params })
+            })
+            .collect(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -425,14 +610,26 @@ pub fn get_gemini_tool_definition() -> Value {
 
 /// Given a tool call ID, name, and parsed arguments, produce the corresponding
 /// [`AiEvent`].  Returns `None` for unrecognised tool names.
-pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String>) -> Option<AiEvent> {
+pub fn dispatch_tool_event(
+    id: &str,
+    name: &str,
+    args: &Value,
+    ts: Option<String>,
+) -> Option<AiEvent> {
     match name {
         "run_terminal_command" => {
             let cmd = args["command"].as_str()?;
             let bg = args["background"].as_bool().unwrap_or(false);
             let target = args["target_pane"].as_str().map(|s| s.to_string());
             let retry = args["retry_in_pane"].as_str().map(|s| s.to_string());
-            Some(AiEvent::ToolCall(id.to_string(), cmd.to_string(), bg, target, retry, ts))
+            Some(AiEvent::ToolCall(
+                id.to_string(),
+                cmd.to_string(),
+                bg,
+                target,
+                retry,
+                ts,
+            ))
         }
         "schedule_command" => Some(AiEvent::ScheduleCommand {
             id: id.to_string(),
@@ -444,7 +641,10 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             runbook: args["runbook"].as_str().map(|s| s.to_string()),
             thought_signature: ts,
         }),
-        "list_schedules" => Some(AiEvent::ListSchedules { id: id.to_string(), thought_signature: ts }),
+        "list_schedules" => Some(AiEvent::ListSchedules {
+            id: id.to_string(),
+            thought_signature: ts,
+        }),
         "cancel_schedule" => Some(AiEvent::CancelSchedule {
             id: id.to_string(),
             job_id: args["id"].as_str().unwrap_or("").to_string(),
@@ -461,7 +661,10 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             content: args["content"].as_str().unwrap_or("").to_string(),
             thought_signature: ts,
         }),
-        "list_scripts" => Some(AiEvent::ListScripts { id: id.to_string(), thought_signature: ts }),
+        "list_scripts" => Some(AiEvent::ListScripts {
+            id: id.to_string(),
+            thought_signature: ts,
+        }),
         "read_script" => Some(AiEvent::ReadScript {
             id: id.to_string(),
             script_name: args["script_name"].as_str().unwrap_or("").to_string(),
@@ -572,13 +775,23 @@ mod tests {
     #[test]
     fn render_gemini_names_match_tools_slice() {
         let rendered = render_gemini(TOOLS);
-        let arr = rendered.as_array().expect("render_gemini must return an array");
-        assert_eq!(arr.len(), TOOLS.len(),
+        let arr = rendered
+            .as_array()
+            .expect("render_gemini must return an array");
+        assert_eq!(
+            arr.len(),
+            TOOLS.len(),
             "rendered Gemini tool count ({}) != TOOLS slice length ({})",
-            arr.len(), TOOLS.len());
+            arr.len(),
+            TOOLS.len()
+        );
         for (i, (entry, def)) in arr.iter().zip(TOOLS.iter()).enumerate() {
-            assert_eq!(entry["name"].as_str().unwrap(), def.name,
-                "tool at index {} name mismatch", i);
+            assert_eq!(
+                entry["name"].as_str().unwrap(),
+                def.name,
+                "tool at index {} name mismatch",
+                i
+            );
         }
     }
 
@@ -588,7 +801,9 @@ mod tests {
     fn render_gemini_types_are_uppercase() {
         let rendered = render_gemini(TOOLS);
         let arr = rendered.as_array().unwrap();
-        let rtc = arr.iter().find(|e| e["name"] == "run_terminal_command")
+        let rtc = arr
+            .iter()
+            .find(|e| e["name"] == "run_terminal_command")
             .expect("run_terminal_command must be present");
         let props = &rtc["parameters"]["properties"];
         assert_eq!(props["command"]["type"], "STRING");
@@ -604,15 +819,21 @@ mod tests {
         let arr = rendered.as_array().unwrap();
 
         // run_terminal_command: only "command" is required
-        let rtc = arr.iter().find(|e| e["name"] == "run_terminal_command").unwrap();
+        let rtc = arr
+            .iter()
+            .find(|e| e["name"] == "run_terminal_command")
+            .unwrap();
         let req = rtc["parameters"]["required"].as_array().unwrap();
         assert_eq!(req, &[serde_json::json!("command")]);
 
         // edit_file: path, old_string, new_string are required
         let ef = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
         let req_ef: Vec<&str> = ef["parameters"]["required"]
-            .as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(req_ef.contains(&"path"));
         assert!(req_ef.contains(&"old_string"));
         assert!(req_ef.contains(&"new_string"));
@@ -624,7 +845,9 @@ mod tests {
         let rendered = render_gemini(TOOLS);
         let arr = rendered.as_array().unwrap();
         let ls = arr.iter().find(|e| e["name"] == "list_schedules").unwrap();
-        assert!(ls["parameters"].get("required").is_none(),
-            "list_schedules must not have a 'required' key");
+        assert!(
+            ls["parameters"].get("required").is_none(),
+            "list_schedules must not have a 'required' key"
+        );
     }
 }

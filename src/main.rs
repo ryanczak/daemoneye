@@ -2,11 +2,10 @@ mod ai;
 mod cli;
 mod config;
 mod daemon;
-pub(crate) mod util;
-mod log;
 mod ipc;
-mod memory;
+mod log;
 mod manifest;
+mod memory;
 mod pane_prefs;
 mod runbook;
 mod scheduler;
@@ -14,6 +13,7 @@ mod scripts;
 mod search;
 mod sys_context;
 mod tmux;
+pub(crate) mod util;
 mod webhook;
 
 use clap::{Parser, Subcommand};
@@ -198,10 +198,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Daemon {
-            log_file,
-            console,
-        } => {
+        Commands::Daemon { log_file, console } => {
             let log_file = if console {
                 None
             } else {
@@ -266,7 +263,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             } => {
                 cli::run_notify_complete(pane_id, exit_code, session_name).await?;
             }
-            NotifyCommands::Focus { pane_id, session_name } => {
+            NotifyCommands::Focus {
+                pane_id,
+                session_name,
+            } => {
                 cli::run_notify_focus(pane_id, session_name).await?;
             }
             NotifyCommands::WindowChanged { session_name } => {
@@ -284,7 +284,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             NotifyCommands::ClientDetached { session_name } => {
                 cli::run_notify_client_detached(session_name).await?;
             }
-            NotifyCommands::Resize { width, height, session_name } => {
+            NotifyCommands::Resize {
+                width,
+                height,
+                session_name,
+            } => {
                 cli::run_notify_resize(width, height, session_name).await?;
             }
         },

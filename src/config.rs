@@ -58,11 +58,21 @@ pub struct WebhookConfig {
     pub bind_addr: String,
 }
 
-fn default_webhook_port() -> u16 { 9393 }
-fn default_true() -> bool { true }
-fn default_severity_threshold() -> String { "warning".to_string() }
-fn default_dedup_window() -> u64 { 300 }
-fn default_webhook_bind() -> String { "127.0.0.1".to_string() }
+fn default_webhook_port() -> u16 {
+    9393
+}
+fn default_true() -> bool {
+    true
+}
+fn default_severity_threshold() -> String {
+    "warning".to_string()
+}
+fn default_dedup_window() -> u64 {
+    300
+}
+fn default_webhook_bind() -> String {
+    "127.0.0.1".to_string()
+}
 
 impl Default for WebhookConfig {
     fn default() -> Self {
@@ -189,9 +199,9 @@ impl AiConfig {
             return u.clone();
         }
         match self.provider.as_str() {
-            "ollama"   => "http://localhost:11434/v1".to_string(),
+            "ollama" => "http://localhost:11434/v1".to_string(),
             "lmstudio" => "http://localhost:1234/v1".to_string(),
-            "openai"   => std::env::var("OPENAI_API_BASE")
+            "openai" => std::env::var("OPENAI_API_BASE")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
             _ => String::new(), // anthropic / gemini don't use this
         }

@@ -66,10 +66,7 @@ fn collect() -> SystemContext {
 /// process-count and last-PID fields which are not useful to the AI.
 fn compact_load_avg() -> String {
     let raw = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
-    raw.split_whitespace()
-        .take(3)
-        .collect::<Vec<_>>()
-        .join(" ")
+    raw.split_whitespace().take(3).collect::<Vec<_>>().join(" ")
 }
 
 /// Return the Mem: and Swap: lines from `free -h`, dropping the header row.
@@ -277,9 +274,15 @@ mod tests {
         // by calling the function and checking it contains exactly 3 space-separated
         // numeric tokens (or is empty if the file is missing in CI).
         let result = compact_load_avg();
-        if result.is_empty() { return; } // /proc/loadavg absent (unusual)
+        if result.is_empty() {
+            return;
+        } // /proc/loadavg absent (unusual)
         let parts: Vec<&str> = result.split_whitespace().collect();
-        assert_eq!(parts.len(), 3, "should have exactly 3 load average values, got: {result}");
+        assert_eq!(
+            parts.len(),
+            3,
+            "should have exactly 3 load average values, got: {result}"
+        );
         for p in &parts {
             p.parse::<f64>().expect("each part should be a float");
         }
@@ -290,7 +293,9 @@ mod tests {
     #[test]
     fn compact_memory_excludes_header_row() {
         let result = compact_memory();
-        if result.is_empty() { return; } // `free` not available in CI
+        if result.is_empty() {
+            return;
+        } // `free` not available in CI
         for line in result.lines() {
             assert!(
                 line.starts_with("Mem:") || line.starts_with("Swap:"),
@@ -310,7 +315,9 @@ mod tests {
             // With truncation marker the value is at most 121 chars (120 + "…").
             assert!(
                 line.len() <= 128, // "PATH=" (5) + 120 ASCII chars + "…" (3 UTF-8 bytes)
-                "PATH line too long ({} chars): {}", line.len(), &line[..line.len().min(80)]
+                "PATH line too long ({} chars): {}",
+                line.len(),
+                &line[..line.len().min(80)]
             );
         }
     }

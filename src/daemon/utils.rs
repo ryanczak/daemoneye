@@ -1,6 +1,3 @@
-
-
-
 pub use crate::util::UnpoisonExt;
 
 /// Return the hostname of the machine running the daemon.
@@ -15,7 +12,13 @@ pub fn daemon_hostname() -> String {
 /// Returns a human-readable description if the pane is on a remote host.
 pub fn get_pane_remote_host(pane_id: &str) -> Option<String> {
     let out = std::process::Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_current_command}"])
+        .args([
+            "display-message",
+            "-t",
+            pane_id,
+            "-p",
+            "#{pane_current_command}",
+        ])
         .output()
         .ok()?;
     let cmd = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -40,11 +43,11 @@ pub fn get_pane_remote_host(pane_id: &str) -> Option<String> {
 ///    that `run-shell` executes, so `\`, `"`, `$`, and `` ` `` are
 ///    backslash-escaped.
 pub fn shell_escape_arg(s: &str) -> String {
-    s.replace('\\', "\\\\")   // shell-level: double backslashes first
-     .replace('\'', "'\\''")  // tmux-level: ' → '\'' (must follow \ escaping)
-     .replace('"',  "\\\"")   // shell-level
-     .replace('$',  "\\$")
-     .replace('`',  "\\`")
+    s.replace('\\', "\\\\") // shell-level: double backslashes first
+        .replace('\'', "'\\''") // tmux-level: ' → '\'' (must follow \ escaping)
+        .replace('"', "\\\"") // shell-level
+        .replace('$', "\\$")
+        .replace('`', "\\`")
 }
 
 /// Return true when `cmd` will start an interactive session in the pane
@@ -69,8 +72,8 @@ pub fn is_interactive_command(cmd: &str) -> bool {
         "ssh" => {
             // Flags that consume the next token as their argument.
             const TAKES_ARG: &[&str] = &[
-                "-b", "-c", "-D", "-e", "-F", "-I", "-i", "-J", "-L",
-                "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+                "-b", "-c", "-D", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-p",
+                "-Q", "-R", "-S", "-W", "-w",
             ];
             let mut non_flag_count = 0usize;
             let mut skip_next = false;
@@ -106,8 +109,8 @@ pub fn is_interactive_command(cmd: &str) -> bool {
 /// Returns `None` when the destination cannot be determined.
 pub fn interactive_destination(cmd: &str) -> Option<String> {
     const SSH_TAKES_ARG: &[&str] = &[
-        "-b", "-c", "-D", "-e", "-F", "-I", "-i", "-J", "-L",
-        "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+        "-b", "-c", "-D", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m", "-O", "-o", "-p", "-Q",
+        "-R", "-S", "-W", "-w",
     ];
     let mut tokens = cmd.split_whitespace();
     let base = tokens.next()?;
@@ -116,9 +119,14 @@ pub fn interactive_destination(cmd: &str) -> Option<String> {
         "ssh" => {
             let mut skip_next = false;
             for tok in tokens {
-                if skip_next { skip_next = false; continue; }
+                if skip_next {
+                    skip_next = false;
+                    continue;
+                }
                 if tok.starts_with('-') {
-                    if SSH_TAKES_ARG.contains(&tok) { skip_next = true; }
+                    if SSH_TAKES_ARG.contains(&tok) {
+                        skip_next = true;
+                    }
                     continue;
                 }
                 return Some(tok.to_string());
@@ -163,9 +171,12 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
     if let Some(obj) = fields.as_object_mut() {
         // Prepend ts + event so they appear first in the line.
         let mut record = serde_json::Map::new();
-        record.insert("ts".to_string(),    serde_json::Value::String(ts));
-        record.insert("event".to_string(), serde_json::Value::String(event.to_string()));
-        
+        record.insert("ts".to_string(), serde_json::Value::String(ts));
+        record.insert(
+            "event".to_string(),
+            serde_json::Value::String(event.to_string()),
+        );
+
         // Take ownership of the fields from the caller's object
         let drained = std::mem::take(obj);
         for (k, v) in drained {
@@ -175,7 +186,11 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
         let mut line = serde_json::to_string(&record).unwrap_or_default();
         line.push('\n');
 
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             let _ = f.write_all(line.as_bytes());
         }
     }
@@ -192,19 +207,27 @@ pub fn log_command(
     status: &str,
     output_excerpt: &str,
 ) {
-    let cmd: String = command.chars().map(|c| if c == '\n' { ' ' } else { c }).collect();
-    let out: String = output_excerpt.chars().take(200)
-        .map(|c| if c == '\n' { ' ' } else { c }).collect();
-    log_event("command", serde_json::json!({
-        "session": session_id.unwrap_or("-"),
-        "mode":    mode,
-        "pane":    pane,
-        "cmd":     cmd,
-        "status":  status,
-        "out":     out,
-    }));
+    let cmd: String = command
+        .chars()
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
+    let out: String = output_excerpt
+        .chars()
+        .take(200)
+        .map(|c| if c == '\n' { ' ' } else { c })
+        .collect();
+    log_event(
+        "command",
+        serde_json::json!({
+            "session": session_id.unwrap_or("-"),
+            "mode":    mode,
+            "pane":    pane,
+            "cmd":     cmd,
+            "status":  status,
+            "out":     out,
+        }),
+    );
 }
-
 
 /// Extract the output produced by a foreground command from a post-run pane snapshot.
 ///
@@ -241,11 +264,16 @@ pub fn extract_command_output(after: &str, cmd: &str) -> String {
 pub fn normalize_output(s: &str) -> String {
     let trimmed: Vec<&str> = s.lines().map(|l| l.trim_end()).collect();
     let start = trimmed.iter().position(|l| !l.is_empty()).unwrap_or(0);
-    let end   = trimmed.iter().rposition(|l| !l.is_empty()).map(|i| i + 1).unwrap_or(0);
-    if start >= end { return String::new(); }
+    let end = trimmed
+        .iter()
+        .rposition(|l| !l.is_empty())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    if start >= end {
+        return String::new();
+    }
     trimmed[start..end].join("\n")
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -257,7 +285,6 @@ mod tests {
         assert_eq!(normalize_output("hello"), "hello");
     }
 
-
     #[test]
     fn normalize_trims_trailing_whitespace_per_line() {
         let input = "line one   \nline two  \nline three";
@@ -265,13 +292,11 @@ mod tests {
         assert_eq!(out, "line one\nline two\nline three");
     }
 
-
     #[test]
     fn normalize_strips_leading_blank_lines() {
         let input = "\n\n\nhello\nworld";
         assert_eq!(normalize_output(input), "hello\nworld");
     }
-
 
     #[test]
     fn normalize_strips_trailing_blank_lines() {
@@ -279,18 +304,15 @@ mod tests {
         assert_eq!(normalize_output(input), "hello\nworld");
     }
 
-
     #[test]
     fn normalize_all_blank_returns_empty() {
         assert_eq!(normalize_output("   \n  \n   "), "");
     }
 
-
     #[test]
     fn normalize_empty_input_returns_empty() {
         assert_eq!(normalize_output(""), "");
     }
-
 
     #[test]
     fn normalize_preserves_internal_blank_lines() {
@@ -298,24 +320,20 @@ mod tests {
         assert_eq!(normalize_output(input), "a\n\nb\n\nc");
     }
 
-
     #[test]
     fn command_has_sudo_simple() {
         assert!(command_has_sudo("sudo apt install vim"));
     }
-
 
     #[test]
     fn command_has_sudo_in_pipeline() {
         assert!(command_has_sudo("echo hi | sudo tee /etc/hosts"));
     }
 
-
     #[test]
     fn command_has_sudo_after_semicolon() {
         assert!(command_has_sudo("cd /tmp; sudo rm -rf foo"));
     }
-
 
     #[test]
     fn command_has_sudo_false_positive_guard() {
@@ -323,12 +341,10 @@ mod tests {
         assert!(!command_has_sudo("cat /etc/sudoers"));
     }
 
-
     #[test]
     fn command_has_sudo_no_sudo() {
         assert!(!command_has_sudo("ls -la /home"));
     }
-
 
     // ── shell_escape_arg ──────────────────────────────────────────────────────
 
@@ -375,7 +391,6 @@ mod tests {
         assert_eq!(shell_escape_arg("a'b'c"), "a'\\''b'\\''c");
     }
 
-
     // ── is_interactive_command ────────────────────────────────────────────────
 
     #[test]
@@ -400,12 +415,16 @@ mod tests {
 
     #[test]
     fn non_interactive_ssh_tunnel_N() {
-        assert!(!is_interactive_command("ssh -N -L 8080:localhost:80 user@host"));
+        assert!(!is_interactive_command(
+            "ssh -N -L 8080:localhost:80 user@host"
+        ));
     }
 
     #[test]
     fn non_interactive_ssh_background_f() {
-        assert!(!is_interactive_command("ssh -f -N -R 2222:localhost:22 bastion"));
+        assert!(!is_interactive_command(
+            "ssh -f -N -R 2222:localhost:22 bastion"
+        ));
     }
 
     #[test]
@@ -437,18 +456,26 @@ mod tests {
 
     #[test]
     fn destination_plain_ssh() {
-        assert_eq!(interactive_destination("ssh user@host"), Some("user@host".to_string()));
+        assert_eq!(
+            interactive_destination("ssh user@host"),
+            Some("user@host".to_string())
+        );
     }
 
     #[test]
     fn destination_ssh_with_flags() {
-        assert_eq!(interactive_destination("ssh -p 2222 -i ~/.ssh/id_rsa user@host"),
-                   Some("user@host".to_string()));
+        assert_eq!(
+            interactive_destination("ssh -p 2222 -i ~/.ssh/id_rsa user@host"),
+            Some("user@host".to_string())
+        );
     }
 
     #[test]
     fn destination_mosh() {
-        assert_eq!(interactive_destination("mosh admin@server"), Some("admin@server".to_string()));
+        assert_eq!(
+            interactive_destination("mosh admin@server"),
+            Some("admin@server".to_string())
+        );
     }
 
     #[test]
@@ -471,11 +498,13 @@ mod tests {
             "matt@host:~$ ",
         ]);
         let result = extract_command_output(&snap, "cat README.md");
-        assert!(result.starts_with("matt@host:~$ cat README.md"),
-            "first line should be the prompt+command, got: {:?}", &result[..result.find('\n').unwrap_or(result.len())]);
+        assert!(
+            result.starts_with("matt@host:~$ cat README.md"),
+            "first line should be the prompt+command, got: {:?}",
+            &result[..result.find('\n').unwrap_or(result.len())]
+        );
         assert!(result.contains("# DaemonEye"));
     }
-
 
     #[test]
     fn extract_uses_rposition_to_pick_most_recent_invocation() {
@@ -496,7 +525,6 @@ mod tests {
         assert!(!result.contains("old output line"));
     }
 
-
     #[test]
     fn extract_fallback_when_cmd_not_found() {
         // Command string doesn't appear as a suffix anywhere — use last 50 lines.
@@ -509,13 +537,10 @@ mod tests {
         assert!(!result.contains("line 0"));
     }
 
-
     #[test]
     fn extract_empty_snap_returns_empty() {
         assert_eq!(extract_command_output("", "ls"), "");
     }
-
-
 }
 
 use crate::ipc::Response;
@@ -529,7 +554,10 @@ pub async fn send_response(stream: &mut UnixStream, response: Response) -> anyho
     Ok(())
 }
 
-pub async fn send_response_split(tx: &mut tokio::net::unix::OwnedWriteHalf, response: Response) -> anyhow::Result<()> {
+pub async fn send_response_split(
+    tx: &mut tokio::net::unix::OwnedWriteHalf,
+    response: Response,
+) -> anyhow::Result<()> {
     let mut data = serde_json::to_vec(&response)?;
     data.push(b'\n');
     tx.write_all(&data).await?;
@@ -538,7 +566,9 @@ pub async fn send_response_split(tx: &mut tokio::net::unix::OwnedWriteHalf, resp
 
 pub fn fire_notification(job_name: &str, msg: &str, config: &crate::config::Config) {
     let cmd = &config.notifications.on_alert;
-    if cmd.is_empty() { return; }
+    if cmd.is_empty() {
+        return;
+    }
     let _ = std::process::Command::new("sh")
         .arg("-c")
         .arg(cmd)

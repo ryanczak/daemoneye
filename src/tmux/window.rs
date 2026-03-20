@@ -86,7 +86,6 @@ pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
-
 /// Query the width of the window containing a pane in columns.
 pub fn query_window_width(pane_id: &str) -> Result<usize> {
     let output = Command::new("tmux")
@@ -100,4 +99,3 @@ pub fn query_window_width(pane_id: &str) -> Result<usize> {
         .parse::<usize>()
         .map_err(|e| anyhow::anyhow!("Could not parse window width: {}", e))
 }
-

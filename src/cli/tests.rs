@@ -16,8 +16,8 @@ use crate::ipc::{Request, Response};
 mod tests {
     use super::*;
     use crate::cli::commands::*;
-    use crate::cli::render::*;
     use crate::cli::input::*;
+    use crate::cli::render::*;
     use crate::daemon::utils::command_has_sudo;
 
     // ── command_has_sudo ──────────────────────────────────────────────────────
@@ -93,23 +93,23 @@ mod tests {
 
     #[test]
     fn fmt_uptime_seconds_only() {
-        assert_eq!(fmt_uptime(std::time::Duration::from_secs(0)),  "0s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(0)), "0s");
         assert_eq!(fmt_uptime(std::time::Duration::from_secs(42)), "42s");
         assert_eq!(fmt_uptime(std::time::Duration::from_secs(59)), "59s");
     }
 
     #[test]
     fn fmt_uptime_minutes_and_seconds() {
-        assert_eq!(fmt_uptime(std::time::Duration::from_secs(60)),  "1m 0s");
-        assert_eq!(fmt_uptime(std::time::Duration::from_secs(90)),  "1m 30s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(60)), "1m 0s");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(90)), "1m 30s");
         assert_eq!(fmt_uptime(std::time::Duration::from_secs(3599)), "59m 59s");
     }
 
     #[test]
     fn fmt_uptime_hours_and_minutes() {
-        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3600)),  "1h 0m");
-        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3660)),  "1h 1m");
-        assert_eq!(fmt_uptime(std::time::Duration::from_secs(7322)),  "2h 2m");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3600)), "1h 0m");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(3660)), "1h 1m");
+        assert_eq!(fmt_uptime(std::time::Duration::from_secs(7322)), "2h 2m");
     }
 
     #[test]
@@ -121,10 +121,10 @@ mod tests {
     }
 }
 
-    #[test]
-    fn wrap_line_hard_with_newlines() {
-        use crate::cli::render::wrap_line_hard;
-        let input = "line1\nline2";
-        let wrapped = wrap_line_hard(input, 10);
-        assert_eq!(wrapped, vec!["line1".to_string(), "line2".to_string()]);
-    }
+#[test]
+fn wrap_line_hard_with_newlines() {
+    use crate::cli::render::wrap_line_hard;
+    let input = "line1\nline2";
+    let wrapped = wrap_line_hard(input, 10);
+    assert_eq!(wrapped, vec!["line1".to_string(), "line2".to_string()]);
+}

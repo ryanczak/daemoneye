@@ -14,17 +14,17 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::{
+    Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
     routing::post,
-    Json, Router,
 };
 use serde_json::Value;
 
 use crate::ai::{AiEvent, Message};
 use crate::config::Config;
-use crate::daemon::session::{append_session_message, SessionStore};
-use crate::daemon::utils::{fire_notification, log_event, UnpoisonExt};
+use crate::daemon::session::{SessionStore, append_session_message};
+use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,10 +136,7 @@ fn parse_alertmanager(body: &Value) -> Vec<InternalAlert> {
                 .unwrap_or("")
                 .to_string();
 
-            let severity = labels
-                .get("severity")
-                .cloned()
-                .unwrap_or_default();
+            let severity = labels.get("severity").cloned().unwrap_or_default();
 
             let status = match a["status"].as_str().unwrap_or("firing") {
                 "resolved" => AlertStatus::Resolved,
@@ -359,6 +356,7 @@ fn now_secs() -> u64 {
 }
 
 async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
+    crate::daemon::stats::record_webhook();
     let cfg = &state.config.webhook;
 
     // 1. Deduplication check.
@@ -607,7 +605,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
 /// Start the webhook HTTP server.  Runs until the process exits.
 pub async fn start(config: Config, sessions: SessionStore) -> anyhow::Result<()> {
     let port = config.webhook.port;
-    let bind_ip: std::net::IpAddr = config.webhook.bind_addr.parse()
+    let bind_ip: std::net::IpAddr = config
+        .webhook
+        .bind_addr
+        .parse()
         .unwrap_or_else(|_| std::net::Ipv4Addr::LOCALHOST.into());
     let state = Arc::new(WebhookState {
         config,
@@ -620,9 +621,7 @@ pub async fn start(config: Config, sessions: SessionStore) -> anyhow::Result<()>
         .route("/webhook", post(handle_webhook))
         .route("/health", axum::routing::get(|| async { "ok" }))
         .with_state(state);
-    let listener = tokio::net::TcpListener::bind(
-        std::net::SocketAddr::new(bind_ip, port)
-    ).await?;
+    let listener = tokio::net::TcpListener::bind(std::net::SocketAddr::new(bind_ip, port)).await?;
     log::info!("Webhook server listening on {}:{}", bind_ip, port);
     axum::serve(listener, app).await?;
     Ok(())
@@ -890,7 +889,10 @@ mod tests {
 
     #[test]
     fn auth_wrong_token_denies() {
-        assert!(!is_authorized("mysecret", &headers_with_bearer("wrongtoken")));
+        assert!(!is_authorized(
+            "mysecret",
+            &headers_with_bearer("wrongtoken")
+        ));
     }
 
     #[test]

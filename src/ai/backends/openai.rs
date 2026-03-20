@@ -4,9 +4,9 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::{AiClient, send_with_retry, http};
-use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::{dispatch_tool_event, get_openai_tool_definition};
+use crate::ai::types::{AiEvent, Message};
+use crate::ai::{AiClient, http, send_with_retry};
 
 /// OpenAI-compatible API backend (GPT family, or any OpenAI-compatible endpoint).
 /// Supports Ollama, LM Studio, vLLM, and any other OpenAI-API-compatible server
@@ -76,7 +76,12 @@ impl OpenAiClient {
 
 #[async_trait]
 impl AiClient for OpenAiClient {
-    async fn chat(&self, system: &str, messages: Vec<Message>, tx: UnboundedSender<AiEvent>) -> Result<()> {
+    async fn chat(
+        &self,
+        system: &str,
+        messages: Vec<Message>,
+        tx: UnboundedSender<AiEvent>,
+    ) -> Result<()> {
         let converted = self.convert_messages(messages);
         let mut full_messages = vec![json!({"role": "system", "content": system})];
         full_messages.extend(converted);
@@ -95,7 +100,8 @@ impl AiClient for OpenAiClient {
                 .post(format!("{}/chat/completions", self.base_url))
                 .bearer_auth(&self.api_key)
                 .json(&body)
-        }).await?;
+        })
+        .await?;
 
         let mut stream = response.bytes_stream();
         let mut tool_id = String::new();
@@ -129,19 +135,27 @@ impl AiClient for OpenAiClient {
                         break 'outer;
                     }
                     if let Ok(v) = serde_json::from_str::<Value>(data) {
-                        if let Some(delta) = v["choices"].get(0).and_then(|c| c["delta"].as_object()) {
+                        if let Some(delta) =
+                            v["choices"].get(0).and_then(|c| c["delta"].as_object())
+                        {
                             if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                                 if !content.is_empty() {
                                     let _ = tx.send(AiEvent::Token(content.to_string()));
                                 }
                             }
-                            if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                            if let Some(tool_calls) =
+                                delta.get("tool_calls").and_then(|t| t.as_array())
+                            {
                                 if let Some(tc) = tool_calls.get(0) {
                                     if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
                                         if !tool_id.is_empty() && tool_id != id {
                                             // Flush previous tool call
-                                            if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                                                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None) {
+                                            if let Ok(args) =
+                                                serde_json::from_str::<Value>(&tool_args)
+                                            {
+                                                if let Some(ev) = dispatch_tool_event(
+                                                    &tool_id, &tool_name, &args, None,
+                                                ) {
                                                     let _ = tx.send(ev);
                                                 }
                                             }
@@ -151,9 +165,13 @@ impl AiClient for OpenAiClient {
                                     }
                                     if let Some(f) = tc.get("function") {
                                         if let Some(n) = f.get("name").and_then(|n| n.as_str()) {
-                                            if !n.is_empty() { tool_name = n.to_string(); }
+                                            if !n.is_empty() {
+                                                tool_name = n.to_string();
+                                            }
                                         }
-                                        if let Some(args) = f.get("arguments").and_then(|a| a.as_str()) {
+                                        if let Some(args) =
+                                            f.get("arguments").and_then(|a| a.as_str())
+                                        {
                                             tool_args.push_str(args);
                                         }
                                     }
@@ -161,8 +179,12 @@ impl AiClient for OpenAiClient {
                             }
                         }
                         if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
-                            usage.prompt_tokens = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                            usage.completion_tokens = u.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            usage.prompt_tokens =
+                                u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            usage.completion_tokens =
+                                u.get("completion_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32;
                         }
                     }
                 }

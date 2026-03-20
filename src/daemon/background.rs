@@ -1,9 +1,11 @@
-use crate::daemon::session::{bg_done_subscribe, complete_subscribe, BgWindowInfo, SessionStore, append_session_message};
+use crate::ai::Message;
+use crate::ai::filter::mask_sensitive;
+use crate::daemon::session::{
+    BgWindowInfo, SessionStore, append_session_message, bg_done_subscribe, complete_subscribe,
+};
 use crate::daemon::utils::{log_event, normalize_output, shell_escape_arg};
 use crate::ipc::Response;
 use crate::tmux;
-use crate::ai::Message;
-use crate::ai::filter::mask_sensitive;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -49,16 +51,16 @@ fn trim_large_output(raw: &str, limit: usize, win_name: &str) -> String {
         .unwrap_or(tail_raw_start);
     let tail = &raw[tail_start..];
 
-    let omitted = raw.lines().count()
+    let omitted = raw
+        .lines()
+        .count()
         .saturating_sub(head.lines().count())
         .saturating_sub(tail.lines().count());
 
     let archive = format!("~/.daemoneye/pane_logs/{}.log", win_name);
     // head already ends with '\n'; trim it so the format string doesn't insert a blank line.
     let head = head.trim_end_matches('\n');
-    format!(
-        "{head}\n... ({omitted} lines omitted — full log: {archive}) ...\n{tail}"
-    )
+    format!("{head}\n... ({omitted} lines omitted — full log: {archive}) ...\n{tail}")
 }
 
 /// Capture and mask pane output, archive the full scrollback to `pane_logs/`.
@@ -67,7 +69,11 @@ fn trim_large_output(raw: &str, limit: usize, win_name: &str) -> String {
 /// `pipe_log` — path to the pipe-pane log file started before the command ran.
 /// When present it is read directly (no scrollback cap) and then deleted.
 /// Falls back to `capture_pane` if the file cannot be read.
-fn capture_and_archive(pane_id: &str, win_name: &str, pipe_log: Option<std::path::PathBuf>) -> String {
+fn capture_and_archive(
+    pane_id: &str,
+    win_name: &str,
+    pipe_log: Option<std::path::PathBuf>,
+) -> String {
     // Fix B: prefer pipe log over scrollback-limited capture_pane.
     let raw = match pipe_log {
         Some(ref log_path) => match std::fs::read_to_string(log_path) {
@@ -76,7 +82,11 @@ fn capture_and_archive(pane_id: &str, win_name: &str, pipe_log: Option<std::path
                 content
             }
             Err(e) => {
-                log::warn!("Failed to read pipe log {:?}: {} — falling back to capture_pane", log_path, e);
+                log::warn!(
+                    "Failed to read pipe log {:?}: {} — falling back to capture_pane",
+                    log_path,
+                    e
+                );
                 let _ = std::fs::remove_file(log_path);
                 tmux::capture_pane(pane_id, 5000).unwrap_or_default()
             }
@@ -92,8 +102,14 @@ fn capture_and_archive(pane_id: &str, win_name: &str, pipe_log: Option<std::path
     };
     let logs_dir = crate::config::config_dir().join("pane_logs");
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
-        log::warn!("Failed to create pane_logs dir {}: {}", logs_dir.display(), e);
-    } else if let Err(e) = tmux::pane::capture_pane_to_file(pane_id, &logs_dir.join(format!("{}.log", win_name))) {
+        log::warn!(
+            "Failed to create pane_logs dir {}: {}",
+            logs_dir.display(),
+            e
+        );
+    } else if let Err(e) =
+        tmux::pane::capture_pane_to_file(pane_id, &logs_dir.join(format!("{}.log", win_name)))
+    {
         log::warn!("Failed to archive pane log for {}: {}", win_name, e);
     }
     body
@@ -113,8 +129,12 @@ fn notify_session(
     body: &str,
     pane_persists: bool,
 ) {
-    let Ok(mut store) = sessions.lock() else { return };
-    let Some(entry) = store.get_mut(session_id) else { return };
+    let Ok(mut store) = sessions.lock() else {
+        return;
+    };
+    let Some(entry) = store.get_mut(session_id) else {
+        return;
+    };
 
     // Update exit_code and completion timestamp in the bg_windows registry.
     if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
@@ -131,9 +151,7 @@ fn notify_session(
              Call close_background_window(\"{pane_id}\") when you are done with this window."
         )
     } else {
-        format!(
-            "The window was closed. Full log: ~/.daemoneye/pane_logs/{win_name}.log"
-        )
+        format!("The window was closed. Full log: ~/.daemoneye/pane_logs/{win_name}.log")
     };
 
     let hints = crate::manifest::related_knowledge_hints(body);
@@ -155,7 +173,11 @@ fn notify_session(
     append_session_message(session_id, &completion_msg);
     entry.messages.push(completion_msg);
 
-    let status_word = if exit_code == 0 { "succeeded" } else { "failed" };
+    let status_word = if exit_code == 0 {
+        "succeeded"
+    } else {
+        "failed"
+    };
     let alert = format!("`{cmd}` {status_word} in pane {pane_id}");
     if let Some(ref cp) = entry.chat_pane {
         let _ = std::process::Command::new("tmux")
@@ -194,7 +216,13 @@ pub async fn run_background_in_window(
 ) -> String {
     let id_short = &tool_id[..tool_id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let win_name = format!("{}{}-{}-{}", crate::daemon::BG_WINDOW_PREFIX, session, now, id_short);
+    let win_name = format!(
+        "{}{}-{}-{}",
+        crate::daemon::BG_WINDOW_PREFIX,
+        session,
+        now,
+        id_short
+    );
 
     let pane_id = match tmux::create_job_window(session, &win_name) {
         Ok(p) => p,
@@ -221,7 +249,11 @@ pub async fn run_background_in_window(
     // notify call remains valid — the original path still resolves on disk.
     // Then shell-quote the path to handle any spaces in the binary location.
     let exe_raw = std::env::current_exe()
-        .map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string())
+        .map(|p| {
+            p.to_string_lossy()
+                .trim_end_matches(" (deleted)")
+                .to_string()
+        })
         .unwrap_or_else(|_| "daemoneye".to_string());
     let exe = shell_escape_arg(&exe_raw);
     let notify = format!(
@@ -240,7 +272,7 @@ pub async fn run_background_in_window(
     // Fix A: subscribe to completion channels BEFORE send_keys so a fast-completing
     // command cannot fire its signal before the monitor has subscribed.
     let mut complete_rx = complete_subscribe();
-    let mut died_rx     = bg_done_subscribe();
+    let mut died_rx = bg_done_subscribe();
 
     // Fix B: start pipe-pane BEFORE the command fires to capture all output without
     // any scrollback cap.  Falls back silently if pipe-pane isn't available.
@@ -249,7 +281,9 @@ pub async fn run_background_in_window(
         .ok();
 
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
-        if pipe_log.is_some() { tmux::stop_pipe_pane(&pane_id); }
+        if pipe_log.is_some() {
+            tmux::stop_pipe_pane(&pane_id);
+        }
         let _ = tmux::kill_job_window(session, &win_name);
         return format!("Failed to send command to window: {}", e);
     }
@@ -290,12 +324,15 @@ pub async fn run_background_in_window(
         }
     }
 
-    log_event("job_start", serde_json::json!({
-        "session": session_id.as_deref().unwrap_or("-"),
-        "job_id": id_short,
-        "job_name": win_name,
-        "pane": pane_id,
-    }));
+    log_event(
+        "job_start",
+        serde_json::json!({
+            "session": session_id.as_deref().unwrap_or("-"),
+            "job_id": id_short,
+            "job_name": win_name,
+            "pane": pane_id,
+        }),
+    );
 
     // Inline completion wait (3 s): the async block borrows complete_rx / died_rx
     // by &mut without moving them, so after .await the receivers are still owned
@@ -320,7 +357,8 @@ pub async fn run_background_in_window(
                 }
             }
         }
-    }).await;
+    })
+    .await;
 
     match inline {
         Ok((exit_code, pane_persists)) => {
@@ -334,19 +372,23 @@ pub async fn run_background_in_window(
             }
             let body = capture_and_archive(&pane_id, &win_name, pipe_log);
 
-            log_event("job_complete", serde_json::json!({
-                "session": session_id.as_deref().unwrap_or("-"),
-                "job_name": win_name,
-                "exit_code": exit_code,
-                "duration_ms": started_at.elapsed().as_millis() as u64,
-                "pane_persists": pane_persists,
-            }));
+            log_event(
+                "job_complete",
+                serde_json::json!({
+                    "session": session_id.as_deref().unwrap_or("-"),
+                    "job_name": win_name,
+                    "exit_code": exit_code,
+                    "duration_ms": started_at.elapsed().as_millis() as u64,
+                    "pane_persists": pane_persists,
+                }),
+            );
 
             // Update exit_code in bg_windows.
             if let Some(ref sid) = session_id {
                 if let Ok(mut store) = sessions.lock() {
                     if let Some(entry) = store.get_mut(sid) {
-                        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
+                        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+                        {
                             w.exit_code = Some(exit_code);
                         }
                     }
@@ -354,12 +396,19 @@ pub async fn run_background_in_window(
             }
 
             if !pane_persists {
-                let reason = if exit_code == 124 { "timeout" } else { "pane-died" };
-                log_event("gc_window", serde_json::json!({
-                    "session": session_id.as_deref().unwrap_or("-"),
-                    "win_name": win_name,
-                    "reason": reason,
-                }));
+                let reason = if exit_code == 124 {
+                    "timeout"
+                } else {
+                    "pane-died"
+                };
+                log_event(
+                    "gc_window",
+                    serde_json::json!({
+                        "session": session_id.as_deref().unwrap_or("-"),
+                        "win_name": win_name,
+                        "reason": reason,
+                    }),
+                );
                 if let Err(e) = tmux::kill_job_window(session, &win_name) {
                     log::error!("Failed to GC dead bg window {}: {}", win_name, e);
                 }
@@ -388,16 +437,16 @@ pub async fn run_background_in_window(
             // Slow path: command still running after 3 s.
             // Borrows on complete_rx / died_rx ended when the timeout future was dropped;
             // move them into the async monitor.
-            let pane_id_bg    = pane_id.clone();
-            let win_name_bg   = win_name.clone();
-            let cmd_bg        = cmd.to_string();
-            let session_bg    = session.to_string();
+            let pane_id_bg = pane_id.clone();
+            let win_name_bg = win_name.clone();
+            let cmd_bg = cmd.to_string();
+            let session_bg = session.to_string();
             let session_id_bg = session_id.clone();
-            let sessions_bg   = sessions.clone();
+            let sessions_bg = sessions.clone();
 
             tokio::spawn(async move {
                 let mut complete_rx = complete_rx;
-                let mut died_rx     = died_rx;
+                let mut died_rx = died_rx;
 
                 let (exit_code, pane_persists) = tokio::time::timeout(
                     Duration::from_secs(3600),
@@ -432,25 +481,44 @@ pub async fn run_background_in_window(
                 let duration_ms = started_at.elapsed().as_millis() as u64;
                 let body = capture_and_archive(&pane_id_bg, &win_name_bg, pipe_log);
 
-                log_event("job_complete", serde_json::json!({
-                    "session": session_id_bg.as_deref().unwrap_or("-"),
-                    "job_name": win_name_bg,
-                    "exit_code": exit_code,
-                    "duration_ms": duration_ms,
-                    "pane_persists": pane_persists,
-                }));
+                log_event(
+                    "job_complete",
+                    serde_json::json!({
+                        "session": session_id_bg.as_deref().unwrap_or("-"),
+                        "job_name": win_name_bg,
+                        "exit_code": exit_code,
+                        "duration_ms": duration_ms,
+                        "pane_persists": pane_persists,
+                    }),
+                );
 
                 if let Some(ref sid) = session_id_bg {
-                    notify_session(&sessions_bg, sid, &pane_id_bg, &cmd_bg, &win_name_bg, exit_code, &body, pane_persists);
+                    notify_session(
+                        &sessions_bg,
+                        sid,
+                        &pane_id_bg,
+                        &cmd_bg,
+                        &win_name_bg,
+                        exit_code,
+                        &body,
+                        pane_persists,
+                    );
                 }
 
                 if !pane_persists {
-                    let reason = if exit_code == 124 { "timeout" } else { "pane-died" };
-                    log_event("gc_window", serde_json::json!({
-                        "session": session_id_bg.as_deref().unwrap_or("-"),
-                        "win_name": win_name_bg,
-                        "reason": reason,
-                    }));
+                    let reason = if exit_code == 124 {
+                        "timeout"
+                    } else {
+                        "pane-died"
+                    };
+                    log_event(
+                        "gc_window",
+                        serde_json::json!({
+                            "session": session_id_bg.as_deref().unwrap_or("-"),
+                            "win_name": win_name_bg,
+                            "reason": reason,
+                        }),
+                    );
                     if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
                         log::error!("Failed to GC dead bg window {}: {}", win_name_bg, e);
                     }
@@ -501,7 +569,10 @@ pub async fn respawn_background_in_pane(
         .args(["respawn-pane", "-k", "-t", pane_id])
         .status();
     if !respawn_status.map(|s| s.success()).unwrap_or(false) {
-        return format!("Error: failed to respawn pane {} (pane may no longer exist)", pane_id);
+        return format!(
+            "Error: failed to respawn pane {} (pane may no longer exist)",
+            pane_id
+        );
     }
 
     // Brief yield so tmux can start the shell before we query it.
@@ -514,7 +585,11 @@ pub async fn respawn_background_in_pane(
     let exit_var = shell_exit_var(&shell_name);
 
     let exe_raw = std::env::current_exe()
-        .map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string())
+        .map(|p| {
+            p.to_string_lossy()
+                .trim_end_matches(" (deleted)")
+                .to_string()
+        })
         .unwrap_or_else(|_| "daemoneye".to_string());
     let exe = shell_escape_arg(&exe_raw);
     let notify = format!(
@@ -530,7 +605,7 @@ pub async fn respawn_background_in_pane(
 
     // Fix A: subscribe before send_keys.
     let mut complete_rx = complete_subscribe();
-    let mut died_rx     = bg_done_subscribe();
+    let mut died_rx = bg_done_subscribe();
 
     // Fix B: clean up any leftover pipe log from the previous run of this pane,
     // then start a fresh pipe before the command fires.
@@ -540,8 +615,13 @@ pub async fn respawn_background_in_pane(
         .ok();
 
     if let Err(e) = tmux::send_keys(pane_id, &wrapped) {
-        if pipe_log.is_some() { tmux::stop_pipe_pane(pane_id); }
-        return format!("Error: failed to send retry command to pane {}: {}", pane_id, e);
+        if pipe_log.is_some() {
+            tmux::stop_pipe_pane(pane_id);
+        }
+        return format!(
+            "Error: failed to send retry command to pane {}: {}",
+            pane_id, e
+        );
     }
 
     // Reset exit_code in bg_windows so the session knows it's running again.
@@ -556,11 +636,14 @@ pub async fn respawn_background_in_pane(
         }
     }
 
-    log_event("job_retry", serde_json::json!({
-        "session": session_id.as_deref().unwrap_or("-"),
-        "pane": pane_id,
-        "win_name": win_name,
-    }));
+    log_event(
+        "job_retry",
+        serde_json::json!({
+            "session": session_id.as_deref().unwrap_or("-"),
+            "pane": pane_id,
+            "win_name": win_name,
+        }),
+    );
 
     // Inline completion wait (3 s): same borrow-not-move pattern as run_background_in_window.
     let pane_id_str = pane_id.to_string();
@@ -582,7 +665,8 @@ pub async fn respawn_background_in_pane(
                 }
             }
         }
-    }).await;
+    })
+    .await;
 
     match inline {
         Ok((exit_code, pane_persists)) => {
@@ -595,19 +679,23 @@ pub async fn respawn_background_in_pane(
             }
             let body = capture_and_archive(pane_id, win_name, pipe_log);
 
-            log_event("job_complete", serde_json::json!({
-                "session": session_id.as_deref().unwrap_or("-"),
-                "job_name": win_name,
-                "exit_code": exit_code,
-                "duration_ms": started_at.elapsed().as_millis() as u64,
-                "pane_persists": pane_persists,
-                "retry": true,
-            }));
+            log_event(
+                "job_complete",
+                serde_json::json!({
+                    "session": session_id.as_deref().unwrap_or("-"),
+                    "job_name": win_name,
+                    "exit_code": exit_code,
+                    "duration_ms": started_at.elapsed().as_millis() as u64,
+                    "pane_persists": pane_persists,
+                    "retry": true,
+                }),
+            );
 
             if let Some(ref sid) = session_id {
                 if let Ok(mut store) = sessions.lock() {
                     if let Some(entry) = store.get_mut(sid) {
-                        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
+                        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+                        {
                             w.exit_code = Some(exit_code);
                         }
                     }
@@ -615,12 +703,19 @@ pub async fn respawn_background_in_pane(
             }
 
             if !pane_persists {
-                let reason = if exit_code == 124 { "timeout" } else { "pane-died" };
-                log_event("gc_window", serde_json::json!({
-                    "session": session_id.as_deref().unwrap_or("-"),
-                    "win_name": win_name,
-                    "reason": reason,
-                }));
+                let reason = if exit_code == 124 {
+                    "timeout"
+                } else {
+                    "pane-died"
+                };
+                log_event(
+                    "gc_window",
+                    serde_json::json!({
+                        "session": session_id.as_deref().unwrap_or("-"),
+                        "win_name": win_name,
+                        "reason": reason,
+                    }),
+                );
                 if let Err(e) = tmux::kill_job_window(session, win_name) {
                     log::error!("Failed to GC retried bg window {}: {}", win_name, e);
                 }
@@ -647,16 +742,16 @@ pub async fn respawn_background_in_pane(
         }
         Err(_elapsed) => {
             // Slow path: retry still running after 3 s — move receivers to async monitor.
-            let pane_id_bg    = pane_id.to_string();
-            let win_name_bg   = win_name.to_string();
-            let cmd_bg        = cmd.to_string();
-            let session_bg    = session.to_string();
+            let pane_id_bg = pane_id.to_string();
+            let win_name_bg = win_name.to_string();
+            let cmd_bg = cmd.to_string();
+            let session_bg = session.to_string();
             let session_id_bg = session_id.clone();
-            let sessions_bg   = sessions.clone();
+            let sessions_bg = sessions.clone();
 
             tokio::spawn(async move {
                 let mut complete_rx = complete_rx;
-                let mut died_rx     = died_rx;
+                let mut died_rx = died_rx;
 
                 let (exit_code, pane_persists) = tokio::time::timeout(
                     Duration::from_secs(3600),
@@ -690,17 +785,29 @@ pub async fn respawn_background_in_pane(
 
                 let body = capture_and_archive(&pane_id_bg, &win_name_bg, pipe_log);
 
-                log_event("job_complete", serde_json::json!({
-                    "session": session_id_bg.as_deref().unwrap_or("-"),
-                    "job_name": win_name_bg,
-                    "exit_code": exit_code,
-                    "duration_ms": started_at.elapsed().as_millis() as u64,
-                    "pane_persists": pane_persists,
-                    "retry": true,
-                }));
+                log_event(
+                    "job_complete",
+                    serde_json::json!({
+                        "session": session_id_bg.as_deref().unwrap_or("-"),
+                        "job_name": win_name_bg,
+                        "exit_code": exit_code,
+                        "duration_ms": started_at.elapsed().as_millis() as u64,
+                        "pane_persists": pane_persists,
+                        "retry": true,
+                    }),
+                );
 
                 if let Some(ref sid) = session_id_bg {
-                    notify_session(&sessions_bg, sid, &pane_id_bg, &cmd_bg, &win_name_bg, exit_code, &body, pane_persists);
+                    notify_session(
+                        &sessions_bg,
+                        sid,
+                        &pane_id_bg,
+                        &cmd_bg,
+                        &win_name_bg,
+                        exit_code,
+                        &body,
+                        pane_persists,
+                    );
                 }
 
                 if !pane_persists {
@@ -749,23 +856,32 @@ pub async fn notify_job_completion(
 ) {
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
-    log_event("job_complete", serde_json::json!({
-        "session": session_id.as_deref().unwrap_or("-"),
-        "job_id": win_name.split('-').last().unwrap_or(""),
-        "job_name": win_name,
-        "exit_code": exit_code,
-        "duration_ms": duration_ms,
-    }));
+    log_event(
+        "job_complete",
+        serde_json::json!({
+            "session": session_id.as_deref().unwrap_or("-"),
+            "job_id": win_name.split('-').last().unwrap_or(""),
+            "job_name": win_name,
+            "exit_code": exit_code,
+            "duration_ms": duration_ms,
+        }),
+    );
 
     // Archive logs.
     let logs_dir = crate::config::config_dir().join("pane_logs");
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
         log::error!("Failed to create pane_logs directory: {}", e);
-    } else if let Err(e) = tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name))) {
+    } else if let Err(e) =
+        tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name)))
+    {
         log::error!("Failed to archive pane logs for {}: {}", win_name, e);
     }
 
-    let status_word = if exit_code == 0 { "succeeded" } else { "failed" };
+    let status_word = if exit_code == 0 {
+        "succeeded"
+    } else {
+        "failed"
+    };
     let alert_msg = format!("`{}` {} in pane {}", cmd, status_word, pane_id);
 
     if let Some(ref tx) = notify_tx {
@@ -774,11 +890,14 @@ pub async fn notify_job_completion(
 
     // FR-1.2.10: destroy on success, leave open on failure for inspection.
     if exit_code == 0 {
-        log_event("gc_window", serde_json::json!({
-            "session": session_id.as_deref().unwrap_or("-"),
-            "win_name": win_name,
-            "reason": "done",
-        }));
+        log_event(
+            "gc_window",
+            serde_json::json!({
+                "session": session_id.as_deref().unwrap_or("-"),
+                "win_name": win_name,
+                "reason": "done",
+            }),
+        );
         if let Err(e) = tmux::kill_job_window(&session, &win_name) {
             log::error!("Failed to GC scheduled job window {}: {}", win_name, e);
         }
@@ -804,7 +923,9 @@ mod tests {
     #[test]
     fn trim_large_output_has_head_and_tail() {
         // Build a string well over the limit.
-        let raw: String = (0..1000).map(|i| format!("{:03}: {}\n", i, "x".repeat(94))).collect();
+        let raw: String = (0..1000)
+            .map(|i| format!("{:03}: {}\n", i, "x".repeat(94)))
+            .collect();
         let limit = 10_000;
         let result = trim_large_output(&raw, limit, "myjob");
 
@@ -825,7 +946,9 @@ mod tests {
 
         // No line should be cut mid-stream.
         for line in result.lines() {
-            if line.starts_with("...") { continue; }
+            if line.starts_with("...") {
+                continue;
+            }
             assert!(line.len() == 9, "line cut: {:?}", line);
         }
     }
@@ -837,9 +960,14 @@ mod tests {
         // Extract the omission count from the marker line.
         let marker = result.lines().find(|l| l.starts_with("...")).unwrap();
         let count: usize = marker
-            .split('(').nth(1).unwrap()
-            .split(' ').next().unwrap()
-            .parse().unwrap();
+            .split('(')
+            .nth(1)
+            .unwrap()
+            .split(' ')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
         assert!(count > 0);
     }
 }

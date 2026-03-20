@@ -1,5 +1,3 @@
-
-
 use crate::cli::render::*;
 
 // ── Async stdin wrapper ───────────────────────────────────────────────────────
@@ -9,7 +7,9 @@ use crate::cli::render::*;
 struct StdinRawFd;
 
 impl std::os::unix::io::AsRawFd for StdinRawFd {
-    fn as_raw_fd(&self) -> std::os::unix::io::RawFd { libc::STDIN_FILENO }
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        libc::STDIN_FILENO
+    }
 }
 
 /// Single async reader over stdin (fd 0), shared by the main input loop and
@@ -33,9 +33,8 @@ impl AsyncStdin {
         let mut buf = [0u8; 1];
         loop {
             let mut guard = self.0.readable().await.ok()?;
-            let n = unsafe {
-                libc::read(libc::STDIN_FILENO, buf.as_mut_ptr() as *mut libc::c_void, 1)
-            };
+            let n =
+                unsafe { libc::read(libc::STDIN_FILENO, buf.as_mut_ptr() as *mut libc::c_void, 1) };
             if n == 1 {
                 return Some(buf[0]); // guard dropped → readiness retained for next byte
             } else if n == 0 {
@@ -58,7 +57,7 @@ impl AsyncStdin {
         loop {
             match self.read_byte().await? {
                 b'\n' | b'\r' => return Some(line),
-                b              => line.push(b as char),
+                b => line.push(b as char),
             }
         }
     }
@@ -68,12 +67,17 @@ impl AsyncStdin {
 
 /// A single editable line: a character buffer and a cursor position.
 pub struct InputLine {
-    buf:    Vec<char>,
+    buf: Vec<char>,
     cursor: usize, // character index, 0 ..= buf.len()
 }
 
 impl InputLine {
-    pub fn new() -> Self { Self { buf: Vec::new(), cursor: 0 } }
+    pub fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            cursor: 0,
+        }
+    }
 
     fn from_str(s: &str) -> Self {
         let buf: Vec<char> = s.chars().collect();
@@ -81,34 +85,65 @@ impl InputLine {
         Self { buf, cursor }
     }
 
-    fn insert(&mut self, c: char) { self.buf.insert(self.cursor, c); self.cursor += 1; }
+    fn insert(&mut self, c: char) {
+        self.buf.insert(self.cursor, c);
+        self.cursor += 1;
+    }
     fn backspace(&mut self) {
-        if self.cursor > 0 { self.buf.remove(self.cursor - 1); self.cursor -= 1; }
+        if self.cursor > 0 {
+            self.buf.remove(self.cursor - 1);
+            self.cursor -= 1;
+        }
     }
     fn delete(&mut self) {
-        if self.cursor < self.buf.len() { self.buf.remove(self.cursor); }
+        if self.cursor < self.buf.len() {
+            self.buf.remove(self.cursor);
+        }
     }
-    fn move_left(&mut self)  { if self.cursor > 0               { self.cursor -= 1; } }
-    fn move_right(&mut self) { if self.cursor < self.buf.len()  { self.cursor += 1; } }
-    fn move_home(&mut self)  { self.cursor = 0; }
-    fn move_end(&mut self)   { self.cursor = self.buf.len(); }
-    fn kill_to_end(&mut self)   { self.buf.truncate(self.cursor); }
-    fn kill_to_start(&mut self) { self.buf.drain(..self.cursor); self.cursor = 0; }
-    fn as_string(&self) -> String { self.buf.iter().collect() }
+    fn move_left(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+    fn move_right(&mut self) {
+        if self.cursor < self.buf.len() {
+            self.cursor += 1;
+        }
+    }
+    fn move_home(&mut self) {
+        self.cursor = 0;
+    }
+    fn move_end(&mut self) {
+        self.cursor = self.buf.len();
+    }
+    fn kill_to_end(&mut self) {
+        self.buf.truncate(self.cursor);
+    }
+    fn kill_to_start(&mut self) {
+        self.buf.drain(..self.cursor);
+        self.cursor = 0;
+    }
+    fn as_string(&self) -> String {
+        self.buf.iter().collect()
+    }
 }
 
 /// Session-wide input state: the current line plus the navigable history.
 pub struct InputState {
-    current:     InputLine,
-    history:     Vec<String>,
+    current: InputLine,
+    history: Vec<String>,
     history_idx: Option<usize>,
-    saved:       String, // current line stashed while browsing history
+    saved: String, // current line stashed while browsing history
 }
 
 impl InputState {
     pub fn new() -> Self {
-        Self { current: InputLine::new(), history: Vec::new(),
-               history_idx: None, saved: String::new() }
+        Self {
+            current: InputLine::new(),
+            history: Vec::new(),
+            history_idx: None,
+            saved: String::new(),
+        }
     }
 
     /// Commit a query to history and reset the current line to empty.
@@ -122,9 +157,14 @@ impl InputState {
     }
 
     fn history_up(&mut self) {
-        if self.history.is_empty() { return; }
+        if self.history.is_empty() {
+            return;
+        }
         let new_idx = match self.history_idx {
-            None    => { self.saved = self.current.as_string(); self.history.len() - 1 }
+            None => {
+                self.saved = self.current.as_string();
+                self.history.len() - 1
+            }
             Some(0) => return,
             Some(i) => i - 1,
         };
@@ -152,12 +192,21 @@ impl InputState {
 /// Parsed key event from raw-mode terminal input.
 enum Key {
     Char(char),
-    Backspace, Delete,
-    Left, Right, Up, Down,
-    Home, End,
+    Backspace,
+    Delete,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
     Enter,
-    CtrlA, CtrlE, CtrlK, CtrlU,
-    CtrlC, CtrlD,
+    CtrlA,
+    CtrlE,
+    CtrlK,
+    CtrlU,
+    CtrlC,
+    CtrlD,
 }
 
 /// Switch stdin to raw (non-canonical, no-echo) mode.
@@ -166,7 +215,10 @@ pub fn set_raw_mode() -> anyhow::Result<libc::termios> {
     unsafe {
         let mut old = std::mem::MaybeUninit::<libc::termios>::uninit();
         if libc::tcgetattr(libc::STDIN_FILENO, old.as_mut_ptr()) != 0 {
-            return Err(anyhow::anyhow!("tcgetattr: {}", std::io::Error::last_os_error()));
+            return Err(anyhow::anyhow!(
+                "tcgetattr: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         let old = old.assume_init();
         let mut raw = old;
@@ -174,17 +226,22 @@ pub fn set_raw_mode() -> anyhow::Result<libc::termios> {
         // This ensures Ctrl+C is read as 0x03 instead of generating SIGINT.
         raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::IEXTEN | libc::ISIG);
         // Return after each byte, no timeout.
-        raw.c_cc[libc::VMIN  as usize] = 1;
+        raw.c_cc[libc::VMIN as usize] = 1;
         raw.c_cc[libc::VTIME as usize] = 0;
         if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &raw) != 0 {
-            return Err(anyhow::anyhow!("tcsetattr: {}", std::io::Error::last_os_error()));
+            return Err(anyhow::anyhow!(
+                "tcsetattr: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         Ok(old)
     }
 }
 
 pub fn restore_termios(old: libc::termios) {
-    unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old); }
+    unsafe {
+        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old);
+    }
 }
 
 /// Maximum number of rows the input area can grow to.
@@ -195,7 +252,11 @@ fn input_rows_needed(line: &InputLine, chat_width: usize, chat_height: usize) ->
     let avail = chat_width.saturating_sub(5).max(1);
     let len = line.buf.len();
     let cap = MAX_INPUT_ROWS.min(chat_height / 3).max(1);
-    if len == 0 { 1 } else { ((len + avail - 1) / avail).min(cap).max(1) }
+    if len == 0 {
+        1
+    } else {
+        ((len + avail - 1) / avail).min(cap).max(1)
+    }
 }
 
 /// Render the word-wrapped multi-row input area.
@@ -206,15 +267,15 @@ fn input_rows_needed(line: &InputLine, chat_width: usize, chat_height: usize) ->
 /// buffer cursor position.
 fn render_input_multiline(line: &InputLine, height: usize, chat_width: usize, rows: usize) {
     use std::io::Write;
-    let avail    = chat_width.saturating_sub(5).max(1);
-    let n_chars  = line.buf.len();
+    let avail = chat_width.saturating_sub(5).max(1);
+    let n_chars = line.buf.len();
     let last_row = height.saturating_sub(2).max(1);
     let first_row = last_row.saturating_sub(rows.saturating_sub(1));
 
     for i in 0..rows {
         let row = first_row + i;
         let start_char = i * avail;
-        let end_char   = (start_char + avail).min(n_chars);
+        let end_char = (start_char + avail).min(n_chars);
         let visible: String = if start_char < n_chars {
             line.buf[start_char..end_char].iter().collect()
         } else {
@@ -231,7 +292,7 @@ fn render_input_multiline(line: &InputLine, height: usize, chat_width: usize, ro
     }
 
     // Place the terminal cursor at the character position in the buffer.
-    let cursor_row_idx   = line.cursor / avail;
+    let cursor_row_idx = line.cursor / avail;
     let cursor_col_in_row = line.cursor % avail;
     let cursor_row = (first_row + cursor_row_idx).min(last_row);
     let cursor_col = 5 + cursor_col_in_row; // 1-indexed
@@ -256,7 +317,9 @@ fn resize_input_area(
     daemon_up: bool,
 ) {
     use std::io::Write;
-    if old_rows == new_rows { return; }
+    if old_rows == new_rows {
+        return;
+    }
 
     // When shrinking, clear from the old border row up to (but not including)
     // the new border row so the old border glyph doesn't remain as an artifact.
@@ -274,7 +337,16 @@ fn resize_input_area(
 
     setup_scroll_region_n(height, new_rows);
     draw_input_frame_n(height, width, new_rows, start_time);
-    draw_status_bar(height, width, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
+    draw_status_bar(
+        height,
+        width,
+        session_id,
+        approval_hint,
+        model,
+        prompt_tokens,
+        context_window,
+        daemon_up,
+    );
 }
 
 /// Collapse the input area back to 1 row (called before returning from the
@@ -291,8 +363,22 @@ fn collapse_input_area(
     context_window: u32,
     daemon_up: bool,
 ) {
-    if input_rows <= 1 { return; }
-    resize_input_area(height, width, input_rows, 1, start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
+    if input_rows <= 1 {
+        return;
+    }
+    resize_input_area(
+        height,
+        width,
+        input_rows,
+        1,
+        start_time,
+        session_id,
+        approval_hint,
+        model,
+        prompt_tokens,
+        context_window,
+        daemon_up,
+    );
 }
 
 /// Read and parse one key event from raw-mode stdin.
@@ -304,14 +390,14 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
 
     let b = stdin.read_byte().await?;
     Some(match b {
-        b'\r' | b'\n'      => Key::Enter,
+        b'\r' | b'\n' => Key::Enter,
         b'\x7f' | b'\x08' => Key::Backspace,
-        b'\x01'            => Key::CtrlA,
-        b'\x03'            => Key::CtrlC,
-        b'\x04'            => Key::CtrlD,
-        b'\x05'            => Key::CtrlE,
-        b'\x0b'            => Key::CtrlK,
-        b'\x15'            => Key::CtrlU,
+        b'\x01' => Key::CtrlA,
+        b'\x03' => Key::CtrlC,
+        b'\x04' => Key::CtrlD,
+        b'\x05' => Key::CtrlE,
+        b'\x0b' => Key::CtrlK,
+        b'\x15' => Key::CtrlU,
         b'\x1b' => {
             match timeout(Duration::from_millis(30), stdin.read_byte()).await {
                 Ok(Some(b'[')) => {
@@ -322,15 +408,18 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                         Ok(Some(b'D')) => Key::Left,
                         Ok(Some(b'H')) => Key::Home,
                         Ok(Some(b'F')) => Key::End,
-                        Ok(Some(b'3')) => { // \x1b[3~ = Delete
+                        Ok(Some(b'3')) => {
+                            // \x1b[3~ = Delete
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
                             Key::Delete
                         }
-                        Ok(Some(b'1')) | Ok(Some(b'7')) => { // \x1b[1~ / \x1b[7~ = Home
+                        Ok(Some(b'1')) | Ok(Some(b'7')) => {
+                            // \x1b[1~ / \x1b[7~ = Home
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
                             Key::Home
                         }
-                        Ok(Some(b'4')) | Ok(Some(b'8')) => { // \x1b[4~ / \x1b[8~ = End
+                        Ok(Some(b'4')) | Ok(Some(b'8')) => {
+                            // \x1b[4~ / \x1b[8~ = End
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
                             Key::End
                         }
@@ -341,7 +430,7 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                     match timeout(Duration::from_millis(30), stdin.read_byte()).await {
                         Ok(Some(b'H')) => Key::Home,
                         Ok(Some(b'F')) => Key::End,
-                        _              => Key::Char('\x1b'),
+                        _ => Key::Char('\x1b'),
                     }
                 }
                 _ => Key::Char('\x1b'), // bare Escape
@@ -351,19 +440,27 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
         c if c < 0x80 => Key::Char(c as char),
         c => {
             // Multi-byte UTF-8: accumulate continuation bytes.
-            let extra = if c >= 0xF0 { 3 } else if c >= 0xE0 { 2 } else { 1 };
+            let extra = if c >= 0xF0 {
+                3
+            } else if c >= 0xE0 {
+                2
+            } else {
+                1
+            };
             let mut utf8 = vec![c];
             for _ in 0..extra {
                 match tokio::time::timeout(
                     tokio::time::Duration::from_millis(30),
                     stdin.read_byte(),
-                ).await {
+                )
+                .await
+                {
                     Ok(Some(b)) => utf8.push(b),
-                    _           => break,
+                    _ => break,
                 }
             }
             match std::str::from_utf8(&utf8) {
-                Ok(s)  => s.chars().next().map_or(Key::Char('\0'), Key::Char),
+                Ok(s) => s.chars().next().map_or(Key::Char('\0'), Key::Char),
                 Err(_) => Key::Char('\0'),
             }
         }
@@ -377,40 +474,52 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
 /// so the input row repaints correctly after a terminal resize.
 /// Returns `None` on EOF or Ctrl+D with an empty buffer.
 pub async fn read_input_line(
-    state:          &mut InputState,
-    stdin:          &AsyncStdin,
-    sigwinch:       &mut tokio::signal::unix::Signal,
-    chat_width:     &mut usize,
-    chat_height:    &mut usize,
-    start_time:     std::time::Instant,
-    session_id:     &str,
-    approval_hint:  &str,
-    model:          &str,
-    prompt_tokens:  u32,
+    state: &mut InputState,
+    stdin: &AsyncStdin,
+    sigwinch: &mut tokio::signal::unix::Signal,
+    chat_width: &mut usize,
+    chat_height: &mut usize,
+    start_time: std::time::Instant,
+    session_id: &str,
+    approval_hint: &str,
+    model: &str,
+    prompt_tokens: u32,
     context_window: u32,
-    last_ctrl_c:    &mut Option<std::time::Instant>,
-    daemon_up:      bool,
+    last_ctrl_c: &mut Option<std::time::Instant>,
+    daemon_up: bool,
 ) -> anyhow::Result<Option<String>> {
     read_input_line_inner(
-        state, stdin, sigwinch, chat_width, chat_height, start_time,
-        session_id, approval_hint, model, prompt_tokens, context_window, last_ctrl_c, daemon_up,
-    ).await
+        state,
+        stdin,
+        sigwinch,
+        chat_width,
+        chat_height,
+        start_time,
+        session_id,
+        approval_hint,
+        model,
+        prompt_tokens,
+        context_window,
+        last_ctrl_c,
+        daemon_up,
+    )
+    .await
 }
 
 async fn read_input_line_inner(
-    state:          &mut InputState,
-    stdin:          &AsyncStdin,
-    sigwinch:       &mut tokio::signal::unix::Signal,
-    chat_width:     &mut usize,
-    chat_height:    &mut usize,
-    start_time:     std::time::Instant,
-    session_id:     &str,
-    approval_hint:  &str,
-    model:          &str,
-    prompt_tokens:  u32,
+    state: &mut InputState,
+    stdin: &AsyncStdin,
+    sigwinch: &mut tokio::signal::unix::Signal,
+    chat_width: &mut usize,
+    chat_height: &mut usize,
+    start_time: std::time::Instant,
+    session_id: &str,
+    approval_hint: &str,
+    model: &str,
+    prompt_tokens: u32,
     context_window: u32,
-    last_ctrl_c:    &mut Option<std::time::Instant>,
-    daemon_up:      bool,
+    last_ctrl_c: &mut Option<std::time::Instant>,
+    daemon_up: bool,
 ) -> anyhow::Result<Option<String>> {
     let mut input_rows = input_rows_needed(&state.current, *chat_width, *chat_height);
 
@@ -423,8 +532,19 @@ async fn read_input_line_inner(
         () => {{
             let needed = input_rows_needed(&state.current, *chat_width, *chat_height);
             if needed != input_rows {
-                resize_input_area(*chat_height, *chat_width, input_rows, needed,
-                                  start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
+                resize_input_area(
+                    *chat_height,
+                    *chat_width,
+                    input_rows,
+                    needed,
+                    start_time,
+                    session_id,
+                    approval_hint,
+                    model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                );
                 input_rows = needed;
             }
             render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);
@@ -524,7 +644,6 @@ async fn read_input_line_inner(
     }
 }
 
-
 /// Read a password from stdin with terminal echo disabled so it is not shown.
 pub fn read_password_silent(prompt: &str) -> anyhow::Result<String> {
     use std::io::{BufRead, Write};
@@ -564,6 +683,8 @@ pub fn read_password_silent(prompt: &str) -> anyhow::Result<String> {
 
     println!(); // newline after silent input
     result?;
-    Ok(input.trim_end_matches('\n').trim_end_matches('\r').to_string())
+    Ok(input
+        .trim_end_matches('\n')
+        .trim_end_matches('\r')
+        .to_string())
 }
-

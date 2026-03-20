@@ -2,12 +2,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::{AiClient, send_with_retry, http};
-use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::{dispatch_tool_event, get_tool_definition};
+use crate::ai::types::{AiEvent, Message};
+use crate::ai::{AiClient, http, send_with_retry};
 
 /// Anthropic API backend (Claude family).
 pub struct AnthropicClient {
@@ -33,11 +33,16 @@ impl AnthropicClient {
         for m in messages {
             if let Some(trs) = m.tool_results {
                 // Anthropic requires all tool results in a single user message.
-                let content: Vec<Value> = trs.into_iter().map(|tr| json!({
-                    "type": "tool_result",
-                    "tool_use_id": tr.tool_call_id,
-                    "content": tr.content
-                })).collect();
+                let content: Vec<Value> = trs
+                    .into_iter()
+                    .map(|tr| {
+                        json!({
+                            "type": "tool_result",
+                            "tool_use_id": tr.tool_call_id,
+                            "content": tr.content
+                        })
+                    })
+                    .collect();
                 result.push(json!({"role": "user", "content": content}));
             } else if let Some(tcs) = m.tool_calls {
                 let mut content = Vec::new();
@@ -82,7 +87,12 @@ impl AnthropicClient {
 
 #[async_trait]
 impl AiClient for AnthropicClient {
-    async fn chat(&self, system: &str, messages: Vec<Message>, tx: UnboundedSender<AiEvent>) -> Result<()> {
+    async fn chat(
+        &self,
+        system: &str,
+        messages: Vec<Message>,
+        tx: UnboundedSender<AiEvent>,
+    ) -> Result<()> {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_str(&self.api_key)?);
         headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
@@ -104,7 +114,8 @@ impl AiClient for AnthropicClient {
                 .post("https://api.anthropic.com/v1/messages")
                 .headers(headers.clone())
                 .json(&body)
-        }).await?;
+        })
+        .await?;
 
         let mut stream = response.bytes_stream();
         let mut tool_id = String::new();
@@ -141,7 +152,9 @@ impl AiClient for AnthropicClient {
                                 if let Some(id) = v["content_block"]["id"].as_str() {
                                     tool_id = id.to_string();
                                     tool_name = v["content_block"]["name"]
-                                        .as_str().unwrap_or("").to_string();
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string();
                                     tool_args.clear();
                                 }
                             } else if v["content_block"]["type"] == "thinking" {
@@ -174,15 +187,23 @@ impl AiClient for AnthropicClient {
                                 // Encode both fields so convert_messages can reconstruct
                                 // the full thinking block for the round-trip.
                                 if !thinking_sig.is_empty() {
-                                    pending_thought_sig = Some(json!({
-                                        "thinking": thinking_text,
-                                        "signature": thinking_sig
-                                    }).to_string());
+                                    pending_thought_sig = Some(
+                                        json!({
+                                            "thinking": thinking_text,
+                                            "signature": thinking_sig
+                                        })
+                                        .to_string(),
+                                    );
                                 }
                                 in_thinking = false;
                             } else if !tool_id.is_empty() {
                                 if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                                    if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take()) {
+                                    if let Some(ev) = dispatch_tool_event(
+                                        &tool_id,
+                                        &tool_name,
+                                        &args,
+                                        pending_thought_sig.take(),
+                                    ) {
                                         let _ = tx.send(ev);
                                     }
                                 }
@@ -192,11 +213,15 @@ impl AiClient for AnthropicClient {
                             }
                         } else if msg_type == "message_start" {
                             if let Some(u) = v["message"]["usage"].as_object() {
-                                usage.prompt_tokens = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                usage.prompt_tokens =
+                                    u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
+                                        as u32;
                             }
                         } else if msg_type == "message_delta" {
                             if let Some(u) = v["usage"].as_object() {
-                                usage.completion_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                usage.completion_tokens =
+                                    u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
+                                        as u32;
                             }
                         }
                     }
@@ -207,7 +232,9 @@ impl AiClient for AnthropicClient {
         // (e.g. network disconnect mid-stream).
         if !tool_id.is_empty() {
             if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take()) {
+                if let Some(ev) =
+                    dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take())
+                {
                     let _ = tx.send(ev);
                 }
             }
@@ -220,4 +247,3 @@ impl AiClient for AnthropicClient {
 // ---------------------------------------------------------------------------
 // OpenAI-compatible
 // ---------------------------------------------------------------------------
-

@@ -1,12 +1,16 @@
-use crate::daemon::session::{bg_done_subscribe, append_session_message, FG_HOOK_COUNTER, BUFFER_COUNTER, SessionStore};
+use crate::ai::{PendingCall, mask_sensitive, next_tool_id};
+use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
+use crate::daemon::session::{
+    BUFFER_COUNTER, FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe,
+};
 use crate::daemon::utils::*;
-use crate::daemon::background::{run_background_in_window, respawn_background_in_pane};
-use crate::ipc::{MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem};
-use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduledJob, ScheduleStore};
+use crate::ipc::{
+    MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem,
+};
+use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduleStore, ScheduledJob};
 use crate::scripts;
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
-use crate::ai::{mask_sensitive, next_tool_id, PendingCall};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncBufReadExt;
@@ -108,8 +112,19 @@ const INTERACTIVE_STABLE_WINDOW: Duration = Duration::from_millis(600);
 fn is_shell_prompt(cmd: &str) -> bool {
     matches!(
         cmd.trim(),
-        "bash" | "zsh" | "fish" | "sh" | "ksh" | "csh" | "tcsh" | "dash"
-            | "nu" | "pwsh" | "elvish" | "xonsh" | "yash"
+        "bash"
+            | "zsh"
+            | "fish"
+            | "sh"
+            | "ksh"
+            | "csh"
+            | "tcsh"
+            | "dash"
+            | "nu"
+            | "pwsh"
+            | "elvish"
+            | "xonsh"
+            | "yash"
     )
 }
 
@@ -123,10 +138,14 @@ fn looks_like_shell_prompt(snap: &str) -> bool {
         .last()
         .map(|l| {
             let t = l.trim_end();
-            t.ends_with("$ ") || t.ends_with("# ") || t.ends_with("% ")
+            t.ends_with("$ ")
+                || t.ends_with("# ")
+                || t.ends_with("% ")
                 || t.ends_with("> ")
-                || t.ends_with('$') || t.ends_with('#')
-                || t.ends_with('%') || t.ends_with('>')
+                || t.ends_with('$')
+                || t.ends_with('#')
+                || t.ends_with('%')
+                || t.ends_with('>')
         })
         .unwrap_or(false)
 }
@@ -150,13 +169,21 @@ async fn prompt_and_await_approval(
     tx: &mut tokio::net::unix::OwnedWriteHalf,
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
 ) -> anyhow::Result<Option<ToolCallOutcome>> {
-    let mode = if background { "background" } else { "foreground" };
-    send_response_split(tx, Response::ToolCallPrompt {
-        id: id.to_string(),
-        command: cmd.to_string(),
-        background,
-        target_pane: target_pane_hint.map(|s| s.to_string()),
-    }).await?;
+    let mode = if background {
+        "background"
+    } else {
+        "foreground"
+    };
+    send_response_split(
+        tx,
+        Response::ToolCallPrompt {
+            id: id.to_string(),
+            command: cmd.to_string(),
+            background,
+            target_pane: target_pane_hint.map(|s| s.to_string()),
+        },
+    )
+    .await?;
 
     let mut line = String::new();
     let read_result = tokio::time::timeout(APPROVAL_TIMEOUT, rx.read_line(&mut line)).await;
@@ -168,10 +195,18 @@ async fn prompt_and_await_approval(
     let timed_out = read_result.is_err();
 
     // Parse the response, checking for a user_message redirect first.
-    enum Parsed { Approved, Denied, UserMessage(String) }
+    enum Parsed {
+        Approved,
+        Denied,
+        UserMessage(String),
+    }
     let parsed = match read_result {
         Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
-            Ok(Request::ToolCallResponse { id: resp_id, approved, user_message }) if resp_id == id => {
+            Ok(Request::ToolCallResponse {
+                id: resp_id,
+                approved,
+                user_message,
+            }) if resp_id == id => {
                 if let Some(msg) = user_message {
                     Parsed::UserMessage(msg)
                 } else if approved {
@@ -188,23 +223,30 @@ async fn prompt_and_await_approval(
     match parsed {
         Parsed::Approved => {
             log::info!("{} command approved: {}", mode, cmd);
-            log_event("command_approval", serde_json::json!({
-                "session": session_id.unwrap_or("-"),
-                "mode": mode,
-                "cmd": cmd,
-                "decision": "approved",
-            }));
+            crate::daemon::stats::record_command(cmd);
+            log_event(
+                "command_approval",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "mode": mode,
+                    "cmd": cmd,
+                    "decision": "approved",
+                }),
+            );
             Ok(None)
         }
         Parsed::Denied => {
             let decision = if timed_out { "timeout" } else { "denied" };
             log::info!("{} command {}: {}", mode, decision, cmd);
-            log_event("command_approval", serde_json::json!({
-                "session": session_id.unwrap_or("-"),
-                "mode": mode,
-                "cmd": cmd,
-                "decision": decision,
-            }));
+            log_event(
+                "command_approval",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "mode": mode,
+                    "cmd": cmd,
+                    "decision": decision,
+                }),
+            );
             log_command(session_id, mode, "", cmd, decision, "");
             let msg = if timed_out {
                 let notice = format!(
@@ -223,12 +265,15 @@ async fn prompt_and_await_approval(
         }
         Parsed::UserMessage(text) => {
             log::info!("{} command redirected by user message: {}", mode, cmd);
-            log_event("command_approval", serde_json::json!({
-                "session": session_id.unwrap_or("-"),
-                "mode": mode,
-                "cmd": cmd,
-                "decision": "user_message",
-            }));
+            log_event(
+                "command_approval",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "mode": mode,
+                    "cmd": cmd,
+                    "decision": "user_message",
+                }),
+            );
             Ok(Some(ToolCallOutcome::UserMessage(text)))
         }
     }
@@ -244,15 +289,21 @@ async fn find_best_target_pane(
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
 ) -> anyhow::Result<String> {
     let ai_target = target.and_then(|tp: &str| {
-        if chat_pane == Some(tp) { return None; }
+        if chat_pane == Some(tp) {
+            return None;
+        }
         let panes = cache.panes.read().unwrap_or_log();
-        if panes.contains_key(tp) { Some(tp.to_string()) } else { None::<String> }
+        if panes.contains_key(tp) {
+            Some(tp.to_string())
+        } else {
+            None::<String>
+        }
     });
 
     if let Some(tp) = ai_target {
         return Ok(tp);
     }
-    
+
     // Check for a user-selected default target pane in the session
     if let Some(sid) = session_id {
         if let Ok(store) = sessions.lock() {
@@ -271,7 +322,8 @@ async fn find_best_target_pane(
 
     let pane_list: Vec<PaneInfo> = {
         let panes = cache.panes.read().unwrap_or_log();
-        let mut v: Vec<PaneInfo> = panes.iter()
+        let mut v: Vec<PaneInfo> = panes
+            .iter()
             .map(|(pid, state)| PaneInfo {
                 id: pid.clone(),
                 current_cmd: state.current_cmd.clone(),
@@ -281,20 +333,22 @@ async fn find_best_target_pane(
         v.sort_by(|a, b| a.id.cmp(&b.id));
         v
     };
-    
+
     if pane_list.is_empty() {
-        send_response_split(tx, Response::Error(
-            "No tmux panes available".to_string()
-        )).await?;
+        send_response_split(tx, Response::Error("No tmux panes available".to_string())).await?;
         return Err(anyhow::anyhow!("No active pane found."));
     }
-    
+
     let prompt_id = next_tool_id();
-    send_response_split(tx, Response::PaneSelectPrompt {
-        id: prompt_id.clone(),
-        panes: pane_list,
-    }).await?;
-    
+    send_response_split(
+        tx,
+        Response::PaneSelectPrompt {
+            id: prompt_id.clone(),
+            panes: pane_list,
+        },
+    )
+    .await?;
+
     let mut pane_line = String::new();
     rx.read_line(&mut pane_line).await?;
     match serde_json::from_str::<Request>(pane_line.trim()) {
@@ -308,11 +362,13 @@ async fn find_best_target_pane(
                 }
             }
             Ok(pane_id)
-        },
+        }
         _ => {
-            send_response_split(tx, Response::Error(
-                "Expected PaneSelectResponse".to_string()
-            )).await?;
+            send_response_split(
+                tx,
+                Response::Error("Expected PaneSelectResponse".to_string()),
+            )
+            .await?;
             Err(anyhow::anyhow!("User aborted or invalid response"))
         }
     }
@@ -337,13 +393,19 @@ fn extract_marked(snap: &str, start: &str, end: &str) -> Option<String> {
     let lines: Vec<&str> = snap.lines().collect();
     let s_idx = lines.iter().position(|l| l.contains(start))?;
     let e_idx = lines.iter().rposition(|l| l.contains(end))?;
-    if e_idx <= s_idx { return None; }
+    if e_idx <= s_idx {
+        return None;
+    }
     Some(lines[s_idx + 1..e_idx].join("\n"))
 }
 
 /// Send a command to a pane and poll until a completion marker appears in the
 /// captured output.  Returns the raw pane snapshot (caller extracts content).
-async fn remote_run_and_capture(pane_id: &str, cmd: &str, timeout_secs: u64) -> anyhow::Result<String> {
+async fn remote_run_and_capture(
+    pane_id: &str,
+    cmd: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<String> {
     tmux::send_keys(pane_id, cmd)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
@@ -376,8 +438,13 @@ fn build_remote_read_cmd(path: &str, start: usize, end: usize, pattern: Option<&
 /// Build the shell command to read `path` through the tmux buffer system.
 /// The file is piped into a named tmux buffer so there is no scrollback cap.
 /// A `__DE_DONE__` marker is echoed to the pane after the load completes.
-fn build_local_buffer_read_cmd(path: &str, start: usize, end: usize,
-                                pattern: Option<&str>, buf_name: &str) -> String {
+fn build_local_buffer_read_cmd(
+    path: &str,
+    start: usize,
+    end: usize,
+    pattern: Option<&str>,
+    buf_name: &str,
+) -> String {
     let safe_path = sq_escape(path);
     let grep_part = pattern
         .map(|p| format!(" | grep -E '{}'", sq_escape(p)))
@@ -390,8 +457,13 @@ fn build_local_buffer_read_cmd(path: &str, start: usize, end: usize,
 
 /// Run a read-file command in a LOCAL target pane using `load-buffer`/`save-buffer`
 /// to bypass the 600-line scrollback cap.  Returns the file content as a String.
-async fn local_read_via_buffer(pane_id: &str, path: &str, start: usize, end: usize,
-                                pattern: Option<&str>) -> anyhow::Result<String> {
+async fn local_read_via_buffer(
+    pane_id: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    pattern: Option<&str>,
+) -> anyhow::Result<String> {
     let idx = BUFFER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let buf_name = format!("de-rb-{}", idx);
     let cmd = build_local_buffer_read_cmd(path, start, end, pattern, &buf_name);
@@ -432,9 +504,9 @@ async fn local_read_via_buffer(pane_id: &str, path: &str, start: usize, end: usi
 /// in a remote pane.  Both scripts are hex-encoded into the command so no
 /// shell escaping is needed for the file contents.
 fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &str) -> String {
-    let path_hex   = to_hex(path);
-    let old_hex    = to_hex(old_string);
-    let new_hex    = to_hex(new_string);
+    let path_hex = to_hex(path);
+    let old_hex = to_hex(old_string);
+    let new_hex = to_hex(new_string);
 
     // Python3 script — hex-encoded to avoid any quoting issues when passed
     // to `python3 -c "exec(bytes.fromhex(...).decode())"`.
@@ -494,7 +566,9 @@ pub async fn execute_tool_call(
     schedule_store: &Arc<ScheduleStore>,
 ) -> anyhow::Result<ToolCallOutcome> {
     let result: String = match call {
-        PendingCall::Foreground { id, cmd, target, .. } => {
+        PendingCall::Foreground {
+            id, cmd, target, ..
+        } => {
             // Compute a best-guess target pane hint synchronously from the cache/session
             // so the approval prompt can show the user which pane will be used.
             let target_hint: Option<String> = (|| {
@@ -524,236 +598,300 @@ pub async fn execute_tool_call(
                 }
                 None
             })();
-            if let Some(outcome) = prompt_and_await_approval(id, cmd, false, target_hint.as_deref(), session_id, tx, rx).await? {
+            if let Some(outcome) = prompt_and_await_approval(
+                id,
+                cmd,
+                false,
+                target_hint.as_deref(),
+                session_id,
+                tx,
+                rx,
+            )
+            .await?
+            {
                 return Ok(outcome);
             }
-            let target_owned = match find_best_target_pane(target.as_deref(), chat_pane, cache, sessions, session_id, tx, rx).await {
-                    Ok(tp) => tp,
-                    Err(_) => return Err(anyhow::anyhow!("EOF")),
+            let target_owned = match find_best_target_pane(
+                target.as_deref(),
+                chat_pane,
+                cache,
+                sessions,
+                session_id,
+                tx,
+                rx,
+            )
+            .await
+            {
+                Ok(tp) => tp,
+                Err(_) => return Err(anyhow::anyhow!("EOF")),
+            };
+
+            let target_str = target_owned.as_str();
+            if target_str.is_empty() {
+                "No active pane found.".to_string()
+            } else {
+                let is_synchronized = {
+                    let panes = cache.panes.read().unwrap_or_log();
+                    panes
+                        .get(target_str)
+                        .map(|p| p.synchronized)
+                        .unwrap_or(false)
                 };
-                
-                let target_str = target_owned.as_str();
-                if target_str.is_empty() {
-                    "No active pane found.".to_string()
-                } else {
-                    let is_synchronized = {
-                        let panes = cache.panes.read().unwrap_or_log();
-                        panes.get(target_str).map(|p| p.synchronized).unwrap_or(false)
-                    };
-                    if is_synchronized {
-                        let msg = format!(
-                            "Pane {} has synchronized input enabled — sending a command \
+                if is_synchronized {
+                    let msg = format!(
+                        "Pane {} has synchronized input enabled — sending a command \
                              would broadcast to all synchronized panes simultaneously. \
                              Disable synchronization first:\n  \
                              tmux set-option -t {} synchronize-panes off",
-                            target_str, target_str
-                        );
-                        send_response_split(tx, Response::SystemMsg(msg.clone())).await?;
-                        msg
-                    } else {
-                        let idle_cmd = tmux::pane_current_command(target_str)
-                            .unwrap_or_default();
-                        let is_remote_pane = get_pane_remote_host(target_str).is_some();
+                        target_str, target_str
+                    );
+                    send_response_split(tx, Response::SystemMsg(msg.clone())).await?;
+                    msg
+                } else {
+                    let idle_cmd = tmux::pane_current_command(target_str).unwrap_or_default();
+                    let is_remote_pane = get_pane_remote_host(target_str).is_some();
 
-                        let current_exe = std::env::current_exe()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
-                        let hook_idx = crate::daemon::session::FG_HOOK_COUNTER
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
-                        let notify_cmd = format!(
-                            "run-shell -b '{} notify activity {} 0 \"{}\"'",
-                            current_exe.display(), target_str, shell_escape_arg(session_name)
-                        );
-                        let _ = std::process::Command::new("tmux")
-                            .args(["set-hook", "-t", target_str, &hook_name, &notify_cmd])
-                            .output();
-                        // RAII guard ensures hooks are removed on any exit path, including
-                        // early returns via `?` and the send_keys error arm.
-                        let mut fg_hook_guard = FgHookGuard::new(target_str, hook_name.clone());
+                    let current_exe = std::env::current_exe()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
+                    let hook_idx = crate::daemon::session::FG_HOOK_COUNTER
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
+                    let notify_cmd = format!(
+                        "run-shell -b '{} notify activity {} 0 \"{}\"'",
+                        current_exe.display(),
+                        target_str,
+                        shell_escape_arg(session_name)
+                    );
+                    let _ = std::process::Command::new("tmux")
+                        .args(["set-hook", "-t", target_str, &hook_name, &notify_cmd])
+                        .output();
+                    // RAII guard ensures hooks are removed on any exit path, including
+                    // early returns via `?` and the send_keys error arm.
+                    let mut fg_hook_guard = FgHookGuard::new(target_str, hook_name.clone());
 
-                        let mut fg_rx = bg_done_subscribe();
+                    let mut fg_rx = bg_done_subscribe();
 
-                        match tmux::send_keys(target_str, cmd) {
-                            Ok(()) => {
-                                // Highlight the target pane so the user can see which pane
-                                // the agent is using during execution.  Immediately restore
-                                // focus to the chat pane so the user is not displaced.
-                                tmux::highlight_pane(target_str, chat_pane);
-                                let mut switched_to_working = false;
-                                let mut is_interactive = false;
+                    match tmux::send_keys(target_str, cmd) {
+                        Ok(()) => {
+                            // Highlight the target pane so the user can see which pane
+                            // the agent is using during execution.  Immediately restore
+                            // focus to the chat pane so the user is not displaced.
+                            tmux::highlight_pane(target_str, chat_pane);
+                            let mut switched_to_working = false;
+                            let mut is_interactive = false;
 
-                                if command_has_sudo(cmd) {
-                                    let poll = SUDO_POLL_INTERVAL;
-                                    let mut waited = Duration::ZERO;
-                                    let prompt_timeout = SUDO_DETECT_WINDOW;
-                                    let needs_password = loop {
-                                        tokio::time::sleep(poll).await;
-                                        waited += poll;
-                                        let cur = tmux::pane_current_command(target_str)
-                                            .unwrap_or_default();
-                                        if cur == "sudo"   { break true;  }
-                                        if cur == idle_cmd { break false; }
-                                        if waited >= prompt_timeout { break false; }
-                                    };
+                            if command_has_sudo(cmd) {
+                                let poll = SUDO_POLL_INTERVAL;
+                                let mut waited = Duration::ZERO;
+                                let prompt_timeout = SUDO_DETECT_WINDOW;
+                                let needs_password = loop {
+                                    tokio::time::sleep(poll).await;
+                                    waited += poll;
+                                    let cur =
+                                        tmux::pane_current_command(target_str).unwrap_or_default();
+                                    if cur == "sudo" {
+                                        break true;
+                                    }
+                                    if cur == idle_cmd {
+                                        break false;
+                                    }
+                                    if waited >= prompt_timeout {
+                                        break false;
+                                    }
+                                };
 
-                                    if needs_password {
-                                        send_response_split(tx, Response::SystemMsg(
+                                if needs_password {
+                                    send_response_split(
+                                        tx,
+                                        Response::SystemMsg(
                                             "sudo password prompt detected — \
                                              switching to your terminal pane. \
-                                             Type your password there.".to_string()
-                                        )).await?;
-                                        let _ = tmux::select_pane(target_str);
-                                        switched_to_working = true;
-                                    }
+                                             Type your password there."
+                                                .to_string(),
+                                        ),
+                                    )
+                                    .await?;
+                                    let _ = tmux::select_pane(target_str);
+                                    switched_to_working = true;
                                 }
+                            }
 
-                                if is_interactive_command(cmd) {
-                                    // Interactive session path (ssh, mosh, telnet, screen).
-                                    // Wait up to INTERACTIVE_CONNECT_TIMEOUT for a shell
-                                    // prompt pattern to appear in the pane, then return
-                                    // immediately rather than waiting for the session to exit.
-                                    is_interactive = true;
-                                    let deadline = tokio::time::Instant::now() + INTERACTIVE_CONNECT_TIMEOUT;
-                                    let mut prompt_found = false;
+                            if is_interactive_command(cmd) {
+                                // Interactive session path (ssh, mosh, telnet, screen).
+                                // Wait up to INTERACTIVE_CONNECT_TIMEOUT for a shell
+                                // prompt pattern to appear in the pane, then return
+                                // immediately rather than waiting for the session to exit.
+                                is_interactive = true;
+                                let deadline =
+                                    tokio::time::Instant::now() + INTERACTIVE_CONNECT_TIMEOUT;
+                                let mut prompt_found = false;
 
-                                    'connect: loop {
-                                        if tokio::time::Instant::now() >= deadline { break; }
-                                        tokio::select! {
-                                            result = fg_rx.recv() => {
-                                                if let Ok(notified_pane) = result {
-                                                    if notified_pane == target_str {
-                                                        // Hook fired — check for prompt immediately.
-                                                        if let Ok(snap) = tmux::capture_pane(target_str, 20) {
-                                                            if looks_like_shell_prompt(&snap) {
-                                                                prompt_found = true;
-                                                                break 'connect;
-                                                            }
+                                'connect: loop {
+                                    if tokio::time::Instant::now() >= deadline {
+                                        break;
+                                    }
+                                    tokio::select! {
+                                        result = fg_rx.recv() => {
+                                            if let Ok(notified_pane) = result {
+                                                if notified_pane == target_str {
+                                                    // Hook fired — check for prompt immediately.
+                                                    if let Ok(snap) = tmux::capture_pane(target_str, 20) {
+                                                        if looks_like_shell_prompt(&snap) {
+                                                            prompt_found = true;
+                                                            break 'connect;
                                                         }
                                                     }
                                                 }
                                             }
-                                            _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
-                                                if let Ok(snap) = tmux::capture_pane(target_str, 20) {
-                                                    if looks_like_shell_prompt(&snap) {
-                                                        prompt_found = true;
-                                                        break 'connect;
-                                                    }
+                                        }
+                                        _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
+                                            if let Ok(snap) = tmux::capture_pane(target_str, 20) {
+                                                if looks_like_shell_prompt(&snap) {
+                                                    prompt_found = true;
+                                                    break 'connect;
                                                 }
                                             }
                                         }
                                     }
+                                }
 
-                                    // Fallback: if no prompt was detected, wait for output
-                                    // to stabilise (two consecutive identical snapshots)
-                                    // so we don't capture mid-handshake noise.
-                                    if !prompt_found {
-                                        let stable_deadline = tokio::time::Instant::now() + INTERACTIVE_STABLE_WINDOW;
-                                        let mut prev = String::new();
-                                        loop {
-                                            if tokio::time::Instant::now() >= stable_deadline { break; }
-                                            tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
-                                            let snap = tmux::capture_pane(target_str, 20).unwrap_or_default();
-                                            if snap == prev && !snap.is_empty() { break; }
-                                            prev = snap;
-                                        }
-                                    }
-                                } else if is_remote_pane {
-                                    let mut prev_snap = String::new();
-                                    let mut stable_ticks = 0u32;
-                                    let poll = REMOTE_POLL_INTERVAL;
-                                    let cmd_timeout = REMOTE_CMD_TIMEOUT;
-                                    let deadline = tokio::time::Instant::now() + cmd_timeout;
-
+                                // Fallback: if no prompt was detected, wait for output
+                                // to stabilise (two consecutive identical snapshots)
+                                // so we don't capture mid-handshake noise.
+                                if !prompt_found {
+                                    let stable_deadline =
+                                        tokio::time::Instant::now() + INTERACTIVE_STABLE_WINDOW;
+                                    let mut prev = String::new();
                                     loop {
-                                        if tokio::time::Instant::now() >= deadline { break; }
+                                        if tokio::time::Instant::now() >= stable_deadline {
+                                            break;
+                                        }
+                                        tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
+                                        let snap =
+                                            tmux::capture_pane(target_str, 20).unwrap_or_default();
+                                        if snap == prev && !snap.is_empty() {
+                                            break;
+                                        }
+                                        prev = snap;
+                                    }
+                                }
+                            } else if is_remote_pane {
+                                let mut prev_snap = String::new();
+                                let mut stable_ticks = 0u32;
+                                let poll = REMOTE_POLL_INTERVAL;
+                                let cmd_timeout = REMOTE_CMD_TIMEOUT;
+                                let deadline = tokio::time::Instant::now() + cmd_timeout;
+
+                                loop {
+                                    if tokio::time::Instant::now() >= deadline {
+                                        break;
+                                    }
+                                    tokio::select! {
+                                        result = fg_rx.recv() => {
+                                            if let Ok(notified_pane) = result {
+                                                if notified_pane == target_str {
+                                                    stable_ticks = 0;
+                                                }
+                                            }
+                                        }
+                                        _ = tokio::time::sleep(poll) => {
+                                            let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                            if snap == prev_snap && !snap.is_empty() {
+                                                stable_ticks += 1;
+                                                if stable_ticks >= 2 { break; }
+                                            } else {
+                                                stable_ticks = 0;
+                                                prev_snap = snap;
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // N9: install monitor-silence + alert-silence as a secondary
+                                // completion signal for edge cases where pane_current_command
+                                // doesn't reliably signal done (nested shells, custom prompts).
+                                let silence_hook_name =
+                                    format!("alert-silence[@de_fg_{}]", hook_idx);
+                                let _ = std::process::Command::new("tmux")
+                                    .args([
+                                        "set-hook",
+                                        "-t",
+                                        target_str,
+                                        &silence_hook_name,
+                                        &notify_cmd,
+                                    ])
+                                    .output();
+                                let _ = std::process::Command::new("tmux")
+                                    .args([
+                                        "set-option",
+                                        "-t",
+                                        target_str,
+                                        "monitor-silence",
+                                        &SILENCE_MONITOR_SECS.to_string(),
+                                    ])
+                                    .output();
+                                fg_hook_guard.add_silence(silence_hook_name.clone());
+
+                                let fast_poll = LOCAL_CHILD_POLL;
+                                let start_timeout = LOCAL_CHILD_START_WINDOW;
+                                let cmd_timeout = LOCAL_CMD_TIMEOUT;
+                                let deadline = tokio::time::Instant::now() + cmd_timeout;
+
+                                let saw_child = tokio::time::timeout(start_timeout, async {
+                                    loop {
+                                        tokio::time::sleep(fast_poll).await;
+                                        let cur = tmux::pane_current_command(target_str)
+                                            .unwrap_or_default();
+                                        if cur != idle_cmd {
+                                            break;
+                                        }
+                                    }
+                                })
+                                .await
+                                .is_ok();
+
+                                if saw_child {
+                                    let slow_poll = LOCAL_SLOW_POLL;
+                                    loop {
+                                        if tokio::time::Instant::now() >= deadline {
+                                            break;
+                                        }
                                         tokio::select! {
                                             result = fg_rx.recv() => {
                                                 if let Ok(notified_pane) = result {
                                                     if notified_pane == target_str {
-                                                        stable_ticks = 0;
+                                                        let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+                                                        if cur == idle_cmd { break; }
                                                     }
                                                 }
                                             }
-                                            _ = tokio::time::sleep(poll) => {
-                                                let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
-                                                if snap == prev_snap && !snap.is_empty() {
-                                                    stable_ticks += 1;
-                                                    if stable_ticks >= 2 { break; }
-                                                } else {
-                                                    stable_ticks = 0;
-                                                    prev_snap = snap;
-                                                }
+                                            _ = tokio::time::sleep(slow_poll) => {
+                                                let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+                                                if cur == idle_cmd { break; }
                                             }
                                         }
                                     }
-                                } else {
-                                    // N9: install monitor-silence + alert-silence as a secondary
-                                    // completion signal for edge cases where pane_current_command
-                                    // doesn't reliably signal done (nested shells, custom prompts).
-                                    let silence_hook_name = format!("alert-silence[@de_fg_{}]", hook_idx);
-                                    let _ = std::process::Command::new("tmux")
-                                        .args(["set-hook", "-t", target_str, &silence_hook_name, &notify_cmd])
-                                        .output();
-                                    let _ = std::process::Command::new("tmux")
-                                        .args(["set-option", "-t", target_str,
-                                               "monitor-silence", &SILENCE_MONITOR_SECS.to_string()])
-                                        .output();
-                                    fg_hook_guard.add_silence(silence_hook_name.clone());
-
-                                    let fast_poll = LOCAL_CHILD_POLL;
-                                    let start_timeout = LOCAL_CHILD_START_WINDOW;
-                                    let cmd_timeout = LOCAL_CMD_TIMEOUT;
-                                    let deadline = tokio::time::Instant::now() + cmd_timeout;
-
-                                    let saw_child = tokio::time::timeout(start_timeout, async {
-                                        loop {
-                                            tokio::time::sleep(fast_poll).await;
-                                            let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                                            if cur != idle_cmd { break; }
-                                        }
-                                    }).await.is_ok();
-
-                                    if saw_child {
-                                        let slow_poll = LOCAL_SLOW_POLL;
-                                        loop {
-                                            if tokio::time::Instant::now() >= deadline { break; }
-                                            tokio::select! {
-                                                result = fg_rx.recv() => {
-                                                    if let Ok(notified_pane) = result {
-                                                        if notified_pane == target_str {
-                                                            let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                                                            if cur == idle_cmd { break; }
-                                                        }
-                                                    }
-                                                }
-                                                _ = tokio::time::sleep(slow_poll) => {
-                                                    let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                                                    if cur == idle_cmd { break; }
-                                                }
-                                            }
-                                        }
-                                    }
-
                                 }
+                            }
 
-                                // Drop the guard now so hooks are removed before the capture
-                                // delay — avoids spurious re-fires during output collection.
-                                drop(fg_hook_guard);
+                            // Drop the guard now so hooks are removed before the capture
+                            // delay — avoids spurious re-fires during output collection.
+                            drop(fg_hook_guard);
 
-                                tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
+                            tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
 
-                                // Remove the visual highlight now that execution is complete.
-                                tmux::unhighlight_pane(target_str, chat_pane);
+                            // Remove the visual highlight now that execution is complete.
+                            tmux::unhighlight_pane(target_str, chat_pane);
 
-                                let output = match tmux::capture_pane(target_str, 200) {
-                                    Ok(snap) if is_interactive => {
-                                        let destination = interactive_destination(cmd)
-                                            .unwrap_or_else(|| "the remote host".to_string());
-                                        let pane_snap = mask_sensitive(
-                                            &normalize_output(&extract_command_output(&snap, cmd))
-                                        );
-                                        format!(
-                                            "[Interactive session started]\n\
+                            let output = match tmux::capture_pane(target_str, 200) {
+                                Ok(snap) if is_interactive => {
+                                    let destination = interactive_destination(cmd)
+                                        .unwrap_or_else(|| "the remote host".to_string());
+                                    let pane_snap = mask_sensitive(&normalize_output(
+                                        &extract_command_output(&snap, cmd),
+                                    ));
+                                    format!(
+                                        "[Interactive session started]\n\
                                              `{cmd}` opened an interactive session in pane \
                                              {target_str} — now connected to {destination}.\n\
                                              The command did not exit; the pane is running an \
@@ -765,42 +903,61 @@ pub async fn execute_tool_call(
                                              Do NOT call `{cmd}` again — the session is already \
                                              established.\n\
                                              <pane_snapshot>\n{pane_snap}\n</pane_snapshot>"
-                                        )
-                                    }
-                                    Ok(snap) => {
-                                        let extracted = extract_command_output(&snap, cmd);
-                                        let mut out = mask_sensitive(&normalize_output(&extracted));
-                                        let hints = crate::manifest::related_knowledge_hints(&out);
-                                        if !hints.is_empty() {
-                                            out.push('\n');
-                                            out.push_str(&hints);
-                                        }
-                                        out
-                                    }
-                                    Err(_) => "Command sent but could not capture output.".to_string(),
-                                };
-
-                                if switched_to_working {
-                                    if let Some(cp) = chat_pane {
-                                        let _ = tmux::select_pane(cp);
-                                    }
+                                    )
                                 }
+                                Ok(snap) => {
+                                    let extracted = extract_command_output(&snap, cmd);
+                                    let mut out = mask_sensitive(&normalize_output(&extracted));
+                                    let hints = crate::manifest::related_knowledge_hints(&out);
+                                    if !hints.is_empty() {
+                                        out.push('\n');
+                                        out.push_str(&hints);
+                                    }
+                                    out
+                                }
+                                Err(_) => "Command sent but could not capture output.".to_string(),
+                            };
 
-                                send_response_split(tx, Response::ToolResult(output.clone())).await?;
-                                log_command(session_id, "foreground", target_str, cmd, "approved", &output);
-                                output
+                            if switched_to_working {
+                                if let Some(cp) = chat_pane {
+                                    let _ = tmux::select_pane(cp);
+                                }
                             }
-                            Err(e) => {
-                                let msg = format!("Failed to send command: {}", e);
-                                log_command(session_id, "foreground", target_str, cmd, "send-failed", &msg);
-                                msg
-                            }
+
+                            send_response_split(tx, Response::ToolResult(output.clone())).await?;
+                            log_command(
+                                session_id,
+                                "foreground",
+                                target_str,
+                                cmd,
+                                "approved",
+                                &output,
+                            );
+                            output
+                        }
+                        Err(e) => {
+                            let msg = format!("Failed to send command: {}", e);
+                            log_command(
+                                session_id,
+                                "foreground",
+                                target_str,
+                                cmd,
+                                "send-failed",
+                                &msg,
+                            );
+                            msg
                         }
                     }
                 }
+            }
         }
 
-        PendingCall::Background { id, cmd, retry_pane, .. } => {
+        PendingCall::Background {
+            id,
+            cmd,
+            retry_pane,
+            ..
+        } => {
             // N11: retry path — reuse an existing background pane via respawn-pane.
             if let Some(pane_id) = retry_pane {
                 if !tmux::pane_exists(pane_id) {
@@ -818,7 +975,9 @@ pub async fn execute_tool_call(
                     if let Some(sid) = session_id {
                         if let Ok(store) = sessions.lock() {
                             if let Some(entry) = store.get(sid) {
-                                if let Some(w) = entry.bg_windows.iter().find(|w| &w.pane_id == pane_id) {
+                                if let Some(w) =
+                                    entry.bg_windows.iter().find(|w| &w.pane_id == pane_id)
+                                {
                                     name = w.window_name.clone();
                                 }
                             }
@@ -826,7 +985,9 @@ pub async fn execute_tool_call(
                     }
                     name
                 };
-                if let Some(outcome) = prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
+                if let Some(outcome) =
+                    prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await?
+                {
                     return Ok(outcome);
                 }
                 let session_id_owned = session_id.map(|s| s.to_string());
@@ -837,7 +998,8 @@ pub async fn execute_tool_call(
                     session_name,
                     session_id_owned,
                     sessions.clone(),
-                ).await;
+                )
+                .await;
                 send_response_split(tx, Response::ToolResult(output.clone())).await?;
                 log_command(session_id, "background_retry", "", cmd, "approved", &output);
                 return Ok(ToolCallOutcome::Result(output));
@@ -852,8 +1014,8 @@ pub async fn execute_tool_call(
                     if let Ok(mut store) = sessions.lock() {
                         if let Some(entry) = store.get_mut(sid) {
                             if entry.bg_windows.len() >= MAX_BG_WINDOWS_PER_SESSION {
-                                let evict_idx = entry.bg_windows.iter()
-                                    .position(|w| w.exit_code.is_some());
+                                let evict_idx =
+                                    entry.bg_windows.iter().position(|w| w.exit_code.is_some());
                                 match evict_idx {
                                     Some(i) => {
                                         let evicted = entry.bg_windows.remove(i);
@@ -861,22 +1023,42 @@ pub async fn execute_tool_call(
                                         // running active work (i.e. sitting at a shell prompt).
                                         // exit_code.is_some() means the tracked command finished,
                                         // but a user may have re-used the pane manually.
-                                        let pane_cmd = crate::tmux::pane_current_command(&evicted.pane_id)
-                                            .unwrap_or_default();
+                                        let pane_cmd =
+                                            crate::tmux::pane_current_command(&evicted.pane_id)
+                                                .unwrap_or_default();
                                         let is_idle = matches!(
                                             pane_cmd.as_str(),
-                                            "bash" | "sh" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "csh" | ""
+                                            "bash"
+                                                | "sh"
+                                                | "zsh"
+                                                | "fish"
+                                                | "dash"
+                                                | "ksh"
+                                                | "tcsh"
+                                                | "csh"
+                                                | ""
                                         );
                                         if is_idle {
-                                            log::info!("Evicting completed bg window {} to stay under cap", evicted.window_name);
-                                            if let Err(e) = crate::tmux::kill_job_window(&evicted.tmux_session, &evicted.window_name) {
-                                                log::warn!("Failed to evict bg window {}: {}", evicted.window_name, e);
+                                            log::info!(
+                                                "Evicting completed bg window {} to stay under cap",
+                                                evicted.window_name
+                                            );
+                                            if let Err(e) = crate::tmux::kill_job_window(
+                                                &evicted.tmux_session,
+                                                &evicted.window_name,
+                                            ) {
+                                                log::warn!(
+                                                    "Failed to evict bg window {}: {}",
+                                                    evicted.window_name,
+                                                    e
+                                                );
                                             }
                                         } else {
                                             log::warn!(
                                                 "Skipping eviction of bg window {} — pane is still running '{}'; \
                                                  re-inserting and denying new background job.",
-                                                evicted.window_name, pane_cmd
+                                                evicted.window_name,
+                                                pane_cmd
                                             );
                                             entry.bg_windows.insert(i, evicted);
                                             denial = Some(format!(
@@ -884,7 +1066,12 @@ pub async fn execute_tool_call(
                                                  is still in use. Close one of the open background windows ({}) \
                                                  before starting another.",
                                                 MAX_BG_WINDOWS_PER_SESSION,
-                                                entry.bg_windows.iter().map(|w| w.window_name.as_str()).collect::<Vec<_>>().join(", ")
+                                                entry
+                                                    .bg_windows
+                                                    .iter()
+                                                    .map(|w| w.window_name.as_str())
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
                                             ));
                                         }
                                     }
@@ -894,7 +1081,12 @@ pub async fn execute_tool_call(
                                              Wait for one to complete, or ask the user to close one of the open \
                                              background windows ({}) before starting another.",
                                             MAX_BG_WINDOWS_PER_SESSION,
-                                            entry.bg_windows.iter().map(|w| w.window_name.as_str()).collect::<Vec<_>>().join(", ")
+                                            entry
+                                                .bg_windows
+                                                .iter()
+                                                .map(|w| w.window_name.as_str())
+                                                .collect::<Vec<_>>()
+                                                .join(", ")
                                         ));
                                     }
                                 }
@@ -909,51 +1101,68 @@ pub async fn execute_tool_call(
                 return Ok(ToolCallOutcome::Result(msg));
             }
 
-            if let Some(outcome) = prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
+            if let Some(outcome) =
+                prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await?
+            {
                 return Ok(outcome);
             }
             // Wrap the sudo password in Zeroizing so its heap memory is
             // overwritten when the variable drops, rather than lingering until
             // the allocator reclaims it.
             let credential: Option<zeroize::Zeroizing<String>> = if command_has_sudo(cmd) {
-                    send_response_split(tx, Response::CredentialPrompt {
+                send_response_split(
+                    tx,
+                    Response::CredentialPrompt {
                         id: id.clone(),
                         prompt: format!("[sudo] password required for: {}", cmd),
-                    }).await?;
-                    let mut cred_line = String::new();
-                    let result = match tokio::time::timeout(
-                        USER_PROMPT_TIMEOUT,
-                        rx.read_line(&mut cred_line),
-                    ).await {
+                    },
+                )
+                .await?;
+                let mut cred_line = String::new();
+                let result =
+                    match tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut cred_line))
+                        .await
+                    {
                         Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
-                            Ok(Request::CredentialResponse { credential, .. }) =>
-                                Some(zeroize::Zeroizing::new(credential)),
+                            Ok(Request::CredentialResponse { credential, .. }) => {
+                                Some(zeroize::Zeroizing::new(credential))
+                            }
                             _ => None,
                         },
                         _ => None,
                     };
-                    // Zero the raw JSON line that contained the password.
-                    zeroize::Zeroize::zeroize(&mut cred_line);
-                    result
-                } else {
-                    None
-                };
+                // Zero the raw JSON line that contained the password.
+                zeroize::Zeroize::zeroize(&mut cred_line);
+                result
+            } else {
+                None
+            };
 
-                let session_id_owned = session_id.map(|s| s.to_string());
-                let output = run_background_in_window(
-                    session_name,
-                    id,
-                    cmd,
-                    credential.as_ref().map(|z| z.as_str()),
-                    session_id_owned,
-                    sessions.clone(),
-                ).await;
-                send_response_split(tx, Response::ToolResult(output.clone())).await?;
-                log_command(session_id, "background", "", cmd, "approved", &output);
-                output
+            let session_id_owned = session_id.map(|s| s.to_string());
+            let output = run_background_in_window(
+                session_name,
+                id,
+                cmd,
+                credential.as_ref().map(|z| z.as_str()),
+                session_id_owned,
+                sessions.clone(),
+            )
+            .await;
+            send_response_split(tx, Response::ToolResult(output.clone())).await?;
+            log_command(session_id, "background", "", cmd, "approved", &output);
+            output
         }
 
-        PendingCall::ScheduleCommand { id: call_id, name, command, is_script, run_at, interval, runbook, .. } => {
+        PendingCall::ScheduleCommand {
+            id: call_id,
+            name,
+            command,
+            is_script,
+            run_at,
+            interval,
+            runbook,
+            ..
+        } => {
             let action = if *is_script {
                 ActionOn::Script(command.clone())
             } else {
@@ -962,34 +1171,46 @@ pub async fn execute_tool_call(
             let kind = if let Some(iso) = interval {
                 let secs = match crate::scheduler::parse_iso_duration(iso) {
                     Some(s) => s,
-                    None => return Ok(ToolCallOutcome::Result(format!(
-                        "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
-                        iso
-                    ))),
+                    None => {
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
+                            iso
+                        )));
+                    }
                 };
                 let next = chrono::Utc::now() + chrono::Duration::seconds(secs as i64);
-                ScheduleKind::Every { interval_secs: secs, next_run: next }
+                ScheduleKind::Every {
+                    interval_secs: secs,
+                    next_run: next,
+                }
             } else if let Some(at_str) = run_at {
-                let at = chrono::DateTime::parse_from_rfc3339(at_str).map(|d| d.with_timezone(&chrono::Utc))
+                let at = chrono::DateTime::parse_from_rfc3339(at_str)
+                    .map(|d| d.with_timezone(&chrono::Utc))
                     .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::seconds(60));
                 ScheduleKind::Once { at }
             } else {
-                ScheduleKind::Once { at: chrono::Utc::now() + chrono::Duration::seconds(60) }
+                ScheduleKind::Once {
+                    at: chrono::Utc::now() + chrono::Duration::seconds(60),
+                }
             };
 
-            send_response_split(tx, Response::ScheduleWritePrompt {
-                id: call_id.clone(),
-                name: name.clone(),
-                kind: kind.describe(),
-                action: action.describe(),
-            }).await?;
+            send_response_split(
+                tx,
+                Response::ScheduleWritePrompt {
+                    id: call_id.clone(),
+                    name: name.clone(),
+                    kind: kind.describe(),
+                    action: action.describe(),
+                },
+            )
+            .await?;
 
             let mut line = String::new();
-            let read_result = tokio::time::timeout(
-                USER_PROMPT_TIMEOUT,
-                rx.read_line(&mut line),
-            ).await;
-            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
+            let read_result =
+                tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) {
+                return Err(anyhow::anyhow!("EOF"));
+            }
             let approved = match read_result {
                 Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
                     Ok(Request::ScheduleWriteResponse { approved, .. }) => approved,
@@ -1003,47 +1224,66 @@ pub async fn execute_tool_call(
                 match schedule_store.add(job) {
                     Ok(job_id) => {
                         log::info!("Job scheduled: '{}' ({})", name, &job_id[..8]);
-                        log_event("job_scheduled", serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "job_id": &job_id,
-                            "job_name": name,
-                            "kind": kind.describe(),
-                        }));
+                        log_event(
+                            "job_scheduled",
+                            serde_json::json!({
+                                "session": session_id.unwrap_or("-"),
+                                "job_id": &job_id,
+                                "job_name": name,
+                                "kind": kind.describe(),
+                            }),
+                        );
                         format!("Scheduled job '{}' created (id: {})", name, job_id)
                     }
                     Err(e) => format!("Failed to schedule job: {}", e),
                 }
             } else {
-                log_event("command_approval", serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": "schedule",
-                    "cmd": command,
-                    "decision": "denied",
-                }));
+                log_event(
+                    "command_approval",
+                    serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "mode": "schedule",
+                        "cmd": command,
+                        "decision": "denied",
+                    }),
+                );
                 "Job scheduling denied by user".to_string()
             }
         }
 
         PendingCall::ListSchedules { .. } => {
             let jobs = schedule_store.list();
-            let items: Vec<ScheduleListItem> = jobs.iter().map(|j| ScheduleListItem {
-                id: j.id.clone(),
-                name: j.name.clone(),
-                kind: j.kind.describe(),
-                action: j.action.describe(),
-                status: j.status.describe(),
-                last_run: j.last_run.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
-                // Only show next_run for pending jobs; for succeeded/failed/cancelled
-                // jobs it would be a stale past timestamp that confuses the AI into
-                // thinking the job needs to be re-scheduled.
-                next_run: if matches!(j.status, JobStatus::Pending) {
-                    j.kind.next_run().map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-                } else {
-                    None
-                },
-            }).collect();
+            let items: Vec<ScheduleListItem> = jobs
+                .iter()
+                .map(|j| ScheduleListItem {
+                    id: j.id.clone(),
+                    name: j.name.clone(),
+                    kind: j.kind.describe(),
+                    action: j.action.describe(),
+                    status: j.status.describe(),
+                    last_run: j
+                        .last_run
+                        .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
+                    // Only show next_run for pending jobs; for succeeded/failed/cancelled
+                    // jobs it would be a stale past timestamp that confuses the AI into
+                    // thinking the job needs to be re-scheduled.
+                    next_run: if matches!(j.status, JobStatus::Pending) {
+                        j.kind
+                            .next_run()
+                            .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                    } else {
+                        None
+                    },
+                })
+                .collect();
             let count = items.len();
-            let _ = send_response_split(tx, Response::ScheduleList { jobs: items.clone() }).await;
+            let _ = send_response_split(
+                tx,
+                Response::ScheduleList {
+                    jobs: items.clone(),
+                },
+            )
+            .await;
             // Build a full job listing for the AI so it has IDs for cancel/delete.
             if count == 0 {
                 "No scheduled jobs.".to_string()
@@ -1061,49 +1301,60 @@ pub async fn execute_tool_call(
             }
         }
 
-        PendingCall::CancelSchedule { job_id, .. } => {
-            match schedule_store.cancel(job_id) {
-                Ok(true) => {
-                    log::info!("Job canceled: {}", &job_id[..job_id.len().min(8)]);
-                    log_event("job_canceled", serde_json::json!({
+        PendingCall::CancelSchedule { job_id, .. } => match schedule_store.cancel(job_id) {
+            Ok(true) => {
+                log::info!("Job canceled: {}", &job_id[..job_id.len().min(8)]);
+                log_event(
+                    "job_canceled",
+                    serde_json::json!({
                         "session": session_id.unwrap_or("-"),
                         "job_id": job_id,
-                    }));
-                    format!("Job {} cancelled", &job_id[..job_id.len().min(8)])
-                }
-                Ok(false) => format!("Job {} not found", job_id),
-                Err(e)  => format!("Failed to cancel job: {}", e),
+                    }),
+                );
+                format!("Job {} cancelled", &job_id[..job_id.len().min(8)])
             }
-        }
+            Ok(false) => format!("Job {} not found", job_id),
+            Err(e) => format!("Failed to cancel job: {}", e),
+        },
 
-        PendingCall::DeleteSchedule { job_id, .. } => {
-            match schedule_store.delete(job_id) {
-                Ok(true) => {
-                    log::info!("Job deleted: {}", &job_id[..job_id.len().min(8)]);
-                    log_event("job_deleted", serde_json::json!({
+        PendingCall::DeleteSchedule { job_id, .. } => match schedule_store.delete(job_id) {
+            Ok(true) => {
+                log::info!("Job deleted: {}", &job_id[..job_id.len().min(8)]);
+                log_event(
+                    "job_deleted",
+                    serde_json::json!({
                         "session": session_id.unwrap_or("-"),
                         "job_id": job_id,
-                    }));
-                    format!("Job {} deleted permanently", &job_id[..job_id.len().min(8)])
-                }
-                Ok(false) => format!("Job {} not found", job_id),
-                Err(e)  => format!("Failed to delete job: {}", e),
+                    }),
+                );
+                format!("Job {} deleted permanently", &job_id[..job_id.len().min(8)])
             }
-        }
+            Ok(false) => format!("Job {} not found", job_id),
+            Err(e) => format!("Failed to delete job: {}", e),
+        },
 
-        PendingCall::WriteScript { id, script_name, content, .. } => {
-            send_response_split(tx, Response::ScriptWritePrompt {
-                id: id.clone(),
-                script_name: script_name.clone(),
-                content: content.clone(),
-            }).await?;
+        PendingCall::WriteScript {
+            id,
+            script_name,
+            content,
+            ..
+        } => {
+            send_response_split(
+                tx,
+                Response::ScriptWritePrompt {
+                    id: id.clone(),
+                    script_name: script_name.clone(),
+                    content: content.clone(),
+                },
+            )
+            .await?;
 
             let mut line = String::new();
-            let read_result = tokio::time::timeout(
-                USER_PROMPT_TIMEOUT,
-                rx.read_line(&mut line),
-            ).await;
-            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
+            let read_result =
+                tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) {
+                return Err(anyhow::anyhow!("EOF"));
+            }
             let approved = match read_result {
                 Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
                     Ok(Request::ScriptWriteResponse { approved, .. }) => approved,
@@ -1124,33 +1375,42 @@ pub async fn execute_tool_call(
 
         PendingCall::ListScripts { .. } => {
             let script_list = scripts::list_scripts().unwrap_or_default();
-            let items: Vec<ScriptListItem> = script_list.iter()
-                .map(|s| ScriptListItem { name: s.name.clone(), size: s.size })
+            let items: Vec<ScriptListItem> = script_list
+                .iter()
+                .map(|s| ScriptListItem {
+                    name: s.name.clone(),
+                    size: s.size,
+                })
                 .collect();
             let count = items.len();
             let _ = send_response_split(tx, Response::ScriptList { scripts: items }).await;
             format!("{} script(s) in ~/.daemoneye/scripts/", count)
         }
 
-        PendingCall::ReadScript { script_name, .. } => {
-            match scripts::read_script(script_name) {
-                Ok(content) => content,
-                Err(e) => format!("Error reading script '{}': {}", script_name, e),
-            }
-        }
+        PendingCall::ReadScript { script_name, .. } => match scripts::read_script(script_name) {
+            Ok(content) => content,
+            Err(e) => format!("Error reading script '{}': {}", script_name, e),
+        },
 
-        PendingCall::WatchPane { pane_id, timeout_secs, pattern, .. } => {
+        PendingCall::WatchPane {
+            pane_id,
+            timeout_secs,
+            pattern,
+            ..
+        } => {
             // Sample the current foreground command so we know when the shell returns to a prompt.
             let initial_cmd = tmux::pane_current_command(pane_id).unwrap_or_default();
 
             // Install a pane-title-changed hook as a fast-path IPC signal.
             let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let hook_name = format!("pane-title-changed[@de_wp_{}]", hook_idx);
-            let current_exe = std::env::current_exe()
-                .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
+            let current_exe =
+                std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
             let notify_cmd = format!(
                 "run-shell -b '{} notify activity {} 0 \"{}\"'",
-                current_exe.display(), pane_id, shell_escape_arg(session_name)
+                current_exe.display(),
+                pane_id,
+                shell_escape_arg(session_name)
             );
             let _ = std::process::Command::new("tmux")
                 .args(["set-hook", "-t", pane_id, &hook_name, &notify_cmd])
@@ -1165,22 +1425,30 @@ pub async fn execute_tool_call(
             let timeout = Duration::from_secs(*timeout_secs);
             let pattern_owned = pattern.clone();
 
-            log::info!("watch_pane: monitoring {} (initial_cmd={:?}) for session {}", pane_id, initial_cmd, session_id_owned);
-            log_event("watch_pane", serde_json::json!({
-                "session": session_id_owned,
-                "pane_id": pane_id,
-                "pattern": pattern,
-                "status": "active"
-            }));
+            log::info!(
+                "watch_pane: monitoring {} (initial_cmd={:?}) for session {}",
+                pane_id,
+                initial_cmd,
+                session_id_owned
+            );
+            log_event(
+                "watch_pane",
+                serde_json::json!({
+                    "session": session_id_owned,
+                    "pane_id": pane_id,
+                    "pattern": pattern,
+                    "status": "active"
+                }),
+            );
 
             tokio::spawn(async move {
                 let slow_poll = Duration::from_millis(500);
                 let start_wait = Duration::from_secs(5);
 
                 // Pre-compile pattern regex once so the watch loop doesn't recompile each tick.
-                let pattern_re = pattern_owned.as_deref().and_then(|p| {
-                    regex::RegexBuilder::new(p).size_limit(1 << 20).build().ok()
-                });
+                let pattern_re = pattern_owned
+                    .as_deref()
+                    .and_then(|p| regex::RegexBuilder::new(p).size_limit(1 << 20).build().ok());
 
                 let completed = tokio::time::timeout(timeout, async {
                     if let Some(ref re) = pattern_re {
@@ -1294,7 +1562,11 @@ pub async fn execute_tool_call(
                         }
                     }
                 }
-                log::info!("watch_pane {}: {}", pane_id_owned, if completed { "completed" } else { "timed out" });
+                log::info!(
+                    "watch_pane {}: {}",
+                    pane_id_owned,
+                    if completed { "completed" } else { "timed out" }
+                );
             });
 
             if let Some(pat) = pattern {
@@ -1314,16 +1586,23 @@ pub async fn execute_tool_call(
             }
         }
 
-        PendingCall::ReadFile { path, offset, limit, pattern, target_pane, .. } => {
+        PendingCall::ReadFile {
+            path,
+            offset,
+            limit,
+            pattern,
+            target_pane,
+            ..
+        } => {
             // Reject path traversal attempts.
             if path.contains("..") {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: path must not contain '..'.".to_string()
+                    "Error: path must not contain '..'.".to_string(),
                 ));
             }
             if !std::path::Path::new(path.as_str()).is_absolute() {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: path must be absolute (e.g. /var/log/syslog).".to_string()
+                    "Error: path must be absolute (e.g. /var/log/syslog).".to_string(),
                 ));
             }
 
@@ -1337,7 +1616,8 @@ pub async fn execute_tool_call(
                     return Ok(ToolCallOutcome::Result(
                         "Error: read_file cannot access the daemoneye configuration \
                          directory. Use the dedicated tools (read_script, read_runbook, \
-                         read_memory, list_memories, etc.) instead.".to_string()
+                         read_memory, list_memories, etc.) instead."
+                            .to_string(),
                     ));
                 }
             }
@@ -1353,17 +1633,19 @@ pub async fn execute_tool_call(
             // ── Target-pane path: run sed/grep in target_pane ─────────────────
             if let Some(pane) = target_pane {
                 let start = offset_n + 1;
-                let end   = offset_n + limit_n;
+                let end = offset_n + limit_n;
 
                 // N12: if the target pane is LOCAL use load-buffer/save-buffer to
                 // bypass the 600-line scrollback cap.  SSH/mosh panes fall back to
                 // the capture_pane-based approach.
                 let (content, is_remote) = if get_pane_remote_host(pane).is_none() {
-                    let raw = match local_read_via_buffer(pane, path, start, end,
-                                                          pattern.as_deref()).await {
-                        Ok(s) => s,
-                        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
-                    };
+                    let raw =
+                        match local_read_via_buffer(pane, path, start, end, pattern.as_deref())
+                            .await
+                        {
+                            Ok(s) => s,
+                            Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+                        };
                     (raw, false)
                 } else {
                     let cmd = build_remote_read_cmd(path, start, end, pattern.as_deref());
@@ -1377,9 +1659,10 @@ pub async fn execute_tool_call(
                 };
 
                 if content.trim().is_empty() {
-                    return Ok(ToolCallOutcome::Result(
-                        format!("{}: no output (file may be empty or lines out of range)", path)
-                    ));
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "{}: no output (file may be empty or lines out of range)",
+                        path
+                    )));
                 }
                 let body = mask_sensitive(content.trim_end());
                 let label = if is_remote {
@@ -1405,9 +1688,12 @@ pub async fn execute_tool_call(
                 .unwrap_or_else(|_| std::path::PathBuf::from(path.as_str()));
             let raw = match std::fs::read_to_string(&real_path) {
                 Ok(s) => s,
-                Err(e) => return Ok(ToolCallOutcome::Result(
-                    format!("Error reading {}: {}", path, e)
-                )),
+                Err(e) => {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Error reading {}: {}",
+                        path, e
+                    )));
+                }
             };
 
             let all_lines: Vec<&str> = raw.lines().collect();
@@ -1419,51 +1705,69 @@ pub async fn execute_tool_call(
             let filtered: Vec<&str> = if let Some(pat) = pattern {
                 match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
                     Ok(re) => limited.into_iter().filter(|l| re.is_match(l)).collect(),
-                    Err(e) => return Ok(ToolCallOutcome::Result(
-                        format!("Error: invalid pattern regex: {}", e)
-                    )),
+                    Err(e) => {
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Error: invalid pattern regex: {}",
+                            e
+                        )));
+                    }
                 }
             } else {
                 limited
             };
 
             if filtered.is_empty() {
-                return Ok(ToolCallOutcome::Result(
-                    format!("{}: no lines matched (total {} lines in file)", path, total)
-                ));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "{}: no lines matched (total {} lines in file)",
+                    path, total
+                )));
             }
 
             let body = mask_sensitive(&filtered.join("\n"));
             if pattern.is_some() {
                 format!(
                     "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
-                    path, filtered.len(), offset_n + 1,
-                    (offset_n + limited_len).min(total), total, body
+                    path,
+                    filtered.len(),
+                    offset_n + 1,
+                    (offset_n + limited_len).min(total),
+                    total,
+                    body
                 )
             } else {
                 format!(
                     "{} (lines {}-{} of {}):\n{}",
-                    path, offset_n + 1,
-                    (offset_n + filtered.len()).min(total), total, body
+                    path,
+                    offset_n + 1,
+                    (offset_n + filtered.len()).min(total),
+                    total,
+                    body
                 )
             }
         }
 
-        PendingCall::EditFile { id, path, old_string, new_string, target_pane, .. } => {
+        PendingCall::EditFile {
+            id,
+            path,
+            old_string,
+            new_string,
+            target_pane,
+            ..
+        } => {
             // Reject path traversal.
             if path.contains("..") {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: path must not contain '..'.".to_string()
+                    "Error: path must not contain '..'.".to_string(),
                 ));
             }
             if !std::path::Path::new(path.as_str()).is_absolute() {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: path must be absolute.".to_string()
+                    "Error: path must be absolute.".to_string(),
                 ));
             }
             if old_string.is_empty() {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: old_string cannot be empty.".to_string()
+                    "Error: old_string cannot be empty.".to_string(),
                 ));
             }
 
@@ -1477,7 +1781,8 @@ pub async fn execute_tool_call(
                     return Ok(ToolCallOutcome::Result(
                         "Error: edit_file cannot access the daemoneye configuration \
                          directory. Use the dedicated tools (write_script, write_runbook, \
-                         add_memory, etc.) instead.".to_string()
+                         add_memory, etc.) instead."
+                            .to_string(),
                     ));
                 }
             }
@@ -1489,9 +1794,10 @@ pub async fn execute_tool_call(
                     "edit_file {}\n--- old\n{}\n+++ new\n{}",
                     location, old_string, new_string
                 );
-                if let Some(outcome) = prompt_and_await_approval(
-                    id, &approval_cmd, false, None, session_id, tx, rx
-                ).await? {
+                if let Some(outcome) =
+                    prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
+                        .await?
+                {
                     return Ok(outcome);
                 }
 
@@ -1504,24 +1810,31 @@ pub async fn execute_tool_call(
                 // Look for DE_OK or DE_ERROR in the captured output.
                 for line in snap.lines().rev() {
                     if line.contains("DE_OK:") {
-                        log_event("file_edit", serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "path": path,
-                            "remote_pane": pane,
-                        }));
-                        return Ok(ToolCallOutcome::Result(
-                            format!("Edited {} via pane {}.", path, pane)
-                        ));
+                        log_event(
+                            "file_edit",
+                            serde_json::json!({
+                                "session": session_id.unwrap_or("-"),
+                                "path": path,
+                                "remote_pane": pane,
+                            }),
+                        );
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Edited {} via pane {}.",
+                            path, pane
+                        )));
                     }
                     if line.contains("DE_ERROR:") {
-                        return Ok(ToolCallOutcome::Result(
-                            format!("Error editing {}: {}", path, line.trim())
-                        ));
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Error editing {}: {}",
+                            path,
+                            line.trim()
+                        )));
                     }
                 }
-                return Ok(ToolCallOutcome::Result(
-                    format!("Edit command completed but result was unclear. Check {} manually.", path)
-                ));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Edit command completed but result was unclear. Check {} manually.",
+                    path
+                )));
             }
 
             // ── Local path: direct daemon-host filesystem edit ────────────────
@@ -1529,61 +1842,72 @@ pub async fn execute_tool_call(
             // cannot redirect the edit to an unintended location.
             let std_path = match std::fs::canonicalize(path.as_str()) {
                 Ok(p) => p,
-                Err(e) => return Ok(ToolCallOutcome::Result(
-                    format!("Error: cannot resolve path {}: {}", path, e)
-                )),
+                Err(e) => {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Error: cannot resolve path {}: {}",
+                        path, e
+                    )));
+                }
             };
             let original = match std::fs::read_to_string(&std_path) {
                 Ok(s) => s,
-                Err(e) => return Ok(ToolCallOutcome::Result(
-                    format!("Error reading {}: {}", path, e)
-                )),
+                Err(e) => {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Error reading {}: {}",
+                        path, e
+                    )));
+                }
             };
 
             let count = original.matches(old_string.as_str()).count();
             if count == 0 {
-                return Ok(ToolCallOutcome::Result(
-                    format!("Error: old_string not found in {}.", path)
-                ));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: old_string not found in {}.",
+                    path
+                )));
             }
             if count > 1 {
-                return Ok(ToolCallOutcome::Result(
-                    format!(
-                        "Error: old_string appears {} times in {}. \
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: old_string appears {} times in {}. \
                          Add more surrounding context to make it unique.",
-                        count, path
-                    )
-                ));
+                    count, path
+                )));
             }
 
             let approval_cmd = format!(
                 "edit_file {}\n--- old\n{}\n+++ new\n{}",
                 path, old_string, new_string
             );
-            if let Some(outcome) = prompt_and_await_approval(
-                id, &approval_cmd, false, None, session_id, tx, rx
-            ).await? {
+            if let Some(outcome) =
+                prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
+                    .await?
+            {
                 return Ok(outcome);
             }
 
             let updated = original.replacen(old_string.as_str(), new_string.as_str(), 1);
             let tmp_path = std_path.with_extension("de_tmp");
             if let Err(e) = std::fs::write(&tmp_path, &updated) {
-                return Ok(ToolCallOutcome::Result(
-                    format!("Error writing temp file: {}", e)
-                ));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error writing temp file: {}",
+                    e
+                )));
             }
             if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
                 let _ = std::fs::remove_file(&tmp_path);
-                return Ok(ToolCallOutcome::Result(
-                    format!("Error committing edit: {}", e)
-                ));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error committing edit: {}",
+                    e
+                )));
             }
 
-            log_event("file_edit", serde_json::json!({
-                "session": session_id.unwrap_or("-"),
-                "path": path,
-            }));
+            log_event(
+                "file_edit",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "path": path,
+                }),
+            );
 
             let old_lines = old_string.lines().count();
             let new_lines = new_string.lines().count();
@@ -1593,16 +1917,25 @@ pub async fn execute_tool_call(
             )
         }
 
-        PendingCall::WriteRunbook { id, name, content, .. } => {
-            send_response_split(tx, Response::RunbookWritePrompt {
-                id: id.clone(),
-                runbook_name: name.clone(),
-                content: content.clone(),
-            }).await?;
+        PendingCall::WriteRunbook {
+            id, name, content, ..
+        } => {
+            send_response_split(
+                tx,
+                Response::RunbookWritePrompt {
+                    id: id.clone(),
+                    runbook_name: name.clone(),
+                    content: content.clone(),
+                },
+            )
+            .await?;
 
             let mut line = String::new();
-            let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
-            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
+            let read_result =
+                tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) {
+                return Err(anyhow::anyhow!("EOF"));
+            }
             let approved = match read_result {
                 Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
                     Ok(Request::RunbookWriteResponse { approved, .. }) => approved,
@@ -1615,11 +1948,17 @@ pub async fn execute_tool_call(
                 match crate::runbook::write_runbook(name, content) {
                     Ok(()) => {
                         log::info!("Runbook '{}' written", name);
-                        log_event("runbook_write", serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "runbook": name,
-                        }));
-                        format!("Runbook '{}' written to ~/.daemoneye/runbooks/{}.md", name, name)
+                        log_event(
+                            "runbook_write",
+                            serde_json::json!({
+                                "session": session_id.unwrap_or("-"),
+                                "runbook": name,
+                            }),
+                        );
+                        format!(
+                            "Runbook '{}' written to ~/.daemoneye/runbooks/{}.md",
+                            name, name
+                        )
                     }
                     Err(e) => format!("Failed to write runbook: {}", e),
                 }
@@ -1630,21 +1969,29 @@ pub async fn execute_tool_call(
 
         PendingCall::DeleteRunbook { id, name, .. } => {
             // Check for active scheduled jobs that reference this runbook
-            let active_jobs: Vec<String> = schedule_store.list()
+            let active_jobs: Vec<String> = schedule_store
+                .list()
                 .into_iter()
                 .filter(|j| j.runbook.as_deref() == Some(name))
                 .map(|j| j.name)
                 .collect();
 
-            send_response_split(tx, Response::RunbookDeletePrompt {
-                id: id.clone(),
-                runbook_name: name.clone(),
-                active_jobs,
-            }).await?;
+            send_response_split(
+                tx,
+                Response::RunbookDeletePrompt {
+                    id: id.clone(),
+                    runbook_name: name.clone(),
+                    active_jobs,
+                },
+            )
+            .await?;
 
             let mut line = String::new();
-            let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
-            if matches!(read_result, Ok(Ok(0))) { return Err(anyhow::anyhow!("EOF")); }
+            let read_result =
+                tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) {
+                return Err(anyhow::anyhow!("EOF"));
+            }
             let approved = match read_result {
                 Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
                     Ok(Request::RunbookDeleteResponse { approved, .. }) => approved,
@@ -1657,10 +2004,13 @@ pub async fn execute_tool_call(
                 match crate::runbook::delete_runbook(name) {
                     Ok(()) => {
                         log::info!("Runbook '{}' deleted", name);
-                        log_event("runbook_delete", serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "runbook": name,
-                        }));
+                        log_event(
+                            "runbook_delete",
+                            serde_json::json!({
+                                "session": session_id.unwrap_or("-"),
+                                "runbook": name,
+                            }),
+                        );
                         format!("Runbook '{}' deleted", name)
                     }
                     Err(e) => format!("Failed to delete runbook: {}", e),
@@ -1670,24 +2020,37 @@ pub async fn execute_tool_call(
             }
         }
 
-        PendingCall::ReadRunbook { name, .. } => {
-            match crate::runbook::load_runbook(name) {
-                Ok(rb) => rb.content,
-                Err(e) => format!("Error reading runbook '{}': {}", name, e),
-            }
-        }
+        PendingCall::ReadRunbook { name, .. } => match crate::runbook::load_runbook(name) {
+            Ok(rb) => rb.content,
+            Err(e) => format!("Error reading runbook '{}': {}", name, e),
+        },
 
         PendingCall::ListRunbooks { .. } => {
             let items = crate::runbook::list_runbooks().unwrap_or_default();
             let count = items.len();
-            let runbook_items: Vec<RunbookListItem> = items.iter()
-                .map(|r| RunbookListItem { name: r.name.clone(), tags: r.tags.clone() })
+            let runbook_items: Vec<RunbookListItem> = items
+                .iter()
+                .map(|r| RunbookListItem {
+                    name: r.name.clone(),
+                    tags: r.tags.clone(),
+                })
                 .collect();
-            let _ = send_response_split(tx, Response::RunbookList { runbooks: runbook_items }).await;
+            let _ = send_response_split(
+                tx,
+                Response::RunbookList {
+                    runbooks: runbook_items,
+                },
+            )
+            .await;
             format!("{} runbook(s) in ~/.daemoneye/runbooks/", count)
         }
 
-        PendingCall::AddMemory { key, value, category, .. } => {
+        PendingCall::AddMemory {
+            key,
+            value,
+            category,
+            ..
+        } => {
             let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
                 return Ok(ToolCallOutcome::Result(format!(
                     "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
@@ -1701,12 +2064,15 @@ pub async fn execute_tool_call(
             }
             match crate::memory::add_memory(key, value, cat) {
                 Ok(()) => {
-                    log_event("memory_write", serde_json::json!({
-                        "session": session_id,
-                        "op": "add",
-                        "category": category,
-                        "key": key,
-                    }));
+                    log_event(
+                        "memory_write",
+                        serde_json::json!({
+                            "session": session_id,
+                            "op": "add",
+                            "category": category,
+                            "key": key,
+                        }),
+                    );
                     format!("Memory '{}' stored in {}", key, category)
                 }
                 Err(e) => format!("Error storing memory: {}", e),
@@ -1722,12 +2088,15 @@ pub async fn execute_tool_call(
             };
             match crate::memory::delete_memory(key, cat) {
                 Ok(()) => {
-                    log_event("memory_write", serde_json::json!({
-                        "session": session_id,
-                        "op": "delete",
-                        "category": category,
-                        "key": key,
-                    }));
+                    log_event(
+                        "memory_write",
+                        serde_json::json!({
+                            "session": session_id,
+                            "op": "delete",
+                            "category": category,
+                            "key": key,
+                        }),
+                    );
                     format!("Memory '{}' deleted from {}", key, category)
                 }
                 Err(e) => format!("Error deleting memory: {}", e),
@@ -1752,22 +2121,29 @@ pub async fn execute_tool_call(
                 None => None,
                 Some(s) => match crate::memory::MemoryCategory::from_str(s) {
                     Some(c) => Some(c),
-                    None => return Ok(ToolCallOutcome::Result(format!(
-                        "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
-                        s
-                    ))),
+                    None => {
+                        return Ok(ToolCallOutcome::Result(format!(
+                            "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+                            s
+                        )));
+                    }
                 },
             };
             let entries = crate::memory::list_memories(cat).unwrap_or_default();
             let count = entries.len();
-            let items: Vec<MemoryListItem> = entries.iter()
-                .map(|(c, k)| MemoryListItem { category: c.clone(), key: k.clone() })
+            let items: Vec<MemoryListItem> = entries
+                .iter()
+                .map(|(c, k)| MemoryListItem {
+                    category: c.clone(),
+                    key: k.clone(),
+                })
                 .collect();
             let _ = send_response_split(tx, Response::MemoryList { entries: items }).await;
             if count == 0 {
                 "No memory entries found.".to_string()
             } else {
-                let lines: Vec<String> = entries.iter()
+                let lines: Vec<String> = entries
+                    .iter()
                     .map(|(c, k)| format!("[{}] {}", c, k))
                     .collect();
                 format!("{} memory entries:\n{}", count, lines.join("\n"))
@@ -1779,35 +2155,49 @@ pub async fn execute_tool_call(
             crate::search::format_results(&results)
         }
 
-        PendingCall::GetTerminalContext { .. } => {
-            cache.get_labeled_context(chat_pane, chat_pane)
-        }
+        PendingCall::GetTerminalContext { .. } => cache.get_labeled_context(chat_pane, chat_pane),
 
         PendingCall::CloseBackgroundWindow { pane_id, .. } => {
             let Some(sid) = session_id else {
-                return Ok(ToolCallOutcome::Result("No active session — cannot close background window.".to_string()));
+                return Ok(ToolCallOutcome::Result(
+                    "No active session — cannot close background window.".to_string(),
+                ));
             };
             let (win_name, tmux_session, still_running) = {
                 let store = sessions.lock().unwrap_or_log();
                 let Some(entry) = store.get(sid) else {
                     return Ok(ToolCallOutcome::Result(format!(
-                        "Session '{}' not found.", sid
+                        "Session '{}' not found.",
+                        sid
                     )));
                 };
                 let Some(win) = entry.bg_windows.iter().find(|w| w.pane_id == *pane_id) else {
                     return Ok(ToolCallOutcome::Result(format!(
-                        "No background window with pane ID {} found in this session.", pane_id
+                        "No background window with pane ID {} found in this session.",
+                        pane_id
                     )));
                 };
-                (win.window_name.clone(), win.tmux_session.clone(), win.exit_code.is_none())
+                (
+                    win.window_name.clone(),
+                    win.tmux_session.clone(),
+                    win.exit_code.is_none(),
+                )
             };
 
             if still_running {
-                log::warn!("Agent closing still-running bg window {} (pane {})", win_name, pane_id);
+                log::warn!(
+                    "Agent closing still-running bg window {} (pane {})",
+                    win_name,
+                    pane_id
+                );
             }
 
             if let Err(e) = crate::tmux::kill_job_window(&tmux_session, &win_name) {
-                log::warn!("close_background_window: failed to kill {}: {}", win_name, e);
+                log::warn!(
+                    "close_background_window: failed to kill {}: {}",
+                    win_name,
+                    e
+                );
             }
 
             // Remove the entry from the session's bg_windows list.
@@ -1817,12 +2207,15 @@ pub async fn execute_tool_call(
                 }
             }
 
-            log_event("close_bg_window", serde_json::json!({
-                "session": sid,
-                "pane_id": pane_id,
-                "win_name": win_name,
-                "was_running": still_running,
-            }));
+            log_event(
+                "close_bg_window",
+                serde_json::json!({
+                    "session": sid,
+                    "pane_id": pane_id,
+                    "win_name": win_name,
+                    "was_running": still_running,
+                }),
+            );
 
             format!("Background window {} (pane {}) closed.", win_name, pane_id)
         }
@@ -1840,7 +2233,8 @@ pub async fn execute_tool_call(
 
             if rows.is_empty() {
                 return Ok(ToolCallOutcome::Result(format!(
-                    "No targetable panes found in session '{}'.", session
+                    "No targetable panes found in session '{}'.",
+                    session
                 )));
             }
 
@@ -1856,19 +2250,25 @@ pub async fn execute_tool_call(
                 .unwrap_or(0);
             for (id, state) in &rows {
                 // Title: omit when it's identical to the command (redundant).
-                let title_part = if !state.pane_title.is_empty() && state.pane_title != state.current_cmd {
-                    format!("  title:{}", mask_sensitive(&state.pane_title))
-                } else {
-                    String::new()
-                };
+                let title_part =
+                    if !state.pane_title.is_empty() && state.pane_title != state.current_cmd {
+                        format!("  title:{}", mask_sensitive(&state.pane_title))
+                    } else {
+                        String::new()
+                    };
                 // N5: show start command when it differs from current command.
-                let start_part = if !state.start_cmd.is_empty() && state.start_cmd != state.current_cmd {
-                    format!("  started:{}", state.start_cmd)
+                let start_part =
+                    if !state.start_cmd.is_empty() && state.start_cmd != state.current_cmd {
+                        format!("  started:{}", state.start_cmd)
+                    } else {
+                        String::new()
+                    };
+                let sync_part = if state.synchronized {
+                    "  [synchronized]"
                 } else {
-                    String::new()
+                    ""
                 };
-                let sync_part  = if state.synchronized { "  [synchronized]" } else { "" };
-                let dead_part  = if state.dead {
+                let dead_part = if state.dead {
                     format!("  [dead: {}]", state.dead_status.unwrap_or(0))
                 } else {
                     String::new()
@@ -1919,7 +2319,9 @@ mod tests {
 
     #[test]
     fn is_shell_prompt_recognises_common_shells() {
-        for sh in &["bash", "zsh", "fish", "sh", "ksh", "csh", "tcsh", "dash", "nu"] {
+        for sh in &[
+            "bash", "zsh", "fish", "sh", "ksh", "csh", "tcsh", "dash", "nu",
+        ] {
             assert!(is_shell_prompt(sh), "{sh} should be a shell prompt");
         }
     }
@@ -2036,7 +2438,10 @@ mod tests {
 
     #[test]
     fn read_file_default_reads_from_start() {
-        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let out = simulate_read_file(&content, None, None, None);
         assert!(out.starts_with("lines 1-10 of 10:"), "got: {out}");
         assert!(out.contains("line 1"));
@@ -2045,7 +2450,10 @@ mod tests {
 
     #[test]
     fn read_file_offset_skips_lines() {
-        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let out = simulate_read_file(&content, Some(5), None, None);
         assert!(out.starts_with("lines 5-10 of 10:"), "got: {out}");
         assert!(!out.contains("line 4"));
@@ -2054,7 +2462,10 @@ mod tests {
 
     #[test]
     fn read_file_limit_caps_output() {
-        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let out = simulate_read_file(&content, None, Some(3), None);
         assert!(out.starts_with("lines 1-3 of 10:"), "got: {out}");
         assert!(out.contains("line 3"));
@@ -2063,7 +2474,10 @@ mod tests {
 
     #[test]
     fn read_file_limit_capped_at_max() {
-        let content = (1..=10).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        let content = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         // limit=1000 > MAX_LINES=500, should clamp to all 10 lines here.
         let out = simulate_read_file(&content, None, Some(1000), None);
         assert!(out.contains("line 10"), "got: {out}");
@@ -2073,7 +2487,10 @@ mod tests {
     fn read_file_pattern_grep_mode_header() {
         let content = "alpha\nbeta\nalpha again\ngamma";
         let out = simulate_read_file(content, None, None, Some("alpha"));
-        assert!(out.starts_with("2 matching lines, searched lines 1-4 of 4:"), "got: {out}");
+        assert!(
+            out.starts_with("2 matching lines, searched lines 1-4 of 4:"),
+            "got: {out}"
+        );
         assert!(out.contains("alpha"));
         assert!(!out.contains("beta"));
         assert!(!out.contains("gamma"));
@@ -2090,6 +2507,9 @@ mod tests {
     fn read_file_offset_beyond_eof_returns_empty() {
         let content = "only one line";
         let out = simulate_read_file(content, Some(999), None, None);
-        assert!(out.contains("no lines matched") || out.contains("lines"), "got: {out}");
+        assert!(
+            out.contains("no lines matched") || out.contains("lines"),
+            "got: {out}"
+        );
     }
 }

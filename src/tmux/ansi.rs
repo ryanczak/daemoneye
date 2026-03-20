@@ -48,20 +48,20 @@ fn flush_span(out: &mut String, span_buf: &mut String, color: SpanColor) {
 /// All other CSI / OSC sequences (cursor movement, bold, underline, …) are
 /// stripped.  `\r\n` and lone `\r` are normalised to `\n`.
 pub(super) fn annotate_ansi(s: &str) -> String {
-    use std::sync::OnceLock;
     use regex::Regex;
+    use std::sync::OnceLock;
 
     // First branch captures SGR params (ESC [ <digits/semicolons> m).
     // Remaining branches match other escape sequences that should be stripped.
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         Regex::new(concat!(
-            r"\x1b\[([0-9;]*)m",                            // group 1: SGR
-            r"|\x1b\[[0-9;?<=>!]*[A-Za-z]",                // other CSI
-            r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?",        // OSC
-            r"|\x1b[PX\^_][^\x1b]*\x1b\\",                 // DCS/SOS/PM/APC
-            r"|\x1b[()][A-Za-z0-9]",                        // Charset
-            r"|\x1b.",                                       // lone ESC + 1 byte
+            r"\x1b\[([0-9;]*)m",                    // group 1: SGR
+            r"|\x1b\[[0-9;?<=>!]*[A-Za-z]",         // other CSI
+            r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?", // OSC
+            r"|\x1b[PX\^_][^\x1b]*\x1b\\",          // DCS/SOS/PM/APC
+            r"|\x1b[()][A-Za-z0-9]",                // Charset
+            r"|\x1b.",                              // lone ESC + 1 byte
         ))
         .expect("annotate_ansi regex is valid")
     });
@@ -140,10 +140,7 @@ mod tests {
 
     #[test]
     fn annotate_ansi_bright_red_becomes_error() {
-        assert_eq!(
-            annotate_ansi("\x1b[91mERROR\x1b[0m"),
-            "[ERROR: ERROR]"
-        );
+        assert_eq!(annotate_ansi("\x1b[91mERROR\x1b[0m"), "[ERROR: ERROR]");
     }
 
     #[test]

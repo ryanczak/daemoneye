@@ -1,10 +1,10 @@
-use crate::util::UnpoisonExt;
+use super::ansi::annotate_ansi;
 use crate::ai::filter::mask_sensitive;
 use crate::tmux;
+use crate::util::UnpoisonExt;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::RwLock;
-use super::ansi::annotate_ansi;
 
 /// Maximum bytes to read from the tail of a pipe log when using it as the
 /// active-pane content source (R1).
@@ -22,16 +22,24 @@ const PIPE_LOG_ROTATE_THRESHOLD: usize = 10 * 1024 * 1024; // 10 MB
 fn read_pipe_log(pane_id: &str) -> String {
     use std::io::{Read, Seek, SeekFrom, Write};
     let path = tmux::pipe_log_path(pane_id);
-    let Ok(mut file) = std::fs::File::open(&path) else { return String::new() };
-    let Ok(meta) = file.metadata() else { return String::new() };
+    let Ok(mut file) = std::fs::File::open(&path) else {
+        return String::new();
+    };
+    let Ok(meta) = file.metadata() else {
+        return String::new();
+    };
     let file_size = meta.len() as usize;
-    if file_size == 0 { return String::new(); }
+    if file_size == 0 {
+        return String::new();
+    }
     let offset = file_size.saturating_sub(PIPE_LOG_MAX_BYTES);
     if offset > 0 && file.seek(SeekFrom::Start(offset as u64)).is_err() {
         return String::new();
     }
     let mut buf = Vec::new();
-    if file.read_to_end(&mut buf).is_err() { return String::new(); }
+    if file.read_to_end(&mut buf).is_err() {
+        return String::new();
+    }
 
     // A7: rotate — if the file has grown beyond the threshold, truncate it to
     // just the tail we already hold. The tmux `cat` process keeps the file
@@ -39,15 +47,19 @@ fn read_pipe_log(pane_id: &str) -> String {
     if file_size > PIPE_LOG_ROTATE_THRESHOLD {
         drop(file);
         if let Ok(mut wfile) = std::fs::OpenOptions::new()
-            .write(true).truncate(true).open(&path)
+            .write(true)
+            .truncate(true)
+            .open(&path)
         {
             if let Err(e) = wfile.write_all(&buf) {
                 log::warn!("Failed to rotate pipe log {}: {}", path.display(), e);
             } else {
-                log::debug!("Rotated pipe log {} ({} MB → {} KB)",
+                log::debug!(
+                    "Rotated pipe log {} ({} MB → {} KB)",
                     path.display(),
                     file_size / (1024 * 1024),
-                    buf.len() / 1024);
+                    buf.len() / 1024
+                );
             }
         }
     }
@@ -169,7 +181,6 @@ impl SessionCache {
             *self.windows.write().unwrap_or_log() = wins;
         }
     }
-
 
     /// Refresh the cache.
     ///
@@ -299,7 +310,11 @@ impl SessionCache {
     /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
     /// background pane listing so the AI cannot accidentally target it with foreground
     /// commands.
-    pub fn get_labeled_context(&self, source_pane: Option<&str>, chat_pane: Option<&str>) -> String {
+    pub fn get_labeled_context(
+        &self,
+        source_pane: Option<&str>,
+        chat_pane: Option<&str>,
+    ) -> String {
         let mut out = String::new();
 
         // Window topology (P4) — prepend if session has ≥2 windows.
@@ -367,10 +382,25 @@ impl SessionCache {
             let (cwd, cmd, title, scroll_pos, in_copy_mode, pane_idx, window_name_for_active) = {
                 let panes = self.panes.read().unwrap_or_log();
                 if let Some(p) = panes.get(pane_id) {
-                    (p.current_path.clone(), p.current_cmd.clone(), p.pane_title.clone(),
-                     p.scroll_position, p.in_copy_mode, p.pane_index, p.window_name.clone())
+                    (
+                        p.current_path.clone(),
+                        p.current_cmd.clone(),
+                        p.pane_title.clone(),
+                        p.scroll_position,
+                        p.in_copy_mode,
+                        p.pane_index,
+                        p.window_name.clone(),
+                    )
                 } else {
-                    (String::new(), String::new(), String::new(), 0usize, false, 0usize, String::new())
+                    (
+                        String::new(),
+                        String::new(),
+                        String::new(),
+                        0usize,
+                        false,
+                        0usize,
+                        String::new(),
+                    )
                 }
             };
 
@@ -514,20 +544,22 @@ impl SessionCache {
             };
             // N4: annotate how recently the pane produced output.
             // Dead panes already show elapsed time in dead_part above.
-            let activity_part = if !state.dead && state.last_activity > 0 && now_secs >= state.last_activity {
-                let age = now_secs - state.last_activity;
-                if age < 30 {
-                    format!(" [active {}s ago]", age)
-                } else if age < 3600 {
-                    format!(" [idle {}m]", age / 60)
+            let activity_part =
+                if !state.dead && state.last_activity > 0 && now_secs >= state.last_activity {
+                    let age = now_secs - state.last_activity;
+                    if age < 30 {
+                        format!(" [active {}s ago]", age)
+                    } else if age < 3600 {
+                        format!(" [idle {}m]", age / 60)
+                    } else {
+                        format!(" [idle {}h{}m]", age / 3600, (age % 3600) / 60)
+                    }
                 } else {
-                    format!(" [idle {}h{}m]", age / 3600, (age % 3600) / 60)
-                }
-            } else {
-                String::new()
-            };
+                    String::new()
+                };
             // N5: show start_cmd when it differs from current_cmd (e.g. "ssh -t host bash" vs "bash").
-            let start_part = if !state.start_cmd.is_empty() && state.start_cmd != state.current_cmd {
+            let start_part = if !state.start_cmd.is_empty() && state.start_cmd != state.current_cmd
+            {
                 format!(" (started: {})", state.start_cmd)
             } else {
                 String::new()
@@ -646,17 +678,33 @@ mod tests {
         // Need at least one pane so output is non-empty.
         {
             let mut panes = c.panes.write().unwrap();
-            panes.insert("%1".to_string(), PaneState {
-                buffer: String::new(), summary: "shell".to_string(),
-                current_cmd: "bash".to_string(), current_path: "/home/user".to_string(),
-                pane_title: String::new(), last_updated: std::time::Instant::now(),
-                scroll_position: 0, history_size: 0, in_copy_mode: false,
-                synchronized: false, window_name: "main".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
-            });
+            panes.insert(
+                "%1".to_string(),
+                PaneState {
+                    buffer: String::new(),
+                    summary: "shell".to_string(),
+                    current_cmd: "bash".to_string(),
+                    current_path: "/home/user".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "main".to_string(),
+                    dead: false,
+                    dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
+                    pane_index: 0,
+                },
+            );
         }
         let ctx = c.get_labeled_context(None, None);
-        assert!(ctx.contains("[CLIENT VIEWPORT] 220x50"), "expected viewport block, got: {ctx}");
+        assert!(
+            ctx.contains("[CLIENT VIEWPORT] 220x50"),
+            "expected viewport block, got: {ctx}"
+        );
     }
 
     #[test]
@@ -665,17 +713,33 @@ mod tests {
         // Default is (0, 0) — no viewport block should appear.
         {
             let mut panes = c.panes.write().unwrap();
-            panes.insert("%1".to_string(), PaneState {
-                buffer: String::new(), summary: "shell".to_string(),
-                current_cmd: "bash".to_string(), current_path: "/home/user".to_string(),
-                pane_title: String::new(), last_updated: std::time::Instant::now(),
-                scroll_position: 0, history_size: 0, in_copy_mode: false,
-                synchronized: false, window_name: "main".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
-            });
+            panes.insert(
+                "%1".to_string(),
+                PaneState {
+                    buffer: String::new(),
+                    summary: "shell".to_string(),
+                    current_cmd: "bash".to_string(),
+                    current_path: "/home/user".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "main".to_string(),
+                    dead: false,
+                    dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
+                    pane_index: 0,
+                },
+            );
         }
         let ctx = c.get_labeled_context(None, None);
-        assert!(!ctx.contains("[CLIENT VIEWPORT]"), "viewport block should be absent when (0,0)");
+        assert!(
+            !ctx.contains("[CLIENT VIEWPORT]"),
+            "viewport block should be absent when (0,0)"
+        );
     }
 
     #[test]
@@ -987,9 +1051,15 @@ mod tests {
         }
         // %1 is source, %2 is chat — chat pane must not appear in background listing.
         let ctx = c.get_labeled_context(Some("%1"), Some("%2"));
-        assert!(!ctx.contains("[BACKGROUND PANE %2"), "chat pane should be excluded");
+        assert!(
+            !ctx.contains("[BACKGROUND PANE %2"),
+            "chat pane should be excluded"
+        );
         // Source pane also shouldn't be in background listing (existing behaviour).
-        assert!(!ctx.contains("[BACKGROUND PANE %1"), "source pane should be excluded too");
+        assert!(
+            !ctx.contains("[BACKGROUND PANE %1"),
+            "source pane should be excluded too"
+        );
     }
 
     #[test]
@@ -998,47 +1068,108 @@ mod tests {
         {
             let mut panes = c.panes.write().unwrap();
             // Chat pane — window "work".
-            panes.insert("%2".to_string(), PaneState {
-                buffer: String::new(), summary: String::new(),
-                current_cmd: "daemoneye".to_string(), current_path: String::new(),
-                pane_title: String::new(), last_updated: std::time::Instant::now(),
-                scroll_position: 0, history_size: 0, in_copy_mode: false,
-                synchronized: false, window_name: "work".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
-            });
+            panes.insert(
+                "%2".to_string(),
+                PaneState {
+                    buffer: String::new(),
+                    summary: String::new(),
+                    current_cmd: "daemoneye".to_string(),
+                    current_path: String::new(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "work".to_string(),
+                    dead: false,
+                    dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
+                    pane_index: 0,
+                },
+            );
             // Visible peer — same window as chat.
-            panes.insert("%3".to_string(), PaneState {
-                buffer: String::new(), summary: "shell".to_string(),
-                current_cmd: "bash".to_string(), current_path: "/home/user".to_string(),
-                pane_title: String::new(), last_updated: std::time::Instant::now(),
-                scroll_position: 0, history_size: 0, in_copy_mode: false,
-                synchronized: false, window_name: "work".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
-            });
+            panes.insert(
+                "%3".to_string(),
+                PaneState {
+                    buffer: String::new(),
+                    summary: "shell".to_string(),
+                    current_cmd: "bash".to_string(),
+                    current_path: "/home/user".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "work".to_string(),
+                    dead: false,
+                    dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
+                    pane_index: 0,
+                },
+            );
             // Daemon-launched background window.
-            panes.insert("%5".to_string(), PaneState {
-                buffer: String::new(), summary: "running".to_string(),
-                current_cmd: "bash".to_string(), current_path: "/tmp".to_string(),
-                pane_title: String::new(), last_updated: std::time::Instant::now(),
-                scroll_position: 0, history_size: 0, in_copy_mode: false,
-                synchronized: false, window_name: "de-bg-myjob".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
-            });
+            panes.insert(
+                "%5".to_string(),
+                PaneState {
+                    buffer: String::new(),
+                    summary: "running".to_string(),
+                    current_cmd: "bash".to_string(),
+                    current_path: "/tmp".to_string(),
+                    pane_title: String::new(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "de-bg-myjob".to_string(),
+                    dead: false,
+                    dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
+                    pane_index: 0,
+                },
+            );
             // User's session pane in a different window.
-            panes.insert("%7".to_string(), PaneState {
-                buffer: String::new(), summary: "ssh idle".to_string(),
-                current_cmd: "ssh".to_string(), current_path: "~".to_string(),
-                pane_title: "web01".to_string(), last_updated: std::time::Instant::now(),
-                scroll_position: 0, history_size: 0, in_copy_mode: false,
-                synchronized: false, window_name: "servers".to_string(),
-                dead: false, dead_status: None, last_activity: 0, start_cmd: String::new(), pane_index: 0,
-            });
+            panes.insert(
+                "%7".to_string(),
+                PaneState {
+                    buffer: String::new(),
+                    summary: "ssh idle".to_string(),
+                    current_cmd: "ssh".to_string(),
+                    current_path: "~".to_string(),
+                    pane_title: "web01".to_string(),
+                    last_updated: std::time::Instant::now(),
+                    scroll_position: 0,
+                    history_size: 0,
+                    in_copy_mode: false,
+                    synchronized: false,
+                    window_name: "servers".to_string(),
+                    dead: false,
+                    dead_status: None,
+                    last_activity: 0,
+                    start_cmd: String::new(),
+                    pane_index: 0,
+                },
+            );
         }
         // No source pane; chat pane is %2.
         let ctx = c.get_labeled_context(None, Some("%2"));
         assert!(!ctx.contains("%2"), "chat pane should be excluded entirely");
-        assert!(ctx.contains("[VISIBLE PANE %3"),   "peer in same window should be VISIBLE PANE");
-        assert!(ctx.contains("[BACKGROUND PANE %5"), "de-bg-* window should be BACKGROUND PANE");
-        assert!(ctx.contains("[SESSION PANE %7"),   "other user window should be SESSION PANE");
+        assert!(
+            ctx.contains("[VISIBLE PANE %3"),
+            "peer in same window should be VISIBLE PANE"
+        );
+        assert!(
+            ctx.contains("[BACKGROUND PANE %5"),
+            "de-bg-* window should be BACKGROUND PANE"
+        );
+        assert!(
+            ctx.contains("[SESSION PANE %7"),
+            "other user window should be SESSION PANE"
+        );
     }
 }

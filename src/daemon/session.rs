@@ -1,4 +1,3 @@
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -57,7 +56,6 @@ pub struct SessionEntry {
 /// Thread-safe, shared session store passed to every client handler.
 pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
 
-
 /// Maximum number of messages retained per session (in memory and on disk).
 pub const MAX_HISTORY: usize = 40;
 
@@ -72,26 +70,29 @@ pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(Stri
 /// Monotonically-incrementing counter used to generate unique `pane-title-changed`
 /// hook slot names (`@de_fg_N`) for concurrent foreground command executions.
 /// Using a counter avoids the timestamp-modulo collision risk.
-pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static FG_HOOK_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Monotonically-incrementing counter used to generate unique tmux buffer names
 /// (`de-rb-N`) for N12 local-pane file reads via `load-buffer`/`save-buffer`.
-pub static BUFFER_COUNTER: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static BUFFER_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn bg_done_subscribe() -> tokio::sync::broadcast::Receiver<String> {
     BG_DONE_TX
-        .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
+        .get_or_init(|| {
+            let (tx, _) = tokio::sync::broadcast::channel(32);
+            tx
+        })
         .subscribe()
 }
 
 pub fn complete_subscribe() -> tokio::sync::broadcast::Receiver<(String, i32)> {
     COMPLETE_TX
-        .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx })
+        .get_or_init(|| {
+            let (tx, _) = tokio::sync::broadcast::channel(32);
+            tx
+        })
         .subscribe()
 }
-
 
 /// Path to the JSONL file storing a session's message history.
 pub fn session_file(id: &str) -> std::path::PathBuf {
@@ -128,8 +129,8 @@ pub fn write_session_file(id: &str, messages: &[Message]) {
 /// This is the hot path — called once per new message during normal turns.
 /// Failures are logged at WARN and non-fatal.
 pub fn append_session_message(id: &str, msg: &Message) {
-    use std::io::Write;
     use std::fs::OpenOptions;
+    use std::io::Write;
     let path = session_file(id);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
         if let Ok(line) = serde_json::to_string(msg) {
@@ -188,7 +189,9 @@ pub fn trim_history(messages: Vec<Message>) -> Vec<Message> {
 /// tail messages.  Returns an empty Vec if the file does not exist or is unreadable.
 pub fn read_session_file(id: &str) -> Vec<Message> {
     let path = session_file(id);
-    let Ok(text) = std::fs::read_to_string(&path) else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     let msgs: Vec<Message> = text
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
@@ -200,18 +203,29 @@ pub fn read_session_file(id: &str) -> Vec<Message> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::Message;
 
     fn make_msg(role: &str, content: &str) -> Message {
-        Message { role: role.to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+        Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
     }
 
     fn make_history(n: usize) -> Vec<Message> {
-        (0..n).map(|i| make_msg(if i % 2 == 0 { "user" } else { "assistant" }, &format!("msg {i}"))).collect()
+        (0..n)
+            .map(|i| {
+                make_msg(
+                    if i % 2 == 0 { "user" } else { "assistant" },
+                    &format!("msg {i}"),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -222,14 +236,12 @@ mod tests {
         assert_eq!(out[0].content, "msg 0");
     }
 
-
     #[test]
     fn trim_history_at_exact_limit_unchanged() {
         let msgs = make_history(MAX_HISTORY);
         let out = trim_history(msgs);
         assert_eq!(out.len(), MAX_HISTORY);
     }
-
 
     #[test]
     fn trim_history_over_limit_bounded() {
@@ -238,14 +250,12 @@ mod tests {
         assert!(out.len() <= MAX_HISTORY);
     }
 
-
     #[test]
     fn trim_history_preserves_first_message() {
         let msgs = make_history(MAX_HISTORY + 5);
         let out = trim_history(msgs);
         assert_eq!(out[0].content, "msg 0");
     }
-
 
     #[test]
     fn trim_history_placeholder_is_assistant() {
@@ -256,7 +266,6 @@ mod tests {
         assert!(out[1].content.contains("trimmed"));
     }
 
-
     #[test]
     fn trim_history_tail_starts_on_user_turn() {
         // After [first, placeholder], the next message must be a user message
@@ -265,7 +274,6 @@ mod tests {
         let out = trim_history(msgs);
         assert_eq!(out[2].role, "user", "tail must start on a user message");
     }
-
 
     #[test]
     fn append_session_message_adds_lines() {
@@ -284,14 +292,19 @@ mod tests {
         let extra = make_msg("user", "how are you");
         // Call append_session_message via the session-file path directly.
         {
-            use std::io::Write;
             use std::fs::OpenOptions;
-            let mut f = OpenOptions::new().create(true).append(true).open(&path).unwrap();
+            use std::io::Write;
+            let mut f = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .unwrap();
             writeln!(f, "{}", serde_json::to_string(&extra).unwrap()).unwrap();
         }
         // Read back and verify all three messages are present.
         let text = std::fs::read_to_string(&path).unwrap();
-        let loaded: Vec<Message> = text.lines()
+        let loaded: Vec<Message> = text
+            .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
         assert_eq!(loaded.len(), 3);
@@ -308,10 +321,7 @@ mod tests {
         let dir = std::path::PathBuf::from("/tmp");
         let path = dir.join(format!("{}.jsonl", id));
 
-        let msgs = vec![
-            make_msg("user", "hello"),
-            make_msg("assistant", "hi there"),
-        ];
+        let msgs = vec![make_msg("user", "hello"), make_msg("assistant", "hi there")];
 
         // Replicate write_session_file logic with a known path.
         use std::io::Write;
@@ -322,7 +332,8 @@ mod tests {
 
         // Replicate read_session_file logic with the same path.
         let text = std::fs::read_to_string(&path).unwrap();
-        let loaded: Vec<Message> = text.lines()
+        let loaded: Vec<Message> = text
+            .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
 
@@ -333,8 +344,6 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
-
-
 }
 
 impl SessionEntry {
@@ -347,9 +356,20 @@ impl SessionEntry {
     /// agent forgot to close with `close_background_window`.
     pub fn gc_stale_bg_windows(&mut self, timeout: std::time::Duration) {
         let now = std::time::Instant::now();
-        let to_evict: Vec<(String, String, String)> = self.bg_windows.iter()
-            .filter(|w| w.completed_at.map_or(false, |t| now.duration_since(t) >= timeout))
-            .map(|w| (w.pane_id.clone(), w.window_name.clone(), w.tmux_session.clone()))
+        let to_evict: Vec<(String, String, String)> = self
+            .bg_windows
+            .iter()
+            .filter(|w| {
+                w.completed_at
+                    .map_or(false, |t| now.duration_since(t) >= timeout)
+            })
+            .map(|w| {
+                (
+                    w.pane_id.clone(),
+                    w.window_name.clone(),
+                    w.tmux_session.clone(),
+                )
+            })
             .collect();
         for (pane_id, win_name, tmux_session) in to_evict {
             log::info!("Auto-GC stale bg window {} (pane {})", win_name, pane_id);
@@ -365,7 +385,11 @@ impl SessionEntry {
     pub fn cleanup_bg_windows(&self) {
         for win in &self.bg_windows {
             if let Err(e) = crate::tmux::kill_job_window(&win.tmux_session, &win.window_name) {
-                log::warn!("GC bg window {} on session eviction: {}", win.window_name, e);
+                log::warn!(
+                    "GC bg window {} on session eviction: {}",
+                    win.window_name,
+                    e
+                );
             }
         }
         // R1: stop pipe-pane and remove the log file if one was started for this session.

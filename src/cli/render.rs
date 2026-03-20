@@ -1,6 +1,3 @@
-
-
-
 // ── Async stdin wrapper ───────────────────────────────────────────────────────
 
 /// Non-owning handle to fd 0 used with `AsyncFd`.  Does not close the fd on
@@ -11,13 +8,16 @@
 /// `body`     — lines of text to show inside; long lines are truncated with `…`
 /// `dim_body` — if true the body text is rendered dim (for captured output)
 pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
-    let w     = terminal_width().max(44);
+    let w = terminal_width().max(44);
     let inner = w - 2; // visible chars between corner glyphs
 
     // ── Top border: ╭─ title ────────────────────────────╮ ─────────────
     // Content between ╭ and ╮: "─ " (2) + title + " " (1) + fill×"─" + "─" (1) = inner
-    let fill  = inner.saturating_sub(visual_len(title) + 4);
-    println!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{title}\x1b[38;5;88m {}─╮\x1b[0m", "─".repeat(fill));
+    let fill = inner.saturating_sub(visual_len(title) + 4);
+    println!(
+        "\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{title}\x1b[38;5;88m {}─╮\x1b[0m",
+        "─".repeat(fill)
+    );
 
     // ── Body lines ──────────────────────────────────────────────────────
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
@@ -26,9 +26,13 @@ pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
             let vis = visual_len(&wrapped_line);
             let pad = " ".repeat(inner.saturating_sub(2 + vis));
             if dim_body {
-                println!("\x1b[38;5;88m\x1b[1m│\x1b[0m  \x1b[2m{wrapped_line}\x1b[0m{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m");
+                println!(
+                    "\x1b[38;5;88m\x1b[1m│\x1b[0m  \x1b[2m{wrapped_line}\x1b[0m{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m"
+                );
             } else {
-                println!("\x1b[38;5;88m\x1b[1m│\x1b[0m  {wrapped_line}{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m");
+                println!(
+                    "\x1b[38;5;88m\x1b[1m│\x1b[0m  {wrapped_line}{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m"
+                );
             }
         }
     }
@@ -46,7 +50,11 @@ fn local_user_host() -> String {
     let host = std::env::var("HOSTNAME").unwrap_or_default();
     // Strip domain suffix: `scrappy.local` → `scrappy`
     let host = host.split('.').next().unwrap_or("").to_string();
-    if host.is_empty() { user } else { format!("{}@{}", user, host) }
+    if host.is_empty() {
+        user
+    } else {
+        format!("{}@{}", user, host)
+    }
 }
 
 /// Render a user query as a bordered box in the chat history scroll region.
@@ -62,14 +70,17 @@ fn local_user_host() -> String {
 /// `context_window` — model context window in tokens (used to show % remaining)
 pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_window: u32) {
     use std::io::Write;
-    let w     = terminal_width().max(44);
+    let w = terminal_width().max(44);
     let inner = w - 2; // visible chars between corner glyphs
 
     // ── Top border: ╭─ matt@scrappy ──────────────────╮ ─────────────
     let identity = local_user_host();
     let tpart = format!("─ {} ", identity); // plain for visual_len
-    let fill  = inner.saturating_sub(visual_len(&tpart) + 1); // +1 for ─ before ╮
-    println!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{identity}\x1b[38;5;88m {}─╮\x1b[0m", "─".repeat(fill));
+    let fill = inner.saturating_sub(visual_len(&tpart) + 1); // +1 for ─ before ╮
+    println!(
+        "\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{identity}\x1b[38;5;88m {}─╮\x1b[0m",
+        "─".repeat(fill)
+    );
 
     // ── Body lines (word-wrap aware) ──────────────────────────────────
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
@@ -88,15 +99,17 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_wi
     } else {
         let pct_used = (prompt_tokens as f64 / context_window.max(1) as f64 * 100.0) as u32;
         let pct_left = 100u32.saturating_sub(pct_used);
-        let used_k   = prompt_tokens / 1000;
-        let win_k    = context_window / 1000;
+        let used_k = prompt_tokens / 1000;
+        let win_k = context_window / 1000;
         format!("{}k / {}k tokens · {}% remaining", used_k, win_k, pct_left)
     };
-    let label     = format!(" turn {} · {} ", turn, budget_label);
+    let label = format!(" turn {} · {} ", turn, budget_label);
     let label_vis = visual_len(&label);
-    let dashes    = inner.saturating_sub(label_vis + 1);
-    println!("\x1b[38;5;88m\x1b[1m╰{}\x1b[0m\x1b[38;5;136m{label}\x1b[38;5;88m\x1b[1m─╯\x1b[0m",
-        "─".repeat(dashes));
+    let dashes = inner.saturating_sub(label_vis + 1);
+    println!(
+        "\x1b[38;5;88m\x1b[1m╰{}\x1b[0m\x1b[38;5;136m{label}\x1b[38;5;88m\x1b[1m─╯\x1b[0m",
+        "─".repeat(dashes)
+    );
     std::io::stdout().flush().ok();
 }
 
@@ -110,7 +123,7 @@ pub fn wrap_line_hard(s: &str, width: usize) -> Vec<String> {
         let mut current_line = String::new();
         let mut current_vis = 0;
         let mut in_esc = false;
-        
+
         for ch in hard_line.chars() {
             current_line.push(ch);
             if in_esc {
@@ -140,7 +153,9 @@ pub fn visual_len(s: &str) -> usize {
     let mut in_esc = false;
     for ch in s.chars() {
         if in_esc {
-            if ch.is_ascii_alphabetic() { in_esc = false; }
+            if ch.is_ascii_alphabetic() {
+                in_esc = false;
+            }
         } else if ch == '\x1b' {
             in_esc = true;
         } else {
@@ -156,9 +171,7 @@ pub fn visual_len(s: &str) -> usize {
 pub fn terminal_width() -> usize {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0
-            && ws.ws_col > 1
-        {
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 1 {
             // Leave a 1-char right margin so text never touches the very edge.
             return (ws.ws_col as usize) - 1;
         }
@@ -175,9 +188,7 @@ pub fn terminal_width() -> usize {
 pub fn terminal_height() -> usize {
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0
-            && ws.ws_row > 2
-        {
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_row > 2 {
             return ws.ws_row as usize;
         }
     }
@@ -253,19 +264,26 @@ pub fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) 
 /// without disturbing the scroll-region cursor position.
 ///   row (height-2-n): ╭─ DaemonEye ─────────────────────── up 4m 12s ─╮
 ///   row (height-1):   ╰────────────────────────────────────────────────╯
-pub fn draw_input_frame_n(height: usize, width: usize, input_rows: usize, start: std::time::Instant) {
+pub fn draw_input_frame_n(
+    height: usize,
+    width: usize,
+    input_rows: usize,
+    start: std::time::Instant,
+) {
     use std::io::Write;
-    let border_top    = height.saturating_sub(2 + input_rows).max(1);
+    let border_top = height.saturating_sub(2 + input_rows).max(1);
     let border_bottom = height.saturating_sub(1).max(1);
     let inner = width.saturating_sub(2);
 
-    let user_host   = local_user_host();
-    let title_left  = format!("─ {} ─", user_host); // plain for visual_len
+    let user_host = local_user_host();
+    let title_left = format!("─ {} ─", user_host); // plain for visual_len
     let title_right = format!(" up {} ─", fmt_uptime(start.elapsed()));
-    let anchors     = visual_len(&title_left) + visual_len(&title_right);
+    let anchors = visual_len(&title_left) + visual_len(&title_right);
     let top = if inner >= anchors {
         let mid = "─".repeat(inner - anchors);
-        format!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m")
+        format!(
+            "\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m"
+        )
     } else {
         let dashes = "─".repeat(inner.saturating_sub(visual_len(&title_left)));
         format!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{dashes}╮\x1b[0m")
@@ -273,7 +291,10 @@ pub fn draw_input_frame_n(height: usize, width: usize, input_rows: usize, start:
 
     print!("\x1b7");
     print!("\x1b[{border_top};1H\x1b[2K{top}");
-    print!("\x1b[{border_bottom};1H\x1b[2K\x1b[38;5;88m\x1b[1m╰{}╯\x1b[0m", "─".repeat(inner));
+    print!(
+        "\x1b[{border_bottom};1H\x1b[2K\x1b[38;5;88m\x1b[1m╰{}╯\x1b[0m",
+        "─".repeat(inner)
+    );
     print!("\x1b8");
     std::io::stdout().flush().ok();
 }
@@ -323,8 +344,8 @@ pub fn draw_status_bar(
     };
 
     let token_str = if prompt_tokens > 0 && context_window > 0 {
-        let used_k   = (prompt_tokens + 500) / 1000;
-        let win_k    = (context_window + 500) / 1000;
+        let used_k = (prompt_tokens + 500) / 1000;
+        let win_k = (context_window + 500) / 1000;
         let pct_used = (prompt_tokens as u64 * 100 / context_window.max(1) as u64) as u32;
         let pct_left = 100u32.saturating_sub(pct_used);
         format!(" ·  {}k / {}k · {}% ", used_k, win_k, pct_left)
@@ -336,7 +357,10 @@ pub fn draw_status_bar(
     let hint_str = if approval_hint.is_empty() {
         String::new()
     } else if approval_hint.starts_with('⚡') {
-        format!(" ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ", approval_hint)
+        format!(
+            " ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ",
+            approval_hint
+        )
     } else {
         format!(" ·  \x1b[2m{}\x1b[0m ", approval_hint)
     };
@@ -363,10 +387,10 @@ pub fn draw_status_bar(
 
     let pad = " ".repeat(width.saturating_sub(vis));
 
-    print!("\x1b7");                    // DEC save cursor
-    print!("\x1b[{height};1H");        // move to status bar row
+    print!("\x1b7"); // DEC save cursor
+    print!("\x1b[{height};1H"); // move to status bar row
     print!("\x1b[2m{}{}\x1b[0m", out, pad);
-    print!("\x1b8");                    // DEC restore cursor
+    print!("\x1b8"); // DEC restore cursor
     std::io::stdout().flush().ok();
 }
 
@@ -392,7 +416,12 @@ struct WrapWriter {
 
 impl WrapWriter {
     fn new() -> Self {
-        Self { col: 0, pending: String::new(), space_before: false, tint: false }
+        Self {
+            col: 0,
+            pending: String::new(),
+            space_before: false,
+            tint: false,
+        }
     }
 
     /// Feed a streaming token into the writer.
@@ -484,9 +513,9 @@ fn render_inline(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let n = chars.len();
     let mut i = 0;
-    let mut in_bold   = false;
+    let mut in_bold = false;
     let mut in_italic = false;
-    let mut in_code   = false;
+    let mut in_code = false;
 
     while i < n {
         if in_code {
@@ -519,7 +548,7 @@ fn render_inline(input: &str) -> String {
             '*' => {
                 // Open italic only at a word boundary (preceded by space or
                 // start-of-string and followed by a non-space character).
-                let at_start    = i == 0 || chars[i - 1] == ' ';
+                let at_start = i == 0 || chars[i - 1] == ' ';
                 let next_is_txt = i + 1 < n && chars[i + 1] != ' ';
                 if in_italic {
                     out.push_str("\x1b[23m");
@@ -532,7 +561,10 @@ fn render_inline(input: &str) -> String {
                 }
                 i += 1;
             }
-            c => { out.push(c); i += 1; }
+            c => {
+                out.push(c);
+                i += 1;
+            }
         }
     }
 
@@ -546,69 +578,225 @@ fn render_inline(input: &str) -> String {
 
 #[derive(Copy, Clone)]
 enum CommentStyle {
-    Hash,         // #  (bash, python, yaml, ruby, dockerfile)
-    DoubleSlash,  // // (rust, js, go, java, c, c++)
-    DoubleDash,   // -- (sql, lua, haskell)
-    Semicolon,    // ;  (lisp, asm)
+    Hash,        // #  (bash, python, yaml, ruby, dockerfile)
+    DoubleSlash, // // (rust, js, go, java, c, c++)
+    DoubleDash,  // -- (sql, lua, haskell)
+    Semicolon,   // ;  (lisp, asm)
     None,
 }
 
 fn lang_keywords(lang: &str) -> &'static [&'static str] {
     match lang {
         "bash" | "sh" | "shell" | "zsh" | "fish" => &[
-            "if", "then", "else", "elif", "fi", "for", "in", "do", "done",
-            "while", "until", "case", "esac", "function", "return", "local",
-            "export", "readonly", "declare", "unset", "source", "echo", "printf",
-            "cd", "exit", "break", "continue", "shift", "set", "unsetopt",
+            "if", "then", "else", "elif", "fi", "for", "in", "do", "done", "while", "until",
+            "case", "esac", "function", "return", "local", "export", "readonly", "declare",
+            "unset", "source", "echo", "printf", "cd", "exit", "break", "continue", "shift", "set",
+            "unsetopt",
         ],
         "python" | "py" => &[
-            "False", "None", "True", "and", "as", "assert", "async", "await",
-            "break", "class", "continue", "def", "del", "elif", "else", "except",
-            "finally", "for", "from", "global", "if", "import", "in", "is",
-            "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
-            "while", "with", "yield",
+            "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class",
+            "continue", "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
+            "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
+            "return", "try", "while", "with", "yield",
         ],
         "rust" | "rs" => &[
-            "as", "async", "await", "break", "const", "continue", "crate", "dyn",
-            "else", "enum", "extern", "false", "fn", "for", "if", "impl", "in",
-            "let", "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
-            "self", "Self", "static", "struct", "super", "trait", "true", "type",
-            "union", "unsafe", "use", "where", "while",
+            "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+            "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod",
+            "move", "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super",
+            "trait", "true", "type", "union", "unsafe", "use", "where", "while",
         ],
         "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" => &[
-            "break", "case", "catch", "class", "const", "continue", "debugger",
-            "default", "delete", "do", "else", "export", "extends", "false",
-            "finally", "for", "function", "if", "import", "in", "instanceof",
-            "let", "new", "null", "return", "static", "super", "switch", "this",
-            "throw", "true", "try", "typeof", "undefined", "var", "void", "while",
-            "with", "yield", "async", "await", "of", "from", "type", "interface",
-            "enum", "implements", "readonly",
+            "break",
+            "case",
+            "catch",
+            "class",
+            "const",
+            "continue",
+            "debugger",
+            "default",
+            "delete",
+            "do",
+            "else",
+            "export",
+            "extends",
+            "false",
+            "finally",
+            "for",
+            "function",
+            "if",
+            "import",
+            "in",
+            "instanceof",
+            "let",
+            "new",
+            "null",
+            "return",
+            "static",
+            "super",
+            "switch",
+            "this",
+            "throw",
+            "true",
+            "try",
+            "typeof",
+            "undefined",
+            "var",
+            "void",
+            "while",
+            "with",
+            "yield",
+            "async",
+            "await",
+            "of",
+            "from",
+            "type",
+            "interface",
+            "enum",
+            "implements",
+            "readonly",
         ],
         "go" | "golang" => &[
-            "break", "case", "chan", "const", "continue", "default", "defer",
-            "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
-            "interface", "map", "package", "range", "return", "select", "struct",
-            "switch", "type", "var", "true", "false", "nil",
+            "break",
+            "case",
+            "chan",
+            "const",
+            "continue",
+            "default",
+            "defer",
+            "else",
+            "fallthrough",
+            "for",
+            "func",
+            "go",
+            "goto",
+            "if",
+            "import",
+            "interface",
+            "map",
+            "package",
+            "range",
+            "return",
+            "select",
+            "struct",
+            "switch",
+            "type",
+            "var",
+            "true",
+            "false",
+            "nil",
         ],
         "java" => &[
-            "abstract", "assert", "boolean", "break", "byte", "case", "catch",
-            "char", "class", "const", "continue", "default", "do", "double",
-            "else", "enum", "extends", "false", "final", "finally", "float",
-            "for", "goto", "if", "implements", "import", "instanceof", "int",
-            "interface", "long", "native", "new", "null", "package", "private",
-            "protected", "public", "return", "short", "static", "strictfp",
-            "super", "switch", "synchronized", "this", "throw", "throws",
-            "transient", "true", "try", "void", "volatile", "while",
+            "abstract",
+            "assert",
+            "boolean",
+            "break",
+            "byte",
+            "case",
+            "catch",
+            "char",
+            "class",
+            "const",
+            "continue",
+            "default",
+            "do",
+            "double",
+            "else",
+            "enum",
+            "extends",
+            "false",
+            "final",
+            "finally",
+            "float",
+            "for",
+            "goto",
+            "if",
+            "implements",
+            "import",
+            "instanceof",
+            "int",
+            "interface",
+            "long",
+            "native",
+            "new",
+            "null",
+            "package",
+            "private",
+            "protected",
+            "public",
+            "return",
+            "short",
+            "static",
+            "strictfp",
+            "super",
+            "switch",
+            "synchronized",
+            "this",
+            "throw",
+            "throws",
+            "transient",
+            "true",
+            "try",
+            "void",
+            "volatile",
+            "while",
         ],
         "sql" => &[
-            "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "INSERT", "INTO",
-            "VALUES", "UPDATE", "SET", "DELETE", "CREATE", "TABLE", "DROP",
-            "ALTER", "ADD", "COLUMN", "INDEX", "PRIMARY", "KEY", "FOREIGN",
-            "REFERENCES", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "ON",
-            "GROUP", "BY", "ORDER", "HAVING", "LIMIT", "OFFSET", "DISTINCT",
-            "AS", "IN", "IS", "NULL", "NOT", "EXISTS", "UNION", "ALL",
-            "CASE", "WHEN", "THEN", "ELSE", "END", "WITH", "RETURNING",
-            "CONSTRAINT", "UNIQUE", "DEFAULT", "AUTO_INCREMENT", "SERIAL",
+            "SELECT",
+            "FROM",
+            "WHERE",
+            "AND",
+            "OR",
+            "NOT",
+            "INSERT",
+            "INTO",
+            "VALUES",
+            "UPDATE",
+            "SET",
+            "DELETE",
+            "CREATE",
+            "TABLE",
+            "DROP",
+            "ALTER",
+            "ADD",
+            "COLUMN",
+            "INDEX",
+            "PRIMARY",
+            "KEY",
+            "FOREIGN",
+            "REFERENCES",
+            "JOIN",
+            "LEFT",
+            "RIGHT",
+            "INNER",
+            "OUTER",
+            "ON",
+            "GROUP",
+            "BY",
+            "ORDER",
+            "HAVING",
+            "LIMIT",
+            "OFFSET",
+            "DISTINCT",
+            "AS",
+            "IN",
+            "IS",
+            "NULL",
+            "NOT",
+            "EXISTS",
+            "UNION",
+            "ALL",
+            "CASE",
+            "WHEN",
+            "THEN",
+            "ELSE",
+            "END",
+            "WITH",
+            "RETURNING",
+            "CONSTRAINT",
+            "UNIQUE",
+            "DEFAULT",
+            "AUTO_INCREMENT",
+            "SERIAL",
         ],
         _ => &[],
     }
@@ -616,20 +804,12 @@ fn lang_keywords(lang: &str) -> &'static [&'static str] {
 
 fn lang_comment_style(lang: &str) -> CommentStyle {
     match lang {
-        "bash" | "sh" | "shell" | "zsh" | "fish"
-        | "python" | "py"
-        | "ruby" | "rb"
-        | "yaml" | "yml"
-        | "toml"
-        | "dockerfile" | "docker" => CommentStyle::Hash,
+        "bash" | "sh" | "shell" | "zsh" | "fish" | "python" | "py" | "ruby" | "rb" | "yaml"
+        | "yml" | "toml" | "dockerfile" | "docker" => CommentStyle::Hash,
 
-        "rust" | "rs"
-        | "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx"
-        | "go" | "golang"
-        | "java"
-        | "c" | "cpp" | "c++" | "cc" | "h" | "hpp"
-        | "css" | "scss" | "sass"
-        | "swift" | "kotlin" | "scala" => CommentStyle::DoubleSlash,
+        "rust" | "rs" | "javascript" | "js" | "typescript" | "ts" | "jsx" | "tsx" | "go"
+        | "golang" | "java" | "c" | "cpp" | "c++" | "cc" | "h" | "hpp" | "css" | "scss"
+        | "sass" | "swift" | "kotlin" | "scala" => CommentStyle::DoubleSlash,
 
         "sql" | "lua" | "haskell" | "hs" => CommentStyle::DoubleDash,
 
@@ -682,11 +862,11 @@ fn highlight_code(line: &str, lang: Option<&str>) -> String {
     // Detect single-line comments that start at column 0 or after whitespace.
     // We check for comment prefix at the start of each "token" boundary.
     let comment_prefix: Option<&str> = match comment_style {
-        CommentStyle::Hash        => Some("#"),
+        CommentStyle::Hash => Some("#"),
         CommentStyle::DoubleSlash => Some("//"),
-        CommentStyle::DoubleDash  => Some("--"),
-        CommentStyle::Semicolon   => Some(";"),
-        CommentStyle::None        => None,
+        CommentStyle::DoubleDash => Some("--"),
+        CommentStyle::Semicolon => Some(";"),
+        CommentStyle::None => None,
     };
 
     // String quote char currently open (None = not in a string).
@@ -725,7 +905,9 @@ fn highlight_code(line: &str, lang: Option<&str>) -> String {
                 flush_word!();
                 out.push_str("\x1b[2m\x1b[3m"); // dim italic
                 // Emit the rest of the line as comment
-                for &c in &chars[i..] { out.push(c); }
+                for &c in &chars[i..] {
+                    out.push(c);
+                }
                 out.push_str("\x1b[0m");
                 return out;
             }
@@ -753,7 +935,9 @@ fn highlight_code(line: &str, lang: Option<&str>) -> String {
         if word.is_empty() && chars[i].is_ascii_digit() {
             // Collect the whole number token
             let mut num = String::new();
-            while i < len && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_') {
+            while i < len
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '.' || chars[i] == '_')
+            {
                 num.push(chars[i]);
                 i += 1;
             }
@@ -804,9 +988,9 @@ impl MarkdownRenderer {
         let mut wrap = WrapWriter::new();
         wrap.tint = true; // soft-white tint for AI prose
         Self {
-            line_buf:      String::new(),
+            line_buf: String::new(),
             in_code_block: false,
-            code_lang:     None,
+            code_lang: None,
             wrap,
         }
     }
@@ -815,9 +999,12 @@ impl MarkdownRenderer {
     pub fn feed(&mut self, token: &str) {
         for ch in token.chars() {
             match ch {
-                '\n' => { self.process_line(); self.line_buf.clear(); }
+                '\n' => {
+                    self.process_line();
+                    self.line_buf.clear();
+                }
                 '\r' => {}
-                _    => self.line_buf.push(ch),
+                _ => self.line_buf.push(ch),
             }
         }
     }
@@ -865,8 +1052,11 @@ impl MarkdownRenderer {
                 } else {
                     let label = format!(" {} ", lang);
                     let dashes = border.saturating_sub(2 + label.len());
-                    println!("\x1b[2m──\x1b[0m\x1b[33m{}\x1b[2m{}\x1b[0m",
-                             label, "─".repeat(dashes));
+                    println!(
+                        "\x1b[2m──\x1b[0m\x1b[33m{}\x1b[2m{}\x1b[0m",
+                        label,
+                        "─".repeat(dashes)
+                    );
                 }
                 self.code_lang = if lang.is_empty() { None } else { Some(lang) };
             }
@@ -916,10 +1106,7 @@ impl MarkdownRenderer {
         }
 
         // ── Bullet list (top-level and one level of indent) ───────────────
-        let bullet = if line.starts_with("- ")
-                     || line.starts_with("* ")
-                     || line.starts_with("+ ")
-        {
+        let bullet = if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
             Some((2usize, "\x1b[33m•\x1b[0m"))
         } else if line.starts_with("  - ") || line.starts_with("  * ") {
             Some((4usize, "  \x1b[2m◦\x1b[0m"))
@@ -942,7 +1129,9 @@ impl MarkdownRenderer {
         {
             let bytes = line.as_bytes();
             let mut j = 0;
-            while j < bytes.len() && bytes[j].is_ascii_digit() { j += 1; }
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
             if j > 0 && j + 1 < bytes.len() && bytes[j] == b'.' && bytes[j + 1] == b' ' {
                 self.wrap.flush();
                 let num = &line[..j];
@@ -983,4 +1172,3 @@ impl MarkdownRenderer {
         self.wrap.reset();
     }
 }
-

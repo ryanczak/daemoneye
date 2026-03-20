@@ -34,8 +34,19 @@ pub struct AiUsage {
 
 /// A tool call collected during AI streaming, to be executed after `Done`.
 pub enum PendingCall {
-    Foreground { id: String, thought_signature: Option<String>, cmd: String, target: Option<String> },
-    Background { id: String, thought_signature: Option<String>, cmd: String, _credential: Option<String>, retry_pane: Option<String> },
+    Foreground {
+        id: String,
+        thought_signature: Option<String>,
+        cmd: String,
+        target: Option<String>,
+    },
+    Background {
+        id: String,
+        thought_signature: Option<String>,
+        cmd: String,
+        _credential: Option<String>,
+        retry_pane: Option<String>,
+    },
     ScheduleCommand {
         id: String,
         thought_signature: Option<String>,
@@ -46,27 +57,122 @@ pub enum PendingCall {
         interval: Option<String>,
         runbook: Option<String>,
     },
-    ListSchedules { id: String, thought_signature: Option<String> },
-    CancelSchedule { id: String, thought_signature: Option<String>, job_id: String },
-    DeleteSchedule { id: String, thought_signature: Option<String>, job_id: String },
-    WriteScript { id: String, thought_signature: Option<String>, script_name: String, content: String },
-    ListScripts { id: String, thought_signature: Option<String> },
-    ReadScript { id: String, thought_signature: Option<String>, script_name: String },
-    WatchPane { id: String, thought_signature: Option<String>, pane_id: String, timeout_secs: u64, pattern: Option<String> },
-    ReadFile { id: String, thought_signature: Option<String>, path: String, offset: Option<u64>, limit: Option<u64>, pattern: Option<String>, target_pane: Option<String> },
-    EditFile { id: String, thought_signature: Option<String>, path: String, old_string: String, new_string: String, target_pane: Option<String> },
-    WriteRunbook { id: String, thought_signature: Option<String>, name: String, content: String },
-    DeleteRunbook { id: String, thought_signature: Option<String>, name: String },
-    ReadRunbook { id: String, thought_signature: Option<String>, name: String },
-    ListRunbooks { id: String, thought_signature: Option<String> },
-    AddMemory { id: String, thought_signature: Option<String>, key: String, value: String, category: String },
-    DeleteMemory { id: String, thought_signature: Option<String>, key: String, category: String },
-    ReadMemory { id: String, thought_signature: Option<String>, key: String, category: String },
-    ListMemories { id: String, thought_signature: Option<String>, category: Option<String> },
-    SearchRepository { id: String, thought_signature: Option<String>, query: String, kind: String },
-    GetTerminalContext { id: String, thought_signature: Option<String> },
-    ListPanes { id: String, thought_signature: Option<String> },
-    CloseBackgroundWindow { id: String, thought_signature: Option<String>, pane_id: String },
+    ListSchedules {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    CancelSchedule {
+        id: String,
+        thought_signature: Option<String>,
+        job_id: String,
+    },
+    DeleteSchedule {
+        id: String,
+        thought_signature: Option<String>,
+        job_id: String,
+    },
+    WriteScript {
+        id: String,
+        thought_signature: Option<String>,
+        script_name: String,
+        content: String,
+    },
+    ListScripts {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    ReadScript {
+        id: String,
+        thought_signature: Option<String>,
+        script_name: String,
+    },
+    WatchPane {
+        id: String,
+        thought_signature: Option<String>,
+        pane_id: String,
+        timeout_secs: u64,
+        pattern: Option<String>,
+    },
+    ReadFile {
+        id: String,
+        thought_signature: Option<String>,
+        path: String,
+        offset: Option<u64>,
+        limit: Option<u64>,
+        pattern: Option<String>,
+        target_pane: Option<String>,
+    },
+    EditFile {
+        id: String,
+        thought_signature: Option<String>,
+        path: String,
+        old_string: String,
+        new_string: String,
+        target_pane: Option<String>,
+    },
+    WriteRunbook {
+        id: String,
+        thought_signature: Option<String>,
+        name: String,
+        content: String,
+    },
+    DeleteRunbook {
+        id: String,
+        thought_signature: Option<String>,
+        name: String,
+    },
+    ReadRunbook {
+        id: String,
+        thought_signature: Option<String>,
+        name: String,
+    },
+    ListRunbooks {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    AddMemory {
+        id: String,
+        thought_signature: Option<String>,
+        key: String,
+        value: String,
+        category: String,
+    },
+    DeleteMemory {
+        id: String,
+        thought_signature: Option<String>,
+        key: String,
+        category: String,
+    },
+    ReadMemory {
+        id: String,
+        thought_signature: Option<String>,
+        key: String,
+        category: String,
+    },
+    ListMemories {
+        id: String,
+        thought_signature: Option<String>,
+        category: Option<String>,
+    },
+    SearchRepository {
+        id: String,
+        thought_signature: Option<String>,
+        query: String,
+        kind: String,
+    },
+    GetTerminalContext {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    ListPanes {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    CloseBackgroundWindow {
+        id: String,
+        thought_signature: Option<String>,
+        pane_id: String,
+    },
 }
 
 impl PendingCall {
@@ -265,7 +371,9 @@ impl PendingCall {
     /// Returns the canonical tool name for this call, used for per-turn rate limiting.
     pub fn tool_name(&self) -> &'static str {
         match self {
-            PendingCall::Foreground { .. } | PendingCall::Background { .. } => "run_terminal_command",
+            PendingCall::Foreground { .. } | PendingCall::Background { .. } => {
+                "run_terminal_command"
+            }
             PendingCall::ScheduleCommand { .. } => "schedule_command",
             PendingCall::ListSchedules { .. } => "list_schedules",
             PendingCall::CancelSchedule { .. } => "cancel_schedule",
@@ -296,7 +404,14 @@ impl PendingCall {
 pub enum AiEvent {
     Token(String),
     /// (id, cmd, background, target_pane, retry_in_pane, thought_signature)
-    ToolCall(String, String, bool, Option<String>, Option<String>, Option<String>),
+    ToolCall(
+        String,
+        String,
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
     ScheduleCommand {
         id: String,
         name: String,
@@ -307,27 +422,122 @@ pub enum AiEvent {
         runbook: Option<String>,
         thought_signature: Option<String>,
     },
-    ListSchedules { id: String, thought_signature: Option<String> },
-    CancelSchedule { id: String, job_id: String, thought_signature: Option<String> },
-    DeleteSchedule { id: String, job_id: String, thought_signature: Option<String> },
-    WriteScript { id: String, script_name: String, content: String, thought_signature: Option<String> },
-    ListScripts { id: String, thought_signature: Option<String> },
-    ReadScript { id: String, script_name: String, thought_signature: Option<String> },
-    WatchPane { id: String, pane_id: String, timeout_secs: u64, pattern: Option<String>, thought_signature: Option<String> },
-    ReadFile { id: String, path: String, offset: Option<u64>, limit: Option<u64>, pattern: Option<String>, target_pane: Option<String>, thought_signature: Option<String> },
-    EditFile { id: String, path: String, old_string: String, new_string: String, target_pane: Option<String>, thought_signature: Option<String> },
-    WriteRunbook { id: String, name: String, content: String, thought_signature: Option<String> },
-    DeleteRunbook { id: String, name: String, thought_signature: Option<String> },
-    ReadRunbook { id: String, name: String, thought_signature: Option<String> },
-    ListRunbooks { id: String, thought_signature: Option<String> },
-    AddMemory { id: String, key: String, value: String, category: String, thought_signature: Option<String> },
-    DeleteMemory { id: String, key: String, category: String, thought_signature: Option<String> },
-    ReadMemory { id: String, key: String, category: String, thought_signature: Option<String> },
-    ListMemories { id: String, category: Option<String>, thought_signature: Option<String> },
-    SearchRepository { id: String, query: String, kind: String, thought_signature: Option<String> },
-    GetTerminalContext { id: String, thought_signature: Option<String> },
-    ListPanes { id: String, thought_signature: Option<String> },
-    CloseBackgroundWindow { id: String, pane_id: String, thought_signature: Option<String> },
+    ListSchedules {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    CancelSchedule {
+        id: String,
+        job_id: String,
+        thought_signature: Option<String>,
+    },
+    DeleteSchedule {
+        id: String,
+        job_id: String,
+        thought_signature: Option<String>,
+    },
+    WriteScript {
+        id: String,
+        script_name: String,
+        content: String,
+        thought_signature: Option<String>,
+    },
+    ListScripts {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    ReadScript {
+        id: String,
+        script_name: String,
+        thought_signature: Option<String>,
+    },
+    WatchPane {
+        id: String,
+        pane_id: String,
+        timeout_secs: u64,
+        pattern: Option<String>,
+        thought_signature: Option<String>,
+    },
+    ReadFile {
+        id: String,
+        path: String,
+        offset: Option<u64>,
+        limit: Option<u64>,
+        pattern: Option<String>,
+        target_pane: Option<String>,
+        thought_signature: Option<String>,
+    },
+    EditFile {
+        id: String,
+        path: String,
+        old_string: String,
+        new_string: String,
+        target_pane: Option<String>,
+        thought_signature: Option<String>,
+    },
+    WriteRunbook {
+        id: String,
+        name: String,
+        content: String,
+        thought_signature: Option<String>,
+    },
+    DeleteRunbook {
+        id: String,
+        name: String,
+        thought_signature: Option<String>,
+    },
+    ReadRunbook {
+        id: String,
+        name: String,
+        thought_signature: Option<String>,
+    },
+    ListRunbooks {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    AddMemory {
+        id: String,
+        key: String,
+        value: String,
+        category: String,
+        thought_signature: Option<String>,
+    },
+    DeleteMemory {
+        id: String,
+        key: String,
+        category: String,
+        thought_signature: Option<String>,
+    },
+    ReadMemory {
+        id: String,
+        key: String,
+        category: String,
+        thought_signature: Option<String>,
+    },
+    ListMemories {
+        id: String,
+        category: Option<String>,
+        thought_signature: Option<String>,
+    },
+    SearchRepository {
+        id: String,
+        query: String,
+        kind: String,
+        thought_signature: Option<String>,
+    },
+    GetTerminalContext {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    ListPanes {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    CloseBackgroundWindow {
+        id: String,
+        pane_id: String,
+        thought_signature: Option<String>,
+    },
     Done(AiUsage),
     Error(String),
 }

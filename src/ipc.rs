@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 /// A snapshot of a single tmux pane, sent in `PaneSelectPrompt` so the client
 /// can display a numbered list for the user to choose from.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -127,29 +126,19 @@ pub enum Request {
     },
     /// Notify the daemon that the active window changed (`session-window-changed` hook, N2).
     /// Triggers a targeted window-list refresh so `[SESSION TOPOLOGY]` stays current.
-    NotifyWindowChanged {
-        session_name: String,
-    },
+    NotifyWindowChanged { session_name: String },
     /// Notify the daemon that a new tmux session was created (`after-new-session` hook, N14).
     /// The daemon installs per-session hooks for the new session automatically.
-    NotifySessionCreated {
-        session_name: String,
-    },
+    NotifySessionCreated { session_name: String },
     /// Notify the daemon that a tmux session was destroyed (`session-closed` hook, A6).
     /// The daemon cleans up bg windows and pipe-pane logs for that session.
-    NotifySessionClosed {
-        session_name: String,
-    },
+    NotifySessionClosed { session_name: String },
     /// Notify the daemon that a tmux client attached to a session (`client-attached` hook, N15).
     /// Clears any pending detach state so the catch-up brief is not shown.
-    NotifyClientAttached {
-        session_name: String,
-    },
+    NotifyClientAttached { session_name: String },
     /// Notify the daemon that a tmux client detached from a session (`client-detached` hook, N15).
     /// The daemon records the detach time; the next `Ask` will include a catch-up brief.
-    NotifyClientDetached {
-        session_name: String,
-    },
+    NotifyClientDetached { session_name: String },
     /// Notify the daemon that the attached terminal was resized (`client-resized` hook, N8).
     /// Updates the cached client viewport so the AI knows the current terminal dimensions.
     NotifyResize {
@@ -253,6 +242,12 @@ pub enum Response {
         schedule_count: usize,
         /// Circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
         circuit_state: String,
+        commands_executed: usize,
+        webhooks_received: usize,
+        runbooks_count: usize,
+        scripts_count: usize,
+        memory_items_count: usize,
+        recent_commands: Vec<String>,
     },
 }
 
@@ -376,7 +371,11 @@ mod tests {
             user_message: None,
         };
         match roundtrip_req(&req) {
-            Request::ToolCallResponse { id, approved, user_message } => {
+            Request::ToolCallResponse {
+                id,
+                approved,
+                user_message,
+            } => {
                 assert_eq!(id, "tc_1");
                 assert!(approved);
                 assert!(user_message.is_none());
@@ -393,10 +392,17 @@ mod tests {
             user_message: Some("don't do that, try a safer approach".to_string()),
         };
         match roundtrip_req(&req) {
-            Request::ToolCallResponse { id, approved, user_message } => {
+            Request::ToolCallResponse {
+                id,
+                approved,
+                user_message,
+            } => {
                 assert_eq!(id, "tc_2");
                 assert!(!approved);
-                assert_eq!(user_message.as_deref(), Some("don't do that, try a safer approach"));
+                assert_eq!(
+                    user_message.as_deref(),
+                    Some("don't do that, try a safer approach")
+                );
             }
             _ => panic!("wrong variant"),
         }
@@ -451,7 +457,9 @@ mod tests {
             session_name: "test_session".to_string(),
         };
         match roundtrip_req(&req) {
-            Request::NotifyComplete { pane_id, exit_code, .. } => {
+            Request::NotifyComplete {
+                pane_id, exit_code, ..
+            } => {
                 assert_eq!(pane_id, "%5");
                 assert_eq!(exit_code, 42);
             }
@@ -721,7 +729,9 @@ mod tests {
 
     #[test]
     fn request_notify_client_attached_roundtrip() {
-        let req = Request::NotifyClientAttached { session_name: "dev".to_string() };
+        let req = Request::NotifyClientAttached {
+            session_name: "dev".to_string(),
+        };
         match roundtrip_req(&req) {
             Request::NotifyClientAttached { session_name } => assert_eq!(session_name, "dev"),
             _ => panic!("wrong variant"),
@@ -730,7 +740,9 @@ mod tests {
 
     #[test]
     fn request_notify_client_detached_roundtrip() {
-        let req = Request::NotifyClientDetached { session_name: "staging".to_string() };
+        let req = Request::NotifyClientDetached {
+            session_name: "staging".to_string(),
+        };
         match roundtrip_req(&req) {
             Request::NotifyClientDetached { session_name } => assert_eq!(session_name, "staging"),
             _ => panic!("wrong variant"),
@@ -739,7 +751,9 @@ mod tests {
 
     #[test]
     fn request_notify_session_closed_roundtrip() {
-        let req = Request::NotifySessionClosed { session_name: "prod".to_string() };
+        let req = Request::NotifySessionClosed {
+            session_name: "prod".to_string(),
+        };
         match roundtrip_req(&req) {
             Request::NotifySessionClosed { session_name } => assert_eq!(session_name, "prod"),
             _ => panic!("wrong variant"),
@@ -748,9 +762,17 @@ mod tests {
 
     #[test]
     fn request_notify_resize_roundtrip() {
-        let req = Request::NotifyResize { width: 220, height: 50, session_name: "main".to_string() };
+        let req = Request::NotifyResize {
+            width: 220,
+            height: 50,
+            session_name: "main".to_string(),
+        };
         match roundtrip_req(&req) {
-            Request::NotifyResize { width, height, session_name } => {
+            Request::NotifyResize {
+                width,
+                height,
+                session_name,
+            } => {
                 assert_eq!(width, 220);
                 assert_eq!(height, 50);
                 assert_eq!(session_name, "main");
@@ -775,6 +797,12 @@ mod tests {
             socket_path: "/tmp/daemoneye.sock".to_string(),
             schedule_count: 3,
             circuit_state: "closed".to_string(),
+            commands_executed: 10,
+            webhooks_received: 5,
+            runbooks_count: 7,
+            scripts_count: 2,
+            memory_items_count: 4,
+            recent_commands: vec!["ls".to_string(), "date".to_string()],
         };
         match roundtrip_resp(&resp) {
             Response::DaemonStatus {
@@ -785,6 +813,12 @@ mod tests {
                 model,
                 schedule_count,
                 circuit_state,
+                commands_executed,
+                webhooks_received,
+                runbooks_count,
+                scripts_count,
+                memory_items_count,
+                recent_commands,
                 ..
             } => {
                 assert_eq!(uptime_secs, 3661);
@@ -794,6 +828,12 @@ mod tests {
                 assert_eq!(model, "claude-sonnet-4-6");
                 assert_eq!(schedule_count, 3);
                 assert_eq!(circuit_state, "closed");
+                assert_eq!(commands_executed, 10);
+                assert_eq!(webhooks_received, 5);
+                assert_eq!(runbooks_count, 7);
+                assert_eq!(scripts_count, 2);
+                assert_eq!(memory_items_count, 4);
+                assert_eq!(recent_commands.len(), 2);
             }
             _ => panic!("wrong variant"),
         }

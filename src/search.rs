@@ -31,16 +31,34 @@ pub fn search_repository(query: &str, kind: &str, context_lines: usize) -> Vec<S
             dirs.push((base.join("scripts"), "script".to_string()));
         }
         "memory" => {
-            dirs.push((base.join("memory").join("session"), "memory/session".to_string()));
-            dirs.push((base.join("memory").join("knowledge"), "memory/knowledge".to_string()));
-            dirs.push((base.join("memory").join("incidents"), "memory/incidents".to_string()));
+            dirs.push((
+                base.join("memory").join("session"),
+                "memory/session".to_string(),
+            ));
+            dirs.push((
+                base.join("memory").join("knowledge"),
+                "memory/knowledge".to_string(),
+            ));
+            dirs.push((
+                base.join("memory").join("incidents"),
+                "memory/incidents".to_string(),
+            ));
         }
         "all" => {
             dirs.push((base.join("runbooks"), "runbook".to_string()));
             dirs.push((base.join("scripts"), "script".to_string()));
-            dirs.push((base.join("memory").join("session"), "memory/session".to_string()));
-            dirs.push((base.join("memory").join("knowledge"), "memory/knowledge".to_string()));
-            dirs.push((base.join("memory").join("incidents"), "memory/incidents".to_string()));
+            dirs.push((
+                base.join("memory").join("session"),
+                "memory/session".to_string(),
+            ));
+            dirs.push((
+                base.join("memory").join("knowledge"),
+                "memory/knowledge".to_string(),
+            ));
+            dirs.push((
+                base.join("memory").join("incidents"),
+                "memory/incidents".to_string(),
+            ));
         }
         _ => {
             dirs.push((base.join("runbooks"), "runbook".to_string()));
@@ -105,8 +123,8 @@ fn search_dir(
         let lines: Vec<&str> = content.lines().collect();
 
         // Also match on filename
-        let name_matches = stem.to_lowercase().contains(query_lower)
-            || name.to_lowercase().contains(query_lower);
+        let name_matches =
+            stem.to_lowercase().contains(query_lower) || name.to_lowercase().contains(query_lower);
 
         if name_matches && results.len() < MAX_RESULTS {
             results.push(SearchResult {
@@ -266,27 +284,38 @@ mod tests {
     impl TmpHome {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let p = std::env::temp_dir()
-                .join(format!("de_srch_test_{}_{}", std::process::id(), n));
+            let p = std::env::temp_dir().join(format!("de_srch_test_{}_{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TmpHome(p)
         }
-        fn path(&self) -> &std::path::Path { &self.0 }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
     }
     impl Drop for TmpHome {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
-    fn temp_home() -> TmpHome { TmpHome::new() }
+    fn temp_home() -> TmpHome {
+        TmpHome::new()
+    }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
         let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
         let old = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", tmp.path()); }
+        unsafe {
+            env::set_var("HOME", tmp.path());
+        }
         f();
         match old {
-            Some(v) => unsafe { env::set_var("HOME", v); },
-            None => unsafe { env::remove_var("HOME"); },
+            Some(v) => unsafe {
+                env::set_var("HOME", v);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
         }
     }
 
@@ -301,7 +330,11 @@ mod tests {
 
             let results = search_repository("disk usage", "runbooks", 1);
             assert!(!results.is_empty());
-            assert!(results.iter().any(|r| r.matched_line.contains("disk usage")));
+            assert!(
+                results
+                    .iter()
+                    .any(|r| r.matched_line.contains("disk usage"))
+            );
         });
     }
 
@@ -342,7 +375,10 @@ mod tests {
 
             // Search only scripts — should not find the runbook match
             let results = search_repository("contains_needle", "scripts", 0);
-            assert!(results.is_empty(), "script search should not return runbook matches");
+            assert!(
+                results.is_empty(),
+                "script search should not return runbook matches"
+            );
 
             // Search runbooks — should find it
             let results = search_repository("contains_needle", "runbooks", 0);

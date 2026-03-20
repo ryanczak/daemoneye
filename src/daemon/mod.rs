@@ -1,34 +1,36 @@
-
+use crate::config::{Config, default_socket_path};
+use crate::ipc::{Request, Response};
+use crate::scheduler::ScheduleStore;
+use crate::tmux::cache::SessionCache;
 use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
-use std::time::Duration;
-use crate::ipc::{Request, Response};
-use crate::tmux::cache::SessionCache;
-use crate::config::{Config, default_socket_path};
-use crate::scheduler::ScheduleStore;
 
 /// Timestamp of when `run_daemon` started. Initialised once at daemon startup.
 static DAEMON_START: OnceLock<Instant> = OnceLock::new();
 
 /// Returns the number of seconds since the daemon started, or 0 before init.
 pub fn daemon_uptime_secs() -> u64 {
-    DAEMON_START.get().map(|t| t.elapsed().as_secs()).unwrap_or(0)
+    DAEMON_START
+        .get()
+        .map(|t| t.elapsed().as_secs())
+        .unwrap_or(0)
 }
 
-
-pub mod session;
-pub mod utils;
-pub mod server;
-pub mod executor;
 pub mod background;
+pub mod executor;
+pub mod server;
+pub mod session;
+pub mod stats;
+pub mod utils;
 
 /// Shared prefix for all daemon-managed tmux windows.  Used by the CLI to
 /// filter windows from `tmux list-windows` output.
@@ -38,9 +40,9 @@ pub const BG_WINDOW_PREFIX: &str = "de-bg-";
 /// Window-name prefix for scheduled-job windows (`de-sched-<ts>-<id>`).
 pub const SCHED_WINDOW_PREFIX: &str = "de-sched-";
 
+pub use server::*;
 pub use session::*;
 pub use utils::*;
-pub use server::*;
 
 /// Supervise a long-lived daemon task, restarting it with exponential backoff
 /// on panic or unexpected exit (A1).
@@ -51,11 +53,7 @@ pub use server::*;
 ///
 /// Backoff schedule: 1 s → 2 s → 4 s → 8 s → 16 s → 30 s (cap).
 /// The failure counter resets when a task runs stably for ≥ 60 s.
-pub async fn supervise<F, Fut>(
-    name: &'static str,
-    shutdown: Arc<AtomicBool>,
-    factory: F,
-)
+pub async fn supervise<F, Fut>(name: &'static str, shutdown: Arc<AtomicBool>, factory: F)
 where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -73,7 +71,10 @@ where
                 if shutdown.load(Ordering::Relaxed) {
                     return;
                 }
-                log::warn!("Supervised task '{}' exited unexpectedly — restarting.", name);
+                log::warn!(
+                    "Supervised task '{}' exited unexpectedly — restarting.",
+                    name
+                );
             }
             Err(e) if e.is_panic() => {
                 if shutdown.load(Ordering::Relaxed) {
@@ -88,7 +89,10 @@ where
                     "(non-string panic payload)".to_string()
                 };
                 log::error!("Supervised task '{}' panicked: {} — restarting.", name, msg);
-                log_event("task_panic", serde_json::json!({ "task": name, "msg": msg }));
+                log_event(
+                    "task_panic",
+                    serde_json::json!({ "task": name, "msg": msg }),
+                );
             }
             Err(_) => {
                 // Task was cancelled — expected during shutdown.
@@ -102,7 +106,12 @@ where
         }
 
         let delay = MAX_BACKOFF.min(Duration::from_secs(1u64 << attempt.min(4)));
-        log::info!("Restarting task '{}' in {:?} (attempt {}).", name, delay, attempt + 1);
+        log::info!(
+            "Restarting task '{}' in {:?} (attempt {}).",
+            name,
+            delay,
+            attempt + 1
+        );
         tokio::time::sleep(delay).await;
         attempt = attempt.saturating_add(1);
 
@@ -153,7 +162,11 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
         .args(["set-hook", "-t", session_name, "alert-bell", &bell_cmd])
         .output()
     {
-        log::warn!("Failed to register alert-bell hook for '{}': {}", session_name, e);
+        log::warn!(
+            "Failed to register alert-bell hook for '{}': {}",
+            session_name,
+            e
+        );
     }
 
     // pane-focus-in (N1): update active-pane cache instantly when focus moves.
@@ -165,7 +178,11 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
         .args(["set-hook", "-t", session_name, "pane-focus-in", &focus_cmd])
         .output()
     {
-        log::warn!("Failed to register pane-focus-in hook for '{}': {}", session_name, e);
+        log::warn!(
+            "Failed to register pane-focus-in hook for '{}': {}",
+            session_name,
+            e
+        );
     }
 
     // session-window-changed (N2): refresh window topology when the user switches windows.
@@ -174,10 +191,20 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
         hook_exe, escaped,
     );
     if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", session_name, "session-window-changed", &window_cmd])
+        .args([
+            "set-hook",
+            "-t",
+            session_name,
+            "session-window-changed",
+            &window_cmd,
+        ])
         .output()
     {
-        log::warn!("Failed to register session-window-changed hook for '{}': {}", session_name, e);
+        log::warn!(
+            "Failed to register session-window-changed hook for '{}': {}",
+            session_name,
+            e
+        );
     }
 
     // client-resized (N8): update cached viewport dimensions when the terminal is resized.
@@ -186,10 +213,20 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
         hook_exe, escaped,
     );
     if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", session_name, "client-resized", &resize_cmd])
+        .args([
+            "set-hook",
+            "-t",
+            session_name,
+            "client-resized",
+            &resize_cmd,
+        ])
         .output()
     {
-        log::warn!("Failed to register client-resized hook for '{}': {}", session_name, e);
+        log::warn!(
+            "Failed to register client-resized hook for '{}': {}",
+            session_name,
+            e
+        );
     }
 
     // session-closed (A6): clean up daemon state when this session is destroyed.
@@ -200,10 +237,20 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
         hook_exe, escaped,
     );
     if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", session_name, "session-closed", &closed_cmd])
+        .args([
+            "set-hook",
+            "-t",
+            session_name,
+            "session-closed",
+            &closed_cmd,
+        ])
         .output()
     {
-        log::warn!("Failed to register session-closed hook for '{}': {}", session_name, e);
+        log::warn!(
+            "Failed to register session-closed hook for '{}': {}",
+            session_name,
+            e
+        );
     }
 
     log::info!("Session hooks installed for: {}", session_name);
@@ -228,7 +275,10 @@ pub async fn daemon_is_running() -> bool {
 
     let mut line = String::new();
     match tokio::time::timeout(Duration::from_secs(2), rx.read_line(&mut line)).await {
-        Ok(Ok(_)) => matches!(serde_json::from_str::<Response>(line.trim()), Ok(Response::Ok)),
+        Ok(Ok(_)) => matches!(
+            serde_json::from_str::<Response>(line.trim()),
+            Ok(Response::Ok)
+        ),
         _ => false,
     }
 }
@@ -250,16 +300,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     // Initialise env_logger once.  DAEMONEYE_LOG=debug|info|warn|error controls verbosity.
     // Default is `info` which shows lifecycle events, connections, and command execution.
     // Color is disabled and a human-readable UTC timestamp is prepended to every line.
-    let _ = env_logger::Builder::from_env(
-        env_logger::Env::new().filter_or("DAEMONEYE_LOG", "info")
-    )
-    .write_style(env_logger::WriteStyle::Never)
-    .format(|buf, record| {
-        use std::io::Write;
-        let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
-        writeln!(buf, "{} {:5} {}", ts, record.level(), record.args())
-    })
-    .try_init();
+    let _ =
+        env_logger::Builder::from_env(env_logger::Env::new().filter_or("DAEMONEYE_LOG", "info"))
+            .write_style(env_logger::WriteStyle::Never)
+            .format(|buf, record| {
+                use std::io::Write;
+                let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+                writeln!(buf, "{} {:5} {}", ts, record.level(), record.args())
+            })
+            .try_init();
 
     if let Some(ref path) = log_file {
         let file = std::fs::OpenOptions::new()
@@ -328,7 +377,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         }
         _ => {}
     }
-    log::info!("Provider: {} / {}", startup_config.ai.provider, startup_config.ai.model);
+    log::info!(
+        "Provider: {} / {}",
+        startup_config.ai.provider,
+        startup_config.ai.model
+    );
 
     let initial_session = detect_session();
     match &initial_session {
@@ -339,12 +392,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         ),
     }
 
-    log_event("daemon_start", serde_json::json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "session": initial_session.as_deref().unwrap_or(""),
-        "pid":     std::process::id(),
-        "socket":  default_socket_path().display().to_string(),
-    }));
+    log_event(
+        "daemon_start",
+        serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "session": initial_session.as_deref().unwrap_or(""),
+            "pid":     std::process::id(),
+            "socket":  default_socket_path().display().to_string(),
+        }),
+    );
 
     let hook_exe_path = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
@@ -373,7 +429,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         .args(["set-hook", "-g", "after-new-session", &session_created_cmd])
         .output()
     {
-        log::warn!("Failed to register global tmux after-new-session hook: {}", e);
+        log::warn!(
+            "Failed to register global tmux after-new-session hook: {}",
+            e
+        );
     }
 
     // client-attached (N15): notify daemon when a terminal client re-attaches so it
@@ -409,20 +468,22 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
 
     // bg_session is the tmux session used for background/scheduled job windows.
     // Starts empty when started by systemd; adopted from the first connecting client.
-    let bg_session: Arc<Mutex<String>> = Arc::new(Mutex::new(
-        initial_session.clone().unwrap_or_default()
-    ));
+    let bg_session: Arc<Mutex<String>> =
+        Arc::new(Mutex::new(initial_session.clone().unwrap_or_default()));
 
-    let cache = Arc::new(SessionCache::new(
-        initial_session.as_deref().unwrap_or("")
-    ));
+    let cache = Arc::new(SessionCache::new(initial_session.as_deref().unwrap_or("")));
 
     // N7: seed the initial client viewport dimensions now that the cache exists.
     if let Some(ref sn) = initial_session {
         let (w, h) = crate::tmux::client_dimensions(sn);
         if w > 0 && h > 0 {
             cache.set_client_size(w, h);
-            log::info!("N7: initial client viewport {}x{} for session '{}'", w, h, sn);
+            log::info!(
+                "N7: initial client viewport {}x{} for session '{}'",
+                w,
+                h,
+                sn
+            );
         }
     }
 
@@ -432,31 +493,36 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
 
     log::info!("Cache poller started");
     let cache_sup = Arc::clone(&cache);
-    tokio::spawn(supervise("cache-poller", Arc::clone(&shutdown), move || {
-        let c = Arc::clone(&cache_sup);
-        async move {
-            loop {
-                if let Err(e) = c.refresh() {
-                    log::warn!("Failed to refresh tmux cache: {}", e);
-                    log_event("cache_refresh_error", serde_json::json!({ "error": e.to_string() }));
+    tokio::spawn(supervise(
+        "cache-poller",
+        Arc::clone(&shutdown),
+        move || {
+            let c = Arc::clone(&cache_sup);
+            async move {
+                loop {
+                    if let Err(e) = c.refresh() {
+                        log::warn!("Failed to refresh tmux cache: {}", e);
+                        log_event(
+                            "cache_refresh_error",
+                            serde_json::json!({ "error": e.to_string() }),
+                        );
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
-                tokio::time::sleep(Duration::from_secs(2)).await;
             }
-        }
-    }));
+        },
+    ));
 
     let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
 
     // Load or create the schedule store.
     let schedules_path = Config::schedules_path();
     let schedule_store = Arc::new(
-        ScheduleStore::load_or_create(schedules_path)
-            .unwrap_or_else(|e| {
-                log::warn!("Could not load schedules: {e}");
-                ScheduleStore::load_or_create(
-                    std::env::temp_dir().join("daemoneye_schedules.json")
-                ).expect("fallback schedule store")
-            })
+        ScheduleStore::load_or_create(schedules_path).unwrap_or_else(|e| {
+            log::warn!("Could not load schedules: {e}");
+            ScheduleStore::load_or_create(std::env::temp_dir().join("daemoneye_schedules.json"))
+                .expect("fallback schedule store")
+        }),
     );
 
     // Scheduler task: poll every second for due jobs.
@@ -507,37 +573,47 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
             }
         }));
         if startup_config.webhook.secret.is_empty() {
-            log::warn!("Webhook listener enabled on port {} — no auth (set webhook.secret in config.toml to require a Bearer token)", startup_config.webhook.port);
+            log::warn!(
+                "Webhook listener enabled on port {} — no auth (set webhook.secret in config.toml to require a Bearer token)",
+                startup_config.webhook.port
+            );
         } else {
-            log::info!("Webhook listener enabled on port {} — Bearer token auth required", startup_config.webhook.port);
+            log::info!(
+                "Webhook listener enabled on port {} — Bearer token auth required",
+                startup_config.webhook.port
+            );
         }
     }
 
     // Prune chat sessions idle for more than 30 minutes.
     let sessions_cleanup_sup = Arc::clone(&sessions);
-    tokio::spawn(supervise("session-cleanup", Arc::clone(&shutdown), move || {
-        let sessions_cleanup = Arc::clone(&sessions_cleanup_sup);
-        async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-                let now = Instant::now();
-                // Auto-GC timeout: 15 minutes after a background window completes.
-                const STALE_BG_TIMEOUT: Duration = Duration::from_secs(900);
-                let mut store = sessions_cleanup.lock().unwrap_or_log();
-                for (_, v) in store.iter_mut() {
-                    v.gc_stale_bg_windows(STALE_BG_TIMEOUT);
-                }
-                store.retain(|_, v| {
-                    if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
-                        v.cleanup_bg_windows();
-                        false
-                    } else {
-                        true
+    tokio::spawn(supervise(
+        "session-cleanup",
+        Arc::clone(&shutdown),
+        move || {
+            let sessions_cleanup = Arc::clone(&sessions_cleanup_sup);
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    let now = Instant::now();
+                    // Auto-GC timeout: 15 minutes after a background window completes.
+                    const STALE_BG_TIMEOUT: Duration = Duration::from_secs(900);
+                    let mut store = sessions_cleanup.lock().unwrap_or_log();
+                    for (_, v) in store.iter_mut() {
+                        v.gc_stale_bg_windows(STALE_BG_TIMEOUT);
                     }
-                });
+                    store.retain(|_, v| {
+                        if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
+                            v.cleanup_bg_windows();
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
             }
-        }
-    }));
+        },
+    ));
 
     let socket_path: PathBuf = default_socket_path();
 
@@ -553,8 +629,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     // socket path removes the symlink itself rather than its target (S3).
     match socket_path.symlink_metadata() {
         Ok(_) => {
-            std::fs::remove_file(&socket_path)
-                .context("Failed to remove stale socket file")?;
+            std::fs::remove_file(&socket_path).context("Failed to remove stale socket file")?;
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e).context("Failed to stat socket path"),
@@ -610,7 +685,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     let _ = std::fs::remove_file(&socket_path);
 
     // 2. Uninstall global tmux hooks so they don't fire against a dead daemon.
-    for hook in &["pane-died", "after-new-session", "client-attached", "client-detached"] {
+    for hook in &[
+        "pane-died",
+        "after-new-session",
+        "client-attached",
+        "client-detached",
+    ] {
         if let Err(e) = std::process::Command::new("tmux")
             .args(["set-hook", "-gu", hook])
             .output()
@@ -646,18 +726,22 @@ mod tests {
         let sd = Arc::clone(&shutdown);
         let cc = Arc::clone(&call_count);
 
-        let handle = tokio::spawn(supervise("test-restart", Arc::clone(&shutdown), move || {
-            let count = Arc::clone(&cc);
-            let sd2 = Arc::clone(&sd);
-            async move {
-                let n = count.fetch_add(1, Ordering::SeqCst);
-                if n == 0 {
-                    panic!("deliberate test panic");
+        let handle = tokio::spawn(supervise(
+            "test-restart",
+            Arc::clone(&shutdown),
+            move || {
+                let count = Arc::clone(&cc);
+                let sd2 = Arc::clone(&sd);
+                async move {
+                    let n = count.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        panic!("deliberate test panic");
+                    }
+                    // Second call: signal shutdown so the supervisor exits after us.
+                    sd2.store(true, Ordering::Relaxed);
                 }
-                // Second call: signal shutdown so the supervisor exits after us.
-                sd2.store(true, Ordering::Relaxed);
-            }
-        }));
+            },
+        ));
 
         // Advance time past the 1 s backoff so the supervisor restarts.
         tokio::time::advance(Duration::from_secs(2)).await;
@@ -681,16 +765,20 @@ mod tests {
         let sd = Arc::clone(&shutdown);
         let cc = Arc::clone(&call_count);
 
-        let handle = tokio::spawn(supervise("test-shutdown", Arc::clone(&shutdown), move || {
-            let count = Arc::clone(&cc);
-            let sd2 = Arc::clone(&sd);
-            async move {
-                count.fetch_add(1, Ordering::SeqCst);
-                // Signal shutdown before panicking — supervisor must not restart.
-                sd2.store(true, Ordering::Relaxed);
-                panic!("deliberate test panic");
-            }
-        }));
+        let handle = tokio::spawn(supervise(
+            "test-shutdown",
+            Arc::clone(&shutdown),
+            move || {
+                let count = Arc::clone(&cc);
+                let sd2 = Arc::clone(&sd);
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    // Signal shutdown before panicking — supervisor must not restart.
+                    sd2.store(true, Ordering::Relaxed);
+                    panic!("deliberate test panic");
+                }
+            },
+        ));
 
         handle.await.expect("supervisor should complete cleanly");
         assert_eq!(

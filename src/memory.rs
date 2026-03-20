@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 pub enum MemoryCategory {
@@ -80,13 +80,14 @@ fn parse_memory_tag_field(frontmatter: &str) -> Vec<String> {
 }
 
 fn memory_dir(category: &MemoryCategory) -> PathBuf {
-    crate::config::config_dir().join("memory").join(category.dir_name())
+    crate::config::config_dir()
+        .join("memory")
+        .join(category.dir_name())
 }
 
 fn ensure_memory_dir(category: &MemoryCategory) -> Result<()> {
     let dir = memory_dir(category);
-    std::fs::create_dir_all(&dir)
-        .with_context(|| format!("creating memory dir {}", dir.display()))
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating memory dir {}", dir.display()))
 }
 
 fn validate_memory_key(key: &str) -> Result<()> {
@@ -103,8 +104,7 @@ pub fn add_memory(key: &str, value: &str, category: MemoryCategory) -> Result<()
     validate_memory_key(key)?;
     ensure_memory_dir(&category)?;
     let path = memory_dir(&category).join(format!("{}.md", key));
-    std::fs::write(&path, value)
-        .with_context(|| format!("writing memory key '{}'", key))
+    std::fs::write(&path, value).with_context(|| format!("writing memory key '{}'", key))
 }
 
 pub fn delete_memory(key: &str, category: MemoryCategory) -> Result<()> {
@@ -175,7 +175,9 @@ pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<M
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let path = e.path();
-                if !path.is_file() { return None; }
+                if !path.is_file() {
+                    return None;
+                }
                 path.file_stem().map(|s| s.to_string_lossy().to_string())
             })
             .collect();
@@ -188,10 +190,7 @@ pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<M
             } else {
                 Vec::new()
             };
-            results.push(MemoryInfo {
-                key: name,
-                tags,
-            });
+            results.push(MemoryInfo { key: name, tags });
         }
     }
     Ok(results)
@@ -261,7 +260,11 @@ pub fn load_session_memory_block() -> String {
         body.push_str(&format!(
             "[{} session {} omitted due to size cap: {} — use read_memory to load individually]\n",
             omitted_keys.len(),
-            if omitted_keys.len() == 1 { "memory" } else { "memories" },
+            if omitted_keys.len() == 1 {
+                "memory"
+            } else {
+                "memories"
+            },
             omitted_keys.join(", ")
         ));
     }
@@ -281,27 +284,38 @@ mod tests {
     impl TmpHome {
         fn new() -> Self {
             let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let p = std::env::temp_dir()
-                .join(format!("de_mem_test_{}_{}", std::process::id(), n));
+            let p = std::env::temp_dir().join(format!("de_mem_test_{}_{}", std::process::id(), n));
             std::fs::create_dir_all(&p).unwrap();
             TmpHome(p)
         }
-        fn path(&self) -> &std::path::Path { &self.0 }
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
     }
     impl Drop for TmpHome {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
-    fn temp_home() -> TmpHome { TmpHome::new() }
+    fn temp_home() -> TmpHome {
+        TmpHome::new()
+    }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
         let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
         let old = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", tmp.path()); }
+        unsafe {
+            env::set_var("HOME", tmp.path());
+        }
         f();
         match old {
-            Some(v) => unsafe { env::set_var("HOME", v); },
-            None => unsafe { env::remove_var("HOME"); },
+            Some(v) => unsafe {
+                env::set_var("HOME", v);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
         }
     }
 
@@ -309,7 +323,12 @@ mod tests {
     fn add_and_read_memory() {
         let tmp = temp_home();
         with_home(&tmp, || {
-            add_memory("user_prefs", "Prefers verbose output", MemoryCategory::Session).unwrap();
+            add_memory(
+                "user_prefs",
+                "Prefers verbose output",
+                MemoryCategory::Session,
+            )
+            .unwrap();
             let val = read_memory("user_prefs", MemoryCategory::Session).unwrap();
             assert_eq!(val, "Prefers verbose output");
         });
@@ -359,11 +378,23 @@ mod tests {
                 "tagged-key",
                 "---\ntags: [postgres, production]\n---\nActual content",
                 MemoryCategory::Knowledge,
-            ).unwrap();
+            )
+            .unwrap();
             let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
-            let info = infos.iter().find(|m| m.key == "tagged-key").expect("key not found");
-            assert!(info.tags.contains(&"postgres".to_string()), "tag missing: {:?}", info.tags);
-            assert!(info.tags.contains(&"production".to_string()), "tag missing: {:?}", info.tags);
+            let info = infos
+                .iter()
+                .find(|m| m.key == "tagged-key")
+                .expect("key not found");
+            assert!(
+                info.tags.contains(&"postgres".to_string()),
+                "tag missing: {:?}",
+                info.tags
+            );
+            assert!(
+                info.tags.contains(&"production".to_string()),
+                "tag missing: {:?}",
+                info.tags
+            );
         });
     }
 
@@ -373,7 +404,10 @@ mod tests {
         with_home(&tmp, || {
             add_memory("plain-key", "Just plain content", MemoryCategory::Knowledge).unwrap();
             let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
-            let info = infos.iter().find(|m| m.key == "plain-key").expect("key not found");
+            let info = infos
+                .iter()
+                .find(|m| m.key == "plain-key")
+                .expect("key not found");
             assert!(info.tags.is_empty(), "expected no tags: {:?}", info.tags);
         });
     }
@@ -398,12 +432,23 @@ mod tests {
             // Write many large entries to exceed SESSION_MEMORY_CAP (32 768 bytes)
             for i in 0..50 {
                 let content = "x".repeat(1000);
-                add_memory(&format!("entry_{:02}", i), &content, MemoryCategory::Session).unwrap();
+                add_memory(
+                    &format!("entry_{:02}", i),
+                    &content,
+                    MemoryCategory::Session,
+                )
+                .unwrap();
             }
             let block = load_session_memory_block();
-            assert!(block.len() <= 32_768 + 200, "block should be capped near 32 KB");
+            assert!(
+                block.len() <= 32_768 + 200,
+                "block should be capped near 32 KB"
+            );
             assert!(block.contains("omitted"), "should mention omitted entries");
-            assert!(block.contains("entry_"), "should name at least one omitted key");
+            assert!(
+                block.contains("entry_"),
+                "should name at least one omitted key"
+            );
         });
     }
 }

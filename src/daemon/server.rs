@@ -1,26 +1,25 @@
-
+use crate::ai::filter::mask_sensitive;
+use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
+use crate::config::default_socket_path;
+use crate::config::{Config, load_named_prompt};
+use crate::daemon::background::notify_job_completion;
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
-use libc;
-use tokio::io::AsyncBufReadExt;
-use anyhow::Result;
-use std::sync::Arc;
-use std::time::Instant;
-use tokio::io::BufReader;
-use tokio::net::UnixStream;
-use std::time::Duration;
 use crate::ipc::{Request, Response};
-use crate::config::default_socket_path;
+use crate::runbook;
+use crate::scheduler::{ActionOn, ScheduleStore, ScheduledJob};
+use crate::scripts;
+use crate::sys_context::get_or_init_sys_context;
 use crate::tmux;
 use crate::tmux::cache::SessionCache;
-use crate::ai::{make_client, AiEvent, Message, ToolResult, PendingCall};
-use crate::ai::filter::mask_sensitive;
-use crate::config::{Config, load_named_prompt};
-use crate::sys_context::get_or_init_sys_context;
-use crate::scheduler::{ActionOn, ScheduledJob, ScheduleStore};
-use crate::runbook;
-use crate::scripts;
-use crate::daemon::background::notify_job_completion;
+use anyhow::Result;
+use libc;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
+use tokio::net::UnixStream;
 
 /// Build the N15 catch-up brief from messages injected while the client was away.
 ///
@@ -32,24 +31,31 @@ use crate::daemon::background::notify_job_completion;
 /// crafted hook payloads cannot inject escape sequences or unexpected strings
 /// into the cache or broadcast channels.
 fn is_valid_pane_id(id: &str) -> bool {
-    id.starts_with('%')
-        && id.len() > 1
-        && id[1..].bytes().all(|b| b.is_ascii_digit())
+    id.starts_with('%') && id.len() > 1 && id[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
-pub(crate) fn build_catchup_brief(new_msgs: &[crate::ai::Message], away_secs: u64) -> Option<String> {
+pub(crate) fn build_catchup_brief(
+    new_msgs: &[crate::ai::Message],
+    away_secs: u64,
+) -> Option<String> {
     // Skip if the user was away less than 30 s — too brief to be useful.
-    if away_secs < 30 { return None; }
-    if new_msgs.is_empty() { return None; }
+    if away_secs < 30 {
+        return None;
+    }
+    if new_msgs.is_empty() {
+        return None;
+    }
 
     // Scan for injected event messages the AI adds to session history.
-    let events: Vec<String> = new_msgs.iter()
+    let events: Vec<String> = new_msgs
+        .iter()
         .filter_map(|m| {
             let c = &m.content;
-            if c.contains("[Background Task Completed") ||
-               c.contains("[Webhook Alert]") ||
-               c.contains("[Watchdog]") ||
-               c.contains("[Watch Pane") {
+            if c.contains("[Background Task Completed")
+                || c.contains("[Webhook Alert]")
+                || c.contains("[Watchdog]")
+                || c.contains("[Watch Pane")
+            {
                 // Extract just the first line as a terse summary.
                 Some(c.lines().next().unwrap_or(c.as_str()).trim().to_string())
             } else {
@@ -58,7 +64,9 @@ pub(crate) fn build_catchup_brief(new_msgs: &[crate::ai::Message], away_secs: u6
         })
         .collect();
 
-    if events.is_empty() { return None; }
+    if events.is_empty() {
+        return None;
+    }
 
     let away_str = if away_secs < 60 {
         format!("{}s", away_secs)
@@ -68,13 +76,17 @@ pub(crate) fn build_catchup_brief(new_msgs: &[crate::ai::Message], away_secs: u6
         format!("{}h{}m", away_secs / 3600, (away_secs % 3600) / 60)
     };
     let count = events.len();
-    let lines = events.iter()
+    let lines = events
+        .iter()
         .map(|e| format!("  • {}", e))
         .collect::<Vec<_>>()
         .join("\n");
     Some(format!(
         "[Catch-up] {} event{} while you were away ({}):\n{}",
-        count, if count == 1 { "" } else { "s" }, away_str, lines,
+        count,
+        if count == 1 { "" } else { "s" },
+        away_str,
+        lines,
     ))
 }
 
@@ -110,7 +122,9 @@ pub async fn run_scheduled_job(
             Err(e) => {
                 let msg = format!("Scheduled job '{}' failed: {}", job.name, e);
                 store.mark_done(&job.id, false, Some(msg.clone()));
-                if let Some(ref tx) = notify_tx { let _ = tx.send(Response::SystemMsg(msg)); }
+                if let Some(ref tx) = notify_tx {
+                    let _ = tx.send(Response::SystemMsg(msg));
+                }
                 return;
             }
         },
@@ -121,13 +135,18 @@ pub async fn run_scheduled_job(
     let pane_id = match tmux::create_job_window(&session, &win_name) {
         Ok(p) => p,
         Err(e) => {
-            let msg = format!("Scheduled job '{}': failed to create window: {}", job.name, e);
+            let msg = format!(
+                "Scheduled job '{}': failed to create window: {}",
+                job.name, e
+            );
             store.mark_done(&job.id, false, Some(e.to_string()));
-            if let Some(ref tx) = notify_tx { let _ = tx.send(Response::SystemMsg(msg)); }
+            if let Some(ref tx) = notify_tx {
+                let _ = tx.send(Response::SystemMsg(msg));
+            }
             return;
         }
     };
-    
+
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
     if let Err(e) = tmux::set_remain_on_exit(&pane_id, true) {
         log::warn!("Failed to set remain-on-exit for {}: {}", win_name, e);
@@ -136,13 +155,15 @@ pub async fn run_scheduled_job(
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
         let msg = format!("Scheduled job '{}': failed to send keys: {}", job.name, e);
         store.mark_done(&job.id, false, Some(e.to_string()));
-        if let Some(ref tx) = notify_tx { let _ = tx.send(Response::SystemMsg(msg)); }
+        if let Some(ref tx) = notify_tx {
+            let _ = tx.send(Response::SystemMsg(msg));
+        }
         return;
     }
 
     let mut rx = bg_done_subscribe();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
-    
+
     let exit_code = loop {
         if let Some(code) = tmux::pane_dead_status(&pane_id) {
             break code;
@@ -174,7 +195,12 @@ pub async fn run_scheduled_job(
     if let Some(ref rb_name) = job.runbook {
         if let Ok(rb) = runbook::load_runbook(rb_name) {
             let api_key = config.ai.resolve_api_key();
-            let client = crate::ai::make_client(&config.ai.provider, api_key, config.ai.model.clone(), config.ai.effective_base_url());
+            let client = crate::ai::make_client(
+                &config.ai.provider,
+                api_key,
+                config.ai.model.clone(),
+                config.ai.effective_base_url(),
+            );
             let system = runbook::watchdog_system_prompt(&rb);
             let msgs = vec![Message {
                 role: "user".to_string(),
@@ -186,24 +212,36 @@ pub async fn run_scheduled_job(
             let _ = client.chat(&system, msgs, ai_tx).await;
             let mut ai_response = String::new();
             while let Some(ev) = ai_rx.recv().await {
-                if let AiEvent::Token(t) = ev { ai_response.push_str(&t); }
+                if let AiEvent::Token(t) = ev {
+                    ai_response.push_str(&t);
+                }
             }
             if ai_response.to_uppercase().contains("ALERT") {
                 let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
-                if let Some(ref tx) = notify_tx { let _ = tx.send(Response::SystemMsg(msg.clone())); }
+                if let Some(ref tx) = notify_tx {
+                    let _ = tx.send(Response::SystemMsg(msg.clone()));
+                }
                 fire_notification(&job.name, &msg, &config);
             }
         }
     }
 
-    store.mark_done(&job.id, success, if success { None } else {
-        Some(format!("exit code {}", exit_code))
-    });
+    store.mark_done(
+        &job.id,
+        success,
+        if success {
+            None
+        } else {
+            Some(format!("exit code {}", exit_code))
+        },
+    );
 
     // Hand off to the shared notification + GC handler (non-blocking)
     let cmd_str = cmd.to_string();
     let started_at = tokio::time::Instant::now() - Duration::from_secs(60);
-    tokio::spawn(notify_job_completion(pane_id, cmd_str, win_name, session, exit_code, None, sessions, notify_tx, started_at));
+    tokio::spawn(notify_job_completion(
+        pane_id, cmd_str, win_name, session, exit_code, None, sessions, notify_tx, started_at,
+    ));
 }
 
 /// Handle one client connection end-to-end.
@@ -257,9 +295,15 @@ pub async fn handle_client(
     }
     if line.len() > MAX_IPC_MESSAGE_BYTES {
         let mut stream = reader.into_inner();
-        send_response(&mut stream, Response::Error(
-            format!("Request too large ({} bytes; limit {} bytes)", line.len(), MAX_IPC_MESSAGE_BYTES)
-        )).await?;
+        send_response(
+            &mut stream,
+            Response::Error(format!(
+                "Request too large ({} bytes; limit {} bytes)",
+                line.len(),
+                MAX_IPC_MESSAGE_BYTES
+            )),
+        )
+        .await?;
         return Ok(());
     }
 
@@ -267,7 +311,11 @@ pub async fn handle_client(
         Ok(req) => req,
         Err(e) => {
             let mut stream = reader.into_inner();
-            send_response(&mut stream, Response::Error(format!("Invalid request: {}", e))).await?;
+            send_response(
+                &mut stream,
+                Response::Error(format!("Invalid request: {}", e)),
+            )
+            .await?;
             return Ok(());
         }
     };
@@ -275,7 +323,16 @@ pub async fn handle_client(
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);
 
-    let (initial_query, client_pane, session_id, chat_pane, prompt_override, chat_width, client_tmux_session, client_target_pane) = match request {
+    let (
+        initial_query,
+        client_pane,
+        session_id,
+        chat_pane,
+        prompt_override,
+        chat_width,
+        client_tmux_session,
+        client_target_pane,
+    ) = match request {
         Request::Ping => {
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
@@ -285,11 +342,30 @@ pub async fn handle_client(
             // Send SIGTERM to ourselves so the main loop's signal handler runs
             // the full graceful shutdown sequence (hook uninstall, session cleanup,
             // socket removal) rather than exiting here and bypassing it.
-            unsafe { libc::kill(libc::getpid(), libc::SIGTERM); }
+            unsafe {
+                libc::kill(libc::getpid(), libc::SIGTERM);
+            }
             return Ok(());
         }
-        Request::Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane } =>
-            (query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane),
+        Request::Ask {
+            query,
+            tmux_pane,
+            session_id,
+            chat_pane,
+            prompt,
+            chat_width,
+            tmux_session,
+            target_pane,
+        } => (
+            query,
+            tmux_pane,
+            session_id,
+            chat_pane,
+            prompt,
+            chat_width,
+            tmux_session,
+            target_pane,
+        ),
         Request::Refresh => {
             crate::sys_context::refresh_sys_context();
             send_response_split(&mut tx, Response::Ok).await?;
@@ -302,19 +378,45 @@ pub async fn handle_client(
             let active_sessions = sessions.lock().unwrap_or_log().len();
             let schedule_count = schedule_store.list().len();
             let circuit_state = crate::ai::circuit_state_str().to_string();
-            send_response_split(&mut tx, Response::DaemonStatus {
-                uptime_secs,
-                pid,
-                active_sessions,
-                provider: config.ai.provider.clone(),
-                model: config.ai.model.clone(),
-                socket_path: default_socket_path().display().to_string(),
-                schedule_count,
-                circuit_state,
-            }).await?;
+
+            let commands_executed = crate::daemon::stats::get_commands_executed();
+            let webhooks_received = crate::daemon::stats::get_webhooks_received();
+            let recent_commands = crate::daemon::stats::get_recent_commands();
+            let runbooks_count = crate::runbook::list_runbooks()
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let scripts_count = crate::scripts::list_scripts().map(|s| s.len()).unwrap_or(0);
+            let memory_items_count = crate::memory::list_memories(None)
+                .map(|m| m.len())
+                .unwrap_or(0);
+
+            send_response_split(
+                &mut tx,
+                Response::DaemonStatus {
+                    uptime_secs,
+                    pid,
+                    active_sessions,
+                    provider: config.ai.provider.clone(),
+                    model: config.ai.model.clone(),
+                    socket_path: default_socket_path().display().to_string(),
+                    schedule_count,
+                    circuit_state,
+                    commands_executed,
+                    webhooks_received,
+                    runbooks_count,
+                    scripts_count,
+                    memory_items_count,
+                    recent_commands,
+                },
+            )
+            .await?;
             return Ok(());
         }
-        Request::NotifyActivity { pane_id, hook_index: _, session_name: _ } => {
+        Request::NotifyActivity {
+            pane_id,
+            hook_index: _,
+            session_name: _,
+        } => {
             if is_valid_pane_id(&pane_id) {
                 if let Some(tx) = BG_DONE_TX.get() {
                     let _ = tx.send(pane_id.clone());
@@ -325,12 +427,18 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
-        Request::NotifyComplete { pane_id, exit_code, session_name: _ } => {
+        Request::NotifyComplete {
+            pane_id,
+            exit_code,
+            session_name: _,
+        } => {
             if is_valid_pane_id(&pane_id) {
                 // Fix C: use get_or_init so the channel always exists, even if
                 // NotifyComplete arrives before any completion monitor has subscribed.
-                let tx = crate::daemon::session::COMPLETE_TX
-                    .get_or_init(|| { let (tx, _) = tokio::sync::broadcast::channel(32); tx });
+                let tx = crate::daemon::session::COMPLETE_TX.get_or_init(|| {
+                    let (tx, _) = tokio::sync::broadcast::channel(32);
+                    tx
+                });
                 let _ = tx.send((pane_id, exit_code));
             } else {
                 log::warn!("NotifyComplete: rejected invalid pane_id {:?}", pane_id);
@@ -339,7 +447,10 @@ pub async fn handle_client(
             return Ok(());
         }
         // N1: pane-focus-in hook — update active pane instantly, no 2 s poll lag.
-        Request::NotifyFocus { pane_id, session_name: _ } => {
+        Request::NotifyFocus {
+            pane_id,
+            session_name: _,
+        } => {
             if is_valid_pane_id(&pane_id) {
                 cache.set_active_pane(&pane_id);
             } else {
@@ -360,7 +471,10 @@ pub async fn handle_client(
                 store.retain(|_, entry| {
                     if entry.tmux_session == session_name {
                         entry.cleanup_bg_windows();
-                        log::info!("Cleaned up session '{}' on tmux session-closed.", session_name);
+                        log::info!(
+                            "Cleaned up session '{}' on tmux session-closed.",
+                            session_name
+                        );
                         false
                     } else {
                         true
@@ -406,7 +520,11 @@ pub async fn handle_client(
             return Ok(());
         }
         // N8: client-resized hook — update cached viewport dimensions immediately.
-        Request::NotifyResize { width, height, session_name: _ } => {
+        Request::NotifyResize {
+            width,
+            height,
+            session_name: _,
+        } => {
             cache.set_client_size(width, height);
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
@@ -447,7 +565,9 @@ pub async fn handle_client(
             mem.get(id).map(|e| e.messages.clone())
         })
         .or_else(|| {
-            session_id.as_ref().map(|id| read_session_file(id))
+            session_id
+                .as_ref()
+                .map(|id| read_session_file(id))
                 .filter(|v| !v.is_empty())
         })
         .unwrap_or_default();
@@ -482,8 +602,12 @@ pub async fn handle_client(
             if entry.pipe_source_pane.is_none() {
                 if let Some(ref pane_id) = client_pane {
                     match crate::tmux::start_pipe_pane(pane_id) {
-                        Ok(_) => { entry.pipe_source_pane = Some(pane_id.clone()); }
-                        Err(e) => { log::warn!("R1: could not start pipe-pane for {}: {}", pane_id, e); }
+                        Ok(_) => {
+                            entry.pipe_source_pane = Some(pane_id.clone());
+                        }
+                        Err(e) => {
+                            log::warn!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                        }
                     }
                 }
             }
@@ -493,7 +617,8 @@ pub async fn handle_client(
             // webhook alerts, watchdog results, etc.).
             let brief = entry.last_detach.and_then(|detach_time| {
                 let away_secs = detach_time.elapsed().as_secs();
-                let new_msgs = &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
+                let new_msgs =
+                    &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
                 build_catchup_brief(new_msgs, away_secs)
             });
 
@@ -526,7 +651,8 @@ pub async fn handle_client(
     let is_first_turn = messages.is_empty();
 
     // Read last prompt token count for context-budget injection and client display.
-    let last_prompt_tokens = session_id.as_ref()
+    let last_prompt_tokens = session_id
+        .as_ref()
         .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
         .unwrap_or(0);
 
@@ -536,11 +662,13 @@ pub async fn handle_client(
     // Subsequent turns: budget note + query only. The AI calls get_terminal_context
     // when it needs a fresh snapshot, keeping mid-turn messages lean.
     let prompt = if is_first_turn {
-        let session_summary = cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
+        let session_summary =
+            cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
         let sys_ctx = get_or_init_sys_context().format_for_ai();
         let daemon_host = daemon_hostname();
         let environment = &config.context.environment;
-        let pane_location = client_pane.as_deref()
+        let pane_location = client_pane
+            .as_deref()
             .and_then(get_pane_remote_host)
             .map(|h| format!("REMOTE — {}", h))
             .unwrap_or_else(|| format!("LOCAL — same host as daemon ({})", daemon_host));
@@ -571,22 +699,34 @@ pub async fn handle_client(
         let context_window = config.ai.context_window();
         let pct_used = if context_window > 0 {
             (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
-        } else { 0 };
+        } else {
+            0
+        };
         let budget_note = if pct_used >= 75 {
-            format!("[Token Budget] Context at {}k / {}k tokens ({}% used) — NEAR LIMIT. Be very concise. Suggest `/clear` if the task is complete.\n\n",
-                last_prompt_tokens / 1000, context_window / 1000, pct_used)
+            format!(
+                "[Token Budget] Context at {}k / {}k tokens ({}% used) — NEAR LIMIT. Be very concise. Suggest `/clear` if the task is complete.\n\n",
+                last_prompt_tokens / 1000,
+                context_window / 1000,
+                pct_used
+            )
         } else if pct_used >= 50 {
-            format!("[Token Budget] Context at {}k / {}k tokens ({}% used) — prefer concise responses, avoid redundant tool calls.\n\n",
-                last_prompt_tokens / 1000, context_window / 1000, pct_used)
+            format!(
+                "[Token Budget] Context at {}k / {}k tokens ({}% used) — prefer concise responses, avoid redundant tool calls.\n\n",
+                last_prompt_tokens / 1000,
+                context_window / 1000,
+                pct_used
+            )
         } else if last_prompt_tokens > 0 {
-            format!("[Token Budget] Context at {}k / {}k tokens ({}% used).\n\n",
-                last_prompt_tokens / 1000, context_window / 1000, pct_used)
+            format!(
+                "[Token Budget] Context at {}k / {}k tokens ({}% used).\n\n",
+                last_prompt_tokens / 1000,
+                context_window / 1000,
+                pct_used
+            )
         } else {
             String::new()
         };
-        format!(
-            "{budget_note}User: {safe_query}"
-        )
+        format!("{budget_note}User: {safe_query}")
     };
 
     let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);
@@ -600,7 +740,13 @@ pub async fn handle_client(
         tool_results: None,
     });
 
-    send_response_split(&mut tx, Response::SessionInfo { message_count: history_count }).await?;
+    send_response_split(
+        &mut tx,
+        Response::SessionInfo {
+            message_count: history_count,
+        },
+    )
+    .await?;
 
     // N15: send catch-up brief as a SystemMsg immediately after SessionInfo so
     // it appears before any streaming tokens from the AI.
@@ -611,12 +757,20 @@ pub async fn handle_client(
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
-        let client_instance = make_client(&config.ai.provider, config.ai.resolve_api_key(), config.ai.model.clone(), config.ai.effective_base_url());
+        let client_instance = make_client(
+            &config.ai.provider,
+            config.ai.resolve_api_key(),
+            config.ai.model.clone(),
+            config.ai.effective_base_url(),
+        );
         let sys_prompt_turn = sys_prompt.clone();
         let messages_clone = messages.clone();
-        
+
         tokio::spawn(async move {
-            if let Err(e) = client_instance.chat(&sys_prompt_turn, messages_clone, ai_tx.clone()).await {
+            if let Err(e) = client_instance
+                .chat(&sys_prompt_turn, messages_clone, ai_tx.clone())
+                .await
+            {
                 let _ = ai_tx.send(AiEvent::Error(e.to_string()));
             }
         });
@@ -625,10 +779,9 @@ pub async fn handle_client(
         let mut pending_calls: Vec<PendingCall> = Vec::new();
 
         loop {
-            let event = match tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                ai_rx.recv(),
-            ).await {
+            let event = match tokio::time::timeout(std::time::Duration::from_secs(30), ai_rx.recv())
+                .await
+            {
                 Ok(Some(ev)) => ev,
                 Ok(None) => break,
                 Err(_timeout) => {
@@ -645,76 +798,295 @@ pub async fn handle_client(
                 }
                 AiEvent::ToolCall(id, cmd, bg, target, retry, thought_signature) => {
                     if bg {
-                        pending_calls.push(PendingCall::Background { id, cmd, _credential: None, retry_pane: retry, thought_signature: thought_signature.clone() });
+                        pending_calls.push(PendingCall::Background {
+                            id,
+                            cmd,
+                            _credential: None,
+                            retry_pane: retry,
+                            thought_signature: thought_signature.clone(),
+                        });
                     } else {
-                        pending_calls.push(PendingCall::Foreground { id, cmd, target, thought_signature: thought_signature.clone() });
+                        pending_calls.push(PendingCall::Foreground {
+                            id,
+                            cmd,
+                            target,
+                            thought_signature: thought_signature.clone(),
+                        });
                     }
                 }
-                AiEvent::ScheduleCommand { id, name, command, is_script, run_at, interval, runbook, thought_signature } => {
-                    pending_calls.push(PendingCall::ScheduleCommand { id, name, command, is_script, run_at, interval, runbook, thought_signature });
+                AiEvent::ScheduleCommand {
+                    id,
+                    name,
+                    command,
+                    is_script,
+                    run_at,
+                    interval,
+                    runbook,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ScheduleCommand {
+                        id,
+                        name,
+                        command,
+                        is_script,
+                        run_at,
+                        interval,
+                        runbook,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ListSchedules { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListSchedules { id, thought_signature });
+                AiEvent::ListSchedules {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListSchedules {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::CancelSchedule { id, job_id, thought_signature } => {
-                    pending_calls.push(PendingCall::CancelSchedule { id, job_id, thought_signature });
+                AiEvent::CancelSchedule {
+                    id,
+                    job_id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::CancelSchedule {
+                        id,
+                        job_id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::DeleteSchedule { id, job_id, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteSchedule { id, job_id, thought_signature });
+                AiEvent::DeleteSchedule {
+                    id,
+                    job_id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteSchedule {
+                        id,
+                        job_id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::WriteScript { id, script_name, content, thought_signature } => {
-                    pending_calls.push(PendingCall::WriteScript { id, script_name, content, thought_signature });
+                AiEvent::WriteScript {
+                    id,
+                    script_name,
+                    content,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::WriteScript {
+                        id,
+                        script_name,
+                        content,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ListScripts { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListScripts { id, thought_signature });
+                AiEvent::ListScripts {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListScripts {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ReadScript { id, script_name, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadScript { id, script_name, thought_signature });
+                AiEvent::ReadScript {
+                    id,
+                    script_name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadScript {
+                        id,
+                        script_name,
+                        thought_signature,
+                    });
                 }
-                AiEvent::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature } => {
-                    pending_calls.push(PendingCall::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature });
+                AiEvent::WatchPane {
+                    id,
+                    pane_id,
+                    timeout_secs,
+                    pattern,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::WatchPane {
+                        id,
+                        pane_id,
+                        timeout_secs,
+                        pattern,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ReadFile { id, path, offset, limit, pattern, target_pane, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadFile { id, thought_signature, path, offset, limit, pattern, target_pane });
+                AiEvent::ReadFile {
+                    id,
+                    path,
+                    offset,
+                    limit,
+                    pattern,
+                    target_pane,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadFile {
+                        id,
+                        thought_signature,
+                        path,
+                        offset,
+                        limit,
+                        pattern,
+                        target_pane,
+                    });
                 }
-                AiEvent::EditFile { id, path, old_string, new_string, target_pane, thought_signature } => {
-                    pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
+                AiEvent::EditFile {
+                    id,
+                    path,
+                    old_string,
+                    new_string,
+                    target_pane,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::EditFile {
+                        id,
+                        thought_signature,
+                        path,
+                        old_string,
+                        new_string,
+                        target_pane,
+                    });
                 }
-                AiEvent::WriteRunbook { id, name, content, thought_signature } => {
-                    pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });
+                AiEvent::WriteRunbook {
+                    id,
+                    name,
+                    content,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::WriteRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                        content,
+                    });
                 }
-                AiEvent::DeleteRunbook { id, name, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
+                AiEvent::DeleteRunbook {
+                    id,
+                    name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                    });
                 }
-                AiEvent::ReadRunbook { id, name, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
+                AiEvent::ReadRunbook {
+                    id,
+                    name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                    });
                 }
-                AiEvent::ListRunbooks { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
+                AiEvent::ListRunbooks {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListRunbooks {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::AddMemory { id, key, value, category, thought_signature } => {
-                    pending_calls.push(PendingCall::AddMemory { id, thought_signature, key, value, category });
+                AiEvent::AddMemory {
+                    id,
+                    key,
+                    value,
+                    category,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::AddMemory {
+                        id,
+                        thought_signature,
+                        key,
+                        value,
+                        category,
+                    });
                 }
-                AiEvent::DeleteMemory { id, key, category, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteMemory { id, thought_signature, key, category });
+                AiEvent::DeleteMemory {
+                    id,
+                    key,
+                    category,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteMemory {
+                        id,
+                        thought_signature,
+                        key,
+                        category,
+                    });
                 }
-                AiEvent::ReadMemory { id, key, category, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadMemory { id, thought_signature, key, category });
+                AiEvent::ReadMemory {
+                    id,
+                    key,
+                    category,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadMemory {
+                        id,
+                        thought_signature,
+                        key,
+                        category,
+                    });
                 }
-                AiEvent::ListMemories { id, category, thought_signature } => {
-                    pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
+                AiEvent::ListMemories {
+                    id,
+                    category,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListMemories {
+                        id,
+                        thought_signature,
+                        category,
+                    });
                 }
-                AiEvent::SearchRepository { id, query, kind, thought_signature } => {
-                    pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
+                AiEvent::SearchRepository {
+                    id,
+                    query,
+                    kind,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::SearchRepository {
+                        id,
+                        thought_signature,
+                        query,
+                        kind,
+                    });
                 }
-                AiEvent::GetTerminalContext { id, thought_signature } => {
-                    pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
+                AiEvent::GetTerminalContext {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::GetTerminalContext {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ListPanes { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListPanes { id, thought_signature });
+                AiEvent::ListPanes {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListPanes {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::CloseBackgroundWindow { id, pane_id, thought_signature } => {
-                    pending_calls.push(PendingCall::CloseBackgroundWindow { id, thought_signature, pane_id });
+                AiEvent::CloseBackgroundWindow {
+                    id,
+                    pane_id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::CloseBackgroundWindow {
+                        id,
+                        thought_signature,
+                        pane_id,
+                    });
                 }
 
                 AiEvent::Error(e) => {
@@ -732,14 +1104,17 @@ pub async fn handle_client(
                                 tool_results: None,
                             });
                         }
-                        
-                        log_event("ai_turn", serde_json::json!({
-                            "session": session_id.as_deref().unwrap_or("-"),
-                            "model": config.ai.model,
-                            "prompt_tokens": usage.prompt_tokens,
-                            "completion_tokens": usage.completion_tokens,
-                        }));
-                        
+
+                        log_event(
+                            "ai_turn",
+                            serde_json::json!({
+                                "session": session_id.as_deref().unwrap_or("-"),
+                                "model": config.ai.model,
+                                "prompt_tokens": usage.prompt_tokens,
+                                "completion_tokens": usage.completion_tokens,
+                            }),
+                        );
+
                         // Persist the conversation for the next turn.
                         // In-memory: fast lookup within the same daemon run.
                         // On-disk: survives daemon restarts.
@@ -762,19 +1137,26 @@ pub async fn handle_client(
                                 }
                             }
                         }
-                        send_response_split(&mut tx, Response::UsageUpdate {
-                            prompt_tokens: usage.prompt_tokens,
-                        }).await?;
+                        send_response_split(
+                            &mut tx,
+                            Response::UsageUpdate {
+                                prompt_tokens: usage.prompt_tokens,
+                            },
+                        )
+                        .await?;
                         send_response_split(&mut tx, Response::Ok).await?;
                         return Ok(());
                     }
 
-                    log_event("ai_turn", serde_json::json!({
-                        "session": session_id.as_deref().unwrap_or("-"),
-                        "model": config.ai.model,
-                        "prompt_tokens": usage.prompt_tokens,
-                        "completion_tokens": usage.completion_tokens,
-                    }));
+                    log_event(
+                        "ai_turn",
+                        serde_json::json!({
+                            "session": session_id.as_deref().unwrap_or("-"),
+                            "model": config.ai.model,
+                            "prompt_tokens": usage.prompt_tokens,
+                            "completion_tokens": usage.completion_tokens,
+                        }),
+                    );
 
                     // Update session token tracking so the budget line in the next
                     // prompt reflects the actual context size of this turn.
@@ -798,7 +1180,8 @@ pub async fn handle_client(
                     // Prevents the AI from looping endlessly through the same tools.
                     const MAX_SAME_TOOL: u32 = 2;
                     const MAX_TOTAL_CALLS: u32 = 12;
-                    let mut tool_call_counts: std::collections::HashMap<&'static str, u32> = std::collections::HashMap::new();
+                    let mut tool_call_counts: std::collections::HashMap<&'static str, u32> =
+                        std::collections::HashMap::new();
 
                     let mut tool_results = Vec::new();
                     let mut user_message_redirect: Option<String> = None;
@@ -807,7 +1190,10 @@ pub async fn handle_client(
 
                         // Hard total cap: block all calls beyond the limit.
                         if call_idx as u32 >= MAX_TOTAL_CALLS {
-                            log::warn!("Turn tool-call total limit ({MAX_TOTAL_CALLS}) reached; blocking call {}", call_idx + 1);
+                            log::warn!(
+                                "Turn tool-call total limit ({MAX_TOTAL_CALLS}) reached; blocking call {}",
+                                call_idx + 1
+                            );
                             tool_results.push(ToolResult {
                                 tool_call_id: call_id,
                                 tool_name: call.tool_name().to_string(),
@@ -825,7 +1211,9 @@ pub async fn handle_client(
                         let count = tool_call_counts.entry(tool_name).or_insert(0);
                         *count += 1;
                         if *count > MAX_SAME_TOOL {
-                            log::warn!("Per-tool limit for `{tool_name}` reached ({MAX_SAME_TOOL}); blocking call");
+                            log::warn!(
+                                "Per-tool limit for `{tool_name}` reached ({MAX_SAME_TOOL}); blocking call"
+                            );
                             tool_results.push(ToolResult {
                                 tool_call_id: call_id,
                                 tool_name: tool_name.to_string(),
@@ -839,9 +1227,18 @@ pub async fn handle_client(
                         }
 
                         let outcome = match crate::daemon::executor::execute_tool_call(
-                            call, &mut tx, &mut rx, session_id.as_deref(), &session_name,
-                            chat_pane.as_deref(), &cache, &sessions, &schedule_store
-                        ).await {
+                            call,
+                            &mut tx,
+                            &mut rx,
+                            session_id.as_deref(),
+                            &session_name,
+                            chat_pane.as_deref(),
+                            &cache,
+                            &sessions,
+                            &schedule_store,
+                        )
+                        .await
+                        {
                             Ok(res) => res,
                             Err(_) => return Ok(()),
                         };
@@ -856,7 +1253,11 @@ pub async fn handle_client(
                                 break;
                             }
                             crate::daemon::executor::ToolCallOutcome::Result(result) => {
-                                tool_results.push(ToolResult { tool_call_id: call_id, tool_name: tool_name.to_string(), content: result });
+                                tool_results.push(ToolResult {
+                                    tool_call_id: call_id,
+                                    tool_name: tool_name.to_string(),
+                                    content: result,
+                                });
                             }
                         }
                     }
@@ -907,7 +1308,6 @@ pub async fn handle_client(
                 }
             }
         }
-
     }
 }
 
@@ -917,7 +1317,12 @@ mod tests {
     use crate::ai::Message;
 
     fn msg(content: &str) -> Message {
-        Message { role: "user".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+        Message {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
     }
 
     // ── build_catchup_brief ───────────────────────────────────────────────────
@@ -935,16 +1340,24 @@ mod tests {
 
     #[test]
     fn catchup_brief_none_when_no_matching_events() {
-        let msgs = vec![msg("User: what is load avg?"), msg("The load average is 0.5")];
+        let msgs = vec![
+            msg("User: what is load avg?"),
+            msg("The load average is 0.5"),
+        ];
         assert!(build_catchup_brief(&msgs, 120).is_none());
     }
 
     #[test]
     fn catchup_brief_detects_background_task() {
-        let msgs = vec![msg("[Background Task Completed] apt upgrade finished (exit 0)")];
+        let msgs = vec![msg(
+            "[Background Task Completed] apt upgrade finished (exit 0)",
+        )];
         let brief = build_catchup_brief(&msgs, 60).expect("should produce a brief");
         assert!(brief.contains("[Catch-up]"), "missing header: {brief}");
-        assert!(brief.contains("[Background Task Completed]"), "missing event: {brief}");
+        assert!(
+            brief.contains("[Background Task Completed]"),
+            "missing event: {brief}"
+        );
         assert!(brief.contains("1m"), "wrong away time: {brief}");
     }
 
@@ -993,11 +1406,19 @@ mod tests {
 
     #[test]
     fn catchup_brief_extracts_first_line_only() {
-        let msgs = vec![msg("[Background Task Completed] job done\nFull output:\nline 1\nline 2")];
+        let msgs = vec![msg(
+            "[Background Task Completed] job done\nFull output:\nline 1\nline 2",
+        )];
         let brief = build_catchup_brief(&msgs, 60).expect("should produce a brief");
         // Only the first line should appear as the bullet
-        assert!(brief.contains("[Background Task Completed] job done"), "missing first line: {brief}");
-        assert!(!brief.contains("Full output:"), "should not include subsequent lines: {brief}");
+        assert!(
+            brief.contains("[Background Task Completed] job done"),
+            "missing first line: {brief}"
+        );
+        assert!(
+            !brief.contains("Full output:"),
+            "should not include subsequent lines: {brief}"
+        );
     }
 
     #[test]
@@ -1021,10 +1442,10 @@ mod tests {
     #[test]
     fn invalid_pane_ids_rejected() {
         assert!(!is_valid_pane_id(""));
-        assert!(!is_valid_pane_id("%"));          // no digits
-        assert!(!is_valid_pane_id("0"));           // no leading %
-        assert!(!is_valid_pane_id("%0a"));         // non-digit character
+        assert!(!is_valid_pane_id("%")); // no digits
+        assert!(!is_valid_pane_id("0")); // no leading %
+        assert!(!is_valid_pane_id("%0a")); // non-digit character
         assert!(!is_valid_pane_id("%23\x1b[31m")); // ANSI escape injection
-        assert!(!is_valid_pane_id("%;rm -rf /"));  // shell injection attempt
+        assert!(!is_valid_pane_id("%;rm -rf /")); // shell injection attempt
     }
 }

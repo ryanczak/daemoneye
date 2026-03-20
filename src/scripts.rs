@@ -86,16 +86,19 @@ fn meta_path(name: &str) -> std::path::PathBuf {
 pub fn read_script_meta(name: &str) -> Option<ScriptMeta> {
     let path = meta_path(name);
     let content = std::fs::read_to_string(&path).ok()?;
-    Some(ScriptMeta { tags: parse_meta_tags(&content) })
+    Some(ScriptMeta {
+        tags: parse_meta_tags(&content),
+    })
 }
-
 
 /// List all scripts with their optional sidecar tags.
 pub fn list_scripts_with_tags() -> Result<Vec<(ScriptInfo, Vec<String>)>> {
     Ok(list_scripts()?
         .into_iter()
         .map(|s| {
-            let tags = read_script_meta(&s.name).map(|m| m.tags).unwrap_or_default();
+            let tags = read_script_meta(&s.name)
+                .map(|m| m.tags)
+                .unwrap_or_default();
             (s, tags)
         })
         .collect())
@@ -151,11 +154,17 @@ mod tests {
     fn with_home<F: FnOnce()>(tmp: &std::path::Path, f: F) {
         let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
         let old_home = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", tmp); }
+        unsafe {
+            std::env::set_var("HOME", tmp);
+        }
         f();
         match old_home {
-            Some(v) => unsafe { std::env::set_var("HOME", v); },
-            None => unsafe { std::env::remove_var("HOME"); },
+            Some(v) => unsafe {
+                std::env::set_var("HOME", v);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
         }
     }
 
@@ -165,7 +174,11 @@ mod tests {
         std::fs::create_dir_all(&tmp).unwrap();
         with_home(&tmp, || {
             write_script("my-script.sh", "#!/bin/bash\necho hi").unwrap();
-            std::fs::write(meta_path("my-script.sh"), "tags = [\"disk\", \"cleanup\"]\n").unwrap();
+            std::fs::write(
+                meta_path("my-script.sh"),
+                "tags = [\"disk\", \"cleanup\"]\n",
+            )
+            .unwrap();
             let meta = read_script_meta("my-script.sh").expect("meta not found");
             assert!(meta.tags.contains(&"disk".to_string()));
             assert!(meta.tags.contains(&"cleanup".to_string()));

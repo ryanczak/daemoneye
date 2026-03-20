@@ -86,7 +86,10 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
                 .get(12)
                 .and_then(|s| s.trim().parse::<u64>().ok())
                 .unwrap_or(0),
-            start_cmd: fields.get(13).map(|s| s.trim().to_string()).unwrap_or_default(),
+            start_cmd: fields
+                .get(13)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default(),
             pane_index: fields
                 .get(14)
                 .and_then(|s| s.trim().parse::<usize>().ok())
@@ -193,7 +196,6 @@ pub fn capture_pane_at_scroll_with_escapes(
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
-
 
 /// Capture the entire scrollback history of a pane and save it directly to a file.
 /// This prevents massive buffers from blowing up memory during daemon GC.
@@ -424,4 +426,3 @@ pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {
     }
     Ok(())
 }
-

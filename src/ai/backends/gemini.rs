@@ -4,9 +4,9 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::{AiClient, next_tool_id, send_with_retry, http};
-use crate::ai::types::{AiEvent, Message};
 use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition};
+use crate::ai::types::{AiEvent, Message};
+use crate::ai::{AiClient, http, next_tool_id, send_with_retry};
 
 /// Returns `(command, background)` if parsing succeeds, `None` otherwise.
 ///
@@ -37,7 +37,10 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
                 '(' => depth += 1,
                 ')' => {
                     depth -= 1;
-                    if depth == 0 { end = Some(i); break; }
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    }
                 }
                 _ => {}
             }
@@ -56,12 +59,18 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
 
     // Match: background = true|false (optional; defaults to false).
     static BG_RE: OnceLock<Regex> = OnceLock::new();
-    let bg_re = BG_RE.get_or_init(|| {
-        Regex::new(r#"background\s*=\s*(true|false)"#).expect("valid regex")
-    });
-    let bg = bg_re.captures(call_body).map(|c| &c[1] == "true").unwrap_or(false);
+    let bg_re =
+        BG_RE.get_or_init(|| Regex::new(r#"background\s*=\s*(true|false)"#).expect("valid regex"));
+    let bg = bg_re
+        .captures(call_body)
+        .map(|c| &c[1] == "true")
+        .unwrap_or(false);
 
-    log::warn!("Gemini MALFORMED_FUNCTION_CALL fallback invoked: cmd={:?} background={}", cmd, bg);
+    log::warn!(
+        "Gemini MALFORMED_FUNCTION_CALL fallback invoked: cmd={:?} background={}",
+        cmd,
+        bg
+    );
     Some((cmd, bg))
 }
 
@@ -82,15 +91,20 @@ impl GeminiClient {
         for m in messages {
             if let Some(trs) = m.tool_results {
                 // Gemini batches all function responses into one user turn.
-                let parts: Vec<Value> = trs.into_iter().map(|tr| json!({
-                    "functionResponse": {
-                        "name": tr.tool_name,
-                        "response": {
-                            "name": tr.tool_name,
-                            "content": tr.content
-                        }
-                    }
-                })).collect();
+                let parts: Vec<Value> = trs
+                    .into_iter()
+                    .map(|tr| {
+                        json!({
+                            "functionResponse": {
+                                "name": tr.tool_name,
+                                "response": {
+                                    "name": tr.tool_name,
+                                    "content": tr.content
+                                }
+                            }
+                        })
+                    })
+                    .collect();
                 result.push(json!({"role": "user", "parts": parts}));
             } else if let Some(tcs) = m.tool_calls {
                 let mut parts = Vec::new();
@@ -127,7 +141,12 @@ impl GeminiClient {
 
 #[async_trait]
 impl AiClient for GeminiClient {
-    async fn chat(&self, system: &str, messages: Vec<Message>, tx: UnboundedSender<AiEvent>) -> Result<()> {
+    async fn chat(
+        &self,
+        system: &str,
+        messages: Vec<Message>,
+        tx: UnboundedSender<AiEvent>,
+    ) -> Result<()> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
             self.model, self.api_key
@@ -165,12 +184,18 @@ impl AiClient for GeminiClient {
                                 if candidate.get("finishReason").and_then(|r| r.as_str())
                                     == Some("MALFORMED_FUNCTION_CALL")
                                 {
-                                    if let Some(msg) = candidate
-                                        .get("finishMessage")
-                                        .and_then(|m| m.as_str())
+                                    if let Some(msg) =
+                                        candidate.get("finishMessage").and_then(|m| m.as_str())
                                     {
                                         if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
-                                            let _ = tx.send(AiEvent::ToolCall(next_tool_id(), cmd, bg, None, None, None));
+                                            let _ = tx.send(AiEvent::ToolCall(
+                                                next_tool_id(),
+                                                cmd,
+                                                bg,
+                                                None,
+                                                None,
+                                                None,
+                                            ));
                                         } else {
                                             let _ = tx.send(AiEvent::Error(format!(
                                                 "Gemini produced a malformed function call \
@@ -183,9 +208,13 @@ impl AiClient for GeminiClient {
                                     continue;
                                 }
 
-                                if let Some(parts) = candidate["content"].get("parts").and_then(|p| p.as_array()) {
+                                if let Some(parts) =
+                                    candidate["content"].get("parts").and_then(|p| p.as_array())
+                                {
                                     for part in parts {
-                                        if let Some(t) = part.get("text").and_then(|text| text.as_str()) {
+                                        if let Some(t) =
+                                            part.get("text").and_then(|text| text.as_str())
+                                        {
                                             if !t.is_empty() {
                                                 let _ = tx.send(AiEvent::Token(t.to_string()));
                                             }
@@ -194,10 +223,16 @@ impl AiClient for GeminiClient {
                                             let fn_name = call["name"].as_str().unwrap_or("");
                                             if let Some(args) = call.get("args") {
                                                 let id = next_tool_id();
-                                                let thought_sig = part.get("thoughtSignature")
+                                                let thought_sig = part
+                                                    .get("thoughtSignature")
                                                     .and_then(|v| v.as_str())
                                                     .map(String::from);
-                                                if let Some(ev) = dispatch_tool_event(&id, fn_name, args, thought_sig) {
+                                                if let Some(ev) = dispatch_tool_event(
+                                                    &id,
+                                                    fn_name,
+                                                    args,
+                                                    thought_sig,
+                                                ) {
                                                     let _ = tx.send(ev);
                                                 }
                                             }
@@ -207,8 +242,14 @@ impl AiClient for GeminiClient {
                             }
                         }
                         if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
-                            usage.prompt_tokens = u.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                            usage.completion_tokens = u.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            usage.prompt_tokens =
+                                u.get("promptTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32;
+                            usage.completion_tokens =
+                                u.get("candidatesTokenCount")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0) as u32;
                         }
                     }
                 }
@@ -223,19 +264,28 @@ impl AiClient for GeminiClient {
 // Factory
 // ---------------------------------------------------------------------------
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::backends::anthropic::AnthropicClient;
-    use crate::ai::{make_client, ToolResult};
     use crate::ai::types::ToolCall;
+    use crate::ai::{ToolResult, make_client};
 
     fn user_msg(content: &str) -> Message {
-        Message { role: "user".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+        Message {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
     }
     fn assistant_msg(content: &str) -> Message {
-        Message { role: "assistant".to_string(), content: content.to_string(), tool_calls: None, tool_results: None }
+        Message {
+            role: "assistant".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
     }
     fn client() -> AnthropicClient {
         AnthropicClient::new("key".to_string(), "model".to_string())
@@ -271,7 +321,10 @@ mod tests {
         assert_eq!(out.len(), 1);
         // Content should be an array with text + tool_use blocks.
         let content = out[0]["content"].as_array().expect("content array");
-        assert!(content.iter().any(|b| b["type"] == "tool_use"), "no tool_use block");
+        assert!(
+            content.iter().any(|b| b["type"] == "tool_use"),
+            "no tool_use block"
+        );
         assert!(content.iter().any(|b| b["type"] == "text"), "no text block");
     }
 
@@ -291,7 +344,10 @@ mod tests {
         };
         let out = client().convert_messages(vec![msg]);
         let content = out[0]["content"].as_array().expect("content array");
-        assert!(!content.iter().any(|b| b["type"] == "text"), "empty text block should be omitted");
+        assert!(
+            !content.iter().any(|b| b["type"] == "text"),
+            "empty text block should be omitted"
+        );
     }
 
     #[test]
@@ -337,7 +393,10 @@ mod tests {
         assert_eq!(out[0]["role"], "user");
         let parts = out[0]["parts"].as_array().expect("parts array");
         assert_eq!(parts[0]["functionResponse"]["name"], "list_schedules");
-        assert_eq!(parts[0]["functionResponse"]["response"]["name"], "list_schedules");
+        assert_eq!(
+            parts[0]["functionResponse"]["response"]["name"],
+            "list_schedules"
+        );
         assert_eq!(parts[0]["functionResponse"]["response"]["content"], "[]");
     }
 
@@ -346,27 +405,52 @@ mod tests {
     #[test]
     fn make_client_unknown_defaults_to_anthropic() {
         // We just verify make_client doesn't panic for unknown providers.
-        let _c = make_client("unknown_provider", "key".to_string(), "model".to_string(), String::new());
+        let _c = make_client(
+            "unknown_provider",
+            "key".to_string(),
+            "model".to_string(),
+            String::new(),
+        );
     }
 
     #[test]
     fn make_client_openai() {
-        let _c = make_client("openai", "key".to_string(), "gpt-4o".to_string(), String::new());
+        let _c = make_client(
+            "openai",
+            "key".to_string(),
+            "gpt-4o".to_string(),
+            String::new(),
+        );
     }
 
     #[test]
     fn make_client_gemini() {
-        let _c = make_client("gemini", "key".to_string(), "gemini-2.0-flash".to_string(), String::new());
+        let _c = make_client(
+            "gemini",
+            "key".to_string(),
+            "gemini-2.0-flash".to_string(),
+            String::new(),
+        );
     }
 
     #[test]
     fn make_client_ollama() {
-        let _c = make_client("ollama", "local".to_string(), "llama3.2".to_string(), "http://localhost:11434/v1".to_string());
+        let _c = make_client(
+            "ollama",
+            "local".to_string(),
+            "llama3.2".to_string(),
+            "http://localhost:11434/v1".to_string(),
+        );
     }
 
     #[test]
     fn make_client_lmstudio() {
-        let _c = make_client("lmstudio", "local".to_string(), "some-model".to_string(), "http://localhost:1234/v1".to_string());
+        let _c = make_client(
+            "lmstudio",
+            "local".to_string(),
+            "some-model".to_string(),
+            "http://localhost:1234/v1".to_string(),
+        );
     }
 
     // ── Message serialization ─────────────────────────────────────────────────
@@ -446,7 +530,8 @@ mod tests {
     #[test]
     fn parse_malformed_gemini_call_uses_only_call_body() {
         // The commentary "command = 'danger'" appears outside the parens.
-        let msg = r#"Note: command = 'danger'. run_terminal_command(command = "ls", background = false)"#;
+        let msg =
+            r#"Note: command = 'danger'. run_terminal_command(command = "ls", background = false)"#;
         let result = parse_malformed_gemini_call(msg);
         assert_eq!(result, Some(("ls".to_string(), false)));
     }
@@ -456,7 +541,10 @@ mod tests {
     fn parse_malformed_gemini_call_double_quotes_reordered_args() {
         let msg = r#"Malformed function call: print(default_api.run_terminal_command(background = false, command = "cat ~/.daemoneye/config.toml", target_pane = None))"#;
         let result = parse_malformed_gemini_call(msg);
-        assert_eq!(result, Some(("cat ~/.daemoneye/config.toml".to_string(), false)));
+        assert_eq!(
+            result,
+            Some(("cat ~/.daemoneye/config.toml".to_string(), false))
+        );
     }
 
     #[test]

@@ -4,12 +4,11 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
-use crate::config::{Config, default_socket_path};
-use crate::cli::render::*;
 use crate::cli::input::*;
+use crate::cli::render::*;
+use crate::config::{Config, default_socket_path};
 use crate::daemon::utils::command_has_sudo;
 use crate::ipc::{Request, Response};
-
 
 /// Per-session auto-approval flags for the two command classes.
 /// Once set, the corresponding class is approved without prompting
@@ -25,9 +24,9 @@ impl SessionApproval {
     fn hint(&self) -> String {
         match (self.regular, self.sudo) {
             (false, false) => "auto-approve: off".to_string(),
-            (true, false)  => "⚡ auto-approve: regular  ·  Ctrl+C to stop".to_string(),
-            (false, true)  => "⚡ auto-approve: sudo  ·  Ctrl+C to stop".to_string(),
-            (true, true)   => "⚡ auto-approve: all  ·  Ctrl+C to stop".to_string(),
+            (true, false) => "⚡ auto-approve: regular  ·  Ctrl+C to stop".to_string(),
+            (false, true) => "⚡ auto-approve: sudo  ·  Ctrl+C to stop".to_string(),
+            (true, true) => "⚡ auto-approve: all  ·  Ctrl+C to stop".to_string(),
         }
     }
 }
@@ -77,15 +76,12 @@ WantedBy=default.target
         }
     }
 
-    let position = Config::load()
-        .unwrap_or_default()
-        .ai
-        .position;
+    let position = Config::load().unwrap_or_default().ai.position;
     let split_flag = match position.as_str() {
-        "right"  => "-h",
-        "left"   => "-bh",
-        "top"    => "-bv",
-        _        => "-v",   // "bottom" or any unrecognised value
+        "right" => "-h",
+        "left" => "-bh",
+        "top" => "-bv",
+        _ => "-v", // "bottom" or any unrecognised value
     };
 
     // Use the absolute path to the running binary so the bind-key works even
@@ -98,7 +94,10 @@ WantedBy=default.target
 
     println!();
     println!("# Add this to your ~/.tmux.conf:");
-    println!("bind-key T split-window {} '{} chat'", split_flag, daemon_bin);
+    println!(
+        "bind-key T split-window {} '{} chat'",
+        split_flag, daemon_bin
+    );
     println!();
     println!("# Then reload tmux config:");
     println!("tmux source-file ~/.tmux.conf");
@@ -187,6 +186,12 @@ pub async fn run_status() -> Result<()> {
                     socket_path,
                     schedule_count,
                     circuit_state,
+                    commands_executed,
+                    webhooks_received,
+                    runbooks_count,
+                    scripts_count,
+                    memory_items_count,
+                    recent_commands,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -205,6 +210,12 @@ pub async fn run_status() -> Result<()> {
                     println!("Active sessions: {}", active_sessions);
                     println!("Schedules:       {}", schedule_count);
                     println!("Circuit:         {}", circuit_state);
+                    println!("Commands exec'd: {}", commands_executed);
+                    println!("Webhooks rec'd:  {}", webhooks_received);
+                    println!("Runbooks:        {}", runbooks_count);
+                    println!("Scripts:         {}", scripts_count);
+                    println!("Memories:        {}", memory_items_count);
+                    println!("Recent commands: {}", recent_commands.join(", "));
                 }
                 _ => {
                     println!("Daemon did not return status.");
@@ -219,11 +230,27 @@ pub async fn run_status() -> Result<()> {
 pub async fn run_ask(query: String) -> Result<()> {
     let stdin = AsyncStdin::new()?;
     let mut approval = SessionApproval::default(); // never persists; single-shot has no session
-    
+
     let old = crate::cli::input::set_raw_mode()?;
     let tmux_session = crate::tmux::current_session_name();
     // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
-    let result = ask_with_session(query.clone(), &query, None, None, &stdin, Some(terminal_width()), &mut approval, old, tmux_session.as_deref(), None, &mut 0, 0, None, None).await;
+    let result = ask_with_session(
+        query.clone(),
+        &query,
+        None,
+        None,
+        &stdin,
+        Some(terminal_width()),
+        &mut approval,
+        old,
+        tmux_session.as_deref(),
+        None,
+        &mut 0,
+        0,
+        None,
+        None,
+    )
+    .await;
     crate::cli::input::restore_termios(old);
     result
 }
@@ -243,7 +270,8 @@ pub fn run_prompts() -> Result<()> {
         paths.sort_by_key(|e| e.file_name());
 
         for entry in paths {
-            let name = entry.path()
+            let name = entry
+                .path()
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -260,14 +288,26 @@ pub fn run_prompts() -> Result<()> {
         return Ok(());
     }
 
-    let name_width = entries.iter().map(|(n, _)| n.len()).max().unwrap_or(4).max(4);
+    let name_width = entries
+        .iter()
+        .map(|(n, _)| n.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
     println!("\x1b[1mAvailable prompts\x1b[0m  ({})", dir.display());
     println!();
     for (name, desc) in &entries {
-        println!("  \x1b[1m\x1b[96m{:<width$}\x1b[0m  {}", name, desc, width = name_width);
+        println!(
+            "  \x1b[1m\x1b[96m{:<width$}\x1b[0m  {}",
+            name,
+            desc,
+            width = name_width
+        );
     }
     println!();
-    println!("  Use \x1b[1m/prompt <name>\x1b[0m in chat to switch, or set \x1b[1mprompt = \"<name>\"\x1b[0m in config.toml.");
+    println!(
+        "  Use \x1b[1m/prompt <name>\x1b[0m in chat to switch, or set \x1b[1mprompt = \"<name>\"\x1b[0m in config.toml."
+    );
     Ok(())
 }
 
@@ -280,11 +320,24 @@ pub fn run_scripts() -> Result<()> {
         println!("Ask the AI to write a script, or place one there manually.");
         return Ok(());
     }
-    let name_w = scripts.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
-    println!("\x1b[1mScripts\x1b[0m  ({})", crate::scripts::scripts_dir().display());
+    let name_w = scripts
+        .iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    println!(
+        "\x1b[1mScripts\x1b[0m  ({})",
+        crate::scripts::scripts_dir().display()
+    );
     println!();
     for s in &scripts {
-        println!("  \x1b[1m\x1b[96m{:<width$}\x1b[0m  {} bytes", s.name, s.size, width = name_w);
+        println!(
+            "  \x1b[1m\x1b[96m{:<width$}\x1b[0m  {} bytes",
+            s.name,
+            s.size,
+            width = name_w
+        );
     }
     println!();
     Ok(())
@@ -302,18 +355,39 @@ pub fn run_sched_list() -> Result<()> {
     let name_w = jobs.iter().map(|j| j.name.len()).max().unwrap_or(4).max(4);
     println!("\x1b[1mScheduled Jobs\x1b[0m");
     println!();
-    println!("  {:<8}  {:<name_w$}  {:<16}  {:<12}  {}",
-        "ID", "Name", "Schedule", "Status", "Next Run", name_w = name_w);
-    println!("  {}  {}  {}  {}  {}",
-        "─".repeat(8), "─".repeat(name_w), "─".repeat(16), "─".repeat(12), "─".repeat(24));
+    println!(
+        "  {:<8}  {:<name_w$}  {:<16}  {:<12}  {}",
+        "ID",
+        "Name",
+        "Schedule",
+        "Status",
+        "Next Run",
+        name_w = name_w
+    );
+    println!(
+        "  {}  {}  {}  {}  {}",
+        "─".repeat(8),
+        "─".repeat(name_w),
+        "─".repeat(16),
+        "─".repeat(12),
+        "─".repeat(24)
+    );
     for job in &jobs {
         let id_short = &job.id[..job.id.len().min(8)];
-        let next = job.kind.next_run()
+        let next = job
+            .kind
+            .next_run()
             .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_else(|| "—".to_string());
-        println!("  \x1b[96m{:<8}\x1b[0m  {:<name_w$}  {:<16}  {:<12}  {}",
-            id_short, job.name, job.kind.describe(), job.status.describe(), next,
-            name_w = name_w);
+        println!(
+            "  \x1b[96m{:<8}\x1b[0m  {:<name_w$}  {:<16}  {:<12}  {}",
+            id_short,
+            job.name,
+            job.kind.describe(),
+            job.status.describe(),
+            next,
+            name_w = name_w
+        );
     }
     println!();
     Ok(())
@@ -325,9 +399,8 @@ pub fn run_sched_cancel(id: String) -> Result<()> {
     let store = crate::scheduler::ScheduleStore::load_or_create(path)?;
     // Support prefix matching
     let jobs = store.list();
-    let matched: Vec<&crate::scheduler::ScheduledJob> = jobs.iter()
-        .filter(|j| j.id.starts_with(&id))
-        .collect();
+    let matched: Vec<&crate::scheduler::ScheduledJob> =
+        jobs.iter().filter(|j| j.id.starts_with(&id)).collect();
     match matched.len() {
         0 => {
             eprintln!("No job found with ID starting with '{}'", id);
@@ -339,7 +412,11 @@ pub fn run_sched_cancel(id: String) -> Result<()> {
             println!("Cancelled job {} ({})", full_id, matched[0].name);
         }
         _ => {
-            eprintln!("Ambiguous ID prefix '{}' — matches {} jobs. Use more characters.", id, matched.len());
+            eprintln!(
+                "Ambiguous ID prefix '{}' — matches {} jobs. Use more characters.",
+                id,
+                matched.len()
+            );
             std::process::exit(1);
         }
     }
@@ -355,7 +432,8 @@ pub fn run_sched_windows() -> Result<()> {
     match output {
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout);
-            let de_windows: Vec<&str> = text.lines()
+            let de_windows: Vec<&str> = text
+                .lines()
                 .filter(|l| {
                     let name = l.splitn(2, ':').nth(1).unwrap_or("");
                     name.starts_with(crate::daemon::DAEMON_WINDOW_PREFIX)
@@ -437,7 +515,14 @@ pub async fn run_notify_focus(pane_id: String, session_name: String) -> Result<(
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifyFocus { pane_id, session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifyFocus {
+                    pane_id,
+                    session_name,
+                },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -451,7 +536,11 @@ pub async fn run_notify_window_changed(session_name: String) -> Result<()> {
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifyWindowChanged { session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifyWindowChanged { session_name },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -465,7 +554,11 @@ pub async fn run_notify_session_created(session_name: String) -> Result<()> {
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifySessionCreated { session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifySessionCreated { session_name },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -479,7 +572,11 @@ pub async fn run_notify_session_closed(session_name: String) -> Result<()> {
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifySessionClosed { session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifySessionClosed { session_name },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -493,7 +590,11 @@ pub async fn run_notify_client_attached(session_name: String) -> Result<()> {
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifyClientAttached { session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifyClientAttached { session_name },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -507,7 +608,11 @@ pub async fn run_notify_client_detached(session_name: String) -> Result<()> {
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifyClientDetached { session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifyClientDetached { session_name },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -521,7 +626,15 @@ pub async fn run_notify_resize(width: u16, height: u16, session_name: String) ->
         Ok(stream) => {
             let (rx, mut tx) = stream.into_split();
             let mut rx = BufReader::new(rx);
-            send_request(&mut tx, crate::ipc::Request::NotifyResize { width, height, session_name }).await?;
+            send_request(
+                &mut tx,
+                crate::ipc::Request::NotifyResize {
+                    width,
+                    height,
+                    session_name,
+                },
+            )
+            .await?;
             let _ = recv(&mut rx).await;
             Ok(())
         }
@@ -582,7 +695,7 @@ async fn run_chat_inner() -> Result<()> {
         }
         chat_height = crate::tmux::query_pane_height(pane_id).unwrap_or_else(|_| terminal_height());
     } else {
-        chat_width  = terminal_width();
+        chat_width = terminal_width();
         chat_height = terminal_height();
     }
 
@@ -594,13 +707,12 @@ async fn run_chat_inner() -> Result<()> {
     if pane_id_opt.is_some() {
         const SETTLE_MS: u64 = 500;
         loop {
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(SETTLE_MS),
-                sigwinch.recv(),
-            ).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(SETTLE_MS), sigwinch.recv())
+                .await
+            {
                 Ok(_) => {
                     // Another resize — update dims and restart the quiet timer.
-                    chat_width  = terminal_width();
+                    chat_width = terminal_width();
                     chat_height = terminal_height();
                 }
                 Err(_elapsed) => break, // stable for SETTLE_MS — proceed
@@ -640,25 +752,32 @@ async fn run_chat_inner() -> Result<()> {
             "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
         ];
         let subtitle = "                 AI POWERED OPERATOR";
-        let logo_w = logo_lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+        let logo_w = logo_lines
+            .iter()
+            .map(|l| l.chars().count())
+            .max()
+            .unwrap_or(0);
         let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
         println!();
-        let blood_red   = "\x1b[1m\x1b[38;2;180;0;0m";
+        let blood_red = "\x1b[1m\x1b[38;2;180;0;0m";
         let deep_yellow = "\x1b[38;2;220;160;0m"; // bold inherited from blood_red prefix
         for (i, line) in logo_lines.iter().enumerate() {
             // For eye lines, split the line around the yellow segment and render
             // the outer body in red and the inner pupil/iris in deep yellow.
             let eye = match i {
-                6 => "▄██▄",    // line 7 of art — iris
-                7 => "███ ██",  // line 8 — pupil
-                8 => "▀████▀",  // line 9 — eye interior
-                9 => "▀██▀",    // line 10 — pupil highlight
+                6 => "▄██▄",   // line 7 of art — iris
+                7 => "███ ██", // line 8 — pupil
+                8 => "▀████▀", // line 9 — eye interior
+                9 => "▀██▀",   // line 10 — pupil highlight
                 _ => "",
             };
             let s = if !eye.is_empty() {
                 if let Some(p) = line.find(eye) {
-                    format!("{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
-                            &line[..p], &line[p + eye.len()..])
+                    format!(
+                        "{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
+                        &line[..p],
+                        &line[p + eye.len()..]
+                    )
                 } else {
                     format!("{blood_red}{line}\x1b[0m")
                 }
@@ -674,15 +793,17 @@ async fn run_chat_inner() -> Result<()> {
 
     // One-time usage hints — stacked vertically, centered in the pane.
     {
-        let center = |vis_len: usize| -> String {
-            " ".repeat((chat_width.saturating_sub(vis_len)) / 2)
-        };
+        let center =
+            |vis_len: usize| -> String { " ".repeat((chat_width.saturating_sub(vis_len)) / 2) };
         println!();
         // visible lengths (no ANSI): 22, 23, 26, 30
-        println!("{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",           center(22));
-        println!("{}\x1b[96m/clear\x1b[0m to reset session",                           center(23));
-        println!("{}\x1b[96m/refresh\x1b[0m to resync context",                        center(26));
-        println!("{}\x1b[2mcontext: panes · windows · env\x1b[0m",                    center(30));
+        println!(
+            "{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",
+            center(22)
+        );
+        println!("{}\x1b[96m/clear\x1b[0m to reset session", center(23));
+        println!("{}\x1b[96m/refresh\x1b[0m to resync context", center(26));
+        println!("{}\x1b[2mcontext: panes · windows · env\x1b[0m", center(30));
         println!();
     }
 
@@ -696,37 +817,54 @@ async fn run_chat_inner() -> Result<()> {
     // session), #{session_attached} is already ≥ 1 so the loop exits on the
     // first check with no perceptible delay.
     let config = Config::load().unwrap_or_default();
-    let model_pre  = config.ai.model.clone();
-    let ctx_pre    = config.ai.context_window();
+    let model_pre = config.ai.model.clone();
+    let ctx_pre = config.ai.context_window();
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model_pre, 0, ctx_pre, false);
+    draw_status_bar(
+        chat_height,
+        chat_width,
+        &session_id,
+        &hint,
+        &model_pre,
+        0,
+        ctx_pre,
+        false,
+    );
 
     // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
     let old_termios = crate::cli::input::set_raw_mode()?;
 
     let result = run_chat_inner_raw(
-        &mut input_state, &stdin, &mut sigwinch,
-        chat_width, start_time, session_id,
-        current_prompt, &mut approval, old_termios,
-        tmux_session, target_pane,
-    ).await;
+        &mut input_state,
+        &stdin,
+        &mut sigwinch,
+        chat_width,
+        start_time,
+        session_id,
+        current_prompt,
+        &mut approval,
+        old_termios,
+        tmux_session,
+        target_pane,
+    )
+    .await;
 
     crate::cli::input::restore_termios(old_termios);
     result
 }
 
 async fn run_chat_inner_raw(
-    input_state:    &mut InputState,
-    stdin:          &AsyncStdin,
-    sigwinch:       &mut tokio::signal::unix::Signal,
+    input_state: &mut InputState,
+    stdin: &AsyncStdin,
+    sigwinch: &mut tokio::signal::unix::Signal,
     mut chat_width: usize,
-    start_time:     std::time::Instant,
+    start_time: std::time::Instant,
     mut session_id: String,
     mut current_prompt: Option<String>,
-    approval:   &mut SessionApproval,
-    old_termios:    libc::termios,
-    tmux_session:   Option<String>,
-    target_pane:    Option<String>,
+    approval: &mut SessionApproval,
+    old_termios: libc::termios,
+    tmux_session: Option<String>,
+    target_pane: Option<String>,
 ) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
@@ -745,7 +883,9 @@ async fn run_chat_inner_raw(
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .and_then(|s| s.trim().parse::<u32>().ok())
             .unwrap_or(1); // treat errors as attached (e.g. running outside tmux)
-        if attached > 0 { break; }
+        if attached > 0 {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
@@ -755,11 +895,31 @@ async fn run_chat_inner_raw(
     {
         let cw = chat_width; // copy for Request::Ask; &mut chat_width goes into resize
         let resize = StreamResizeDims {
-            width: &mut chat_width, height: &mut chat_height,
-            start: start_time, model: model.clone(),
-            daemon_up: false, has_frame: false,
+            width: &mut chat_width,
+            height: &mut chat_height,
+            start: start_time,
+            model: model.clone(),
+            daemon_up: false,
+            has_frame: false,
         };
-        match ask_with_session("Hello!".to_string(), "", Some(&session_id), current_prompt.as_deref(), &stdin, Some(cw), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window, Some(sigwinch), Some(resize)).await {
+        match ask_with_session(
+            "Hello!".to_string(),
+            "",
+            Some(&session_id),
+            current_prompt.as_deref(),
+            &stdin,
+            Some(cw),
+            approval,
+            old_termios,
+            tmux_session.as_deref(),
+            target_pane.as_deref(),
+            &mut prompt_tokens,
+            context_window,
+            Some(sigwinch),
+            Some(resize),
+        )
+        .await
+        {
             Ok(()) => daemon_up = true,
             Err(e) => {
                 eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
@@ -771,22 +931,41 @@ async fn run_chat_inner_raw(
 
     // Greeting is done.  Re-query dimensions in case the pane was resized
     // while it streamed, then draw the full chrome for the first time.
-    chat_width  = terminal_width();
+    chat_width = terminal_width();
     chat_height = terminal_height();
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
+    draw_status_bar(
+        chat_height,
+        chat_width,
+        &session_id,
+        &hint,
+        &model,
+        prompt_tokens,
+        context_window,
+        daemon_up,
+    );
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
         let hint = approval.hint();
         let line_opt = read_input_line(
-            input_state, stdin, sigwinch,
-            &mut chat_width, &mut chat_height,
-            start_time, &session_id, &hint, &model, prompt_tokens, context_window,
-            &mut last_ctrl_c, daemon_up,
-        ).await?;
+            input_state,
+            stdin,
+            sigwinch,
+            &mut chat_width,
+            &mut chat_height,
+            start_time,
+            &session_id,
+            &hint,
+            &model,
+            prompt_tokens,
+            context_window,
+            &mut last_ctrl_c,
+            daemon_up,
+        )
+        .await?;
 
         let Some(line) = line_opt else { break }; // EOF or Ctrl+D on empty line
 
@@ -794,7 +973,7 @@ async fn run_chat_inner_raw(
         // all subsequent output scrolls upward.
         {
             use std::io::Write;
-            let input_row     = chat_height.saturating_sub(2).max(1);
+            let input_row = chat_height.saturating_sub(2).max(1);
             let scroll_bottom = chat_height.saturating_sub(4).max(1);
             print!("\x1b[{input_row};1H\x1b[2K");
             print!("\x1b[{scroll_bottom};1H");
@@ -802,12 +981,16 @@ async fn run_chat_inner_raw(
         }
 
         let query = line.trim().to_string();
-        if query.is_empty() { continue; }
+        if query.is_empty() {
+            continue;
+        }
 
         // Push to history before processing so /clear etc. are also navigable.
         input_state.push_history(query.clone());
 
-        if query == "exit" || query == "quit" { break; }
+        if query == "exit" || query == "quit" {
+            break;
+        }
         if query == "/clear" {
             session_id = new_session_id();
             *approval = SessionApproval::default();
@@ -817,14 +1000,26 @@ async fn run_chat_inner_raw(
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
             let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
+            draw_status_bar(
+                chat_height,
+                chat_width,
+                &session_id,
+                &hint,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+            );
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
             let name = name.to_string();
             let path = crate::config::prompts_dir().join(format!("{}.toml", name));
             if !path.exists() && name != "sre" {
-                println!("\x1b[31m✗\x1b[0m  Unknown prompt \x1b[1m{}\x1b[0m — run \x1b[1mdaemoneye prompts\x1b[0m to list available prompts.", name);
+                println!(
+                    "\x1b[31m✗\x1b[0m  Unknown prompt \x1b[1m{}\x1b[0m — run \x1b[1mdaemoneye prompts\x1b[0m to list available prompts.",
+                    name
+                );
             } else {
                 session_id = new_session_id();
                 *approval = SessionApproval::default();
@@ -834,7 +1029,16 @@ async fn run_chat_inner_raw(
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                 draw_input_frame(chat_height, chat_width, start_time);
                 let hint = approval.hint();
-                draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
+                draw_status_bar(
+                    chat_height,
+                    chat_width,
+                    &session_id,
+                    &hint,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                );
             }
             continue;
         }
@@ -848,7 +1052,16 @@ async fn run_chat_inner_raw(
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                     draw_input_frame(chat_height, chat_width, start_time);
                     let hint = approval.hint();
-                    draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
+                    draw_status_bar(
+                        chat_height,
+                        chat_width,
+                        &session_id,
+                        &hint,
+                        &model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                    );
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
@@ -857,11 +1070,31 @@ async fn run_chat_inner_raw(
         {
             let cw = chat_width; // copy for Request::Ask
             let resize = StreamResizeDims {
-                width: &mut chat_width, height: &mut chat_height,
-                start: start_time, model: model.clone(),
-                daemon_up, has_frame: true,
+                width: &mut chat_width,
+                height: &mut chat_height,
+                start: start_time,
+                model: model.clone(),
+                daemon_up,
+                has_frame: true,
             };
-            match ask_with_session(query.clone(), &query, Some(&session_id), current_prompt.as_deref(), stdin, Some(cw), approval, old_termios, tmux_session.as_deref(), target_pane.as_deref(), &mut prompt_tokens, context_window, Some(sigwinch), Some(resize)).await {
+            match ask_with_session(
+                query.clone(),
+                &query,
+                Some(&session_id),
+                current_prompt.as_deref(),
+                stdin,
+                Some(cw),
+                approval,
+                old_termios,
+                tmux_session.as_deref(),
+                target_pane.as_deref(),
+                &mut prompt_tokens,
+                context_window,
+                Some(sigwinch),
+                Some(resize),
+            )
+            .await
+            {
                 Ok(()) => daemon_up = true,
                 Err(e) => eprintln!("\n\x1b[31m✗\x1b[0m {}", e),
             }
@@ -870,19 +1103,27 @@ async fn run_chat_inner_raw(
         last_ctrl_c = None;
 
         // Re-sync dimensions after the (potentially long) streaming response.
-        chat_width  = terminal_width();
+        chat_width = terminal_width();
         chat_height = terminal_height();
         setup_scroll_region(chat_height);
         draw_input_frame(chat_height, chat_width, start_time);
         let hint = approval.hint();
-        draw_status_bar(chat_height, chat_width, &session_id, &hint, &model, prompt_tokens, context_window, daemon_up);
+        draw_status_bar(
+            chat_height,
+            chat_width,
+            &session_id,
+            &hint,
+            &model,
+            prompt_tokens,
+            context_window,
+            daemon_up,
+        );
     }
 
     teardown_scroll_region(chat_height);
     println!("\n\x1b[2mGoodbye.\x1b[0m");
     Ok(())
 }
-
 
 // ── Pane discovery ─────────────────────────────────────────────────────────
 
@@ -961,12 +1202,21 @@ fn offer_no_sibling_options(chat_pane: &str, session: &str) -> Option<String> {
 
     println!();
     println!("No sibling pane in this window for foreground commands.");
-    println!("  [S]  Split this window (side by side) and use the new pane  \x1b[2m← default\x1b[0m");
+    println!(
+        "  [S]  Split this window (side by side) and use the new pane  \x1b[2m← default\x1b[0m"
+    );
     if !other_panes.is_empty() {
-        println!("  [P]  Pick from another pane in this session ({} available)", other_panes.len());
+        println!(
+            "  [P]  Pick from another pane in this session ({} available)",
+            other_panes.len()
+        );
     }
     println!("  [N]  No foreground target (background commands only)");
-    let opts = if other_panes.is_empty() { "S/N" } else { "S/P/N" };
+    let opts = if other_panes.is_empty() {
+        "S/N"
+    } else {
+        "S/P/N"
+    };
     print!("Choose [{}] (Enter = S): ", opts);
     let _ = std::io::stdout().flush();
 
@@ -976,7 +1226,15 @@ fn offer_no_sibling_options(chat_pane: &str, session: &str) -> Option<String> {
     match choice.as_str() {
         "" | "s" => {
             let out = std::process::Command::new("tmux")
-                .args(["split-window", "-h", "-t", chat_pane, "-P", "-F", "#{pane_id}"])
+                .args([
+                    "split-window",
+                    "-h",
+                    "-t",
+                    chat_pane,
+                    "-P",
+                    "-F",
+                    "#{pane_id}",
+                ])
                 .output()
                 .ok()?;
             let new_pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -1004,8 +1262,13 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
     println!("Multiple panes available. Which should I use for foreground commands?");
     for (i, pane_id) in candidates.iter().enumerate() {
         let info = std::process::Command::new("tmux")
-            .args(["display-message", "-t", pane_id, "-p",
-                   "#{pane_current_command}  #{pane_current_path}"])
+            .args([
+                "display-message",
+                "-t",
+                pane_id,
+                "-p",
+                "#{pane_current_command}  #{pane_current_path}",
+            ])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default();
@@ -1037,10 +1300,10 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
 
 /// Context for SIGWINCH handling during streaming in `ask_with_session`.
 struct StreamResizeDims<'a> {
-    width:     &'a mut usize,
-    height:    &'a mut usize,
-    start:     std::time::Instant,
-    model:     String,
+    width: &'a mut usize,
+    height: &'a mut usize,
+    start: std::time::Instant,
+    model: String,
     daemon_up: bool,
     /// True when the input frame (borders + status bar) is currently drawn.
     /// When false, only dimensions are updated; caller redraws after streaming.
@@ -1050,15 +1313,15 @@ struct StreamResizeDims<'a> {
 /// Called from the SIGWINCH arms inside `ask_with_session`.
 /// Re-queries dimensions, erases the old frame if visible, and redraws.
 fn apply_stream_resize(
-    d:              &mut StreamResizeDims<'_>,
-    session_id:     Option<&str>,
-    approval:       &SessionApproval,
-    prompt_tokens:  u32,
+    d: &mut StreamResizeDims<'_>,
+    session_id: Option<&str>,
+    approval: &SessionApproval,
+    prompt_tokens: u32,
     context_window: u32,
 ) {
     use std::io::Write;
     let old_height = *d.height;
-    *d.width  = terminal_width();
+    *d.width = terminal_width();
     *d.height = terminal_height();
 
     if !d.has_frame {
@@ -1080,9 +1343,14 @@ fn apply_stream_resize(
     draw_input_frame(*d.height, *d.width, d.start);
     let hint = approval.hint();
     draw_status_bar(
-        *d.height, *d.width,
-        session_id.unwrap_or(""), &hint,
-        &d.model, prompt_tokens, context_window, d.daemon_up,
+        *d.height,
+        *d.width,
+        session_id.unwrap_or(""),
+        &hint,
+        &d.model,
+        prompt_tokens,
+        context_window,
+        d.daemon_up,
     );
 }
 
@@ -1120,16 +1388,20 @@ async fn ask_with_session(
         .map(|s| s.to_string())
         .or_else(|| std::env::var("TMUX_PANE").ok());
 
-    send_request(&mut tx, Request::Ask {
-        query,
-        tmux_pane,
-        session_id: session_id.map(|s| s.to_string()),
-        chat_pane,
-        prompt: prompt_override.map(|s| s.to_string()),
-        chat_width,
-        tmux_session: tmux_session.map(|s| s.to_string()),
-        target_pane: target_pane.map(|s| s.to_string()),
-    }).await?;
+    send_request(
+        &mut tx,
+        Request::Ask {
+            query,
+            tmux_pane,
+            session_id: session_id.map(|s| s.to_string()),
+            chat_pane,
+            prompt: prompt_override.map(|s| s.to_string()),
+            chat_width,
+            tmux_session: tmux_session.map(|s| s.to_string()),
+            target_pane: target_pane.map(|s| s.to_string()),
+        },
+    )
+    .await?;
 
     // Braille-pattern spinner frames, updated every 80 ms while waiting for
     // the first response from the daemon.
@@ -1159,7 +1431,8 @@ async fn ask_with_session(
     let verb_offset = (std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .subsec_nanos() as usize) % VERBS.len();
+        .subsec_nanos() as usize)
+        % VERBS.len();
     let mut spin = verb_offset * TICKS_PER_VERB;
     let mut response_started = false;
     // prompt_tokens is passed in from the outer loop so the value from the
@@ -1289,7 +1562,12 @@ async fn ask_with_session(
                 md.feed(&t);
                 std::io::stdout().flush()?;
             }
-            Response::ToolCallPrompt { id, command, background, target_pane } => {
+            Response::ToolCallPrompt {
+                id,
+                command,
+                background,
+                target_pane,
+            } => {
                 if !response_started {
                     print!("\r\x1b[K");
                     response_started = true;
@@ -1307,8 +1585,15 @@ async fn ask_with_session(
                 // user can visually map the pane ID to their tmux layout.
                 let target_label = target_pane.as_deref().and_then(|tp| {
                     let out = std::process::Command::new("tmux")
-                        .args(["display-message", "-t", tp, "-p", "#{pane_index}\t#{window_name}"])
-                        .output().ok()?;
+                        .args([
+                            "display-message",
+                            "-t",
+                            tp,
+                            "-p",
+                            "#{pane_index}\t#{window_name}",
+                        ])
+                        .output()
+                        .ok()?;
                     let s = String::from_utf8_lossy(&out.stdout);
                     let mut parts = s.trim().splitn(2, '\t');
                     let idx = parts.next()?;
@@ -1340,7 +1625,11 @@ async fn ask_with_session(
                 }
 
                 let is_sudo = command_has_sudo(&command);
-                let auto_approved = if is_sudo { approval.sudo } else { approval.regular };
+                let auto_approved = if is_sudo {
+                    approval.sudo
+                } else {
+                    approval.regular
+                };
 
                 // Outcome of the approval prompt.
                 enum ApprovalDecision {
@@ -1375,9 +1664,15 @@ async fn ask_with_session(
                         println!("  \x1b[32m✓ approved\x1b[0m");
                         ApprovalDecision::Approved
                     } else if trimmed.eq_ignore_ascii_case("a") {
-                        if is_sudo { approval.sudo = true; } else { approval.regular = true; }
-                        println!("  \x1b[32m✓ approved — all {} commands auto-approved for this session\x1b[0m",
-                                 if is_sudo { "sudo" } else { "regular" });
+                        if is_sudo {
+                            approval.sudo = true;
+                        } else {
+                            approval.regular = true;
+                        }
+                        println!(
+                            "  \x1b[32m✓ approved — all {} commands auto-approved for this session\x1b[0m",
+                            if is_sudo { "sudo" } else { "regular" }
+                        );
                         ApprovalDecision::ApprovedSession
                     } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {
                         println!("  \x1b[2m✗ skipped\x1b[0m");
@@ -1408,7 +1703,15 @@ async fn ask_with_session(
                 }
 
                 md.reset();
-                send_request(&mut tx, Request::ToolCallResponse { id, approved, user_message }).await?;
+                send_request(
+                    &mut tx,
+                    Request::ToolCallResponse {
+                        id,
+                        approved,
+                        user_message,
+                    },
+                )
+                .await?;
             }
             Response::SystemMsg(msg) => {
                 if !response_started {
@@ -1432,7 +1735,9 @@ async fn ask_with_session(
                     total
                 };
                 let mut body: Vec<String> = all_lines[..content_rows]
-                    .iter().map(|s| s.to_string()).collect();
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
                 if total > MAX_RESULT_LINES {
                     body.push(format!("… {} more lines", total - content_rows));
                 }
@@ -1448,7 +1753,8 @@ async fn ask_with_session(
             Response::CredentialPrompt { id, prompt } => {
                 md.flush();
                 println!("\n\x1b[33m⚠\x1b[0m  \x1b[1m{}\x1b[0m", prompt);
-                let credential = read_password_silent("   \x1b[33mPassword:\x1b[0m ").unwrap_or_default();
+                let credential =
+                    read_password_silent("   \x1b[33mPassword:\x1b[0m ").unwrap_or_default();
                 md.reset();
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
             }
@@ -1459,11 +1765,18 @@ async fn ask_with_session(
                 }
                 md.flush();
                 println!();
-                println!("  \x1b[33m⚙\x1b[0m \x1b[1mWhich pane should receive this command?\x1b[0m");
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mWhich pane should receive this command?\x1b[0m"
+                );
                 println!();
                 for (i, pane) in panes.iter().enumerate() {
-                    println!("  \x1b[32m[{}]\x1b[0m  {} — {} — {}",
-                        i + 1, pane.id, pane.current_cmd, pane.summary);
+                    println!(
+                        "  \x1b[32m[{}]\x1b[0m  {} — {} — {}",
+                        i + 1,
+                        pane.id,
+                        pane.current_cmd,
+                        pane.summary
+                    );
                 }
                 println!();
                 print!("  Select pane \x1b[32m›\x1b[0m ");
@@ -1472,7 +1785,9 @@ async fn ask_with_session(
                 crate::cli::input::restore_termios(old_termios);
                 let input = stdin.read_line().await.unwrap_or_default();
                 let _ = crate::cli::input::set_raw_mode(); // back to raw mode for turn trap
-                let pane_id = input.trim().parse::<usize>()
+                let pane_id = input
+                    .trim()
+                    .parse::<usize>()
                     .ok()
                     .and_then(|n| panes.get(n.saturating_sub(1)))
                     .map(|p| p.id.clone())
@@ -1480,14 +1795,21 @@ async fn ask_with_session(
                 md.reset();
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
             }
-            Response::ScriptWritePrompt { id, script_name, content } => {
+            Response::ScriptWritePrompt {
+                id,
+                script_name,
+                content,
+            } => {
                 if !response_started {
                     print!("\r\x1b[K");
                     response_started = true;
                 }
                 md.flush();
                 println!();
-                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to write script:\x1b[0m \x1b[96m{}\x1b[0m", script_name);
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to write script:\x1b[0m \x1b[96m{}\x1b[0m",
+                    script_name
+                );
                 println!();
                 // Show up to 40 lines of the script content
                 let lines: Vec<&str> = content.lines().collect();
@@ -1499,7 +1821,10 @@ async fn ask_with_session(
                     println!("  \x1b[2m… ({} more lines)\x1b[0m", lines.len() - 40);
                 }
                 println!();
-                print!("  Approve writing to ~/.daemoneye/scripts/{}? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", script_name);
+                print!(
+                    "  Approve writing to ~/.daemoneye/scripts/{}? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ",
+                    script_name
+                );
                 std::io::stdout().flush()?;
                 // Temporarily revert to cooked mode for user input
                 crate::cli::input::restore_termios(old_termios);
@@ -1509,14 +1834,22 @@ async fn ask_with_session(
                 md.reset();
                 send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
             }
-            Response::ScheduleWritePrompt { id, name, kind, action } => {
+            Response::ScheduleWritePrompt {
+                id,
+                name,
+                kind,
+                action,
+            } => {
                 if !response_started {
                     print!("\r\x1b[K");
                     response_started = true;
                 }
                 md.flush();
                 println!();
-                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to schedule a job:\x1b[0m \x1b[96m{}\x1b[0m", name);
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to schedule a job:\x1b[0m \x1b[96m{}\x1b[0m",
+                    name
+                );
                 println!();
                 println!("  \x1b[2mSchedule : {}\x1b[0m", kind);
                 println!("  \x1b[2mAction   : {}\x1b[0m", action);
@@ -1546,18 +1879,39 @@ async fn ask_with_session(
                     let id_w = jobs.iter().map(|j| j.id.len().min(8)).max().unwrap_or(8);
                     let name_w = jobs.iter().map(|j| j.name.len()).max().unwrap_or(4).max(4);
                     let kind_w = jobs.iter().map(|j| j.kind.len()).max().unwrap_or(8).max(8);
-                    println!("  {:<id_w$}  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
-                        "ID", "Name", "Schedule", "Status", "Next Run",
-                        id_w = id_w, name_w = name_w, kind_w = kind_w);
-                    println!("  {}  {}  {}  {}  {}",
-                        "─".repeat(id_w), "─".repeat(name_w), "─".repeat(kind_w),
-                        "─".repeat(12), "─".repeat(24));
+                    println!(
+                        "  {:<id_w$}  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
+                        "ID",
+                        "Name",
+                        "Schedule",
+                        "Status",
+                        "Next Run",
+                        id_w = id_w,
+                        name_w = name_w,
+                        kind_w = kind_w
+                    );
+                    println!(
+                        "  {}  {}  {}  {}  {}",
+                        "─".repeat(id_w),
+                        "─".repeat(name_w),
+                        "─".repeat(kind_w),
+                        "─".repeat(12),
+                        "─".repeat(24)
+                    );
                     for job in &jobs {
                         let id_short = &job.id[..job.id.len().min(8)];
                         let next = job.next_run.as_deref().unwrap_or("—");
-                        println!("  \x1b[96m{:<id_w$}\x1b[0m  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
-                            id_short, job.name, job.kind, job.status, next,
-                            id_w = id_w, name_w = name_w, kind_w = kind_w);
+                        println!(
+                            "  \x1b[96m{:<id_w$}\x1b[0m  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
+                            id_short,
+                            job.name,
+                            job.kind,
+                            job.status,
+                            next,
+                            id_w = id_w,
+                            name_w = name_w,
+                            kind_w = kind_w
+                        );
                     }
                 }
                 println!();
@@ -1575,22 +1929,39 @@ async fn ask_with_session(
                 } else {
                     println!("  \x1b[1mScripts\x1b[0m  (~/.daemoneye/scripts/)");
                     println!();
-                    let name_w = scripts.iter().map(|s| s.name.len()).max().unwrap_or(4).max(4);
+                    let name_w = scripts
+                        .iter()
+                        .map(|s| s.name.len())
+                        .max()
+                        .unwrap_or(4)
+                        .max(4);
                     for s in &scripts {
-                        println!("  \x1b[96m{:<name_w$}\x1b[0m  {} bytes", s.name, s.size, name_w = name_w);
+                        println!(
+                            "  \x1b[96m{:<name_w$}\x1b[0m  {} bytes",
+                            s.name,
+                            s.size,
+                            name_w = name_w
+                        );
                     }
                 }
                 println!();
                 md.reset();
             }
-            Response::RunbookWritePrompt { id, runbook_name, content } => {
+            Response::RunbookWritePrompt {
+                id,
+                runbook_name,
+                content,
+            } => {
                 if !response_started {
                     print!("\r\x1b[K");
                     response_started = true;
                 }
                 md.flush();
                 println!();
-                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to write runbook:\x1b[0m \x1b[96m{}\x1b[0m", runbook_name);
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to write runbook:\x1b[0m \x1b[96m{}\x1b[0m",
+                    runbook_name
+                );
                 println!();
                 let lines: Vec<&str> = content.lines().collect();
                 let show = lines.len().min(40);
@@ -1601,7 +1972,10 @@ async fn ask_with_session(
                     println!("  \x1b[2m… ({} more lines)\x1b[0m", lines.len() - 40);
                 }
                 println!();
-                print!("  Approve writing to ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", runbook_name);
+                print!(
+                    "  Approve writing to ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ",
+                    runbook_name
+                );
                 std::io::stdout().flush()?;
                 crate::cli::input::restore_termios(old_termios);
                 let input = stdin.read_line().await.unwrap_or_default();
@@ -1610,23 +1984,35 @@ async fn ask_with_session(
                 md.reset();
                 send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
             }
-            Response::RunbookDeletePrompt { id, runbook_name, active_jobs } => {
+            Response::RunbookDeletePrompt {
+                id,
+                runbook_name,
+                active_jobs,
+            } => {
                 if !response_started {
                     print!("\r\x1b[K");
                     response_started = true;
                 }
                 md.flush();
                 println!();
-                println!("  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to delete runbook:\x1b[0m \x1b[96m{}\x1b[0m", runbook_name);
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to delete runbook:\x1b[0m \x1b[96m{}\x1b[0m",
+                    runbook_name
+                );
                 if !active_jobs.is_empty() {
                     println!();
-                    println!("  \x1b[33mWarning:\x1b[0m the following scheduled jobs reference this runbook:");
+                    println!(
+                        "  \x1b[33mWarning:\x1b[0m the following scheduled jobs reference this runbook:"
+                    );
                     for job in &active_jobs {
                         println!("    \x1b[2m- {}\x1b[0m", job);
                     }
                 }
                 println!();
-                print!("  Approve deleting ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ", runbook_name);
+                print!(
+                    "  Approve deleting ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ",
+                    runbook_name
+                );
                 std::io::stdout().flush()?;
                 crate::cli::input::restore_termios(old_termios);
                 let input = stdin.read_line().await.unwrap_or_default();
@@ -1647,14 +2033,24 @@ async fn ask_with_session(
                 } else {
                     println!("  \x1b[1mRunbooks\x1b[0m  (~/.daemoneye/runbooks/)");
                     println!();
-                    let name_w = runbooks.iter().map(|r| r.name.len()).max().unwrap_or(4).max(4);
+                    let name_w = runbooks
+                        .iter()
+                        .map(|r| r.name.len())
+                        .max()
+                        .unwrap_or(4)
+                        .max(4);
                     for r in &runbooks {
                         let tags = if r.tags.is_empty() {
                             String::new()
                         } else {
                             format!("  \x1b[2m[{}]\x1b[0m", r.tags.join(", "))
                         };
-                        println!("  \x1b[96m{:<name_w$}\x1b[0m{}", r.name, tags, name_w = name_w);
+                        println!(
+                            "  \x1b[96m{:<name_w$}\x1b[0m{}",
+                            r.name,
+                            tags,
+                            name_w = name_w
+                        );
                     }
                 }
                 println!();
@@ -1672,12 +2068,27 @@ async fn ask_with_session(
                 } else {
                     println!("  \x1b[1mMemory Entries\x1b[0m  (~/.daemoneye/memory/)");
                     println!();
-                    let cat_w = entries.iter().map(|e| e.category.len()).max().unwrap_or(8).max(8);
-                    let key_w = entries.iter().map(|e| e.key.len()).max().unwrap_or(3).max(3);
+                    let cat_w = entries
+                        .iter()
+                        .map(|e| e.category.len())
+                        .max()
+                        .unwrap_or(8)
+                        .max(8);
+                    let key_w = entries
+                        .iter()
+                        .map(|e| e.key.len())
+                        .max()
+                        .unwrap_or(3)
+                        .max(3);
                     println!("  {:<cat_w$}  {}", "Category", "Key", cat_w = cat_w);
                     println!("  {}  {}", "─".repeat(cat_w), "─".repeat(key_w));
                     for e in &entries {
-                        println!("  \x1b[2m{:<cat_w$}\x1b[0m  \x1b[96m{}\x1b[0m", e.category, e.key, cat_w = cat_w);
+                        println!(
+                            "  \x1b[2m{:<cat_w$}\x1b[0m  \x1b[96m{}\x1b[0m",
+                            e.category,
+                            e.key,
+                            cat_w = cat_w
+                        );
                     }
                 }
                 println!();
@@ -1691,7 +2102,6 @@ async fn ask_with_session(
 
     Ok(())
 }
-
 
 /// Generate a random session ID from /dev/urandom.
 /// Falls back to timestamp+PID entropy if /dev/urandom is unavailable,
@@ -1734,7 +2144,12 @@ pub async fn connect() -> Result<UnixStream> {
         UnixStream::connect(&socket_path),
     )
     .await
-    .with_context(|| format!("Timed out connecting to daemon at {} (is it running?)", socket_path.display()))?
+    .with_context(|| {
+        format!(
+            "Timed out connecting to daemon at {} (is it running?)",
+            socket_path.display()
+        )
+    })?
     .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))
 }
 
