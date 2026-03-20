@@ -493,13 +493,28 @@ impl SessionCache {
             } else {
                 String::new()
             };
+            // For dead panes, fold the idle-since-completion time into the [dead:] tag
+            // so the agent sees a single clear signal: [dead: 0, idle 8m].
             let dead_part = if state.dead {
-                format!(" [dead: {}]", state.dead_status.unwrap_or(0))
+                let idle_sfx = if state.last_activity > 0 && now_secs > state.last_activity {
+                    let age = now_secs - state.last_activity;
+                    if age < 60 {
+                        format!(", idle {}s", age)
+                    } else if age < 3600 {
+                        format!(", idle {}m", age / 60)
+                    } else {
+                        format!(", idle {}h{}m", age / 3600, (age % 3600) / 60)
+                    }
+                } else {
+                    String::new()
+                };
+                format!(" [dead: {}{}]", state.dead_status.unwrap_or(0), idle_sfx)
             } else {
                 String::new()
             };
             // N4: annotate how recently the pane produced output.
-            let activity_part = if state.last_activity > 0 && now_secs >= state.last_activity {
+            // Dead panes already show elapsed time in dead_part above.
+            let activity_part = if !state.dead && state.last_activity > 0 && now_secs >= state.last_activity {
                 let age = now_secs - state.last_activity;
                 if age < 30 {
                     format!(" [active {}s ago]", age)
