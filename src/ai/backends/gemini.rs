@@ -358,6 +358,17 @@ impl AiClient for GeminiClient {
                                 },
                                 "required": ["path", "old_string", "new_string"]
                             }
+                        },
+                        {
+                            "name": "close_background_window",
+                            "description": "Close a background tmux window that is no longer needed. Call this after you have finished with a background window — once you have read its output and will not be issuing any more commands there. Frees the slot immediately rather than waiting for cap eviction.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "pane_id": {"type": "STRING", "description": "Pane ID of the background window to close (e.g. \"%3\"). Obtained from a [Background Task Completed] message or [BACKGROUND PANE] context block."}
+                                },
+                                "required": ["pane_id"]
+                            }
                         }
                     ]
                 }
