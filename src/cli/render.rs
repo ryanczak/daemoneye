@@ -5,7 +5,7 @@
 
 /// Non-owning handle to fd 0 used with `AsyncFd`.  Does not close the fd on
 /// drop — closing stdin would break the process.
-/// Render a bright-cyan bordered panel at terminal width.
+/// Render a bordered panel at terminal width.
 ///
 /// `title`    — label embedded in the top border
 /// `body`     — lines of text to show inside; long lines are truncated with `…`
@@ -15,9 +15,9 @@ pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
     let inner = w - 2; // visible chars between corner glyphs
 
     // ── Top border: ╭─ title ────────────────────────────╮ ─────────────
-    let tpart = format!("─ {} ", title);
-    let fill  = inner.saturating_sub(visual_len(&tpart) + 1); // +1 for the ─ before ╮
-    println!("\x1b[1m\x1b[96m╭{tpart}{}─╮\x1b[0m", "─".repeat(fill));
+    // Content between ╭ and ╮: "─ " (2) + title + " " (1) + fill×"─" + "─" (1) = inner
+    let fill  = inner.saturating_sub(visual_len(title) + 4);
+    println!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{title}\x1b[38;5;88m {}─╮\x1b[0m", "─".repeat(fill));
 
     // ── Body lines ──────────────────────────────────────────────────────
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
@@ -26,15 +26,15 @@ pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
             let vis = visual_len(&wrapped_line);
             let pad = " ".repeat(inner.saturating_sub(2 + vis));
             if dim_body {
-                println!("\x1b[1m\x1b[96m│\x1b[0m  \x1b[2m{wrapped_line}\x1b[0m{pad}\x1b[1m\x1b[96m│\x1b[0m");
+                println!("\x1b[38;5;88m\x1b[1m│\x1b[0m  \x1b[2m{wrapped_line}\x1b[0m{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m");
             } else {
-                println!("\x1b[1m\x1b[96m│\x1b[0m  {wrapped_line}{pad}\x1b[1m\x1b[96m│\x1b[0m");
+                println!("\x1b[38;5;88m\x1b[1m│\x1b[0m  {wrapped_line}{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m");
             }
         }
     }
 
     // ── Bottom border: ╰──────────────────────────────────╯ ─────────────
-    println!("\x1b[1m\x1b[96m╰{}\x1b[22m╯\x1b[0m", "─".repeat(inner));
+    println!("\x1b[38;5;88m\x1b[1m╰{}╯\x1b[0m", "─".repeat(inner));
 }
 
 /// Return `user@hostname` for the local machine, used as the label in the
@@ -67,9 +67,9 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_wi
 
     // ── Top border: ╭─ matt@scrappy ──────────────────╮ ─────────────
     let identity = local_user_host();
-    let tpart = format!("─ {} ", identity);
+    let tpart = format!("─ {} ", identity); // plain for visual_len
     let fill  = inner.saturating_sub(visual_len(&tpart) + 1); // +1 for ─ before ╮
-    println!("\x1b[1m\x1b[96m╭{tpart}{}─╮\x1b[0m", "─".repeat(fill));
+    println!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{identity}\x1b[38;5;88m {}─╮\x1b[0m", "─".repeat(fill));
 
     // ── Body lines (word-wrap aware) ──────────────────────────────────
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
@@ -77,33 +77,25 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_wi
         for wrapped in wrap_line_hard(raw_line, avail) {
             let vis = visual_len(&wrapped);
             let pad = " ".repeat(inner.saturating_sub(2 + vis));
-            println!("\x1b[1m\x1b[96m│\x1b[0m  {wrapped}{pad}\x1b[1m\x1b[96m│\x1b[0m");
+            println!("\x1b[38;5;88m\x1b[1m│\x1b[0m  {wrapped}{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m");
         }
     }
 
     // ── Bottom border with right-justified context-budget label ───────
-    // Show used/total tokens with % remaining, coloured by pressure.
-    let (budget_label, budget_color) = if prompt_tokens == 0 {
-        ("new session".to_string(), "\x1b[2m")
+    // Show used/total tokens with % remaining.
+    let budget_label = if prompt_tokens == 0 {
+        "new session".to_string()
     } else {
         let pct_used = (prompt_tokens as f64 / context_window.max(1) as f64 * 100.0) as u32;
         let pct_left = 100u32.saturating_sub(pct_used);
         let used_k   = prompt_tokens / 1000;
         let win_k    = context_window / 1000;
-        let label    = format!("{}k / {}k tokens · {}% remaining", used_k, win_k, pct_left);
-        let color = if pct_used >= 75 {
-            "\x1b[1m\x1b[31m" // bold red — high pressure
-        } else if pct_used >= 50 {
-            "\x1b[33m"        // yellow — moderate pressure
-        } else {
-            "\x1b[2m"         // dim — comfortable
-        };
-        (label, color)
+        format!("{}k / {}k tokens · {}% remaining", used_k, win_k, pct_left)
     };
     let label     = format!(" turn {} · {} ", turn, budget_label);
     let label_vis = visual_len(&label);
     let dashes    = inner.saturating_sub(label_vis + 1);
-    println!("\x1b[1m\x1b[96m╰{}\x1b[0m{budget_color}{label}\x1b[0m\x1b[1m\x1b[96m─╯\x1b[0m",
+    println!("\x1b[38;5;88m\x1b[1m╰{}\x1b[0m\x1b[38;5;136m{label}\x1b[38;5;88m\x1b[1m─╯\x1b[0m",
         "─".repeat(dashes));
     std::io::stdout().flush().ok();
 }
@@ -267,21 +259,21 @@ pub fn draw_input_frame_n(height: usize, width: usize, input_rows: usize, start:
     let border_bottom = height.saturating_sub(1).max(1);
     let inner = width.saturating_sub(2);
 
-    let label       = format!("─ {} ─", local_user_host());
-    let title_left  = label.as_str();
+    let user_host   = local_user_host();
+    let title_left  = format!("─ {} ─", user_host); // plain for visual_len
     let title_right = format!(" up {} ─", fmt_uptime(start.elapsed()));
-    let anchors     = visual_len(title_left) + visual_len(&title_right);
+    let anchors     = visual_len(&title_left) + visual_len(&title_right);
     let top = if inner >= anchors {
         let mid = "─".repeat(inner - anchors);
-        format!("\x1b[1m\x1b[96m╭{title_left}{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m")
+        format!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m")
     } else {
-        let dashes = "─".repeat(inner.saturating_sub(visual_len(title_left)));
-        format!("\x1b[1m\x1b[96m╭{title_left}{dashes}╮\x1b[0m")
+        let dashes = "─".repeat(inner.saturating_sub(visual_len(&title_left)));
+        format!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{dashes}╮\x1b[0m")
     };
 
     print!("\x1b7");
     print!("\x1b[{border_top};1H\x1b[2K{top}");
-    print!("\x1b[{border_bottom};1H\x1b[2K\x1b[1m\x1b[96m╰{}╯\x1b[0m", "─".repeat(inner));
+    print!("\x1b[{border_bottom};1H\x1b[2K\x1b[38;5;88m\x1b[1m╰{}╯\x1b[0m", "─".repeat(inner));
     print!("\x1b8");
     std::io::stdout().flush().ok();
 }
