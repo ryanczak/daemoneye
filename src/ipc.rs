@@ -155,8 +155,8 @@ pub struct RecentCommand {
     pub id: usize,
     pub cmd: String,
     pub timestamp: String,
-    pub exit_code: Option<i32>,
-    pub runtime_ms: Option<u64>,
+    pub mode: String,
+    pub status: String,
 }
 
 /// Messages sent from the daemon back to the CLI client.
@@ -251,17 +251,23 @@ pub enum Response {
         schedule_count: usize,
         /// Circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
         circuit_state: String,
-        commands_succeeded: usize,
-        commands_failed: usize,
+        commands_fg_succeeded: usize,
+        commands_fg_failed: usize,
+        commands_bg_succeeded: usize,
+        commands_bg_failed: usize,
         webhooks_received: usize,
+        webhook_url: String,
         runbooks_created: usize,
         runbooks_executed: usize,
+        runbooks_deleted: usize,
         scripts_created: usize,
         scripts_executed: usize,
         memories_created: usize,
         memories_recalled: usize,
+        memories_deleted: usize,
         schedules_created: usize,
         schedules_executed: usize,
+        schedules_deleted: usize,
         active_prompt_tokens: u32,
         context_window_tokens: u32,
         recent_commands: Vec<RecentCommand>,
@@ -819,25 +825,31 @@ mod tests {
             socket_path: "/tmp/daemoneye.sock".to_string(),
             schedule_count: 3,
             circuit_state: "closed".to_string(),
-            commands_succeeded: 8,
-            commands_failed: 2,
+            commands_fg_succeeded: 5,
+            commands_fg_failed: 1,
+            commands_bg_succeeded: 3,
+            commands_bg_failed: 1,
             webhooks_received: 5,
+            webhook_url: "http://127.0.0.1:8000/webhook".to_string(),
             runbooks_created: 1,
             runbooks_executed: 4,
+            runbooks_deleted: 0,
             scripts_created: 2,
             scripts_executed: 6,
             memories_created: 3,
             memories_recalled: 7,
+            memories_deleted: 1,
             schedules_created: 2,
             schedules_executed: 5,
+            schedules_deleted: 0,
             active_prompt_tokens: 1000,
             context_window_tokens: 4000,
             recent_commands: vec![RecentCommand {
                 id: 1,
                 cmd: "ls".to_string(),
-                timestamp: "12:00:00".to_string(),
-                exit_code: Some(0),
-                runtime_ms: Some(10),
+                timestamp: "2026-03-20 12:00:00".to_string(),
+                mode: "foreground".to_string(),
+                status: "succeeded".to_string(),
             }],
             memory_breakdown: memory_breakdown.clone(),
         };
@@ -850,17 +862,23 @@ mod tests {
                 model,
                 schedule_count,
                 circuit_state,
-                commands_succeeded,
-                commands_failed,
+                commands_fg_succeeded,
+                commands_fg_failed,
+                commands_bg_succeeded,
+                commands_bg_failed,
                 webhooks_received,
+                webhook_url,
                 runbooks_created,
                 runbooks_executed,
+                runbooks_deleted,
                 scripts_created,
                 scripts_executed,
                 memories_created,
                 memories_recalled,
+                memories_deleted,
                 schedules_created,
                 schedules_executed,
+                schedules_deleted,
                 active_prompt_tokens,
                 context_window_tokens,
                 recent_commands,
@@ -874,17 +892,23 @@ mod tests {
                 assert_eq!(model, "claude-sonnet-4-6");
                 assert_eq!(schedule_count, 3);
                 assert_eq!(circuit_state, "closed");
-                assert_eq!(commands_succeeded, 8);
-                assert_eq!(commands_failed, 2);
+                assert_eq!(commands_fg_succeeded, 5);
+                assert_eq!(commands_fg_failed, 1);
+                assert_eq!(commands_bg_succeeded, 3);
+                assert_eq!(commands_bg_failed, 1);
                 assert_eq!(webhooks_received, 5);
+                assert_eq!(webhook_url, "http://127.0.0.1:8000/webhook");
                 assert_eq!(runbooks_created, 1);
                 assert_eq!(runbooks_executed, 4);
+                assert_eq!(runbooks_deleted, 0);
                 assert_eq!(scripts_created, 2);
                 assert_eq!(scripts_executed, 6);
                 assert_eq!(memories_created, 3);
                 assert_eq!(memories_recalled, 7);
+                assert_eq!(memories_deleted, 1);
                 assert_eq!(schedules_created, 2);
                 assert_eq!(schedules_executed, 5);
+                assert_eq!(schedules_deleted, 0);
                 assert_eq!(active_prompt_tokens, 1000);
                 assert_eq!(context_window_tokens, 4000);
                 assert_eq!(recent_commands.len(), 1);

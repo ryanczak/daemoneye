@@ -223,7 +223,7 @@ async fn prompt_and_await_approval(
     match parsed {
         Parsed::Approved => {
             log::info!("{} command approved: {}", mode, cmd);
-            let cmd_id = crate::daemon::stats::start_command(cmd);
+            let cmd_id = crate::daemon::stats::start_command(cmd, mode);
             if cmd.contains(".daemoneye/scripts/") {
                 crate::daemon::stats::inc_scripts_executed();
             }

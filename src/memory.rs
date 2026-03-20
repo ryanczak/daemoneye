@@ -113,6 +113,7 @@ pub fn delete_memory(key: &str, category: MemoryCategory) -> Result<()> {
     let path = memory_dir(&category).join(format!("{}.md", key));
     if path.exists() {
         std::fs::remove_file(&path)?;
+        crate::daemon::stats::inc_memories_deleted();
     }
     Ok(())
 }

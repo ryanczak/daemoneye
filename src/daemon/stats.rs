@@ -9,40 +9,44 @@ pub struct RecentCommand {
     pub id: usize,
     pub cmd: String,
     pub timestamp: String,
-    pub exit_code: Option<i32>,
-    pub runtime_ms: Option<u64>,
-    #[serde(skip)]
-    pub start_time: Option<std::time::Instant>,
+    pub mode: String,
+    pub status: String,
 }
 
-static COMMANDS_EXECUTED: AtomicUsize = AtomicUsize::new(0);
-static COMMANDS_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
-static COMMANDS_FAILED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_FG_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_FG_FAILED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_BG_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_BG_FAILED: AtomicUsize = AtomicUsize::new(0);
+
 static WEBHOOKS_RECEIVED: AtomicUsize = AtomicUsize::new(0);
 
 static RUNBOOKS_CREATED: AtomicUsize = AtomicUsize::new(0);
 static RUNBOOKS_EXECUTED: AtomicUsize = AtomicUsize::new(0);
+static RUNBOOKS_DELETED: AtomicUsize = AtomicUsize::new(0);
+
 static SCRIPTS_CREATED: AtomicUsize = AtomicUsize::new(0);
 static SCRIPTS_EXECUTED: AtomicUsize = AtomicUsize::new(0);
+
 static MEMORIES_CREATED: AtomicUsize = AtomicUsize::new(0);
 static MEMORIES_RECALLED: AtomicUsize = AtomicUsize::new(0);
+static MEMORIES_DELETED: AtomicUsize = AtomicUsize::new(0);
+
 static SCHEDULES_CREATED: AtomicUsize = AtomicUsize::new(0);
 static SCHEDULES_EXECUTED: AtomicUsize = AtomicUsize::new(0);
+static SCHEDULES_DELETED: AtomicUsize = AtomicUsize::new(0);
 
 static NEXT_CMD_ID: AtomicUsize = AtomicUsize::new(1);
 static RECENT_COMMANDS: Mutex<VecDeque<RecentCommand>> = Mutex::new(VecDeque::new());
 
-pub fn start_command(cmd: &str) -> usize {
-    COMMANDS_EXECUTED.fetch_add(1, Ordering::Relaxed);
+pub fn start_command(cmd: &str, mode: &str) -> usize {
     let id = NEXT_CMD_ID.fetch_add(1, Ordering::Relaxed);
 
     let recent = RecentCommand {
         id,
         cmd: cmd.to_string(),
-        timestamp: Local::now().format("%H:%M:%S").to_string(),
-        exit_code: None,
-        runtime_ms: None,
-        start_time: Some(std::time::Instant::now()),
+        timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        mode: mode.to_string(),
+        status: "approved".to_string(),
     };
 
     if let Ok(mut cmds) = RECENT_COMMANDS.lock() {
@@ -56,18 +60,35 @@ pub fn start_command(cmd: &str) -> usize {
 }
 
 pub fn finish_command(id: usize, exit_code: i32) {
-    if exit_code == 0 {
-        COMMANDS_SUCCEEDED.fetch_add(1, Ordering::Relaxed);
-    } else {
-        COMMANDS_FAILED.fetch_add(1, Ordering::Relaxed);
-    }
-
+    let mut is_fg = false;
+    let mut is_bg = false;
     if let Ok(mut cmds) = RECENT_COMMANDS.lock() {
         if let Some(cmd) = cmds.iter_mut().find(|c| c.id == id) {
-            cmd.exit_code = Some(exit_code);
-            if let Some(start) = cmd.start_time {
-                cmd.runtime_ms = Some(start.elapsed().as_millis() as u64);
+            let success = exit_code == 0;
+            cmd.status = if success {
+                "succeeded".to_string()
+            } else {
+                format!("failed ({})", exit_code)
+            };
+            if cmd.mode == "foreground" {
+                is_fg = true;
+            } else {
+                is_bg = true;
             }
+        }
+    }
+
+    if is_fg {
+        if exit_code == 0 {
+            COMMANDS_FG_SUCCEEDED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            COMMANDS_FG_FAILED.fetch_add(1, Ordering::Relaxed);
+        }
+    } else if is_bg {
+        if exit_code == 0 {
+            COMMANDS_BG_SUCCEEDED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            COMMANDS_BG_FAILED.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -79,11 +100,17 @@ pub fn get_webhooks_received() -> usize {
     WEBHOOKS_RECEIVED.load(Ordering::Relaxed)
 }
 
-pub fn get_commands_succeeded() -> usize {
-    COMMANDS_SUCCEEDED.load(Ordering::Relaxed)
+pub fn get_commands_fg_succeeded() -> usize {
+    COMMANDS_FG_SUCCEEDED.load(Ordering::Relaxed)
 }
-pub fn get_commands_failed() -> usize {
-    COMMANDS_FAILED.load(Ordering::Relaxed)
+pub fn get_commands_fg_failed() -> usize {
+    COMMANDS_FG_FAILED.load(Ordering::Relaxed)
+}
+pub fn get_commands_bg_succeeded() -> usize {
+    COMMANDS_BG_SUCCEEDED.load(Ordering::Relaxed)
+}
+pub fn get_commands_bg_failed() -> usize {
+    COMMANDS_BG_FAILED.load(Ordering::Relaxed)
 }
 
 pub fn get_recent_commands() -> Vec<crate::ipc::RecentCommand> {
@@ -93,8 +120,8 @@ pub fn get_recent_commands() -> Vec<crate::ipc::RecentCommand> {
                 id: c.id,
                 cmd: c.cmd.clone(),
                 timestamp: c.timestamp.clone(),
-                exit_code: c.exit_code,
-                runtime_ms: c.runtime_ms,
+                mode: c.mode.clone(),
+                status: c.status.clone(),
             })
             .collect()
     } else {
@@ -109,11 +136,17 @@ pub fn inc_runbooks_created() {
 pub fn inc_runbooks_executed() {
     RUNBOOKS_EXECUTED.fetch_add(1, Ordering::Relaxed);
 }
+pub fn inc_runbooks_deleted() {
+    RUNBOOKS_DELETED.fetch_add(1, Ordering::Relaxed);
+}
 pub fn get_runbooks_created() -> usize {
     RUNBOOKS_CREATED.load(Ordering::Relaxed)
 }
 pub fn get_runbooks_executed() -> usize {
     RUNBOOKS_EXECUTED.load(Ordering::Relaxed)
+}
+pub fn get_runbooks_deleted() -> usize {
+    RUNBOOKS_DELETED.load(Ordering::Relaxed)
 }
 
 pub fn inc_scripts_created() {
@@ -135,11 +168,17 @@ pub fn inc_memories_created() {
 pub fn inc_memories_recalled() {
     MEMORIES_RECALLED.fetch_add(1, Ordering::Relaxed);
 }
+pub fn inc_memories_deleted() {
+    MEMORIES_DELETED.fetch_add(1, Ordering::Relaxed);
+}
 pub fn get_memories_created() -> usize {
     MEMORIES_CREATED.load(Ordering::Relaxed)
 }
 pub fn get_memories_recalled() -> usize {
     MEMORIES_RECALLED.load(Ordering::Relaxed)
+}
+pub fn get_memories_deleted() -> usize {
+    MEMORIES_DELETED.load(Ordering::Relaxed)
 }
 
 pub fn inc_schedules_created() {
@@ -148,9 +187,15 @@ pub fn inc_schedules_created() {
 pub fn inc_schedules_executed() {
     SCHEDULES_EXECUTED.fetch_add(1, Ordering::Relaxed);
 }
+pub fn inc_schedules_deleted() {
+    SCHEDULES_DELETED.fetch_add(1, Ordering::Relaxed);
+}
 pub fn get_schedules_created() -> usize {
     SCHEDULES_CREATED.load(Ordering::Relaxed)
 }
 pub fn get_schedules_executed() -> usize {
     SCHEDULES_EXECUTED.load(Ordering::Relaxed)
+}
+pub fn get_schedules_deleted() -> usize {
+    SCHEDULES_DELETED.load(Ordering::Relaxed)
 }

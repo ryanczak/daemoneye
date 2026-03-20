@@ -245,6 +245,7 @@ impl ScheduleStore {
                 name,
                 &id[..8]
             );
+            crate::daemon::stats::inc_schedules_deleted();
         }
         Ok(found)
     }

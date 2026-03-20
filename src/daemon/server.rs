@@ -389,20 +389,28 @@ pub async fn handle_client(
             let schedule_count = schedule_store.list().len();
             let circuit_state = crate::ai::circuit_state_str().to_string();
 
-            let commands_succeeded = crate::daemon::stats::get_commands_succeeded();
-            let commands_failed = crate::daemon::stats::get_commands_failed();
+            let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
+            let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
+            let commands_bg_succeeded = crate::daemon::stats::get_commands_bg_succeeded();
+            let commands_bg_failed = crate::daemon::stats::get_commands_bg_failed();
             let webhooks_received = crate::daemon::stats::get_webhooks_received();
+            let webhook_url = format!(
+                "http://{}:{}/webhook",
+                config.webhook.bind_addr, config.webhook.port
+            );
             let recent_commands = crate::daemon::stats::get_recent_commands();
 
             let runbooks_created = crate::daemon::stats::get_runbooks_created();
             let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
+            let runbooks_deleted = crate::daemon::stats::get_runbooks_deleted();
             let scripts_created = crate::daemon::stats::get_scripts_created();
             let scripts_executed = crate::daemon::stats::get_scripts_executed();
             let memories_created = crate::daemon::stats::get_memories_created();
             let memories_recalled = crate::daemon::stats::get_memories_recalled();
+            let memories_deleted = crate::daemon::stats::get_memories_deleted();
             let schedules_created = crate::daemon::stats::get_schedules_created();
             let schedules_executed = crate::daemon::stats::get_schedules_executed();
-
+            let schedules_deleted = crate::daemon::stats::get_schedules_deleted();
             let mut memory_breakdown = std::collections::HashMap::new();
             if let Ok(memories) = crate::memory::list_memories(None) {
                 for (cat, _) in memories {
@@ -423,17 +431,23 @@ pub async fn handle_client(
                     socket_path: default_socket_path().display().to_string(),
                     schedule_count,
                     circuit_state,
-                    commands_succeeded,
-                    commands_failed,
+                    commands_fg_succeeded,
+                    commands_fg_failed,
+                    commands_bg_succeeded,
+                    commands_bg_failed,
                     webhooks_received,
+                    webhook_url,
                     runbooks_created,
                     runbooks_executed,
+                    runbooks_deleted,
                     scripts_created,
                     scripts_executed,
                     memories_created,
                     memories_recalled,
+                    memories_deleted,
                     schedules_created,
                     schedules_executed,
+                    schedules_deleted,
                     active_prompt_tokens,
                     context_window_tokens,
                     recent_commands,

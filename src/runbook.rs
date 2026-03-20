@@ -137,6 +137,7 @@ pub fn delete_runbook(name: &str) -> Result<()> {
     if path.exists() {
         std::fs::remove_file(&path)
             .with_context(|| format!("deleting runbook at {}", path.display()))?;
+        crate::daemon::stats::inc_runbooks_deleted();
     }
     Ok(())
 }
