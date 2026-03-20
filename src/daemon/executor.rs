@@ -1316,6 +1316,21 @@ pub async fn execute_tool_call(
                 ));
             }
 
+            // Block access to the daemoneye config directory — use the dedicated
+            // tools (read_script, read_runbook, read_memory, etc.) instead.
+            {
+                let de_dir = crate::config::config_dir();
+                let candidate = std::fs::canonicalize(path.as_str())
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path.as_str()));
+                if candidate.starts_with(&de_dir) {
+                    return Ok(ToolCallOutcome::Result(
+                        "Error: read_file cannot access the daemoneye configuration \
+                         directory. Use the dedicated tools (read_script, read_runbook, \
+                         read_memory, list_memories, etc.) instead.".to_string()
+                    ));
+                }
+            }
+
             const MAX_LINES: usize = 500;
             const DEFAULT_LINES: usize = 200;
             let limit_n = match limit {
@@ -1439,6 +1454,21 @@ pub async fn execute_tool_call(
                 return Ok(ToolCallOutcome::Result(
                     "Error: old_string cannot be empty.".to_string()
                 ));
+            }
+
+            // Block edits to the daemoneye config directory — use the dedicated
+            // tools (write_script, write_runbook, add_memory, etc.) instead.
+            {
+                let de_dir = crate::config::config_dir();
+                let candidate = std::fs::canonicalize(path.as_str())
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path.as_str()));
+                if candidate.starts_with(&de_dir) {
+                    return Ok(ToolCallOutcome::Result(
+                        "Error: edit_file cannot access the daemoneye configuration \
+                         directory. Use the dedicated tools (write_script, write_runbook, \
+                         add_memory, etc.) instead.".to_string()
+                    ));
+                }
             }
 
             // ── Remote path: Python3/Perl replacement in target_pane ──────────

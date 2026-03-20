@@ -295,6 +295,8 @@ environments and have different return semantics:
 
 **read_file (file reader — daemon host, local pane, or remote pane)**
 - Reads a file with line-range pagination and optional grep filtering. Sensitive data masked.
+- **Cannot access `~/.daemoneye/`** — use the dedicated tools (`read_script`, `read_runbook`, \
+  `read_memory`, etc.) for daemoneye-managed data.
 - `path`: absolute path to the file
 - `offset`: 1-based line number to start from (omit for beginning of file)
 - `limit`: max lines to return (default 200, max 500)
@@ -318,6 +320,8 @@ environments and have different return semantics:
 - Safely replaces an exact string in a file. `old_string` must appear exactly once.
 - User approval required before the write is committed (shows a diff-style preview).
 - Write is atomic (`.de_tmp` → rename). Enforces uniqueness before writing.
+- **Cannot access `~/.daemoneye/`** — use the dedicated tools (`write_script`, `write_runbook`, \
+  `add_memory`, etc.) for daemoneye-managed data.
 - `target_pane`: optional tmux pane ID — **set this when the file is on a remote SSH host**. \
   The tool runs a Python3 replacement script in that pane (falls back to Perl if Python3 \
   is unavailable). No shell escaping issues — old/new strings are hex-encoded internally. \

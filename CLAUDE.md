@@ -100,8 +100,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `list_schedules` / `cancel_schedule` / `delete_schedule` | Schedule management |
 | `write_script` / `read_script` / `list_scripts` | Script CRUD in `~/.daemoneye/scripts/` |
 | `watch_pane` | Block until regex `pattern` matches pane output, or command exits, or timeout |
-| `read_file` | Paginated daemon-host file read with optional grep filter; masks sensitive data; path `canonicalize()`d to resolve symlinks |
-| `edit_file` | Atomic string replacement in daemon-host file; requires user approval; path `canonicalize()`d, tmp at `<canonical>.de_tmp` |
+| `read_file` | Paginated daemon-host file read with optional grep filter; masks sensitive data; path `canonicalize()`d to resolve symlinks; **blocked from `~/.daemoneye/`** |
+| `edit_file` | Atomic string replacement in daemon-host file; requires user approval; path `canonicalize()`d, tmp at `<canonical>.de_tmp`; **blocked from `~/.daemoneye/`** |
 | `write_runbook` / `read_runbook` / `delete_runbook` / `list_runbooks` | Runbook CRUD |
 | `add_memory` / `read_memory` / `delete_memory` / `list_memories` | Persistent memory |
 | `search_repository` | Grep across runbooks / scripts / memory / events |
