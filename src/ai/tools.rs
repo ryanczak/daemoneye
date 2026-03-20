@@ -109,10 +109,21 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "cancel_schedule",
-        description: "Cancel a scheduled job by its UUID. The job will no longer fire.",
+        description: "Cancel a scheduled job by its UUID. The job will no longer fire but \
+                      remains visible in list_schedules with status 'cancelled'.",
         params: &[
             ParamDef { name: "id", ty: ParamTy::Str, required: true,
                        description: "UUID of the scheduled job to cancel." },
+        ],
+    },
+    ToolDef {
+        name: "delete_schedule",
+        description: "Permanently delete a scheduled job by its UUID, removing it from \
+                      the schedule store entirely. Unlike cancel_schedule, the job will \
+                      no longer appear in list_schedules.",
+        params: &[
+            ParamDef { name: "id", ty: ParamTy::Str, required: true,
+                       description: "UUID of the scheduled job to delete." },
         ],
     },
     ToolDef {

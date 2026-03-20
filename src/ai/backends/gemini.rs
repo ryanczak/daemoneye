@@ -176,7 +176,16 @@ impl AiClient for GeminiClient {
                         },
                         {
                             "name": "cancel_schedule",
-                            "description": "Cancel a scheduled job by UUID.",
+                            "description": "Cancel a scheduled job by UUID. The job will no longer fire but remains visible in list_schedules with status 'cancelled'.",
+                            "parameters": {
+                                "type": "OBJECT",
+                                "properties": {"id": {"type": "STRING"}},
+                                "required": ["id"]
+                            }
+                        },
+                        {
+                            "name": "delete_schedule",
+                            "description": "Permanently delete a scheduled job by UUID, removing it from the schedule store entirely. Unlike cancel_schedule, the job will no longer appear in list_schedules.",
                             "parameters": {
                                 "type": "OBJECT",
                                 "properties": {"id": {"type": "STRING"}},
