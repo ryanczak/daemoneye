@@ -17,7 +17,6 @@ impl ParamTy {
         }
     }
 
-    #[allow(dead_code)] // used in Phase 2 (gemini.rs migration)
     fn as_gemini_str(self) -> &'static str {
         match self {
             ParamTy::Str  => "STRING",
@@ -359,7 +358,6 @@ fn build_properties(params: &[ParamDef]) -> serde_json::Map<String, Value> {
     }).collect()
 }
 
-#[allow(dead_code)] // used in Phase 2 (gemini.rs migration)
 fn build_gemini_properties(params: &[ParamDef]) -> serde_json::Map<String, Value> {
     params.iter().map(|p| {
         (p.name.to_string(), json!({
@@ -395,7 +393,6 @@ fn render_openai(tools: &[ToolDef]) -> Value {
     }).collect())
 }
 
-#[allow(dead_code)] // used in Phase 2 (gemini.rs migration)
 pub fn render_gemini(tools: &[ToolDef]) -> Value {
     Value::Array(tools.iter().map(|t| {
         let props = build_gemini_properties(t.params);
@@ -416,6 +413,10 @@ pub fn get_tool_definition() -> Value {
 
 pub fn get_openai_tool_definition() -> Value {
     render_openai(TOOLS)
+}
+
+pub fn get_gemini_tool_definition() -> Value {
+    render_gemini(TOOLS)
 }
 
 // ---------------------------------------------------------------------------
@@ -554,5 +555,76 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
             thought_signature: ts,
         }),
         _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every tool in TOOLS must appear in the Gemini render, in order.
+    /// This is the regression test that would have caught every previous
+    /// "tool missing from Gemini" bug.
+    #[test]
+    fn render_gemini_names_match_tools_slice() {
+        let rendered = render_gemini(TOOLS);
+        let arr = rendered.as_array().expect("render_gemini must return an array");
+        assert_eq!(arr.len(), TOOLS.len(),
+            "rendered Gemini tool count ({}) != TOOLS slice length ({})",
+            arr.len(), TOOLS.len());
+        for (i, (entry, def)) in arr.iter().zip(TOOLS.iter()).enumerate() {
+            assert_eq!(entry["name"].as_str().unwrap(), def.name,
+                "tool at index {} name mismatch", i);
+        }
+    }
+
+    /// Parameter types must use Gemini's uppercase strings, not the lowercase
+    /// variants used by Anthropic/OpenAI.
+    #[test]
+    fn render_gemini_types_are_uppercase() {
+        let rendered = render_gemini(TOOLS);
+        let arr = rendered.as_array().unwrap();
+        let rtc = arr.iter().find(|e| e["name"] == "run_terminal_command")
+            .expect("run_terminal_command must be present");
+        let props = &rtc["parameters"]["properties"];
+        assert_eq!(props["command"]["type"], "STRING");
+        assert_eq!(props["background"]["type"], "BOOLEAN");
+        // target_pane is STRING too
+        assert_eq!(props["target_pane"]["type"], "STRING");
+    }
+
+    /// Required fields must match the ParamDef required flags.
+    #[test]
+    fn render_gemini_required_fields_correct() {
+        let rendered = render_gemini(TOOLS);
+        let arr = rendered.as_array().unwrap();
+
+        // run_terminal_command: only "command" is required
+        let rtc = arr.iter().find(|e| e["name"] == "run_terminal_command").unwrap();
+        let req = rtc["parameters"]["required"].as_array().unwrap();
+        assert_eq!(req, &[serde_json::json!("command")]);
+
+        // edit_file: path, old_string, new_string are required
+        let ef = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
+        let req_ef: Vec<&str> = ef["parameters"]["required"]
+            .as_array().unwrap()
+            .iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(req_ef.contains(&"path"));
+        assert!(req_ef.contains(&"old_string"));
+        assert!(req_ef.contains(&"new_string"));
+    }
+
+    /// Tools with no params must not have a "required" key (would be an API error).
+    #[test]
+    fn render_gemini_no_required_for_empty_params() {
+        let rendered = render_gemini(TOOLS);
+        let arr = rendered.as_array().unwrap();
+        let ls = arr.iter().find(|e| e["name"] == "list_schedules").unwrap();
+        assert!(ls["parameters"].get("required").is_none(),
+            "list_schedules must not have a 'required' key");
     }
 }
