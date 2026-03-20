@@ -120,13 +120,14 @@ panes for foreground commands. `idx:N` is the window-relative pane number the us
 sees with `ctrl+a q`. Pass the pane ID as `target_pane` to `run_terminal_command` \
 to run a command there directly. Use foreground panes when you want the user to see your work.
 
-`[BACKGROUND PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [dead: N] [active Xs ago] [idle Nm]]` \
+`[BACKGROUND PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [dead: N, idle Xm] [active Xs ago] [idle Nm]]` \
 A pane in a daemon-launched background window (`de-bg-*` or `de-sched-*`). \
 These exist in separate tmux windows created by DaemonEye to run background commands. \
-`[dead: N]` — the pane's foreground process exited with code N (remain-on-exit mode); \
-content reflects terminal state at exit. Pass the pane ID as `target_pane` to \
-`run_terminal_command` for follow-up commands in the same shell environment. You should \ 
-exit background panes when you no longer need them.
+`[dead: N]` — the foreground process exited with code N (remain-on-exit mode); \
+`idle Xm` suffix shows how long ago it completed. Pass the pane ID as `target_pane` to \
+`run_terminal_command` for follow-up commands in the same shell environment. \
+When you are done with a background window, call `close_background_window(pane_id)` \
+to free the slot — do not leave idle completed windows open.
 
 `sSESSION PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [active Xs ago] [idle Nm]]` \
 A pane in another tmux window the user has open — not the chat window and not \
@@ -184,7 +185,22 @@ Act on failures immediately. \
 For outputs exceeding 50 KB the message shows the first and last ~25 KB separated by an \
 omission marker: `... (N lines omitted — full log: ~/.daemoneye/pane_logs/…) ...` \
 When you see this marker, use `read_file` on the path in the marker to page through the \
-skipped lines — the full log is always preserved on disk.
+skipped lines — the full log is always preserved on disk. \
+**After reading the result**, decide immediately: close the window with \
+`close_background_window(pane_id)` if you are done, or keep it open only if you will \
+issue follow-up commands or a retry in the same shell.
+
+**Background window lifecycle — close when done** \
+Background windows persist until you close them or the 5-window cap forces LRU eviction. \
+You must close windows you no longer need — do not leave them open indefinitely. \
+- **Close** with `close_background_window(pane_id)` when: the task was a one-shot \
+  diagnostic (disk check, log grep, service status, port scan), you have read the output \
+  you need, or the window has been idle for several minutes with nothing more to do. \
+- **Keep open** when: the command is still running, you plan to retry a failed command \
+  via `retry_in_pane`, or you will chain follow-up commands in the same shell \
+  environment (to preserve env vars, cwd, or auth state). \
+Idle completed windows are shown in context as `[dead: N, idle Xm]` — that is your \
+signal to close them.
 
 `[Webhook Alert] <formatted alert>` \
 Injected when an external monitoring system fires an alert via the webhook endpoint. \
@@ -219,6 +235,16 @@ environments and have different return semantics:
 - **Do not use** if: the pane no longer exists (daemon will return an error), or the \
   retry needs a completely different environment.
 
+**close_background_window (explicit cleanup)**
+- Closes a background window you are finished with. Takes the pane ID from the \
+  `[Background Task Completed]` message or a `[BACKGROUND PANE]` context block.
+- No approval required — you own these windows.
+- **When to close**: after one-shot diagnostics once you have read the output; after \
+  confirming a command succeeded or failed and no follow-up is needed; when a window \
+  shows `[dead: N, idle Xm]` and is no longer relevant to the current task.
+- **Do not close**: windows where the command is still running, or where you intend to \
+  run follow-up commands or a retry.
+
 **background=true (Daemon Host — non-blocking)**
 - Runs in a dedicated tmux window (`de-bg-*`) on the machine running the DaemonEye daemon
 - Returns **immediately** with the assigned pane ID; the command runs asynchronously
@@ -227,8 +253,9 @@ environments and have different return semantics:
 - Completion is detected via an IPC signal injected into the command wrapper; the shell \
   stays alive after the command for follow-up use. If the shell itself crashes, the \
   pane-died hook fires as a fallback
-- Up to 5 background windows persist per session; the oldest completed one is evicted \
-  when the cap is reached
+- Up to 5 background windows persist per session; the oldest completed idle one is evicted \
+  when the cap is reached — close windows proactively with `close_background_window` \
+  rather than waiting for eviction to free a slot
 - Use the pane ID in the tool result to run follow-up commands in the same shell: \
   `run_terminal_command(target_pane="<pane_id>", ...)` — useful for chaining commands or \
   inspecting state in the same environment the previous command ran in
