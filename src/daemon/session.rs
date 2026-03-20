@@ -5,22 +5,15 @@ use std::time::Instant;
 use crate::ai::Message;
 
 /// Metadata for a background tmux window spawned during a chat session.
-#[allow(dead_code)]
 pub struct BgWindowInfo {
     /// tmux pane ID (e.g. `%7`) — can be passed to `watch_pane` or used as foreground target.
     pub pane_id: String,
     /// Full tmux window name (e.g. `de-bg-main-20240101120000-abc12345`).
     pub window_name: String,
-    /// The command that was run.
-    pub command: String,
     /// The tmux session the window belongs to (needed to kill it on eviction).
     pub tmux_session: String,
-    /// When the window was created; used for LRU eviction.
-    pub started_at: std::time::Instant,
     /// `None` while still running; `Some(code)` after the pane exits.
     pub exit_code: Option<i32>,
-    /// When the exit code was first recorded; used for auto-GC timeout.
-    pub completed_at: Option<std::time::Instant>,
 }
 
 /// In-memory record of an active chat session.
@@ -349,35 +342,6 @@ mod tests {
 impl SessionEntry {
     pub fn last_accessed(&self) -> std::time::Instant {
         self.last_accessed
-    }
-
-    /// GC background windows that completed more than `timeout` ago.
-    /// Called by the session-cleanup loop as a safety net for windows the
-    /// agent forgot to close with `close_background_window`.
-    pub fn gc_stale_bg_windows(&mut self, timeout: std::time::Duration) {
-        let now = std::time::Instant::now();
-        let to_evict: Vec<(String, String, String)> = self
-            .bg_windows
-            .iter()
-            .filter(|w| {
-                w.completed_at
-                    .map_or(false, |t| now.duration_since(t) >= timeout)
-            })
-            .map(|w| {
-                (
-                    w.pane_id.clone(),
-                    w.window_name.clone(),
-                    w.tmux_session.clone(),
-                )
-            })
-            .collect();
-        for (pane_id, win_name, tmux_session) in to_evict {
-            log::info!("Auto-GC stale bg window {} (pane {})", win_name, pane_id);
-            if let Err(e) = crate::tmux::kill_job_window(&tmux_session, &win_name) {
-                log::warn!("Auto-GC: failed to kill {}: {}", win_name, e);
-            }
-            self.bg_windows.retain(|w| w.pane_id != pane_id);
-        }
     }
 
     /// Kill all background windows that are still open for this session.

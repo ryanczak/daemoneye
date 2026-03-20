@@ -596,12 +596,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
                     let now = Instant::now();
-                    // Auto-GC timeout: 15 minutes after a background window completes.
-                    const STALE_BG_TIMEOUT: Duration = Duration::from_secs(900);
                     let mut store = sessions_cleanup.lock().unwrap_or_log();
-                    for (_, v) in store.iter_mut() {
-                        v.gc_stale_bg_windows(STALE_BG_TIMEOUT);
-                    }
                     store.retain(|_, v| {
                         if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
                             v.cleanup_bg_windows();
