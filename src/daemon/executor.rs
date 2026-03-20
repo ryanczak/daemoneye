@@ -1783,6 +1783,50 @@ pub async fn execute_tool_call(
             cache.get_labeled_context(chat_pane, chat_pane)
         }
 
+        PendingCall::CloseBackgroundWindow { pane_id, .. } => {
+            let Some(sid) = session_id else {
+                return Ok(ToolCallOutcome::Result("No active session — cannot close background window.".to_string()));
+            };
+            let (win_name, tmux_session, still_running) = {
+                let store = sessions.lock().unwrap_or_log();
+                let Some(entry) = store.get(sid) else {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Session '{}' not found.", sid
+                    )));
+                };
+                let Some(win) = entry.bg_windows.iter().find(|w| w.pane_id == *pane_id) else {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "No background window with pane ID {} found in this session.", pane_id
+                    )));
+                };
+                (win.window_name.clone(), win.tmux_session.clone(), win.exit_code.is_none())
+            };
+
+            if still_running {
+                log::warn!("Agent closing still-running bg window {} (pane {})", win_name, pane_id);
+            }
+
+            if let Err(e) = crate::tmux::kill_job_window(&tmux_session, &win_name) {
+                log::warn!("close_background_window: failed to kill {}: {}", win_name, e);
+            }
+
+            // Remove the entry from the session's bg_windows list.
+            if let Ok(mut store) = sessions.lock() {
+                if let Some(entry) = store.get_mut(sid) {
+                    entry.bg_windows.retain(|w| w.pane_id != *pane_id);
+                }
+            }
+
+            log_event("close_bg_window", serde_json::json!({
+                "session": sid,
+                "pane_id": pane_id,
+                "win_name": win_name,
+                "was_running": still_running,
+            }));
+
+            format!("Background window {} (pane {}) closed.", win_name, pane_id)
+        }
+
         PendingCall::ListPanes { .. } => {
             let panes = cache.panes.read().unwrap_or_log();
             let session = cache.session_name.read().unwrap_or_log().clone();

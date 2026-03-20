@@ -316,6 +316,23 @@ pub static TOOLS: &[ToolDef] = &[
                       immediately with no tmux subprocess overhead.",
         params: &[],
     },
+    ToolDef {
+        name: "close_background_window",
+        description: "Close a background tmux window that is no longer needed. \
+                      Call this after you have finished with a background window — \
+                      once you have read its output and will not be issuing any more \
+                      commands there. Frees the slot immediately rather than waiting \
+                      for the cap eviction. Up to 5 background windows exist per session; \
+                      closing idle ones proactively prevents cap exhaustion.",
+        params: &[
+            ParamDef {
+                name: "pane_id", ty: ParamTy::Str, required: true,
+                description: "Pane ID of the background window to close (e.g. \"%3\"). \
+                              Obtained from a [Background Task Completed] message or \
+                              a [BACKGROUND PANE] context block.",
+            },
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -518,6 +535,11 @@ pub fn dispatch_tool_event(id: &str, name: &str, args: &Value, ts: Option<String
         }),
         "list_panes" => Some(AiEvent::ListPanes {
             id: id.to_string(),
+            thought_signature: ts,
+        }),
+        "close_background_window" => Some(AiEvent::CloseBackgroundWindow {
+            id: id.to_string(),
+            pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
             thought_signature: ts,
         }),
         _ => None,

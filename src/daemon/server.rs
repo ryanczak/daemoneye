@@ -713,6 +713,9 @@ pub async fn handle_client(
                 AiEvent::ListPanes { id, thought_signature } => {
                     pending_calls.push(PendingCall::ListPanes { id, thought_signature });
                 }
+                AiEvent::CloseBackgroundWindow { id, pane_id, thought_signature } => {
+                    pending_calls.push(PendingCall::CloseBackgroundWindow { id, thought_signature, pane_id });
+                }
 
                 AiEvent::Error(e) => {
                     send_response_split(&mut tx, Response::Error(e)).await?;

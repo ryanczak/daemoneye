@@ -66,6 +66,7 @@ pub enum PendingCall {
     SearchRepository { id: String, thought_signature: Option<String>, query: String, kind: String },
     GetTerminalContext { id: String, thought_signature: Option<String> },
     ListPanes { id: String, thought_signature: Option<String> },
+    CloseBackgroundWindow { id: String, thought_signature: Option<String>, pane_id: String },
 }
 
 impl PendingCall {
@@ -223,6 +224,12 @@ impl PendingCall {
                 name: "list_panes".to_string(),
                 arguments: "{}".to_string(),
             },
+            PendingCall::CloseBackgroundWindow { id, thought_signature, pane_id } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "close_background_window".to_string(),
+                arguments: serde_json::json!({"pane_id": pane_id}).to_string(),
+            },
         }
     }
 
@@ -251,6 +258,7 @@ impl PendingCall {
             PendingCall::SearchRepository { id, .. } => id,
             PendingCall::GetTerminalContext { id, .. } => id,
             PendingCall::ListPanes { id, .. } => id,
+            PendingCall::CloseBackgroundWindow { id, .. } => id,
         }
     }
 
@@ -279,6 +287,7 @@ impl PendingCall {
             PendingCall::SearchRepository { .. } => "search_repository",
             PendingCall::GetTerminalContext { .. } => "get_terminal_context",
             PendingCall::ListPanes { .. } => "list_panes",
+            PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
         }
     }
 }
@@ -318,6 +327,7 @@ pub enum AiEvent {
     SearchRepository { id: String, query: String, kind: String, thought_signature: Option<String> },
     GetTerminalContext { id: String, thought_signature: Option<String> },
     ListPanes { id: String, thought_signature: Option<String> },
+    CloseBackgroundWindow { id: String, pane_id: String, thought_signature: Option<String> },
     Done(AiUsage),
     Error(String),
 }
