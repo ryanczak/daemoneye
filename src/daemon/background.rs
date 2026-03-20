@@ -214,9 +214,16 @@ pub async fn run_background_in_window(
 
     // Wrap the command so it notifies the daemon on completion via IPC.
     // The shell stays alive for follow-up commands (no `exit`).
-    let exe = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
+    //
+    // On Linux, if the binary was replaced after the daemon started (e.g. a
+    // `cargo build` while the daemon runs), the kernel appends " (deleted)"
+    // to the /proc/self/exe path returned by current_exe().  Strip it so the
+    // notify call remains valid — the original path still resolves on disk.
+    // Then shell-quote the path to handle any spaces in the binary location.
+    let exe_raw = std::env::current_exe()
+        .map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string())
         .unwrap_or_else(|_| "daemoneye".to_string());
+    let exe = shell_escape_arg(&exe_raw);
     let notify = format!(
         "{exe} notify complete {pane_id} $__de_ec {session}",
         pane_id = pane_id,
@@ -506,9 +513,10 @@ pub async fn respawn_background_in_pane(
     let shell_name = tmux::pane_current_command(pane_id).unwrap_or_default();
     let exit_var = shell_exit_var(&shell_name);
 
-    let exe = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
+    let exe_raw = std::env::current_exe()
+        .map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string())
         .unwrap_or_else(|_| "daemoneye".to_string());
+    let exe = shell_escape_arg(&exe_raw);
     let notify = format!(
         "{exe} notify complete {pane_id} $__de_ec {session}",
         pane_id = pane_id,
