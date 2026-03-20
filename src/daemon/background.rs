@@ -206,9 +206,15 @@ fn notify_session(
 /// The AI receives `[Background Task Completed]` asynchronously in its next
 /// turn.  The returned string includes the pane ID so the AI can direct
 /// follow-up commands there via `target="<pane_id>"`.
+use std::sync::Mutex;
+
+pub static BG_COMMAND_MAP: std::sync::OnceLock<Mutex<std::collections::HashMap<String, usize>>> =
+    std::sync::OnceLock::new();
+
 pub async fn run_background_in_window(
     session: &str,
     tool_id: &str,
+    cmd_id: usize,
     cmd: &str,
     credential: Option<&str>,
     session_id: Option<String>,
@@ -228,6 +234,13 @@ pub async fn run_background_in_window(
         Ok(p) => p,
         Err(e) => return format!("Failed to create background window: {}", e),
     };
+
+    if let Ok(mut map) = BG_COMMAND_MAP
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+    {
+        map.insert(pane_id.clone(), cmd_id);
+    }
 
     let started_at = tokio::time::Instant::now();
 
@@ -559,11 +572,18 @@ pub async fn run_background_in_window(
 pub async fn respawn_background_in_pane(
     pane_id: &str,
     win_name: &str,
+    cmd_id: usize,
     cmd: &str,
     session: &str,
     session_id: Option<String>,
     sessions: SessionStore,
 ) -> String {
+    if let Ok(mut map) = BG_COMMAND_MAP
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+    {
+        map.insert(pane_id.to_string(), cmd_id);
+    }
     // Respawn: start a fresh shell in the pane, killing anything running.
     let respawn_status = std::process::Command::new("tmux")
         .args(["respawn-pane", "-k", "-t", pane_id])

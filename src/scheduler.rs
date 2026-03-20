@@ -221,6 +221,7 @@ impl ScheduleStore {
             kind,
             &id[..8]
         );
+        crate::daemon::stats::inc_schedules_created();
         Ok(id)
     }
 

@@ -102,6 +102,11 @@ pub async fn run_scheduled_job(
     config: Config,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
 ) {
+    crate::daemon::stats::inc_schedules_executed();
+    if matches!(job.action, ActionOn::Script(_)) {
+        crate::daemon::stats::inc_scripts_executed();
+    }
+
     let id_short = &job.id[..job.id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
     let win_name = format!("{}{}-{}", crate::daemon::SCHED_WINDOW_PREFIX, now, id_short);
@@ -375,20 +380,37 @@ pub async fn handle_client(
         Request::Status => {
             let uptime_secs = crate::daemon::daemon_uptime_secs();
             let pid = std::process::id();
-            let active_sessions = sessions.lock().unwrap_or_log().len();
+            let mut active_sessions = 0;
+            let mut active_prompt_tokens = 0;
+            if let Ok(sess_map) = sessions.lock() {
+                active_sessions = sess_map.len();
+                active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
+            }
             let schedule_count = schedule_store.list().len();
             let circuit_state = crate::ai::circuit_state_str().to_string();
 
-            let commands_executed = crate::daemon::stats::get_commands_executed();
+            let commands_succeeded = crate::daemon::stats::get_commands_succeeded();
+            let commands_failed = crate::daemon::stats::get_commands_failed();
             let webhooks_received = crate::daemon::stats::get_webhooks_received();
             let recent_commands = crate::daemon::stats::get_recent_commands();
-            let runbooks_count = crate::runbook::list_runbooks()
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let scripts_count = crate::scripts::list_scripts().map(|s| s.len()).unwrap_or(0);
-            let memory_items_count = crate::memory::list_memories(None)
-                .map(|m| m.len())
-                .unwrap_or(0);
+
+            let runbooks_created = crate::daemon::stats::get_runbooks_created();
+            let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
+            let scripts_created = crate::daemon::stats::get_scripts_created();
+            let scripts_executed = crate::daemon::stats::get_scripts_executed();
+            let memories_created = crate::daemon::stats::get_memories_created();
+            let memories_recalled = crate::daemon::stats::get_memories_recalled();
+            let schedules_created = crate::daemon::stats::get_schedules_created();
+            let schedules_executed = crate::daemon::stats::get_schedules_executed();
+
+            let mut memory_breakdown = std::collections::HashMap::new();
+            if let Ok(memories) = crate::memory::list_memories(None) {
+                for (cat, _) in memories {
+                    *memory_breakdown.entry(cat).or_insert(0) += 1;
+                }
+            }
+
+            let context_window_tokens = config.ai.context_window_tokens.unwrap_or(128000);
 
             send_response_split(
                 &mut tx,
@@ -401,12 +423,21 @@ pub async fn handle_client(
                     socket_path: default_socket_path().display().to_string(),
                     schedule_count,
                     circuit_state,
-                    commands_executed,
+                    commands_succeeded,
+                    commands_failed,
                     webhooks_received,
-                    runbooks_count,
-                    scripts_count,
-                    memory_items_count,
+                    runbooks_created,
+                    runbooks_executed,
+                    scripts_created,
+                    scripts_executed,
+                    memories_created,
+                    memories_recalled,
+                    schedules_created,
+                    schedules_executed,
+                    active_prompt_tokens,
+                    context_window_tokens,
                     recent_commands,
+                    memory_breakdown,
                 },
             )
             .await?;
@@ -433,6 +464,14 @@ pub async fn handle_client(
             session_name: _,
         } => {
             if is_valid_pane_id(&pane_id) {
+                if let Ok(mut map) = crate::daemon::background::BG_COMMAND_MAP
+                    .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+                    .lock()
+                {
+                    if let Some(cmd_id) = map.remove(&pane_id) {
+                        crate::daemon::stats::finish_command(cmd_id, exit_code);
+                    }
+                }
                 // Fix C: use get_or_init so the channel always exists, even if
                 // NotifyComplete arrives before any completion monitor has subscribed.
                 let tx = crate::daemon::session::COMPLETE_TX.get_or_init(|| {

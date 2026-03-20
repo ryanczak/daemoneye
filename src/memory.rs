@@ -104,7 +104,9 @@ pub fn add_memory(key: &str, value: &str, category: MemoryCategory) -> Result<()
     validate_memory_key(key)?;
     ensure_memory_dir(&category)?;
     let path = memory_dir(&category).join(format!("{}.md", key));
-    std::fs::write(&path, value).with_context(|| format!("writing memory key '{}'", key))
+    std::fs::write(&path, value).with_context(|| format!("writing memory key '{}'", key))?;
+    crate::daemon::stats::inc_memories_created();
+    Ok(())
 }
 
 pub fn delete_memory(key: &str, category: MemoryCategory) -> Result<()> {
@@ -117,8 +119,10 @@ pub fn delete_memory(key: &str, category: MemoryCategory) -> Result<()> {
 
 pub fn read_memory(key: &str, category: MemoryCategory) -> Result<String> {
     let path = memory_dir(&category).join(format!("{}.md", key));
-    std::fs::read_to_string(&path)
-        .with_context(|| format!("reading memory key '{}' from {}", key, path.display()))
+    let val = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading memory key '{}' from {}", key, path.display()))?;
+    crate::daemon::stats::inc_memories_recalled();
+    Ok(val)
 }
 
 pub fn list_memories(category: Option<MemoryCategory>) -> Result<Vec<(String, String)>> {

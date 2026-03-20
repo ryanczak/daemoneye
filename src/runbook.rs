@@ -109,6 +109,7 @@ pub fn load_runbook(name: &str) -> Result<Runbook> {
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("reading runbook at {}", path.display()))?;
     let (tags, memories, content) = parse_frontmatter(&raw);
+    crate::daemon::stats::inc_runbooks_executed();
     Ok(Runbook {
         name: name.to_string(),
         content,
@@ -123,7 +124,10 @@ pub fn write_runbook(name: &str, content: &str) -> Result<()> {
     validate_runbook_content(content)?;
     ensure_runbooks_dir()?;
     let path = runbooks_dir().join(format!("{}.md", name));
-    std::fs::write(&path, content).with_context(|| format!("writing runbook at {}", path.display()))
+    std::fs::write(&path, content)
+        .with_context(|| format!("writing runbook at {}", path.display()))?;
+    crate::daemon::stats::inc_runbooks_created();
+    Ok(())
 }
 
 /// Delete a runbook. No-op if the file does not exist.

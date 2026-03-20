@@ -150,6 +150,15 @@ pub enum Request {
     Status,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecentCommand {
+    pub id: usize,
+    pub cmd: String,
+    pub timestamp: String,
+    pub exit_code: Option<i32>,
+    pub runtime_ms: Option<u64>,
+}
+
 /// Messages sent from the daemon back to the CLI client.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Response {
@@ -242,12 +251,21 @@ pub enum Response {
         schedule_count: usize,
         /// Circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
         circuit_state: String,
-        commands_executed: usize,
+        commands_succeeded: usize,
+        commands_failed: usize,
         webhooks_received: usize,
-        runbooks_count: usize,
-        scripts_count: usize,
-        memory_items_count: usize,
-        recent_commands: Vec<String>,
+        runbooks_created: usize,
+        runbooks_executed: usize,
+        scripts_created: usize,
+        scripts_executed: usize,
+        memories_created: usize,
+        memories_recalled: usize,
+        schedules_created: usize,
+        schedules_executed: usize,
+        active_prompt_tokens: u32,
+        context_window_tokens: u32,
+        recent_commands: Vec<RecentCommand>,
+        memory_breakdown: std::collections::HashMap<String, usize>,
     },
 }
 
@@ -788,6 +806,10 @@ mod tests {
 
     #[test]
     fn response_daemon_status_roundtrip() {
+        let mut memory_breakdown = std::collections::HashMap::new();
+        memory_breakdown.insert("knowledge".to_string(), 3);
+        memory_breakdown.insert("incident".to_string(), 1);
+
         let resp = Response::DaemonStatus {
             uptime_secs: 3661,
             pid: 12345,
@@ -797,12 +819,27 @@ mod tests {
             socket_path: "/tmp/daemoneye.sock".to_string(),
             schedule_count: 3,
             circuit_state: "closed".to_string(),
-            commands_executed: 10,
+            commands_succeeded: 8,
+            commands_failed: 2,
             webhooks_received: 5,
-            runbooks_count: 7,
-            scripts_count: 2,
-            memory_items_count: 4,
-            recent_commands: vec!["ls".to_string(), "date".to_string()],
+            runbooks_created: 1,
+            runbooks_executed: 4,
+            scripts_created: 2,
+            scripts_executed: 6,
+            memories_created: 3,
+            memories_recalled: 7,
+            schedules_created: 2,
+            schedules_executed: 5,
+            active_prompt_tokens: 1000,
+            context_window_tokens: 4000,
+            recent_commands: vec![RecentCommand {
+                id: 1,
+                cmd: "ls".to_string(),
+                timestamp: "12:00:00".to_string(),
+                exit_code: Some(0),
+                runtime_ms: Some(10),
+            }],
+            memory_breakdown: memory_breakdown.clone(),
         };
         match roundtrip_resp(&resp) {
             Response::DaemonStatus {
@@ -813,12 +850,21 @@ mod tests {
                 model,
                 schedule_count,
                 circuit_state,
-                commands_executed,
+                commands_succeeded,
+                commands_failed,
                 webhooks_received,
-                runbooks_count,
-                scripts_count,
-                memory_items_count,
+                runbooks_created,
+                runbooks_executed,
+                scripts_created,
+                scripts_executed,
+                memories_created,
+                memories_recalled,
+                schedules_created,
+                schedules_executed,
+                active_prompt_tokens,
+                context_window_tokens,
                 recent_commands,
+                memory_breakdown: mb,
                 ..
             } => {
                 assert_eq!(uptime_secs, 3661);
@@ -828,12 +874,21 @@ mod tests {
                 assert_eq!(model, "claude-sonnet-4-6");
                 assert_eq!(schedule_count, 3);
                 assert_eq!(circuit_state, "closed");
-                assert_eq!(commands_executed, 10);
+                assert_eq!(commands_succeeded, 8);
+                assert_eq!(commands_failed, 2);
                 assert_eq!(webhooks_received, 5);
-                assert_eq!(runbooks_count, 7);
-                assert_eq!(scripts_count, 2);
-                assert_eq!(memory_items_count, 4);
-                assert_eq!(recent_commands.len(), 2);
+                assert_eq!(runbooks_created, 1);
+                assert_eq!(runbooks_executed, 4);
+                assert_eq!(scripts_created, 2);
+                assert_eq!(scripts_executed, 6);
+                assert_eq!(memories_created, 3);
+                assert_eq!(memories_recalled, 7);
+                assert_eq!(schedules_created, 2);
+                assert_eq!(schedules_executed, 5);
+                assert_eq!(active_prompt_tokens, 1000);
+                assert_eq!(context_window_tokens, 4000);
+                assert_eq!(recent_commands.len(), 1);
+                assert_eq!(mb.len(), 2);
             }
             _ => panic!("wrong variant"),
         }

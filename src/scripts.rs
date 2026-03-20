@@ -54,6 +54,7 @@ pub fn write_script(name: &str, content: &str) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
         .with_context(|| format!("chmod 700 {}", path.display()))?;
+    crate::daemon::stats::inc_scripts_created();
     Ok(())
 }
 

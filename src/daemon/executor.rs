@@ -153,10 +153,10 @@ fn looks_like_shell_prompt(snap: &str) -> bool {
 /// Send a `ToolCallPrompt` to the client, wait up to [`APPROVAL_TIMEOUT`] for
 /// the user's [`Request::ToolCallResponse`], and log the outcome.
 ///
-/// Returns `Ok(None)` when the user approves.
-/// Returns `Ok(Some(ToolCallOutcome::Result(msg)))` when the user denies or
+/// Returns `Ok(Ok(cmd_id))` when the user approves.
+/// Returns `Ok(Err(ToolCallOutcome::Result(msg)))` when the user denies or
 /// the wait times out — the caller should propagate this as the tool result.
-/// Returns `Ok(Some(ToolCallOutcome::UserMessage(text)))` when the user typed
+/// Returns `Ok(Err(ToolCallOutcome::UserMessage(text)))` when the user typed
 /// a corrective message; the caller should abort the tool chain and inject the
 /// text as a new user turn.
 /// Returns `Err` on connection EOF.
@@ -168,7 +168,7 @@ async fn prompt_and_await_approval(
     session_id: Option<&str>,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
-) -> anyhow::Result<Option<ToolCallOutcome>> {
+) -> anyhow::Result<Result<usize, ToolCallOutcome>> {
     let mode = if background {
         "background"
     } else {
@@ -223,7 +223,10 @@ async fn prompt_and_await_approval(
     match parsed {
         Parsed::Approved => {
             log::info!("{} command approved: {}", mode, cmd);
-            crate::daemon::stats::record_command(cmd);
+            let cmd_id = crate::daemon::stats::start_command(cmd);
+            if cmd.contains(".daemoneye/scripts/") {
+                crate::daemon::stats::inc_scripts_executed();
+            }
             log_event(
                 "command_approval",
                 serde_json::json!({
@@ -233,7 +236,7 @@ async fn prompt_and_await_approval(
                     "decision": "approved",
                 }),
             );
-            Ok(None)
+            Ok(Ok(cmd_id))
         }
         Parsed::Denied => {
             let decision = if timed_out { "timeout" } else { "denied" };
@@ -261,7 +264,7 @@ async fn prompt_and_await_approval(
             } else {
                 "User denied execution".to_string()
             };
-            Ok(Some(ToolCallOutcome::Result(msg)))
+            Ok(Err(ToolCallOutcome::Result(msg)))
         }
         Parsed::UserMessage(text) => {
             log::info!("{} command redirected by user message: {}", mode, cmd);
@@ -274,7 +277,7 @@ async fn prompt_and_await_approval(
                     "decision": "user_message",
                 }),
             );
-            Ok(Some(ToolCallOutcome::UserMessage(text)))
+            Ok(Err(ToolCallOutcome::UserMessage(text)))
         }
     }
 }
@@ -598,7 +601,7 @@ pub async fn execute_tool_call(
                 }
                 None
             })();
-            if let Some(outcome) = prompt_and_await_approval(
+            let _cmd_id = match prompt_and_await_approval(
                 id,
                 cmd,
                 false,
@@ -609,8 +612,9 @@ pub async fn execute_tool_call(
             )
             .await?
             {
-                return Ok(outcome);
-            }
+                Ok(id) => id,
+                Err(outcome) => return Ok(outcome),
+            };
             let target_owned = match find_best_target_pane(
                 target.as_deref(),
                 chat_pane,
@@ -985,15 +989,17 @@ pub async fn execute_tool_call(
                     }
                     name
                 };
-                if let Some(outcome) =
-                    prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await?
-                {
-                    return Ok(outcome);
-                }
+                let cmd_id =
+                    match prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await?
+                    {
+                        Ok(id) => id,
+                        Err(outcome) => return Ok(outcome),
+                    };
                 let session_id_owned = session_id.map(|s| s.to_string());
                 let output = respawn_background_in_pane(
                     pane_id,
                     &win_name,
+                    cmd_id,
                     cmd,
                     session_name,
                     session_id_owned,
@@ -1101,11 +1107,11 @@ pub async fn execute_tool_call(
                 return Ok(ToolCallOutcome::Result(msg));
             }
 
-            if let Some(outcome) =
-                prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await?
-            {
-                return Ok(outcome);
-            }
+            let cmd_id =
+                match prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
+                    Ok(id) => id,
+                    Err(outcome) => return Ok(outcome),
+                };
             // Wrap the sudo password in Zeroizing so its heap memory is
             // overwritten when the variable drops, rather than lingering until
             // the allocator reclaims it.
@@ -1142,6 +1148,7 @@ pub async fn execute_tool_call(
             let output = run_background_in_window(
                 session_name,
                 id,
+                cmd_id,
                 cmd,
                 credential.as_ref().map(|z| z.as_str()),
                 session_id_owned,
@@ -1794,12 +1801,20 @@ pub async fn execute_tool_call(
                     "edit_file {}\n--- old\n{}\n+++ new\n{}",
                     location, old_string, new_string
                 );
-                if let Some(outcome) =
-                    prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
-                        .await?
+                let _cmd_id = match prompt_and_await_approval(
+                    id,
+                    &approval_cmd,
+                    false,
+                    None,
+                    session_id,
+                    tx,
+                    rx,
+                )
+                .await?
                 {
-                    return Ok(outcome);
-                }
+                    Ok(id) => id,
+                    Err(outcome) => return Ok(outcome),
+                };
 
                 let cmd = build_remote_edit_cmd(path, old_string, new_string);
                 let snap = match remote_run_and_capture(pane, &cmd, 30).await {
@@ -1878,12 +1893,13 @@ pub async fn execute_tool_call(
                 "edit_file {}\n--- old\n{}\n+++ new\n{}",
                 path, old_string, new_string
             );
-            if let Some(outcome) =
-                prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
+            let _cmd_id =
+                match prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
                     .await?
-            {
-                return Ok(outcome);
-            }
+                {
+                    Ok(id) => id,
+                    Err(outcome) => return Ok(outcome),
+                };
 
             let updated = original.replacen(old_string.as_str(), new_string.as_str(), 1);
             let tmp_path = std_path.with_extension("de_tmp");
