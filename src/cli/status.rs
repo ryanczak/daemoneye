@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::collections::VecDeque;
 use tokio::io::BufReader;
 
 use crate::cli::commands::{connect, recv, send_request};
@@ -63,7 +62,8 @@ pub async fn run_status() -> Result<()> {
                     let reset = "\x1b[0m";
                     let bold_white = "\x1b[1m\x1b[37m";
 
-                    let col_width = 49;
+                    let col_width = 62;
+                    let right_width = 44;
 
                     let title_left = format!("{}Process Information{}", blood_red, reset);
                     let title_right = format!("{}Session Information{}", blood_red, reset);
@@ -72,13 +72,15 @@ pub async fn run_status() -> Result<()> {
                     let left_pad_str = " ".repeat(left_pad);
 
                     println!(
-                        "{}{}{deep_yellow}│{reset} {}",
+                        "{}{} {deep_yellow}│{reset} {}",
                         title_left, left_pad_str, title_right
                     );
-                    let sep_line = format!("{:─<width$}", "", width = col_width);
                     println!(
-                        "{deep_yellow}{}┼──────────────────────────────────{reset}",
-                        sep_line
+                        "{deep_yellow}{:─<col_width$}┼{:─<right_width$}{reset}",
+                        "",
+                        "",
+                        col_width = col_width + 1,
+                        right_width = right_width
                     );
 
                     let commands_fg_total = commands_fg_succeeded + commands_fg_failed;
@@ -100,59 +102,60 @@ pub async fn run_status() -> Result<()> {
                         0
                     };
 
-                    let mut rows = Vec::new();
-                    rows.push((
-                        "PID:".to_string(),
-                        pid.to_string(),
-                        "Active sessions:".to_string(),
-                        active_sessions.to_string(),
+                    let home_dir = std::env::var("HOME").unwrap_or_default();
+                    let display_socket_path =
+                        if !home_dir.is_empty() && socket_path.starts_with(&home_dir) {
+                            socket_path.replacen(&home_dir, "~", 1)
+                        } else {
+                            socket_path.clone()
+                        };
+
+                    let mut left_items = Vec::new();
+                    left_items.push(("PID:".to_string(), pid.to_string()));
+                    left_items.push(("Uptime:".to_string(), uptime_str));
+                    left_items.push(("Socket:".to_string(), display_socket_path));
+                    left_items.push(("─".to_string(), "".to_string()));
+                    left_items.push(("Webhook URL:".to_string(), webhook_url));
+                    left_items.push(("Webhooks rec'd:".to_string(), webhooks_received.to_string()));
+                    left_items.push(("─".to_string(), "".to_string()));
+                    left_items.push(("Commands (fg):".to_string(), commands_fg_str));
+                    left_items.push(("Commands (bg):".to_string(), commands_bg_str));
+                    left_items.push(("─".to_string(), "".to_string()));
+                    left_items.push((
+                        "Runbooks:".to_string(),
+                        format!(
+                            "{} created, {} executed, {} deleted",
+                            runbooks_created, runbooks_executed, runbooks_deleted
+                        ),
                     ));
-                    rows.push((
-                        "Uptime:".to_string(),
-                        uptime_str,
+                    left_items.push((
+                        "Scripts:".to_string(),
+                        format!("{} created, {} executed", scripts_created, scripts_executed),
+                    ));
+                    left_items.push((
+                        "Schedules:".to_string(),
+                        format!(
+                            "{} created, {} executed, {} deleted",
+                            schedules_created, schedules_executed, schedules_deleted
+                        ),
+                    ));
+
+                    let mut right_items = Vec::new();
+                    right_items.push(("Active sessions:".to_string(), active_sessions.to_string()));
+                    right_items.push((
                         "Active model:".to_string(),
                         format!("{}/{}", provider, model),
                     ));
-                    rows.push((
-                        "Socket:".to_string(),
-                        socket_path,
+                    right_items.push(("Circuit:".to_string(), circuit_state.clone()));
+                    right_items.push((
                         "Token budget:".to_string(),
                         format!(
                             "{} / {} ({}%)",
                             active_prompt_tokens, context_window_tokens, tokens_pct
                         ),
                     ));
-
-                    rows.push((
-                        "─".to_string(),
-                        "".to_string(),
-                        "".to_string(),
-                        "".to_string(),
-                    ));
-
-                    rows.push((
-                        "Webhooks rec'd:".to_string(),
-                        webhooks_received.to_string(),
-                        "Circuit:".to_string(),
-                        circuit_state.clone(),
-                    ));
-                    rows.push((
-                        "Webhook URL:".to_string(),
-                        webhook_url,
-                        "".to_string(),
-                        "".to_string(),
-                    ));
-
-                    rows.push((
-                        "─".to_string(),
-                        "".to_string(),
-                        "".to_string(),
-                        "".to_string(),
-                    ));
-
-                    rows.push((
-                        "Commands (fg):".to_string(),
-                        commands_fg_str,
+                    right_items.push(("─".to_string(), "".to_string()));
+                    right_items.push((
                         "Memories:".to_string(),
                         format!(
                             "{} created, {} recalled, {} deleted",
@@ -162,76 +165,23 @@ pub async fn run_status() -> Result<()> {
 
                     let mut mem_cats: Vec<_> = memory_breakdown.into_iter().collect();
                     mem_cats.sort_by_key(|k| k.0.clone());
-
-                    let mut right_queue = VecDeque::new();
                     for (cat, count) in mem_cats {
-                        right_queue.push_back((
+                        right_items.push((
                             "".to_string(),
                             format!("  - {:<12} {}", format!("{}:", cat), count),
                         ));
                     }
 
-                    let (rk, rv) = right_queue
-                        .pop_front()
-                        .unwrap_or(("".to_string(), "".to_string()));
-                    rows.push(("Commands (bg):".to_string(), commands_bg_str, rk, rv));
-
-                    rows.push((
-                        "─".to_string(),
-                        "".to_string(),
-                        "".to_string(),
-                        "".to_string(),
-                    ));
-
-                    let (rk, rv) = right_queue
-                        .pop_front()
-                        .unwrap_or(("".to_string(), "".to_string()));
-                    rows.push((
-                        "Runbooks:".to_string(),
-                        format!(
-                            "{} created, {} executed, {} deleted",
-                            runbooks_created, runbooks_executed, runbooks_deleted
-                        ),
-                        rk,
-                        rv,
-                    ));
-
-                    let (rk, rv) = right_queue
-                        .pop_front()
-                        .unwrap_or(("".to_string(), "".to_string()));
-                    rows.push((
-                        "Scripts:".to_string(),
-                        format!("{} created, {} executed", scripts_created, scripts_executed),
-                        rk,
-                        rv,
-                    ));
-
-                    let (rk, rv) = right_queue
-                        .pop_front()
-                        .unwrap_or(("".to_string(), "".to_string()));
-                    rows.push((
-                        "Schedules:".to_string(),
-                        format!(
-                            "{} created, {} executed, {} deleted",
-                            schedules_created, schedules_executed, schedules_deleted
-                        ),
-                        rk,
-                        rv,
-                    ));
-
-                    while let Some((rk, rv)) = right_queue.pop_front() {
-                        rows.push(("".to_string(), "".to_string(), rk, rv));
-                    }
-
-                    for (lk, lv, rk, rv) in rows {
-                        if lk == "─" {
-                            println!(
-                                "{deep_yellow}{:─<col_width$}┼──────────────────────────────────{reset}",
-                                "",
-                                col_width = col_width
-                            );
-                            continue;
-                        }
+                    let rows_count = left_items.len().max(right_items.len());
+                    for i in 0..rows_count {
+                        let (lk, lv) = left_items
+                            .get(i)
+                            .cloned()
+                            .unwrap_or(("".to_string(), "".to_string()));
+                        let (rk, rv) = right_items
+                            .get(i)
+                            .cloned()
+                            .unwrap_or(("".to_string(), "".to_string()));
 
                         let l_color = bold_white;
                         let r_color = if rk == "Circuit:" {
@@ -243,6 +193,60 @@ pub async fn run_status() -> Result<()> {
                         } else {
                             bold_white
                         };
+
+                        if lk == "─" && rk == "─" {
+                            println!(
+                                "{deep_yellow}{:─<col_width$}┼{:─<right_width$}{reset}",
+                                "",
+                                "",
+                                col_width = col_width + 1,
+                                right_width = right_width
+                            );
+                            continue;
+                        } else if lk == "─" {
+                            let r_str = if rk.is_empty() {
+                                format!("{}{}{reset}", r_color, rv)
+                            } else {
+                                format!("{:<17} {}{}{reset}", rk, r_color, rv)
+                            };
+                            println!(
+                                "{deep_yellow}{:─<col_width$}┼{reset} {}",
+                                "",
+                                r_str,
+                                col_width = col_width + 1
+                            );
+                            continue;
+                        } else if rk == "─" {
+                            let lv_chars: Vec<char> = lv.chars().collect();
+                            let lv_trunc = if lv_chars.len() > col_width - 18 {
+                                let max_len = col_width - 18 - 3;
+                                let trunc: String =
+                                    lv_chars[lv_chars.len() - max_len..].iter().collect();
+                                format!("...{}", trunc)
+                            } else {
+                                lv.to_string()
+                            };
+
+                            let l_str = if lk.is_empty() {
+                                format!("{:<col_width$}", "", col_width = col_width)
+                            } else {
+                                let f = format!("{:<17} {}{}{reset}", lk, l_color, lv_trunc);
+                                let vis_len = 18 + lv_trunc.chars().count();
+                                let pad = if vis_len < col_width {
+                                    col_width - vis_len
+                                } else {
+                                    0
+                                };
+                                format!("{}{}", f, " ".repeat(pad))
+                            };
+                            println!(
+                                "{} {deep_yellow}│{:─<right_width$}{reset}",
+                                l_str,
+                                "",
+                                right_width = right_width
+                            );
+                            continue;
+                        }
 
                         let lv_chars: Vec<char> = lv.chars().collect();
                         let lv_trunc = if lv_chars.len() > col_width - 18 {
@@ -280,7 +284,8 @@ pub async fn run_status() -> Result<()> {
 
                     println!();
                     println!("{}Recent Commands{}", blood_red, reset);
-                    let bottom_sep = format!("{:─<width$}", "", width = col_width + 35);
+                    let bottom_sep =
+                        format!("{:─<width$}", "", width = col_width + right_width + 3);
                     println!("{deep_yellow}{}{reset}", bottom_sep);
                     if recent_commands.is_empty() {
                         println!("  (none)");
