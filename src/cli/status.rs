@@ -249,11 +249,13 @@ pub async fn run_status() -> Result<()> {
                                 format!("{}{}{reset}{}", blood_red, lv, " ".repeat(pad))
                             } else {
                                 // normal left side
-                                let lv_chars: Vec<char> = lv.chars().collect();
-                                let lv_trunc = if lv_chars.len() > col_width - 19 {
-                                    let max_len = col_width - 19 - 3;
-                                    let trunc: String = lv_chars[lv_chars.len() - max_len..].iter().collect();
-                                    format!("...{}", trunc)
+                                let lv_trunc = if !lk.is_empty() {
+                                    let lv_chars: Vec<char> = lv.chars().collect();
+                                    if lv_chars.len() > col_width - 19 {
+                                        let max_len = col_width - 19 - 3;
+                                        let trunc: String = lv_chars[lv_chars.len() - max_len..].iter().collect();
+                                        format!("...{}", trunc)
+                                    } else { lv.to_string() }
                                 } else { lv.to_string() };
                                 if lk.is_empty() {
                                     let vis_len = lv_trunc.chars().count();
@@ -309,12 +311,16 @@ pub async fn run_status() -> Result<()> {
                             );
                             continue;
                         } else if rk == "─" {
-                            let lv_chars: Vec<char> = lv.chars().collect();
-                            let lv_trunc = if lv_chars.len() > col_width - 19 {
-                                let max_len = col_width - 19 - 3;
-                                let trunc: String =
-                                    lv_chars[lv_chars.len() - max_len..].iter().collect();
-                                format!("...{}", trunc)
+                            let lv_trunc = if !lk.is_empty() {
+                                let lv_chars: Vec<char> = lv.chars().collect();
+                                if lv_chars.len() > col_width - 19 {
+                                    let max_len = col_width - 19 - 3;
+                                    let trunc: String =
+                                        lv_chars[lv_chars.len() - max_len..].iter().collect();
+                                    format!("...{}", trunc)
+                                } else {
+                                    lv.to_string()
+                                }
                             } else {
                                 lv.to_string()
                             };
@@ -340,12 +346,16 @@ pub async fn run_status() -> Result<()> {
                             continue;
                         }
 
-                        let lv_chars: Vec<char> = lv.chars().collect();
-                        let lv_trunc = if lv_chars.len() > col_width - 19 {
-                            let max_len = col_width - 19 - 3;
-                            let trunc: String =
-                                lv_chars[lv_chars.len() - max_len..].iter().collect();
-                            format!("...{}", trunc)
+                        let lv_trunc = if !lk.is_empty() {
+                            let lv_chars: Vec<char> = lv.chars().collect();
+                            if lv_chars.len() > col_width - 19 {
+                                let max_len = col_width - 19 - 3;
+                                let trunc: String =
+                                    lv_chars[lv_chars.len() - max_len..].iter().collect();
+                                format!("...{}", trunc)
+                            } else {
+                                lv.to_string()
+                            }
                         } else {
                             lv.to_string()
                         };
@@ -380,7 +390,7 @@ pub async fn run_status() -> Result<()> {
                         }
                     }
 
-                    println!();
+
                     println!("{}Recent Commands{}", blood_red, reset);
                     let bottom_sep =
                         format!("{:─<width$}", "", width = col_width + right_width + 3);

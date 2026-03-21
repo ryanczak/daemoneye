@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-static PATTERNS: OnceLock<Vec<(Regex, String)>> = OnceLock::new();
+static PATTERNS: OnceLock<Vec<(Regex, String, bool)>> = OnceLock::new();
 
 // Per-type redaction counters (lifetime of the daemon process).
 static REDACT_AWS_KEY: AtomicUsize = AtomicUsize::new(0);
@@ -15,6 +15,9 @@ static REDACT_DB_URL: AtomicUsize = AtomicUsize::new(0);
 static REDACT_GENERIC: AtomicUsize = AtomicUsize::new(0);
 static REDACT_CARD: AtomicUsize = AtomicUsize::new(0);
 static REDACT_SSN: AtomicUsize = AtomicUsize::new(0);
+static REDACT_USER: AtomicUsize = AtomicUsize::new(0);
+static REDACT_SSH_PUBKEY: AtomicUsize = AtomicUsize::new(0);
+static REDACT_SSH_HOST: AtomicUsize = AtomicUsize::new(0);
 
 fn counter_for(rep: &str) -> &'static AtomicUsize {
     match rep {
@@ -26,12 +29,14 @@ fn counter_for(rep: &str) -> &'static AtomicUsize {
         "<DB_URL>" => &REDACT_DB_URL,
         "<CARD>" => &REDACT_CARD,
         "<SSN>" => &REDACT_SSN,
+        "<SSH_PUBKEY>" => &REDACT_SSH_PUBKEY,
+        "<SSH_HOST>" => &REDACT_SSH_HOST,
         _ => &REDACT_GENERIC,
     }
 }
 
 /// Returns a snapshot of redaction counts by type since daemon start.
-/// Keys are human-readable type names; only types with count > 0 are included.
+/// All built-in types are always included, even when the count is zero.
 pub fn get_redaction_counts() -> std::collections::HashMap<String, usize> {
     let raw = [
         ("AWS Key", REDACT_AWS_KEY.load(Ordering::Relaxed)),
@@ -43,9 +48,14 @@ pub fn get_redaction_counts() -> std::collections::HashMap<String, usize> {
         ("Secret", REDACT_GENERIC.load(Ordering::Relaxed)),
         ("Card", REDACT_CARD.load(Ordering::Relaxed)),
         ("SSN", REDACT_SSN.load(Ordering::Relaxed)),
+        ("User Defined", REDACT_USER.load(Ordering::Relaxed)),
+        (
+            "SSH Secrets",
+            REDACT_SSH_PUBKEY.load(Ordering::Relaxed)
+                + REDACT_SSH_HOST.load(Ordering::Relaxed),
+        ),
     ];
     raw.into_iter()
-        .filter(|(_, n)| *n > 0)
         .map(|(k, v)| (k.to_string(), v))
         .collect()
 }
@@ -89,21 +99,31 @@ fn builtin_defs() -> &'static [(&'static str, &'static str)] {
         (r"\b(?:\d{4}[- ]){3}\d{4}\b", "<CARD>"),
         // US Social Security Number
         (r"\b\d{3}-\d{2}-\d{4}\b", "<SSN>"),
+        // SSH public keys: id_rsa.pub, authorized_keys, known_hosts key data.
+        // All OpenSSH public key types start with "AAAA" in base64.
+        (
+            r"(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\s+AAAA[A-Za-z0-9+/=]+",
+            "<SSH_PUBKEY>",
+        ),
+        // SSH config file directives that reveal server topology.
+        // Matches: HostName <value> and IdentityFile <value> (case-insensitive).
+        (r"(?i)\b(?:HostName|IdentityFile)\s+\S+", "<SSH_HOST>"),
     ]
 }
 
 /// Compile built-in patterns plus any caller-supplied extras into a pattern list.
-fn compile_patterns(extra: &[String]) -> Vec<(Regex, String)> {
+/// Each entry is `(regex, replacement, is_user)` where `is_user` marks user-config patterns.
+fn compile_patterns(extra: &[String]) -> Vec<(Regex, String, bool)> {
     let mut result = Vec::new();
     for (pat, rep) in builtin_defs() {
         match Regex::new(pat) {
-            Ok(re) => result.push((re, rep.to_string())),
+            Ok(re) => result.push((re, rep.to_string(), false)),
             Err(e) => eprintln!("Warning: built-in masking pattern failed to compile: {e}"),
         }
     }
     for pat in extra {
         match Regex::new(pat) {
-            Ok(re) => result.push((re, "<REDACTED>".to_string())),
+            Ok(re) => result.push((re, "<REDACTED>".to_string(), true)),
             Err(_) => eprintln!("Warning: invalid masking pattern ignored: {pat}"),
         }
     }
@@ -121,10 +141,14 @@ pub fn init_masking(extra_patterns: &[String]) {
 pub fn mask_sensitive(text: &str) -> String {
     let pats = PATTERNS.get_or_init(|| compile_patterns(&[]));
     let mut result: Cow<str> = Cow::Borrowed(text);
-    for (re, rep) in pats {
+    for (re, rep, is_user) in pats {
         if re.is_match(&result) {
             let rep_str = rep.as_str();
-            let counter = counter_for(rep_str);
+            let counter = if *is_user {
+                &REDACT_USER
+            } else {
+                counter_for(rep_str)
+            };
             let mut n = 0usize;
             result = Cow::Owned(
                 re.replace_all(&result, |_: &regex::Captures<'_>| {
@@ -148,7 +172,7 @@ mod tests {
     fn mask(text: &str) -> String {
         let pats = compile_patterns(&[]);
         let mut result: std::borrow::Cow<str> = std::borrow::Cow::Borrowed(text);
-        for (re, rep) in &pats {
+        for (re, rep, _) in &pats {
             if re.is_match(&result) {
                 result =
                     std::borrow::Cow::Owned(re.replace_all(&result, rep.as_str()).into_owned());
@@ -239,7 +263,7 @@ mod tests {
         let pats = compile_patterns(&["MYCO-[A-Z0-9]{8}".to_string()]);
         let mut result: std::borrow::Cow<str> =
             std::borrow::Cow::Borrowed("deploy key: MYCO-ABCD1234");
-        for (re, rep) in &pats {
+        for (re, rep, _) in &pats {
             if re.is_match(&result) {
                 result =
                     std::borrow::Cow::Owned(re.replace_all(&result, rep.as_str()).into_owned());
@@ -331,5 +355,71 @@ mod tests {
     fn multiline_text_preserves_clean_lines() {
         let text = "ls -la\necho hello\ncat /etc/hostname";
         assert_eq!(mask(text), text);
+    }
+
+    // ── SSH-specific patterns ─────────────────────────────────────────────────
+
+    #[test]
+    fn ssh_rsa_pubkey_masked() {
+        let text = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7user@host";
+        let out = mask(text);
+        assert!(out.contains("<SSH_PUBKEY>"), "ssh-rsa public key should be masked");
+        assert!(!out.contains("AAAAB3NzaC1yc2E"), "key data should not be present");
+    }
+
+    #[test]
+    fn ssh_ed25519_pubkey_masked() {
+        let text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAbcdef user@laptop";
+        let out = mask(text);
+        assert!(out.contains("<SSH_PUBKEY>"), "ssh-ed25519 public key should be masked");
+    }
+
+    #[test]
+    fn authorized_keys_line_masked() {
+        // Typical authorized_keys line: key-type key-data optional-comment
+        let text = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDexample== deploy@ci";
+        let out = mask(text);
+        assert!(out.contains("<SSH_PUBKEY>"));
+        assert!(!out.contains("AAAAB3Nz"));
+    }
+
+    #[test]
+    fn known_hosts_key_data_masked() {
+        // known_hosts lines end with a public key
+        let text = "github.com ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEAq2A7hRGm";
+        let out = mask(text);
+        assert!(out.contains("<SSH_PUBKEY>"));
+        assert!(!out.contains("AAAAB3Nz"));
+        // hostname itself is preserved (not a secret)
+        assert!(out.contains("github.com"));
+    }
+
+    #[test]
+    fn ssh_config_hostname_masked() {
+        let text = "  HostName 10.0.0.42";
+        let out = mask(text);
+        assert!(out.contains("<SSH_HOST>"), "HostName directive should be masked");
+        assert!(!out.contains("10.0.0.42"));
+    }
+
+    #[test]
+    fn ssh_config_identityfile_masked() {
+        let text = "  IdentityFile ~/.ssh/id_rsa_prod";
+        let out = mask(text);
+        assert!(out.contains("<SSH_HOST>"), "IdentityFile directive should be masked");
+        assert!(!out.contains("id_rsa_prod"));
+    }
+
+    #[test]
+    fn ssh_config_hostname_case_insensitive() {
+        assert!(mask("hostname 192.168.1.1").contains("<SSH_HOST>"));
+        assert!(mask("HOSTNAME server.internal").contains("<SSH_HOST>"));
+    }
+
+    #[test]
+    fn ecdsa_pubkey_masked() {
+        let text = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY= user@host";
+        let out = mask(text);
+        assert!(out.contains("<SSH_PUBKEY>"));
     }
 }
