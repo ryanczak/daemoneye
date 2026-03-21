@@ -323,6 +323,7 @@ async fn handle_webhook(
 ) -> StatusCode {
     if !is_authorized(&state.config.webhook.secret, &headers) {
         log::warn!("Webhook: rejected request — invalid or missing Bearer token");
+        crate::daemon::stats::record_webhook_rejected();
         return StatusCode::UNAUTHORIZED;
     }
 

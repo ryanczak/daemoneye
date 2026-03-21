@@ -166,6 +166,8 @@ pub async fn run_scheduled_job(
         return;
     }
 
+    let cmd_id = crate::daemon::stats::start_command(&cmd, "scheduled");
+
     let mut rx = bg_done_subscribe();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
 
@@ -191,6 +193,8 @@ pub async fn run_scheduled_job(
             }
         }
     };
+
+    crate::daemon::stats::finish_command(cmd_id, exit_code);
 
     let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
     let output = normalize_output(&raw);
@@ -388,12 +392,16 @@ pub async fn handle_client(
             }
             let schedule_count = schedule_store.list().len();
             let circuit_state = crate::ai::circuit_state_str().to_string();
+            let circuit_failures = crate::ai::circuit_failure_count();
 
             let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
             let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
             let commands_bg_succeeded = crate::daemon::stats::get_commands_bg_succeeded();
             let commands_bg_failed = crate::daemon::stats::get_commands_bg_failed();
+            let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
+            let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
             let webhooks_received = crate::daemon::stats::get_webhooks_received();
+            let webhooks_rejected = crate::daemon::stats::get_webhooks_rejected();
             let webhook_url = format!(
                 "http://{}:{}/webhook",
                 config.webhook.bind_addr, config.webhook.port
@@ -434,11 +442,15 @@ pub async fn handle_client(
                     socket_path: default_socket_path().display().to_string(),
                     schedule_count,
                     circuit_state,
+                    circuit_failures,
                     commands_fg_succeeded,
                     commands_fg_failed,
                     commands_bg_succeeded,
                     commands_bg_failed,
+                    commands_sched_succeeded,
+                    commands_sched_failed,
                     webhooks_received,
+                    webhooks_rejected,
                     webhook_url,
                     runbook_count,
                     runbooks_created,
@@ -458,6 +470,7 @@ pub async fn handle_client(
                     context_window_tokens,
                     recent_commands,
                     memory_breakdown,
+                    redaction_counts: crate::ai::filter::get_redaction_counts(),
                 },
             )
             .await?;

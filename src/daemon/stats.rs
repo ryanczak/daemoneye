@@ -18,8 +18,11 @@ static COMMANDS_FG_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_FG_FAILED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_BG_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_BG_FAILED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_SCHED_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_SCHED_FAILED: AtomicUsize = AtomicUsize::new(0);
 
 static WEBHOOKS_RECEIVED: AtomicUsize = AtomicUsize::new(0);
+static WEBHOOKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
 
 static RUNBOOKS_CREATED: AtomicUsize = AtomicUsize::new(0);
 static RUNBOOKS_EXECUTED: AtomicUsize = AtomicUsize::new(0);
@@ -65,6 +68,7 @@ pub fn start_command(cmd: &str, mode: &str) -> usize {
 pub fn finish_command(id: usize, exit_code: i32) {
     let mut is_fg = false;
     let mut is_bg = false;
+    let mut is_sched = false;
     if let Ok(mut cmds) = RECENT_COMMANDS.lock() {
         if let Some(cmd) = cmds.iter_mut().find(|c| c.id == id) {
             let success = exit_code == 0;
@@ -75,6 +79,8 @@ pub fn finish_command(id: usize, exit_code: i32) {
             };
             if cmd.mode == "foreground" {
                 is_fg = true;
+            } else if cmd.mode == "scheduled" {
+                is_sched = true;
             } else {
                 is_bg = true;
             }
@@ -86,6 +92,12 @@ pub fn finish_command(id: usize, exit_code: i32) {
             COMMANDS_FG_SUCCEEDED.fetch_add(1, Ordering::Relaxed);
         } else {
             COMMANDS_FG_FAILED.fetch_add(1, Ordering::Relaxed);
+        }
+    } else if is_sched {
+        if exit_code == 0 {
+            COMMANDS_SCHED_SUCCEEDED.fetch_add(1, Ordering::Relaxed);
+        } else {
+            COMMANDS_SCHED_FAILED.fetch_add(1, Ordering::Relaxed);
         }
     } else if is_bg {
         if exit_code == 0 {
@@ -99,8 +111,14 @@ pub fn finish_command(id: usize, exit_code: i32) {
 pub fn record_webhook() {
     WEBHOOKS_RECEIVED.fetch_add(1, Ordering::Relaxed);
 }
+pub fn record_webhook_rejected() {
+    WEBHOOKS_REJECTED.fetch_add(1, Ordering::Relaxed);
+}
 pub fn get_webhooks_received() -> usize {
     WEBHOOKS_RECEIVED.load(Ordering::Relaxed)
+}
+pub fn get_webhooks_rejected() -> usize {
+    WEBHOOKS_REJECTED.load(Ordering::Relaxed)
 }
 
 pub fn get_commands_fg_succeeded() -> usize {
@@ -114,6 +132,12 @@ pub fn get_commands_bg_succeeded() -> usize {
 }
 pub fn get_commands_bg_failed() -> usize {
     COMMANDS_BG_FAILED.load(Ordering::Relaxed)
+}
+pub fn get_commands_sched_succeeded() -> usize {
+    COMMANDS_SCHED_SUCCEEDED.load(Ordering::Relaxed)
+}
+pub fn get_commands_sched_failed() -> usize {
+    COMMANDS_SCHED_FAILED.load(Ordering::Relaxed)
 }
 
 pub fn get_recent_commands() -> Vec<crate::ipc::RecentCommand> {

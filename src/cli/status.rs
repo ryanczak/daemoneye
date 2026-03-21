@@ -52,6 +52,7 @@ pub async fn run_status() -> Result<()> {
                     context_window_tokens,
                     recent_commands,
                     memory_breakdown,
+                    redaction_counts,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -198,6 +199,18 @@ pub async fn run_status() -> Result<()> {
                             format!("  - {}:", cat),
                             count.to_string(),
                         ));
+                    }
+
+                    right_items.push(("─".to_string(), "".to_string()));
+                    right_items.push(("§".to_string(), "Redactions".to_string()));
+                    let mut redact_sorted: Vec<_> = redaction_counts.into_iter().collect();
+                    redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                    if redact_sorted.is_empty() {
+                        right_items.push(("".to_string(), "(none)".to_string()));
+                    } else {
+                        for (rtype, count) in redact_sorted {
+                            right_items.push((format!("{}:", rtype), count.to_string()));
+                        }
                     }
 
                     let rows_count = left_items.len().max(right_items.len());

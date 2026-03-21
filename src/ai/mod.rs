@@ -88,6 +88,11 @@ pub fn circuit_state_str() -> &'static str {
     circuit().state_str()
 }
 
+/// Returns the current consecutive failure count for the circuit breaker.
+pub fn circuit_failure_count() -> u32 {
+    circuit().consecutive_failures.load(Ordering::Relaxed)
+}
+
 #[async_trait]
 pub trait AiClient: Send + Sync {
     async fn chat(

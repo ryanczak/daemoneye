@@ -1,8 +1,54 @@
 use regex::Regex;
 use std::borrow::Cow;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 static PATTERNS: OnceLock<Vec<(Regex, String)>> = OnceLock::new();
+
+// Per-type redaction counters (lifetime of the daemon process).
+static REDACT_AWS_KEY: AtomicUsize = AtomicUsize::new(0);
+static REDACT_PRIVATE_KEY: AtomicUsize = AtomicUsize::new(0);
+static REDACT_GCP_KEY: AtomicUsize = AtomicUsize::new(0);
+static REDACT_JWT: AtomicUsize = AtomicUsize::new(0);
+static REDACT_GITHUB_TOKEN: AtomicUsize = AtomicUsize::new(0);
+static REDACT_DB_URL: AtomicUsize = AtomicUsize::new(0);
+static REDACT_GENERIC: AtomicUsize = AtomicUsize::new(0);
+static REDACT_CARD: AtomicUsize = AtomicUsize::new(0);
+static REDACT_SSN: AtomicUsize = AtomicUsize::new(0);
+
+fn counter_for(rep: &str) -> &'static AtomicUsize {
+    match rep {
+        "<AWS_KEY>" => &REDACT_AWS_KEY,
+        "<PRIVATE_KEY>" => &REDACT_PRIVATE_KEY,
+        "<GCP_KEY>" => &REDACT_GCP_KEY,
+        "<JWT>" => &REDACT_JWT,
+        "<GITHUB_TOKEN>" => &REDACT_GITHUB_TOKEN,
+        "<DB_URL>" => &REDACT_DB_URL,
+        "<CARD>" => &REDACT_CARD,
+        "<SSN>" => &REDACT_SSN,
+        _ => &REDACT_GENERIC,
+    }
+}
+
+/// Returns a snapshot of redaction counts by type since daemon start.
+/// Keys are human-readable type names; only types with count > 0 are included.
+pub fn get_redaction_counts() -> std::collections::HashMap<String, usize> {
+    let raw = [
+        ("AWS Key", REDACT_AWS_KEY.load(Ordering::Relaxed)),
+        ("Private Key", REDACT_PRIVATE_KEY.load(Ordering::Relaxed)),
+        ("GCP Key", REDACT_GCP_KEY.load(Ordering::Relaxed)),
+        ("JWT", REDACT_JWT.load(Ordering::Relaxed)),
+        ("GitHub Token", REDACT_GITHUB_TOKEN.load(Ordering::Relaxed)),
+        ("DB URL", REDACT_DB_URL.load(Ordering::Relaxed)),
+        ("Secret", REDACT_GENERIC.load(Ordering::Relaxed)),
+        ("Card", REDACT_CARD.load(Ordering::Relaxed)),
+        ("SSN", REDACT_SSN.load(Ordering::Relaxed)),
+    ];
+    raw.into_iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(k, v)| (k.to_string(), v))
+        .collect()
+}
 
 /// Built-in (always-on) pattern definitions: `(regex, replacement)`.
 fn builtin_defs() -> &'static [(&'static str, &'static str)] {
@@ -77,7 +123,17 @@ pub fn mask_sensitive(text: &str) -> String {
     let mut result: Cow<str> = Cow::Borrowed(text);
     for (re, rep) in pats {
         if re.is_match(&result) {
-            result = Cow::Owned(re.replace_all(&result, rep.as_str()).into_owned());
+            let rep_str = rep.as_str();
+            let counter = counter_for(rep_str);
+            let mut n = 0usize;
+            result = Cow::Owned(
+                re.replace_all(&result, |_: &regex::Captures<'_>| {
+                    n += 1;
+                    rep_str
+                })
+                .into_owned(),
+            );
+            counter.fetch_add(n, Ordering::Relaxed);
         }
     }
     result.into_owned()

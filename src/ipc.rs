@@ -259,11 +259,15 @@ pub enum Response {
         schedule_count: usize,
         /// Circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
         circuit_state: String,
+        circuit_failures: u32,
         commands_fg_succeeded: usize,
         commands_fg_failed: usize,
         commands_bg_succeeded: usize,
         commands_bg_failed: usize,
+        commands_sched_succeeded: usize,
+        commands_sched_failed: usize,
         webhooks_received: usize,
+        webhooks_rejected: usize,
         webhook_url: String,
         runbook_count: usize,
         runbooks_created: usize,
@@ -283,6 +287,9 @@ pub enum Response {
         context_window_tokens: u32,
         recent_commands: Vec<RecentCommand>,
         memory_breakdown: std::collections::HashMap<String, usize>,
+        /// Redaction counts by type since daemon start (only types with count > 0).
+        #[serde(default)]
+        redaction_counts: std::collections::HashMap<String, usize>,
     },
 }
 
@@ -836,11 +843,15 @@ mod tests {
             socket_path: "/tmp/daemoneye.sock".to_string(),
             schedule_count: 3,
             circuit_state: "closed".to_string(),
+            circuit_failures: 2,
             commands_fg_succeeded: 5,
             commands_fg_failed: 1,
             commands_bg_succeeded: 3,
             commands_bg_failed: 1,
+            commands_sched_succeeded: 2,
+            commands_sched_failed: 0,
             webhooks_received: 5,
+            webhooks_rejected: 1,
             webhook_url: "http://127.0.0.1:8000/webhook".to_string(),
             runbook_count: 2,
             runbooks_created: 1,
@@ -867,6 +878,12 @@ mod tests {
                 status: "succeeded".to_string(),
             }],
             memory_breakdown: memory_breakdown.clone(),
+            redaction_counts: {
+                let mut m = std::collections::HashMap::new();
+                m.insert("JWT".to_string(), 3);
+                m.insert("Secret".to_string(), 1);
+                m
+            },
         };
         match roundtrip_resp(&resp) {
             Response::DaemonStatus {
@@ -877,11 +894,15 @@ mod tests {
                 model,
                 schedule_count,
                 circuit_state,
+                circuit_failures,
                 commands_fg_succeeded,
                 commands_fg_failed,
                 commands_bg_succeeded,
                 commands_bg_failed,
+                commands_sched_succeeded,
+                commands_sched_failed,
                 webhooks_received,
+                webhooks_rejected,
                 webhook_url,
                 runbooks_created,
                 runbooks_executed,
@@ -898,6 +919,7 @@ mod tests {
                 context_window_tokens,
                 recent_commands,
                 memory_breakdown: mb,
+                redaction_counts: rc,
                 ..
             } => {
                 assert_eq!(uptime_secs, 3661);
@@ -907,11 +929,15 @@ mod tests {
                 assert_eq!(model, "claude-sonnet-4-6");
                 assert_eq!(schedule_count, 3);
                 assert_eq!(circuit_state, "closed");
+                assert_eq!(circuit_failures, 2);
                 assert_eq!(commands_fg_succeeded, 5);
                 assert_eq!(commands_fg_failed, 1);
                 assert_eq!(commands_bg_succeeded, 3);
                 assert_eq!(commands_bg_failed, 1);
+                assert_eq!(commands_sched_succeeded, 2);
+                assert_eq!(commands_sched_failed, 0);
                 assert_eq!(webhooks_received, 5);
+                assert_eq!(webhooks_rejected, 1);
                 assert_eq!(webhook_url, "http://127.0.0.1:8000/webhook");
                 assert_eq!(runbooks_created, 1);
                 assert_eq!(runbooks_executed, 4);
@@ -928,6 +954,8 @@ mod tests {
                 assert_eq!(context_window_tokens, 4000);
                 assert_eq!(recent_commands.len(), 1);
                 assert_eq!(mb.len(), 2);
+                assert_eq!(rc.get("JWT").copied().unwrap_or(0), 3);
+                assert_eq!(rc.get("Secret").copied().unwrap_or(0), 1);
             }
             _ => panic!("wrong variant"),
         }
