@@ -105,6 +105,7 @@ pub enum Request {
     RunbookWriteResponse { id: String, approved: bool },
     /// Approve or deny a runbook delete proposed by the AI.
     RunbookDeleteResponse { id: String, approved: bool },
+    ScriptDeleteResponse { id: String, approved: bool },
     /// Notify the daemon of an event (e.g. background pane activity from a tmux hook).
     NotifyActivity {
         pane_id: String,
@@ -156,6 +157,7 @@ pub struct RecentCommand {
     pub cmd: String,
     pub timestamp: String,
     pub mode: String,
+    pub approval: String,
     pub status: String,
 }
 
@@ -195,6 +197,12 @@ pub enum Response {
     /// Daemon cannot determine the target pane and needs the user to choose.
     /// Client displays the list and returns a `Request::PaneSelectResponse`.
     PaneSelectPrompt { id: String, panes: Vec<PaneInfo> },
+    /// The AI wants to delete a script; the client MUST confirm with the user,
+    /// then return `Request::ScriptDeleteResponse`.
+    ScriptDeletePrompt {
+        id: String,
+        script_name: String,
+    },
     /// The AI wants to write a script; the client MUST show the content and
     /// prompt the user for approval, then return `Request::ScriptWriteResponse`.
     ScriptWritePrompt {
@@ -257,11 +265,14 @@ pub enum Response {
         commands_bg_failed: usize,
         webhooks_received: usize,
         webhook_url: String,
+        runbook_count: usize,
         runbooks_created: usize,
         runbooks_executed: usize,
         runbooks_deleted: usize,
+        script_count: usize,
         scripts_created: usize,
         scripts_executed: usize,
+        scripts_deleted: usize,
         memories_created: usize,
         memories_recalled: usize,
         memories_deleted: usize,
@@ -831,11 +842,14 @@ mod tests {
             commands_bg_failed: 1,
             webhooks_received: 5,
             webhook_url: "http://127.0.0.1:8000/webhook".to_string(),
+            runbook_count: 2,
             runbooks_created: 1,
             runbooks_executed: 4,
             runbooks_deleted: 0,
+            script_count: 3,
             scripts_created: 2,
             scripts_executed: 6,
+            scripts_deleted: 1,
             memories_created: 3,
             memories_recalled: 7,
             memories_deleted: 1,
@@ -849,6 +863,7 @@ mod tests {
                 cmd: "ls".to_string(),
                 timestamp: "2026-03-20 12:00:00".to_string(),
                 mode: "foreground".to_string(),
+                approval: "approved".to_string(),
                 status: "succeeded".to_string(),
             }],
             memory_breakdown: memory_breakdown.clone(),

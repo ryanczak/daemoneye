@@ -400,11 +400,14 @@ pub async fn handle_client(
             );
             let recent_commands = crate::daemon::stats::get_recent_commands();
 
+            let runbook_count = crate::runbook::list_runbooks().map(|v| v.len()).unwrap_or(0);
             let runbooks_created = crate::daemon::stats::get_runbooks_created();
             let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
             let runbooks_deleted = crate::daemon::stats::get_runbooks_deleted();
+            let script_count = crate::scripts::list_scripts().map(|v| v.len()).unwrap_or(0);
             let scripts_created = crate::daemon::stats::get_scripts_created();
             let scripts_executed = crate::daemon::stats::get_scripts_executed();
+            let scripts_deleted = crate::daemon::stats::get_scripts_deleted();
             let memories_created = crate::daemon::stats::get_memories_created();
             let memories_recalled = crate::daemon::stats::get_memories_recalled();
             let memories_deleted = crate::daemon::stats::get_memories_deleted();
@@ -437,11 +440,14 @@ pub async fn handle_client(
                     commands_bg_failed,
                     webhooks_received,
                     webhook_url,
+                    runbook_count,
                     runbooks_created,
                     runbooks_executed,
                     runbooks_deleted,
+                    script_count,
                     scripts_created,
                     scripts_executed,
+                    scripts_deleted,
                     memories_created,
                     memories_recalled,
                     memories_deleted,
@@ -947,6 +953,17 @@ pub async fn handle_client(
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::ReadScript {
+                        id,
+                        script_name,
+                        thought_signature,
+                    });
+                }
+                AiEvent::DeleteScript {
+                    id,
+                    script_name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteScript {
                         id,
                         script_name,
                         thought_signature,

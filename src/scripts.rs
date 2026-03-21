@@ -68,6 +68,18 @@ pub fn resolve_script(name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Delete a named script and its sidecar `.meta.toml` if present.
+pub fn delete_script(name: &str) -> Result<()> {
+    let path = resolve_script(name)?;
+    std::fs::remove_file(&path).with_context(|| format!("deleting script {}", path.display()))?;
+    let meta = meta_path(name);
+    if meta.exists() {
+        let _ = std::fs::remove_file(&meta);
+    }
+    crate::daemon::stats::inc_scripts_deleted();
+    Ok(())
+}
+
 /// Read the content of a named script.
 pub fn read_script(name: &str) -> Result<String> {
     let path = resolve_script(name)?;

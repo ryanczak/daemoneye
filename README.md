@@ -14,7 +14,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Command Scheduler & Watchdog** — Schedule commands to run once at a time or on a repeating interval. Set up watchdog monitors with AI-powered runbook analysis. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Watchdog jobs can trigger alerts via a configurable notification hook (`[notifications] on_alert`).
 - **Knowledge System** — Three-tier persistence for AI-generated knowledge: *runbooks* (`~/.daemoneye/runbooks/`, markdown with frontmatter) for watchdog procedures; *memory* (`~/.daemoneye/memory/{session,knowledge,incidents}/`) for durable facts and incident records; and *search* for cross-corpus keyword lookup across runbooks, scripts, memory, and the event log. Session memories are automatically injected into every AI turn. Runbook and memory writes are exposed as AI tools with approval gates for destructive operations.
 - **Passive Pane Monitoring** — The daemon registers hooks at startup using the absolute path to the running binary. Four global hooks: `pane-died` (notifies the daemon when a background pane exits — triggers output capture, `[Background Task Completed]` history injection, and GC window cleanup), `after-new-session` (automatically installs all per-session hooks for any tmux session created after the daemon starts — no manual reconfiguration needed), `client-detached` (records detach time and history watermark on matching sessions so the next AI turn can generate a catch-up brief), and `client-attached` (clears the detach record so the catch-up brief fires only once per detach cycle). Three per-session hooks installed by `install_session_hooks()`: `alert-bell` (existing background-completion fallback), `pane-focus-in` (notifies the daemon whenever the user switches panes, updating the active-pane cache immediately rather than waiting up to 2 s for the next poll), and `session-window-changed` (notifies the daemon whenever the active window changes, triggering an instant window-topology refresh). When the user re-attaches after ≥ 30 seconds away and new events occurred (background task completions, webhook alerts, watchdog results, or watch-pane outcomes), the daemon sends a `[Catch-up] N events while you were away (Xm): …` system message at the start of the next AI turn so nothing goes unnoticed. When a background pane exits, the daemon issues a `tmux display-message` overlay, injects a `[Background Task Completed]` context message into the AI's session history, and GC-kills the window. The AI can also passively monitor arbitrary panes via `watch_pane`.
-- **Scripts Directory** — AI and users can create and manage reusable scripts in `~/.daemoneye/scripts/`. Script writes require an approval step showing the full content. Scripts can be referenced by name in scheduled jobs.
+- **Scripts Directory** — AI and users can create, read, list, and delete reusable scripts in `~/.daemoneye/scripts/`. Script writes and deletes are approval-gated. Scripts can be referenced by name in scheduled jobs.
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
 - **Structured Event Logging** — Every executed command, AI turn usage, and lifecycle event is appended to `~/.daemoneye/events.jsonl` as a single structured JSON object.
@@ -98,7 +98,11 @@ You can also manage the daemon with systemd — run `daemoneye setup` for the se
 
 ### 2. Configure tmux
 
-Run `daemoneye setup` to get the recommended `tmux` configuration and add the output to your `~/.tmux.conf`:
+Run `daemoneye setup` to get the recommended configuration. It prints three things:
+
+**a) systemd service file** — follow the printed instructions to enable the daemon on login.
+
+**b) tmux keybinding** — add to `~/.tmux.conf`:
 
 ```sh
 # ~/.tmux.conf
@@ -110,6 +114,22 @@ Reload your tmux config:
 ```sh
 tmux source-file ~/.tmux.conf
 ```
+
+**c) Shell hook for exit-code tracking** — add the appropriate snippet to your shell config so DaemonEye can record the real exit code of foreground commands in `daemoneye status`:
+
+```sh
+# bash (~/.bashrc)
+_de_exit_trap() { tmux set-environment "DE_EXIT_${TMUX_PANE#%}" "$?" 2>/dev/null; }
+PROMPT_COMMAND="_de_exit_trap${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+```
+
+```sh
+# zsh (~/.zshrc)
+_de_precmd() { tmux set-environment "DE_EXIT_${TMUX_PANE#%}" "$?" 2>/dev/null; }
+precmd_functions+=(_de_precmd)
+```
+
+Without this hook, foreground commands are still tracked in `daemoneye status` but always recorded as succeeded regardless of their actual exit code.
 
 ### 3. Interact with the AI
 
@@ -293,7 +313,7 @@ src/
 ├── runbook.rs       # Runbook markdown loader (frontmatter parser, CRUD); watchdog AI system prompt builder
 ├── memory.rs        # Persistent memory: session (auto-loaded), knowledge (on-demand), incidents (search-only)
 ├── search.rs        # Keyword search across runbooks, scripts, memory, and events.jsonl
-├── scripts.rs       # Script management: list, write (chmod 700), read, resolve
+├── scripts.rs       # Script management: list, write (chmod 700), read, delete, resolve
 ├── sys_context.rs   # One-time host audit (OS, uptime, memory, processes, shell history)
 ├── tmux/
 │   ├── mod.rs       # tmux interoperability layer (capture-pane, send-keys, create/kill job windows, etc.)

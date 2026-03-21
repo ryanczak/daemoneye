@@ -441,6 +441,8 @@ Use script tools to manage reusable automation on the daemon host:
 - `write_script(name, content)`: creates `~/.daemoneye/scripts/<name>` with chmod 700.
 - `read_script(name)`: read the content of a saved script.
 - `list_scripts`: enumerate all scripts. Skip if the manifest already shows the full list.
+- `delete_script(name)`: permanently delete a script (requires user approval). Also removes the \
+  sidecar `.meta.toml` if present. Use to remove obsolete or replaced scripts.
 - Before writing a new script, check the manifest for existing scripts — read before writing duplicates.
 - Scripts support optional sidecar tag metadata at `~/.daemoneye/scripts/<name>.meta.toml` \
   (format: `tags = ["disk", "cleanup"]`). Tags improve discovery in `## Available Knowledge`.

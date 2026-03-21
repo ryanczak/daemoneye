@@ -601,7 +601,7 @@ pub async fn execute_tool_call(
                 }
                 None
             })();
-            let _cmd_id = match prompt_and_await_approval(
+            let cmd_id = match prompt_and_await_approval(
                 id,
                 cmd,
                 false,
@@ -928,6 +928,8 @@ pub async fn execute_tool_call(
                                 }
                             }
 
+                            let exit_code = tmux::read_pane_exit_status(target_str).unwrap_or(0);
+                            crate::daemon::stats::finish_command(cmd_id, exit_code);
                             send_response_split(tx, Response::ToolResult(output.clone())).await?;
                             log_command(
                                 session_id,
@@ -940,6 +942,7 @@ pub async fn execute_tool_call(
                             output
                         }
                         Err(e) => {
+                            crate::daemon::stats::finish_command(cmd_id, 1);
                             let msg = format!("Failed to send command: {}", e);
                             log_command(
                                 session_id,
@@ -1399,6 +1402,50 @@ pub async fn execute_tool_call(
             Err(e) => format!("Error reading script '{}': {}", script_name, e),
         },
 
+        PendingCall::DeleteScript { id, script_name, .. } => {
+            send_response_split(
+                tx,
+                Response::ScriptDeletePrompt {
+                    id: id.clone(),
+                    script_name: script_name.clone(),
+                },
+            )
+            .await?;
+
+            let mut line = String::new();
+            let read_result =
+                tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+            if matches!(read_result, Ok(Ok(0))) {
+                return Err(anyhow::anyhow!("EOF"));
+            }
+            let approved = match read_result {
+                Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+                    Ok(Request::ScriptDeleteResponse { approved, .. }) => approved,
+                    _ => false,
+                },
+                _ => false,
+            };
+
+            if approved {
+                match scripts::delete_script(script_name) {
+                    Ok(()) => {
+                        log::info!("Script '{}' deleted", script_name);
+                        log_event(
+                            "script_delete",
+                            serde_json::json!({
+                                "session": session_id.unwrap_or("-"),
+                                "script": script_name,
+                            }),
+                        );
+                        format!("Script '{}' deleted", script_name)
+                    }
+                    Err(e) => format!("Failed to delete script '{}': {}", script_name, e),
+                }
+            } else {
+                "Script deletion denied by user".to_string()
+            }
+        }
+
         PendingCall::WatchPane {
             pane_id,
             timeout_secs,
@@ -1801,7 +1848,7 @@ pub async fn execute_tool_call(
                     "edit_file {}\n--- old\n{}\n+++ new\n{}",
                     location, old_string, new_string
                 );
-                let _cmd_id = match prompt_and_await_approval(
+                let cmd_id = match prompt_and_await_approval(
                     id,
                     &approval_cmd,
                     false,
@@ -1819,12 +1866,16 @@ pub async fn execute_tool_call(
                 let cmd = build_remote_edit_cmd(path, old_string, new_string);
                 let snap = match remote_run_and_capture(pane, &cmd, 30).await {
                     Ok(s) => s,
-                    Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+                    Err(e) => {
+                        crate::daemon::stats::finish_command(cmd_id, 1);
+                        return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
+                    }
                 };
 
                 // Look for DE_OK or DE_ERROR in the captured output.
                 for line in snap.lines().rev() {
                     if line.contains("DE_OK:") {
+                        crate::daemon::stats::finish_command(cmd_id, 0);
                         log_event(
                             "file_edit",
                             serde_json::json!({
@@ -1839,6 +1890,7 @@ pub async fn execute_tool_call(
                         )));
                     }
                     if line.contains("DE_ERROR:") {
+                        crate::daemon::stats::finish_command(cmd_id, 1);
                         return Ok(ToolCallOutcome::Result(format!(
                             "Error editing {}: {}",
                             path,
@@ -1846,6 +1898,7 @@ pub async fn execute_tool_call(
                         )));
                     }
                 }
+                crate::daemon::stats::finish_command(cmd_id, 1);
                 return Ok(ToolCallOutcome::Result(format!(
                     "Edit command completed but result was unclear. Check {} manually.",
                     path
@@ -1893,7 +1946,7 @@ pub async fn execute_tool_call(
                 "edit_file {}\n--- old\n{}\n+++ new\n{}",
                 path, old_string, new_string
             );
-            let _cmd_id =
+            let cmd_id =
                 match prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
                     .await?
                 {
@@ -1904,6 +1957,7 @@ pub async fn execute_tool_call(
             let updated = original.replacen(old_string.as_str(), new_string.as_str(), 1);
             let tmp_path = std_path.with_extension("de_tmp");
             if let Err(e) = std::fs::write(&tmp_path, &updated) {
+                crate::daemon::stats::finish_command(cmd_id, 1);
                 return Ok(ToolCallOutcome::Result(format!(
                     "Error writing temp file: {}",
                     e
@@ -1911,12 +1965,14 @@ pub async fn execute_tool_call(
             }
             if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
                 let _ = std::fs::remove_file(&tmp_path);
+                crate::daemon::stats::finish_command(cmd_id, 1);
                 return Ok(ToolCallOutcome::Result(format!(
                     "Error committing edit: {}",
                     e
                 )));
             }
 
+            crate::daemon::stats::finish_command(cmd_id, 0);
             log_event(
                 "file_edit",
                 serde_json::json!({

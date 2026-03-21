@@ -201,6 +201,17 @@ pub static TOOLS: &[ToolDef] = &[
         }],
     },
     ToolDef {
+        name: "delete_script",
+        description: "Permanently delete a script from ~/.daemoneye/scripts/. The user must \
+                      approve before the file is removed. Also removes any sidecar .meta.toml.",
+        params: &[ParamDef {
+            name: "script_name",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Name of the script to delete.",
+        }],
+    },
+    ToolDef {
         name: "watch_pane",
         description: "Passively monitor a background tmux pane. Blocks until the pane's \
                       command completes (returns to shell prompt), or until a specific string \
@@ -666,6 +677,11 @@ pub fn dispatch_tool_event(
             thought_signature: ts,
         }),
         "read_script" => Some(AiEvent::ReadScript {
+            id: id.to_string(),
+            script_name: args["script_name"].as_str().unwrap_or("").to_string(),
+            thought_signature: ts,
+        }),
+        "delete_script" => Some(AiEvent::DeleteScript {
             id: id.to_string(),
             script_name: args["script_name"].as_str().unwrap_or("").to_string(),
             thought_signature: ts,

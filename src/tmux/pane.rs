@@ -336,6 +336,28 @@ pub fn select_pane(pane_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Read the last exit status recorded by the shell hook in the given pane.
+///
+/// The shell hook (`PROMPT_COMMAND` / `precmd`) writes the exit code to the
+/// tmux session environment under the key `DE_EXIT_<num>` (e.g. `DE_EXIT_3`
+/// for pane `%3`).  Returns `None` when the key is absent (hook not set up)
+/// or the value cannot be parsed.
+pub fn read_pane_exit_status(pane_id: &str) -> Option<i32> {
+    let key = format!("DE_EXIT_{}", pane_id.trim_start_matches('%'));
+    let output = Command::new("tmux")
+        .args(["show-environment", &key])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    // Output format: "DE_EXIT_3=0\n"
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.trim()
+        .split_once('=')
+        .and_then(|(_, val)| val.parse::<i32>().ok())
+}
+
 /// Send keys (a command) to a specific pane.
 pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
     let output = Command::new("tmux")

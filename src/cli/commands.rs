@@ -105,6 +105,17 @@ WantedBy=default.target
     println!("# If you already have a bind-key that uses the bare name 'daemoneye',");
     println!("# replace it with the full path above — the tmux session may not");
     println!("# inherit ~/.cargo/bin in its PATH.");
+    println!();
+    println!("# To enable accurate exit-code tracking for foreground commands,");
+    println!("# add the appropriate snippet to your shell config:");
+    println!();
+    println!("# bash (~/.bashrc):");
+    println!("_de_exit_trap() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}");
+    println!("PROMPT_COMMAND=\"_de_exit_trap${{PROMPT_COMMAND:+; $PROMPT_COMMAND}}\"");
+    println!();
+    println!("# zsh (~/.zshrc):");
+    println!("_de_precmd() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}");
+    println!("precmd_functions+=(_de_precmd)");
 
     Ok(())
 }
@@ -1733,6 +1744,30 @@ async fn ask_with_session(
                     .unwrap_or_else(|| panes.first().map(|p| p.id.clone()).unwrap_or_default());
                 md.reset();
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
+            }
+            Response::ScriptDeletePrompt { id, script_name } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to delete script:\x1b[0m \x1b[96m{}\x1b[0m",
+                    script_name
+                );
+                println!();
+                print!(
+                    "  Approve deleting ~/.daemoneye/scripts/{}? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ",
+                    script_name
+                );
+                std::io::stdout().flush()?;
+                crate::cli::input::restore_termios(old_termios);
+                let input = stdin.read_line().await.unwrap_or_default();
+                let _ = crate::cli::input::set_raw_mode();
+                let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
+                md.reset();
+                send_request(&mut tx, Request::ScriptDeleteResponse { id, approved }).await?;
             }
             Response::ScriptWritePrompt {
                 id,

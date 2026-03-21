@@ -10,6 +10,7 @@ pub struct RecentCommand {
     pub cmd: String,
     pub timestamp: String,
     pub mode: String,
+    pub approval: String,
     pub status: String,
 }
 
@@ -26,6 +27,7 @@ static RUNBOOKS_DELETED: AtomicUsize = AtomicUsize::new(0);
 
 static SCRIPTS_CREATED: AtomicUsize = AtomicUsize::new(0);
 static SCRIPTS_EXECUTED: AtomicUsize = AtomicUsize::new(0);
+static SCRIPTS_DELETED: AtomicUsize = AtomicUsize::new(0);
 
 static MEMORIES_CREATED: AtomicUsize = AtomicUsize::new(0);
 static MEMORIES_RECALLED: AtomicUsize = AtomicUsize::new(0);
@@ -46,7 +48,8 @@ pub fn start_command(cmd: &str, mode: &str) -> usize {
         cmd: cmd.to_string(),
         timestamp: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
         mode: mode.to_string(),
-        status: "approved".to_string(),
+        approval: "approved".to_string(),
+        status: "pending".to_string(),
     };
 
     if let Ok(mut cmds) = RECENT_COMMANDS.lock() {
@@ -121,6 +124,7 @@ pub fn get_recent_commands() -> Vec<crate::ipc::RecentCommand> {
                 cmd: c.cmd.clone(),
                 timestamp: c.timestamp.clone(),
                 mode: c.mode.clone(),
+                approval: c.approval.clone(),
                 status: c.status.clone(),
             })
             .collect()
@@ -155,11 +159,17 @@ pub fn inc_scripts_created() {
 pub fn inc_scripts_executed() {
     SCRIPTS_EXECUTED.fetch_add(1, Ordering::Relaxed);
 }
+pub fn inc_scripts_deleted() {
+    SCRIPTS_DELETED.fetch_add(1, Ordering::Relaxed);
+}
 pub fn get_scripts_created() -> usize {
     SCRIPTS_CREATED.load(Ordering::Relaxed)
 }
 pub fn get_scripts_executed() -> usize {
     SCRIPTS_EXECUTED.load(Ordering::Relaxed)
+}
+pub fn get_scripts_deleted() -> usize {
+    SCRIPTS_DELETED.load(Ordering::Relaxed)
 }
 
 pub fn inc_memories_created() {

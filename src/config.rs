@@ -394,6 +394,7 @@ prompt   = "sre"
 # auto_analyze = true
 # severity_threshold = "warning"   # "info" | "warning" | "critical"
 # dedup_window_secs = 300
+# bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
 "#,
             )?;
         }

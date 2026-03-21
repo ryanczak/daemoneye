@@ -22,7 +22,7 @@ pub async fn run_status() -> Result<()> {
                     provider,
                     model,
                     socket_path,
-                    schedule_count: _,
+                    schedule_count,
                     circuit_state,
                     commands_fg_succeeded,
                     commands_fg_failed,
@@ -30,11 +30,14 @@ pub async fn run_status() -> Result<()> {
                     commands_bg_failed,
                     webhooks_received,
                     webhook_url,
+                    runbook_count,
                     runbooks_created,
                     runbooks_executed,
                     runbooks_deleted,
+                    script_count,
                     scripts_created,
                     scripts_executed,
+                    scripts_deleted,
                     memories_created,
                     memories_recalled,
                     memories_deleted,
@@ -116,26 +119,32 @@ pub async fn run_status() -> Result<()> {
                     left_items.push(("Socket:".to_string(), display_socket_path));
                     left_items.push(("─".to_string(), "".to_string()));
                     left_items.push(("Webhook URL:".to_string(), webhook_url));
-                    left_items.push(("Webhooks rec'd:".to_string(), webhooks_received.to_string()));
+                    left_items.push(("Webhooks received:".to_string(), webhooks_received.to_string()));
                     left_items.push(("─".to_string(), "".to_string()));
                     left_items.push(("Commands (fg):".to_string(), commands_fg_str));
                     left_items.push(("Commands (bg):".to_string(), commands_bg_str));
                     left_items.push(("─".to_string(), "".to_string()));
+                    left_items.push(("Runbooks:".to_string(), format!("{} existing", runbook_count)));
                     left_items.push((
-                        "Runbooks:".to_string(),
+                        "".to_string(),
                         format!(
-                            "{} created, {} executed, {} deleted",
+                            "  {} created, {} executed, {} deleted",
                             runbooks_created, runbooks_executed, runbooks_deleted
                         ),
                     ));
+                    left_items.push(("Scripts:".to_string(), format!("{} existing", script_count)));
                     left_items.push((
-                        "Scripts:".to_string(),
-                        format!("{} created, {} executed", scripts_created, scripts_executed),
-                    ));
-                    left_items.push((
-                        "Schedules:".to_string(),
+                        "".to_string(),
                         format!(
-                            "{} created, {} executed, {} deleted",
+                            "  {} created, {} executed, {} deleted",
+                            scripts_created, scripts_executed, scripts_deleted
+                        ),
+                    ));
+                    left_items.push(("Schedules:".to_string(), format!("{} active", schedule_count)));
+                    left_items.push((
+                        "".to_string(),
+                        format!(
+                            "  {} created, {} executed, {} deleted",
                             schedules_created, schedules_executed, schedules_deleted
                         ),
                     ));
@@ -207,10 +216,10 @@ pub async fn run_status() -> Result<()> {
                             let r_str = if rk.is_empty() {
                                 format!("{}{}{reset}", r_color, rv)
                             } else {
-                                format!("{:<17} {}{}{reset}", rk, r_color, rv)
+                                format!("{:<19}{}{}{reset}", rk, r_color, rv)
                             };
                             println!(
-                                "{deep_yellow}{:─<col_width$}┼{reset} {}",
+                                "{deep_yellow}{:─<col_width$}┤{reset} {}",
                                 "",
                                 r_str,
                                 col_width = col_width + 1
@@ -218,8 +227,8 @@ pub async fn run_status() -> Result<()> {
                             continue;
                         } else if rk == "─" {
                             let lv_chars: Vec<char> = lv.chars().collect();
-                            let lv_trunc = if lv_chars.len() > col_width - 18 {
-                                let max_len = col_width - 18 - 3;
+                            let lv_trunc = if lv_chars.len() > col_width - 19 {
+                                let max_len = col_width - 19 - 3;
                                 let trunc: String =
                                     lv_chars[lv_chars.len() - max_len..].iter().collect();
                                 format!("...{}", trunc)
@@ -230,8 +239,8 @@ pub async fn run_status() -> Result<()> {
                             let l_str = if lk.is_empty() {
                                 format!("{:<col_width$}", "", col_width = col_width)
                             } else {
-                                let f = format!("{:<17} {}{}{reset}", lk, l_color, lv_trunc);
-                                let vis_len = 18 + lv_trunc.chars().count();
+                                let f = format!("{:<19}{}{}{reset}", lk, l_color, lv_trunc);
+                                let vis_len = 19 + lv_trunc.chars().count();
                                 let pad = if vis_len < col_width {
                                     col_width - vis_len
                                 } else {
@@ -240,7 +249,7 @@ pub async fn run_status() -> Result<()> {
                                 format!("{}{}", f, " ".repeat(pad))
                             };
                             println!(
-                                "{} {deep_yellow}│{:─<right_width$}{reset}",
+                                "{} {deep_yellow}├{:─<right_width$}{reset}",
                                 l_str,
                                 "",
                                 right_width = right_width
@@ -249,8 +258,8 @@ pub async fn run_status() -> Result<()> {
                         }
 
                         let lv_chars: Vec<char> = lv.chars().collect();
-                        let lv_trunc = if lv_chars.len() > col_width - 18 {
-                            let max_len = col_width - 18 - 3;
+                        let lv_trunc = if lv_chars.len() > col_width - 19 {
+                            let max_len = col_width - 19 - 3;
                             let trunc: String =
                                 lv_chars[lv_chars.len() - max_len..].iter().collect();
                             format!("...{}", trunc)
@@ -259,10 +268,16 @@ pub async fn run_status() -> Result<()> {
                         };
 
                         let l_str = if lk.is_empty() {
-                            format!("{:<col_width$}", "", col_width = col_width)
+                            if lv_trunc.is_empty() {
+                                format!("{:<col_width$}", "", col_width = col_width)
+                            } else {
+                                let vis_len = lv_trunc.chars().count();
+                                let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                format!("{}{}{reset}{}", l_color, lv_trunc, " ".repeat(pad))
+                            }
                         } else {
-                            let f = format!("{:<17} {}{}{reset}", lk, l_color, lv_trunc);
-                            let vis_len = 18 + lv_trunc.chars().count();
+                            let f = format!("{:<19}{}{}{reset}", lk, l_color, lv_trunc);
+                            let vis_len = 19 + lv_trunc.chars().count();
                             let pad = if vis_len < col_width {
                                 col_width - vis_len
                             } else {
@@ -277,7 +292,7 @@ pub async fn run_status() -> Result<()> {
                             let r_str = format!("{}{}{reset}", r_color, rv);
                             println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
                         } else {
-                            let r_str = format!("{:<17} {}{}{reset}", rk, r_color, rv);
+                            let r_str = format!("{:<19}{}{}{reset}", rk, r_color, rv);
                             println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
                         }
                     }
@@ -291,26 +306,43 @@ pub async fn run_status() -> Result<()> {
                         println!("  (none)");
                     } else {
                         for c in recent_commands.iter() {
-                            let status_color = match c.status.as_str() {
+                            let approval_color = match c.approval.as_str() {
+                                "approved" => "\x1b[32m",
+                                "denied" => "\x1b[31m",
+                                _ => bold_white,
+                            };
+                            let exit_color = match c.status.as_str() {
                                 "succeeded" => "\x1b[32m",
-                                "approved" => "\x1b[33m",
+                                "pending" => "\x1b[33m",
                                 s if s.starts_with("failed") => "\x1b[31m",
                                 _ => bold_white,
                             };
 
-                            let status_padded = format!("{:<14}", c.status);
-                            let status_fmt = format!("{}{}{}", status_color, status_padded, reset);
-                            let mode_padded = format!("{:<18}", format!("[{}]", c.mode));
+                            let approval_fmt = format!(
+                                "{}{:<10}{}",
+                                approval_color, c.approval, reset
+                            );
+                            let exit_fmt = format!(
+                                "{}{:<14}{}",
+                                exit_color, c.status, reset
+                            );
+                            let mode_padded = format!("{:<19}", format!("[{}]", c.mode));
 
                             let mut cmd_disp = c.cmd.clone();
-                            if cmd_disp.len() > 60 {
-                                cmd_disp.truncate(57);
+                            if cmd_disp.len() > 55 {
+                                cmd_disp.truncate(52);
                                 cmd_disp.push_str("...");
                             }
 
                             println!(
-                                "  {} {} {} {}{}{}",
-                                c.timestamp, mode_padded, status_fmt, bold_white, cmd_disp, reset
+                                "  {} {} {} {} {}{}{}",
+                                c.timestamp,
+                                mode_padded,
+                                approval_fmt,
+                                exit_fmt,
+                                bold_white,
+                                cmd_disp,
+                                reset
                             );
                         }
                     }

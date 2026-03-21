@@ -86,6 +86,11 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         script_name: String,
     },
+    DeleteScript {
+        id: String,
+        thought_signature: Option<String>,
+        script_name: String,
+    },
     WatchPane {
         id: String,
         thought_signature: Option<String>,
@@ -246,6 +251,12 @@ impl PendingCall {
                 name: "read_script".to_string(),
                 arguments: serde_json::json!({"script_name": script_name}).to_string(),
             },
+            PendingCall::DeleteScript { id, thought_signature, script_name } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "delete_script".to_string(),
+                arguments: serde_json::json!({"script_name": script_name}).to_string(),
+            },
             PendingCall::WatchPane { id, thought_signature, pane_id, timeout_secs, pattern } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
@@ -350,6 +361,7 @@ impl PendingCall {
             PendingCall::WriteScript { id, .. } => id,
             PendingCall::ListScripts { id, .. } => id,
             PendingCall::ReadScript { id, .. } => id,
+            PendingCall::DeleteScript { id, .. } => id,
             PendingCall::WatchPane { id, .. } => id,
             PendingCall::ReadFile { id, .. } => id,
             PendingCall::EditFile { id, .. } => id,
@@ -381,6 +393,7 @@ impl PendingCall {
             PendingCall::WriteScript { .. } => "write_script",
             PendingCall::ListScripts { .. } => "list_scripts",
             PendingCall::ReadScript { .. } => "read_script",
+            PendingCall::DeleteScript { .. } => "delete_script",
             PendingCall::WatchPane { .. } => "watch_pane",
             PendingCall::ReadFile { .. } => "read_file",
             PendingCall::EditFile { .. } => "edit_file",
@@ -447,6 +460,11 @@ pub enum AiEvent {
         thought_signature: Option<String>,
     },
     ReadScript {
+        id: String,
+        script_name: String,
+        thought_signature: Option<String>,
+    },
+    DeleteScript {
         id: String,
         script_name: String,
         thought_signature: Option<String>,
