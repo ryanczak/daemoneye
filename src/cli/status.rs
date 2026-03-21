@@ -70,20 +70,6 @@ pub async fn run_status() -> Result<()> {
                     let reset = "\x1b[0m";
                     let bold_white = "\x1b[1m\x1b[37m";
 
-                    let col_width = 62;
-                    let right_width = 44;
-
-                    let title_left = format!("{}Process Information{}", blood_red, reset);
-                    let title_right = format!("{}Session Information{}", blood_red, reset);
-
-                    let left_pad = col_width - 19;
-                    let left_pad_str = " ".repeat(left_pad);
-
-                    println!(
-                        "{}{} {deep_yellow}│{reset} {}",
-                        title_left, left_pad_str, title_right
-                    );
-
                     let commands_fg_total = commands_fg_succeeded + commands_fg_failed;
                     let commands_fg_str = format!(
                         "{} ({} ok, {} fail)",
@@ -205,13 +191,33 @@ pub async fn run_status() -> Result<()> {
                     right_items.push(("§".to_string(), "Redactions".to_string()));
                     let mut redact_sorted: Vec<_> = redaction_counts.into_iter().collect();
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                    if redact_sorted.is_empty() {
-                        right_items.push(("".to_string(), "(none)".to_string()));
-                    } else {
-                        for (rtype, count) in redact_sorted {
-                            right_items.push((format!("{}:", rtype), count.to_string()));
-                        }
+                    for (rtype, count) in redact_sorted {
+                        right_items.push((format!("{}:", rtype), count.to_string()));
                     }
+
+                    let col_width = left_items
+                        .iter()
+                        .map(|(k, v)| {
+                            if k == "─" {
+                                0
+                            } else if k == "§" || k.is_empty() {
+                                v.chars().count()
+                            } else {
+                                19 + v.chars().count()
+                            }
+                        })
+                        .max()
+                        .unwrap_or(40)
+                        + 2;
+                    let right_width = 44;
+
+                    let title_left = format!("{}Process Information{}", blood_red, reset);
+                    let title_right = format!("{}Session Information{}", blood_red, reset);
+                    let left_pad_str = " ".repeat(col_width.saturating_sub(19));
+                    println!(
+                        "{}{} {deep_yellow}│{reset} {}",
+                        title_left, left_pad_str, title_right
+                    );
 
                     let rows_count = left_items.len().max(right_items.len());
                     for i in 0..rows_count {
