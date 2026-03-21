@@ -24,11 +24,15 @@ pub async fn run_status() -> Result<()> {
                     socket_path,
                     schedule_count,
                     circuit_state,
+                    circuit_failures,
                     commands_fg_succeeded,
                     commands_fg_failed,
                     commands_bg_succeeded,
                     commands_bg_failed,
+                    commands_sched_succeeded,
+                    commands_sched_failed,
                     webhooks_received,
+                    webhooks_rejected,
                     webhook_url,
                     runbook_count,
                     runbooks_created,
@@ -78,13 +82,6 @@ pub async fn run_status() -> Result<()> {
                         "{}{} {deep_yellow}│{reset} {}",
                         title_left, left_pad_str, title_right
                     );
-                    println!(
-                        "{deep_yellow}{:─<col_width$}┼{:─<right_width$}{reset}",
-                        "",
-                        "",
-                        col_width = col_width + 1,
-                        right_width = right_width
-                    );
 
                     let commands_fg_total = commands_fg_succeeded + commands_fg_failed;
                     let commands_fg_str = format!(
@@ -96,6 +93,12 @@ pub async fn run_status() -> Result<()> {
                     let commands_bg_str = format!(
                         "{} ({} ok, {} fail)",
                         commands_bg_total, commands_bg_succeeded, commands_bg_failed
+                    );
+
+                    let commands_sched_total = commands_sched_succeeded + commands_sched_failed;
+                    let commands_sched_str = format!(
+                        "{} ({} ok, {} fail)",
+                        commands_sched_total, commands_sched_succeeded, commands_sched_failed
                     );
 
                     let tokens_pct = if context_window_tokens > 0 {
@@ -118,12 +121,17 @@ pub async fn run_status() -> Result<()> {
                     left_items.push(("Uptime:".to_string(), uptime_str));
                     left_items.push(("Socket:".to_string(), display_socket_path));
                     left_items.push(("─".to_string(), "".to_string()));
-                    left_items.push(("Webhook URL:".to_string(), webhook_url));
-                    left_items.push(("Webhooks received:".to_string(), webhooks_received.to_string()));
+                    left_items.push(("§".to_string(), "Webhook".to_string()));
+                    left_items.push(("URL:".to_string(), webhook_url));
+                    left_items.push(("Received:".to_string(), webhooks_received.to_string()));
+                    left_items.push(("Rejected:".to_string(), webhooks_rejected.to_string()));
                     left_items.push(("─".to_string(), "".to_string()));
-                    left_items.push(("Commands (fg):".to_string(), commands_fg_str));
-                    left_items.push(("Commands (bg):".to_string(), commands_bg_str));
+                    left_items.push(("§".to_string(), "Commands".to_string()));
+                    left_items.push(("Foreground:".to_string(), commands_fg_str));
+                    left_items.push(("Background:".to_string(), commands_bg_str));
+                    left_items.push(("Scheduled:".to_string(), commands_sched_str));
                     left_items.push(("─".to_string(), "".to_string()));
+                    left_items.push(("§".to_string(), "Tooling".to_string()));
                     left_items.push(("Runbooks:".to_string(), format!("{} existing", runbook_count)));
                     left_items.push((
                         "".to_string(),
@@ -155,7 +163,10 @@ pub async fn run_status() -> Result<()> {
                         "Active model:".to_string(),
                         format!("{}/{}", provider, model),
                     ));
-                    right_items.push(("Circuit:".to_string(), circuit_state.clone()));
+                    right_items.push((
+                        "Circuit:".to_string(),
+                        format!("{} ({} failures)", circuit_state, circuit_failures),
+                    ));
                     right_items.push((
                         "Token budget:".to_string(),
                         format!(
@@ -164,20 +175,28 @@ pub async fn run_status() -> Result<()> {
                         ),
                     ));
                     right_items.push(("─".to_string(), "".to_string()));
+                    right_items.push(("§".to_string(), "Memories".to_string()));
+                    let knowledge_count = memory_breakdown.get("knowledge").copied().unwrap_or(0);
+                    let session_count = memory_breakdown.get("session").copied().unwrap_or(0);
+                    right_items.push(("Knowledge:".to_string(), knowledge_count.to_string()));
+                    right_items.push(("Session:".to_string(), session_count.to_string()));
                     right_items.push((
-                        "Memories:".to_string(),
+                        "".to_string(),
                         format!(
-                            "{} created, {} recalled, {} deleted",
+                            "  {} created, {} recalled, {} deleted",
                             memories_created, memories_recalled, memories_deleted
                         ),
                     ));
 
-                    let mut mem_cats: Vec<_> = memory_breakdown.into_iter().collect();
+                    let mut mem_cats: Vec<_> = memory_breakdown
+                        .into_iter()
+                        .filter(|(cat, _)| cat != "knowledge" && cat != "session")
+                        .collect();
                     mem_cats.sort_by_key(|k| k.0.clone());
                     for (cat, count) in mem_cats {
                         right_items.push((
-                            "".to_string(),
-                            format!("  - {:<12} {}", format!("{}:", cat), count),
+                            format!("  - {}:", cat),
+                            count.to_string(),
                         ));
                     }
 
@@ -194,7 +213,7 @@ pub async fn run_status() -> Result<()> {
 
                         let l_color = bold_white;
                         let r_color = if rk == "Circuit:" {
-                            match rv.as_str() {
+                            match circuit_state.as_str() {
                                 "closed" => "\x1b[32m",
                                 "open" => "\x1b[31m",
                                 _ => "\x1b[33m",
@@ -202,6 +221,51 @@ pub async fn run_status() -> Result<()> {
                         } else {
                             bold_white
                         };
+
+                        // Blood-red section header sentinel
+                        if lk == "§" || rk == "§" {
+                            let l_str = if lk == "§" {
+                                let vis_len = lv.chars().count();
+                                let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                format!("{}{}{reset}{}", blood_red, lv, " ".repeat(pad))
+                            } else {
+                                // normal left side
+                                let lv_chars: Vec<char> = lv.chars().collect();
+                                let lv_trunc = if lv_chars.len() > col_width - 19 {
+                                    let max_len = col_width - 19 - 3;
+                                    let trunc: String = lv_chars[lv_chars.len() - max_len..].iter().collect();
+                                    format!("...{}", trunc)
+                                } else { lv.to_string() };
+                                if lk.is_empty() {
+                                    let vis_len = lv_trunc.chars().count();
+                                    let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                    format!("{}{}{reset}{}", l_color, lv_trunc, " ".repeat(pad))
+                                } else {
+                                    let f = format!(" {:<18}{}{}{reset}", lk, l_color, lv_trunc);
+                                    let vis_len = 19 + lv_trunc.chars().count();
+                                    let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                    format!("{}{}", f, " ".repeat(pad))
+                                }
+                            };
+                            let r_str = if rk == "§" {
+                                format!("{}{}{reset}", blood_red, rv)
+                            } else if rk.is_empty() {
+                                format!("{}{}{reset}", r_color, rv)
+                            } else {
+                                format!(" {:<18}{}{}{reset}", rk, r_color, rv)
+                            };
+                            if rk == "─" {
+                                println!(
+                                    "{} {deep_yellow}├{:─<right_width$}{reset}",
+                                    l_str, "", right_width = right_width
+                                );
+                            } else if rv.is_empty() && rk != "§" {
+                                println!("{} {deep_yellow}│{reset}", l_str);
+                            } else {
+                                println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
+                            }
+                            continue;
+                        }
 
                         if lk == "─" && rk == "─" {
                             println!(
@@ -216,7 +280,7 @@ pub async fn run_status() -> Result<()> {
                             let r_str = if rk.is_empty() {
                                 format!("{}{}{reset}", r_color, rv)
                             } else {
-                                format!("{:<19}{}{}{reset}", rk, r_color, rv)
+                                format!(" {:<18}{}{}{reset}", rk, r_color, rv)
                             };
                             println!(
                                 "{deep_yellow}{:─<col_width$}┤{reset} {}",
@@ -239,7 +303,7 @@ pub async fn run_status() -> Result<()> {
                             let l_str = if lk.is_empty() {
                                 format!("{:<col_width$}", "", col_width = col_width)
                             } else {
-                                let f = format!("{:<19}{}{}{reset}", lk, l_color, lv_trunc);
+                                let f = format!(" {:<18}{}{}{reset}", lk, l_color, lv_trunc);
                                 let vis_len = 19 + lv_trunc.chars().count();
                                 let pad = if vis_len < col_width {
                                     col_width - vis_len
@@ -276,7 +340,7 @@ pub async fn run_status() -> Result<()> {
                                 format!("{}{}{reset}{}", l_color, lv_trunc, " ".repeat(pad))
                             }
                         } else {
-                            let f = format!("{:<19}{}{}{reset}", lk, l_color, lv_trunc);
+                            let f = format!(" {:<18}{}{}{reset}", lk, l_color, lv_trunc);
                             let vis_len = 19 + lv_trunc.chars().count();
                             let pad = if vis_len < col_width {
                                 col_width - vis_len
@@ -292,7 +356,7 @@ pub async fn run_status() -> Result<()> {
                             let r_str = format!("{}{}{reset}", r_color, rv);
                             println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
                         } else {
-                            let r_str = format!("{:<19}{}{}{reset}", rk, r_color, rv);
+                            let r_str = format!(" {:<18}{}{}{reset}", rk, r_color, rv);
                             println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
                         }
                     }
