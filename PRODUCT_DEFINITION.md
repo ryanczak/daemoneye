@@ -109,7 +109,7 @@ DaemonEye elevates the command-line experience by embedding AI agents like Googl
 - **API Access**: Requires a valid API Key for an AI agent (e.g., Google Gemini, Anthropic Claude, or OpenAI's ChatGPT) configured in the daemon.
 - **Privacy & Security Framework**:
   - Explicit user controls over what terminal context is sent to the LLM.
-  - Sensitive data masking: a multi-pattern regex filter runs on all terminal context before transmission. Built-in patterns cover AWS keys, PEM/GCP private keys, JWTs, GitHub PATs, database connection URLs, password/token assignments, URL query-param secrets, credit cards, and SSNs. Users extend the filter with org-specific patterns via `[masking] extra_patterns` in `config.toml`; built-in patterns cannot be disabled. Per-type redaction counts (AWS Key, JWT, DB URL, etc.) are tracked atomically and visible in `daemoneye status` so operators can audit how much sensitive data has been filtered.
+  - Sensitive data masking: a multi-pattern regex filter runs on all terminal context before transmission. Built-in patterns cover AWS keys, PEM/GCP private keys, JWTs, GitHub PATs, database connection URLs, password/token assignments, URL query-param secrets, credit cards, and SSNs. Users extend the filter with org-specific patterns via `[masking] extra_patterns` in `config.toml`; built-in patterns cannot be disabled. Per-type redaction counts (AWS Key, JWT, DB URL, etc.) are tracked atomically and visible in `daemoneye status` so operators can audit how much sensitive data has been filtered. All built-in types are always shown, even at zero. Hits from user-configured patterns are aggregated into a separate `"User Defined"` counter.
 
 ---
 

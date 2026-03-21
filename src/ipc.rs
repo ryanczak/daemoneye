@@ -287,7 +287,7 @@ pub enum Response {
         context_window_tokens: u32,
         recent_commands: Vec<RecentCommand>,
         memory_breakdown: std::collections::HashMap<String, usize>,
-        /// Redaction counts by type since daemon start (only types with count > 0).
+        /// Redaction counts by type since daemon start (all built-in types included, even if zero).
         #[serde(default)]
         redaction_counts: std::collections::HashMap<String, usize>,
     },
