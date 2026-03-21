@@ -27,8 +27,12 @@ pub async fn run_status() -> Result<()> {
                     circuit_failures,
                     commands_fg_succeeded,
                     commands_fg_failed,
+                    commands_fg_approved,
+                    commands_fg_denied,
                     commands_bg_succeeded,
                     commands_bg_failed,
+                    commands_bg_approved,
+                    commands_bg_denied,
                     commands_sched_succeeded,
                     commands_sched_failed,
                     webhooks_received,
@@ -70,16 +74,20 @@ pub async fn run_status() -> Result<()> {
                     let reset = "\x1b[0m";
                     let bold_white = "\x1b[1m\x1b[37m";
 
-                    let commands_fg_total = commands_fg_succeeded + commands_fg_failed;
                     let commands_fg_str = format!(
-                        "{} ({} ok, {} fail)",
-                        commands_fg_total, commands_fg_succeeded, commands_fg_failed
+                        "{} approved, {} denied ({} ok, {} fail)",
+                        commands_fg_approved,
+                        commands_fg_denied,
+                        commands_fg_succeeded,
+                        commands_fg_failed
                     );
 
-                    let commands_bg_total = commands_bg_succeeded + commands_bg_failed;
                     let commands_bg_str = format!(
-                        "{} ({} ok, {} fail)",
-                        commands_bg_total, commands_bg_succeeded, commands_bg_failed
+                        "{} approved, {} denied ({} ok, {} fail)",
+                        commands_bg_approved,
+                        commands_bg_denied,
+                        commands_bg_succeeded,
+                        commands_bg_failed
                     );
 
                     let commands_sched_total = commands_sched_succeeded + commands_sched_failed;
@@ -195,21 +203,63 @@ pub async fn run_status() -> Result<()> {
                         right_items.push((format!("{}:", rtype), count.to_string()));
                     }
 
-                    let col_width = left_items
-                        .iter()
-                        .map(|(k, v)| {
-                            if k == "─" {
-                                0
-                            } else if k == "§" || k.is_empty() {
-                                v.chars().count()
+                    let term_width: usize = {
+                        fn tiocgwinsz(fd: libc::c_int) -> Option<usize> {
+                            let mut ws = libc::winsize {
+                                ws_row: 0,
+                                ws_col: 0,
+                                ws_xpixel: 0,
+                                ws_ypixel: 0,
+                            };
+                            let ret = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) };
+                            if ret == 0 && ws.ws_col > 0 {
+                                Some(ws.ws_col as usize)
                             } else {
-                                19 + v.chars().count()
+                                None
                             }
-                        })
-                        .max()
-                        .unwrap_or(40)
-                        + 2;
-                    let right_width = 44;
+                        }
+                        tiocgwinsz(libc::STDOUT_FILENO)
+                            .or_else(|| tiocgwinsz(libc::STDERR_FILENO))
+                            .or_else(|| tiocgwinsz(libc::STDIN_FILENO))
+                            .or_else(|| {
+                                use std::fs::OpenOptions;
+                                use std::os::unix::io::AsRawFd;
+                                OpenOptions::new()
+                                    .read(true)
+                                    .write(true)
+                                    .open("/dev/tty")
+                                    .ok()
+                                    .and_then(|f| tiocgwinsz(f.as_raw_fd()))
+                            })
+                            .or_else(|| {
+                                std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok())
+                            })
+                            .unwrap_or(80)
+                    };
+
+                    let col_width = {
+                        let raw = left_items
+                            .iter()
+                            .map(|(k, v)| {
+                                if k == "─" {
+                                    0
+                                } else if k == "§" || k.is_empty() {
+                                    v.chars().count()
+                                } else {
+                                    19 + v.chars().count()
+                                }
+                            })
+                            .max()
+                            .unwrap_or(40)
+                            + 2;
+                        // Cap at ~55% of terminal width so long Socket/URL values
+                        // trigger the existing left-truncation logic instead of
+                        // expanding the column past the screen edge.
+                        raw.min((term_width * 55 / 100).max(40))
+                    };
+                    // All dividers render as: (col_width+1) dashes + join-char + right_width dashes
+                    // = col_width + right_width + 2 chars total.  Set right_width so that equals term_width.
+                    let right_width = term_width.saturating_sub(col_width + 2).max(20);
 
                     let title_left = format!("{}Process Information{}", blood_red, reset);
                     let title_right = format!("{}Session Information{}", blood_red, reset);
@@ -379,22 +429,38 @@ pub async fn run_status() -> Result<()> {
                             format!("{}{}", f, " ".repeat(pad))
                         };
 
+                        // Truncate right-side values so they don't overflow right_width.
+                        // Key takes 19 chars (1 space + 18 padded label), leaving the rest for value.
+                        let rv_max = right_width.saturating_sub(20);
+                        let rv_trunc = if !rk.is_empty() && rv.chars().count() > rv_max && rv_max > 3 {
+                            let rv_chars: Vec<char> = rv.chars().collect();
+                            let trunc: String = rv_chars[rv_chars.len() - (rv_max - 3)..].iter().collect();
+                            format!("...{}", trunc)
+                        } else {
+                            rv.clone()
+                        };
+
                         if rk.is_empty() && rv.is_empty() {
                             println!("{} {deep_yellow}│{reset}", l_str);
                         } else if rk.is_empty() {
-                            let r_str = format!("{}{}{reset}", r_color, rv);
+                            let r_str = format!("{}{}{reset}", r_color, rv_trunc);
                             println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
                         } else {
-                            let r_str = format!(" {:<18}{}{}{reset}", rk, r_color, rv);
+                            let r_str = format!(" {:<18}{}{}{reset}", rk, r_color, rv_trunc);
                             println!("{} {deep_yellow}│{reset} {}", l_str, r_str);
                         }
                     }
 
 
-                    println!("{}Recent Commands{}", blood_red, reset);
-                    let bottom_sep =
-                        format!("{:─<width$}", "", width = col_width + right_width + 3);
+                    let bottom_sep = format!(
+                        "{:─<left$}┴{:─<right$}",
+                        "",
+                        "",
+                        left = col_width + 1,
+                        right = right_width
+                    );
                     println!("{deep_yellow}{}{reset}", bottom_sep);
+                    println!("{}Recent Commands{}", blood_red, reset);
                     if recent_commands.is_empty() {
                         println!("  (none)");
                     } else {

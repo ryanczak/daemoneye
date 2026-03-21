@@ -262,8 +262,16 @@ pub enum Response {
         circuit_failures: u32,
         commands_fg_succeeded: usize,
         commands_fg_failed: usize,
+        #[serde(default)]
+        commands_fg_approved: usize,
+        #[serde(default)]
+        commands_fg_denied: usize,
         commands_bg_succeeded: usize,
         commands_bg_failed: usize,
+        #[serde(default)]
+        commands_bg_approved: usize,
+        #[serde(default)]
+        commands_bg_denied: usize,
         commands_sched_succeeded: usize,
         commands_sched_failed: usize,
         webhooks_received: usize,
@@ -846,8 +854,12 @@ mod tests {
             circuit_failures: 2,
             commands_fg_succeeded: 5,
             commands_fg_failed: 1,
+            commands_fg_approved: 6,
+            commands_fg_denied: 2,
             commands_bg_succeeded: 3,
             commands_bg_failed: 1,
+            commands_bg_approved: 4,
+            commands_bg_denied: 1,
             commands_sched_succeeded: 2,
             commands_sched_failed: 0,
             webhooks_received: 5,

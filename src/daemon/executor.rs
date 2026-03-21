@@ -223,6 +223,11 @@ async fn prompt_and_await_approval(
     match parsed {
         Parsed::Approved => {
             log::info!("{} command approved: {}", mode, cmd);
+            if background {
+                crate::daemon::stats::inc_commands_bg_approved();
+            } else {
+                crate::daemon::stats::inc_commands_fg_approved();
+            }
             let cmd_id = crate::daemon::stats::start_command(cmd, mode);
             if cmd.contains(".daemoneye/scripts/") {
                 crate::daemon::stats::inc_scripts_executed();
@@ -240,6 +245,11 @@ async fn prompt_and_await_approval(
         }
         Parsed::Denied => {
             let decision = if timed_out { "timeout" } else { "denied" };
+            if background {
+                crate::daemon::stats::inc_commands_bg_denied();
+            } else {
+                crate::daemon::stats::inc_commands_fg_denied();
+            }
             log::info!("{} command {}: {}", mode, decision, cmd);
             log_event(
                 "command_approval",

@@ -16,8 +16,12 @@ pub struct RecentCommand {
 
 static COMMANDS_FG_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_FG_FAILED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_FG_APPROVED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_FG_DENIED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_BG_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_BG_FAILED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_BG_APPROVED: AtomicUsize = AtomicUsize::new(0);
+static COMMANDS_BG_DENIED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_SCHED_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_SCHED_FAILED: AtomicUsize = AtomicUsize::new(0);
 
@@ -127,11 +131,35 @@ pub fn get_commands_fg_succeeded() -> usize {
 pub fn get_commands_fg_failed() -> usize {
     COMMANDS_FG_FAILED.load(Ordering::Relaxed)
 }
+pub fn get_commands_fg_approved() -> usize {
+    COMMANDS_FG_APPROVED.load(Ordering::Relaxed)
+}
+pub fn get_commands_fg_denied() -> usize {
+    COMMANDS_FG_DENIED.load(Ordering::Relaxed)
+}
 pub fn get_commands_bg_succeeded() -> usize {
     COMMANDS_BG_SUCCEEDED.load(Ordering::Relaxed)
 }
 pub fn get_commands_bg_failed() -> usize {
     COMMANDS_BG_FAILED.load(Ordering::Relaxed)
+}
+pub fn get_commands_bg_approved() -> usize {
+    COMMANDS_BG_APPROVED.load(Ordering::Relaxed)
+}
+pub fn get_commands_bg_denied() -> usize {
+    COMMANDS_BG_DENIED.load(Ordering::Relaxed)
+}
+pub fn inc_commands_fg_approved() {
+    COMMANDS_FG_APPROVED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_commands_fg_denied() {
+    COMMANDS_FG_DENIED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_commands_bg_approved() {
+    COMMANDS_BG_APPROVED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_commands_bg_denied() {
+    COMMANDS_BG_DENIED.fetch_add(1, Ordering::Relaxed);
 }
 pub fn get_commands_sched_succeeded() -> usize {
     COMMANDS_SCHED_SUCCEEDED.load(Ordering::Relaxed)

@@ -396,8 +396,12 @@ pub async fn handle_client(
 
             let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
             let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
+            let commands_fg_approved = crate::daemon::stats::get_commands_fg_approved();
+            let commands_fg_denied = crate::daemon::stats::get_commands_fg_denied();
             let commands_bg_succeeded = crate::daemon::stats::get_commands_bg_succeeded();
             let commands_bg_failed = crate::daemon::stats::get_commands_bg_failed();
+            let commands_bg_approved = crate::daemon::stats::get_commands_bg_approved();
+            let commands_bg_denied = crate::daemon::stats::get_commands_bg_denied();
             let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
             let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
             let webhooks_received = crate::daemon::stats::get_webhooks_received();
@@ -445,8 +449,12 @@ pub async fn handle_client(
                     circuit_failures,
                     commands_fg_succeeded,
                     commands_fg_failed,
+                    commands_fg_approved,
+                    commands_fg_denied,
                     commands_bg_succeeded,
                     commands_bg_failed,
+                    commands_bg_approved,
+                    commands_bg_denied,
                     commands_sched_succeeded,
                     commands_sched_failed,
                     webhooks_received,
