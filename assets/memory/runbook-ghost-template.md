@@ -8,6 +8,7 @@ tags: [service, alert-type]
 memories: [relevant-knowledge-key]
 enabled: true
 auto_approve_scripts: [remediation-script.sh]
+run_with_sudo: false
 auto_approve_read_only: true
 max_ghost_turns: 20
 ---
@@ -33,5 +34,6 @@ Lessons learned and manual overrides performed by humans.
 
 - `enabled`: Set to `true` to allow DaemonEye to spawn an autonomous Ghost Session for this alert.
 - `auto_approve_scripts`: A list of script names in `~/.daemoneye/scripts/` that the AI is authorized to run without human approval.
+- `run_with_sudo`: Set to `true` to prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry so the script runs with elevated privileges without a password prompt. Defaults to `false`.
 - `auto_approve_read_only`: Set to `true` to allow the AI to run safe informational commands (e.g., `ps`, `df`, `ls`) automatically.
 - `max_ghost_turns`: Maximum number of AI turns before the session is forcibly stopped. Defaults to 20 if omitted or set to 0.
