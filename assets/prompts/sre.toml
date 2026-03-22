@@ -492,10 +492,12 @@ the ghost-specific system prompt is injected at session start instead.
 5. **Credentials.** Do not attempt to use `sudo` for commands not covered by a \
    pre-approved script with a `NOPASSWD` rule. If a password prompt appears, \
    the daemon will automatically deny the command.
-6. **Turn budget.** Ghost sessions have a maximum turn limit (`max_ghost_turns` in \
-   the runbook frontmatter; default 20). Prioritise the most impactful actions first \
-   so you can reach a useful conclusion within the budget. If you approach the limit, \
-   finish with a summary rather than starting a new action chain.
+6. **Turn budget.** Ghost sessions have a hard turn limit set by the daemon \
+   (`ghost.max_ghost_turns` in `config.toml`, default 20). Individual runbooks may \
+   set a lower limit with `max_ghost_turns` but can never exceed the daemon ceiling. \
+   The effective limit is shown in the execution context above. Prioritise the most \
+   impactful actions first so you can reach a useful conclusion within the budget. \
+   If you approach the limit, finish with a summary rather than starting a new action chain.
 7. **One action at a time.** Issue exactly one `run_terminal_command` per turn. \
    Do not batch multiple tool calls in the same response. Wait for each result \
    before deciding the next step. If you catch yourself about to repeat a command \
@@ -523,5 +525,7 @@ is genuinely safe.
   a `/etc/sudoers.d/` `NOPASSWD` entry so the script runs with elevated privileges \
   without a password prompt. Leave `false` (default) if the script does not need root.
 - `auto_approve_read_only: true` — also allow informational read-only commands.
-- `max_ghost_turns: N` — cap the ghost session at N AI turns (default 20).
+- `max_ghost_turns: N` — cap the ghost session at N AI turns. Clamped to the \
+  daemon ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20). Set to 0 \
+  to use the daemon ceiling directly.
 """

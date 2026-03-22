@@ -192,6 +192,9 @@ prompt   = "sre"
 # [masking]
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
 
+# [ghost]
+# max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
+
 # [webhook]
 # enabled = false
 # port = 9393
@@ -244,6 +247,14 @@ on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
 | `auto_analyze` | bool | `true` | Run runbook-based AI analysis when a matching runbook exists. |
 | `severity_threshold` | string | `"warning"` | Minimum severity to trigger AI analysis and `on_alert`. One of `"info"`, `"warning"`, `"critical"`. |
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
+
+### `[ghost]` section
+
+Daemon-wide hard limits for Ghost Sessions. These are ceilings — individual runbooks cannot exceed them.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost session. A runbook's `max_ghost_turns` is clamped to this value. Set to a lower number in production to constrain blast radius. |
 
 #### Prometheus Alertmanager integration
 
@@ -415,7 +426,7 @@ captures the error log for post-incident review.
 | `auto_approve_scripts` | list | `[]` | Script names in `~/.daemoneye/scripts/` the ghost may run without prompting. Bare names, relative paths (`./name.sh`), and commands with arguments are all resolved to the absolute path. |
 | `run_with_sudo` | bool | `false` | Prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry. Leave `false` if the script does not need root. |
 | `auto_approve_read_only` | bool | `false` | Also allow informational read-only commands (`ps`, `df`, `systemctl status`, etc.) without policy approval. |
-| `max_ghost_turns` | integer | `20` | Hard cap on AI turns. The ghost session is forcibly stopped when reached. |
+| `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
 
 ### Step 4 — Enable the webhook and configure Alertmanager
 
@@ -526,7 +537,7 @@ tmux list-windows | grep de-incident
 - **Scope sudoers entries tightly.** Pin the exact absolute path in `/etc/sudoers.d/`. Never use `ALL` as the command or allow path wildcards.
 - **Only list scripts you control.** `auto_approve_scripts` is a whitelist of filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
 - **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost session.
-- **Turn budget limits blast radius.** Set `max_ghost_turns` conservatively. A stuck ghost session cannot run forever.
+- **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling. A ghost session is forcibly stopped when the limit is reached regardless of what it is doing.
 - **All actions are logged.** Every command approval, execution, and result is recorded in `events.jsonl` for post-incident audit.
 
 ---

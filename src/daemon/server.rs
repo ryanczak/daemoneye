@@ -132,7 +132,9 @@ pub async fn trigger_ghost_turn(
     // Ghost-specific system prompt suffix: behavioral rules + execution context.
     // These instructions live here (not in the conversation history) so the AI
     // API receives them as the system prompt, where role restrictions don't apply.
-    let (approved_scripts, auto_read_only, run_with_sudo) = {
+    // Compute all ghost policy values from the session entry in a single lock.
+    let daemon_ceiling = config.ghost.max_ghost_turns;
+    let (approved_scripts, auto_read_only, run_with_sudo, max_ghost_turns) = {
         let store = sessions.lock().unwrap_or_log();
         store.get(session_id).and_then(|e| e.ghost_config.as_ref()).map(|gc| {
             let scripts = if gc.auto_approve_scripts.is_empty() {
@@ -140,8 +142,13 @@ pub async fn trigger_ghost_turn(
             } else {
                 gc.auto_approve_scripts.join(", ")
             };
-            (scripts, gc.auto_approve_read_only, gc.run_with_sudo)
-        }).unwrap_or_else(|| ("none".to_string(), false, false))
+            let turns = if gc.max_ghost_turns > 0 {
+                gc.max_ghost_turns.min(daemon_ceiling)
+            } else {
+                daemon_ceiling
+            };
+            (scripts, gc.auto_approve_read_only, gc.run_with_sudo, turns)
+        }).unwrap_or_else(|| ("none".to_string(), false, false, daemon_ceiling))
     };
     let system = format!(
         "{}\n\n\
@@ -152,7 +159,8 @@ pub async fn trigger_ghost_turn(
          Daemon Host: {}\n\
          Tmux Session: {}\n\
          Pre-approved Scripts: {}{}\n\
-         Read-only Commands Auto-approved: {}\n\n\
+         Read-only Commands Auto-approved: {}\n\
+         Turn Budget: {} (hard limit — session will be stopped when reached)\n\n\
          {}",
         system_base,
         daemon_hostname(),
@@ -160,6 +168,7 @@ pub async fn trigger_ghost_turn(
         approved_scripts,
         if run_with_sudo { " (executed with sudo)" } else { "" },
         if auto_read_only { "yes" } else { "no" },
+        max_ghost_turns,
         sys_context.format_for_ai()
     );
 
@@ -191,15 +200,6 @@ pub async fn trigger_ghost_turn(
         config.ai.effective_base_url(),
     ));
 
-    // Maximum turns — use the runbook's value if set, otherwise default to 20.
-    const DEFAULT_MAX_GHOST_TURNS: usize = 20;
-    let max_ghost_turns = {
-        let store = sessions.lock().unwrap_or_log();
-        store.get(session_id)
-            .and_then(|e| e.ghost_config.as_ref())
-            .map(|gc| if gc.max_ghost_turns > 0 { gc.max_ghost_turns } else { DEFAULT_MAX_GHOST_TURNS })
-            .unwrap_or(DEFAULT_MAX_GHOST_TURNS)
-    };
     // Per-turn deadline: if the AI or a tool call doesn't complete within 5 minutes,
     // abort the turn rather than hanging indefinitely.
     const GHOST_TURN_TIMEOUT_SECS: u64 = 300;

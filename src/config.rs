@@ -16,6 +16,31 @@ pub struct Config {
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub webhook: WebhookConfig,
+    #[serde(default)]
+    pub ghost: GhostDaemonConfig,
+}
+
+/// Daemon-wide limits for autonomous Ghost Sessions.
+/// These are hard ceilings that individual runbooks cannot exceed.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GhostDaemonConfig {
+    /// Hard upper limit on AI turns per ghost session.
+    /// Individual runbooks may set a lower value with `max_ghost_turns`
+    /// but can never exceed this ceiling. Default: 20.
+    #[serde(default = "default_max_ghost_turns")]
+    pub max_ghost_turns: usize,
+}
+
+fn default_max_ghost_turns() -> usize {
+    20
+}
+
+impl Default for GhostDaemonConfig {
+    fn default() -> Self {
+        Self {
+            max_ghost_turns: default_max_ghost_turns(),
+        }
+    }
 }
 
 /// Notification hooks for scheduler/watchdog alerts.
