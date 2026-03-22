@@ -44,6 +44,10 @@ static SCHEDULES_CREATED: AtomicUsize = AtomicUsize::new(0);
 static SCHEDULES_EXECUTED: AtomicUsize = AtomicUsize::new(0);
 static SCHEDULES_DELETED: AtomicUsize = AtomicUsize::new(0);
 
+static GHOSTS_LAUNCHED: AtomicUsize = AtomicUsize::new(0);
+static GHOSTS_COMPLETED: AtomicUsize = AtomicUsize::new(0);
+static GHOSTS_FAILED: AtomicUsize = AtomicUsize::new(0);
+
 static NEXT_CMD_ID: AtomicUsize = AtomicUsize::new(1);
 static RECENT_COMMANDS: Mutex<VecDeque<RecentCommand>> = Mutex::new(VecDeque::new());
 
@@ -260,4 +264,23 @@ pub fn get_schedules_executed() -> usize {
 }
 pub fn get_schedules_deleted() -> usize {
     SCHEDULES_DELETED.load(Ordering::Relaxed)
+}
+
+pub fn inc_ghosts_launched() {
+    GHOSTS_LAUNCHED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_ghosts_completed() {
+    GHOSTS_COMPLETED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_ghosts_failed() {
+    GHOSTS_FAILED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_ghosts_launched() -> usize {
+    GHOSTS_LAUNCHED.load(Ordering::Relaxed)
+}
+pub fn get_ghosts_completed() -> usize {
+    GHOSTS_COMPLETED.load(Ordering::Relaxed)
+}
+pub fn get_ghosts_failed() -> usize {
+    GHOSTS_FAILED.load(Ordering::Relaxed)
 }

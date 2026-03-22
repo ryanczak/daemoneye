@@ -283,6 +283,12 @@ pub enum Response {
         commands_bg_denied: usize,
         commands_sched_succeeded: usize,
         commands_sched_failed: usize,
+        #[serde(default)]
+        ghosts_launched: usize,
+        #[serde(default)]
+        ghosts_completed: usize,
+        #[serde(default)]
+        ghosts_failed: usize,
         webhooks_received: usize,
         webhooks_rejected: usize,
         webhook_url: String,

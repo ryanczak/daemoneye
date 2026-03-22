@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::time::Instant;
+use crate::util::UnpoisonExt;
 
 use crate::daemon::session::{SessionEntry, SessionStore};
 use crate::runbook::Runbook;
@@ -67,11 +68,14 @@ impl GhostManager {
         };
 
         {
-            let mut store = sessions.lock().unwrap();
+            let mut store = sessions.lock().unwrap_or_log();
             store.insert(session_id.clone(), entry);
-        }
+            }
 
-        log::info!(
+            crate::daemon::stats::inc_ghosts_launched();
+
+            log::info!(
+
             "Ghost Session started: {} (window: {}, pane: {})",
             session_id,
             alert_name,

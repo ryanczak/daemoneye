@@ -249,6 +249,7 @@ pub async fn trigger_ghost_turn(
     }
 
     log::info!("Ghost Turn completed for session {}", session_id);
+    crate::daemon::stats::inc_ghosts_completed();
     Ok(())
 }
 
@@ -564,7 +565,11 @@ pub async fn handle_client(
             let commands_bg_denied = crate::daemon::stats::get_commands_bg_denied();
             let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
             let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
+            let ghosts_launched = crate::daemon::stats::get_ghosts_launched();
+            let ghosts_completed = crate::daemon::stats::get_ghosts_completed();
+            let ghosts_failed = crate::daemon::stats::get_ghosts_failed();
             let webhooks_received = crate::daemon::stats::get_webhooks_received();
+
             let webhooks_rejected = crate::daemon::stats::get_webhooks_rejected();
             let webhook_url = format!(
                 "http://{}:{}/webhook",
@@ -615,6 +620,9 @@ pub async fn handle_client(
                     commands_bg_denied,
                     commands_sched_succeeded,
                     commands_sched_failed,
+                    ghosts_launched,
+                    ghosts_completed,
+                    ghosts_failed,
                     webhooks_received,
                     webhooks_rejected,
                     webhook_url,

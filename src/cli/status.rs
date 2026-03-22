@@ -33,6 +33,9 @@ pub async fn run_status() -> Result<()> {
                     commands_bg_denied,
                     commands_sched_succeeded,
                     commands_sched_failed,
+                    ghosts_launched,
+                    ghosts_completed,
+                    ghosts_failed,
                     webhooks_received,
                     webhooks_rejected,
                     webhook_url,
@@ -196,6 +199,12 @@ pub async fn run_status() -> Result<()> {
                     for (rtype, count) in redact_sorted {
                         right_items.push((format!("{}:", rtype), count.to_string()));
                     }
+
+                    right_items.push(("─".to_string(), "".to_string()));
+                    right_items.push(("§".to_string(), "Ghosts".to_string()));
+                    right_items.push(("Launched:".to_string(), ghosts_launched.to_string()));
+                    right_items.push(("Completed:".to_string(), ghosts_completed.to_string()));
+                    right_items.push(("Failed:".to_string(), ghosts_failed.to_string()));
 
                     let term_width: usize = {
                         fn tiocgwinsz(fd: libc::c_int) -> Option<usize> {

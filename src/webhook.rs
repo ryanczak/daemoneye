@@ -597,6 +597,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                             &schedule_store_clone,
                         ).await {
                             log::error!("Ghost Turn: failed for {}: {}", sid, e);
+                            crate::daemon::stats::inc_ghosts_failed();
                         }
                     }
                     Err(e) => log::error!("Ghost Session: failed to start: {}", e),
