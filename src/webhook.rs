@@ -608,9 +608,12 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     );
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-    if let Err(e) = client.chat(&system, msgs, ai_tx).await {
+    let api_err = if let Err(e) = client.chat(&system, msgs, ai_tx).await {
         log::error!("Webhook: runbook analysis API call failed for '{}': {}", alert.alert_name, e);
-    }
+        Some(e.to_string())
+    } else {
+        None
+    };
 
     let mut response = String::new();
     while let Some(ev) = ai_rx.recv().await {
@@ -619,15 +622,38 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         }
     }
 
+    // Derive should_act and a human-readable reason for the log.
     // Prefer the structured GHOST_TRIGGER field; fall back to the legacy "ALERT"
     // keyword for runbooks whose AI response predates the structured format.
-    let should_act = parse_ghost_trigger(&response)
-        .unwrap_or_else(|| response.to_uppercase().contains("ALERT"));
+    let (should_act, trigger_reason) = if api_err.is_some() && response.is_empty() {
+        (false, "api_error — response empty")
+    } else if response.is_empty() {
+        (false, "empty_response — model returned no tokens")
+    } else {
+        match parse_ghost_trigger(&response) {
+            Some(true)  => (true,  "GHOST_TRIGGER: YES"),
+            Some(false) => (false, "GHOST_TRIGGER: NO"),
+            None => {
+                let legacy = response.to_uppercase().contains("ALERT");
+                if legacy {
+                    (true,  "legacy ALERT keyword (no GHOST_TRIGGER line found)")
+                } else {
+                    (false, "no GHOST_TRIGGER line and no ALERT keyword in response")
+                }
+            }
+        }
+    };
 
     log::info!(
-        "Webhook: analysis for '{}' complete — should_act={} ghost_enabled={} (response: {} chars)",
-        alert.alert_name, should_act, rb.ghost_config.enabled, response.len()
+        "Webhook: analysis for '{}' complete — should_act={} reason='{}' ghost_enabled={} (response: {} chars)",
+        alert.alert_name, should_act, trigger_reason, rb.ghost_config.enabled, response.len()
     );
+    if !should_act && rb.ghost_config.enabled {
+        log::info!(
+            "Webhook: ghost session NOT triggered for '{}' — reason: {}",
+            alert.alert_name, trigger_reason
+        );
+    }
     log::debug!("Webhook: analysis response for '{}':\n{}", alert.alert_name, response.trim());
 
     log_event(
@@ -636,6 +662,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             "alert_name": alert.alert_name,
             "runbook": rb.name,
             "ghost_trigger": should_act,
+            "trigger_reason": trigger_reason,
             "ghost_enabled": rb.ghost_config.enabled,
         }),
     );
