@@ -273,6 +273,264 @@ extra_patterns = [
 ]
 ```
 
+---
+
+## Ghost Sessions & Autonomous Remediation
+
+Ghost Sessions are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost session runs inside a dedicated `de-incident-*` tmux window on the daemon host, investigates the alert, and executes pre-approved remediation steps — all without a human present. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
+
+### How it works end-to-end
+
+```
+Alertmanager / Grafana / curl
+        │
+        ▼
+POST /webhook  ──→  DaemonEye dedup + mask
+        │
+        ▼
+Runbook lookup (alertname → kebab-case filename)
+        │
+        ▼
+Watchdog AI analysis (reads runbook, emits GHOST_TRIGGER: YES|NO)
+        │  YES + runbook has  enabled: true
+        ▼
+GhostManager::start_session()
+  • Allocates de-incident-<name>-<ts> tmux window
+  • Loads ghost_config from runbook frontmatter
+  • Injects [Ghost Session Started] into all active chat sessions
+        │
+        ▼
+Ghost AI turn loop (up to max_ghost_turns)
+  • Reads runbook + alert context as system prompt
+  • Issues run_terminal_command (background mode only)
+  • Policy gate: command must be in auto_approve_scripts
+    or be a read-only command (auto_approve_read_only: true)
+  • resolve_command() rewrites bare/relative script names
+    to ~/.daemoneye/scripts/<name> (+ sudo prefix if run_with_sudo: true)
+  • watch_pane blocks until command exits before next turn
+        │
+        ▼
+[Ghost Session Completed] or [Ghost Session Failed]
+injected into all active sessions → appears in catch-up brief
+```
+
+### Step 1 — Write a remediation script
+
+Place scripts in `~/.daemoneye/scripts/`. DaemonEye sets them `chmod 700`.
+
+```bash
+# Use the AI tool or write directly:
+daemoneye ask "write a script called restart-nginx.sh that restarts nginx and \
+  checks its status, then tails the last 20 lines of /var/log/nginx/error.log"
+```
+
+Or write it manually:
+
+```bash
+cat > ~/.daemoneye/scripts/restart-nginx.sh << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "=== Restarting nginx ==="
+systemctl restart nginx
+sleep 2
+systemctl is-active --quiet nginx && echo "nginx: OK" || { echo "nginx: FAILED"; exit 1; }
+
+echo "=== Recent error log ==="
+tail -20 /var/log/nginx/error.log
+EOF
+chmod 700 ~/.daemoneye/scripts/restart-nginx.sh
+```
+
+### Step 2 — Configure sudo NOPASSWD (optional)
+
+If the script needs elevated privileges (e.g., `systemctl restart nginx`), create a sudoers drop-in so it can run without a password prompt. Ghost sessions run unattended — interactive `sudo` password prompts will cause the command to fail.
+
+```bash
+# Create a sudoers drop-in — use visudo -f to validate syntax
+sudo visudo -f /etc/sudoers.d/daemoneye-ghost
+```
+
+```sudoers
+# Allow the daemoneye user to restart nginx without a password
+your-username ALL=(ALL) NOPASSWD: /home/your-username/.daemoneye/scripts/restart-nginx.sh
+```
+
+> **Important:** Use the **full absolute path** in the sudoers entry — the same path that DaemonEye will resolve to (`~/.daemoneye/scripts/<name>`). Wildcards in sudoers paths are dangerous; pin the exact filename.
+
+Verify the entry works before testing ghost sessions:
+
+```bash
+sudo ~/.daemoneye/scripts/restart-nginx.sh
+```
+
+### Step 3 — Create a ghost-enabled runbook
+
+Runbook filenames must match the Prometheus alertname converted to kebab-case:
+`NginxDown` → `nginx-down`, `HighDiskUsage` → `high-disk-usage`.
+
+```bash
+daemoneye ask "write a runbook for the NginxDown alert"
+# or write it directly with write_runbook
+```
+
+Full runbook example:
+
+````markdown
+---
+tags: [nginx, web, production]
+memories: [nginx-config-notes]
+enabled: true
+auto_approve_scripts: [restart-nginx.sh]
+run_with_sudo: true
+auto_approve_read_only: true
+max_ghost_turns: 10
+---
+# Runbook: nginx-down
+
+## Purpose
+Automated first-responder for the NginxDown alert. Restarts nginx and
+captures the error log for post-incident review.
+
+## Alert Criteria
+- Prometheus rule: `up{job="nginx"} == 0` for > 2 minutes
+- Severity: critical
+
+## Remediation Steps
+1. **Investigate**: Check nginx process status and recent error log.
+2. **Restart**: Run `restart-nginx.sh` to restart nginx and verify recovery.
+3. **Escalation**: If restart fails, page the on-call engineer. Do not retry
+   more than once — leave the window open for manual inspection.
+
+## Notes
+- If nginx fails to start, check for config syntax errors: `nginx -t`
+- Common cause: stale PID file at `/var/run/nginx.pid`
+````
+
+#### Frontmatter fields reference
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Allow DaemonEye to spawn an autonomous Ghost Session for this alert. |
+| `auto_approve_scripts` | list | `[]` | Script names in `~/.daemoneye/scripts/` the ghost may run without prompting. Bare names, relative paths (`./name.sh`), and commands with arguments are all resolved to the absolute path. |
+| `run_with_sudo` | bool | `false` | Prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry. Leave `false` if the script does not need root. |
+| `auto_approve_read_only` | bool | `false` | Also allow informational read-only commands (`ps`, `df`, `systemctl status`, etc.) without policy approval. |
+| `max_ghost_turns` | integer | `20` | Hard cap on AI turns. The ghost session is forcibly stopped when reached. |
+
+### Step 4 — Enable the webhook and configure Alertmanager
+
+In `~/.daemoneye/config.toml`:
+
+```toml
+[webhook]
+enabled = true
+port = 9393
+bind_addr = "127.0.0.1"
+secret = "change-me"          # set a Bearer token; leave empty to disable auth
+auto_analyze = true
+severity_threshold = "warning"
+dedup_window_secs = 300
+```
+
+In your Alertmanager config:
+
+```yaml
+receivers:
+  - name: daemoneye
+    webhook_configs:
+      - url: http://localhost:9393/webhook
+        http_config:
+          authorization:
+            credentials: change-me   # matches webhook.secret
+
+route:
+  receiver: daemoneye
+  group_by: [alertname]
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 1h
+```
+
+Restart the DaemonEye daemon to pick up the config change:
+
+```bash
+daemoneye stop && daemoneye daemon
+```
+
+### Step 5 — Test end-to-end
+
+Simulate an alert with curl to verify the full pipeline before a real incident:
+
+```bash
+curl -s -X POST http://localhost:9393/webhook \
+  -H "Authorization: Bearer change-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "version": "4",
+    "status": "firing",
+    "alerts": [{
+      "status": "firing",
+      "labels": {
+        "alertname": "NginxDown",
+        "severity": "critical",
+        "instance": "localhost:9113"
+      },
+      "annotations": {
+        "summary": "nginx is down on localhost"
+      },
+      "fingerprint": "test-001"
+    }]
+  }'
+```
+
+Watch the ghost session in real time:
+
+```bash
+# In another pane — attach to the incident window
+tmux select-window -t de-incident-nginx-down-$(date +%s | head -c8 2>/dev/null || echo "")
+
+# Or just watch daemon.log
+daemoneye logs
+```
+
+Check the event log for the full audit trail:
+
+```bash
+grep "ghost\|webhook_analysis\|command_approval" ~/.daemoneye/events.jsonl | tail -30
+```
+
+### Monitoring active ghost sessions
+
+```bash
+daemoneye status
+```
+
+The `Ghost Sessions` section of the status output shows:
+
+```
+Ghost Sessions
+  Active:    1
+  Launched:  3
+  Completed: 2
+  Failed:    0
+```
+
+List the incident windows currently open:
+
+```bash
+tmux list-windows | grep de-incident
+```
+
+### Security considerations
+
+- **Scope sudoers entries tightly.** Pin the exact absolute path in `/etc/sudoers.d/`. Never use `ALL` as the command or allow path wildcards.
+- **Only list scripts you control.** `auto_approve_scripts` is a whitelist of filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
+- **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost session.
+- **Turn budget limits blast radius.** Set `max_ghost_turns` conservatively. A stuck ghost session cannot run forever.
+- **All actions are logged.** Every command approval, execution, and result is recorded in `events.jsonl` for post-incident audit.
+
+---
+
 #### Valid `provider` values
 
 | Value | Provider | Default API endpoint | API key required |
