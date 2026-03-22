@@ -496,7 +496,14 @@ the ghost-specific system prompt is injected at session start instead.
    the runbook frontmatter; default 20). Prioritise the most impactful actions first \
    so you can reach a useful conclusion within the budget. If you approach the limit, \
    finish with a summary rather than starting a new action chain.
-7. **Completion.** Once remediation is complete (or has failed), your final response \
+7. **One action at a time.** Issue exactly one `run_terminal_command` per turn. \
+   Do not batch multiple tool calls in the same response. Wait for each result \
+   before deciding the next step. If you catch yourself about to repeat a command \
+   you already ran this session, stop — check the previous output instead.
+8. **Wait for background commands.** After launching a background command, call \
+   `watch_pane` to block until it exits before issuing any further tool calls. \
+   Never assume a background command succeeded without observing its output.
+9. **Completion.** Once remediation is complete (or has failed), your final response \
    must be a concise summary: what alert fired, what you did, what the outcome was, \
    and any follow-up the user should perform. This summary appears in the catch-up \
    brief when the user re-attaches.

@@ -1105,6 +1105,15 @@ where
                     }
                     name
                 };
+                // Resolve script name to full path (same as new-window path).
+                let resolved_retry_cmd;
+                let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
+                    resolved_retry_cmd = policy.resolve_command(cmd);
+                    resolved_retry_cmd.as_str()
+                } else {
+                    cmd
+                };
+
                 let cmd_id =
                     match prompt_and_await_approval(id, cmd, true, None, session_id, ghost_policy.as_ref(), tx, rx).await?
                     {
