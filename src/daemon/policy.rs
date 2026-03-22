@@ -29,11 +29,20 @@ impl GhostPolicy {
     /// based on the policy rules.
     pub fn is_safe(&self, command: &str) -> bool {
         // 1. Check script whitelist — match by exact name or trailing path component.
-        let first_token = command.split_whitespace().next().unwrap_or("");
-        let basename = std::path::Path::new(first_token)
+        // Skip a leading `sudo` token so that commands rewritten by resolve_command()
+        // with run_with_sudo=true ("sudo /path/to/script.sh") are still matched
+        // against the whitelist by their script basename rather than "sudo".
+        let mut tokens = command.split_whitespace();
+        let first_token = tokens.next().unwrap_or("");
+        let effective_token = if first_token == "sudo" {
+            tokens.next().unwrap_or("")
+        } else {
+            first_token
+        };
+        let basename = std::path::Path::new(effective_token)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(first_token);
+            .unwrap_or(effective_token);
         if self.auto_approve_scripts.iter().any(|s| s == basename) {
             return true;
         }
@@ -126,6 +135,24 @@ mod tests {
     fn is_safe_absolute_path() {
         let p = policy(&["fix.sh"]);
         assert!(p.is_safe("/home/user/.daemoneye/scripts/fix.sh"));
+    }
+
+    #[test]
+    fn is_safe_sudo_absolute_path() {
+        let p = policy(&["fix.sh"]);
+        assert!(p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh"));
+    }
+
+    #[test]
+    fn is_safe_sudo_absolute_path_with_args() {
+        let p = policy(&["fix.sh"]);
+        assert!(p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh --flag"));
+    }
+
+    #[test]
+    fn is_safe_sudo_not_on_whitelist() {
+        let p = policy(&["fix.sh"]);
+        assert!(!p.is_safe("sudo /home/user/.daemoneye/scripts/other.sh"));
     }
 
     #[test]
