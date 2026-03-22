@@ -988,13 +988,17 @@ pub async fn handle_client(
             // capture-pane silently if pipe-pane is unavailable.
             if entry.pipe_source_pane.is_none() {
                 if let Some(ref pane_id) = client_pane {
-                    match crate::tmux::start_pipe_pane(pane_id) {
-                        Ok(_) => {
-                            entry.pipe_source_pane = Some(pane_id.clone());
+                    if crate::tmux::pane_exists(pane_id) {
+                        match crate::tmux::start_pipe_pane(pane_id) {
+                            Ok(_) => {
+                                entry.pipe_source_pane = Some(pane_id.clone());
+                            }
+                            Err(e) => {
+                                log::warn!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                            }
                         }
-                        Err(e) => {
-                            log::warn!("R1: could not start pipe-pane for {}: {}", pane_id, e);
-                        }
+                    } else {
+                        log::debug!("R1: skipping pipe-pane for {} — pane no longer exists", pane_id);
                     }
                 }
             }
