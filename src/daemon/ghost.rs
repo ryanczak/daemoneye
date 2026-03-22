@@ -13,10 +13,10 @@ pub struct GhostManager;
 impl GhostManager {
     /// Start a new Ghost Session for a specific alert and runbook.
     ///
-    /// 1. Ensures a host tmux session exists.
-    /// 2. Creates a dedicated `de-incident-*` window.
-    /// 3. Initializes a new ghost `SessionEntry`.
-    /// 4. Injects the initial alert context and system instructions.
+    /// 1. Ensures a host tmux session exists (active or detached).
+    /// 2. Initializes a new ghost `SessionEntry` with the alert as the first user turn.
+    ///    Background windows (`de-incident-*`) are created lazily on the first tool call.
+    /// 3. Returns the session ID for use by `trigger_ghost_turn`.
     pub async fn start_session(
         sessions: SessionStore,
         runbook: &Runbook,
@@ -32,21 +32,19 @@ impl GhostManager {
         let session_id = format!("ghost-{}-{}", alert_name, uuid::Uuid::new_v4().simple());
         
         let mut messages = Vec::new();
-        
-        // System instruction for Ghost Session
-        let system_msg = Message {
-            role: "assistant".to_string(),
-            content: format!(
-                "[System] You are operating in an unattended Ghost Session responding to: {}\n\n\
-                 Investigate and remediate autonomously using the provided runbook. \
-                 You must use background terminal commands (which will run in de-incident-* windows). \
-                 No human user is present to approve commands or answer questions.",
-                alert_msg
-            ),
+
+        // The alert payload is the first user turn.  Ghost behavioral instructions
+        // (autonomous mode, background-only execution, no human present) live in the
+        // system prompt assembled by `trigger_ghost_turn`, not here.  Putting them in
+        // an assistant-role message causes the Anthropic API to reject the request
+        // because conversations must begin with a user turn.
+        let user_msg = Message {
+            role: "user".to_string(),
+            content: format!("Incoming alert:\n{}", alert_msg),
             tool_calls: None,
             tool_results: None,
         };
-        messages.push(system_msg);
+        messages.push(user_msg);
 
         let entry = SessionEntry {
             messages,

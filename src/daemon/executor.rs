@@ -658,6 +658,25 @@ where
     } else {
         None
     };
+    // Defensive guard: a ghost session entry must always have a ghost_config.
+    // If is_ghost=true but ghost_policy is None, the invariant is broken.
+    // Rather than falling through to the human-approval path (which writes to a
+    // dead duplex and reads EOF), return an error result immediately.
+    let is_ghost_session: bool = if let Some(sid) = session_id {
+        if let Ok(store) = sessions.lock() {
+            store.get(sid).map(|e| e.is_ghost).unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if is_ghost_session && ghost_policy.is_none() {
+        let msg = "Error: ghost session has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
+        log::error!("{} for session {:?}", msg, session_id);
+        send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+        return Ok(ToolCallOutcome::Result(msg));
+    }
     let is_ghost = ghost_policy.is_some();
     // ──────────────────────────────────────────────────────────────────────────
 

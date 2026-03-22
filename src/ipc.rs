@@ -892,6 +892,9 @@ mod tests {
             schedules_created: 2,
             schedules_executed: 5,
             schedules_deleted: 0,
+            ghosts_launched: 1,
+            ghosts_completed: 1,
+            ghosts_failed: 0,
             active_prompt_tokens: 1000,
             context_window_tokens: 4000,
             recent_commands: vec![RecentCommand {

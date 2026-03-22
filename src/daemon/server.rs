@@ -113,7 +113,7 @@ pub async fn trigger_ghost_turn(
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
     // 1. Get a copy of the session entry
-    let (_messages, _ghost_config, tmux_session, target_pane) = {
+    let (_messages, _ghost_config, tmux_session, _target_pane) = {
         let store = sessions.lock().unwrap_or_log();
         let Some(entry) = store.get(session_id) else {
             anyhow::bail!("Ghost Session '{}' not found", session_id);
@@ -131,12 +131,36 @@ pub async fn trigger_ghost_turn(
     let system_base = load_named_prompt(&prompt_name).system;
     let sys_context = get_or_init_sys_context();
     
-    // Ghost-specific context prefix
+    // Ghost-specific system prompt suffix: behavioral rules + execution context.
+    // These instructions live here (not in the conversation history) so the AI
+    // API receives them as the system prompt, where role restrictions don't apply.
+    let (approved_scripts, auto_read_only) = {
+        let store = sessions.lock().unwrap_or_log();
+        store.get(session_id).and_then(|e| e.ghost_config.as_ref()).map(|gc| {
+            let scripts = if gc.auto_approve_scripts.is_empty() {
+                "none".to_string()
+            } else {
+                gc.auto_approve_scripts.join(", ")
+            };
+            (scripts, gc.auto_approve_read_only)
+        }).unwrap_or_else(|| ("none".to_string(), false))
+    };
     let system = format!(
-        "{}\n\n## Execution Context\nDaemon Host: {}\nTarget Pane: {}\n\n{}",
+        "{}\n\n\
+         ## Ghost Session Execution Context\n\
+         You are operating autonomously — no human user is present.\n\
+         All terminal commands MUST use background mode (they run in de-incident-* windows).\n\
+         Do NOT ask questions or wait for user input.\n\
+         Daemon Host: {}\n\
+         Tmux Session: {}\n\
+         Pre-approved Scripts: {}\n\
+         Read-only Commands Auto-approved: {}\n\n\
+         {}",
         system_base,
         daemon_hostname(),
-        target_pane.as_deref().unwrap_or("-"),
+        tmux_session,
+        approved_scripts,
+        if auto_read_only { "yes" } else { "no" },
         sys_context.format_for_ai()
     );
 
@@ -157,10 +181,24 @@ pub async fn trigger_ghost_turn(
         config.ai.effective_base_url(),
     ));
 
-    let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+    // Maximum turns per ghost session to prevent runaway API spend.
+    const MAX_GHOST_TURNS: usize = 20;
+    // Per-turn deadline: if the AI or a tool call doesn't complete within 5 minutes,
+    // abort the turn rather than hanging indefinitely.
+    const GHOST_TURN_TIMEOUT_SECS: u64 = 300;
 
     // 4. Autonomous Conversation Loop
+    let mut turn = 0usize;
     loop {
+        if turn >= MAX_GHOST_TURNS {
+            log::warn!(
+                "Ghost Session {}: reached max turns ({}), stopping",
+                session_id, MAX_GHOST_TURNS
+            );
+            break;
+        }
+        turn += 1;
+
         let chat_messages = {
             let store = sessions.lock().unwrap_or_log();
             let Some(entry) = store.get(session_id) else { break; };
@@ -169,78 +207,97 @@ pub async fn trigger_ghost_turn(
 
         let client_clone = Arc::clone(&client);
         let system_clone = system.clone();
-        let ai_tx_clone = ai_tx.clone();
+
+        // Create a fresh channel each iteration.  The sender is moved (not cloned) into
+        // the spawn so the channel closes as soon as the AI task exits — whether it
+        // succeeds, errors, or is cancelled.  This guarantees the recv() loop below
+        // terminates even when the AI call returns Err without sending AiEvent::Done.
+        let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
         tokio::spawn(async move {
-            if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx_clone).await {
+            if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx).await {
                 log::error!("Ghost Session AI error: {}", e);
             }
+            // ai_tx dropped here → channel closes → recv() returns None
         });
 
         let mut assistant_content = String::new();
         let mut pending_calls = Vec::new();
 
-        // Process events for this turn
-        while let Some(ev) = ai_rx.recv().await {
-            match ev {
-                AiEvent::Token(t) => {
-                    assistant_content.push_str(&t);
+        let deadline = tokio::time::Instant::now()
+            + Duration::from_secs(GHOST_TURN_TIMEOUT_SECS);
+
+        // Process events for this turn; bail on timeout so we never hang.
+        loop {
+            match tokio::time::timeout_at(deadline, ai_rx.recv()).await {
+                Err(_elapsed) => {
+                    log::error!(
+                        "Ghost Session {}: turn {} timed out after {}s",
+                        session_id, turn, GHOST_TURN_TIMEOUT_SECS
+                    );
+                    anyhow::bail!("ghost turn timed out");
                 }
-                AiEvent::ToolCall(id, command, _background, _target_pane, retry_in_pane, thought_signature) => {
-                    // Ghost Sessions MUST ALWAYS use background mode for terminal commands.
-                    // This ensures they run in a dedicated window and never touch user panes.
-                    pending_calls.push(PendingCall::Background {
-                        id,
-                        cmd: command,
-                        thought_signature,
-                        _credential: None,
-                        retry_pane: retry_in_pane,
-                    });
-                }
-                AiEvent::ListRunbooks { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
-                }
-                AiEvent::ReadRunbook { id, thought_signature, name } => {
-                    pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
-                }
-                AiEvent::SearchRepository { id, thought_signature, query, kind } => {
-                    pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
-                }
-                AiEvent::ListMemories { id, thought_signature, category } => {
-                    pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
-                }
-                AiEvent::ReadMemory { id, thought_signature, key, category } => {
-                    pending_calls.push(PendingCall::ReadMemory { id, thought_signature, key, category });
-                }
-                AiEvent::GetTerminalContext { id, thought_signature } => {
-                    pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
-                }
-                AiEvent::ListPanes { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListPanes { id, thought_signature });
-                }
-                AiEvent::WriteRunbook { id, thought_signature, name, content } => {
-                    pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });
-                }
-                AiEvent::DeleteRunbook { id, thought_signature, name } => {
-                    pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
-                }
-                AiEvent::WriteScript { id, thought_signature, script_name, content } => {
-                    pending_calls.push(PendingCall::WriteScript { id, thought_signature, script_name, content });
-                }
-                AiEvent::DeleteScript { id, thought_signature, script_name } => {
-                    pending_calls.push(PendingCall::DeleteScript { id, thought_signature, script_name });
-                }
-                AiEvent::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook } => {
-                    pending_calls.push(PendingCall::ScheduleCommand { 
-                        id, thought_signature, name, command, is_script, run_at, interval, runbook 
-                    });
-                }
-                AiEvent::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => {
-                    pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
-                }
-                AiEvent::Done(_) => break,
-                AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
-                _ => {}
+                Ok(None) => break, // channel closed (AI task exited)
+                Ok(Some(ev)) => match ev {
+                    AiEvent::Token(t) => {
+                        assistant_content.push_str(&t);
+                    }
+                    AiEvent::ToolCall(id, command, _background, _target_pane, retry_in_pane, thought_signature) => {
+                        // Ghost Sessions MUST ALWAYS use background mode for terminal commands.
+                        // This ensures they run in a dedicated window and never touch user panes.
+                        pending_calls.push(PendingCall::Background {
+                            id,
+                            cmd: command,
+                            thought_signature,
+                            _credential: None,
+                            retry_pane: retry_in_pane,
+                        });
+                    }
+                    AiEvent::ListRunbooks { id, thought_signature } => {
+                        pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
+                    }
+                    AiEvent::ReadRunbook { id, thought_signature, name } => {
+                        pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
+                    }
+                    AiEvent::SearchRepository { id, thought_signature, query, kind } => {
+                        pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
+                    }
+                    AiEvent::ListMemories { id, thought_signature, category } => {
+                        pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
+                    }
+                    AiEvent::ReadMemory { id, thought_signature, key, category } => {
+                        pending_calls.push(PendingCall::ReadMemory { id, thought_signature, key, category });
+                    }
+                    AiEvent::GetTerminalContext { id, thought_signature } => {
+                        pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
+                    }
+                    AiEvent::ListPanes { id, thought_signature } => {
+                        pending_calls.push(PendingCall::ListPanes { id, thought_signature });
+                    }
+                    AiEvent::WriteRunbook { id, thought_signature, name, content } => {
+                        pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });
+                    }
+                    AiEvent::DeleteRunbook { id, thought_signature, name } => {
+                        pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
+                    }
+                    AiEvent::WriteScript { id, thought_signature, script_name, content } => {
+                        pending_calls.push(PendingCall::WriteScript { id, thought_signature, script_name, content });
+                    }
+                    AiEvent::DeleteScript { id, thought_signature, script_name } => {
+                        pending_calls.push(PendingCall::DeleteScript { id, thought_signature, script_name });
+                    }
+                    AiEvent::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook } => {
+                        pending_calls.push(PendingCall::ScheduleCommand {
+                            id, thought_signature, name, command, is_script, run_at, interval, runbook
+                        });
+                    }
+                    AiEvent::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => {
+                        pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
+                    }
+                    AiEvent::Done(_) => break,
+                    AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
+                    _ => {}
+                },
             }
         }
 

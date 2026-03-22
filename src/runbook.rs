@@ -310,6 +310,7 @@ Last updated: 2026-03-01
             content: "# Runbook: disk-check\n\n## Alert Criteria\n- usage > 90%\n\nNormal disk usage is below 80%".to_string(),
             tags: vec!["disk".to_string()],
             memories: vec![],
+            ghost_config: crate::ipc::GhostConfig::default(),
         };
         let prompt = watchdog_system_prompt(&rb);
         assert!(prompt.contains("disk-check"));
