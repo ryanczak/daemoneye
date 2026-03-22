@@ -60,7 +60,7 @@ pub fn start_command(cmd: &str, mode: &str) -> usize {
     };
 
     if let Ok(mut cmds) = RECENT_COMMANDS.lock() {
-        if cmds.len() >= 5 {
+        if cmds.len() >= 6 {
             cmds.pop_front();
         }
         cmds.push_back(recent);

@@ -257,9 +257,6 @@ pub enum Response {
         model: String,
         socket_path: String,
         schedule_count: usize,
-        /// Circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
-        circuit_state: String,
-        circuit_failures: u32,
         commands_fg_succeeded: usize,
         commands_fg_failed: usize,
         #[serde(default)]
@@ -850,8 +847,6 @@ mod tests {
             model: "claude-sonnet-4-6".to_string(),
             socket_path: "/tmp/daemoneye.sock".to_string(),
             schedule_count: 3,
-            circuit_state: "closed".to_string(),
-            circuit_failures: 2,
             commands_fg_succeeded: 5,
             commands_fg_failed: 1,
             commands_fg_approved: 6,
@@ -905,8 +900,6 @@ mod tests {
                 provider,
                 model,
                 schedule_count,
-                circuit_state,
-                circuit_failures,
                 commands_fg_succeeded,
                 commands_fg_failed,
                 commands_bg_succeeded,
@@ -940,8 +933,6 @@ mod tests {
                 assert_eq!(provider, "anthropic");
                 assert_eq!(model, "claude-sonnet-4-6");
                 assert_eq!(schedule_count, 3);
-                assert_eq!(circuit_state, "closed");
-                assert_eq!(circuit_failures, 2);
                 assert_eq!(commands_fg_succeeded, 5);
                 assert_eq!(commands_fg_failed, 1);
                 assert_eq!(commands_bg_succeeded, 3);

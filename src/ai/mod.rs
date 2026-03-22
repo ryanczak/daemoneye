@@ -40,6 +40,7 @@ impl CircuitBreaker {
         }
     }
 
+    #[cfg(test)]
     fn state_str(&self) -> &'static str {
         let open_until = *self.open_until.lock().unwrap_or_else(|e| e.into_inner());
         match open_until {
@@ -59,7 +60,14 @@ impl CircuitBreaker {
 
     fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Relaxed);
-        *self.open_until.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let prev = self
+            .open_until
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if prev.is_some() {
+            log::info!("AI circuit breaker CLOSED — backend responded successfully.");
+        }
     }
 
     fn record_failure(&self) {
@@ -73,6 +81,12 @@ impl CircuitBreaker {
                 failures,
                 CB_COOLDOWN.as_secs()
             );
+        } else {
+            log::warn!(
+                "AI backend request failed ({}/{} failures before circuit opens).",
+                failures,
+                CB_FAILURE_THRESHOLD
+            );
         }
     }
 }
@@ -83,15 +97,6 @@ fn circuit() -> &'static CircuitBreaker {
     CIRCUIT_BREAKER.get_or_init(CircuitBreaker::new)
 }
 
-/// Returns the current AI backend circuit breaker state: `"closed"`, `"open"`, or `"half-open"`.
-pub fn circuit_state_str() -> &'static str {
-    circuit().state_str()
-}
-
-/// Returns the current consecutive failure count for the circuit breaker.
-pub fn circuit_failure_count() -> u32 {
-    circuit().consecutive_failures.load(Ordering::Relaxed)
-}
 
 #[async_trait]
 pub trait AiClient: Send + Sync {

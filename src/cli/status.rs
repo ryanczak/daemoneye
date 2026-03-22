@@ -23,8 +23,6 @@ pub async fn run_status() -> Result<()> {
                     model,
                     socket_path,
                     schedule_count,
-                    circuit_state,
-                    circuit_failures,
                     commands_fg_succeeded,
                     commands_fg_failed,
                     commands_fg_approved,
@@ -159,10 +157,6 @@ pub async fn run_status() -> Result<()> {
                         format!("{}/{}", provider, model),
                     ));
                     right_items.push((
-                        "Circuit:".to_string(),
-                        format!("{} ({} failures)", circuit_state, circuit_failures),
-                    ));
-                    right_items.push((
                         "Token budget:".to_string(),
                         format!(
                             "{} / {} ({}%)",
@@ -281,15 +275,7 @@ pub async fn run_status() -> Result<()> {
                             .unwrap_or(("".to_string(), "".to_string()));
 
                         let l_color = bold_white;
-                        let r_color = if rk == "Circuit:" {
-                            match circuit_state.as_str() {
-                                "closed" => "\x1b[32m",
-                                "open" => "\x1b[31m",
-                                _ => "\x1b[33m",
-                            }
-                        } else {
-                            bold_white
-                        };
+                        let r_color = bold_white;
 
                         // Blood-red section header sentinel
                         if lk == "§" || rk == "§" {

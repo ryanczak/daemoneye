@@ -391,8 +391,6 @@ pub async fn handle_client(
                 active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
             }
             let schedule_count = schedule_store.list().len();
-            let circuit_state = crate::ai::circuit_state_str().to_string();
-            let circuit_failures = crate::ai::circuit_failure_count();
 
             let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
             let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
@@ -445,8 +443,6 @@ pub async fn handle_client(
                     model: config.ai.model.clone(),
                     socket_path: default_socket_path().display().to_string(),
                     schedule_count,
-                    circuit_state,
-                    circuit_failures,
                     commands_fg_succeeded,
                     commands_fg_failed,
                     commands_fg_approved,
