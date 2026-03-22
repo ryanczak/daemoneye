@@ -289,6 +289,8 @@ pub enum Response {
         #[serde(default)]
         ghosts_launched: usize,
         #[serde(default)]
+        ghosts_active: usize,
+        #[serde(default)]
         ghosts_completed: usize,
         #[serde(default)]
         ghosts_failed: usize,
@@ -896,6 +898,7 @@ mod tests {
             schedules_executed: 5,
             schedules_deleted: 0,
             ghosts_launched: 1,
+            ghosts_active: 0,
             ghosts_completed: 1,
             ghosts_failed: 0,
             active_prompt_tokens: 1000,

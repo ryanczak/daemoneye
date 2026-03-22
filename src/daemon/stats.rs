@@ -45,6 +45,7 @@ static SCHEDULES_EXECUTED: AtomicUsize = AtomicUsize::new(0);
 static SCHEDULES_DELETED: AtomicUsize = AtomicUsize::new(0);
 
 static GHOSTS_LAUNCHED: AtomicUsize = AtomicUsize::new(0);
+static GHOSTS_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static GHOSTS_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static GHOSTS_FAILED: AtomicUsize = AtomicUsize::new(0);
 
@@ -268,15 +269,27 @@ pub fn get_schedules_deleted() -> usize {
 
 pub fn inc_ghosts_launched() {
     GHOSTS_LAUNCHED.fetch_add(1, Ordering::Relaxed);
+    GHOSTS_ACTIVE.fetch_add(1, Ordering::Relaxed);
+}
+pub fn dec_ghosts_active() {
+    // Saturating to guard against any double-decrement.
+    GHOSTS_ACTIVE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+        Some(v.saturating_sub(1))
+    }).ok();
 }
 pub fn inc_ghosts_completed() {
     GHOSTS_COMPLETED.fetch_add(1, Ordering::Relaxed);
+    dec_ghosts_active();
 }
 pub fn inc_ghosts_failed() {
     GHOSTS_FAILED.fetch_add(1, Ordering::Relaxed);
+    dec_ghosts_active();
 }
 pub fn get_ghosts_launched() -> usize {
     GHOSTS_LAUNCHED.load(Ordering::Relaxed)
+}
+pub fn get_ghosts_active() -> usize {
+    GHOSTS_ACTIVE.load(Ordering::Relaxed)
 }
 pub fn get_ghosts_completed() -> usize {
     GHOSTS_COMPLETED.load(Ordering::Relaxed)

@@ -60,14 +60,12 @@ pub(crate) fn build_catchup_brief(
                 || c.contains("[Webhook Alert]")
                 || c.contains("[Watchdog]")
                 || c.contains("[Watch Pane")
-                || c.contains("[System] You are operating in an unattended Ghost Session")
+                || c.contains("[Ghost Session Started]")
+                || c.contains("[Ghost Session Completed]")
+                || c.contains("[Ghost Session Failed]")
             {
                 // Extract just the first line as a terse summary.
                 let first_line = c.lines().next().unwrap_or(c.as_str()).trim();
-                // Special case for ghost sessions
-                if first_line.contains("Ghost Session") {
-                    return Some("Ghost Session handled an autonomous alert response.".to_string());
-                }
                 Some(first_line.to_string())
             } else {
                 None
@@ -705,6 +703,7 @@ pub async fn handle_client(
             let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
             let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
             let ghosts_launched = crate::daemon::stats::get_ghosts_launched();
+            let ghosts_active = crate::daemon::stats::get_ghosts_active();
             let ghosts_completed = crate::daemon::stats::get_ghosts_completed();
             let ghosts_failed = crate::daemon::stats::get_ghosts_failed();
             let webhooks_received = crate::daemon::stats::get_webhooks_received();
@@ -760,6 +759,7 @@ pub async fn handle_client(
                     commands_sched_succeeded,
                     commands_sched_failed,
                     ghosts_launched,
+                    ghosts_active,
                     ghosts_completed,
                     ghosts_failed,
                     webhooks_received,

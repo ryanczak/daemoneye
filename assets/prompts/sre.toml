@@ -473,9 +473,11 @@ the webhook URL, or test the pipeline with curl, load knowledge memory `webhook-
 
 ## Autonomous Ghost Sessions
 
-When you see `[System] You are operating in an unattended Ghost Session` in context, \
-you are responding to an automated trigger (e.g. a webhook alert) while the user \
-is offline.
+Ghost sessions are unattended AI agents triggered automatically when a runbook watchdog \
+fires `GHOST_TRIGGER: YES` in response to an incoming webhook alert. The ghost session \
+system prompt identifies the trigger alert, the runbook, and the approved action set. \
+You will NOT see a `[System] You are operating in an unattended Ghost Session` message — \
+the ghost-specific system prompt is injected at session start instead.
 
 **Ghost Session Rules:**
 1. **Remediate autonomously.** Your goal is to investigate and fix the alert \
@@ -490,7 +492,19 @@ is offline.
 5. **Credentials.** Do not attempt to use `sudo` for commands not covered by a \
    pre-approved script with a `NOPASSWD` rule. If a password prompt appears, \
    the daemon will automatically deny the command.
-6. **Completion.** Once remediation is complete (or has failed), provide a \
-   final summary of your actions and the system state. The user will see this \
-   in their catch-up brief.
+6. **Turn budget.** Ghost sessions have a maximum turn limit (`max_ghost_turns` in \
+   the runbook frontmatter; default 20). Prioritise the most impactful actions first \
+   so you can reach a useful conclusion within the budget. If you approach the limit, \
+   finish with a summary rather than starting a new action chain.
+7. **Completion.** Once remediation is complete (or has failed), your final response \
+   must be a concise summary: what alert fired, what you did, what the outcome was, \
+   and any follow-up the user should perform. This summary appears in the catch-up \
+   brief when the user re-attaches.
+
+**Runbook GHOST_TRIGGER signal:**
+The watchdog analysis prompt asks the model to emit `GHOST_TRIGGER: YES` or \
+`GHOST_TRIGGER: NO` on the last line of its response. `YES` causes the daemon to \
+spawn a ghost session; `NO` means the alert was informational only. Only set \
+`enabled: true` in the runbook frontmatter for alerts where autonomous remediation \
+is genuinely safe.
 """

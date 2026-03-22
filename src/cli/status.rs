@@ -34,6 +34,7 @@ pub async fn run_status() -> Result<()> {
                     commands_sched_succeeded,
                     commands_sched_failed,
                     ghosts_launched,
+                    ghosts_active,
                     ghosts_completed,
                     ghosts_failed,
                     webhooks_received,
@@ -213,6 +214,7 @@ pub async fn run_status() -> Result<()> {
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
                     let ghost_metrics = vec![
+                        (format!("{:<10}", " Active:"), ghosts_active.to_string()),
                         (format!("{:<10}", " Launched:"), ghosts_launched.to_string()),
                         (format!("{:<10}", " Completed:"), ghosts_completed.to_string()),
                         (format!("{:<10}", " Failed:"), ghosts_failed.to_string()),

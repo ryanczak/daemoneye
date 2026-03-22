@@ -472,7 +472,7 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
 /// Append the alert message to every active session — both the on-disk JSONL
 /// file and the in-memory entry (so it appears in the next AI turn regardless
 /// of whether the session was idle or active).
-fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
+pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
     let guard = sessions.lock().unwrap_or_log();
     for (sid, entry) in guard.iter() {
         append_session_message(sid, msg);
@@ -485,7 +485,7 @@ fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
 }
 
 /// Send a one-line alert notification to every active chat pane.
-fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
+pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
     let guard = sessions.lock().unwrap_or_log();
     for entry in guard.values() {
         if let Some(ref pane) = entry.chat_pane {
@@ -494,6 +494,24 @@ fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
                 .output();
         }
     }
+}
+
+/// Inject a ghost session lifecycle event into all active user sessions and
+/// send a tmux display-message notification to every open chat pane.
+///
+/// The `content` string is stored in session history so it shows up in the
+/// N15 catch-up brief when the user re-attaches after being away.
+pub(crate) fn inject_ghost_event(sessions: &SessionStore, content: &str) {
+    let msg = crate::ai::Message {
+        role: "user".to_string(),
+        content: content.to_string(),
+        tool_calls: None,
+        tool_results: None,
+    };
+    inject_into_sessions(sessions, &msg);
+    // One-liner for the tmux display-message overlay (strip newlines).
+    let one_liner = content.lines().next().unwrap_or(content);
+    notify_chat_panes(sessions, one_liner);
 }
 
 // ---------------------------------------------------------------------------
@@ -614,16 +632,32 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             tokio::spawn(async move {
                 match GhostManager::start_session(sessions.clone(), &rb_clone, &alert_msg).await {
                     Ok(sid) => {
-                        // After starting the session, trigger the first AI turn headlessly.
-                        if let Err(e) = crate::daemon::server::trigger_ghost_turn(
+                        inject_ghost_event(
+                            &sessions,
+                            &format!("[Ghost Session Started] Autonomous remediation triggered for alert: {}", rb_clone.name),
+                        );
+
+                        match crate::daemon::server::trigger_ghost_turn(
                             &sid,
                             &sessions,
                             &config_clone,
                             &cache_clone,
                             &schedule_store_clone,
                         ).await {
-                            log::error!("Ghost Turn: failed for {}: {}", sid, e);
-                            crate::daemon::stats::inc_ghosts_failed();
+                            Ok(()) => {
+                                inject_ghost_event(
+                                    &sessions,
+                                    &format!("[Ghost Session Completed] Autonomous remediation finished for alert: {}", rb_clone.name),
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("Ghost Turn: failed for {}: {}", sid, e);
+                                crate::daemon::stats::inc_ghosts_failed();
+                                inject_ghost_event(
+                                    &sessions,
+                                    &format!("[Ghost Session Failed] Autonomous remediation failed for alert: {} — {}", rb_clone.name, e),
+                                );
+                            }
                         }
                     }
                     Err(e) => log::error!("Ghost Session: failed to start: {}", e),
