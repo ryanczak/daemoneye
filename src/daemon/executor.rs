@@ -1223,6 +1223,17 @@ where
                 return Ok(ToolCallOutcome::Result(msg));
             }
 
+            // Ghost sessions: resolve bare/relative script names to their absolute
+            // path in ~/.daemoneye/scripts/ so execution succeeds regardless of
+            // the background pane's working directory.
+            let resolved_cmd;
+            let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
+                resolved_cmd = policy.resolve_command(cmd);
+                resolved_cmd.as_str()
+            } else {
+                cmd
+            };
+
             let cmd_id =
                 match prompt_and_await_approval(id, cmd, true, None, session_id, ghost_policy.as_ref(), tx, rx).await? {
                     Ok(id) => id,
