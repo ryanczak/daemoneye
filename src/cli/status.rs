@@ -201,7 +201,7 @@ pub async fn run_status() -> Result<()> {
                     right_items.push((
                         "§".to_string(),
                         format!(
-                            "{:<23}{deep_yellow}│{reset}{blood_red}Ghosts",
+                            "{:<23}{deep_yellow}│{reset}{blood_red} Ghosts",
                             "Redactions",
                             deep_yellow = deep_yellow,
                             reset = reset,
@@ -213,13 +213,13 @@ pub async fn run_status() -> Result<()> {
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
                     let ghost_metrics = vec![
-                        (format!("{:<10}", "Launched:"), ghosts_launched.to_string()),
-                        (format!("{:<10}", "Completed:"), ghosts_completed.to_string()),
-                        (format!("{:<10}", "Failed:"), ghosts_failed.to_string()),
+                        (format!("{:<10}", " Launched:"), ghosts_launched.to_string()),
+                        (format!("{:<10}", " Completed:"), ghosts_completed.to_string()),
+                        (format!("{:<10}", " Failed:"), ghosts_failed.to_string()),
                     ];
 
                     for (i, (rtype, count)) in redact_sorted.into_iter().enumerate() {
-                        let left_col = format!("{:<18} {}", rtype + ":", count);
+                        let left_col = format!(" {:<18} {}", rtype + ":", count);
                         if let Some((gk, gv)) = ghost_metrics.get(i) {
                             right_items.push((
                                 "".to_string(),
