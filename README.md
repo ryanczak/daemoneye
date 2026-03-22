@@ -21,7 +21,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session. The bottom border of the user input box shows `turn N · Xk / Yk tokens · Z% remaining`, giving you a live read on context consumption relative to the model's context window. The indicator is color-coded: dim when comfortable, yellow past 50 %, bold red past 75 %.
 - **Multi-line Chat Input** — The chat input box word-wraps long text across up to 5 rows instead of scrolling horizontally; the box grows upward as you type and collapses back on submission. The top border shows your `user@host`. Supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). History persists for the lifetime of the chat session.
 - **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`~/.daemoneye/daemoneye.sock`) for instant, non-blocking interaction. The socket lives in the user's home directory (not `/tmp`) so other local users cannot connect to it or pre-create a symlink at that path.
-- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis via a watchdog prompt; the watchdog model emits `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its final line. If `YES` and the runbook has `enabled: true` in its `ghost_config` frontmatter, DaemonEye spawns an **Autonomous Ghost Session** in a dedicated incident window (`de-incident-*`) to handle the alert unattended. Ghost session start, completion, and failure events are injected into all active sessions and appear in the next catch-up brief. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
+- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis via a watchdog prompt; the watchdog model emits `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its final line. If `YES` and the runbook has `enabled: true` in its frontmatter, DaemonEye spawns an **Autonomous Ghost Session** in a dedicated `de-incident-*` tmux window to handle the alert unattended. The ghost AI runs pre-approved scripts from `~/.daemoneye/scripts/` — optionally with `sudo` when paired with a `/etc/sudoers.d/` `NOPASSWD` entry (`run_with_sudo: true`). A configurable hard turn ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20) caps how much autonomous work any single session can do; individual runbooks may set a lower limit but cannot exceed the daemon ceiling. Ghost session start, completion, and failure events are injected into all active sessions and appear in the next catch-up brief. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
 
 ---
 
@@ -217,11 +217,34 @@ prompt   = "sre"
 | `base_url` | string | *(provider default)* | Override the API base URL. Useful for pointing at a remote Ollama host, LM Studio instance, or any OpenAI-compatible proxy. |
 | `context_window_tokens` | integer | *(model lookup)* | Override the context-window size in tokens. Set this for local models where the automatic lookup is inaccurate. |
 
+#### Valid `provider` values
+
+| Value | Provider | Default API endpoint | API key required |
+|---|---|---|---|
+| `"anthropic"` | Anthropic (Claude) | `https://api.anthropic.com/v1/messages` | Yes |
+| `"openai"` | OpenAI (or any OpenAI-compatible API) | `https://api.openai.com/v1` | Yes |
+| `"gemini"` | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/` | Yes |
+| `"ollama"` | Ollama (local, OpenAI-compatible) | `http://localhost:11434/v1` | No |
+| `"lmstudio"` | LM Studio (local, OpenAI-compatible) | `http://localhost:1234/v1` | No |
+
+For `ollama`, start the server with `ollama serve` and pull a model (`ollama pull llama3.2`).
+For `lmstudio`, start the local server from the LM Studio app and load a model.
+
 ### `[masking]` section
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `extra_patterns` | list of strings | `[]` | Additional regex patterns to redact before context is sent to the AI. Each match is replaced with `<REDACTED>`. Built-in patterns always run; these extend the set. |
+
+Example:
+
+```toml
+[masking]
+extra_patterns = [
+  "MYCO-[A-Z0-9]{32}",       # internal API token format
+  "sk_live_[A-Za-z0-9]{32}", # Stripe live secret key
+]
+```
 
 ### `[notifications]` section
 
@@ -248,14 +271,6 @@ on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
 | `severity_threshold` | string | `"warning"` | Minimum severity to trigger AI analysis and `on_alert`. One of `"info"`, `"warning"`, `"critical"`. |
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
 
-### `[ghost]` section
-
-Daemon-wide hard limits for Ghost Sessions. These are ceilings — individual runbooks cannot exceed them.
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost session. A runbook's `max_ghost_turns` is clamped to this value. Set to a lower number in production to constrain blast radius. |
-
 #### Prometheus Alertmanager integration
 
 Add a DaemonEye receiver to your Alertmanager configuration:
@@ -274,15 +289,13 @@ route:
   receiver: daemoneye
 ```
 
-Example:
+### `[ghost]` section
 
-```toml
-[masking]
-extra_patterns = [
-  "MYCO-[A-Z0-9]{32}",       # internal API token format
-  "sk_live_[A-Za-z0-9]{32}", # Stripe live secret key
-]
-```
+Daemon-wide hard limits for autonomous Ghost Sessions. These are ceilings — individual runbooks can set lower values but cannot exceed them.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost session. A runbook's `max_ghost_turns` is clamped to this value. Set lower in production to constrain blast radius. |
 
 ---
 
@@ -540,21 +553,6 @@ tmux list-windows | grep de-incident
 - **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling. A ghost session is forcibly stopped when the limit is reached regardless of what it is doing.
 - **All actions are logged.** Every command approval, execution, and result is recorded in `events.jsonl` for post-incident audit.
 
----
-
-#### Valid `provider` values
-
-| Value | Provider | Default API endpoint | API key required |
-|---|---|---|---|
-| `"anthropic"` | Anthropic (Claude) | `https://api.anthropic.com/v1/messages` | Yes |
-| `"openai"` | OpenAI (or any OpenAI-compatible API) | `https://api.openai.com/v1` | Yes |
-| `"gemini"` | Google Gemini | `https://generativelanguage.googleapis.com/v1beta/` | Yes |
-| `"ollama"` | Ollama (local, OpenAI-compatible) | `http://localhost:11434/v1` | No |
-| `"lmstudio"` | LM Studio (local, OpenAI-compatible) | `http://localhost:1234/v1` | No |
-
-For `ollama`, start the server with `ollama serve` and pull a model (`ollama pull llama3.2`).
-For `lmstudio`, start the local server from the LM Studio app and load a model.
-
 ### Environment variables
 
 | Variable | Effect |
@@ -571,27 +569,35 @@ For `lmstudio`, start the local server from the LM Studio app and load a model.
 ```
 src/
 ├── main.rs          # CLI entry point — parses subcommands (daemon, stop, ping, logs, chat, ask, setup, scripts, sched)
+├── ipc.rs           # Request/Response enums — the full wire protocol; GhostConfig struct
+├── config.rs        # ~/.daemoneye/config.toml parsing; GhostDaemonConfig; prompt loading; directory helpers
 ├── daemon/          # Background process: IPC server, session memory, background execution
-│   ├── server.rs    # Core IPC connection loop and AI prompt orchestration
-│   ├── executor.rs  # Dispatches AI tool calls
-│   ├── background.rs # Manages dedicated tmux windows for background tasks
-│   └── ...
+│   ├── mod.rs       # Daemon entry point; supervise() task supervisor; hook installation
+│   ├── server.rs    # IPC connection loop; AI prompt assembly; trigger_ghost_turn()
+│   ├── executor.rs  # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
+│   ├── background.rs # run_background_in_window(); notify_job_completion(); GC lifecycle
+│   ├── ghost.rs     # GhostManager::start_session() — allocates de-incident-* tmux window
+│   ├── policy.rs    # GhostPolicy — auto_approve_scripts / auto_approve_read_only / run_with_sudo enforcement
+│   └── stats.rs     # Atomic ghost session counters (launched / completed / failed / active)
 ├── cli/             # IPC client: chat interface, terminal rendering, subcommands
-├── ipc.rs           # Shared data structures for Unix Socket communication
 ├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus
 ├── runbook.rs       # Runbook markdown loader (frontmatter parser, CRUD); watchdog AI system prompt builder
+├── webhook.rs       # HTTP alert ingestion (axum); parse_payload(); process_alert(); parse_ghost_trigger()
 ├── memory.rs        # Persistent memory: session (auto-loaded), knowledge (on-demand), incidents (search-only)
 ├── search.rs        # Keyword search across runbooks, scripts, memory, and events.jsonl
 ├── scripts.rs       # Script management: list, write (chmod 700), read, delete, resolve
 ├── sys_context.rs   # One-time host audit (OS, uptime, memory, processes, shell history)
 ├── tmux/
 │   ├── mod.rs       # tmux interoperability layer (capture-pane, send-keys, create/kill job windows, etc.)
-│   └── cache.rs     # Background poller that caches and summarizes all tmux panes
+│   ├── cache.rs     # Background poller; SessionCache; PaneState; get_labeled_context()
+│   └── session.rs   # Session-level helpers: other_sessions_context(); client_dimensions(); session_exists()
 ├── config.rs        # ~/.daemoneye/config.toml parsing, prompt loading, directory helpers
 └── ai/
-    ├── mod.rs
-    ├── backends/    # Anthropic/OpenAI/Gemini streaming
-    └── filter.rs    # Sensitive-data masking before API submission
+    ├── mod.rs       # AiClient trait; send_with_retry(); CircuitBreaker
+    ├── types.rs     # PendingCall / AiEvent enums; Message; AiUsage
+    ├── tools.rs     # Tool definitions (Anthropic/OpenAI); dispatch_tool_event()
+    ├── backends/    # Per-provider SSE streaming: anthropic.rs, openai.rs, gemini.rs
+    └── filter.rs    # Regex-based sensitive-data masking; init_masking()
 ```
 
 ---
