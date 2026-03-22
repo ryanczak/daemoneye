@@ -164,7 +164,18 @@ pub async fn trigger_ghost_turn(
         sys_context.format_for_ai()
     );
 
-    // 3. Setup dummy IPC halves to satisfy execute_tool_call requirements
+    // 3. Verify the target tmux session still exists before doing any AI work.
+    //    `ensure_incident_session()` ran at start_session() time; the session could
+    //    have been destroyed by the time trigger_ghost_turn executes.
+    if !tmux::session_exists(&tmux_session) {
+        anyhow::bail!(
+            "Ghost Session {}: tmux session '{}' no longer exists",
+            session_id,
+            tmux_session
+        );
+    }
+
+    // 4. Setup dummy IPC halves to satisfy execute_tool_call requirements
     let (tx_duplex, _rx_duplex) = tokio::io::duplex(4096);
     let (rx_half, tx_half) = tokio::io::split(tx_duplex);
     let mut tx = tx_half;
@@ -327,6 +338,23 @@ pub async fn trigger_ghost_turn(
                 }
                 _ => {}
             }
+        }
+
+        // Warn if the ghost policy denied every tool call this turn.  This most
+        // commonly means auto_approve_scripts is empty and auto_approve_read_only
+        // is false — the AI will keep planning but never execute anything.
+        if !tool_results.is_empty()
+            && tool_results
+                .iter()
+                .all(|r| r.content.starts_with("Command denied by Ghost Policy"))
+        {
+            log::warn!(
+                "Ghost Session {}: all {} tool call(s) denied by ghost policy on turn {} — \
+                 runbook may need auto_approve_scripts or auto_approve_read_only: true",
+                session_id,
+                tool_results.len(),
+                turn,
+            );
         }
 
         // Update session history

@@ -512,6 +512,23 @@ fn camel_to_kebab(s: &str) -> String {
     out
 }
 
+/// Parse the structured `GHOST_TRIGGER: YES/NO` field from a watchdog AI response.
+///
+/// Scans lines in reverse so the field is found quickly even in long responses.
+/// Returns `Some(true)` for YES, `Some(false)` for NO, `None` if absent.
+fn parse_ghost_trigger(response: &str) -> Option<bool> {
+    for line in response.lines().rev() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("GHOST_TRIGGER: YES") {
+            return Some(true);
+        }
+        if t.eq_ignore_ascii_case("GHOST_TRIGGER: NO") {
+            return Some(false);
+        }
+    }
+    None
+}
+
 /// Try to find a runbook whose name matches the alert name in several variants.
 fn find_runbook_for_alert(alert_name: &str) -> Option<crate::runbook::Runbook> {
     let kebab = camel_to_kebab(alert_name);
@@ -539,6 +556,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     }
 
     let Some(rb) = find_runbook_for_alert(&alert.alert_name) else {
+        log::debug!(
+            "Webhook: no runbook found for alert '{}' (tried kebab-case, lowercase, exact match) — skipping analysis",
+            alert.alert_name
+        );
         return;
     };
 
@@ -574,7 +595,12 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         }
     }
 
-    if response.to_uppercase().contains("ALERT") {
+    // Prefer the structured GHOST_TRIGGER field; fall back to the legacy "ALERT"
+    // keyword for runbooks whose AI response predates the structured format.
+    let should_act = parse_ghost_trigger(&response)
+        .unwrap_or_else(|| response.to_uppercase().contains("ALERT"));
+
+    if should_act {
         // If the runbook has ghost mode enabled, trigger a ghost session.
         if rb.ghost_config.enabled {
             log::info!("Webhook: triggering Ghost Session for '{}'", alert.alert_name);
@@ -626,7 +652,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             serde_json::json!({
                 "alert_name": alert.alert_name,
                 "runbook": rb.name,
-                "alerted": true,
+                "ghost_trigger": should_act,
+                "ghost_enabled": rb.ghost_config.enabled,
             }),
         );
     }
@@ -944,5 +971,45 @@ mod tests {
             "mysecret".parse().unwrap(),
         );
         assert!(!is_authorized("mysecret", &h));
+    }
+
+    // ── parse_ghost_trigger ──────────────────────────────────────────────────
+
+    #[test]
+    fn ghost_trigger_yes_detected() {
+        let r = "ALERT: disk usage at 95%.\nGHOST_TRIGGER: YES";
+        assert_eq!(parse_ghost_trigger(r), Some(true));
+    }
+
+    #[test]
+    fn ghost_trigger_no_detected() {
+        let r = "OK: disk usage is normal.\nGHOST_TRIGGER: NO";
+        assert_eq!(parse_ghost_trigger(r), Some(false));
+    }
+
+    #[test]
+    fn ghost_trigger_case_insensitive() {
+        assert_eq!(parse_ghost_trigger("ghost_trigger: yes"), Some(true));
+        assert_eq!(parse_ghost_trigger("Ghost_Trigger: No"), Some(false));
+    }
+
+    #[test]
+    fn ghost_trigger_absent_returns_none() {
+        assert_eq!(parse_ghost_trigger("ALERT: something is wrong."), None);
+        assert_eq!(parse_ghost_trigger("OK: everything fine."), None);
+        assert_eq!(parse_ghost_trigger(""), None);
+    }
+
+    #[test]
+    fn ghost_trigger_scans_last_occurrence() {
+        // If the field appears more than once, the last one wins.
+        let r = "GHOST_TRIGGER: NO\nSome analysis.\nGHOST_TRIGGER: YES";
+        assert_eq!(parse_ghost_trigger(r), Some(true));
+    }
+
+    #[test]
+    fn ghost_trigger_whitespace_trimmed() {
+        assert_eq!(parse_ghost_trigger("  GHOST_TRIGGER: YES  "), Some(true));
+        assert_eq!(parse_ghost_trigger("  GHOST_TRIGGER: NO  "), Some(false));
     }
 }

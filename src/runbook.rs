@@ -225,11 +225,16 @@ pub fn watchdog_system_prompt(runbook: &Runbook) -> String {
     };
 
     format!(
-        "You are an automated watchdog monitor. Analyze the command output below and \
-         determine if it indicates an alert condition.\n\n\
+        "You are an automated watchdog monitor. Analyze the incoming alert below and \
+         determine if it indicates an alert condition requiring action.\n\n\
          ## Runbook: {}\n\n{}\n\n\
          {}Respond with ALERT if any alert condition is met, followed by a brief explanation. \
-         Respond with OK if everything looks normal.",
+         Respond with OK if everything looks normal.\n\n\
+         On the final line of your response, always include exactly one of:\n\
+         GHOST_TRIGGER: YES\n\
+         GHOST_TRIGGER: NO\n\
+         Use GHOST_TRIGGER: YES only when an alert condition is met AND autonomous remediation \
+         should be attempted based on the runbook guidance. Use GHOST_TRIGGER: NO otherwise.",
         runbook.name,
         runbook.content.trim(),
         memory_context,
@@ -316,6 +321,8 @@ Last updated: 2026-03-01
         assert!(prompt.contains("disk-check"));
         assert!(prompt.contains("80%"));
         assert!(prompt.contains("ALERT"));
+        assert!(prompt.contains("GHOST_TRIGGER: YES"));
+        assert!(prompt.contains("GHOST_TRIGGER: NO"));
     }
 
     #[test]

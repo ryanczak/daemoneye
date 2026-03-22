@@ -345,6 +345,15 @@ pub fn ensure_incident_session() -> Result<String> {
     Ok(INCIDENT_SESSION_NAME.to_string())
 }
 
+/// Return `true` if a tmux session with this name currently exists.
+pub fn session_exists(name: &str) -> bool {
+    Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// List all pane IDs in a tmux session (across all windows).
 pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
     let out = Command::new("tmux")
