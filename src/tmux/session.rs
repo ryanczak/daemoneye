@@ -307,6 +307,68 @@ mod tests {
     }
 }
 
+/// Default name for the headless tmux session used to host ghost incidents.
+pub const INCIDENT_SESSION_NAME: &str = "daemoneye-incidents";
+
+/// Ensure a tmux session exists to host an incident window.
+///
+/// Returns the name of an existing active session if available,
+/// otherwise creates a new detached session named `daemoneye-incidents`
+/// and returns that name.
+pub fn ensure_incident_session() -> Result<String> {
+    let sessions = list_sessions();
+    
+    // 1. Try to find the most recently active attached session.
+    if let Some(s) = sessions.iter()
+        .filter(|s| s.attached)
+        .max_by_key(|s| s.last_activity) {
+        return Ok(s.name.clone());
+    }
+
+    // 2. Try to find any existing session (even detached).
+    if let Some(s) = sessions.iter()
+        .max_by_key(|s| s.last_activity) {
+        return Ok(s.name.clone());
+    }
+
+    // 3. Fallback: create a new detached session.
+    log::info!("No active tmux sessions found. Creating detached session: {}", INCIDENT_SESSION_NAME);
+    let out = Command::new("tmux")
+        .args(["new-session", "-d", "-s", INCIDENT_SESSION_NAME])
+        .output()?;
+    
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        anyhow::bail!("Failed to create incident session: {}", err);
+    }
+
+    Ok(INCIDENT_SESSION_NAME.to_string())
+}
+
+/// Create a new window for an incident in the specified session.
+///
+/// Returns the window-relative index and pane ID of the newly created window.
+pub fn create_incident_window(session: &str, alert_name: &str) -> Result<(usize, String)> {
+    let ts = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
+    let window_name = format!("de-incident-{}-{}", alert_name, &ts[8..]); // Shorten TS to HHMMSS
+    
+    let out = Command::new("tmux")
+        .args(["new-window", "-d", "-t", session, "-n", &window_name, "-P", "-F", "#{window_index}\t#{pane_id}"])
+        .output()?;
+
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        anyhow::bail!("Failed to create incident window: {}", err);
+    }
+
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut parts = s.trim().splitn(2, '\t');
+    let idx = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let pane_id = parts.next().unwrap_or("").to_string();
+
+    Ok((idx, pane_id))
+}
+
 /// List all pane IDs in a tmux session (across all windows).
 pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
     let out = Command::new("tmux")
