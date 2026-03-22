@@ -3,6 +3,7 @@ use crate::daemon::background::{respawn_background_in_pane, run_background_in_wi
 use crate::daemon::session::{
     BUFFER_COUNTER, FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe,
 };
+use crate::daemon::policy::GhostPolicy;
 use crate::daemon::utils::*;
 use crate::ipc::{
     MemoryListItem, PaneInfo, Request, Response, RunbookListItem, ScheduleListItem, ScriptListItem,
@@ -166,6 +167,7 @@ async fn prompt_and_await_approval(
     background: bool,
     target_pane_hint: Option<&str>,
     session_id: Option<&str>,
+    ghost_policy: Option<&GhostPolicy>,
     tx: &mut tokio::net::unix::OwnedWriteHalf,
     rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
 ) -> anyhow::Result<Result<usize, ToolCallOutcome>> {
@@ -174,6 +176,56 @@ async fn prompt_and_await_approval(
     } else {
         "foreground"
     };
+
+    // ── Ghost Session Logic ──────────────────────────────────────────────────
+    if let Some(policy) = ghost_policy {
+        if policy.is_safe(cmd) {
+            log::info!("Ghost Session auto-approved {}: {}", mode, cmd);
+            if background {
+                crate::daemon::stats::inc_commands_bg_approved();
+            } else {
+                crate::daemon::stats::inc_commands_fg_approved();
+            }
+            let cmd_id = crate::daemon::stats::start_command(cmd, mode);
+            if cmd.contains(".daemoneye/scripts/") {
+                crate::daemon::stats::inc_scripts_executed();
+            }
+            log_event(
+                "command_approval",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "mode": mode,
+                    "cmd": cmd,
+                    "decision": "ghost_auto_approved",
+                }),
+            );
+            return Ok(Ok(cmd_id));
+        } else {
+            log::info!("Ghost Session auto-denied (not on whitelist): {}", cmd);
+            let msg = format!(
+                "Command denied by Ghost Policy (not a pre-approved script or safe read-only command): {}",
+                cmd
+            );
+            if background {
+                crate::daemon::stats::inc_commands_bg_denied();
+            } else {
+                crate::daemon::stats::inc_commands_fg_denied();
+            }
+            log_event(
+                "command_approval",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "mode": mode,
+                    "cmd": cmd,
+                    "decision": "ghost_auto_denied",
+                }),
+            );
+            log_command(session_id, mode, "", cmd, "ghost_denied", "");
+            return Ok(Err(ToolCallOutcome::Result(msg)));
+        }
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
     send_response_split(
         tx,
         Response::ToolCallPrompt {
@@ -578,6 +630,25 @@ pub async fn execute_tool_call(
     sessions: &SessionStore,
     schedule_store: &Arc<ScheduleStore>,
 ) -> anyhow::Result<ToolCallOutcome> {
+    // ── Pre-fetch Ghost Policy ───────────────────────────────────────────────
+    let ghost_policy: Option<GhostPolicy> = if let Some(sid) = session_id {
+        if let Ok(store) = sessions.lock() {
+            store.get(sid).and_then(|e| {
+                if e.is_ghost {
+                    e.ghost_config.as_ref().map(GhostPolicy::from_config)
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let is_ghost = ghost_policy.is_some();
+    // ──────────────────────────────────────────────────────────────────────────
+
     let result: String = match call {
         PendingCall::Foreground {
             id, cmd, target, ..
@@ -617,6 +688,7 @@ pub async fn execute_tool_call(
                 false,
                 target_hint.as_deref(),
                 session_id,
+                ghost_policy.as_ref(),
                 tx,
                 rx,
             )
@@ -1003,7 +1075,7 @@ pub async fn execute_tool_call(
                     name
                 };
                 let cmd_id =
-                    match prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await?
+                    match prompt_and_await_approval(id, cmd, true, None, session_id, ghost_policy.as_ref(), tx, rx).await?
                     {
                         Ok(id) => id,
                         Err(outcome) => return Ok(outcome),
@@ -1121,7 +1193,7 @@ pub async fn execute_tool_call(
             }
 
             let cmd_id =
-                match prompt_and_await_approval(id, cmd, true, None, session_id, tx, rx).await? {
+                match prompt_and_await_approval(id, cmd, true, None, session_id, ghost_policy.as_ref(), tx, rx).await? {
                     Ok(id) => id,
                     Err(outcome) => return Ok(outcome),
                 };
@@ -1129,30 +1201,36 @@ pub async fn execute_tool_call(
             // overwritten when the variable drops, rather than lingering until
             // the allocator reclaims it.
             let credential: Option<zeroize::Zeroizing<String>> = if command_has_sudo(cmd) {
-                send_response_split(
-                    tx,
-                    Response::CredentialPrompt {
-                        id: id.clone(),
-                        prompt: format!("[sudo] password required for: {}", cmd),
-                    },
-                )
-                .await?;
-                let mut cred_line = String::new();
-                let result =
-                    match tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut cred_line))
-                        .await
-                    {
-                        Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
-                            Ok(Request::CredentialResponse { credential, .. }) => {
-                                Some(zeroize::Zeroizing::new(credential))
-                            }
-                            _ => None,
+                if is_ghost {
+                    // Ghost Sessions cannot provide sudo passwords. 
+                    // This command will likely fail if it triggers a prompt.
+                    None
+                } else {
+                    send_response_split(
+                        tx,
+                        Response::CredentialPrompt {
+                            id: id.clone(),
+                            prompt: format!("[sudo] password required for: {}", cmd),
                         },
-                        _ => None,
-                    };
-                // Zero the raw JSON line that contained the password.
-                zeroize::Zeroize::zeroize(&mut cred_line);
-                result
+                    )
+                    .await?;
+                    let mut cred_line = String::new();
+                    let result =
+                        match tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut cred_line))
+                            .await
+                        {
+                            Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
+                                Ok(Request::CredentialResponse { credential, .. }) => {
+                                    Some(zeroize::Zeroizing::new(credential))
+                                }
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                    // Zero the raw JSON line that contained the password.
+                    zeroize::Zeroize::zeroize(&mut cred_line);
+                    result
+                }
             } else {
                 None
             };
@@ -1213,6 +1291,12 @@ pub async fn execute_tool_call(
                     at: chrono::Utc::now() + chrono::Duration::seconds(60),
                 }
             };
+
+            if is_ghost {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: cannot create scheduled jobs in a Ghost Session (requires user approval).".to_string(),
+                ));
+            }
 
             send_response_split(
                 tx,
@@ -1359,6 +1443,11 @@ pub async fn execute_tool_call(
             content,
             ..
         } => {
+            if is_ghost {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: cannot write scripts in a Ghost Session (requires user approval).".to_string(),
+                ));
+            }
             send_response_split(
                 tx,
                 Response::ScriptWritePrompt {
@@ -1413,6 +1502,11 @@ pub async fn execute_tool_call(
         },
 
         PendingCall::DeleteScript { id, script_name, .. } => {
+            if is_ghost {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: cannot delete scripts in a Ghost Session (requires user approval).".to_string(),
+                ));
+            }
             send_response_split(
                 tx,
                 Response::ScriptDeletePrompt {
@@ -1851,7 +1945,14 @@ pub async fn execute_tool_call(
                 }
             }
 
-            // ── Remote path: Python3/Perl replacement in target_pane ──────────
+            if is_ghost {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: cannot edit files in a Ghost Session (requires user approval).".to_string(),
+                ));
+            }
+
+                // ── Remote path: Python3/Perl replacement in target_pane ──────────
+
             if let Some(pane) = target_pane {
                 let location = format!("{} (remote via pane {})", path, pane);
                 let approval_cmd = format!(
@@ -1864,6 +1965,7 @@ pub async fn execute_tool_call(
                     false,
                     None,
                     session_id,
+                    ghost_policy.as_ref(),
                     tx,
                     rx,
                 )
@@ -1957,7 +2059,7 @@ pub async fn execute_tool_call(
                 path, old_string, new_string
             );
             let cmd_id =
-                match prompt_and_await_approval(id, &approval_cmd, false, None, session_id, tx, rx)
+                match prompt_and_await_approval(id, &approval_cmd, false, None, session_id, ghost_policy.as_ref(), tx, rx)
                     .await?
                 {
                     Ok(id) => id,
@@ -2002,6 +2104,11 @@ pub async fn execute_tool_call(
         PendingCall::WriteRunbook {
             id, name, content, ..
         } => {
+            if is_ghost {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: cannot write runbooks in a Ghost Session (requires user approval).".to_string(),
+                ));
+            }
             send_response_split(
                 tx,
                 Response::RunbookWritePrompt {
@@ -2057,6 +2164,12 @@ pub async fn execute_tool_call(
                 .filter(|j| j.runbook.as_deref() == Some(name))
                 .map(|j| j.name)
                 .collect();
+
+            if is_ghost {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: cannot delete runbooks in a Ghost Session (requires user approval).".to_string(),
+                ));
+            }
 
             send_response_split(
                 tx,
