@@ -14,7 +14,6 @@ use crate::tmux;
 use crate::tmux::cache::SessionCache;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::AsyncBufReadExt;
 
 /// The outcome of a single tool call execution.
 pub enum ToolCallOutcome {
@@ -161,16 +160,20 @@ fn looks_like_shell_prompt(snap: &str) -> bool {
 /// a corrective message; the caller should abort the tool chain and inject the
 /// text as a new user turn.
 /// Returns `Err` on connection EOF.
-async fn prompt_and_await_approval(
+async fn prompt_and_await_approval<W, R>(
     id: &str,
     cmd: &str,
     background: bool,
     target_pane_hint: Option<&str>,
     session_id: Option<&str>,
     ghost_policy: Option<&GhostPolicy>,
-    tx: &mut tokio::net::unix::OwnedWriteHalf,
-    rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
-) -> anyhow::Result<Result<usize, ToolCallOutcome>> {
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<Result<usize, ToolCallOutcome>> 
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
     let mode = if background {
         "background"
     } else {
@@ -344,15 +347,20 @@ async fn prompt_and_await_approval(
     }
 }
 
-async fn find_best_target_pane(
-    target: Option<&str>,
+async fn find_best_target_pane<W, R>(
+    specified_pane: Option<&str>,
     chat_pane: Option<&str>,
     cache: &Arc<SessionCache>,
     sessions: &SessionStore,
     session_id: Option<&str>,
-    tx: &mut tokio::net::unix::OwnedWriteHalf,
-    rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
-) -> anyhow::Result<String> {
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<String>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let target = specified_pane;
     let ai_target = target.and_then(|tp: &str| {
         if chat_pane == Some(tp) {
             return None;
@@ -619,17 +627,21 @@ fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &str) -> Stri
     )
 }
 
-pub async fn execute_tool_call(
+pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
-    tx: &mut tokio::net::unix::OwnedWriteHalf,
-    rx: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
+    tx: &mut W,
+    rx: &mut R,
     session_id: Option<&str>,
     session_name: &str,
     chat_pane: Option<&str>,
     cache: &Arc<SessionCache>,
     sessions: &SessionStore,
     schedule_store: &Arc<ScheduleStore>,
-) -> anyhow::Result<ToolCallOutcome> {
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
     // ── Pre-fetch Ghost Policy ───────────────────────────────────────────────
     let ghost_policy: Option<GhostPolicy> = if let Some(sid) = session_id {
         if let Ok(store) = sessions.lock() {

@@ -565,11 +565,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     if startup_config.webhook.enabled {
         let wh_config_sup = startup_config.clone();
         let wh_sessions_sup = Arc::clone(&sessions);
+        let wh_cache_sup = Arc::clone(&cache);
+        let wh_schedule_store_sup = Arc::clone(&schedule_store);
         tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
             let cfg = wh_config_sup.clone();
             let sessions = Arc::clone(&wh_sessions_sup);
+            let cache = Arc::clone(&wh_cache_sup);
+            let schedule_store = Arc::clone(&wh_schedule_store_sup);
             async move {
-                if let Err(e) = crate::webhook::start(cfg, sessions).await {
+                if let Err(e) = crate::webhook::start(cfg, sessions, cache, schedule_store).await {
                     log::error!("Webhook server exited: {}", e);
                 }
             }

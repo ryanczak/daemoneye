@@ -23,6 +23,7 @@ use serde_json::Value;
 
 use crate::ai::{AiEvent, Message};
 use crate::config::Config;
+use crate::daemon::ghost::GhostManager;
 use crate::daemon::session::{SessionStore, append_session_message};
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
@@ -66,6 +67,8 @@ impl AlertStatus {
 pub struct WebhookState {
     pub config: Config,
     pub sessions: SessionStore,
+    pub cache: Arc<crate::tmux::cache::SessionCache>,
+    pub schedule_store: Arc<crate::scheduler::ScheduleStore>,
     /// Fingerprint → last-seen timestamp (seconds since UNIX epoch).
     pub dedup: Mutex<HashMap<String, u64>>,
     /// Alert-name → last-analysis timestamp for rate-limiting AI analysis.
@@ -572,6 +575,35 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     }
 
     if response.to_uppercase().contains("ALERT") {
+        // If the runbook has ghost mode enabled, trigger a ghost session.
+        if rb.ghost_config.enabled {
+            log::info!("Webhook: triggering Ghost Session for '{}'", alert.alert_name);
+            let sessions = state.sessions.clone();
+            let alert_msg = formatted_msg.to_string();
+            let rb_clone = rb.clone();
+            let config_clone = state.config.clone();
+            let cache_clone = state.cache.clone();
+            let schedule_store_clone = state.schedule_store.clone();
+
+            tokio::spawn(async move {
+                match GhostManager::start_session(sessions.clone(), &rb_clone, &alert_msg).await {
+                    Ok(sid) => {
+                        // After starting the session, trigger the first AI turn headlessly.
+                        if let Err(e) = crate::daemon::server::trigger_ghost_turn(
+                            &sid,
+                            &sessions,
+                            &config_clone,
+                            &cache_clone,
+                            &schedule_store_clone,
+                        ).await {
+                            log::error!("Ghost Turn: failed for {}: {}", sid, e);
+                        }
+                    }
+                    Err(e) => log::error!("Ghost Session: failed to start: {}", e),
+                }
+            });
+        }
+
         let analysis = format!(
             "[Webhook Analysis] {}: {}",
             alert.alert_name,
@@ -604,7 +636,12 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
 // ---------------------------------------------------------------------------
 
 /// Start the webhook HTTP server.  Runs until the process exits.
-pub async fn start(config: Config, sessions: SessionStore) -> anyhow::Result<()> {
+pub async fn start(
+    config: Config,
+    sessions: SessionStore,
+    cache: Arc<crate::tmux::cache::SessionCache>,
+    schedule_store: Arc<crate::scheduler::ScheduleStore>,
+) -> anyhow::Result<()> {
     let port = config.webhook.port;
     let bind_ip: std::net::IpAddr = config
         .webhook
@@ -614,6 +651,8 @@ pub async fn start(config: Config, sessions: SessionStore) -> anyhow::Result<()>
     let state = Arc::new(WebhookState {
         config,
         sessions,
+        cache,
+        schedule_store,
         dedup: Mutex::new(HashMap::new()),
         rate_limit: Mutex::new(HashMap::new()),
     });

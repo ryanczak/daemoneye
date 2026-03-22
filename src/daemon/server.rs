@@ -34,6 +34,11 @@ fn is_valid_pane_id(id: &str) -> bool {
     id.starts_with('%') && id.len() > 1 && id[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Build the N15 catch-up brief from messages injected while the client was away.
+///
+/// `new_msgs` is the slice of messages added after detach.
+/// `away_secs` is how long the client was gone.
+/// Returns `None` when the absence was too short or no relevant events occurred.
 pub(crate) fn build_catchup_brief(
     new_msgs: &[crate::ai::Message],
     away_secs: u64,
@@ -55,9 +60,15 @@ pub(crate) fn build_catchup_brief(
                 || c.contains("[Webhook Alert]")
                 || c.contains("[Watchdog]")
                 || c.contains("[Watch Pane")
+                || c.contains("[System] You are operating in an unattended Ghost Session")
             {
                 // Extract just the first line as a terse summary.
-                Some(c.lines().next().unwrap_or(c.as_str()).trim().to_string())
+                let first_line = c.lines().next().unwrap_or(c.as_str()).trim();
+                // Special case for ghost sessions
+                if first_line.contains("Ghost Session") {
+                    return Some("Ghost Session handled an autonomous alert response.".to_string());
+                }
+                Some(first_line.to_string())
             } else {
                 None
             }
@@ -88,6 +99,157 @@ pub(crate) fn build_catchup_brief(
         away_str,
         lines,
     ))
+}
+
+/// Trigger a headless AI turn for a Ghost Session.
+///
+/// This simulates a user's `Ask` request but without an attached terminal.
+/// Results and tool outcomes are persisted to the session file.
+pub async fn trigger_ghost_turn(
+    session_id: &str,
+    sessions: &SessionStore,
+    config: &Config,
+    cache: &Arc<SessionCache>,
+    schedule_store: &Arc<ScheduleStore>,
+) -> Result<()> {
+    // 1. Get a copy of the session entry
+    let (messages, _ghost_config, tmux_session, target_pane) = {
+        let store = sessions.lock().unwrap_or_log();
+        let Some(entry) = store.get(session_id) else {
+            anyhow::bail!("Ghost Session '{}' not found", session_id);
+        };
+        (
+            entry.messages.clone(),
+            entry.ghost_config.clone(),
+            entry.tmux_session.clone(),
+            entry.default_target_pane.clone(),
+        )
+    };
+
+    // 2. Prepare the prompt context (system prompt + sys context)
+    let prompt_name = config.ai.prompt.clone();
+    let system_base = load_named_prompt(&prompt_name).system;
+    let sys_context = get_or_init_sys_context();
+    
+    // Ghost-specific context prefix
+    let system = format!(
+        "{}\n\n## Execution Context\nDaemon Host: {}\nTarget Pane: {}\n\n{}",
+        system_base,
+        daemon_hostname(),
+        target_pane.as_deref().unwrap_or("-"),
+        sys_context.format_for_ai()
+    );
+
+    // 3. Setup dummy IPC halves to satisfy execute_tool_call requirements
+    let (tx_duplex, _rx_duplex) = tokio::io::duplex(4096);
+    let (rx_half, tx_half) = tokio::io::split(tx_duplex);
+    let mut tx = tx_half;
+    let mut rx = BufReader::new(rx_half);
+    
+    // We don't actually read from rx/tx in ghost mode for tool calls
+    // because execute_tool_call will hit the ghost approval gate.
+    
+    let api_key = config.ai.resolve_api_key();
+    let client = crate::ai::make_client(
+        &config.ai.provider,
+        api_key,
+        config.ai.model.clone(),
+        config.ai.effective_base_url(),
+    );
+
+    let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+
+    // 4. Start the AI chat turn
+    tokio::spawn(async move {
+        if let Err(e) = client.chat(&system, messages, ai_tx).await {
+            log::error!("Ghost Session AI error: {}", e);
+        }
+    });
+
+    let mut assistant_content = String::new();
+    let mut pending_calls = Vec::new();
+
+    // 5. Process AI events headlessly
+    while let Some(ev) = ai_rx.recv().await {
+        match ev {
+            AiEvent::Token(t) => {
+                assistant_content.push_str(&t);
+            }
+            AiEvent::ToolCall(id, command, background, target_pane, retry_in_pane, thought_signature) => {
+                if background {
+                    pending_calls.push(PendingCall::Background {
+                        id,
+                        cmd: command,
+                        thought_signature,
+                        _credential: None,
+                        retry_pane: retry_in_pane,
+                    });
+                } else {
+                    pending_calls.push(PendingCall::Foreground {
+                        id,
+                        cmd: command,
+                        thought_signature,
+                        target: target_pane,
+                    });
+                }
+            }
+            // ... map other tool events to PendingCall variants as needed ...
+            AiEvent::Done(_) => break,
+            AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
+            _ => {
+                // For simplicity in this first iteration, we only support 
+                // command execution tools in ghost sessions.
+            }
+        }
+    }
+
+    // 6. Execute approved tool calls
+    let mut tool_results = Vec::new();
+
+    for call in &pending_calls {
+        let outcome = crate::daemon::executor::execute_tool_call(
+            call,
+            &mut tx,
+            &mut rx,
+            Some(session_id),
+            &tmux_session,
+            None, // No chat pane
+            cache,
+            sessions,
+            schedule_store,
+        ).await?;
+
+        match outcome {
+            crate::daemon::executor::ToolCallOutcome::Result(r) => {
+                tool_results.push(crate::ai::ToolResult {
+                    tool_call_id: call.id().to_string(),
+                    tool_name: call.tool_name().to_string(),
+                    content: r,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // 7. Update session history
+    let assistant_msg = Message {
+        role: "assistant".to_string(),
+        content: assistant_content,
+        tool_calls: if pending_calls.is_empty() { None } else { Some(pending_calls.iter().map(|c| c.to_tool_call()).collect()) },
+        tool_results: if tool_results.is_empty() { None } else { Some(tool_results) },
+    };
+    
+    append_session_message(session_id, &assistant_msg);
+    {
+        let mut store = sessions.lock().unwrap_or_log();
+        if let Some(entry) = store.get_mut(session_id) {
+            entry.messages.push(assistant_msg);
+            entry.last_accessed = Instant::now();
+        }
+    }
+
+    log::info!("Ghost Turn completed for session {}", session_id);
+    Ok(())
 }
 
 /// Run a single scheduled job in a dedicated tmux window.
