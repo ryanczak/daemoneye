@@ -11,6 +11,8 @@ pub struct GhostPolicy {
     pub auto_approve_scripts: Vec<String>,
     /// Whether to auto-approve known read-only informational commands.
     pub auto_approve_read_only: bool,
+    /// Whether to prepend `sudo` when executing pre-approved scripts.
+    pub run_with_sudo: bool,
 }
 
 impl GhostPolicy {
@@ -19,6 +21,7 @@ impl GhostPolicy {
         Self {
             auto_approve_scripts: config.auto_approve_scripts.clone(),
             auto_approve_read_only: config.auto_approve_read_only,
+            run_with_sudo: config.run_with_sudo,
         }
     }
 
@@ -70,7 +73,11 @@ impl GhostPolicy {
 
         if self.auto_approve_scripts.iter().any(|s| s == basename) {
             let full_path = crate::scripts::scripts_dir().join(basename);
-            return format!("{}{}", full_path.display(), rest);
+            return if self.run_with_sudo {
+                format!("sudo {}{}", full_path.display(), rest)
+            } else {
+                format!("{}{}", full_path.display(), rest)
+            };
         }
 
         cmd.to_string()
@@ -85,6 +92,15 @@ mod tests {
         GhostPolicy {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
             auto_approve_read_only: false,
+            run_with_sudo: false,
+        }
+    }
+
+    fn sudo_policy(scripts: &[&str]) -> GhostPolicy {
+        GhostPolicy {
+            auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
+            auto_approve_read_only: false,
+            run_with_sudo: true,
         }
     }
 
@@ -151,5 +167,44 @@ mod tests {
     fn resolve_command_not_on_whitelist_unchanged() {
         let p = policy(&["fix.sh"]);
         assert_eq!(p.resolve_command("./other.sh"), "./other.sh");
+    }
+
+    #[test]
+    fn resolve_command_sudo_bare_name() {
+        let p = sudo_policy(&["fix.sh"]);
+        let resolved = p.resolve_command("fix.sh");
+        assert!(resolved.starts_with("sudo "), "got: {}", resolved);
+        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+    }
+
+    #[test]
+    fn resolve_command_sudo_relative_path() {
+        let p = sudo_policy(&["fix.sh"]);
+        let resolved = p.resolve_command("./fix.sh");
+        assert!(resolved.starts_with("sudo "), "got: {}", resolved);
+        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+    }
+
+    #[test]
+    fn resolve_command_sudo_preserves_args() {
+        let p = sudo_policy(&["fix.sh"]);
+        let resolved = p.resolve_command("./fix.sh --dry-run");
+        assert!(resolved.starts_with("sudo "), "got: {}", resolved);
+        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh --dry-run"), "got: {}", resolved);
+    }
+
+    #[test]
+    fn resolve_command_sudo_absolute_unchanged() {
+        // Absolute paths bypass resolve_command entirely — no sudo prepended.
+        let p = sudo_policy(&["fix.sh"]);
+        let cmd = "/home/user/.daemoneye/scripts/fix.sh";
+        assert_eq!(p.resolve_command(cmd), cmd);
+    }
+
+    #[test]
+    fn resolve_command_no_sudo_without_flag() {
+        let p = policy(&["fix.sh"]);
+        let resolved = p.resolve_command("fix.sh");
+        assert!(!resolved.starts_with("sudo "), "got: {}", resolved);
     }
 }

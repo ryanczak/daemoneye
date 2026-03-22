@@ -86,12 +86,14 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let auto_approve_scripts = parse_list_field(frontmatter, "auto_approve_scripts");
         let auto_approve_read_only = parse_bool_field(frontmatter, "auto_approve_read_only");
         let max_ghost_turns = parse_usize_field(frontmatter, "max_ghost_turns").unwrap_or(0);
+        let run_with_sudo = parse_bool_field(frontmatter, "run_with_sudo");
 
         let ghost_config = GhostConfig {
             enabled,
             auto_approve_scripts,
             auto_approve_read_only,
             max_ghost_turns,
+            run_with_sudo,
         };
 
         (tags, memories, ghost_config, body)

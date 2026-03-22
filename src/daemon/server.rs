@@ -132,7 +132,7 @@ pub async fn trigger_ghost_turn(
     // Ghost-specific system prompt suffix: behavioral rules + execution context.
     // These instructions live here (not in the conversation history) so the AI
     // API receives them as the system prompt, where role restrictions don't apply.
-    let (approved_scripts, auto_read_only) = {
+    let (approved_scripts, auto_read_only, run_with_sudo) = {
         let store = sessions.lock().unwrap_or_log();
         store.get(session_id).and_then(|e| e.ghost_config.as_ref()).map(|gc| {
             let scripts = if gc.auto_approve_scripts.is_empty() {
@@ -140,8 +140,8 @@ pub async fn trigger_ghost_turn(
             } else {
                 gc.auto_approve_scripts.join(", ")
             };
-            (scripts, gc.auto_approve_read_only)
-        }).unwrap_or_else(|| ("none".to_string(), false))
+            (scripts, gc.auto_approve_read_only, gc.run_with_sudo)
+        }).unwrap_or_else(|| ("none".to_string(), false, false))
     };
     let system = format!(
         "{}\n\n\
@@ -151,13 +151,14 @@ pub async fn trigger_ghost_turn(
          Do NOT ask questions or wait for user input.\n\
          Daemon Host: {}\n\
          Tmux Session: {}\n\
-         Pre-approved Scripts: {}\n\
+         Pre-approved Scripts: {}{}\n\
          Read-only Commands Auto-approved: {}\n\n\
          {}",
         system_base,
         daemon_hostname(),
         tmux_session,
         approved_scripts,
+        if run_with_sudo { " (executed with sudo)" } else { "" },
         if auto_read_only { "yes" } else { "no" },
         sys_context.format_for_ai()
     );

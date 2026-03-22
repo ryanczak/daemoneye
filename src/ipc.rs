@@ -43,6 +43,9 @@ pub struct GhostConfig {
     /// Maximum number of AI turns before the session is forcibly stopped.
     /// `0` means use the daemon default (20).
     pub max_ghost_turns: usize,
+    /// Whether to prepend `sudo` when executing pre-approved scripts.
+    /// Intended for use with `/etc/sudoers.d/` `NOPASSWD` rules.
+    pub run_with_sudo: bool,
 }
 
 /// Summary of a runbook for the `RunbookList` response.

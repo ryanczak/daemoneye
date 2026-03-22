@@ -514,4 +514,14 @@ The watchdog analysis prompt asks the model to emit `GHOST_TRIGGER: YES` or \
 spawn a ghost session; `NO` means the alert was informational only. Only set \
 `enabled: true` in the runbook frontmatter for alerts where autonomous remediation \
 is genuinely safe.
+
+**Runbook ghost frontmatter fields:**
+- `enabled: true` — enable ghost sessions for this runbook.
+- `auto_approve_scripts: [script.sh, ...]` — scripts in `~/.daemoneye/scripts/` that \
+  may run without prompting the user.
+- `run_with_sudo: true` — prepend `sudo` when executing approved scripts. Use with \
+  a `/etc/sudoers.d/` `NOPASSWD` entry so the script runs with elevated privileges \
+  without a password prompt. Leave `false` (default) if the script does not need root.
+- `auto_approve_read_only: true` — also allow informational read-only commands.
+- `max_ghost_turns: N` — cap the ghost session at N AI turns (default 20).
 """
