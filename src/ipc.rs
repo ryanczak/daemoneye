@@ -40,6 +40,9 @@ pub struct GhostConfig {
     pub auto_approve_scripts: Vec<String>,
     /// Whether to auto-approve known read-only informational commands.
     pub auto_approve_read_only: bool,
+    /// Maximum number of AI turns before the session is forcibly stopped.
+    /// `0` means use the daemon default (20).
+    pub max_ghost_turns: usize,
 }
 
 /// Summary of a runbook for the `RunbookList` response.

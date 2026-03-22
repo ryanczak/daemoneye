@@ -192,8 +192,15 @@ pub async fn trigger_ghost_turn(
         config.ai.effective_base_url(),
     ));
 
-    // Maximum turns per ghost session to prevent runaway API spend.
-    const MAX_GHOST_TURNS: usize = 20;
+    // Maximum turns — use the runbook's value if set, otherwise default to 20.
+    const DEFAULT_MAX_GHOST_TURNS: usize = 20;
+    let max_ghost_turns = {
+        let store = sessions.lock().unwrap_or_log();
+        store.get(session_id)
+            .and_then(|e| e.ghost_config.as_ref())
+            .map(|gc| if gc.max_ghost_turns > 0 { gc.max_ghost_turns } else { DEFAULT_MAX_GHOST_TURNS })
+            .unwrap_or(DEFAULT_MAX_GHOST_TURNS)
+    };
     // Per-turn deadline: if the AI or a tool call doesn't complete within 5 minutes,
     // abort the turn rather than hanging indefinitely.
     const GHOST_TURN_TIMEOUT_SECS: u64 = 300;
@@ -201,10 +208,10 @@ pub async fn trigger_ghost_turn(
     // 4. Autonomous Conversation Loop
     let mut turn = 0usize;
     loop {
-        if turn >= MAX_GHOST_TURNS {
+        if turn >= max_ghost_turns {
             log::warn!(
                 "Ghost Session {}: reached max turns ({}), stopping",
-                session_id, MAX_GHOST_TURNS
+                session_id, max_ghost_turns
             );
             break;
         }

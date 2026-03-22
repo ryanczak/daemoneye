@@ -85,17 +85,32 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let enabled = parse_bool_field(frontmatter, "enabled");
         let auto_approve_scripts = parse_list_field(frontmatter, "auto_approve_scripts");
         let auto_approve_read_only = parse_bool_field(frontmatter, "auto_approve_read_only");
+        let max_ghost_turns = parse_usize_field(frontmatter, "max_ghost_turns").unwrap_or(0);
 
         let ghost_config = GhostConfig {
             enabled,
             auto_approve_scripts,
             auto_approve_read_only,
+            max_ghost_turns,
         };
 
         (tags, memories, ghost_config, body)
     } else {
         (Vec::new(), Vec::new(), GhostConfig::default(), raw.to_string())
     }
+}
+
+/// Parse a field of the form `key: N` (non-negative integer) from frontmatter text.
+/// Returns `None` if the key is absent or its value is not a valid integer.
+fn parse_usize_field(frontmatter: &str, key: &str) -> Option<usize> {
+    let prefix = format!("{}:", key);
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(&prefix) {
+            return trimmed[prefix.len()..].trim().parse().ok();
+        }
+    }
+    None
 }
 
 /// Parse a field of the form `key: true` or `key: false` from frontmatter text.
@@ -339,6 +354,29 @@ Last updated: 2026-03-01
             assert!(rb.memories.contains(&"disk_thresholds".to_string()));
             assert!(rb.content.contains("# Runbook: disk-check"));
         });
+    }
+
+    #[test]
+    fn parse_usize_field_basic() {
+        assert_eq!(parse_usize_field("max_ghost_turns: 5\n", "max_ghost_turns"), Some(5));
+        assert_eq!(parse_usize_field("max_ghost_turns: 0\n", "max_ghost_turns"), Some(0));
+        assert_eq!(parse_usize_field("other: 3\n", "max_ghost_turns"), None);
+        assert_eq!(parse_usize_field("max_ghost_turns: abc\n", "max_ghost_turns"), None);
+        assert_eq!(parse_usize_field("", "max_ghost_turns"), None);
+    }
+
+    #[test]
+    fn max_ghost_turns_parsed_from_frontmatter() {
+        let raw = "---\nenabled: true\nmax_ghost_turns: 7\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
+        let (_, _, gc, _) = parse_frontmatter(raw);
+        assert_eq!(gc.max_ghost_turns, 7);
+    }
+
+    #[test]
+    fn max_ghost_turns_defaults_to_zero_when_absent() {
+        let raw = "---\nenabled: true\n---\n# Runbook: test\n\n## Alert Criteria\n- x\n";
+        let (_, _, gc, _) = parse_frontmatter(raw);
+        assert_eq!(gc.max_ghost_turns, 0);
     }
 
     #[test]
