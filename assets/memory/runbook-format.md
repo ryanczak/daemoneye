@@ -39,6 +39,9 @@ DaemonEye auto-analysis looks up runbooks by this converted name when an alert f
 
 - `tags`: free-form labels for search_repository
 - `memories`: list of `knowledge` memory keys to auto-load during watchdog analysis
+- `enabled`: (bool) set `true` to enable autonomous Ghost Sessions for this runbook
+- `auto_approve_scripts`: (list) script names authorized for unattended execution
+- `auto_approve_read_only`: (bool) set `true` to auto-approve safe informational commands
 
 ## Key Rules
 
