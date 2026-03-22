@@ -431,7 +431,7 @@ pub async fn handle_client(
                 }
             }
 
-            let context_window_tokens = config.ai.context_window_tokens.unwrap_or(128000);
+            let context_window_tokens = config.ai.context_window();
 
             send_response_split(
                 &mut tx,

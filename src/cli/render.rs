@@ -98,10 +98,7 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_wi
         "new session".to_string()
     } else {
         let pct_used = (prompt_tokens as f64 / context_window.max(1) as f64 * 100.0) as u32;
-        let pct_left = 100u32.saturating_sub(pct_used);
-        let used_k = prompt_tokens / 1000;
-        let win_k = context_window / 1000;
-        format!("{}k / {}k tokens · {}% remaining", used_k, win_k, pct_left)
+        format!("{} / {} ({}%)", prompt_tokens, context_window, pct_used)
     };
     let label = format!(" turn {} · {} ", turn, budget_label);
     let label_vis = visual_len(&label);
@@ -276,13 +273,14 @@ pub fn draw_input_frame_n(
     let inner = width.saturating_sub(2);
 
     let user_host = local_user_host();
+    let uptime = fmt_uptime(start.elapsed());
     let title_left = format!("─ {} ─", user_host); // plain for visual_len
-    let title_right = format!(" up {} ─", fmt_uptime(start.elapsed()));
+    let title_right = format!(" up {} ─", uptime); // plain for visual_len
     let anchors = visual_len(&title_left) + visual_len(&title_right);
     let top = if inner >= anchors {
         let mid = "─".repeat(inner - anchors);
         format!(
-            "\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{mid}\x1b[2m{title_right}\x1b[22m╮\x1b[0m"
+            "\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{mid} \x1b[38;2;220;160;0mup {uptime}\x1b[38;5;88m ─╮\x1b[0m"
         )
     } else {
         let dashes = "─".repeat(inner.saturating_sub(visual_len(&title_left)));
@@ -344,11 +342,8 @@ pub fn draw_status_bar(
     };
 
     let token_str = if prompt_tokens > 0 && context_window > 0 {
-        let used_k = (prompt_tokens + 500) / 1000;
-        let win_k = (context_window + 500) / 1000;
-        let pct_used = (prompt_tokens as u64 * 100 / context_window.max(1) as u64) as u32;
-        let pct_left = 100u32.saturating_sub(pct_used);
-        format!(" ·  {}k / {}k · {}% ", used_k, win_k, pct_left)
+        let pct_used = (prompt_tokens as f64 / context_window.max(1) as f64 * 100.0) as u32;
+        format!(" ·  {} / {} ({}%) ", prompt_tokens, context_window, pct_used)
     } else {
         String::new()
     };
