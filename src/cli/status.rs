@@ -367,13 +367,20 @@ pub async fn run_status() -> Result<()> {
                             continue;
                         }
 
-                        if lk == "─" && rk == "─" {
+                        if lk == "─" && (rk == "─" || rk == "┬─") {
+                            let mut r_line = String::with_capacity(right_width * 3);
+                            for i in 0..right_width {
+                                if rk == "┬─" && i == 24 {
+                                    r_line.push('┬');
+                                } else {
+                                    r_line.push('─');
+                                }
+                            }
                             println!(
-                                "{deep_yellow}{:─<col_width$}┼{:─<right_width$}{reset}",
+                                "{deep_yellow}{:─<col_width$}┼{}{reset}",
                                 "",
-                                "",
-                                col_width = col_width + 1,
-                                right_width = right_width
+                                r_line,
+                                col_width = col_width + 1
                             );
                             continue;
                         } else if lk == "─" {
@@ -419,7 +426,7 @@ pub async fn run_status() -> Result<()> {
 
                             let mut r_line = String::with_capacity(right_width * 3);
                             for i in 0..right_width {
-                                if rk == "┬─" && i == 23 {
+                                if rk == "┬─" && i == 24 {
                                     r_line.push('┬');
                                 } else {
                                     r_line.push('─');
@@ -492,7 +499,7 @@ pub async fn run_status() -> Result<()> {
 
                     let mut r_bottom = String::with_capacity(right_width * 3);
                     for i in 0..right_width {
-                        if i == 23 {
+                        if i == 24 {
                             r_bottom.push('┴');
                         } else {
                             r_bottom.push('─');
