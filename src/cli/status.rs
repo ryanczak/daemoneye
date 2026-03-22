@@ -417,9 +417,13 @@ pub async fn run_status() -> Result<()> {
                                 format!("{}{}", f, " ".repeat(pad))
                             };
 
-                            let mut r_line = "─".repeat(right_width);
-                            if rk == "┬─" && right_width > 23 {
-                                r_line.replace_range(23..24, "┬");
+                            let mut r_line = String::with_capacity(right_width * 3);
+                            for i in 0..right_width {
+                                if rk == "┬─" && i == 23 {
+                                    r_line.push('┬');
+                                } else {
+                                    r_line.push('─');
+                                }
                             }
 
                             println!(
@@ -486,9 +490,13 @@ pub async fn run_status() -> Result<()> {
                     }
 
 
-                    let mut r_bottom = "─".repeat(right_width);
-                    if right_width > 23 {
-                        r_bottom.replace_range(23..24, "┴");
+                    let mut r_bottom = String::with_capacity(right_width * 3);
+                    for i in 0..right_width {
+                        if i == 23 {
+                            r_bottom.push('┴');
+                        } else {
+                            r_bottom.push('─');
+                        }
                     }
                     let bottom_sep = format!(
                         "{:─<left$}┴{}",
