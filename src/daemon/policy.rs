@@ -15,7 +15,7 @@ pub struct GhostPolicy {
 
 impl GhostPolicy {
     /// Create a policy from the ghost configuration inherited from a runbook.
-    pub fn from_config(config: &crate::runbook::GhostConfig) -> Self {
+    pub fn from_config(config: &crate::ipc::GhostConfig) -> Self {
         Self {
             auto_approve_scripts: config.auto_approve_scripts.clone(),
             auto_approve_read_only: config.auto_approve_read_only,

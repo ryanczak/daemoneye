@@ -2240,6 +2240,7 @@ where
                 .map(|r| RunbookListItem {
                     name: r.name.clone(),
                     tags: r.tags.clone(),
+                    ghost_config: r.ghost_config.clone(),
                 })
                 .collect();
             let _ = send_response_split(

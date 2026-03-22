@@ -1,16 +1,6 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-
-/// Configuration for autonomous Ghost Sessions triggered by a runbook.
-#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
-pub struct GhostConfig {
-    /// Whether the AI can operate autonomously in a Ghost Session.
-    pub enabled: bool,
-    /// List of script names (in `~/.daemoneye/scripts/`) pre-approved for execution.
-    pub auto_approve_scripts: Vec<String>,
-    /// Whether to auto-approve known read-only informational commands.
-    pub auto_approve_read_only: bool,
-}
+use crate::ipc::GhostConfig;
 
 /// A runbook loaded from `~/.daemoneye/runbooks/<name>.md`.
 ///

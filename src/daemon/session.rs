@@ -47,7 +47,7 @@ pub struct SessionEntry {
     /// True if this session is autonomous (no attached human user).
     pub is_ghost: bool,
     /// Settings for autonomous execution (inherited from the triggering runbook).
-    pub ghost_config: Option<crate::runbook::GhostConfig>,
+    pub ghost_config: Option<crate::ipc::GhostConfig>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.

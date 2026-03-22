@@ -31,11 +31,23 @@ pub struct ScriptListItem {
     pub size: u64,
 }
 
+/// Configuration for autonomous Ghost Sessions triggered by a runbook.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GhostConfig {
+    /// Whether the AI can operate autonomously in a Ghost Session.
+    pub enabled: bool,
+    /// List of script names (in `~/.daemoneye/scripts/`) pre-approved for execution.
+    pub auto_approve_scripts: Vec<String>,
+    /// Whether to auto-approve known read-only informational commands.
+    pub auto_approve_read_only: bool,
+}
+
 /// Summary of a runbook for the `RunbookList` response.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RunbookListItem {
     pub name: String,
     pub tags: Vec<String>,
+    pub ghost_config: GhostConfig,
 }
 
 /// An entry in the `MemoryList` response.
