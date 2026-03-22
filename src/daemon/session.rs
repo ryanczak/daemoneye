@@ -361,8 +361,11 @@ impl SessionEntry {
             }
         }
         // R1: stop pipe-pane and remove the log file if one was started for this session.
+        // An empty string is the "failed / skipped" sentinel — nothing to clean up.
         if let Some(ref pane_id) = self.pipe_source_pane {
-            crate::tmux::stop_pipe_pane(pane_id);
+            if !pane_id.is_empty() {
+                crate::tmux::stop_pipe_pane(pane_id);
+            }
         }
     }
 }

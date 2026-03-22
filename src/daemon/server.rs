@@ -987,21 +987,35 @@ pub async fn handle_client(
             // capture full terminal output history (including content that has scrolled
             // past the tmux scrollback buffer).  Best-effort — falls back to
             // capture-pane silently if pipe-pane is unavailable.
+            //
+            // `pipe_source_pane = Some("")` is used as a "don't retry" sentinel:
+            // it means we attempted and failed (or deliberately skipped), so we
+            // fall back to capture-pane for all subsequent turns without retrying.
             if entry.pipe_source_pane.is_none() {
                 if let Some(ref pane_id) = client_pane {
-                    if crate::tmux::pane_exists(pane_id) {
+                    // Skip if client_pane == chat_pane: the chat pane runs the
+                    // daemoneye UI, not the user's work.  Piping it is useless and
+                    // can transiently fail immediately after split-window creates the
+                    // pane (pty not yet fully initialized) causing repeated log noise.
+                    let is_chat_pane = chat_pane.as_deref() == Some(pane_id.as_str());
+                    if is_chat_pane {
+                        log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
+                        entry.pipe_source_pane = Some(String::new()); // don't retry
+                    } else if crate::tmux::pane_exists(pane_id) {
                         match crate::tmux::start_pipe_pane(pane_id) {
                             Ok(_) => {
                                 entry.pipe_source_pane = Some(pane_id.clone());
                             }
                             Err(e) => {
                                 // Pane existed at check time but was gone by the time
-                                // pipe-pane ran (TOCTOU race) — best-effort, not actionable.
+                                // pipe-pane ran (TOCTOU race) — don't retry this session.
                                 log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                                entry.pipe_source_pane = Some(String::new()); // don't retry
                             }
                         }
                     } else {
                         log::debug!("R1: skipping pipe-pane for {} — pane no longer exists", pane_id);
+                        entry.pipe_source_pane = Some(String::new()); // don't retry
                     }
                 }
             }
