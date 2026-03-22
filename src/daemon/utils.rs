@@ -154,6 +154,27 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     re.is_match(cmd)
 }
 
+/// Returns true if a command is heuristically "read-only" (non-mutating).
+///
+/// This is a conservative list of binaries known to be informational.
+/// Returns false if the command contains shell redirection or pipes,
+/// as these can be used to mutate the filesystem (e.g. `ls > file`).
+pub fn is_read_only_command(command: &str) -> bool {
+    let cmd = command.trim().split_whitespace().next().unwrap_or("");
+    // Strip any leading path prefix (e.g. /usr/bin/cat → cat).
+    let cmd = cmd.rsplit('/').next().unwrap_or(cmd);
+
+    let read_only_binaries = [
+        "cat", "ls", "grep", "egrep", "fgrep", "tail", "head", "df", "free",
+        "uptime", "who", "w", "id", "ps", "top", "htop", "journalctl",
+        "dmesg", "find", "locate", "stat", "du", "hostname", "uname",
+        "ip", "ifconfig", "netstat", "ss", "lsof", "mount", "printenv", "env",
+        "date", "diff", "wc", "sort", "uniq", "file", "which", "whereis"
+    ];
+
+    read_only_binaries.contains(&cmd) && !command.contains('>') && !command.contains('|')
+}
+
 /// Write a structured JSONL event record to `~/.daemoneye/events.jsonl`.
 ///
 /// Each call appends one JSON object per line.  The top-level fields

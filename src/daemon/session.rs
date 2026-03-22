@@ -44,6 +44,10 @@ pub struct SessionEntry {
     /// The source pane that has `pipe-pane` active for this session (R1).
     /// `None` before the first Ask or when pipe-pane is not available.
     pub pipe_source_pane: Option<String>,
+    /// True if this session is autonomous (no attached human user).
+    pub is_ghost: bool,
+    /// Settings for autonomous execution (inherited from the triggering runbook).
+    pub ghost_config: Option<crate::runbook::GhostConfig>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.

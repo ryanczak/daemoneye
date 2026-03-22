@@ -664,6 +664,8 @@ pub async fn handle_client(
                 last_detach: None,
                 messages_at_detach: 0,
                 pipe_source_pane: None,
+                is_ghost: false,
+                ghost_config: None,
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();

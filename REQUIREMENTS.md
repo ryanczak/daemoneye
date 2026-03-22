@@ -40,6 +40,8 @@ This document specifies the functional and non-functional requirements for Daemo
 
 - **FR-1.2.16**: When the user's tmux environment contains two or more sessions, the daemon MUST include an `[OTHER SESSIONS]` block in every terminal context snapshot (both automatic first-turn and on-demand `get_terminal_context` calls). Each entry MUST include the session name, window count, time elapsed since the session's last activity (formatted as `Xm ago`, `XhYm ago`, etc.), and whether a client is currently attached. The block MUST be omitted when the snapshot has no pane or environment data (to prevent polluting the `(no terminal context available)` fallback path during tests or when the tmux session is unavailable).
 
+- **FR-1.2.17**: The daemon MUST support Autonomous Ghost Sessions for unattended alert response. A Ghost Session: (a) is triggered by a webhook when `auto_analyze = true` and the matching runbook has `ghost_mode.enabled = true`; (b) runs in a dedicated headless tmux window (`de-incident-<alertname>-<id>`) in the user's active session or a detached `daemoneye-incidents` session; (c) is governed by a `GhostPolicy` that auto-approves informational read-only commands and scripts explicitly whitelisted in the runbook's `auto_approve_scripts` frontmatter field; (d) automatically denies any mutating command or sudo prompt not covered by the whitelist; (e) generates a catch-up summary for the user upon their return.
+
 ### 1.3 Prompt Library
 
 - **FR-1.3.1**: The application MUST include a library of pre-defined prompts for common tasks.

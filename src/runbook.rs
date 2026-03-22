@@ -1,6 +1,17 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
+/// Configuration for autonomous Ghost Sessions triggered by a runbook.
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
+pub struct GhostConfig {
+    /// Whether the AI can operate autonomously in a Ghost Session.
+    pub enabled: bool,
+    /// List of script names (in `~/.daemoneye/scripts/`) pre-approved for execution.
+    pub auto_approve_scripts: Vec<String>,
+    /// Whether to auto-approve known read-only informational commands.
+    pub auto_approve_read_only: bool,
+}
+
 /// A runbook loaded from `~/.daemoneye/runbooks/<name>.md`.
 ///
 /// Runbooks provide context for watchdog AI analysis and are managed
@@ -17,6 +28,8 @@ pub struct Runbook {
     pub tags: Vec<String>,
     /// Knowledge memory keys to load when this runbook runs as a watchdog.
     pub memories: Vec<String>,
+    /// Settings for autonomous response (Ghost Session).
+    pub ghost_config: GhostConfig,
 }
 
 /// Metadata returned by `list_runbooks()`.
@@ -24,6 +37,7 @@ pub struct Runbook {
 pub struct RunbookInfo {
     pub name: String,
     pub tags: Vec<String>,
+    pub ghost_config: GhostConfig,
 }
 
 /// Return the path to the runbooks directory: `~/.daemoneye/runbooks/`.
@@ -60,11 +74,11 @@ fn validate_runbook_content(content: &str) -> Result<()> {
 /// Parse YAML-like frontmatter from markdown.
 ///
 /// If the content starts with `---\n`, finds the closing `\n---\n` and
-/// extracts `tags:` and `memories:` list lines.  Returns
-/// `(tags, memories, body_after_frontmatter)`.
-fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, String) {
+/// extracts `tags:`, `memories:`, and `ghost_mode:` fields.  Returns
+/// `(tags, memories, ghost_config, body_after_frontmatter)`.
+fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, String) {
     if !raw.starts_with("---\n") {
-        return (Vec::new(), Vec::new(), raw.to_string());
+        return (Vec::new(), Vec::new(), GhostConfig::default(), raw.to_string());
     }
     // Find closing delimiter
     let search_from = 4; // after "---\n"
@@ -76,10 +90,35 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, String) {
 
         let tags = parse_list_field(frontmatter, "tags");
         let memories = parse_list_field(frontmatter, "memories");
-        (tags, memories, body)
+        
+        // Manual parsing for ghost_mode fields. Supports flat keys for now.
+        let enabled = parse_bool_field(frontmatter, "enabled");
+        let auto_approve_scripts = parse_list_field(frontmatter, "auto_approve_scripts");
+        let auto_approve_read_only = parse_bool_field(frontmatter, "auto_approve_read_only");
+
+        let ghost_config = GhostConfig {
+            enabled,
+            auto_approve_scripts,
+            auto_approve_read_only,
+        };
+
+        (tags, memories, ghost_config, body)
     } else {
-        (Vec::new(), Vec::new(), raw.to_string())
+        (Vec::new(), Vec::new(), GhostConfig::default(), raw.to_string())
     }
+}
+
+/// Parse a field of the form `key: true` or `key: false` from frontmatter text.
+fn parse_bool_field(frontmatter: &str, key: &str) -> bool {
+    let prefix = format!("{}:", key);
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(&prefix) {
+            let rest = trimmed[prefix.len()..].trim().to_lowercase();
+            return rest == "true";
+        }
+    }
+    false
 }
 
 /// Parse a field of the form `key: [item1, item2, item3]` from frontmatter text.
@@ -108,13 +147,14 @@ pub fn load_runbook(name: &str) -> Result<Runbook> {
     let path = runbooks_dir().join(format!("{}.md", name));
     let raw = std::fs::read_to_string(&path)
         .with_context(|| format!("reading runbook at {}", path.display()))?;
-    let (tags, memories, content) = parse_frontmatter(&raw);
+    let (tags, memories, ghost_config, content) = parse_frontmatter(&raw);
     crate::daemon::stats::inc_runbooks_executed();
     Ok(Runbook {
         name: name.to_string(),
         content,
         tags,
         memories,
+        ghost_config,
     })
 }
 
@@ -161,13 +201,13 @@ pub fn list_runbooks() -> Result<Vec<RunbookInfo>> {
             }
             let stem = path.file_stem()?.to_string_lossy().to_string();
             // Best-effort tag extraction — ignore errors
-            let tags = if let Ok(raw) = std::fs::read_to_string(&path) {
-                let (t, _, _) = parse_frontmatter(&raw);
-                t
+            let (tags, ghost_config) = if let Ok(raw) = std::fs::read_to_string(&path) {
+                let (t, _, gc, _) = parse_frontmatter(&raw);
+                (t, gc)
             } else {
-                Vec::new()
+                (Vec::new(), GhostConfig::default())
             };
-            Some(RunbookInfo { name: stem, tags })
+            Some(RunbookInfo { name: stem, tags, ghost_config })
         })
         .collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
