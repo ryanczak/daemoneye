@@ -535,13 +535,17 @@ fn camel_to_kebab(s: &str) -> String {
 /// Scans lines in reverse so the field is found quickly even in long responses.
 /// Returns `Some(true)` for YES, `Some(false)` for NO, `None` if absent.
 fn parse_ghost_trigger(response: &str) -> Option<bool> {
+    const PREFIX: &str = "GHOST_TRIGGER:";
     for line in response.lines().rev() {
-        let t = line.trim();
-        if t.eq_ignore_ascii_case("GHOST_TRIGGER: YES") {
-            return Some(true);
-        }
-        if t.eq_ignore_ascii_case("GHOST_TRIGGER: NO") {
-            return Some(false);
+        let upper = line.trim().to_uppercase();
+        if let Some(rest) = upper.strip_prefix(PREFIX) {
+            let val = rest.trim();
+            if val.starts_with("YES") {
+                return Some(true);
+            }
+            if val.starts_with("NO") {
+                return Some(false);
+            }
         }
     }
     None
@@ -604,7 +608,9 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     );
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-    let _ = client.chat(&system, msgs, ai_tx).await;
+    if let Err(e) = client.chat(&system, msgs, ai_tx).await {
+        log::error!("Webhook: runbook analysis API call failed for '{}': {}", alert.alert_name, e);
+    }
 
     let mut response = String::new();
     while let Some(ev) = ai_rx.recv().await {
@@ -617,6 +623,22 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     // keyword for runbooks whose AI response predates the structured format.
     let should_act = parse_ghost_trigger(&response)
         .unwrap_or_else(|| response.to_uppercase().contains("ALERT"));
+
+    log::info!(
+        "Webhook: analysis for '{}' complete — should_act={} ghost_enabled={} (response: {} chars)",
+        alert.alert_name, should_act, rb.ghost_config.enabled, response.len()
+    );
+    log::debug!("Webhook: analysis response for '{}':\n{}", alert.alert_name, response.trim());
+
+    log_event(
+        "webhook_analysis",
+        serde_json::json!({
+            "alert_name": alert.alert_name,
+            "runbook": rb.name,
+            "ghost_trigger": should_act,
+            "ghost_enabled": rb.ghost_config.enabled,
+        }),
+    );
 
     if should_act {
         // If the runbook has ghost mode enabled, trigger a ghost session.
@@ -680,16 +702,6 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         let first_line = analysis.lines().next().unwrap_or(&analysis).to_string();
         notify_chat_panes(&state.sessions, &first_line);
         fire_notification(&alert.alert_name, &analysis, &state.config);
-
-        log_event(
-            "webhook_analysis",
-            serde_json::json!({
-                "alert_name": alert.alert_name,
-                "runbook": rb.name,
-                "ghost_trigger": should_act,
-                "ghost_enabled": rb.ghost_config.enabled,
-            }),
-        );
     }
 }
 

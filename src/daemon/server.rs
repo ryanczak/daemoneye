@@ -994,7 +994,9 @@ pub async fn handle_client(
                                 entry.pipe_source_pane = Some(pane_id.clone());
                             }
                             Err(e) => {
-                                log::warn!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                                // Pane existed at check time but was gone by the time
+                                // pipe-pane ran (TOCTOU race) — best-effort, not actionable.
+                                log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
                             }
                         }
                     } else {
