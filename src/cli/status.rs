@@ -193,18 +193,50 @@ pub async fn run_status() -> Result<()> {
                     }
 
                     right_items.push(("─".to_string(), "".to_string()));
-                    right_items.push(("§".to_string(), "Redactions".to_string()));
+                    
+                    // We render Redactions and Ghosts side-by-side using a combined list.
+                    // The '§' header is handled specially to show both titles.
+                    right_items.push((
+                        "§".to_string(),
+                        format!(
+                            "{:<23}{deep_yellow}│{reset}{blood_red}Ghosts",
+                            "Redactions",
+                            deep_yellow = deep_yellow,
+                            reset = reset,
+                            blood_red = blood_red
+                        ),
+                    ));
+
                     let mut redact_sorted: Vec<_> = redaction_counts.into_iter().collect();
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                    for (rtype, count) in redact_sorted {
-                        right_items.push((format!("{}:", rtype), count.to_string()));
-                    }
 
-                    right_items.push(("─".to_string(), "".to_string()));
-                    right_items.push(("§".to_string(), "Ghosts".to_string()));
-                    right_items.push(("Launched:".to_string(), ghosts_launched.to_string()));
-                    right_items.push(("Completed:".to_string(), ghosts_completed.to_string()));
-                    right_items.push(("Failed:".to_string(), ghosts_failed.to_string()));
+                    let ghost_metrics = vec![
+                        (format!("{:<10}", "Launched:"), ghosts_launched.to_string()),
+                        (format!("{:<10}", "Completed:"), ghosts_completed.to_string()),
+                        (format!("{:<10}", "Failed:"), ghosts_failed.to_string()),
+                    ];
+
+                    for (i, (rtype, count)) in redact_sorted.into_iter().enumerate() {
+                        let left_col = format!("{:<18} {}", rtype + ":", count);
+                        if let Some((gk, gv)) = ghost_metrics.get(i) {
+                            right_items.push((
+                                "".to_string(),
+                                format!(
+                                    "{:<23}{deep_yellow}│{reset} {} {}",
+                                    left_col,
+                                    gk,
+                                    gv,
+                                    deep_yellow = deep_yellow,
+                                    reset = reset
+                                ),
+                            ));
+                        } else {
+                            right_items.push((
+                                "".to_string(),
+                                format!("{:<23}{deep_yellow}│{reset}", left_col, deep_yellow = deep_yellow, reset = reset),
+                            ));
+                        }
+                    }
 
                     let term_width: usize = {
                         fn tiocgwinsz(fd: libc::c_int) -> Option<usize> {
