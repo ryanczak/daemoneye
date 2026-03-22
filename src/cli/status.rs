@@ -192,7 +192,9 @@ pub async fn run_status() -> Result<()> {
                         ));
                     }
 
-                    right_items.push(("─".to_string(), "".to_string()));
+                    // Use a special marker to indicate this separator needs a top joint (┬)
+                    // for the side-by-side divider.
+                    right_items.push(("┬─".to_string(), "".to_string()));
                     
                     // We render Redactions and Ghosts side-by-side using a combined list.
                     // The '§' header is handled specially to show both titles.
@@ -387,7 +389,7 @@ pub async fn run_status() -> Result<()> {
                                 col_width = col_width + 1
                             );
                             continue;
-                        } else if rk == "─" {
+                        } else if rk == "─" || rk == "┬─" {
                             let lv_trunc = if !lk.is_empty() {
                                 let lv_chars: Vec<char> = lv.chars().collect();
                                 if lv_chars.len() > col_width - 19 {
@@ -414,11 +416,16 @@ pub async fn run_status() -> Result<()> {
                                 };
                                 format!("{}{}", f, " ".repeat(pad))
                             };
+
+                            let mut r_line = "─".repeat(right_width);
+                            if rk == "┬─" && right_width > 23 {
+                                r_line.replace_range(23..24, "┬");
+                            }
+
                             println!(
-                                "{} {deep_yellow}├{:─<right_width$}{reset}",
+                                "{} {deep_yellow}├{}{reset}",
                                 l_str,
-                                "",
-                                right_width = right_width
+                                r_line
                             );
                             continue;
                         }
@@ -479,12 +486,15 @@ pub async fn run_status() -> Result<()> {
                     }
 
 
+                    let mut r_bottom = "─".repeat(right_width);
+                    if right_width > 23 {
+                        r_bottom.replace_range(23..24, "┴");
+                    }
                     let bottom_sep = format!(
-                        "{:─<left$}┴{:─<right$}",
+                        "{:─<left$}┴{}",
                         "",
-                        "",
-                        left = col_width + 1,
-                        right = right_width
+                        r_bottom,
+                        left = col_width + 1
                     );
                     println!("{deep_yellow}{}{reset}", bottom_sep);
                     println!("{}Recent Commands{}", blood_red, reset);
