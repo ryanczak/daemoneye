@@ -219,9 +219,17 @@ pub async fn run_background_in_window(
 ) -> String {
     let id_short = &tool_id[..tool_id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
+    
+    let is_ghost = session_id.as_ref().map(|sid| sid.starts_with("ghost-")).unwrap_or(false);
+    let prefix = if is_ghost {
+        "de-incident-"
+    } else {
+        crate::daemon::BG_WINDOW_PREFIX
+    };
+
     let win_name = format!(
         "{}{}-{}-{}",
-        crate::daemon::BG_WINDOW_PREFIX,
+        prefix,
         session,
         now,
         id_short

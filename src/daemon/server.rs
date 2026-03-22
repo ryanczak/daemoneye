@@ -113,7 +113,7 @@ pub async fn trigger_ghost_turn(
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
     // 1. Get a copy of the session entry
-    let (messages, _ghost_config, tmux_session, target_pane) = {
+    let (_messages, _ghost_config, tmux_session, target_pane) = {
         let store = sessions.lock().unwrap_or_log();
         let Some(entry) = store.get(session_id) else {
             anyhow::bail!("Ghost Session '{}' not found", session_id);
@@ -150,33 +150,45 @@ pub async fn trigger_ghost_turn(
     // because execute_tool_call will hit the ghost approval gate.
     
     let api_key = config.ai.resolve_api_key();
-    let client = crate::ai::make_client(
+    let client: Arc<Box<dyn crate::ai::AiClient>> = Arc::new(crate::ai::make_client(
         &config.ai.provider,
         api_key,
         config.ai.model.clone(),
         config.ai.effective_base_url(),
-    );
+    ));
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
-    // 4. Start the AI chat turn
-    tokio::spawn(async move {
-        if let Err(e) = client.chat(&system, messages, ai_tx).await {
-            log::error!("Ghost Session AI error: {}", e);
-        }
-    });
+    // 4. Autonomous Conversation Loop
+    loop {
+        let chat_messages = {
+            let store = sessions.lock().unwrap_or_log();
+            let Some(entry) = store.get(session_id) else { break; };
+            entry.messages.clone()
+        };
 
-    let mut assistant_content = String::new();
-    let mut pending_calls = Vec::new();
+        let client_clone = Arc::clone(&client);
+        let system_clone = system.clone();
+        let ai_tx_clone = ai_tx.clone();
 
-    // 5. Process AI events headlessly
-    while let Some(ev) = ai_rx.recv().await {
-        match ev {
-            AiEvent::Token(t) => {
-                assistant_content.push_str(&t);
+        tokio::spawn(async move {
+            if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx_clone).await {
+                log::error!("Ghost Session AI error: {}", e);
             }
-            AiEvent::ToolCall(id, command, background, target_pane, retry_in_pane, thought_signature) => {
-                if background {
+        });
+
+        let mut assistant_content = String::new();
+        let mut pending_calls = Vec::new();
+
+        // Process events for this turn
+        while let Some(ev) = ai_rx.recv().await {
+            match ev {
+                AiEvent::Token(t) => {
+                    assistant_content.push_str(&t);
+                }
+                AiEvent::ToolCall(id, command, _background, _target_pane, retry_in_pane, thought_signature) => {
+                    // Ghost Sessions MUST ALWAYS use background mode for terminal commands.
+                    // This ensures they run in a dedicated window and never touch user panes.
                     pending_calls.push(PendingCall::Background {
                         id,
                         cmd: command,
@@ -184,67 +196,102 @@ pub async fn trigger_ghost_turn(
                         _credential: None,
                         retry_pane: retry_in_pane,
                     });
-                } else {
-                    pending_calls.push(PendingCall::Foreground {
-                        id,
-                        cmd: command,
-                        thought_signature,
-                        target: target_pane,
+                }
+                AiEvent::ListRunbooks { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
+                }
+                AiEvent::ReadRunbook { id, thought_signature, name } => {
+                    pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
+                }
+                AiEvent::SearchRepository { id, thought_signature, query, kind } => {
+                    pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
+                }
+                AiEvent::ListMemories { id, thought_signature, category } => {
+                    pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
+                }
+                AiEvent::ReadMemory { id, thought_signature, key, category } => {
+                    pending_calls.push(PendingCall::ReadMemory { id, thought_signature, key, category });
+                }
+                AiEvent::GetTerminalContext { id, thought_signature } => {
+                    pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
+                }
+                AiEvent::ListPanes { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListPanes { id, thought_signature });
+                }
+                AiEvent::WriteRunbook { id, thought_signature, name, content } => {
+                    pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });
+                }
+                AiEvent::DeleteRunbook { id, thought_signature, name } => {
+                    pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
+                }
+                AiEvent::WriteScript { id, thought_signature, script_name, content } => {
+                    pending_calls.push(PendingCall::WriteScript { id, thought_signature, script_name, content });
+                }
+                AiEvent::DeleteScript { id, thought_signature, script_name } => {
+                    pending_calls.push(PendingCall::DeleteScript { id, thought_signature, script_name });
+                }
+                AiEvent::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook } => {
+                    pending_calls.push(PendingCall::ScheduleCommand { 
+                        id, thought_signature, name, command, is_script, run_at, interval, runbook 
                     });
                 }
-            }
-            // ... map other tool events to PendingCall variants as needed ...
-            AiEvent::Done(_) => break,
-            AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
-            _ => {
-                // For simplicity in this first iteration, we only support 
-                // command execution tools in ghost sessions.
+                AiEvent::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => {
+                    pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
+                }
+                AiEvent::Done(_) => break,
+                AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
+                _ => {}
             }
         }
-    }
 
-    // 6. Execute approved tool calls
-    let mut tool_results = Vec::new();
+        // Execute approved tool calls
+        let mut tool_results = Vec::new();
 
-    for call in &pending_calls {
-        let outcome = crate::daemon::executor::execute_tool_call(
-            call,
-            &mut tx,
-            &mut rx,
-            Some(session_id),
-            &tmux_session,
-            None, // No chat pane
-            cache,
-            sessions,
-            schedule_store,
-        ).await?;
+        for call in &pending_calls {
+            let outcome = crate::daemon::executor::execute_tool_call(
+                call,
+                &mut tx,
+                &mut rx,
+                Some(session_id),
+                &tmux_session,
+                None, // No chat pane
+                cache,
+                sessions,
+                schedule_store,
+            ).await?;
 
-        match outcome {
-            crate::daemon::executor::ToolCallOutcome::Result(r) => {
-                tool_results.push(crate::ai::ToolResult {
-                    tool_call_id: call.id().to_string(),
-                    tool_name: call.tool_name().to_string(),
-                    content: r,
-                });
+            match outcome {
+                crate::daemon::executor::ToolCallOutcome::Result(r) => {
+                    tool_results.push(crate::ai::ToolResult {
+                        tool_call_id: call.id().to_string(),
+                        tool_name: call.tool_name().to_string(),
+                        content: r,
+                    });
+                }
+                _ => {}
             }
-            _ => {}
         }
-    }
 
-    // 7. Update session history
-    let assistant_msg = Message {
-        role: "assistant".to_string(),
-        content: assistant_content,
-        tool_calls: if pending_calls.is_empty() { None } else { Some(pending_calls.iter().map(|c| c.to_tool_call()).collect()) },
-        tool_results: if tool_results.is_empty() { None } else { Some(tool_results) },
-    };
-    
-    append_session_message(session_id, &assistant_msg);
-    {
-        let mut store = sessions.lock().unwrap_or_log();
-        if let Some(entry) = store.get_mut(session_id) {
-            entry.messages.push(assistant_msg);
-            entry.last_accessed = Instant::now();
+        // Update session history
+        let assistant_msg = Message {
+            role: "assistant".to_string(),
+            content: assistant_content,
+            tool_calls: if pending_calls.is_empty() { None } else { Some(pending_calls.iter().map(|c| c.to_tool_call()).collect()) },
+            tool_results: if tool_results.is_empty() { None } else { Some(tool_results) },
+        };
+        
+        append_session_message(session_id, &assistant_msg);
+        {
+            let mut store = sessions.lock().unwrap_or_log();
+            if let Some(entry) = store.get_mut(session_id) {
+                entry.messages.push(assistant_msg);
+                entry.last_accessed = Instant::now();
+            }
+        }
+
+        // If no tool calls were made, the conversation is finished.
+        if pending_calls.is_empty() {
+            break;
         }
     }
 

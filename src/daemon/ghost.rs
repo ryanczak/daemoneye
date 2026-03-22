@@ -5,7 +5,7 @@ use crate::util::UnpoisonExt;
 use crate::daemon::session::{SessionEntry, SessionStore};
 use crate::runbook::Runbook;
 use crate::ai::Message;
-use crate::tmux::{ensure_incident_session, create_incident_window};
+use crate::tmux::ensure_incident_session;
 
 /// Orchestrates the lifecycle of an autonomous Ghost Session.
 pub struct GhostManager;
@@ -24,26 +24,22 @@ impl GhostManager {
     ) -> Result<String> {
         let alert_name = &runbook.name;
         
-        // 1. Ensure host tmux session
+        // 1. Ensure host tmux session exists (active or detached)
         let tmux_session = ensure_incident_session()
             .context("GhostManager: failed to ensure incident session")?;
         
-        // 2. Create incident window
-        let (_window_idx, pane_id) = create_incident_window(&tmux_session, alert_name)
-            .context("GhostManager: failed to create incident window")?;
-        
-        // 3. Initialize ghost session entry
+        // 2. Initialize ghost session entry
         let session_id = format!("ghost-{}-{}", alert_name, uuid::Uuid::new_v4().simple());
         
         let mut messages = Vec::new();
         
         // System instruction for Ghost Session
         let system_msg = Message {
-            role: "assistant".to_string(), // Injected as "system" context but using assistant/user turns
+            role: "assistant".to_string(),
             content: format!(
                 "[System] You are operating in an unattended Ghost Session responding to: {}\n\n\
                  Investigate and remediate autonomously using the provided runbook. \
-                 You must use pre-approved scripts for destructive or sudo actions. \
+                 You must use background terminal commands (which will run in de-incident-* windows). \
                  No human user is present to approve commands or answer questions.",
                 alert_msg
             ),
@@ -55,8 +51,8 @@ impl GhostManager {
         let entry = SessionEntry {
             messages,
             last_accessed: Instant::now(),
-            chat_pane: None, // No interactive chat pane
-            default_target_pane: Some(pane_id.clone()),
+            chat_pane: None,
+            default_target_pane: None, // Ghost sessions use background windows exclusively
             bg_windows: Vec::new(),
             last_prompt_tokens: 0,
             tmux_session: tmux_session.clone(),
@@ -70,16 +66,15 @@ impl GhostManager {
         {
             let mut store = sessions.lock().unwrap_or_log();
             store.insert(session_id.clone(), entry);
-            }
+        }
 
-            crate::daemon::stats::inc_ghosts_launched();
+        crate::daemon::stats::inc_ghosts_launched();
 
-            log::info!(
-
-            "Ghost Session started: {} (window: {}, pane: {})",
+        log::info!(
+            "Ghost Session started: {} (alert: {}, session: {})",
             session_id,
             alert_name,
-            pane_id
+            tmux_session
         );
 
         Ok(session_id)

@@ -345,30 +345,6 @@ pub fn ensure_incident_session() -> Result<String> {
     Ok(INCIDENT_SESSION_NAME.to_string())
 }
 
-/// Create a new window for an incident in the specified session.
-///
-/// Returns the window-relative index and pane ID of the newly created window.
-pub fn create_incident_window(session: &str, alert_name: &str) -> Result<(usize, String)> {
-    let ts = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
-    let window_name = format!("de-incident-{}-{}", alert_name, &ts[8..]); // Shorten TS to HHMMSS
-    
-    let out = Command::new("tmux")
-        .args(["new-window", "-d", "-t", session, "-n", &window_name, "-P", "-F", "#{window_index}\t#{pane_id}"])
-        .output()?;
-
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        anyhow::bail!("Failed to create incident window: {}", err);
-    }
-
-    let s = String::from_utf8_lossy(&out.stdout);
-    let mut parts = s.trim().splitn(2, '\t');
-    let idx = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-    let pane_id = parts.next().unwrap_or("").to_string();
-
-    Ok((idx, pane_id))
-}
-
 /// List all pane IDs in a tmux session (across all windows).
 pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
     let out = Command::new("tmux")
