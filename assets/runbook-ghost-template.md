@@ -9,6 +9,7 @@ memories: [relevant-knowledge-key]
 enabled: true
 auto_approve_scripts: [remediation-script.sh]
 auto_approve_read_only: true
+max_ghost_turns: 20
 ---
 # Runbook: <name>
 
@@ -33,3 +34,4 @@ Lessons learned and manual overrides performed by humans.
 - `enabled`: Set to `true` to allow DaemonEye to spawn an autonomous Ghost Session for this alert.
 - `auto_approve_scripts`: A list of script names in `~/.daemoneye/scripts/` that the AI is authorized to run without human approval.
 - `auto_approve_read_only`: Set to `true` to allow the AI to run safe informational commands (e.g., `ps`, `df`, `ls`) automatically.
+- `max_ghost_turns`: Maximum number of AI turns before the session is forcibly stopped. Defaults to 20 if omitted or set to 0.
