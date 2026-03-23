@@ -41,6 +41,8 @@ pub const DAEMON_WINDOW_PREFIX: &str = "de-";
 pub const BG_WINDOW_PREFIX: &str = "de-bg-";
 /// Window-name prefix for scheduled-job windows (`de-sched-<ts>-<id>`).
 pub const SCHED_WINDOW_PREFIX: &str = "de-sched-";
+/// Window-name prefix for ghost-session (autonomous remediation) windows (`de-incident-<ts>-<id>`).
+pub const INCIDENT_WINDOW_PREFIX: &str = "de-incident-";
 
 pub use server::*;
 pub use session::*;

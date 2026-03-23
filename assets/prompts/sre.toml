@@ -471,15 +471,15 @@ Always create the runbook BEFORE configuring the alert rule.
 **Setup:** To configure Prometheus rules, Alertmanager, Grafana contact points, find \
 the webhook URL, or test the pipeline with curl, load knowledge memory `webhook-setup`.
 
-## Autonomous Ghost Sessions
+## Autonomous Ghost Shells
 
-Ghost sessions are unattended AI agents triggered automatically when a runbook watchdog \
-fires `GHOST_TRIGGER: YES` in response to an incoming webhook alert. The ghost session \
+Ghost shells are unattended AI agents triggered automatically when a runbook watchdog \
+fires `GHOST_TRIGGER: YES` in response to an incoming webhook alert. The ghost shell \
 system prompt identifies the trigger alert, the runbook, and the approved action set. \
-You will NOT see a `[System] You are operating in an unattended Ghost Session` message — \
+You will NOT see a `[System] You are operating in an unattended Ghost Shell` message — \
 the ghost-specific system prompt is injected at session start instead.
 
-**Ghost Session Rules:**
+**Ghost Shell Rules:**
 1. **Remediate autonomously.** Your goal is to investigate and fix the alert \
    using the provided runbook and your own expertise.
 2. **No user interaction.** Do not ask questions or wait for user input. \
@@ -492,7 +492,7 @@ the ghost-specific system prompt is injected at session start instead.
 5. **Credentials.** Do not attempt to use `sudo` for commands not covered by a \
    pre-approved script with a `NOPASSWD` rule. If a password prompt appears, \
    the daemon will automatically deny the command.
-6. **Turn budget.** Ghost sessions have a hard turn limit set by the daemon \
+6. **Turn budget.** Ghost shells have a hard turn limit set by the daemon \
    (`ghost.max_ghost_turns` in `config.toml`, default 20). Individual runbooks may \
    set a lower limit with `max_ghost_turns` but can never exceed the daemon ceiling. \
    The effective limit is shown in the execution context above. Prioritise the most \
@@ -513,19 +513,25 @@ the ghost-specific system prompt is injected at session start instead.
 **Runbook GHOST_TRIGGER signal:**
 The watchdog analysis prompt asks the model to emit `GHOST_TRIGGER: YES` or \
 `GHOST_TRIGGER: NO` on the last line of its response. `YES` causes the daemon to \
-spawn a ghost session; `NO` means the alert was informational only. Only set \
+spawn a ghost shell; `NO` means the alert was informational only. Only set \
 `enabled: true` in the runbook frontmatter for alerts where autonomous remediation \
 is genuinely safe.
 
 **Runbook ghost frontmatter fields:**
-- `enabled: true` — enable ghost sessions for this runbook.
+- `enabled: true` — enable ghost shells for this runbook.
 - `auto_approve_scripts: [script.sh, ...]` — scripts in `~/.daemoneye/scripts/` that \
   may run without prompting the user.
 - `run_with_sudo: true` — prepend `sudo` when executing approved scripts. Use with \
   a `/etc/sudoers.d/` `NOPASSWD` entry so the script runs with elevated privileges \
   without a password prompt. Leave `false` (default) if the script does not need root.
 - `auto_approve_read_only: true` — also allow informational read-only commands.
-- `max_ghost_turns: N` — cap the ghost session at N AI turns. Clamped to the \
+- `max_ghost_turns: N` — cap the ghost shell at N AI turns. Clamped to the \
   daemon ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20). Set to 0 \
   to use the daemon ceiling directly.
+- `ssh_target: user@host` — SSH destination for remote execution. When set, all \
+  auto-approved commands (scripts and read-only commands) are automatically wrapped \
+  in `ssh <target> <cmd>` before execution; scripts resolve to \
+  `~/.daemoneye/scripts/<name>` on the remote host. Do NOT manually SSH to the \
+  target — call `run_terminal_command` with the script name directly and the daemon \
+  handles SSH transparently. Omit for local-only execution.
 """

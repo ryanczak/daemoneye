@@ -60,9 +60,9 @@ pub(crate) fn build_catchup_brief(
                 || c.contains("[Webhook Alert]")
                 || c.contains("[Watchdog]")
                 || c.contains("[Watch Pane")
-                || c.contains("[Ghost Session Started]")
-                || c.contains("[Ghost Session Completed]")
-                || c.contains("[Ghost Session Failed]")
+                || c.contains("[Ghost Shell Started]")
+                || c.contains("[Ghost Shell Completed]")
+                || c.contains("[Ghost Shell Failed]")
             {
                 // Extract just the first line as a terse summary.
                 let first_line = c.lines().next().unwrap_or(c.as_str()).trim();
@@ -99,7 +99,7 @@ pub(crate) fn build_catchup_brief(
     ))
 }
 
-/// Trigger a headless AI turn for a Ghost Session.
+/// Trigger a headless AI turn for a Ghost Shell.
 ///
 /// This simulates a user's `Ask` request but without an attached terminal.
 /// Results and tool outcomes are persisted to the session file.
@@ -114,7 +114,7 @@ pub async fn trigger_ghost_turn(
     let (_messages, _ghost_config, tmux_session, _target_pane) = {
         let store = sessions.lock().unwrap_or_log();
         let Some(entry) = store.get(session_id) else {
-            anyhow::bail!("Ghost Session '{}' not found", session_id);
+            anyhow::bail!("Ghost Shell '{}' not found", session_id);
         };
         (
             entry.messages.clone(),
@@ -134,7 +134,7 @@ pub async fn trigger_ghost_turn(
     // API receives them as the system prompt, where role restrictions don't apply.
     // Compute all ghost policy values from the session entry in a single lock.
     let daemon_ceiling = config.ghost.max_ghost_turns;
-    let (approved_scripts, auto_read_only, run_with_sudo, max_ghost_turns) = {
+    let (approved_scripts, auto_read_only, run_with_sudo, max_ghost_turns, ssh_target) = {
         let store = sessions.lock().unwrap_or_log();
         store.get(session_id).and_then(|e| e.ghost_config.as_ref()).map(|gc| {
             let scripts = if gc.auto_approve_scripts.is_empty() {
@@ -147,24 +147,36 @@ pub async fn trigger_ghost_turn(
             } else {
                 daemon_ceiling
             };
-            (scripts, gc.auto_approve_read_only, gc.run_with_sudo, turns)
-        }).unwrap_or_else(|| ("none".to_string(), false, false, daemon_ceiling))
+            (scripts, gc.auto_approve_read_only, gc.run_with_sudo, turns, gc.ssh_target.clone())
+        }).unwrap_or_else(|| ("none".to_string(), false, false, daemon_ceiling, None))
+    };
+    let remote_line = if let Some(ref target) = ssh_target {
+        format!(
+            "Remote SSH Target: {} — approved scripts and read-only commands are \
+             automatically wrapped in `ssh {}` and executed on this host. \
+             Do NOT manually SSH to the target; call run_terminal_command with the \
+             script name or command directly and the daemon handles SSH transparently.\n         ",
+            target, target
+        )
+    } else {
+        String::new()
     };
     let system = format!(
         "{}\n\n\
-         ## Ghost Session Execution Context\n\
+         ## Ghost Shell Execution Context\n\
          You are operating autonomously — no human user is present.\n\
          All terminal commands MUST use background mode (they run in de-incident-* windows).\n\
          Do NOT ask questions or wait for user input.\n\
          Daemon Host: {}\n\
          Tmux Session: {}\n\
-         Pre-approved Scripts: {}{}\n\
+         {}Pre-approved Scripts: {}{}\n\
          Read-only Commands Auto-approved: {}\n\
-         Turn Budget: {} (hard limit — session will be stopped when reached)\n\n\
+         Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
          {}",
         system_base,
         daemon_hostname(),
         tmux_session,
+        remote_line,
         approved_scripts,
         if run_with_sudo { " (executed with sudo)" } else { "" },
         if auto_read_only { "yes" } else { "no" },
@@ -177,7 +189,7 @@ pub async fn trigger_ghost_turn(
     //    have been destroyed by the time trigger_ghost_turn executes.
     if !tmux::session_exists(&tmux_session) {
         anyhow::bail!(
-            "Ghost Session {}: tmux session '{}' no longer exists",
+            "Ghost Shell {}: tmux session '{}' no longer exists",
             session_id,
             tmux_session
         );
@@ -209,7 +221,7 @@ pub async fn trigger_ghost_turn(
     loop {
         if turn >= max_ghost_turns {
             log::warn!(
-                "Ghost Session {}: reached max turns ({}), stopping",
+                "Ghost Shell {}: reached max turns ({}), stopping",
                 session_id, max_ghost_turns
             );
             break;
@@ -233,7 +245,7 @@ pub async fn trigger_ghost_turn(
 
         tokio::spawn(async move {
             if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx, true).await {
-                log::error!("Ghost Session AI error: {}", e);
+                log::error!("Ghost Shell AI error: {}", e);
             }
             // ai_tx dropped here → channel closes → recv() returns None
         });
@@ -249,7 +261,7 @@ pub async fn trigger_ghost_turn(
             match tokio::time::timeout_at(deadline, ai_rx.recv()).await {
                 Err(_elapsed) => {
                     log::error!(
-                        "Ghost Session {}: turn {} timed out after {}s",
+                        "Ghost Shell {}: turn {} timed out after {}s",
                         session_id, turn, GHOST_TURN_TIMEOUT_SECS
                     );
                     anyhow::bail!("ghost turn timed out");
@@ -260,7 +272,7 @@ pub async fn trigger_ghost_turn(
                         assistant_content.push_str(&t);
                     }
                     AiEvent::ToolCall(id, command, _background, _target_pane, retry_in_pane, thought_signature) => {
-                        // Ghost Sessions MUST ALWAYS use background mode for terminal commands.
+                        // Ghost Shells MUST ALWAYS use background mode for terminal commands.
                         // This ensures they run in a dedicated window and never touch user panes.
                         pending_calls.push(PendingCall::Background {
                             id,
@@ -355,7 +367,7 @@ pub async fn trigger_ghost_turn(
                 .all(|r| r.content.starts_with("Command denied by Ghost Policy"))
         {
             log::warn!(
-                "Ghost Session {}: all {} tool call(s) denied by ghost policy on turn {} — \
+                "Ghost Shell {}: all {} tool call(s) denied by ghost policy on turn {} — \
                  runbook may need auto_approve_scripts or auto_approve_read_only: true",
                 session_id,
                 tool_results.len(),

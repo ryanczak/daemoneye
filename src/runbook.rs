@@ -18,7 +18,7 @@ pub struct Runbook {
     pub tags: Vec<String>,
     /// Knowledge memory keys to load when this runbook runs as a watchdog.
     pub memories: Vec<String>,
-    /// Settings for autonomous response (Ghost Session).
+    /// Settings for autonomous response (Ghost Shell).
     pub ghost_config: GhostConfig,
 }
 
@@ -87,6 +87,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let auto_approve_read_only = parse_bool_field(frontmatter, "auto_approve_read_only");
         let max_ghost_turns = parse_usize_field(frontmatter, "max_ghost_turns").unwrap_or(0);
         let run_with_sudo = parse_bool_field(frontmatter, "run_with_sudo");
+        let ssh_target = parse_string_field(frontmatter, "ssh_target");
 
         let ghost_config = GhostConfig {
             enabled,
@@ -94,6 +95,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             auto_approve_read_only,
             max_ghost_turns,
             run_with_sudo,
+            ssh_target,
         };
 
         (tags, memories, ghost_config, body)
@@ -104,6 +106,20 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
 
 /// Parse a field of the form `key: N` (non-negative integer) from frontmatter text.
 /// Returns `None` if the key is absent or its value is not a valid integer.
+fn parse_string_field(frontmatter: &str, key: &str) -> Option<String> {
+    let prefix = format!("{}:", key);
+    for line in frontmatter.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(&prefix) {
+            let val = trimmed[prefix.len()..].trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
 fn parse_usize_field(frontmatter: &str, key: &str) -> Option<usize> {
     let prefix = format!("{}:", key);
     for line in frontmatter.lines() {

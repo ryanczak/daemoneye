@@ -1,6 +1,6 @@
 # Ghost-Enabled Runbook Template
 
-Use this template when creating a runbook that supports autonomous remediation via Ghost Sessions.
+Use this template when creating a runbook that supports autonomous remediation via Ghost Shells.
 
 ```markdown
 ---
@@ -32,7 +32,7 @@ Lessons learned and manual overrides performed by humans.
 
 ## Frontmatter Fields for Ghost Mode
 
-- `enabled`: Set to `true` to allow DaemonEye to spawn an autonomous Ghost Session for this alert.
+- `enabled`: Set to `true` to allow DaemonEye to spawn an autonomous Ghost Shell for this alert.
 - `auto_approve_scripts`: A list of script names in `~/.daemoneye/scripts/` that the AI is authorized to run without human approval.
 - `run_with_sudo`: Set to `true` to prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry so the script runs with elevated privileges without a password prompt. Defaults to `false`.
 - `auto_approve_read_only`: Set to `true` to allow the AI to run safe informational commands (e.g., `ps`, `df`, `ls`) automatically.

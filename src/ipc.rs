@@ -31,10 +31,10 @@ pub struct ScriptListItem {
     pub size: u64,
 }
 
-/// Configuration for autonomous Ghost Sessions triggered by a runbook.
+/// Configuration for autonomous Ghost Shells triggered by a runbook.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GhostConfig {
-    /// Whether the AI can operate autonomously in a Ghost Session.
+    /// Whether the AI can operate autonomously in a Ghost Shell.
     pub enabled: bool,
     /// List of script names (in `~/.daemoneye/scripts/`) pre-approved for execution.
     pub auto_approve_scripts: Vec<String>,
@@ -46,6 +46,13 @@ pub struct GhostConfig {
     /// Whether to prepend `sudo` when executing pre-approved scripts.
     /// Intended for use with `/etc/sudoers.d/` `NOPASSWD` rules.
     pub run_with_sudo: bool,
+    /// Optional SSH destination (e.g. `user@host` or `host`) for remote execution.
+    /// When set, all auto-approved commands (whitelisted scripts and read-only commands)
+    /// are automatically wrapped in `ssh <target> <cmd>` before execution.
+    /// Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host.
+    /// The AI is instructed not to SSH manually — the policy handles it transparently.
+    #[serde(default)]
+    pub ssh_target: Option<String>,
 }
 
 /// Summary of a runbook for the `RunbookList` response.

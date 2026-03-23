@@ -180,10 +180,10 @@ where
         "foreground"
     };
 
-    // ── Ghost Session Logic ──────────────────────────────────────────────────
+    // ── Ghost Shell Logic ──────────────────────────────────────────────────
     if let Some(policy) = ghost_policy {
         if policy.is_safe(cmd) {
-            log::info!("Ghost Session auto-approved {}: {}", mode, cmd);
+            log::info!("Ghost Shell auto-approved {}: {}", mode, cmd);
             if background {
                 crate::daemon::stats::inc_commands_bg_approved();
             } else {
@@ -205,7 +205,7 @@ where
             return Ok(Ok(cmd_id));
         } else {
             log::info!(
-                "Ghost Session auto-denied (not on whitelist): {} — whitelist={:?} run_with_sudo={} auto_approve_read_only={}",
+                "Ghost Shell auto-denied (not on whitelist): {} — whitelist={:?} run_with_sudo={} auto_approve_read_only={}",
                 cmd,
                 policy.auto_approve_scripts,
                 policy.run_with_sudo,
@@ -664,11 +664,11 @@ where
     } else {
         None
     };
-    // Defensive guard: a ghost session entry must always have a ghost_config.
+    // Defensive guard: a ghost shell entry must always have a ghost_config.
     // If is_ghost=true but ghost_policy is None, the invariant is broken.
     // Rather than falling through to the human-approval path (which writes to a
     // dead duplex and reads EOF), return an error result immediately.
-    let is_ghost_session: bool = if let Some(sid) = session_id {
+    let is_ghost_shell: bool = if let Some(sid) = session_id {
         if let Ok(store) = sessions.lock() {
             store.get(sid).map(|e| e.is_ghost).unwrap_or(false)
         } else {
@@ -677,8 +677,8 @@ where
     } else {
         false
     };
-    if is_ghost_session && ghost_policy.is_none() {
-        let msg = "Error: ghost session has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
+    if is_ghost_shell && ghost_policy.is_none() {
+        let msg = "Error: ghost shell has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
         log::error!("{} for session {:?}", msg, session_id);
         send_response_split(tx, Response::ToolResult(msg.clone())).await?;
         return Ok(ToolCallOutcome::Result(msg));
@@ -1238,7 +1238,7 @@ where
                 return Ok(ToolCallOutcome::Result(msg));
             }
 
-            // Ghost sessions: resolve bare/relative script names to their absolute
+            // Ghost shells: resolve bare/relative script names to their absolute
             // path in ~/.daemoneye/scripts/ so execution succeeds regardless of
             // the background pane's working directory.
             let resolved_cmd;
@@ -1254,12 +1254,26 @@ where
                     Ok(id) => id,
                     Err(outcome) => return Ok(outcome),
                 };
+
+            // Ghost shells: wrap the approved command in `ssh <target> <cmd>` when
+            // a remote ssh_target is configured.  This is done after policy approval
+            // so that `is_safe()` sees the resolved local/tilde path (not the SSH
+            // invocation), and after credential handling so the sudo prompt fires
+            // only for genuinely local sudo commands.
+            let ssh_wrapped_cmd;
+            let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
+                ssh_wrapped_cmd = policy.wrap_remote(cmd);
+                ssh_wrapped_cmd.as_str()
+            } else {
+                cmd
+            };
+
             // Wrap the sudo password in Zeroizing so its heap memory is
             // overwritten when the variable drops, rather than lingering until
             // the allocator reclaims it.
             let credential: Option<zeroize::Zeroizing<String>> = if command_has_sudo(cmd) {
                 if is_ghost {
-                    // Ghost Sessions cannot provide sudo passwords. 
+                    // Ghost Shells cannot provide sudo passwords. 
                     // This command will likely fail if it triggers a prompt.
                     None
                 } else {
@@ -1351,7 +1365,7 @@ where
 
             if is_ghost {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: cannot create scheduled jobs in a Ghost Session (requires user approval).".to_string(),
+                    "Error: cannot create scheduled jobs in a Ghost Shell (requires user approval).".to_string(),
                 ));
             }
 
@@ -1502,7 +1516,7 @@ where
         } => {
             if is_ghost {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: cannot write scripts in a Ghost Session (requires user approval).".to_string(),
+                    "Error: cannot write scripts in a Ghost Shell (requires user approval).".to_string(),
                 ));
             }
             send_response_split(
@@ -1561,7 +1575,7 @@ where
         PendingCall::DeleteScript { id, script_name, .. } => {
             if is_ghost {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: cannot delete scripts in a Ghost Session (requires user approval).".to_string(),
+                    "Error: cannot delete scripts in a Ghost Shell (requires user approval).".to_string(),
                 ));
             }
             send_response_split(
@@ -2004,7 +2018,7 @@ where
 
             if is_ghost {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: cannot edit files in a Ghost Session (requires user approval).".to_string(),
+                    "Error: cannot edit files in a Ghost Shell (requires user approval).".to_string(),
                 ));
             }
 
@@ -2163,7 +2177,7 @@ where
         } => {
             if is_ghost {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: cannot write runbooks in a Ghost Session (requires user approval).".to_string(),
+                    "Error: cannot write runbooks in a Ghost Shell (requires user approval).".to_string(),
                 ));
             }
             send_response_split(
@@ -2224,7 +2238,7 @@ where
 
             if is_ghost {
                 return Ok(ToolCallOutcome::Result(
-                    "Error: cannot delete runbooks in a Ghost Session (requires user approval).".to_string(),
+                    "Error: cannot delete runbooks in a Ghost Shell (requires user approval).".to_string(),
                 ));
             }
 
@@ -2516,6 +2530,11 @@ where
                     } else {
                         String::new()
                     };
+                let ghost_part = if state.window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX) {
+                    "  [ghost]"
+                } else {
+                    ""
+                };
                 let sync_part = if state.synchronized {
                     "  [synchronized]"
                 } else {
@@ -2539,13 +2558,14 @@ where
                     String::new()
                 };
                 out.push_str(&format!(
-                    "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}\n",
+                    "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}{}\n",
                     id,
                     state.window_name,
                     state.current_cmd,
                     state.current_path,
                     start_part,
                     title_part,
+                    ghost_part,
                     sync_part,
                     dead_part,
                     activity_part,

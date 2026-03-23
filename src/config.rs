@@ -20,11 +20,11 @@ pub struct Config {
     pub ghost: GhostDaemonConfig,
 }
 
-/// Daemon-wide limits for autonomous Ghost Sessions.
+/// Daemon-wide limits for autonomous Ghost Shells.
 /// These are hard ceilings that individual runbooks cannot exceed.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct GhostDaemonConfig {
-    /// Hard upper limit on AI turns per ghost session.
+    /// Hard upper limit on AI turns per ghost shell.
     /// Individual runbooks may set a lower value with `max_ghost_turns`
     /// but can never exceed this ceiling. Default: 20.
     #[serde(default = "default_max_ghost_turns")]

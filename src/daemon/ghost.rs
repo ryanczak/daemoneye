@@ -7,11 +7,11 @@ use crate::runbook::Runbook;
 use crate::ai::Message;
 use crate::tmux::ensure_incident_session;
 
-/// Orchestrates the lifecycle of an autonomous Ghost Session.
+/// Orchestrates the lifecycle of an autonomous Ghost Shell.
 pub struct GhostManager;
 
 impl GhostManager {
-    /// Start a new Ghost Session for a specific alert and runbook.
+    /// Start a new Ghost Shell for a specific alert and runbook.
     ///
     /// 1. Ensures a host tmux session exists (active or detached).
     /// 2. Initializes a new ghost `SessionEntry` with the alert as the first user turn.
@@ -28,7 +28,7 @@ impl GhostManager {
         let tmux_session = ensure_incident_session()
             .context("GhostManager: failed to ensure incident session")?;
         
-        // 2. Initialize ghost session entry
+        // 2. Initialize ghost shell entry
         let session_id = format!("ghost-{}-{}", alert_name, uuid::Uuid::new_v4().simple());
         
         let mut messages = Vec::new();
@@ -50,7 +50,7 @@ impl GhostManager {
             messages,
             last_accessed: Instant::now(),
             chat_pane: None,
-            default_target_pane: None, // Ghost sessions use background windows exclusively
+            default_target_pane: None, // Ghost shells use background windows exclusively
             bg_windows: Vec::new(),
             last_prompt_tokens: 0,
             tmux_session: tmux_session.clone(),
@@ -69,7 +69,7 @@ impl GhostManager {
         crate::daemon::stats::inc_ghosts_launched();
 
         log::info!(
-            "Ghost Session started: {} (alert: {}, session: {})",
+            "Ghost Shell started: {} (alert: {}, session: {})",
             session_id,
             alert_name,
             tmux_session

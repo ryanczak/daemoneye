@@ -13,7 +13,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Pane Discovery & Identity** — The AI can call `list_panes` to see all active tmux panes in the session (pane ID, window-relative index, window name, command, working directory, title) and then target any of them with `run_terminal_command`. Every pane block in context — `[ACTIVE PANE]`, `[VISIBLE PANE]`, `[BACKGROUND PANE]`, `[SESSION PANE]` — now also carries `idx:N in 'window'`: the 0-based window-relative index that matches what the user sees when they press `ctrl+a q`. The AI is instructed to always address panes by both handle and index (e.g. "pane index 1 in 'main' (%23)") so the user can visually confirm the target before approving.
 - **Command Scheduler & Watchdog** — Schedule commands to run once at a time or on a repeating interval. Set up watchdog monitors with AI-powered runbook analysis. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Watchdog jobs can trigger alerts via a configurable notification hook (`[notifications] on_alert`).
 - **Knowledge System** — Three-tier persistence for AI-generated knowledge: *runbooks* (`~/.daemoneye/runbooks/`, markdown with frontmatter) for watchdog procedures; *memory* (`~/.daemoneye/memory/{session,knowledge,incidents}/`) for durable facts and incident records; and *search* for cross-corpus keyword lookup across runbooks, scripts, memory, and the event log. Session memories are automatically injected into every AI turn. Runbook and memory writes are exposed as AI tools with approval gates for destructive operations.
-- **Passive Pane Monitoring** — The daemon registers hooks at startup using the absolute path to the running binary. Four global hooks: `pane-died` (notifies the daemon when a background pane exits — triggers output capture, `[Background Task Completed]` history injection, and GC window cleanup), `after-new-session` (automatically installs all per-session hooks for any tmux session created after the daemon starts — no manual reconfiguration needed), `client-detached` (records detach time and history watermark on matching sessions so the next AI turn can generate a catch-up brief), and `client-attached` (clears the detach record so the catch-up brief fires only once per detach cycle). Three per-session hooks installed by `install_session_hooks()`: `alert-bell` (existing background-completion fallback), `pane-focus-in` (notifies the daemon whenever the user switches panes, updating the active-pane cache immediately rather than waiting up to 2 s for the next poll), and `session-window-changed` (notifies the daemon whenever the active window changes, triggering an instant window-topology refresh). When the user re-attaches after ≥ 30 seconds away and new events occurred (background task completions, webhook alerts, watchdog results, watch-pane outcomes, or autonomous ghost session starts/completions/failures), the daemon sends a `[Catch-up] N events while you were away (Xm): …` system message at the start of the next AI turn so nothing goes unnoticed. When a background pane exits, the daemon issues a `tmux display-message` overlay, injects a `[Background Task Completed]` context message into the AI's session history, and GC-kills the window. The AI can also passively monitor arbitrary panes via `watch_pane`.
+- **Passive Pane Monitoring** — The daemon registers hooks at startup using the absolute path to the running binary. Four global hooks: `pane-died` (notifies the daemon when a background pane exits — triggers output capture, `[Background Task Completed]` history injection, and GC window cleanup), `after-new-session` (automatically installs all per-session hooks for any tmux session created after the daemon starts — no manual reconfiguration needed), `client-detached` (records detach time and history watermark on matching sessions so the next AI turn can generate a catch-up brief), and `client-attached` (clears the detach record so the catch-up brief fires only once per detach cycle). Three per-session hooks installed by `install_session_hooks()`: `alert-bell` (existing background-completion fallback), `pane-focus-in` (notifies the daemon whenever the user switches panes, updating the active-pane cache immediately rather than waiting up to 2 s for the next poll), and `session-window-changed` (notifies the daemon whenever the active window changes, triggering an instant window-topology refresh). When the user re-attaches after ≥ 30 seconds away and new events occurred (background task completions, webhook alerts, watchdog results, watch-pane outcomes, or autonomous ghost shell starts/completions/failures), the daemon sends a `[Catch-up] N events while you were away (Xm): …` system message at the start of the next AI turn so nothing goes unnoticed. When a background pane exits, the daemon issues a `tmux display-message` overlay, injects a `[Background Task Completed]` context message into the AI's session history, and GC-kills the window. The AI can also passively monitor arbitrary panes via `watch_pane`.
 - **Scripts Directory** — AI and users can create, read, list, and delete reusable scripts in `~/.daemoneye/scripts/`. Script writes and deletes are approval-gated. Scripts can be referenced by name in scheduled jobs.
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
@@ -21,7 +21,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session. The bottom border of the user input box shows `turn N · Xk / Yk tokens · Z% remaining`, giving you a live read on context consumption relative to the model's context window. The indicator is color-coded: dim when comfortable, yellow past 50 %, bold red past 75 %.
 - **Multi-line Chat Input** — The chat input box word-wraps long text across up to 5 rows instead of scrolling horizontally; the box grows upward as you type and collapses back on submission. The top border shows your `user@host`. Supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). History persists for the lifetime of the chat session.
 - **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`~/.daemoneye/daemoneye.sock`) for instant, non-blocking interaction. The socket lives in the user's home directory (not `/tmp`) so other local users cannot connect to it or pre-create a symlink at that path.
-- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis via a watchdog prompt; the watchdog model emits `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its final line. If `YES` and the runbook has `enabled: true` in its frontmatter, DaemonEye spawns an **Autonomous Ghost Session** in a dedicated `de-incident-*` tmux window to handle the alert unattended. The ghost AI runs pre-approved scripts from `~/.daemoneye/scripts/` — optionally with `sudo` when paired with a `/etc/sudoers.d/` `NOPASSWD` entry (`run_with_sudo: true`). A configurable hard turn ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20) caps how much autonomous work any single session can do; individual runbooks may set a lower limit but cannot exceed the daemon ceiling. Ghost session start, completion, and failure events are injected into all active sessions and appear in the next catch-up brief. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
+- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis via a watchdog prompt; the watchdog model emits `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its final line. If `YES` and the runbook has `enabled: true` in its frontmatter, DaemonEye spawns an **Autonomous Ghost Shell** in a dedicated `de-incident-*` tmux window to handle the alert unattended. The ghost AI runs pre-approved scripts from `~/.daemoneye/scripts/` — optionally with `sudo` when paired with a `/etc/sudoers.d/` `NOPASSWD` entry (`run_with_sudo: true`). A configurable hard turn ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20) caps how much autonomous work any single session can do; individual runbooks may set a lower limit but cannot exceed the daemon ceiling. Ghost session start, completion, and failure events are injected into all active sessions and appear in the next catch-up brief. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
 
 ---
 
@@ -291,17 +291,17 @@ route:
 
 ### `[ghost]` section
 
-Daemon-wide hard limits for autonomous Ghost Sessions. These are ceilings — individual runbooks can set lower values but cannot exceed them.
+Daemon-wide hard limits for autonomous Ghost Shells. These are ceilings — individual runbooks can set lower values but cannot exceed them.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost session. A runbook's `max_ghost_turns` is clamped to this value. Set lower in production to constrain blast radius. |
+| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost shell. A runbook's `max_ghost_turns` is clamped to this value. Set lower in production to constrain blast radius. |
 
 ---
 
-## Ghost Sessions & Autonomous Remediation
+## Ghost Shells & Autonomous Remediation
 
-Ghost Sessions are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost session runs inside a dedicated `de-incident-*` tmux window on the daemon host, investigates the alert, and executes pre-approved remediation steps — all without a human present. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
+Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell runs inside a dedicated `de-incident-*` tmux window on the daemon host, investigates the alert, and executes pre-approved remediation steps — all without a human present. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
 
 ### How it works end-to-end
 
@@ -321,7 +321,7 @@ Watchdog AI analysis (reads runbook, emits GHOST_TRIGGER: YES|NO)
 GhostManager::start_session()
   • Allocates de-incident-<name>-<ts> tmux window
   • Loads ghost_config from runbook frontmatter
-  • Injects [Ghost Session Started] into all active chat sessions
+  • Injects [Ghost Shell Started] into all active chat sessions
         │
         ▼
 Ghost AI turn loop (up to max_ghost_turns)
@@ -334,7 +334,7 @@ Ghost AI turn loop (up to max_ghost_turns)
   • watch_pane blocks until command exits before next turn
         │
         ▼
-[Ghost Session Completed] or [Ghost Session Failed]
+[Ghost Shell Completed] or [Ghost Shell Failed]
 injected into all active sessions → appears in catch-up brief
 ```
 
@@ -382,7 +382,7 @@ your-username ALL=(ALL) NOPASSWD: /home/your-username/.daemoneye/scripts/restart
 
 > **Important:** Use the **full absolute path** in the sudoers entry — the same path that DaemonEye will resolve to (`~/.daemoneye/scripts/<name>`). Wildcards in sudoers paths are dangerous; pin the exact filename.
 
-Verify the entry works before testing ghost sessions:
+Verify the entry works before testing ghost shells:
 
 ```bash
 sudo ~/.daemoneye/scripts/restart-nginx.sh
@@ -435,11 +435,12 @@ captures the error log for post-incident review.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Allow DaemonEye to spawn an autonomous Ghost Session for this alert. |
+| `enabled` | bool | `false` | Allow DaemonEye to spawn an autonomous Ghost Shell for this alert. |
 | `auto_approve_scripts` | list | `[]` | Script names in `~/.daemoneye/scripts/` the ghost may run without prompting. Bare names, relative paths (`./name.sh`), and commands with arguments are all resolved to the absolute path. |
 | `run_with_sudo` | bool | `false` | Prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry. Leave `false` if the script does not need root. |
 | `auto_approve_read_only` | bool | `false` | Also allow informational read-only commands (`ps`, `df`, `systemctl status`, etc.) without policy approval. |
 | `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
+| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all auto-approved commands are transparently wrapped in `ssh <target> <cmd>` before execution. Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host. The AI is instructed not to SSH manually — omit this field for local-only execution. |
 
 ### Step 4 — Enable the webhook and configure Alertmanager
 
@@ -507,7 +508,7 @@ curl -s -X POST http://localhost:9393/webhook \
   }'
 ```
 
-Watch the ghost session in real time:
+Watch the ghost shell in real time:
 
 ```bash
 # In another pane — attach to the incident window
@@ -523,16 +524,16 @@ Check the event log for the full audit trail:
 grep "ghost\|webhook_analysis\|command_approval" ~/.daemoneye/events.jsonl | tail -30
 ```
 
-### Monitoring active ghost sessions
+### Monitoring active ghost shells
 
 ```bash
 daemoneye status
 ```
 
-The `Ghost Sessions` section of the status output shows:
+The `Ghost Shells` section of the status output shows:
 
 ```
-Ghost Sessions
+Ghost Shells
   Active:    1
   Launched:  3
   Completed: 2
@@ -549,8 +550,8 @@ tmux list-windows | grep de-incident
 
 - **Scope sudoers entries tightly.** Pin the exact absolute path in `/etc/sudoers.d/`. Never use `ALL` as the command or allow path wildcards.
 - **Only list scripts you control.** `auto_approve_scripts` is a whitelist of filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
-- **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost session.
-- **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling. A ghost session is forcibly stopped when the limit is reached regardless of what it is doing.
+- **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost shell.
+- **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling. A ghost shell is forcibly stopped when the limit is reached regardless of what it is doing.
 - **All actions are logged.** Every command approval, execution, and result is recorded in `events.jsonl` for post-incident audit.
 
 ### Environment variables
@@ -578,7 +579,7 @@ src/
 │   ├── background.rs # run_background_in_window(); notify_job_completion(); GC lifecycle
 │   ├── ghost.rs     # GhostManager::start_session() — allocates de-incident-* tmux window
 │   ├── policy.rs    # GhostPolicy — auto_approve_scripts / auto_approve_read_only / run_with_sudo enforcement
-│   └── stats.rs     # Atomic ghost session counters (launched / completed / failed / active)
+│   └── stats.rs     # Atomic ghost shell counters (launched / completed / failed / active)
 ├── cli/             # IPC client: chat interface, terminal rendering, subcommands
 ├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus
 ├── runbook.rs       # Runbook markdown loader (frontmatter parser, CRUD); watchdog AI system prompt builder

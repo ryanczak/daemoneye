@@ -477,7 +477,7 @@ impl SessionCache {
         // Non-active panes — classified by their relationship to the chat window.
         //
         // - VISIBLE PANE:    same window as the chat pane (user can see it in the split)
-        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sched-*)
+        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sched-* / de-incident-*)
         // - SESSION PANE:    any other user window (SSH sessions, editors, etc.)
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -502,6 +502,7 @@ impl SessionCache {
                 "VISIBLE PANE"
             } else if state.window_name.starts_with("de-bg-")
                 || state.window_name.starts_with("de-sched-")
+                || state.window_name.starts_with("de-incident-")
             {
                 "BACKGROUND PANE"
             } else {
@@ -517,6 +518,11 @@ impl SessionCache {
                 String::new()
             } else {
                 format!(" ({})", mask_sensitive(&state.pane_title))
+            };
+            let ghost_part = if state.window_name.starts_with("de-incident-") {
+                " [ghost]".to_string()
+            } else {
+                String::new()
             };
             let sync_part = if state.synchronized {
                 " [synchronized]".to_string()
@@ -566,7 +572,7 @@ impl SessionCache {
             };
             let idx_part = format!(" (idx:{} in '{}')", state.pane_index, state.window_name);
             out.push_str(&format!(
-                "[{} {}{}{}{}{}{}{}{}{}]: {}\n",
+                "[{} {}{}{}{}{}{}{}{}{}{}]: {}\n",
                 pane_label,
                 id,
                 idx_part,
@@ -574,6 +580,7 @@ impl SessionCache {
                 start_part,
                 cwd_part,
                 title_part,
+                ghost_part,
                 sync_part,
                 dead_part,
                 activity_part,

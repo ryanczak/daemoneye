@@ -496,7 +496,7 @@ pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
     }
 }
 
-/// Inject a ghost session lifecycle event into all active user sessions and
+/// Inject a ghost shell lifecycle event into all active user sessions and
 /// send a tmux display-message notification to every open chat pane.
 ///
 /// The `content` string is stored in session history so it shows up in the
@@ -650,7 +650,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     );
     if !should_act && rb.ghost_config.enabled {
         log::info!(
-            "Webhook: ghost session NOT triggered for '{}' — reason: {}",
+            "Webhook: ghost shell NOT triggered for '{}' — reason: {}",
             alert.alert_name, trigger_reason
         );
     }
@@ -668,9 +668,9 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     );
 
     if should_act {
-        // If the runbook has ghost mode enabled, trigger a ghost session.
+        // If the runbook has ghost mode enabled, trigger a ghost shell.
         if rb.ghost_config.enabled {
-            log::info!("Webhook: triggering Ghost Session for '{}'", alert.alert_name);
+            log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
             let sessions = state.sessions.clone();
             let alert_msg = formatted_msg.to_string();
             let rb_clone = rb.clone();
@@ -683,7 +683,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                     Ok(sid) => {
                         inject_ghost_event(
                             &sessions,
-                            &format!("[Ghost Session Started] Autonomous remediation triggered for alert: {}", rb_clone.name),
+                            &format!("[Ghost Shell Started] Autonomous remediation triggered for alert: {}", rb_clone.name),
                         );
 
                         match crate::daemon::server::trigger_ghost_turn(
@@ -696,7 +696,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                             Ok(()) => {
                                 inject_ghost_event(
                                     &sessions,
-                                    &format!("[Ghost Session Completed] Autonomous remediation finished for alert: {}", rb_clone.name),
+                                    &format!("[Ghost Shell Completed] Autonomous remediation finished for alert: {}", rb_clone.name),
                                 );
                             }
                             Err(e) => {
@@ -704,12 +704,12 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                                 crate::daemon::stats::inc_ghosts_failed();
                                 inject_ghost_event(
                                     &sessions,
-                                    &format!("[Ghost Session Failed] Autonomous remediation failed for alert: {} — {}", rb_clone.name, e),
+                                    &format!("[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {}", rb_clone.name, e),
                                 );
                             }
                         }
                     }
-                    Err(e) => log::error!("Ghost Session: failed to start: {}", e),
+                    Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
                 }
             });
         }
