@@ -204,7 +204,13 @@ where
             );
             return Ok(Ok(cmd_id));
         } else {
-            log::info!("Ghost Session auto-denied (not on whitelist): {}", cmd);
+            log::info!(
+                "Ghost Session auto-denied (not on whitelist): {} — whitelist={:?} run_with_sudo={} auto_approve_read_only={}",
+                cmd,
+                policy.auto_approve_scripts,
+                policy.run_with_sudo,
+                policy.auto_approve_read_only,
+            );
             let msg = format!(
                 "Command denied by Ghost Policy (not a pre-approved script or safe read-only command): {}",
                 cmd
