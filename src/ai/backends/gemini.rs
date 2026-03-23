@@ -146,6 +146,7 @@ impl AiClient for GeminiClient {
         system: &str,
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
+        use_tools: bool,
     ) -> Result<()> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
@@ -156,7 +157,15 @@ impl AiClient for GeminiClient {
             "system_instruction": {"parts": [{"text": system}]},
             "contents": converted,
         });
-        body["tools"] = json!([{"function_declarations": get_gemini_tool_definition()}]);
+        if use_tools {
+            body["tools"] = json!([{"function_declarations": get_gemini_tool_definition()}]);
+        } else {
+            // Explicitly disable function calling so the model is forced to
+            // respond with plain text (e.g. watchdog analysis calls).
+            body["toolConfig"] = json!({
+                "functionCallingConfig": {"mode": "NONE"}
+            });
+        }
 
         let response = send_with_retry(|| http().post(&url).json(&body)).await?;
 

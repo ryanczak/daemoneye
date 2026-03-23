@@ -608,7 +608,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     );
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-    let api_err = if let Err(e) = client.chat(&system, msgs, ai_tx).await {
+    let api_err = if let Err(e) = client.chat(&system, msgs, ai_tx, false).await {
         log::error!("Webhook: runbook analysis API call failed for '{}': {}", alert.alert_name, e);
         Some(e.to_string())
     } else {

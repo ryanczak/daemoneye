@@ -81,19 +81,24 @@ impl AiClient for OpenAiClient {
         system: &str,
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
+        use_tools: bool,
     ) -> Result<()> {
         let converted = self.convert_messages(messages);
         let mut full_messages = vec![json!({"role": "system", "content": system})];
         full_messages.extend(converted);
 
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "max_tokens": 4096,
             "stream": true,
             "stream_options": { "include_usage": true },
             "messages": full_messages,
-            "tools": get_openai_tool_definition()
         });
+        if use_tools {
+            body["tools"] = json!(get_openai_tool_definition());
+        } else {
+            body["tool_choice"] = json!("none");
+        }
 
         let response = send_with_retry(|| {
             http()

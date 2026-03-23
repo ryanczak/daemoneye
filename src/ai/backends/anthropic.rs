@@ -92,6 +92,7 @@ impl AiClient for AnthropicClient {
         system: &str,
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
+        use_tools: bool,
     ) -> Result<()> {
         let mut headers = HeaderMap::new();
         headers.insert("x-api-key", HeaderValue::from_str(&self.api_key)?);
@@ -100,14 +101,16 @@ impl AiClient for AnthropicClient {
 
         let converted = self.convert_messages(messages);
 
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "max_tokens": 4096,
             "stream": true,
             "system": system,
             "messages": converted,
-            "tools": get_tool_definition()
         });
+        if use_tools {
+            body["tools"] = json!(get_tool_definition());
+        }
 
         let response = send_with_retry(|| {
             http()

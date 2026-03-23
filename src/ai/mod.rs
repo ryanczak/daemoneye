@@ -100,11 +100,20 @@ fn circuit() -> &'static CircuitBreaker {
 
 #[async_trait]
 pub trait AiClient: Send + Sync {
+    /// Stream a chat completion.
+    ///
+    /// Set `use_tools = false` for pure-text analysis calls (e.g. watchdog
+    /// analysis) where the model must not emit tool/function calls.  Backends
+    /// use provider-specific mechanisms to enforce this:
+    /// - Gemini: `toolConfig.functionCallingConfig.mode = "NONE"`
+    /// - OpenAI: `tool_choice = "none"` (tools omitted from body)
+    /// - Anthropic: tool list omitted from body
     async fn chat(
         &self,
         system_prompt: &str,
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
+        use_tools: bool,
     ) -> Result<()>;
 }
 

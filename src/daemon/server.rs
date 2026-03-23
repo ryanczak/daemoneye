@@ -232,7 +232,7 @@ pub async fn trigger_ghost_turn(
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
         tokio::spawn(async move {
-            if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx).await {
+            if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx, true).await {
                 log::error!("Ghost Session AI error: {}", e);
             }
             // ai_tx dropped here → channel closes → recv() returns None
@@ -519,7 +519,7 @@ pub async fn run_scheduled_job(
                 tool_results: None,
             }];
             let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-            let _ = client.chat(&system, msgs, ai_tx).await;
+            let _ = client.chat(&system, msgs, ai_tx, true).await;
             let mut ai_response = String::new();
             while let Some(ev) = ai_rx.recv().await {
                 if let AiEvent::Token(t) = ev {
@@ -1176,7 +1176,7 @@ pub async fn handle_client(
 
         tokio::spawn(async move {
             if let Err(e) = client_instance
-                .chat(&sys_prompt_turn, messages_clone, ai_tx.clone())
+                .chat(&sys_prompt_turn, messages_clone, ai_tx.clone(), true)
                 .await
             {
                 let _ = ai_tx.send(AiEvent::Error(e.to_string()));
