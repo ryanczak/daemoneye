@@ -48,8 +48,8 @@ ssh_target: ""
 | Field | Description |
 |---|---|
 | `enabled` | Must be `true` for webhook-triggered ghosts |
-| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution. Non-sudo commands run freely without listing here. |
-| `run_with_sudo` | Prepend `sudo` to approved scripts. Requires a NOPASSWD sudoers rule — see `scripts-and-sudoers` memory |
+| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` pre-approved for sudo execution. When `run_with_sudo: false`, only these scripts may use sudo. Not needed when `run_with_sudo: true`. |
+| `run_with_sudo` | `true` = all sudo commands are freely allowed (broad root access). `false` (default) = only scripts listed in `auto_approve_scripts` may use sudo. |
 | `max_ghost_turns` | Hard turn limit (0 = use daemon default of 20) |
 | `ssh_target` | If set (e.g. `user@host`), all commands are wrapped in `ssh <target> <cmd>` |
 
@@ -58,9 +58,10 @@ ssh_target: ""
 The ghost operates under a simple OS-delegation model:
 
 - **Non-sudo commands** — always allowed. The daemon runs as the same user as you; OS file permissions are the boundary.
-- **Sudo commands** — must be listed in `auto_approve_scripts` AND have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`. Any other sudo command is auto-denied.
+- **`run_with_sudo: true`** — all sudo commands are allowed. The runbook author has explicitly granted broad root access. Pair with NOPASSWD sudoers rules for password-free operation.
+- **`run_with_sudo: false` (default) — sudo commands** must be listed in `auto_approve_scripts` AND have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`. Any other sudo command is auto-denied and logged.
 
-This means the ghost can freely run `ps`, `df`, `curl`, `journalctl`, `systemctl status`, etc. without any configuration. Only commands that need root require explicit setup.
+This means the ghost can freely run `ps`, `df`, `curl`, `journalctl`, `systemctl status`, etc. without any configuration. Sudo access requires either `run_with_sudo: true` (broad) or explicit `auto_approve_scripts` entries (targeted).
 
 ## tmux Window Naming
 
@@ -86,10 +87,35 @@ All ghost lifecycle events are injected into active sessions and surfaced in cat
 - `[Ghost Shell Failed]` — an error stopped the ghost (session ID included)
 - `[Ghost Shell Skipped]` — concurrency cap prevented the ghost from starting
 
+## Troubleshooting Ghost Shells
+
+Ghost shell activity is logged at multiple levels:
+
+**`~/.daemoneye/daemon.log`** — human-readable trace:
+- `INFO Ghost Shell started: <id> (alert: ..., tmux_session: ..., bg_prefix: ...)` — session created
+- `INFO Ghost Shell <id>: starting turn N/M` — each turn start
+- `INFO Ghost Shell <id>: turn N dispatching '<tool>'` — each tool call with command
+- `INFO Ghost Shell auto-approved background: <cmd>` — policy allowed a command
+- `INFO Ghost Shell auto-denied (sudo command not on whitelist): <cmd>` — policy denied (only when `run_with_sudo: false`)
+- `INFO Ghost Shell <id>: completed in N turn(s)` — successful completion
+- `WARN Ghost Shell <id>: reached max turns (N), stopping` — turn budget exhausted
+- `ERROR Ghost Shell <id>: turn N timed out after 300s` — AI call hung
+
+**`~/.daemoneye/events.jsonl`** — structured records (searchable via `search_repository`):
+- `ghost_start` — session created: `session_id`, `alert_name`, `tmux_session`, `trigger`
+- `ghost_lifecycle` — every lifecycle event message injected into sessions (started/completed/failed/skipped)
+- `ghost_turn` — per-turn tool dispatch: `session_id`, `turn`, `tool_count`, `tools` (array of `{name, cmd}`)
+- `ghost_complete` — successful finish: `session_id`, `turns_used`
+- `ghost_error` — errors/timeouts/denials: `session_id`, `turn`, `error`
+
+**`~/.daemoneye/sessions/ghost-<name>-<uuid>.jsonl`** — full message history including all tool calls and results. Created immediately when the session starts (even if the ghost fails before its first turn).
+
+**`~/.daemoneye/pane_logs/<win_name>.log`** — complete output from each background command. Written from the full pipe-pane log — never truncated by tmux scrollback limits.
+
 ## Operational Checklist Before Spawning a Ghost
 
 1. Verify the runbook exists: `read_runbook("name")`
 2. Verify required scripts exist: `list_scripts()`
-3. If any scripts need sudo: verify sudoers rule exists or run `daemoneye install-sudoers <script>`
+3. If using `run_with_sudo: false` and scripts need sudo: verify sudoers rule exists or run `daemoneye install-sudoers <script>`
 4. Check current ghost count in `daemoneye status` if nearing the cap
 5. For SSH targets: confirm `ssh_target` is set in runbook frontmatter

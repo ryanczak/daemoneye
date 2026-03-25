@@ -64,18 +64,24 @@ fn trim_large_output(raw: &str, limit: usize, win_name: &str) -> String {
     format!("{head}\n... ({omitted} lines omitted — full log: {archive}) ...\n{tail}")
 }
 
-/// Capture and mask pane output, archive the full scrollback to `pane_logs/`.
+/// Capture and mask pane output, archive the full output to `pane_logs/`.
 /// Returns the masked body string suitable for the AI.
 ///
 /// `pipe_log` — path to the pipe-pane log file started before the command ran.
 /// When present it is read directly (no scrollback cap) and then deleted.
 /// Falls back to `capture_pane` if the file cannot be read.
+///
+/// The archive at `~/.daemoneye/pane_logs/{win_name}.log` always uses the
+/// best available content: the full pipe-log when present, otherwise the
+/// scrollback-limited `capture_pane_to_file` fallback.  Ghost shell pane logs
+/// are therefore never truncated due to scrollback limits.
 fn capture_and_archive(
     pane_id: &str,
     win_name: &str,
     pipe_log: Option<std::path::PathBuf>,
 ) -> String {
     // Fix B: prefer pipe log over scrollback-limited capture_pane.
+    let have_pipe_log = pipe_log.is_some();
     let raw = match pipe_log {
         Some(ref log_path) => match std::fs::read_to_string(log_path) {
             Ok(content) => {
@@ -108,10 +114,18 @@ fn capture_and_archive(
             logs_dir.display(),
             e
         );
-    } else if let Err(e) =
-        tmux::pane::capture_pane_to_file(pane_id, &logs_dir.join(format!("{}.log", win_name)))
-    {
-        log::warn!("Failed to archive pane log for {}: {}", win_name, e);
+    } else {
+        let archive_path = logs_dir.join(format!("{}.log", win_name));
+        // When we have the full pipe-log content in `raw`, write it directly to the
+        // archive so ghost shell pane logs are never truncated by scrollback limits.
+        // Fall back to capture_pane_to_file only when no pipe log was available.
+        if have_pipe_log && !raw.is_empty() {
+            if let Err(e) = std::fs::write(&archive_path, raw.as_bytes()) {
+                log::warn!("Failed to archive pane log for {}: {}", win_name, e);
+            }
+        } else if let Err(e) = tmux::pane::capture_pane_to_file(pane_id, &archive_path) {
+            log::warn!("Failed to archive pane log for {}: {}", win_name, e);
+        }
     }
     body
 }

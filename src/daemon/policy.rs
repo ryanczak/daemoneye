@@ -29,12 +29,19 @@ impl GhostPolicy {
     ///
     /// - **Non-sudo commands** are always allowed; the OS user-permission model is the
     ///   boundary — the ghost runs as the same user as the daemon.
-    /// - **Sudo commands** must have their script basename listed in
+    /// - **`run_with_sudo: true`** — all sudo commands are permitted.  The runbook
+    ///   author has explicitly granted broad sudo access to this ghost shell.
+    /// - **Otherwise, sudo commands** must have their script basename listed in
     ///   `auto_approve_scripts`.  The leading `sudo` token and any absolute path prefix
     ///   are stripped before the basename comparison so that both `restart-nginx.sh`
     ///   and `sudo /home/user/.daemoneye/scripts/restart-nginx.sh` match the same entry.
     pub fn is_safe(&self, command: &str) -> bool {
         if !crate::daemon::utils::command_has_sudo(command) {
+            return true;
+        }
+
+        // run_with_sudo grants broad sudo access — any sudo command is allowed.
+        if self.run_with_sudo {
             return true;
         }
 
@@ -194,6 +201,23 @@ mod tests {
         assert!(!p.is_safe("sudo /home/user/.daemoneye/scripts/other.sh"));
         assert!(!p.is_safe("sudo apt install vim"));
         assert!(!p.is_safe("sudo rm -rf /var/log"));
+    }
+
+    #[test]
+    fn is_safe_run_with_sudo_allows_any_sudo_command() {
+        // run_with_sudo grants broad sudo access — arbitrary sudo commands are allowed.
+        let p = sudo_policy(&["ghost-test-remediation.sh"]);
+        assert!(p.is_safe("sudo dmesg | tail -n 50"));
+        assert!(p.is_safe("sudo journalctl -u nginx --since '1 hour ago'"));
+        assert!(p.is_safe("sudo apt install -y vim"));
+        assert!(p.is_safe("sudo rm -rf /tmp/old-data"));
+    }
+
+    #[test]
+    fn is_safe_run_with_sudo_still_allows_non_sudo() {
+        let p = sudo_policy(&[]);
+        assert!(p.is_safe("dmesg | tail -n 50"));
+        assert!(p.is_safe("ps aux"));
     }
 
     #[test]

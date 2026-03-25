@@ -88,6 +88,9 @@ impl GhostManager {
             tool_calls: None,
             tool_results: None,
         };
+        // Write initial message to session file immediately so the file exists
+        // even if the ghost shell fails before completing its first turn.
+        crate::daemon::session::append_session_message(&session_id, &user_msg);
         messages.push(user_msg);
 
         let entry = SessionEntry {
@@ -114,10 +117,20 @@ impl GhostManager {
         crate::daemon::stats::inc_ghosts_launched();
 
         log::info!(
-            "Ghost Shell started: {} (alert: {}, session: {})",
+            "Ghost Shell started: {} (alert: {}, tmux_session: {}, bg_prefix: {})",
             session_id,
             alert_name,
-            tmux_session
+            tmux_session,
+            bg_prefix,
+        );
+        crate::daemon::utils::log_event(
+            "ghost_start",
+            serde_json::json!({
+                "session_id": session_id,
+                "alert_name": alert_name,
+                "tmux_session": tmux_session,
+                "trigger": bg_prefix,
+            }),
         );
 
         Ok(session_id)
@@ -188,7 +201,7 @@ pub async fn trigger_ghost_turn(
          Daemon Host: {}\n\
          Tmux Session: {}\n\
          {}Command Policy: non-sudo commands run freely (OS permissions are the boundary). \
-         Sudo commands require a pre-approved script via install-sudoers.\n\
+         {}\n\
          Pre-approved Sudo Scripts: {}{}\n\
          Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
          {}",
@@ -196,6 +209,11 @@ pub async fn trigger_ghost_turn(
         daemon_hostname(),
         tmux_session,
         remote_line,
+        if run_with_sudo {
+            "Sudo commands are freely allowed (run_with_sudo is enabled for this runbook).".to_string()
+        } else {
+            "Sudo commands require a pre-approved script via install-sudoers.".to_string()
+        },
         approved_scripts,
         if run_with_sudo { " (executed with sudo)" } else { "" },
         max_ghost_turns,
@@ -232,9 +250,21 @@ pub async fn trigger_ghost_turn(
                 "Ghost Shell {}: reached max turns ({}), stopping",
                 session_id, max_ghost_turns
             );
+            crate::daemon::utils::log_event(
+                "ghost_error",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "error": format!("max turns ({}) reached", max_ghost_turns),
+                }),
+            );
             break;
         }
         turn += 1;
+
+        log::info!(
+            "Ghost Shell {}: starting turn {}/{}",
+            session_id, turn, max_ghost_turns
+        );
 
         let chat_messages = {
             let store = sessions.lock().unwrap_or_log();
@@ -264,6 +294,14 @@ pub async fn trigger_ghost_turn(
                     log::error!(
                         "Ghost Shell {}: turn {} timed out after {}s",
                         session_id, turn, GHOST_TURN_TIMEOUT_SECS
+                    );
+                    crate::daemon::utils::log_event(
+                        "ghost_error",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "turn": turn,
+                            "error": format!("turn timed out after {}s", GHOST_TURN_TIMEOUT_SECS),
+                        }),
                     );
                     anyhow::bail!("ghost turn timed out");
                 }
@@ -326,10 +364,50 @@ pub async fn trigger_ghost_turn(
                         pending_calls.push(PendingCall::SpawnGhost { id, thought_signature, runbook, message });
                     }
                     AiEvent::Done(_) => break,
-                    AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
+                    AiEvent::Error(e) => {
+                        crate::daemon::utils::log_event(
+                            "ghost_error",
+                            serde_json::json!({
+                                "session_id": session_id,
+                                "turn": turn,
+                                "error": format!("AI error: {e}"),
+                            }),
+                        );
+                        anyhow::bail!("AI error: {}", e);
+                    }
                     _ => {}
                 },
             }
+        }
+
+        // Log what tools this turn will execute before dispatching.
+        if !pending_calls.is_empty() {
+            for call in &pending_calls {
+                let detail = match call {
+                    PendingCall::Background { cmd, .. } => format!(": {}", cmd),
+                    _ => String::new(),
+                };
+                log::info!(
+                    "Ghost Shell {}: turn {} dispatching '{}'{detail}",
+                    session_id, turn, call.tool_name(),
+                );
+            }
+            crate::daemon::utils::log_event(
+                "ghost_turn",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "turn": turn,
+                    "tool_count": pending_calls.len(),
+                    "tools": pending_calls.iter().map(|c| {
+                        let mut obj = serde_json::Map::new();
+                        obj.insert("name".to_string(), serde_json::Value::String(c.tool_name().to_string()));
+                        if let PendingCall::Background { cmd, .. } = c {
+                            obj.insert("cmd".to_string(), serde_json::Value::String(cmd.clone()));
+                        }
+                        serde_json::Value::Object(obj)
+                    }).collect::<Vec<_>>(),
+                }),
+            );
         }
 
         let mut tool_results: Vec<ToolResult> = Vec::new();
@@ -366,7 +444,17 @@ pub async fn trigger_ghost_turn(
                     let config2 = config.clone();
                     match Box::pin(trigger_ghost_turn(&ghost_sid, &sessions2, &config2, &cache2, &store2)).await {
                         Ok(()) => {}
-                        Err(e) => log::error!("nested SpawnGhost failed for {}: {}", ghost_sid, e),
+                        Err(e) => {
+                            log::error!("nested SpawnGhost failed for {}: {}", ghost_sid, e);
+                            crate::daemon::utils::log_event(
+                                "ghost_error",
+                                serde_json::json!({
+                                    "session_id": session_id,
+                                    "turn": turn,
+                                    "error": format!("nested SpawnGhost failed for {ghost_sid}: {e}"),
+                                }),
+                            );
+                        }
                     }
                     tool_results.push(ToolResult {
                         tool_call_id: call.id().to_string(),
@@ -413,7 +501,17 @@ pub async fn trigger_ghost_turn(
         }
     }
 
-    log::info!("Ghost Turn completed for session {}", session_id);
+    log::info!(
+        "Ghost Shell {}: completed in {} turn(s)",
+        session_id, turn
+    );
+    crate::daemon::utils::log_event(
+        "ghost_complete",
+        serde_json::json!({
+            "session_id": session_id,
+            "turns_used": turn,
+        }),
+    );
     crate::daemon::stats::inc_ghosts_completed();
     Ok(())
 }

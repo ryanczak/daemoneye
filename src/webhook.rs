@@ -512,6 +512,11 @@ pub(crate) fn inject_ghost_event(sessions: &SessionStore, content: &str) {
     // One-liner for the tmux display-message overlay (strip newlines).
     let one_liner = content.lines().next().unwrap_or(content);
     notify_chat_panes(sessions, one_liner);
+    // Always mirror ghost lifecycle events to events.jsonl for troubleshooting.
+    crate::daemon::utils::log_event(
+        "ghost_lifecycle",
+        serde_json::json!({ "content": content }),
+    );
 }
 
 // ---------------------------------------------------------------------------
