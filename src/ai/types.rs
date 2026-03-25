@@ -592,3 +592,50 @@ pub enum AiEvent {
     Done(AiUsage),
     Error(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user_msg(content: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
+    }
+
+    #[test]
+    fn message_roundtrip_plain() {
+        let msg = user_msg("test content");
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.role, "user");
+        assert_eq!(back.content, "test content");
+        assert!(back.tool_calls.is_none());
+        assert!(back.tool_results.is_none());
+    }
+
+    #[test]
+    fn message_tool_calls_skipped_when_none() {
+        let msg = user_msg("hi");
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("tool_calls"));
+        assert!(!json.contains("tool_results"));
+    }
+
+    #[test]
+    fn tool_call_roundtrip() {
+        let tc = ToolCall {
+            id: "tc_99".to_string(),
+            name: "run_terminal_command".to_string(),
+            arguments: r#"{"command":"echo hi","background":true}"#.to_string(),
+            thought_signature: None,
+        };
+        let json = serde_json::to_string(&tc).unwrap();
+        let back: ToolCall = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, "tc_99");
+        assert_eq!(back.name, "run_terminal_command");
+    }
+}

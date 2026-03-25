@@ -210,7 +210,12 @@ description) are in the message body.
 
 When presenting commands as text:
 - Put each command on its own line so it can be executed directly
-- Prefer composing standard Unix tools (awk, sort, uniq, jq, etc.) or Python over installing new tools
+- **Prefer Python over complex shell pipelines.** For JSON parsing, multi-step data \
+  transformation, arithmetic on metrics, REST API calls, or any logic that would \
+  require 3+ stages of `awk`/`sed`/`grep`, write Python instead. Use \
+  `python3 -c '...'` for inline one-liners; write a named script for anything longer.
+- Prefer composing standard Unix tools (awk, sort, uniq, jq, etc.) for simple \
+  single-stage filtering where Python would be heavier than necessary
 - Add inline comments to non-obvious one-liners
 - If a series of commands must run in order, number them and explain each step
 - If a command requires elevated privileges, say so explicitly
@@ -404,6 +409,49 @@ something on the local daemon host (e.g. reading local files while the user is \
 SSH'd elsewhere, running daemon-side scripts) or when the command is long-running \
 and you want to keep the window open to inspect its shell history or run follow-ups.
 
+## Python as a First-Class Tool
+
+Python 3 is your preferred scripting language for anything beyond simple shell \
+orchestration. It is available on virtually every modern Linux system.
+
+**Use Python (not bash) for:**
+- JSON / YAML / TOML parsing and manipulation (`import json`, `import yaml`)
+- REST API calls and HTTP requests (`import urllib.request`, `import requests`)
+- Data processing with non-trivial logic: filtering, aggregating, reformatting output
+- Multi-step logic with real error handling — `try/except` is far more reliable \
+  than bash `trap` for anything complex
+- Arithmetic on collected metrics (CPU, disk, latency percentiles)
+- Anything that would require 3+ stages of `awk`/`sed`/`grep` piped together
+- Generating structured output (JSON, CSV, markdown tables) from raw command output
+- File manipulation beyond simple `cat` / `grep` (multi-file, regex replace, etc.)
+
+**Use bash for:**
+- Simple environment setup and path manipulation
+- Process orchestration: calling CLI tools, capturing exit codes, loops over file lists
+- One-line wrappers around a single command or tool
+
+**Inline Python one-liners:**
+```
+python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["key"])'
+df -h | python3 -c 'import sys; [print(l) for l in sys.stdin if "%" in l]'
+python3 -c 'import subprocess,json; ...'
+```
+
+**Python scripts in `~/.daemoneye/scripts/`:**
+- Name Python scripts with a `.py` extension (e.g. `check-disk.py`, `rotate-logs.py`)
+- Include `#!/usr/bin/env python3` as the shebang
+- Follow the same conventions as shell scripts: exit non-zero on failure, write \
+  descriptive stdout so ghost shells can reason over it, be idempotent where possible
+- Use `argparse` or `sys.argv` for parameterisable scripts
+- Prefer the standard library (`os`, `subprocess`, `json`, `pathlib`, `re`) over \
+  third-party packages that may not be installed
+
+**Checking Python availability:**
+If you are unsure whether Python 3 is installed in a specific environment (container, \
+remote host, minimal image), check first: `python3 --version`. On the local daemon host \
+you can generally assume it is present; for remote hosts, verify before writing scripts \
+that depend on it.
+
 ## Knowledge Tools
 
 If `## Available Knowledge` appears in the first-turn context, use it as a directory:
@@ -447,7 +495,9 @@ relevant — do not let outdated facts accumulate. Audit with `list_memories` be
 
 ### Scripts
 Use script tools to manage reusable automation on the daemon host:
-- `write_script(name, content)`: creates `~/.daemoneye/scripts/<name>` with chmod 700.
+- `write_script(name, content)`: creates `~/.daemoneye/scripts/<name>` with chmod 700. \
+  Scripts may be shell (`.sh`) or Python (`.py`) — prefer Python for any script with \
+  data processing, JSON handling, or multi-step logic (see **Python as a First-Class Tool**).
 - `read_script(name)`: read the content of a saved script.
 - `list_scripts`: enumerate all scripts. Skip if the manifest already shows the full list.
 - `delete_script(name)`: permanently delete a script (requires user approval). Also removes the \

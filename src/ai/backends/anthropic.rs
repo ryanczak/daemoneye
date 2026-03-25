@@ -247,6 +247,111 @@ impl AiClient for AnthropicClient {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::types::ToolCall;
+    use crate::ai::ToolResult;
+
+    fn user_msg(content: &str) -> Message {
+        Message {
+            role: "user".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
+    }
+    fn assistant_msg(content: &str) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+        }
+    }
+    fn client() -> AnthropicClient {
+        AnthropicClient::new("key".to_string(), "model".to_string())
+    }
+
+    #[test]
+    fn convert_plain_conversation() {
+        let msgs = vec![user_msg("hi"), assistant_msg("hello")];
+        let out = client().convert_messages(msgs);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["role"], "user");
+        assert_eq!(out[0]["content"], "hi");
+        assert_eq!(out[1]["role"], "assistant");
+    }
+
+    #[test]
+    fn convert_tool_call_becomes_tool_use_block() {
+        let tc = ToolCall {
+            id: "tc_1".to_string(),
+            name: "run_terminal_command".to_string(),
+            arguments: r#"{"command":"ls","background":true}"#.to_string(),
+            thought_signature: None,
+        };
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: "running ls".to_string(),
+            tool_calls: Some(vec![tc]),
+            tool_results: None,
+        };
+        let out = client().convert_messages(vec![msg]);
+        assert_eq!(out.len(), 1);
+        let content = out[0]["content"].as_array().expect("content array");
+        assert!(
+            content.iter().any(|b| b["type"] == "tool_use"),
+            "no tool_use block"
+        );
+        assert!(content.iter().any(|b| b["type"] == "text"), "no text block");
+    }
+
+    #[test]
+    fn convert_tool_call_without_text_omits_text_block() {
+        let tc = ToolCall {
+            id: "tc_2".to_string(),
+            name: "run_terminal_command".to_string(),
+            arguments: r#"{"command":"pwd","background":false}"#.to_string(),
+            thought_signature: None,
+        };
+        let msg = Message {
+            role: "assistant".to_string(),
+            content: String::new(),
+            tool_calls: Some(vec![tc]),
+            tool_results: None,
+        };
+        let out = client().convert_messages(vec![msg]);
+        let content = out[0]["content"].as_array().expect("content array");
+        assert!(
+            !content.iter().any(|b| b["type"] == "text"),
+            "empty text block should be omitted"
+        );
+    }
+
+    #[test]
+    fn convert_tool_results_become_user_message_with_tool_result_blocks() {
+        let tr = ToolResult {
+            tool_call_id: "tc_1".to_string(),
+            tool_name: "list_schedules".to_string(),
+            content: "output here".to_string(),
+        };
+        let msg = Message {
+            role: "user".to_string(),
+            content: String::new(),
+            tool_calls: None,
+            tool_results: Some(vec![tr]),
+        };
+        let out = client().convert_messages(vec![msg]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["role"], "user");
+        let content = out[0]["content"].as_array().expect("content array");
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "tc_1");
+        assert_eq!(content[0]["content"], "output here");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OpenAI-compatible
 // ---------------------------------------------------------------------------

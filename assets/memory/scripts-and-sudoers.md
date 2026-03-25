@@ -1,14 +1,15 @@
 # Scripts and Sudoers
 
-Scripts are pre-vetted shell scripts stored in `~/.daemoneye/scripts/` that Ghost Shells and scheduled jobs can run without per-command human approval.
+Scripts are pre-vetted programs stored in `~/.daemoneye/scripts/` that Ghost Shells and scheduled jobs can run without per-command human approval. Scripts may be **shell** (`.sh`) or **Python** (`.py`) — Python is preferred for anything with data processing, JSON handling, or multi-step logic.
 
 ## Managing Scripts
 
 ```
 write_script(name="cleanup-logs.sh", content="#!/bin/bash\n...")
-read_script("cleanup-logs.sh")
+write_script(name="check-disk.py", content="#!/usr/bin/env python3\n...")
+read_script("check-disk.py")
 list_scripts()
-delete_script("cleanup-logs.sh")
+delete_script("check-disk.py")
 ```
 
 Scripts are stored with `chmod 700`. Path traversal (e.g., `../../etc/passwd`) is blocked.
@@ -19,19 +20,39 @@ Scripts are stored with `chmod 700`. Path traversal (e.g., `../../etc/passwd`) i
 2. **Exit codes matter** — exit non-zero on failure so the ghost knows to escalate.
 3. **Stdout is the report** — ghost shells read stdout to decide next steps; be descriptive.
 4. **Idempotent where possible** — the ghost may re-run a script if it is unsure of the result.
+5. **Python preferred for complexity** — use Python for JSON parsing, REST calls, arithmetic on metrics, or any logic that would require 3+ piped shell commands.
 
-Example:
+### Python script example
+
+```python
+#!/usr/bin/env python3
+# check-disk.py — report disk usage; exit 1 if above threshold
+import subprocess, sys
+
+THRESHOLD = 90
+result = subprocess.run(["df", "-h", "/"], capture_output=True, text=True)
+for line in result.stdout.splitlines()[1:]:
+    parts = line.split()
+    if not parts:
+        continue
+    pct = int(parts[4].rstrip("%"))
+    mount = parts[5]
+    print(f"Disk usage on {mount}: {pct}%")
+    if pct > THRESHOLD:
+        print(f"WARNING: {mount} usage above {THRESHOLD}%")
+        sys.exit(1)
+print("OK")
+```
+
+### Shell script example
+
 ```bash
 #!/bin/bash
-# check-disk.sh — report disk usage on /dev/sda1
+# restart-nginx.sh — reload nginx config and restart if needed
 set -euo pipefail
-USAGE=$(df -h /dev/sda1 | awk 'NR==2 {print $5}' | tr -d '%')
-echo "Disk usage: ${USAGE}%"
-if [ "$USAGE" -gt 90 ]; then
-  echo "WARNING: disk usage above 90%"
-  exit 1
-fi
-echo "OK"
+nginx -t 2>&1 && echo "Config OK" || { echo "Config invalid"; exit 1; }
+systemctl restart nginx
+echo "nginx restarted"
 ```
 
 ## Sudoers — Running Scripts with Elevated Privileges
