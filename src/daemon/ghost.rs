@@ -77,14 +77,24 @@ impl GhostManager {
         
         let mut messages = Vec::new();
 
-        // The alert payload is the first user turn.  Ghost behavioral instructions
-        // (autonomous mode, background-only execution, no human present) live in the
-        // system prompt assembled by `trigger_ghost_turn`, not here.  Putting them in
-        // an assistant-role message causes the Anthropic API to reject the request
-        // because conversations must begin with a user turn.
+        // The alert payload plus the full runbook body form the first user turn.
+        // Including the runbook content here ensures the ghost AI has its instructions
+        // from the start regardless of the trigger path — a scheduled job fires with
+        // only a terse "job fired" message, so without this the ghost would produce a
+        // text-only response with no tool calls and exit after one turn.
+        //
+        // Ghost behavioral instructions (autonomous mode, background-only execution,
+        // no human present) live in the system prompt assembled by `trigger_ghost_turn`,
+        // not here.  Putting them in an assistant-role message causes the Anthropic API
+        // to reject the request because conversations must begin with a user turn.
         let user_msg = Message {
             role: "user".to_string(),
-            content: format!("Incoming alert:\n{}", alert_msg),
+            content: format!(
+                "Incoming alert:\n{}\n\nRunbook: {}\n\n{}",
+                alert_msg,
+                runbook.name,
+                runbook.content,
+            ),
             tool_calls: None,
             tool_results: None,
         };
