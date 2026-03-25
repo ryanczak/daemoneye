@@ -1,16 +1,13 @@
-use crate::daemon::utils::is_read_only_command;
-
 /// Security policy for autonomous Ghost Shells.
 ///
-/// Determines whether a command is "safe" to auto-approve in a headless session
-/// where no human user is present to provide manual approval.
+/// Trust model: non-sudo commands are always allowed — OS user permissions are the
+/// boundary.  Sudo commands must be pre-approved via `auto_approve_scripts` (paired
+/// with a `/etc/sudoers.d/` NOPASSWD entry created by `daemoneye install-sudoers`).
 #[derive(Debug, Clone)]
 pub struct GhostPolicy {
-    /// List of exact script names (e.g. `restart-nginx.sh`) pre-approved for execution.
-    /// Scripts must exist in `~/.daemoneye/scripts/`.
+    /// List of exact script names (e.g. `restart-nginx.sh`) pre-approved for sudo
+    /// execution.  Scripts must exist in `~/.daemoneye/scripts/`.
     pub auto_approve_scripts: Vec<String>,
-    /// Whether to auto-approve known read-only informational commands.
-    pub auto_approve_read_only: bool,
     /// Whether to prepend `sudo` when executing pre-approved scripts.
     pub run_with_sudo: bool,
     /// Optional SSH destination for remote execution (e.g. `user@host`).
@@ -23,19 +20,25 @@ impl GhostPolicy {
     pub fn from_config(config: &crate::ipc::GhostConfig) -> Self {
         Self {
             auto_approve_scripts: config.auto_approve_scripts.clone(),
-            auto_approve_read_only: config.auto_approve_read_only,
             run_with_sudo: config.run_with_sudo,
             ssh_target: config.ssh_target.clone(),
         }
     }
 
-    /// Returns true if the command is considered "safe" to run autonomously
-    /// based on the policy rules.
+    /// Returns true if the command is safe to run autonomously.
+    ///
+    /// - **Non-sudo commands** are always allowed; the OS user-permission model is the
+    ///   boundary — the ghost runs as the same user as the daemon.
+    /// - **Sudo commands** must have their script basename listed in
+    ///   `auto_approve_scripts`.  The leading `sudo` token and any absolute path prefix
+    ///   are stripped before the basename comparison so that both `restart-nginx.sh`
+    ///   and `sudo /home/user/.daemoneye/scripts/restart-nginx.sh` match the same entry.
     pub fn is_safe(&self, command: &str) -> bool {
-        // 1. Check script whitelist — match by exact name or trailing path component.
-        // Skip a leading `sudo` token so that commands rewritten by resolve_command()
-        // with run_with_sudo=true ("sudo /path/to/script.sh") are still matched
-        // against the whitelist by their script basename rather than "sudo".
+        if !crate::daemon::utils::command_has_sudo(command) {
+            return true;
+        }
+
+        // Sudo command — check script whitelist.
         let mut tokens = command.split_whitespace();
         let first_token = tokens.next().unwrap_or("");
         let effective_token = if first_token == "sudo" {
@@ -47,16 +50,7 @@ impl GhostPolicy {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(effective_token);
-        if self.auto_approve_scripts.iter().any(|s| s == basename) {
-            return true;
-        }
-
-        // 2. Check read-only heuristic
-        if self.auto_approve_read_only && is_read_only_command(command) {
-            return true;
-        }
-
-        false
+        self.auto_approve_scripts.iter().any(|s| s == basename)
     }
 
     /// Rewrite a whitelisted script reference to its absolute (local) or
@@ -145,7 +139,6 @@ mod tests {
     fn policy(scripts: &[&str]) -> GhostPolicy {
         GhostPolicy {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
-            auto_approve_read_only: false,
             run_with_sudo: false,
             ssh_target: None,
         }
@@ -154,7 +147,6 @@ mod tests {
     fn sudo_policy(scripts: &[&str]) -> GhostPolicy {
         GhostPolicy {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
-            auto_approve_read_only: false,
             run_with_sudo: true,
             ssh_target: None,
         }
@@ -163,7 +155,6 @@ mod tests {
     fn remote_policy(scripts: &[&str], target: &str) -> GhostPolicy {
         GhostPolicy {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
-            auto_approve_read_only: false,
             run_with_sudo: false,
             ssh_target: Some(target.to_string()),
         }
@@ -172,45 +163,28 @@ mod tests {
     fn remote_sudo_policy(scripts: &[&str], target: &str) -> GhostPolicy {
         GhostPolicy {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
-            auto_approve_read_only: false,
             run_with_sudo: true,
             ssh_target: Some(target.to_string()),
         }
     }
 
-    #[test]
-    fn is_safe_bare_name() {
-        let p = policy(&["fix.sh"]);
-        assert!(p.is_safe("fix.sh"));
-    }
+    // ── is_safe ───────────────────────────────────────────────────────────────
 
     #[test]
-    fn is_safe_relative_path() {
-        let p = policy(&["fix.sh"]);
-        assert!(p.is_safe("./fix.sh"));
-    }
-
-    #[test]
-    fn is_safe_relative_path_with_args() {
-        let p = policy(&["fix.sh"]);
+    fn is_safe_non_sudo_always_allowed() {
+        // Any non-sudo command is allowed regardless of whitelist.
+        let p = policy(&[]);
+        assert!(p.is_safe("ps aux"));
+        assert!(p.is_safe("dmesg | tail -n 1"));
+        assert!(p.is_safe("rm -rf /tmp/foo"));
         assert!(p.is_safe("./fix.sh --dry-run"));
-    }
-
-    #[test]
-    fn is_safe_absolute_path() {
-        let p = policy(&["fix.sh"]);
         assert!(p.is_safe("/home/user/.daemoneye/scripts/fix.sh"));
     }
 
     #[test]
-    fn is_safe_sudo_absolute_path() {
+    fn is_safe_sudo_on_whitelist() {
         let p = policy(&["fix.sh"]);
         assert!(p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh"));
-    }
-
-    #[test]
-    fn is_safe_sudo_absolute_path_with_args() {
-        let p = policy(&["fix.sh"]);
         assert!(p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh --flag"));
     }
 
@@ -218,13 +192,8 @@ mod tests {
     fn is_safe_sudo_not_on_whitelist() {
         let p = policy(&["fix.sh"]);
         assert!(!p.is_safe("sudo /home/user/.daemoneye/scripts/other.sh"));
-    }
-
-    #[test]
-    fn is_safe_not_on_whitelist() {
-        let p = policy(&["fix.sh"]);
-        assert!(!p.is_safe("other.sh"));
-        assert!(!p.is_safe("rm -rf /"));
+        assert!(!p.is_safe("sudo apt install vim"));
+        assert!(!p.is_safe("sudo rm -rf /var/log"));
     }
 
     #[test]

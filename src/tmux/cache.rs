@@ -3,6 +3,7 @@ use crate::ai::filter::mask_sensitive;
 use crate::tmux;
 use crate::util::UnpoisonExt;
 use anyhow::Result;
+use chrono::Local;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
@@ -596,6 +597,19 @@ impl SessionCache {
         if out.is_empty() {
             out.push_str("(no terminal context available)");
         } else {
+            // Current time — injected so the AI has ground truth for scheduling.
+            {
+                let now_local = Local::now();
+                let now_utc = now_local.to_utc();
+                let tz_name = now_local.format("%Z").to_string();
+                out.push_str(&format!(
+                    "[CURRENT TIME] {} UTC ({}: {})\n",
+                    now_utc.format("%Y-%m-%d %H:%M:%S"),
+                    tz_name,
+                    now_local.format("%Y-%m-%d %H:%M:%S"),
+                ));
+            }
+
             // Other sessions (N16) — append when there is already meaningful context.
             // Skipped when out is empty so it doesn't interfere with the fallback sentinel.
             let session_name = self.session_name.read().unwrap_or_log().clone();

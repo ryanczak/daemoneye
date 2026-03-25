@@ -29,7 +29,7 @@ schedule_command(
 )
 ```
 
-**From a webhook** — configure the runbook with `enabled: true` in `ghost_config` frontmatter. When the watchdog analysis emits `GHOST_TRIGGER: YES`, DaemonEye spawns the ghost automatically.
+**From a webhook** — configure the runbook with `enabled: true` in frontmatter. When the watchdog analysis emits `GHOST_TRIGGER: YES`, DaemonEye spawns the ghost automatically.
 
 ## Runbook Frontmatter for Ghost Shells
 
@@ -39,7 +39,6 @@ tags: [disk, ops]
 memories: [disk-thresholds]
 enabled: true
 auto_approve_scripts: [check-disk.sh, cleanup-logs.sh]
-auto_approve_read_only: true
 run_with_sudo: false
 max_ghost_turns: 20
 ssh_target: ""
@@ -49,19 +48,19 @@ ssh_target: ""
 | Field | Description |
 |---|---|
 | `enabled` | Must be `true` for webhook-triggered ghosts |
-| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` the ghost may run without approval |
-| `auto_approve_read_only` | Auto-approve safe informational commands (`df`, `ps`, `ls`, `cat`, `journalctl`, etc.) |
+| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution. Non-sudo commands run freely without listing here. |
 | `run_with_sudo` | Prepend `sudo` to approved scripts. Requires a NOPASSWD sudoers rule — see `scripts-and-sudoers` memory |
 | `max_ghost_turns` | Hard turn limit (0 = use daemon default of 20) |
-| `ssh_target` | If set (e.g. `user@host`), all approved scripts are wrapped in `ssh <target> <cmd>` |
+| `ssh_target` | If set (e.g. `user@host`), all commands are wrapped in `ssh <target> <cmd>` |
 
 ## Ghost Policy — What Gets Approved
 
-The ghost operates under `GhostPolicy` derived from the runbook frontmatter:
-- **Auto-approved**: scripts listed in `auto_approve_scripts`; read-only commands if `auto_approve_read_only: true`
-- **Auto-denied**: any command not in the above categories; sudo prompts not covered by NOPASSWD
+The ghost operates under a simple OS-delegation model:
 
-The ghost AI is instructed to only use pre-approved scripts for mutating actions. If it needs something not on the whitelist it should document the gap and stop rather than attempt workarounds.
+- **Non-sudo commands** — always allowed. The daemon runs as the same user as you; OS file permissions are the boundary.
+- **Sudo commands** — must be listed in `auto_approve_scripts` AND have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`. Any other sudo command is auto-denied.
+
+This means the ghost can freely run `ps`, `df`, `curl`, `journalctl`, `systemctl status`, etc. without any configuration. Only commands that need root require explicit setup.
 
 ## tmux Window Naming
 
@@ -91,6 +90,6 @@ All ghost lifecycle events are injected into active sessions and surfaced in cat
 
 1. Verify the runbook exists: `read_runbook("name")`
 2. Verify required scripts exist: `list_scripts()`
-3. If scripts need sudo: verify sudoers rule exists or run `daemoneye install-sudoers <script>`
+3. If any scripts need sudo: verify sudoers rule exists or run `daemoneye install-sudoers <script>`
 4. Check current ghost count in `daemoneye status` if nearing the cap
 5. For SSH targets: confirm `ssh_target` is set in runbook frontmatter

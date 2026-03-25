@@ -152,7 +152,7 @@ pub async fn trigger_ghost_turn(
     let sys_context = get_or_init_sys_context();
 
     let daemon_ceiling = config.ghost.max_ghost_turns;
-    let (approved_scripts, auto_read_only, run_with_sudo, max_ghost_turns, ssh_target) = {
+    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target) = {
         let store = sessions.lock().unwrap_or_log();
         store.get(session_id).and_then(|e| e.ghost_config.as_ref()).map(|gc| {
             let scripts = if gc.auto_approve_scripts.is_empty() {
@@ -165,15 +165,15 @@ pub async fn trigger_ghost_turn(
             } else {
                 daemon_ceiling
             };
-            (scripts, gc.auto_approve_read_only, gc.run_with_sudo, turns, gc.ssh_target.clone())
-        }).unwrap_or_else(|| ("none".to_string(), false, false, daemon_ceiling, None))
+            (scripts, gc.run_with_sudo, turns, gc.ssh_target.clone())
+        }).unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None))
     };
     let remote_line = if let Some(ref target) = ssh_target {
         format!(
-            "Remote SSH Target: {} — approved scripts and read-only commands are \
-             automatically wrapped in `ssh {}` and executed on this host. \
+            "Remote SSH Target: {} — all commands are automatically wrapped in \
+             `ssh {}` and executed on this host. \
              Do NOT manually SSH to the target; call run_terminal_command with the \
-             script name or command directly and the daemon handles SSH transparently.\n         ",
+             command directly and the daemon handles SSH transparently.\n         ",
             target, target
         )
     } else {
@@ -187,8 +187,9 @@ pub async fn trigger_ghost_turn(
          Do NOT ask questions or wait for user input.\n\
          Daemon Host: {}\n\
          Tmux Session: {}\n\
-         {}Pre-approved Scripts: {}{}\n\
-         Read-only Commands Auto-approved: {}\n\
+         {}Command Policy: non-sudo commands run freely (OS permissions are the boundary). \
+         Sudo commands require a pre-approved script via install-sudoers.\n\
+         Pre-approved Sudo Scripts: {}{}\n\
          Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
          {}",
         system_base,
@@ -197,7 +198,6 @@ pub async fn trigger_ghost_turn(
         remote_line,
         approved_scripts,
         if run_with_sudo { " (executed with sudo)" } else { "" },
-        if auto_read_only { "yes" } else { "no" },
         max_ghost_turns,
         sys_context.format_for_ai()
     );

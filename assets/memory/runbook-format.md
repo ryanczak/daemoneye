@@ -40,8 +40,7 @@ DaemonEye auto-analysis looks up runbooks by this converted name when an alert f
 - `tags`: free-form labels for search_repository
 - `memories`: list of `knowledge` memory keys to auto-load during watchdog analysis
 - `enabled`: (bool) set `true` to enable autonomous Ghost Shells for this runbook
-- `auto_approve_scripts`: (list) script names in `~/.daemoneye/scripts/` authorized for unattended execution
-- `auto_approve_read_only`: (bool) set `true` to auto-approve safe informational commands (`df`, `ps`, `ls`, `cat`, `journalctl`, etc.)
+- `auto_approve_scripts`: (list) script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution; non-sudo commands run freely without listing them
 - `run_with_sudo`: (bool) prepend `sudo` when executing `auto_approve_scripts`; requires a NOPASSWD sudoers rule — see `scripts-and-sudoers` memory
 - `max_ghost_turns`: (int) turn budget for the Ghost Shell; 0 or omitted = daemon default (20)
 - `ssh_target`: (string) if set (e.g. `user@host`), approved scripts are wrapped in `ssh <target> <cmd>`

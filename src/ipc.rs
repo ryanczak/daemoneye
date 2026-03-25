@@ -36,10 +36,10 @@ pub struct ScriptListItem {
 pub struct GhostConfig {
     /// Whether the AI can operate autonomously in a Ghost Shell.
     pub enabled: bool,
-    /// List of script names (in `~/.daemoneye/scripts/`) pre-approved for execution.
+    /// List of script names (in `~/.daemoneye/scripts/`) pre-approved for sudo execution.
+    /// Non-sudo commands are always allowed; sudo commands must be listed here and have a
+    /// corresponding `/etc/sudoers.d/` `NOPASSWD` entry (via `daemoneye install-sudoers`).
     pub auto_approve_scripts: Vec<String>,
-    /// Whether to auto-approve known read-only informational commands.
-    pub auto_approve_read_only: bool,
     /// Maximum number of AI turns before the session is forcibly stopped.
     /// `0` means use the daemon default (20).
     pub max_ghost_turns: usize,
@@ -47,8 +47,7 @@ pub struct GhostConfig {
     /// Intended for use with `/etc/sudoers.d/` `NOPASSWD` rules.
     pub run_with_sudo: bool,
     /// Optional SSH destination (e.g. `user@host` or `host`) for remote execution.
-    /// When set, all auto-approved commands (whitelisted scripts and read-only commands)
-    /// are automatically wrapped in `ssh <target> <cmd>` before execution.
+    /// When set, approved commands are automatically wrapped in `ssh <target> <cmd>`.
     /// Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host.
     /// The AI is instructed not to SSH manually — the policy handles it transparently.
     #[serde(default)]

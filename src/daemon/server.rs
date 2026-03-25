@@ -608,6 +608,21 @@ pub async fn handle_client(
 
     let safe_query = mask_sensitive(&initial_query);
 
+    // Current time — injected on every turn so the AI always has ground truth
+    // for scheduling and time-relative reasoning.
+    let current_time_line = {
+        use chrono::Local;
+        let now_local = Local::now();
+        let now_utc = now_local.to_utc();
+        let tz_name = now_local.format("%Z").to_string();
+        format!(
+            "[Current time: {} UTC ({}: {})]\n",
+            now_utc.format("%Y-%m-%d %H:%M:%S"),
+            tz_name,
+            now_local.format("%Y-%m-%d %H:%M:%S"),
+        )
+    };
+
     // First turn: include full host context + terminal snapshot.
     // Subsequent turns: budget note + query only. The AI calls get_terminal_context
     // when it needs a fresh snapshot, keeping mid-turn messages lean.
@@ -641,7 +656,7 @@ pub async fn handle_client(
              {manifest_block}\
              {auto_search_block}\
              ## Terminal Session\n```\n{session_summary}\n```\n\n\
-             User: {safe_query}"
+             {current_time_line}User: {safe_query}"
         )
     } else {
         // Inject a context-budget line so the AI knows how much context it has consumed.
@@ -676,7 +691,7 @@ pub async fn handle_client(
         } else {
             String::new()
         };
-        format!("{budget_note}User: {safe_query}")
+        format!("{budget_note}{current_time_line}User: {safe_query}")
     };
 
     let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);

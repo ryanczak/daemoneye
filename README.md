@@ -327,8 +327,8 @@ GhostManager::start_session()
 Ghost AI turn loop (up to max_ghost_turns)
   • Reads runbook + alert context as system prompt
   • Issues run_terminal_command (background mode only)
-  • Policy gate: command must be in auto_approve_scripts
-    or be a read-only command (auto_approve_read_only: true)
+  • Policy gate: non-sudo commands always allowed (OS permissions are the boundary);
+    sudo commands must be in auto_approve_scripts + have a NOPASSWD sudoers rule
   • resolve_command() rewrites bare/relative script names
     to ~/.daemoneye/scripts/<name> (+ sudo prefix if run_with_sudo: true)
   • watch_pane blocks until command exits before next turn
@@ -407,7 +407,6 @@ memories: [nginx-config-notes]
 enabled: true
 auto_approve_scripts: [restart-nginx.sh]
 run_with_sudo: true
-auto_approve_read_only: true
 max_ghost_turns: 10
 ---
 # Runbook: nginx-down
@@ -436,11 +435,10 @@ captures the error log for post-incident review.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Allow DaemonEye to spawn an autonomous Ghost Shell for this alert. |
-| `auto_approve_scripts` | list | `[]` | Script names in `~/.daemoneye/scripts/` the ghost may run without prompting. Bare names, relative paths (`./name.sh`), and commands with arguments are all resolved to the absolute path. |
-| `run_with_sudo` | bool | `false` | Prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry. Leave `false` if the script does not need root. |
-| `auto_approve_read_only` | bool | `false` | Also allow informational read-only commands (`ps`, `df`, `systemctl status`, etc.) without policy approval. |
+| `auto_approve_scripts` | list | `[]` | Script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution. Non-sudo commands run freely without listing them. Bare names, relative paths (`./name.sh`), and commands with arguments are all resolved to the absolute path. |
+| `run_with_sudo` | bool | `false` | Prepend `sudo` when executing approved scripts. Pair with a `/etc/sudoers.d/` `NOPASSWD` entry via `daemoneye install-sudoers`. Leave `false` if the script does not need root. |
 | `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
-| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all auto-approved commands are transparently wrapped in `ssh <target> <cmd>` before execution. Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host. The AI is instructed not to SSH manually — omit this field for local-only execution. |
+| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all commands are transparently wrapped in `ssh <target> <cmd>` before execution. Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host. The AI is instructed not to SSH manually — omit this field for local-only execution. |
 
 ### Step 4 — Enable the webhook and configure Alertmanager
 
@@ -548,8 +546,10 @@ tmux list-windows | grep de-incident
 
 ### Security considerations
 
-- **Scope sudoers entries tightly.** Pin the exact absolute path in `/etc/sudoers.d/`. Never use `ALL` as the command or allow path wildcards.
-- **Only list scripts you control.** `auto_approve_scripts` is a whitelist of filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
+- **Non-sudo commands run as you.** The ghost runs as the same OS user as the daemon. Any command that doesn't require `sudo` runs within your existing file permissions — no additional policy needed.
+- **Sudo requires two explicit approvals.** To allow a sudo command: (1) list the script in `auto_approve_scripts`, and (2) run `daemoneye install-sudoers <script>` to create the NOPASSWD sudoers rule. Both must be present. Any other sudo command is automatically denied.
+- **Scope sudoers entries tightly.** `daemoneye install-sudoers` pins the exact absolute path in `/etc/sudoers.d/`. Never manually add `ALL` as the command or allow path wildcards.
+- **Only list scripts you control.** `auto_approve_scripts` matches filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
 - **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost shell.
 - **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling. A ghost shell is forcibly stopped when the limit is reached regardless of what it is doing.
 - **All actions are logged.** Every command approval, execution, and result is recorded in `events.jsonl` for post-incident audit.
@@ -578,7 +578,7 @@ src/
 │   ├── executor.rs  # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
 │   ├── background.rs # run_background_in_window(); notify_job_completion(); GC lifecycle
 │   ├── ghost.rs     # GhostManager::start_session() — allocates de-incident-* tmux window
-│   ├── policy.rs    # GhostPolicy — auto_approve_scripts / auto_approve_read_only / run_with_sudo enforcement
+│   ├── policy.rs    # GhostPolicy — OS-delegation trust model: non-sudo always allowed; sudo requires auto_approve_scripts + install-sudoers
 │   └── stats.rs     # Atomic ghost shell counters (launched / completed / failed / active)
 ├── cli/             # IPC client: chat interface, terminal rendering, subcommands
 ├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus
