@@ -146,6 +146,99 @@ fn validate_script_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Generate the content for a sudoers drop-in file that grants the current user
+/// NOPASSWD access to the given script.
+///
+/// This is a pure function and does not touch the filesystem — useful for testing.
+pub fn sudoers_rule(user: &str, script_path: &str) -> String {
+    format!("{} ALL=(ALL) NOPASSWD: {}\n", user, script_path)
+}
+
+/// Install a NOPASSWD sudoers rule for a named script in `~/.daemoneye/scripts/`.
+///
+/// Steps:
+/// 1. Validates the script name and checks the script exists.
+/// 2. Resolves the absolute script path.
+/// 3. Determines the current username via `$USER` or `id -un`.
+/// 4. Writes the rule to a temp file, then installs it to
+///    `/etc/sudoers.d/daemoneye-<sanitised-name>` using
+///    `sudo install -m 0440`.
+/// 5. Validates the installed file with `sudo visudo -c -f <file>`;
+///    removes it on validation failure.
+pub fn install_sudoers(script_name: &str) -> Result<()> {
+    validate_script_name(script_name)?;
+
+    let script_path = scripts_dir().join(script_name);
+    if !script_path.exists() {
+        bail!("Script '{}' not found in ~/.daemoneye/scripts/", script_name);
+    }
+    let abs_path = script_path
+        .canonicalize()
+        .with_context(|| format!("resolving absolute path for '{}'", script_name))?;
+    let abs_path_str = abs_path.to_string_lossy().to_string();
+
+    // Determine the current user.
+    let user = std::env::var("USER")
+        .or_else(|_| {
+            let out = std::process::Command::new("id")
+                .arg("-un")
+                .output()
+                .context("running 'id -un'")?;
+            Ok::<String, anyhow::Error>(String::from_utf8_lossy(&out.stdout).trim().to_string())
+        })
+        .context("determining current username")?;
+    if user.is_empty() {
+        bail!("Could not determine current username");
+    }
+
+    // Sanitise the script name for use as a filename component.
+    let safe_name: String = script_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .collect();
+    let sudoers_file = format!("/etc/sudoers.d/daemoneye-{}", safe_name);
+
+    let rule = sudoers_rule(&user, &abs_path_str);
+
+    // Write rule to a temp file.
+    let tmp_path = format!("/tmp/daemoneye-sudoers-{}", std::process::id());
+    std::fs::write(&tmp_path, &rule)
+        .with_context(|| format!("writing temp sudoers file '{}'", tmp_path))?;
+
+    // Install the temp file with correct permissions.
+    let install_status = std::process::Command::new("sudo")
+        .args(["install", "-m", "0440", &tmp_path, &sudoers_file])
+        .status()
+        .context("running 'sudo install'")?;
+    let _ = std::fs::remove_file(&tmp_path);
+    if !install_status.success() {
+        bail!("sudo install failed with status {}", install_status);
+    }
+
+    // Validate the installed file.
+    let visudo_status = std::process::Command::new("sudo")
+        .args(["visudo", "-c", "-f", &sudoers_file])
+        .status()
+        .context("running 'sudo visudo -c'")?;
+    if !visudo_status.success() {
+        // Remove the invalid file before bailing.
+        let _ = std::process::Command::new("sudo")
+            .args(["rm", "-f", &sudoers_file])
+            .status();
+        bail!(
+            "visudo validation failed for '{}'. The file has been removed.",
+            sudoers_file
+        );
+    }
+
+    println!(
+        "Installed sudoers rule: {}\nRule: {}",
+        sudoers_file,
+        rule.trim()
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,5 +321,21 @@ mod tests {
             assert!(!all.iter().any(|(s, _)| s.name.ends_with(".meta.toml")));
         });
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sudoers_rule_content() {
+        let rule = sudoers_rule("alice", "/home/alice/.daemoneye/scripts/check-disk.sh");
+        assert_eq!(
+            rule,
+            "alice ALL=(ALL) NOPASSWD: /home/alice/.daemoneye/scripts/check-disk.sh\n"
+        );
+    }
+
+    #[test]
+    fn sudoers_rule_special_chars_in_path() {
+        // Paths with hyphens and underscores should pass through unchanged.
+        let rule = sudoers_rule("bob", "/opt/scripts/rotate_certs.sh");
+        assert!(rule.starts_with("bob ALL=(ALL) NOPASSWD: /opt/scripts/rotate_certs.sh"));
     }
 }

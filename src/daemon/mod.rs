@@ -39,10 +39,16 @@ pub mod utils;
 pub const DAEMON_WINDOW_PREFIX: &str = "de-";
 /// Window-name prefix for background execution windows (`de-bg-<session>-<ts>-<id>`).
 pub const BG_WINDOW_PREFIX: &str = "de-bg-";
-/// Window-name prefix for scheduled-job windows (`de-sched-<ts>-<id>`).
-pub const SCHED_WINDOW_PREFIX: &str = "de-sched-";
-/// Window-name prefix for ghost-session (autonomous remediation) windows (`de-incident-<ts>-<id>`).
-pub const INCIDENT_WINDOW_PREFIX: &str = "de-incident-";
+/// Window-name prefix for regular scheduled-job windows (`de-sj-<ts>-<id>`).
+pub const SCHED_WINDOW_PREFIX: &str = "de-sj-";
+/// Window-name prefix for ghost-shell background execution windows (`de-gs-bg-<session>-<ts>-<id>`).
+/// Used when a ghost is triggered by a webhook or interactive `spawn_ghost_shell`.
+pub const GS_BG_WINDOW_PREFIX: &str = "de-gs-bg-";
+/// Window-name prefix for ghost-shell scheduled-job windows (`de-gs-sj-<session>-<ts>-<id>`).
+/// Used when a ghost is triggered by a scheduled job (`ActionOn::Ghost`).
+pub const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
+/// Window-name prefix for ghost-shell incident-response (main session) windows (`de-gs-ir-<ts>-<id>`).
+pub const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
 
 pub use server::*;
 pub use session::*;
@@ -535,11 +541,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         let bg_sn_sup = Arc::clone(&bg_session);
         let cfg_sup = startup_config.clone();
         let sessions_sup = Arc::clone(&sessions);
+        let cache_sup = Arc::clone(&cache);
         tokio::spawn(supervise("scheduler", Arc::clone(&shutdown), move || {
             let store = Arc::clone(&store_sup);
             let bg_sn = Arc::clone(&bg_sn_sup);
             let cfg = cfg_sup.clone();
             let sessions_sched = Arc::clone(&sessions_sup);
+            let cache_sched = Arc::clone(&cache_sup);
             async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
                 loop {
@@ -554,8 +562,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                         let sn2 = sn.clone();
                         let cfg2 = cfg.clone();
                         let sessions2 = Arc::clone(&sessions_sched);
+                        let cache2 = Arc::clone(&cache_sched);
+                        let store3 = Arc::clone(&store);
                         tokio::spawn(async move {
-                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, None).await;
+                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, store3, None).await;
                         });
                     }
                 }

@@ -534,7 +534,7 @@ fn camel_to_kebab(s: &str) -> String {
 ///
 /// Scans lines in reverse so the field is found quickly even in long responses.
 /// Returns `Some(true)` for YES, `Some(false)` for NO, `None` if absent.
-fn parse_ghost_trigger(response: &str) -> Option<bool> {
+pub(crate) fn parse_ghost_trigger(response: &str) -> Option<bool> {
     const PREFIX: &str = "GHOST_TRIGGER:";
     for line in response.lines().rev() {
         let upper = line.trim().to_uppercase();
@@ -549,6 +549,35 @@ fn parse_ghost_trigger(response: &str) -> Option<bool> {
         }
     }
     None
+}
+
+/// Evaluate a watchdog AI response to determine whether action should be taken.
+///
+/// Returns `(should_act, trigger_reason)`.  Prefers the structured
+/// `GHOST_TRIGGER: YES/NO` field; falls back to the legacy `ALERT` keyword for
+/// responses that predate the structured format.  Pass `api_error=true` when the
+/// API call itself failed so the reason string is informative.
+pub(crate) fn evaluate_watchdog_response(
+    response: &str,
+    api_error: bool,
+) -> (bool, &'static str) {
+    if api_error && response.is_empty() {
+        (false, "api_error — response empty")
+    } else if response.is_empty() {
+        (false, "empty_response — model returned no tokens")
+    } else {
+        match parse_ghost_trigger(response) {
+            Some(true) => (true, "GHOST_TRIGGER: YES"),
+            Some(false) => (false, "GHOST_TRIGGER: NO"),
+            None => {
+                if response.to_uppercase().contains("ALERT") {
+                    (true, "legacy ALERT keyword (no GHOST_TRIGGER line found)")
+                } else {
+                    (false, "no GHOST_TRIGGER line and no ALERT keyword in response")
+                }
+            }
+        }
+    }
 }
 
 /// Try to find a runbook whose name matches the alert name in several variants.
@@ -622,27 +651,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         }
     }
 
-    // Derive should_act and a human-readable reason for the log.
-    // Prefer the structured GHOST_TRIGGER field; fall back to the legacy "ALERT"
-    // keyword for runbooks whose AI response predates the structured format.
-    let (should_act, trigger_reason) = if api_err.is_some() && response.is_empty() {
-        (false, "api_error — response empty")
-    } else if response.is_empty() {
-        (false, "empty_response — model returned no tokens")
-    } else {
-        match parse_ghost_trigger(&response) {
-            Some(true)  => (true,  "GHOST_TRIGGER: YES"),
-            Some(false) => (false, "GHOST_TRIGGER: NO"),
-            None => {
-                let legacy = response.to_uppercase().contains("ALERT");
-                if legacy {
-                    (true,  "legacy ALERT keyword (no GHOST_TRIGGER line found)")
-                } else {
-                    (false, "no GHOST_TRIGGER line and no ALERT keyword in response")
-                }
-            }
-        }
-    };
+    let (should_act, trigger_reason) =
+        evaluate_watchdog_response(&response, api_err.is_some());
 
     log::info!(
         "Webhook: analysis for '{}' complete — should_act={} reason='{}' ghost_enabled={} (response: {} chars)",
@@ -670,6 +680,20 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     if should_act {
         // If the runbook has ghost mode enabled, trigger a ghost shell.
         if rb.ghost_config.enabled {
+            if !crate::daemon::ghost::check_ghost_capacity(&state.config) {
+                log::warn!(
+                    "Webhook: ghost shell skipped for '{}' — concurrency limit ({}) reached",
+                    alert.alert_name,
+                    state.config.ghost.max_concurrent_ghosts
+                );
+                inject_ghost_event(
+                    &state.sessions,
+                    &format!(
+                        "[Ghost Shell Skipped] Concurrency limit reached for alert: {}",
+                        alert.alert_name
+                    ),
+                );
+            } else {
             log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
             let sessions = state.sessions.clone();
             let alert_msg = formatted_msg.to_string();
@@ -679,7 +703,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             let schedule_store_clone = state.schedule_store.clone();
 
             tokio::spawn(async move {
-                match GhostManager::start_session(sessions.clone(), &rb_clone, &alert_msg).await {
+                match GhostManager::start_session(sessions.clone(), &rb_clone, &alert_msg, crate::daemon::GS_BG_WINDOW_PREFIX).await {
                     Ok(sid) => {
                         inject_ghost_event(
                             &sessions,
@@ -712,6 +736,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                     Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
                 }
             });
+            } // end else (capacity check)
         }
 
         let analysis = format!(
@@ -1084,5 +1109,57 @@ mod tests {
     fn ghost_trigger_whitespace_trimmed() {
         assert_eq!(parse_ghost_trigger("  GHOST_TRIGGER: YES  "), Some(true));
         assert_eq!(parse_ghost_trigger("  GHOST_TRIGGER: NO  "), Some(false));
+    }
+
+    // ── evaluate_watchdog_response ───────────────────────────────────────────
+
+    #[test]
+    fn evaluate_ghost_trigger_yes() {
+        let (act, reason) = evaluate_watchdog_response("ALERT\nGHOST_TRIGGER: YES", false);
+        assert!(act);
+        assert_eq!(reason, "GHOST_TRIGGER: YES");
+    }
+
+    #[test]
+    fn evaluate_ghost_trigger_no() {
+        let (act, reason) = evaluate_watchdog_response("OK\nGHOST_TRIGGER: NO", false);
+        assert!(!act);
+        assert_eq!(reason, "GHOST_TRIGGER: NO");
+    }
+
+    #[test]
+    fn evaluate_legacy_alert_keyword() {
+        let (act, reason) = evaluate_watchdog_response("ALERT: disk is full", false);
+        assert!(act);
+        assert_eq!(reason, "legacy ALERT keyword (no GHOST_TRIGGER line found)");
+    }
+
+    #[test]
+    fn evaluate_no_trigger_no_alert() {
+        let (act, reason) = evaluate_watchdog_response("OK: everything looks fine", false);
+        assert!(!act);
+        assert_eq!(reason, "no GHOST_TRIGGER line and no ALERT keyword in response");
+    }
+
+    #[test]
+    fn evaluate_empty_response_no_api_error() {
+        let (act, reason) = evaluate_watchdog_response("", false);
+        assert!(!act);
+        assert_eq!(reason, "empty_response — model returned no tokens");
+    }
+
+    #[test]
+    fn evaluate_api_error_empty_response() {
+        let (act, reason) = evaluate_watchdog_response("", true);
+        assert!(!act);
+        assert_eq!(reason, "api_error — response empty");
+    }
+
+    #[test]
+    fn evaluate_api_error_with_partial_response_uses_content() {
+        // If api_error=true but there IS a response, still evaluate the content.
+        let (act, reason) = evaluate_watchdog_response("GHOST_TRIGGER: YES", true);
+        assert!(act);
+        assert_eq!(reason, "GHOST_TRIGGER: YES");
     }
 }

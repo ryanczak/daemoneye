@@ -6,6 +6,7 @@ use crate::daemon::session::{
 use crate::daemon::utils::{log_event, normalize_output, shell_escape_arg};
 use crate::ipc::Response;
 use crate::tmux;
+use crate::util::UnpoisonExt;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -220,9 +221,17 @@ pub async fn run_background_in_window(
     let id_short = &tool_id[..tool_id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
     
-    let is_ghost = session_id.as_ref().map(|sid| sid.starts_with("ghost-")).unwrap_or(false);
-    let prefix = if is_ghost {
-        "de-incident-"
+    let prefix = if let Some(sid) = &session_id {
+        if sid.starts_with("ghost-") {
+            // Use the prefix registered on the session entry so webhook-triggered,
+            // scheduler-triggered and interactive ghost shells get distinct prefixes.
+            let store = sessions.lock().unwrap_or_log();
+            store.get(sid.as_str())
+                .map(|e| e.ghost_bg_prefix)
+                .unwrap_or(crate::daemon::GS_BG_WINDOW_PREFIX)
+        } else {
+            crate::daemon::BG_WINDOW_PREFIX
+        }
     } else {
         crate::daemon::BG_WINDOW_PREFIX
     };

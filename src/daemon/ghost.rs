@@ -7,6 +7,39 @@ use crate::runbook::Runbook;
 use crate::ai::Message;
 use crate::tmux::ensure_incident_session;
 
+/// Return `true` if another ghost shell may be started without exceeding the
+/// configured concurrency limit.
+///
+/// A `max_concurrent_ghosts` of 0 disables the cap entirely (always returns `true`).
+pub fn check_ghost_capacity(config: &crate::config::Config) -> bool {
+    let max = config.ghost.max_concurrent_ghosts;
+    if max == 0 {
+        return true;
+    }
+    crate::daemon::stats::get_ghosts_active() < max
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capacity_zero_disables_cap() {
+        let mut config = crate::config::Config::default();
+        config.ghost.max_concurrent_ghosts = 0;
+        // Even with many active ghosts, should always allow.
+        assert!(check_ghost_capacity(&config));
+    }
+
+    #[test]
+    fn capacity_allows_when_under_limit() {
+        let mut config = crate::config::Config::default();
+        config.ghost.max_concurrent_ghosts = 100; // very high ceiling
+        // Active count starts at 0, so we're well under the limit.
+        assert!(check_ghost_capacity(&config));
+    }
+}
+
 /// Orchestrates the lifecycle of an autonomous Ghost Shell.
 pub struct GhostManager;
 
@@ -15,12 +48,15 @@ impl GhostManager {
     ///
     /// 1. Ensures a host tmux session exists (active or detached).
     /// 2. Initializes a new ghost `SessionEntry` with the alert as the first user turn.
-    ///    Background windows (`de-incident-*`) are created lazily on the first tool call.
+    ///    Background windows are created lazily on the first tool call, prefixed with
+    ///    `bg_prefix` (e.g. `GS_BG_WINDOW_PREFIX` for webhook/interactive ghosts,
+    ///    `GS_SCHED_WINDOW_PREFIX` for scheduler-triggered ghosts).
     /// 3. Returns the session ID for use by `trigger_ghost_turn`.
     pub async fn start_session(
         sessions: SessionStore,
         runbook: &Runbook,
         alert_msg: &str,
+        bg_prefix: &'static str,
     ) -> Result<String> {
         let alert_name = &runbook.name;
         
@@ -59,6 +95,7 @@ impl GhostManager {
             pipe_source_pane: None,
             is_ghost: true,
             ghost_config: Some(runbook.ghost_config.clone()),
+            ghost_bg_prefix: bg_prefix,
         };
 
         {

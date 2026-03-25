@@ -477,7 +477,7 @@ impl SessionCache {
         // Non-active panes — classified by their relationship to the chat window.
         //
         // - VISIBLE PANE:    same window as the chat pane (user can see it in the split)
-        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sched-* / de-incident-*)
+        // - BACKGROUND PANE: daemon-launched window (de-bg-* / de-sj-* / de-gs-bg-* / de-gs-sj-* / de-gs-ir-*)
         // - SESSION PANE:    any other user window (SSH sessions, editors, etc.)
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -501,8 +501,10 @@ impl SessionCache {
             let pane_label = if chat_window.map_or(false, |cw| cw == state.window_name) {
                 "VISIBLE PANE"
             } else if state.window_name.starts_with("de-bg-")
-                || state.window_name.starts_with("de-sched-")
-                || state.window_name.starts_with("de-incident-")
+                || state.window_name.starts_with("de-sj-")
+                || state.window_name.starts_with("de-gs-bg-")
+                || state.window_name.starts_with("de-gs-sj-")
+                || state.window_name.starts_with("de-gs-ir-")
             {
                 "BACKGROUND PANE"
             } else {
@@ -519,7 +521,10 @@ impl SessionCache {
             } else {
                 format!(" ({})", mask_sensitive(&state.pane_title))
             };
-            let ghost_part = if state.window_name.starts_with("de-incident-") {
+            let ghost_part = if state.window_name.starts_with("de-gs-bg-")
+                || state.window_name.starts_with("de-gs-sj-")
+                || state.window_name.starts_with("de-gs-ir-")
+            {
                 " [ghost]".to_string()
             } else {
                 String::new()

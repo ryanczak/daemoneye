@@ -165,7 +165,7 @@ pub async fn trigger_ghost_turn(
         "{}\n\n\
          ## Ghost Shell Execution Context\n\
          You are operating autonomously — no human user is present.\n\
-         All terminal commands MUST use background mode (they run in de-incident-* windows).\n\
+         All terminal commands MUST use background mode (they run in de-gs-bg-* or de-gs-sj-* windows).\n\
          Do NOT ask questions or wait for user input.\n\
          Daemon Host: {}\n\
          Tmux Session: {}\n\
@@ -315,13 +315,16 @@ pub async fn trigger_ghost_turn(
                     AiEvent::DeleteScript { id, thought_signature, script_name } => {
                         pending_calls.push(PendingCall::DeleteScript { id, thought_signature, script_name });
                     }
-                    AiEvent::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook } => {
+                    AiEvent::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron } => {
                         pending_calls.push(PendingCall::ScheduleCommand {
-                            id, thought_signature, name, command, is_script, run_at, interval, runbook
+                            id, thought_signature, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron
                         });
                     }
                     AiEvent::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => {
                         pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
+                    }
+                    AiEvent::SpawnGhost { id, runbook, message, thought_signature } => {
+                        pending_calls.push(PendingCall::SpawnGhost { id, thought_signature, runbook, message });
                     }
                     AiEvent::Done(_) => break,
                     AiEvent::Error(e) => anyhow::bail!("AI error: {}", e),
@@ -354,7 +357,29 @@ pub async fn trigger_ghost_turn(
                         content: r,
                     });
                 }
-                _ => {}
+                crate::daemon::executor::ToolCallOutcome::SpawnGhostSession {
+                    session_id: ghost_sid,
+                    runbook_name: _,
+                    tool_result,
+                } => {
+                    // Ghost-in-ghost: the session was already started by the executor.
+                    // Run the turn loop inline (we are already in a background task).
+                    let sessions2 = sessions.clone();
+                    let cache2 = Arc::clone(cache);
+                    let store2 = Arc::clone(schedule_store);
+                    let config2 = config.clone();
+                    // Run the nested ghost turn loop before continuing this turn.
+                    match Box::pin(trigger_ghost_turn(&ghost_sid, &sessions2, &config2, &cache2, &store2)).await {
+                        Ok(()) => {}
+                        Err(e) => log::error!("nested SpawnGhost failed for {}: {}", ghost_sid, e),
+                    }
+                    tool_results.push(crate::ai::ToolResult {
+                        tool_call_id: call.id().to_string(),
+                        tool_name: call.tool_name().to_string(),
+                        content: tool_result,
+                    });
+                }
+                crate::daemon::executor::ToolCallOutcome::UserMessage(_) => {}
             }
         }
 
@@ -405,17 +430,110 @@ pub async fn trigger_ghost_turn(
 
 /// Run a single scheduled job in a dedicated tmux window.
 ///
-/// - Success: window killed, job marked `Succeeded` (or rescheduled for `Every`).
-/// - Failure: window left open for debugging, job marked `Failed`.
+/// - `ActionOn::Ghost`: spawns a full Ghost Shell session using the named runbook.
+/// - `ActionOn::Alert`: emits a SystemMsg notification only.
+/// - `ActionOn::Script`: runs the script in a `de-sj-*` window; captures output;
+///   optionally runs watchdog analysis against a runbook.
+/// - `ActionOn::Command` (deprecated): same as Script but with a raw command string.
+///
+/// On success the window is killed and the job marked `Succeeded` (or rescheduled
+/// for `Every` jobs).  On failure the window is left open for inspection.
 pub async fn run_scheduled_job(
     job: ScheduledJob,
     store: Arc<ScheduleStore>,
     session: String,
     sessions: SessionStore,
     config: Config,
+    cache: Arc<crate::tmux::cache::SessionCache>,
+    schedule_store: Arc<ScheduleStore>,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
 ) {
     crate::daemon::stats::inc_schedules_executed();
+
+    // Ghost-mode: hand off entirely to the ghost shell infrastructure.
+    #[allow(deprecated)]
+    if let ActionOn::Ghost { runbook: rb_name } = &job.action {
+        use crate::daemon::ghost::{GhostManager, check_ghost_capacity};
+        use crate::webhook::inject_ghost_event;
+
+        if !check_ghost_capacity(&config) {
+            log::warn!(
+                "Scheduled ghost job '{}': skipped — concurrency limit ({}) reached",
+                job.name,
+                config.ghost.max_concurrent_ghosts
+            );
+            inject_ghost_event(
+                &sessions,
+                &format!("[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached", job.name),
+            );
+            store.mark_done(&job.id, false, Some("ghost concurrency limit reached".to_string()));
+            return;
+        }
+
+        let alert_msg = format!(
+            "Scheduled job '{}' fired ({})",
+            job.name,
+            job.kind.describe()
+        );
+        match runbook::load_runbook(rb_name) {
+            Err(e) => {
+                let msg = format!(
+                    "Scheduled ghost job '{}': failed to load runbook '{}': {}",
+                    job.name, rb_name, e
+                );
+                log::error!("{}", msg);
+                store.mark_done(&job.id, false, Some(msg));
+            }
+            Ok(rb) => {
+                match GhostManager::start_session(sessions.clone(), &rb, &alert_msg, crate::daemon::GS_SCHED_WINDOW_PREFIX).await {
+                    Err(e) => {
+                        let msg = format!(
+                            "Scheduled ghost job '{}': failed to start session: {}",
+                            job.name, e
+                        );
+                        log::error!("{}", msg);
+                        inject_ghost_event(
+                            &sessions,
+                            &format!("[Ghost Shell Failed] Scheduled job '{}' could not start: {}", job.name, e),
+                        );
+                        store.mark_done(&job.id, false, Some(msg));
+                    }
+                    Ok(sid) => {
+                        inject_ghost_event(
+                            &sessions,
+                            &format!("[Ghost Shell Started] Scheduled job '{}' started autonomous session", job.name),
+                        );
+                        let result =
+                            trigger_ghost_turn(&sid, &sessions, &config, &cache, &schedule_store)
+                                .await;
+                        match result {
+                            Ok(()) => {
+                                inject_ghost_event(
+                                    &sessions,
+                                    &format!("[Ghost Shell Completed] Scheduled job '{}' finished", job.name),
+                                );
+                                store.mark_done(&job.id, true, None);
+                            }
+                            Err(e) => {
+                                log::error!("Scheduled ghost job '{}' failed: {}", job.name, e);
+                                inject_ghost_event(
+                                    &sessions,
+                                    &format!("[Ghost Shell Failed] Scheduled job '{}' error: {}", job.name, e),
+                                );
+                                store.mark_done(
+                                    &job.id,
+                                    false,
+                                    Some(format!("ghost error: {}", e)),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     if matches!(job.action, ActionOn::Script(_)) {
         crate::daemon::stats::inc_scripts_executed();
     }
@@ -423,6 +541,7 @@ pub async fn run_scheduled_job(
     let id_short = &job.id[..job.id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
     let win_name = format!("{}{}-{}", crate::daemon::SCHED_WINDOW_PREFIX, now, id_short);
+    #[allow(deprecated)]
     let cmd = match &job.action {
         ActionOn::Alert => {
             // Pure alert: no command to run.
@@ -434,7 +553,13 @@ pub async fn run_scheduled_job(
             fire_notification(&job.name, &msg, &config);
             return;
         }
-        ActionOn::Command(c) => c.clone(),
+        ActionOn::Command(c) => {
+            log::warn!(
+                "Scheduled job '{}' uses deprecated ActionOn::Command; migrate to ActionOn::Script",
+                job.name
+            );
+            c.clone()
+        }
         ActionOn::Script(s) => match scripts::resolve_script(s) {
             Ok(path) => path.to_string_lossy().to_string(),
             Err(e) => {
@@ -446,6 +571,7 @@ pub async fn run_scheduled_job(
                 return;
             }
         },
+        ActionOn::Ghost { .. } => unreachable!("handled above"),
     };
 
     let wrapped = format!("{}; exit $?", cmd);
@@ -531,14 +657,20 @@ pub async fn run_scheduled_job(
                 tool_results: None,
             }];
             let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-            let _ = client.chat(&system, msgs, ai_tx, true).await;
+            let api_err = client.chat(&system, msgs, ai_tx, false).await.is_err();
             let mut ai_response = String::new();
             while let Some(ev) = ai_rx.recv().await {
                 if let AiEvent::Token(t) = ev {
                     ai_response.push_str(&t);
                 }
             }
-            if ai_response.to_uppercase().contains("ALERT") {
+            let (should_act, trigger_reason) =
+                crate::webhook::evaluate_watchdog_response(&ai_response, api_err);
+            log::info!(
+                "Scheduler watchdog for '{}': should_act={} reason='{}'",
+                job.name, should_act, trigger_reason
+            );
+            if should_act {
                 let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
                 if let Some(ref tx) = notify_tx {
                     let _ = tx.send(Response::SystemMsg(msg.clone()));
@@ -988,6 +1120,7 @@ pub async fn handle_client(
                 pipe_source_pane: None,
                 is_ghost: false,
                 ghost_config: None,
+                ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
@@ -1242,6 +1375,8 @@ pub async fn handle_client(
                     run_at,
                     interval,
                     runbook,
+                    ghost_runbook,
+                    cron,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::ScheduleCommand {
@@ -1252,6 +1387,8 @@ pub async fn handle_client(
                         run_at,
                         interval,
                         runbook,
+                        ghost_runbook,
+                        cron,
                         thought_signature,
                     });
                 }
@@ -1520,6 +1657,20 @@ pub async fn handle_client(
                     });
                 }
 
+                AiEvent::SpawnGhost {
+                    id,
+                    runbook,
+                    message,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::SpawnGhost {
+                        id,
+                        thought_signature,
+                        runbook,
+                        message,
+                    });
+                }
+
                 AiEvent::Error(e) => {
                     send_response_split(&mut tx, Response::Error(e)).await?;
                     return Ok(());
@@ -1688,6 +1839,49 @@ pub async fn handle_client(
                                     tool_call_id: call_id,
                                     tool_name: tool_name.to_string(),
                                     content: result,
+                                });
+                            }
+                            crate::daemon::executor::ToolCallOutcome::SpawnGhostSession {
+                                session_id: ghost_sid,
+                                runbook_name: ghost_rb,
+                                tool_result,
+                            } => {
+                                // Spawn the ghost turn loop in a background task from this
+                                // Send-safe context, then return the tool result to the AI.
+                                let ghost_sessions = Arc::clone(&sessions);
+                                let ghost_cache = Arc::clone(&cache);
+                                let ghost_store = Arc::clone(&schedule_store);
+                                let ghost_config = config.clone();
+                                let ghost_sid2 = ghost_sid.clone();
+                                let ghost_rb2 = ghost_rb.clone();
+                                tokio::spawn(async move {
+                                    match trigger_ghost_turn(
+                                        &ghost_sid2,
+                                        &ghost_sessions,
+                                        &ghost_config,
+                                        &ghost_cache,
+                                        &ghost_store,
+                                    ).await {
+                                        Ok(()) => {
+                                            crate::webhook::inject_ghost_event(
+                                                &ghost_sessions,
+                                                &format!("[Ghost Shell Completed] AI-requested ghost shell finished for runbook: {}", ghost_rb2),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            log::error!("SpawnGhost: ghost turn failed for {}: {}", ghost_sid2, e);
+                                            crate::daemon::stats::inc_ghosts_failed();
+                                            crate::webhook::inject_ghost_event(
+                                                &ghost_sessions,
+                                                &format!("[Ghost Shell Failed] AI-requested ghost shell error for runbook: {} — {}", ghost_rb2, e),
+                                            );
+                                        }
+                                    }
+                                });
+                                tool_results.push(ToolResult {
+                                    tool_call_id: call_id,
+                                    tool_name: tool_name.to_string(),
+                                    content: tool_result,
                                 });
                             }
                         }

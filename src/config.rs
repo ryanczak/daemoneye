@@ -29,16 +29,26 @@ pub struct GhostDaemonConfig {
     /// but can never exceed this ceiling. Default: 20.
     #[serde(default = "default_max_ghost_turns")]
     pub max_ghost_turns: usize,
+    /// Maximum number of ghost shells that may run concurrently.
+    /// New ghost shells are dropped (with a warning) when this limit is reached.
+    /// Set to 0 to disable the cap. Default: 3.
+    #[serde(default = "default_max_concurrent_ghosts")]
+    pub max_concurrent_ghosts: usize,
 }
 
 fn default_max_ghost_turns() -> usize {
     20
 }
 
+fn default_max_concurrent_ghosts() -> usize {
+    3
+}
+
 impl Default for GhostDaemonConfig {
     fn default() -> Self {
         Self {
             max_ghost_turns: default_max_ghost_turns(),
+            max_concurrent_ghosts: default_max_concurrent_ghosts(),
         }
     }
 }
@@ -434,6 +444,10 @@ prompt   = "sre"
         // User edits are preserved — we only write on first run.
         seed_knowledge_memory("webhook-setup", WEBHOOK_SETUP_MEMORY)?;
         seed_knowledge_memory("runbook-format", RUNBOOK_FORMAT_MEMORY)?;
+        seed_knowledge_memory("runbook-ghost-template", RUNBOOK_GHOST_TEMPLATE_MEMORY)?;
+        seed_knowledge_memory("ghost-shell-guide", GHOST_SHELL_GUIDE_MEMORY)?;
+        seed_knowledge_memory("scheduling-guide", SCHEDULING_GUIDE_MEMORY)?;
+        seed_knowledge_memory("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY)?;
 
         Ok(())
     }
@@ -482,6 +496,10 @@ const SRE_PROMPT_TOML: &str = include_str!("../assets/prompts/sre.toml");
 
 const WEBHOOK_SETUP_MEMORY: &str = include_str!("../assets/memory/webhook-setup.md");
 const RUNBOOK_FORMAT_MEMORY: &str = include_str!("../assets/memory/runbook-format.md");
+const RUNBOOK_GHOST_TEMPLATE_MEMORY: &str = include_str!("../assets/memory/runbook-ghost-template.md");
+const GHOST_SHELL_GUIDE_MEMORY: &str = include_str!("../assets/memory/ghost-shell-guide.md");
+const SCHEDULING_GUIDE_MEMORY: &str = include_str!("../assets/memory/scheduling-guide.md");
+const SCRIPTS_AND_SUDOERS_MEMORY: &str = include_str!("../assets/memory/scripts-and-sudoers.md");
 
 #[cfg(test)]
 mod tests {

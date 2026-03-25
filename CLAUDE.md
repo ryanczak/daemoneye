@@ -38,7 +38,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/executor.rs` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination |
 | `src/daemon/background.rs` | `run_background_in_window`, `notify_job_completion`, GC lifecycle |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
-| `src/daemon/ghost.rs` | `GhostManager::start_session()` — allocates the `de-incident-*` tmux window for autonomous remediation |
+| `src/daemon/ghost.rs` | `GhostManager::start_session()` — allocates `de-gs-bg-*` / `de-gs-sj-*` / `de-gs-ir-*` windows for autonomous remediation |
 | `src/daemon/policy.rs` | `GhostPolicy` — runtime enforcement of `auto_approve_scripts` / `auto_approve_read_only` for ghost shells |
 | `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo`, `is_interactive_command`, `interactive_destination`, `normalize_output` helpers |
 | `src/ai/types.rs` | `PendingCall` enum (one variant per AI tool), `AiEvent`, `Message`, `AiUsage` |
@@ -51,8 +51,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/tmux/session.rs` | Session-level tmux helpers: `other_sessions_context()`, `format_other_sessions()`, `client_dimensions()`, `session_environment()`, `list_sessions()`, `session_exists()` |
 | `src/util.rs` | `UnpoisonExt` trait — `unwrap_or_log()` extension on `LockResult` that logs ERROR on poison recovery |
 | `src/config.rs` | `~/.daemoneye/config.toml` parsing; `SRE_PROMPT_TOML` constant; `AiConfig::resolve_api_key()` |
-| `src/scheduler.rs` | `ScheduleStore` (atomic JSON persistence); `run_scheduled_job()` |
-| `src/scripts.rs` | Script management in `~/.daemoneye/scripts/` (chmod 700, path-traversal validation) |
+| `src/scheduler.rs` | `ScheduleStore` (atomic JSON persistence); `ActionOn` enum (`Alert`/`Script`/`Ghost`); `ScheduleKind` (`Once`/`Every`/`Cron`); `parse_cron()` helper |
+| `src/scripts.rs` | Script management in `~/.daemoneye/scripts/` (chmod 700, path-traversal validation); `install_sudoers()` |
 | `src/runbook.rs` | TOML runbook loader; `watchdog_system_prompt()` for AI watchdog analysis |
 | `src/sys_context.rs` | One-shot host audit (OS, uptime, memory, processes, shell history); `OnceLock` |
 | `src/cli/` | Terminal rendering, readline input, session-level approval state, chat/ask/notify commands |
@@ -87,8 +87,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 1. `src/ai/types.rs`: add `PendingCall::ToolName { ... }` variant + `to_tool_call()` arm + `id()` arm + `tool_name()` arm.
 2. `src/ai/types.rs`: add `AiEvent::ToolName { ... }` variant.
-3. `src/ai/tools.rs`: add a `ToolDef` entry to the `TOOLS` slice (Anthropic + OpenAI share it); add dispatch arm in `dispatch_tool_event()`.
-4. `src/ai/backends/gemini.rs`: add inline entry to the `function_declarations` array in `chat()`.
+3. `src/ai/tools.rs`: add a `ToolDef` entry to the `TOOLS` slice (all three backends share it via `render_gemini(TOOLS)`); add dispatch arm in `dispatch_tool_event()`.
+4. `src/ai/backends/gemini.rs`: no separate entry needed — Gemini tool definitions are auto-generated from `TOOLS` via `render_gemini(TOOLS)`.
 5. `src/daemon/server.rs`: add `AiEvent::ToolName` arm in the streaming match.
 6. `src/daemon/executor.rs`: add `PendingCall::ToolName` arm in `execute_tool_call()`.
 7. `src/config.rs` (`SRE_PROMPT_TOML` / `assets/prompts/sre.toml`): document the new tool.
@@ -109,18 +109,22 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `search_repository` | Grep across runbooks / scripts / memory / events |
 | `get_terminal_context` | Fresh tmux snapshot on demand |
 | `list_panes` | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
+| `spawn_ghost_shell` | Delegate a task to an autonomous background Ghost Shell that follows a named runbook |
 
 ## Important Invariants
 
 - `main()` is synchronous so `libc::fork()` can be called before the tokio runtime starts. Never move the fork inside an async context.
 - All mutex lock sites use `.unwrap_or_log()` (the `UnpoisonExt` trait from `src/util.rs`) to recover from poisoned locks — do not change these to `.unwrap()`. The trait logs an ERROR before returning the inner value so poison events are visible in `daemon.log`.
-- tmux window names for daemon-managed windows use predictable prefixes: `de-bg-*` (background execution), `de-sched-*` (scheduled jobs), `de-incident-*` (ghost shells). These are used for GC and listing.
+- tmux window names for daemon-managed windows use predictable prefixes: `de-bg-*` (interactive background execution), `de-sj-*` (regular scheduled jobs), `de-gs-bg-*` (ghost shell background commands, webhook/interactive), `de-gs-sj-*` (ghost shell background commands, scheduler-triggered), `de-gs-ir-*` (ghost shell incident-response main windows). These are used for GC and listing.
 
 ### Ghost Shell conventions
 
-- **Detection signal**: `watchdog_system_prompt()` (`runbook.rs`) asks the watchdog model to emit `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` as the final line of its response. `parse_ghost_trigger()` in `webhook.rs` parses this (case-insensitive, last matching line wins) with fallback to legacy `ALERT` keyword check.
+- **Detection signal**: `watchdog_system_prompt()` (`runbook.rs`) asks the watchdog model to emit `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` as the final line of its response. `parse_ghost_trigger()` in `webhook.rs` parses this (case-insensitive, last matching line wins) with fallback to legacy `ALERT` keyword check. `evaluate_watchdog_response()` (also in `webhook.rs`) is the shared helper used by both webhooks and scheduled jobs.
 - **Turn loop**: `trigger_ghost_turn()` in `server.rs` runs the ghost AI loop. Each iteration creates a **fresh** `(ai_tx, ai_rx)` channel — the sender is moved (not cloned) into the spawned task so the channel closes when the task exits and `recv()` unblocks. A `timeout_at` guard prevents hung turns.
 - **Turn budget**: `GhostConfig.max_ghost_turns` (runbook frontmatter `max_ghost_turns: N`; 0 = use daemon default of 20). Enforced in `trigger_ghost_turn`; a warning is logged if the limit is hit.
 - **Policy enforcement**: `GhostPolicy` (from `GhostConfig`) is passed through `execute_tool_call()`. Ghost shells without a policy return an error rather than proceeding.
-- **Lifecycle events**: `inject_ghost_event()` in `webhook.rs` injects `[Ghost Shell Started]` / `[Ghost Shell Completed]` / `[Ghost Shell Failed]` into all active sessions so they appear in catch-up briefs.
+- **Concurrency cap**: `check_ghost_capacity()` (`daemon/ghost.rs`) returns false when `stats::get_ghosts_active() >= config.ghost.max_concurrent_ghosts`. Default cap is 3; set `max_concurrent_ghosts = 0` in `[ghost]` config to disable. Checked before spawning from both webhooks and scheduled jobs.
+- **Lifecycle events**: `inject_ghost_event()` in `webhook.rs` injects `[Ghost Shell Started]` / `[Ghost Shell Completed]` / `[Ghost Shell Failed]` / `[Ghost Shell Skipped]` into all active sessions so they appear in catch-up briefs.
 - **Session validation**: `session_exists()` (`tmux/session.rs`, wraps `tmux has-session -t`) is called before the AI loop to guard against stale session names.
+- **Scheduled ghost jobs**: `ActionOn::Ghost { runbook }` in `scheduler.rs` routes scheduled jobs through `GhostManager::start_session()` + `trigger_ghost_turn()`. The `schedule_command` AI tool accepts a `ghost_runbook` param to schedule these jobs. Old `ActionOn::Command` entries in `schedules.json` are still loaded (backwards-compat) but deprecated.
+- **Sudoers installation**: `daemoneye install-sudoers <script-name>` writes a NOPASSWD rule to `/etc/sudoers.d/daemoneye-<name>` allowing the current user to run the script without a password. Required for ghost shells and scheduled jobs that need sudo access to pre-vetted scripts.

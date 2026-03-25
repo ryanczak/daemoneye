@@ -7,6 +7,24 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use uuid::Uuid;
 
+/// Parse a cron expression, accepting both the standard 5-field format
+/// (`min hour dom month dow`) and the extended 6-field format used by
+/// this crate's underlying `cron` library (`sec min hour dom month dow`).
+/// A 7-field format with a year field is also accepted as-is.
+///
+/// Standard 5-field input has `0` prepended for the seconds field so that
+/// jobs fire at the top of each matching minute, which matches the conventional
+/// cron behaviour users expect.
+pub fn parse_cron(expr: &str) -> Result<cron::Schedule, cron::error::Error> {
+    let field_count = expr.split_whitespace().count();
+    if field_count == 5 {
+        // Standard 5-field: prepend "0" seconds field.
+        format!("0 {}", expr).parse()
+    } else {
+        expr.parse()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Data structures
 // ---------------------------------------------------------------------------
@@ -22,6 +40,12 @@ pub enum ScheduleKind {
         interval_secs: u64,
         next_run: DateTime<Utc>,
     },
+    /// Run according to a 5-field cron expression (e.g. `*/5 * * * *`).
+    /// `next_run` is recomputed after each execution.
+    Cron {
+        expression: String,
+        next_run: DateTime<Utc>,
+    },
 }
 
 impl ScheduleKind {
@@ -30,17 +54,24 @@ impl ScheduleKind {
         match self {
             ScheduleKind::Once { at } => Some(*at),
             ScheduleKind::Every { next_run, .. } => Some(*next_run),
+            ScheduleKind::Cron { next_run, .. } => Some(*next_run),
         }
     }
 
-    /// Advance `next_run` by one `interval_secs` for `Every` jobs.
+    /// Advance to the next occurrence.
     pub fn advance(&mut self) {
-        if let ScheduleKind::Every {
-            interval_secs,
-            next_run,
-        } = self
-        {
-            *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+        match self {
+            ScheduleKind::Every { interval_secs, next_run } => {
+                *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+            }
+            ScheduleKind::Cron { expression, next_run } => {
+                if let Ok(sched) = parse_cron(expression) {
+                    if let Some(n) = sched.upcoming(Utc).next() {
+                        *next_run = n;
+                    }
+                }
+            }
+            ScheduleKind::Once { .. } => {}
         }
     }
 
@@ -48,15 +79,25 @@ impl ScheduleKind {
     /// in the future.  Prevents catch-up firing when the daemon was down for
     /// longer than one interval (or when the job itself takes longer than its interval).
     pub fn skip_to_future(&mut self) {
-        if let ScheduleKind::Every {
-            interval_secs,
-            next_run,
-        } = self
-        {
-            let now = Utc::now();
-            while *next_run <= now {
-                *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+        match self {
+            ScheduleKind::Every { interval_secs, next_run } => {
+                let now = Utc::now();
+                while *next_run <= now {
+                    *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+                }
             }
+            ScheduleKind::Cron { expression, next_run } => {
+                // `advance()` already calls `upcoming()` which gives the next future time,
+                // but if the stored next_run is still in the past, recompute.
+                if *next_run <= Utc::now() {
+                    if let Ok(sched) = parse_cron(expression) {
+                        if let Some(n) = sched.upcoming(Utc).next() {
+                            *next_run = n;
+                        }
+                    }
+                }
+            }
+            ScheduleKind::Once { .. } => {}
         }
     }
 
@@ -70,6 +111,7 @@ impl ScheduleKind {
             ScheduleKind::Every { interval_secs, .. } => {
                 format!("every {}", describe_secs(*interval_secs))
             }
+            ScheduleKind::Cron { expression, .. } => format!("cron: {}", expression),
         }
     }
 }
@@ -81,17 +123,28 @@ pub enum ActionOn {
     /// Just emit a `SystemMsg` alert — no command execution.
     Alert,
     /// Execute a raw shell command string.
+    ///
+    /// Deprecated: prefer `Script` for auditable, pre-vetted commands.
+    /// Kept for backwards-compatibility with existing `schedules.json` files.
+    #[deprecated(note = "use ActionOn::Script instead")]
     Command(String),
     /// Execute a named script from `~/.daemoneye/scripts/`.
     Script(String),
+    /// Spawn a Ghost Shell session using the named runbook.
+    ///
+    /// The runbook governs what the ghost may do autonomously (policy, turn budget,
+    /// approved scripts, optional sudo elevation, optional SSH target).
+    Ghost { runbook: String },
 }
 
 impl ActionOn {
     pub fn describe(&self) -> String {
+        #[allow(deprecated)]
         match self {
             ActionOn::Alert => "alert".to_string(),
             ActionOn::Command(c) => format!("cmd: {}", c),
             ActionOn::Script(s) => format!("script: {}", s),
+            ActionOn::Ghost { runbook } => format!("ghost: {}", runbook),
         }
     }
 }
@@ -326,6 +379,11 @@ impl ScheduleStore {
                             job.kind.skip_to_future();
                             job.status = JobStatus::Pending;
                         }
+                        ScheduleKind::Cron { .. } => {
+                            job.kind.advance();
+                            job.kind.skip_to_future();
+                            job.status = JobStatus::Pending;
+                        }
                         ScheduleKind::Once { .. } => {
                             job.status = JobStatus::Succeeded;
                         }
@@ -504,6 +562,7 @@ mod tests {
     fn store_add_list_cancel() {
         let (store, path) = tmp_store();
 
+        #[allow(deprecated)]
         let job = ScheduledJob::new(
             "disk-check".to_string(),
             ScheduleKind::Every {
@@ -640,5 +699,85 @@ mod tests {
             ScheduleKind::Once { at } => assert_eq!(at, t),
             _ => panic!("expected Once"),
         }
+    }
+
+    #[test]
+    fn action_on_ghost_serde_roundtrip() {
+        let action = ActionOn::Ghost {
+            runbook: "high-disk-usage".to_string(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: ActionOn = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.describe(), "ghost: high-disk-usage");
+    }
+
+    #[test]
+    fn action_on_ghost_describe() {
+        let action = ActionOn::Ghost {
+            runbook: "my-runbook".to_string(),
+        };
+        assert_eq!(action.describe(), "ghost: my-runbook");
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn action_on_command_backwards_compat_deserializes() {
+        // Old schedules.json entries with ActionOn::Command must still load.
+        let json = r#"{"type":"Command","value":"df -h"}"#;
+        let action: ActionOn = serde_json::from_str(json).unwrap();
+        assert_eq!(action.describe(), "cmd: df -h");
+    }
+
+    #[test]
+    fn schedule_kind_cron_describe() {
+        let now = Utc::now() + chrono::Duration::seconds(60);
+        let kind = ScheduleKind::Cron {
+            expression: "*/5 * * * *".to_string(),
+            next_run: now,
+        };
+        assert_eq!(kind.describe(), "cron: */5 * * * *");
+    }
+
+    #[test]
+    fn schedule_kind_cron_advance_moves_next_run() {
+        let expr = "*/5 * * * *"; // every 5 minutes
+        let sched = parse_cron(expr).unwrap();
+        let first = sched.upcoming(Utc).next().unwrap();
+        let mut kind = ScheduleKind::Cron {
+            expression: expr.to_string(),
+            next_run: first,
+        };
+        kind.advance();
+        let next = match &kind {
+            ScheduleKind::Cron { next_run, .. } => *next_run,
+            _ => panic!("expected Cron"),
+        };
+        // next should be strictly after now (advance computed a new future time)
+        assert!(next > Utc::now());
+    }
+
+    #[test]
+    fn schedule_kind_cron_serde_roundtrip() {
+        let now = Utc::now();
+        let kind = ScheduleKind::Cron {
+            expression: "0 9 * * 1-5".to_string(),
+            next_run: now,
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        let back: ScheduleKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.describe(), "cron: 0 9 * * 1-5");
+    }
+
+    #[test]
+    fn schedule_kind_cron_skip_to_future_moves_past_next_run() {
+        // Simulate a next_run that is in the past.
+        let past = Utc::now() - chrono::Duration::seconds(300);
+        let mut kind = ScheduleKind::Cron {
+            expression: "*/5 * * * *".to_string(),
+            next_run: past,
+        };
+        kind.skip_to_future();
+        let next = kind.next_run().unwrap();
+        assert!(next > Utc::now(), "next_run should be in the future after skip_to_future");
     }
 }

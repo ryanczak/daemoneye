@@ -48,6 +48,10 @@ pub struct SessionEntry {
     pub is_ghost: bool,
     /// Settings for autonomous execution (inherited from the triggering runbook).
     pub ghost_config: Option<crate::ipc::GhostConfig>,
+    /// Window-name prefix to use for background command windows spawned by this ghost session.
+    /// Defaults to `GS_BG_WINDOW_PREFIX`; set to `GS_SCHED_WINDOW_PREFIX` for scheduler-
+    /// originated ghosts so their windows are visually distinct.
+    pub ghost_bg_prefix: &'static str,
 }
 
 /// Thread-safe, shared session store passed to every client handler.

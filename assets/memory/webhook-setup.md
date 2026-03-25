@@ -26,8 +26,7 @@ grep -A5 '\[webhook\]' ~/.daemoneye/config.toml || echo 'not configured'
 
 ## Prometheus Alert Rule
 
-You must be ssh'd to bender to do this.
-Create `/etc/prometheus/rules/<topic>.yml`. Alert name must be CamelCase:
+Create `/etc/prometheus/rules/<topic>.yml` on the Prometheus host. Alert name must be CamelCase:
 
 ```yaml
 groups:
@@ -50,9 +49,7 @@ Reload: `curl -X POST http://localhost:9090/-/reload`
 
 ## Alertmanager Receiver
 
-You must be ssh'd to bender to do this.
-
-Add to `/etc/prometheus/alertmanager.yml`:
+Add to `/etc/prometheus/alertmanager.yml` on the Alertmanager host:
 
 ```yaml
 receivers:
@@ -83,8 +80,7 @@ In Alerting → Contact points, create a Webhook contact point:
 - Method: POST
 - If secret set: add `Authorization: Bearer <secret>` custom header
 
-Via API:
-You must be ssh'd to bender to do this.
+Via API on the Grafana host:
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/provisioning/contact-points \
@@ -99,10 +95,8 @@ Legacy payloads (top-level `"state"` field) are detected and parsed automaticall
 
 ## Test the Pipeline
 
-You must be ssh'd to bender to do this.
-
 ```bash
-curl -s -X POST http://localhost:9393/webhook \
+curl -s -X POST http://<daemon-host>:9393/webhook \
   -H 'Content-Type: application/json' \
   -d '{"alerts":[{"status":"firing","labels":{"alertname":"TestAlert","severity":"warning"},"annotations":{"summary":"Integration test","description":"Verify DaemonEye webhook is working"},"fingerprint":"test-001"}]}'
 ```

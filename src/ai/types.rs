@@ -56,6 +56,11 @@ pub enum PendingCall {
         run_at: Option<String>,
         interval: Option<String>,
         runbook: Option<String>,
+        /// When set, schedule a Ghost Shell job using this runbook instead of
+        /// running a raw command or script.  Mutually exclusive with `command`/`is_script`.
+        ghost_runbook: Option<String>,
+        /// 5-field cron expression (e.g. `*/5 * * * *`). Mutually exclusive with `interval`.
+        cron: Option<String>,
     },
     ListSchedules {
         id: String,
@@ -178,6 +183,15 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         pane_id: String,
     },
+    /// Spawn an autonomous Ghost Shell session in the background.
+    SpawnGhost {
+        id: String,
+        thought_signature: Option<String>,
+        /// Name of the runbook in `~/.daemoneye/runbooks/` that governs the ghost.
+        runbook: String,
+        /// Human-readable description of the problem to investigate.
+        message: String,
+    },
 }
 
 impl PendingCall {
@@ -205,14 +219,16 @@ impl PendingCall {
                     a.to_string()
                 },
             },
-            PendingCall::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook } => ToolCall {
+            PendingCall::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "schedule_command".to_string(),
                 arguments: serde_json::json!({
                     "name": name, "command": command,
                     "is_script": is_script,
-                    "run_at": run_at, "interval": interval, "runbook": runbook
+                    "run_at": run_at, "interval": interval, "runbook": runbook,
+                    "ghost_runbook": ghost_runbook,
+                    "cron": cron
                 }).to_string(),
             },
             PendingCall::ListSchedules { id, thought_signature } => ToolCall {
@@ -347,6 +363,12 @@ impl PendingCall {
                 name: "close_background_window".to_string(),
                 arguments: serde_json::json!({"pane_id": pane_id}).to_string(),
             },
+            PendingCall::SpawnGhost { id, thought_signature, runbook, message } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "spawn_ghost_shell".to_string(),
+                arguments: serde_json::json!({"runbook": runbook, "message": message}).to_string(),
+            },
         }
     }
 
@@ -377,6 +399,7 @@ impl PendingCall {
             PendingCall::GetTerminalContext { id, .. } => id,
             PendingCall::ListPanes { id, .. } => id,
             PendingCall::CloseBackgroundWindow { id, .. } => id,
+            PendingCall::SpawnGhost { id, .. } => id,
         }
     }
 
@@ -409,6 +432,7 @@ impl PendingCall {
             PendingCall::GetTerminalContext { .. } => "get_terminal_context",
             PendingCall::ListPanes { .. } => "list_panes",
             PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
+            PendingCall::SpawnGhost { .. } => "spawn_ghost_shell",
         }
     }
 }
@@ -433,6 +457,8 @@ pub enum AiEvent {
         run_at: Option<String>,
         interval: Option<String>,
         runbook: Option<String>,
+        ghost_runbook: Option<String>,
+        cron: Option<String>,
         thought_signature: Option<String>,
     },
     ListSchedules {
@@ -554,6 +580,13 @@ pub enum AiEvent {
     CloseBackgroundWindow {
         id: String,
         pane_id: String,
+        thought_signature: Option<String>,
+    },
+    /// Spawn an autonomous Ghost Shell session in the background.
+    SpawnGhost {
+        id: String,
+        runbook: String,
+        message: String,
         thought_signature: Option<String>,
     },
     Done(AiUsage),

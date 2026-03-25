@@ -74,6 +74,17 @@ enum Commands {
         #[command(subcommand)]
         cmd: NotifyCommands,
     },
+    /// Install a NOPASSWD sudoers rule for a script in ~/.daemoneye/scripts/.
+    ///
+    /// Grants the current user sudo access to the named script without a password,
+    /// enabling ghost shells and scheduled jobs to run it with elevated privileges.
+    /// Writes to /etc/sudoers.d/daemoneye-<name> (requires sudo).
+    ///
+    /// Example: daemoneye install-sudoers check-disk.sh
+    InstallSudoers {
+        /// Name of the script in ~/.daemoneye/scripts/ (e.g. check-disk.sh)
+        script_name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -292,6 +303,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 cli::run_notify_resize(width, height, session_name).await?;
             }
         },
+        Commands::InstallSudoers { script_name } => {
+            scripts::install_sudoers(&script_name)?;
+        }
     }
 
     Ok(())

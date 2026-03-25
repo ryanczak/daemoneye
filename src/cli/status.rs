@@ -202,7 +202,7 @@ pub async fn run_status() -> Result<()> {
                     right_items.push((
                         "§".to_string(),
                         format!(
-                            "{:<23}{deep_yellow}│{reset}{blood_red} Ghosts",
+                            "{:<23}{deep_yellow}│{reset}{blood_red} Ghost Shells",
                             "Redactions",
                             deep_yellow = deep_yellow,
                             reset = reset,

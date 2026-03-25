@@ -24,6 +24,15 @@ pub enum ToolCallOutcome {
     /// new user turn so the AI can course-correct without seeing a synthetic
     /// tool error.
     UserMessage(String),
+    /// A ghost shell session was created and is ready to run its turn loop.
+    /// The caller (`handle_client` or `trigger_ghost_turn`) must `tokio::spawn`
+    /// `trigger_ghost_turn` for the returned session ID.
+    SpawnGhostSession {
+        session_id: String,
+        runbook_name: String,
+        /// Message to return to the AI as the tool result.
+        tool_result: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -1330,14 +1339,39 @@ where
             run_at,
             interval,
             runbook,
+            ghost_runbook,
+            cron,
             ..
         } => {
-            let action = if *is_script {
+            // Ghost mode: ghost_runbook takes precedence over command/is_script.
+            #[allow(deprecated)]
+            let action = if let Some(rb) = ghost_runbook {
+                ActionOn::Ghost { runbook: rb.clone() }
+            } else if *is_script {
                 ActionOn::Script(command.clone())
             } else {
                 ActionOn::Command(command.clone())
             };
-            let kind = if let Some(iso) = interval {
+            let kind = if let Some(expr) = cron {
+                match crate::scheduler::parse_cron(expr) {
+                    Ok(sched) => match sched.upcoming(chrono::Utc).next() {
+                        Some(next) => ScheduleKind::Cron {
+                            expression: expr.clone(),
+                            next_run: next,
+                        },
+                        None => return Ok(ToolCallOutcome::Result(format!(
+                            "Cron expression '{}' has no future occurrences.",
+                            expr
+                        ))),
+                    },
+                    Err(e) => return Ok(ToolCallOutcome::Result(format!(
+                        "Invalid cron expression '{}': {}. \
+                         Use 5-field format: minute hour day-of-month month day-of-week. \
+                         Example: '*/5 * * * *' (every 5 minutes).",
+                        expr, e
+                    ))),
+                }
+            } else if let Some(iso) = interval {
                 let secs = match crate::scheduler::parse_iso_duration(iso) {
                     Some(s) => s,
                     None => {
@@ -2530,7 +2564,10 @@ where
                     } else {
                         String::new()
                     };
-                let ghost_part = if state.window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX) {
+                let ghost_part = if state.window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
+                    || state.window_name.starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
+                    || state.window_name.starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
+                {
                     "  [ghost]"
                 } else {
                     ""
@@ -2575,6 +2612,57 @@ where
                 "\nUse the pane ID as target_pane in run_terminal_command to execute a command there."
             );
             out
+        }
+
+        PendingCall::SpawnGhost { runbook, message, .. } => {
+            use crate::daemon::ghost::{GhostManager, check_ghost_capacity};
+            use crate::webhook::inject_ghost_event;
+
+            let spawn_config = crate::config::Config::load().unwrap_or_default();
+            if !check_ghost_capacity(&spawn_config) {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Cannot spawn ghost shell: concurrency limit ({}) reached. \
+                     Wait for an active ghost to complete before spawning another.",
+                    spawn_config.ghost.max_concurrent_ghosts
+                )));
+            }
+
+            let rb = match crate::runbook::load_runbook(runbook) {
+                Ok(rb) => rb,
+                Err(e) => {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Failed to load runbook '{}': {}",
+                        runbook, e
+                    )));
+                }
+            };
+
+            let rb_name = rb.name.clone();
+            let alert_msg = message.clone();
+
+            match GhostManager::start_session(sessions.clone(), &rb, &alert_msg, crate::daemon::GS_BG_WINDOW_PREFIX).await {
+                Err(e) => {
+                    format!("Failed to start ghost shell: {}", e)
+                }
+                Ok(sid) => {
+                    inject_ghost_event(
+                        sessions,
+                        &format!("[Ghost Shell Started] AI-requested ghost shell started for runbook: {}", rb_name),
+                    );
+                    let tool_result = format!(
+                        "Ghost shell started (session: {}). It will run autonomously in the background \
+                         and inject [Ghost Shell Completed] or [Ghost Shell Failed] events when done.",
+                        sid
+                    );
+                    // Return SpawnGhostSession so the caller (which has Send context) can
+                    // tokio::spawn trigger_ghost_turn without hitting the non-Send bound.
+                    return Ok(ToolCallOutcome::SpawnGhostSession {
+                        session_id: sid,
+                        runbook_name: rb_name,
+                        tool_result,
+                    });
+                }
+            }
         }
     };
     Ok(ToolCallOutcome::Result(result))

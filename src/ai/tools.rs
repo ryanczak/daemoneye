@@ -95,9 +95,14 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "schedule_command",
-        description: "Schedule a shell command (or named script) to run once at a specific UTC \
-                      time or repeatedly on an interval. For watchdog monitoring, specify a \
-                      runbook name to enable AI analysis of the output.",
+        description: "Schedule a task to run once at a specific UTC time or repeatedly on an \
+                      interval. Two modes: (1) Script mode — set command to a script name and \
+                      is_script=true to run a pre-vetted script from ~/.daemoneye/scripts/; \
+                      optionally pair with runbook for watchdog AI analysis of output. \
+                      (2) Ghost mode — set ghost_runbook to a runbook name to spawn an \
+                      autonomous Ghost Shell session instead of running a command; the runbook \
+                      governs what the ghost may do. ghost_runbook is mutually exclusive with \
+                      command/is_script.",
         params: &[
             ParamDef {
                 name: "name",
@@ -108,8 +113,8 @@ pub static TOOLS: &[ToolDef] = &[
             ParamDef {
                 name: "command",
                 ty: ParamTy::Str,
-                required: true,
-                description: "Shell command to run, or script name if is_script=true.",
+                required: false,
+                description: "Script name (when is_script=true) to execute. Omit when using ghost_runbook.",
             },
             ParamDef {
                 name: "is_script",
@@ -133,7 +138,25 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "runbook",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional name of a runbook in ~/.daemoneye/runbooks/ for watchdog AI analysis of command output.",
+                description: "Optional name of a runbook for watchdog AI analysis of script output (script mode only).",
+            },
+            ParamDef {
+                name: "ghost_runbook",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Name of a runbook to use for autonomous Ghost Shell execution. \
+                              When set, the job spawns a Ghost Shell session that follows the \
+                              runbook autonomously instead of running a command. The runbook \
+                              frontmatter controls ghost policy (approved scripts, sudo, SSH \
+                              target, turn budget). Mutually exclusive with command/is_script.",
+            },
+            ParamDef {
+                name: "cron",
+                ty: ParamTy::Str,
+                required: false,
+                description: "5-field cron expression for recurring jobs (e.g. '*/5 * * * *' for \
+                              every 5 minutes, '0 9 * * 1-5' for weekdays at 09:00 UTC). \
+                              Mutually exclusive with interval and run_at.",
             },
         ],
     },
@@ -502,6 +525,34 @@ pub static TOOLS: &[ToolDef] = &[
                               a [BACKGROUND PANE] context block.",
         }],
     },
+    ToolDef {
+        name: "spawn_ghost_shell",
+        description: "Spawn an autonomous Ghost Shell session that runs in the background \
+                      without requiring your attention. The ghost follows the named runbook \
+                      autonomously — running pre-approved scripts, reading logs, taking \
+                      corrective actions — and injects lifecycle events into the session \
+                      history when it starts, completes, or fails. Use this when you want \
+                      to delegate an investigation or remediation task while continuing to \
+                      assist the user. The ghost's policy (approved scripts, sudo access, \
+                      SSH target, turn budget) is governed entirely by the runbook frontmatter. \
+                      Returns the ghost session ID.",
+        params: &[
+            ParamDef {
+                name: "runbook",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Name of the runbook in ~/.daemoneye/runbooks/ that governs \
+                              the ghost shell's behaviour and policy.",
+            },
+            ParamDef {
+                name: "message",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Human-readable description of the problem or task to hand off \
+                              to the ghost. This becomes the ghost's initial user turn.",
+            },
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -650,6 +701,8 @@ pub fn dispatch_tool_event(
             run_at: args["run_at"].as_str().map(|s| s.to_string()),
             interval: args["interval"].as_str().map(|s| s.to_string()),
             runbook: args["runbook"].as_str().map(|s| s.to_string()),
+            ghost_runbook: args["ghost_runbook"].as_str().map(|s| s.to_string()),
+            cron: args["cron"].as_str().map(|s| s.to_string()),
             thought_signature: ts,
         }),
         "list_schedules" => Some(AiEvent::ListSchedules {
@@ -771,6 +824,12 @@ pub fn dispatch_tool_event(
         "close_background_window" => Some(AiEvent::CloseBackgroundWindow {
             id: id.to_string(),
             pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
+            thought_signature: ts,
+        }),
+        "spawn_ghost_shell" => Some(AiEvent::SpawnGhost {
+            id: id.to_string(),
+            runbook: args["runbook"].as_str().unwrap_or("").to_string(),
+            message: args["message"].as_str().unwrap_or("").to_string(),
             thought_signature: ts,
         }),
         _ => None,
