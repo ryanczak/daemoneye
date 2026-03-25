@@ -30,6 +30,7 @@ pub mod executor;
 pub mod ghost;
 pub mod policy;
 pub mod server;
+pub mod scheduled;
 pub mod session;
 pub mod stats;
 pub mod utils;
@@ -51,6 +52,7 @@ pub const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
 pub const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
 
 pub use server::*;
+pub use scheduled::run_scheduled_job;
 pub use session::*;
 pub use utils::*;
 

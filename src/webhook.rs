@@ -710,7 +710,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                             &format!("[Ghost Shell Started] Autonomous remediation triggered for alert: {}", rb_clone.name),
                         );
 
-                        match crate::daemon::server::trigger_ghost_turn(
+                        match crate::daemon::ghost::trigger_ghost_turn(
                             &sid,
                             &sessions,
                             &config_clone,
