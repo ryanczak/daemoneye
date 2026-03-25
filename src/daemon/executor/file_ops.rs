@@ -1,0 +1,559 @@
+use crate::ai::mask_sensitive;
+use crate::daemon::policy::GhostPolicy;
+use crate::daemon::session::BUFFER_COUNTER;
+use crate::daemon::utils::get_pane_remote_host;
+use crate::tmux;
+use super::ToolCallOutcome;
+use super::prompt_and_await_approval;
+use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Remote-pane helpers for read_file / edit_file
+// ---------------------------------------------------------------------------
+
+/// Hex-encode a string (no external crate required).
+fn to_hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Shell-escape a single-quoted argument by replacing `'` with `'\''`.
+fn sq_escape(s: &str) -> String {
+    s.replace('\'', "'\\''")
+}
+
+/// Extract lines between a unique start marker and end marker from pane output.
+fn extract_marked(snap: &str, start: &str, end: &str) -> Option<String> {
+    let lines: Vec<&str> = snap.lines().collect();
+    let s_idx = lines.iter().position(|l| l.contains(start))?;
+    let e_idx = lines.iter().rposition(|l| l.contains(end))?;
+    if e_idx <= s_idx { return None; }
+    Some(lines[s_idx + 1..e_idx].join("\n"))
+}
+
+/// Send a command to a pane and poll until a completion marker appears.
+async fn remote_run_and_capture(pane_id: &str, cmd: &str, timeout_secs: u64) -> anyhow::Result<String> {
+    tmux::send_keys(pane_id, cmd)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+    loop {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if tokio::time::Instant::now() > deadline {
+            anyhow::bail!("Timed out waiting for remote command in pane {}", pane_id);
+        }
+        let snap = tmux::capture_pane(pane_id, 600).unwrap_or_default();
+        if snap.contains("__DE_DONE__") { return Ok(snap); }
+    }
+}
+
+/// Build the shell command to read `path` from a remote pane with markers.
+fn build_remote_read_cmd(path: &str, start: usize, end: usize, pattern: Option<&str>) -> String {
+    let safe_path = sq_escape(path);
+    let grep_part = pattern
+        .map(|p| format!(" | grep -E '{}'", sq_escape(p)))
+        .unwrap_or_default();
+    format!(
+        "echo '__DE_S__'; sed -n '{},{}p' '{}' 2>&1{}; echo '__DE_E__'; echo '__DE_DONE__'",
+        start, end, safe_path, grep_part
+    )
+}
+
+/// Build the shell command to read `path` through the tmux buffer system (no scrollback cap).
+fn build_local_buffer_read_cmd(
+    path: &str,
+    start: usize,
+    end: usize,
+    pattern: Option<&str>,
+    buf_name: &str,
+) -> String {
+    let safe_path = sq_escape(path);
+    let grep_part = pattern
+        .map(|p| format!(" | grep -E '{}'", sq_escape(p)))
+        .unwrap_or_default();
+    format!(
+        "sed -n '{},{}p' '{}'{}  | tmux load-buffer -b '{}' -; echo '__DE_DONE__'",
+        start, end, safe_path, grep_part, buf_name
+    )
+}
+
+/// Run a read-file command in a LOCAL target pane using `load-buffer`/`save-buffer`.
+async fn local_read_via_buffer(
+    pane_id: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    pattern: Option<&str>,
+) -> anyhow::Result<String> {
+    let idx = BUFFER_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let buf_name = format!("de-rb-{}", idx);
+    let cmd = build_local_buffer_read_cmd(path, start, end, pattern, &buf_name);
+
+    tmux::send_keys(pane_id, &cmd)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if tokio::time::Instant::now() > deadline {
+            let _ = std::process::Command::new("tmux")
+                .args(["delete-buffer", "-b", &buf_name])
+                .output();
+            anyhow::bail!("Timed out waiting for buffer load in pane {}", pane_id);
+        }
+        let snap = tmux::capture_pane(pane_id, 5).unwrap_or_default();
+        if snap.contains("__DE_DONE__") { break; }
+    }
+
+    let out = std::process::Command::new("tmux")
+        .args(["save-buffer", "-b", &buf_name, "-"])
+        .output()?;
+    let _ = std::process::Command::new("tmux")
+        .args(["delete-buffer", "-b", &buf_name])
+        .output();
+
+    if !out.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Build the shell command that runs a Python3-then-Perl atomic replacement in a remote pane.
+fn build_remote_edit_cmd(path: &str, old_string: &str, new_string: &str) -> String {
+    let path_hex = to_hex(path);
+    let old_hex = to_hex(old_string);
+    let new_hex = to_hex(new_string);
+
+    let py = format!(
+        "import os,sys\n\
+         p=bytes.fromhex('{path_hex}').decode()\n\
+         o=bytes.fromhex('{old_hex}').decode()\n\
+         n=bytes.fromhex('{new_hex}').decode()\n\
+         c=open(p).read()\n\
+         cnt=c.count(o)\n\
+         if cnt==0: print('DE_ERROR: old_string not found in '+p); sys.exit(1)\n\
+         if cnt>1: print('DE_ERROR: old_string appears '+str(cnt)+' times in '+p); sys.exit(1)\n\
+         t=p+'.de_tmp'\n\
+         open(t,'w').write(c.replace(o,n,1))\n\
+         os.rename(t,p)\n\
+         print('DE_OK: Edited '+p)\n"
+    );
+    let py_hex = to_hex(&py);
+
+    let pl = format!(
+        "my $p=pack('H*','{path_hex}');\n\
+         my $o=pack('H*','{old_hex}');\n\
+         my $n=pack('H*','{new_hex}');\n\
+         open(my $f,'<',$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my $c=do{{local $/;<$f>}};close $f;\n\
+         my @m=($c=~/\\Q$o\\E/g);\n\
+         if(!@m){{print \"DE_ERROR: not found\\n\";exit 1}}\n\
+         if(@m>1){{print \"DE_ERROR: \".scalar(@m).\" matches\\n\";exit 1}}\n\
+         $c=~s/\\Q$o\\E/$n/;\n\
+         my $t=\"$p.de_tmp\";\n\
+         open(my $g,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         print $g $c;close $g;\n\
+         rename($t,$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         print \"DE_OK: Edited $p\\n\";\n"
+    );
+    let pl_hex = to_hex(&pl);
+
+    format!(
+        "if command -v python3 >/dev/null 2>&1; then \
+            python3 -c \"exec(bytes.fromhex('{py_hex}').decode())\" 2>&1; \
+         else \
+            perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))' 2>&1; \
+         fi; echo '__DE_DONE__'"
+    )
+}
+
+// ---------------------------------------------------------------------------
+// read_file
+// ---------------------------------------------------------------------------
+
+pub(super) async fn run_read_file(
+    path: &str,
+    offset: Option<u64>,
+    limit: Option<u64>,
+    pattern: Option<&str>,
+    target_pane: Option<&str>,
+) -> anyhow::Result<ToolCallOutcome> {
+    if path.contains("..") {
+        return Ok(ToolCallOutcome::Result("Error: path must not contain '..'.".to_string()));
+    }
+    if !std::path::Path::new(path).is_absolute() {
+        return Ok(ToolCallOutcome::Result(
+            "Error: path must be absolute (e.g. /var/log/syslog).".to_string(),
+        ));
+    }
+
+    {
+        let de_dir = crate::config::config_dir();
+        let candidate = std::fs::canonicalize(path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(path));
+        if candidate.starts_with(&de_dir) {
+            return Ok(ToolCallOutcome::Result(
+                "Error: read_file cannot access the daemoneye configuration \
+                 directory. Use the dedicated tools (read_script, read_runbook, \
+                 read_memory, list_memories, etc.) instead."
+                    .to_string(),
+            ));
+        }
+    }
+
+    const MAX_LINES: usize = 500;
+    const DEFAULT_LINES: usize = 200;
+    let limit_n = match limit {
+        Some(n) if n > 0 => (n as usize).min(MAX_LINES),
+        _ => DEFAULT_LINES,
+    };
+    let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
+
+
+    // ── Target-pane path: run sed/grep in target_pane ─────────────────────
+    if let Some(pane) = target_pane {
+        let start = offset_n + 1;
+        let end = offset_n + limit_n;
+
+        let (content, is_remote) = if get_pane_remote_host(pane).is_none() {
+            let raw = match local_read_via_buffer(pane, path, start, end, pattern).await {
+                Ok(s) => s,
+                Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+            };
+            (raw, false)
+        } else {
+            let cmd = build_remote_read_cmd(path, start, end, pattern);
+            let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+                Ok(s) => s,
+                Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+            };
+            let extracted = extract_marked(&snap, "__DE_S__", "__DE_E__")
+                .unwrap_or_else(|| snap.clone());
+            (extracted, true)
+        };
+
+        if content.trim().is_empty() {
+            return Ok(ToolCallOutcome::Result(format!(
+                "{}: no output (file may be empty or lines out of range)", path
+            )));
+        }
+        let body = mask_sensitive(content.trim_end());
+        let label = if is_remote {
+            if pattern.is_some() {
+                format!("{} (remote grep, lines {}-{}):\n{}", path, start, end, body)
+            } else {
+                format!("{} (remote, lines {}-{}):\n{}", path, start, end, body)
+            }
+        } else if pattern.is_some() {
+            format!("{} (local grep, lines {}-{}):\n{}", path, start, end, body)
+        } else {
+            format!("{} (local pane, lines {}-{}):\n{}", path, start, end, body)
+        };
+        return Ok(ToolCallOutcome::Result(label));
+    }
+
+    // ── Local path: read directly from daemon-host filesystem ─────────────
+    let real_path = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let raw = match std::fs::read_to_string(&real_path) {
+        Ok(s) => s,
+        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error reading {}: {}", path, e))),
+    };
+
+    let all_lines: Vec<&str> = raw.lines().collect();
+    let total = all_lines.len();
+    let sliced = &all_lines[offset_n.min(total)..];
+    let limited: Vec<&str> = sliced.iter().take(limit_n).copied().collect();
+    let limited_len = limited.len();
+
+    let filtered: Vec<&str> = if let Some(pat) = pattern {
+        match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
+            Ok(re) => limited.into_iter().filter(|l| re.is_match(l)).collect(),
+            Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: invalid pattern regex: {}", e))),
+        }
+    } else {
+        limited
+    };
+
+    if filtered.is_empty() {
+        return Ok(ToolCallOutcome::Result(format!(
+            "{}: no lines matched (total {} lines in file)", path, total
+        )));
+    }
+
+    let body = mask_sensitive(&filtered.join("\n"));
+    if pattern.is_some() {
+        Ok(ToolCallOutcome::Result(format!(
+            "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
+            path, filtered.len(),
+            offset_n + 1, (offset_n + limited_len).min(total),
+            total, body
+        )))
+    } else {
+        Ok(ToolCallOutcome::Result(format!(
+            "{} (lines {}-{} of {}):\n{}",
+            path,
+            offset_n + 1, (offset_n + filtered.len()).min(total),
+            total, body
+        )))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// edit_file
+// ---------------------------------------------------------------------------
+
+pub(super) async fn run_edit_file<W, R>(
+    id: &str,
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+    target_pane: Option<&str>,
+    session_id: Option<&str>,
+    ghost_policy: Option<&GhostPolicy>,
+    is_ghost: bool,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    if path.contains("..") {
+        return Ok(ToolCallOutcome::Result("Error: path must not contain '..'.".to_string()));
+    }
+    if !std::path::Path::new(path).is_absolute() {
+        return Ok(ToolCallOutcome::Result("Error: path must be absolute.".to_string()));
+    }
+    if old_string.is_empty() {
+        return Ok(ToolCallOutcome::Result("Error: old_string cannot be empty.".to_string()));
+    }
+
+    {
+        let de_dir = crate::config::config_dir();
+        let candidate = std::fs::canonicalize(path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(path));
+        if candidate.starts_with(&de_dir) {
+            return Ok(ToolCallOutcome::Result(
+                "Error: edit_file cannot access the daemoneye configuration \
+                 directory. Use the dedicated tools (write_script, write_runbook, \
+                 add_memory, etc.) instead."
+                    .to_string(),
+            ));
+        }
+    }
+
+    if is_ghost {
+        return Ok(ToolCallOutcome::Result(
+            "Error: cannot edit files in a Ghost Shell (requires user approval).".to_string(),
+        ));
+    }
+
+    // ── Remote path: Python3/Perl replacement in target_pane ──────────────
+    if let Some(pane) = target_pane {
+        let location = format!("{} (remote via pane {})", path, pane);
+        let approval_cmd = format!("edit_file {}\n--- old\n{}\n+++ new\n{}", location, old_string, new_string);
+        let cmd_id = match prompt_and_await_approval(
+            id, &approval_cmd, false, None, session_id, ghost_policy, tx, rx,
+        ).await? {
+            Ok(id) => id,
+            Err(outcome) => return Ok(outcome),
+        };
+
+        let cmd = build_remote_edit_cmd(path, old_string, new_string);
+        let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+            Ok(s) => s,
+            Err(e) => {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
+            }
+        };
+
+        for line in snap.lines().rev() {
+            if line.contains("DE_OK:") {
+                crate::daemon::stats::finish_command(cmd_id, 0);
+                crate::daemon::utils::log_event(
+                    "file_edit",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_pane": pane }),
+                );
+                return Ok(ToolCallOutcome::Result(format!("Edited {} via pane {}.", path, pane)));
+            }
+            if line.contains("DE_ERROR:") {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!("Error editing {}: {}", path, line.trim())));
+            }
+        }
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Edit command completed but result was unclear. Check {} manually.", path
+        )));
+    }
+
+    // ── Local path: direct daemon-host filesystem edit ────────────────────
+    let std_path = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: cannot resolve path {}: {}", path, e))),
+    };
+    let original = match std::fs::read_to_string(&std_path) {
+        Ok(s) => s,
+        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error reading {}: {}", path, e))),
+    };
+
+    let count = original.matches(old_string).count();
+    if count == 0 {
+        return Ok(ToolCallOutcome::Result(format!("Error: old_string not found in {}.", path)));
+    }
+    if count > 1 {
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: old_string appears {} times in {}. \
+             Add more surrounding context to make it unique.",
+            count, path
+        )));
+    }
+
+    let approval_cmd = format!("edit_file {}\n--- old\n{}\n+++ new\n{}", path, old_string, new_string);
+    let cmd_id = match prompt_and_await_approval(
+        id, &approval_cmd, false, None, session_id, ghost_policy, tx, rx,
+    ).await? {
+        Ok(id) => id,
+        Err(outcome) => return Ok(outcome),
+    };
+
+    let updated = original.replacen(old_string, new_string, 1);
+    let tmp_path = std_path.with_extension("de_tmp");
+    if let Err(e) = std::fs::write(&tmp_path, &updated) {
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!("Error writing temp file: {}", e)));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!("Error committing edit: {}", e)));
+    }
+
+    crate::daemon::stats::finish_command(cmd_id, 0);
+    crate::daemon::utils::log_event(
+        "file_edit",
+        serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path }),
+    );
+
+    let old_lines = old_string.lines().count();
+    let new_lines = new_string.lines().count();
+    Ok(ToolCallOutcome::Result(format!(
+        "Edited {}: replaced {} line(s) with {} line(s).", path, old_lines, new_lines
+    )))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use crate::util::UnpoisonExt;
+    use std::env;
+
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    struct TmpHome(std::path::PathBuf);
+    impl TmpHome {
+        fn new() -> Self {
+            let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("de_fops_test_{}_{}", std::process::id(), n));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpHome(p)
+        }
+    }
+    impl Drop for TmpHome {
+        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+    }
+
+    fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
+        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let old = env::var("HOME").ok();
+        unsafe { env::set_var("HOME", &tmp.0); }
+        f();
+        match old {
+            Some(v) => unsafe { env::set_var("HOME", v); },
+            None => unsafe { env::remove_var("HOME"); },
+        }
+    }
+
+    fn simulate_read_file(lines: &[&str]) -> (TmpHome, std::path::PathBuf) {
+        let tmp = TmpHome::new();
+        let path = tmp.0.join("test_file.txt");
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        (tmp, path)
+    }
+
+    #[tokio::test]
+    async fn read_file_default_reads_from_start() {
+        let (tmp, path) = simulate_read_file(&["line1", "line2", "line3"]);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        assert!(s.contains("line1"));
+        assert!(s.contains("line3"));
+    }
+
+    #[tokio::test]
+    async fn read_file_offset_skips_lines() {
+        // Use zero-padded names to avoid "line1" being a substring of "line10".
+        let lines: Vec<String> = (1..=10).map(|i| format!("line{:02}", i)).collect();
+        let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        let (tmp, path) = simulate_read_file(&refs);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), Some(5), None, None, None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        assert!(!s.contains("line01"), "offset should skip line01");
+        assert!(s.contains("line05"), "should start from line05");
+    }
+
+    #[tokio::test]
+    async fn read_file_limit_caps_output() {
+        let lines: Vec<String> = (1..=20).map(|i| format!("line{}", i)).collect();
+        let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        let (tmp, path) = simulate_read_file(&refs);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(3), None, None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        assert!(s.contains("line1"));
+        assert!(s.contains("line3"));
+        assert!(!s.contains("line4"), "limit=3 should not include line4");
+    }
+
+    #[tokio::test]
+    async fn read_file_limit_capped_at_max() {
+        let lines: Vec<String> = (1..=600).map(|i| format!("line{}", i)).collect();
+        let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        let (tmp, path) = simulate_read_file(&refs);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(600), None, None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        // MAX_LINES = 500; line501 should not appear
+        assert!(!s.contains("line501"), "should be capped at 500 lines");
+    }
+
+    #[tokio::test]
+    async fn read_file_pattern_grep_mode_header() {
+        let (tmp, path) = simulate_read_file(&["apple", "banana", "cherry"]);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("banana"), None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        assert!(s.contains("matching lines"));
+        assert!(s.contains("banana"));
+    }
+
+    #[tokio::test]
+    async fn read_file_pattern_no_match_returns_message() {
+        let (tmp, path) = simulate_read_file(&["apple", "banana"]);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("xyzzy_not_found"), None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        assert!(s.contains("no lines matched"));
+    }
+
+    #[tokio::test]
+    async fn read_file_offset_beyond_eof_returns_empty() {
+        let (tmp, path) = simulate_read_file(&["line1", "line2"]);
+        with_home(&tmp, || {});
+        let result = super::run_read_file(path.to_str().unwrap(), Some(1000), None, None, None).await.unwrap();
+        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        assert!(s.contains("no lines matched"));
+    }
+}
