@@ -4,67 +4,63 @@ DaemonEye is a lightweight background daemon that integrates an AI-powered syste
 
 ---
 
-🚀 At a Glance
-Native tmux Integration: Operates as a lightweight background daemon that interacts with your active sessions.
+## 🚀 At a Glance
 
-Hybrid Model Support: Seamlessly stream intelligence from Anthropic, OpenAI, and Google Gemini, or run 100% locally via Ollama and LM Studio.
+- **Native tmux Integration** — A lightweight background daemon that integrates directly into your active sessions with no window manager or GUI required.
+- **Hybrid Model Support** — Stream intelligence from Anthropic, OpenAI, or Google Gemini, or run 100% locally via Ollama or LM Studio with no API key.
+- **Autonomous Ghost Shells** — Specialized sub-agents that spawn in dedicated tmux windows to investigate and remediate alerts completely unattended.
+- **Context-Aware Execution** — The AI sees your full terminal state — scrollback history, environment variables, pane layout, and ANSI-coded errors — to understand problems the moment you ask.
 
-Autonomous Ghost Shells: Specialized agents that spawn in dedicated windows to investigate and remediate alerts unattended.
+---
 
-Context-Aware Execution: The AI "sees" your terminal state, including scrollback history and ANSI colors, to understand errors instantly.
+## ✨ Key Features
 
-✨ Key Features
-🛠️ Collaborative Execution & Safety
-The AI doesn't just suggest—it acts. When the AI proposes a command, you have full control via a triple-action prompt:
+### 🛠️ Collaborative Execution & Safety
 
-[y]es: Approve a single execution.
+The AI doesn't just suggest — it acts. Every proposed command goes through a triple-action approval prompt before anything runs:
 
-[a]pprove session: Trust the AI for this specific command class for the rest of the session.
+- **`[y]es`** — Approve a single execution.
+- **`[a]pprove session`** — Trust the AI for this command class for the rest of the session.
+- **`[N]o`** — Reject, or type a message to redirect the AI mid-stream.
 
-[N]o: Reject and provide course correction.
+**Visual Anchors:** During the approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
 
-Visual Anchors: During the approval window, the target tmux pane is highlighted with a dark-blue background (colour17), ensuring you always know exactly where a command will run.
+### 📡 Webhook Alert Ingestion
 
-📡 Webhook Alert Ingestion
-Optionally expose an HTTP endpoint (default port 9393) to ingest alerts from Prometheus Alertmanager, Grafana, or generic JSON tools.
+Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prometheus Alertmanager, Grafana, or any tool that can POST JSON.
 
-Deduplication: Alerts are deduplicated by fingerprint and masked for sensitive data before injection.
+- **Deduplication** — Alerts are fingerprinted; duplicates within a configurable window are suppressed automatically.
+- **Sensitive-data masking** — Alert payloads pass through the same redaction filter as terminal context before entering the AI conversation.
+- **Watchdog Analysis** — Each incoming alert is automatically analyzed against its matching runbook to determine whether autonomous remediation is warranted.
 
-Watchdog Trigger: Incoming alerts are automatically analyzed by a watchdog model to determine if autonomous action is required.
+### 📖 Runbooks & Knowledge
 
-📖 Runbooks & Knowledge
-Procedure Runbooks: Store specific troubleshooting steps in ~/.daemoneye/runbooks/ as Markdown with frontmatter.
+- **Procedure Runbooks** — Store troubleshooting steps in `~/.daemoneye/runbooks/` as Markdown with YAML frontmatter. When an alert fires, DaemonEye finds the matching runbook and uses it to guide the investigation.
+- **Durable Memory** — Three-tier persistence for session context, knowledge facts, and incident records. Session memories are injected into every AI turn automatically; knowledge and incident memories are available on demand.
+- **Built-in Guides** — Six knowledge memory files are seeded on first run covering webhooks, runbook format, ghost shell usage, scheduling, scripts, and sudoers setup — the AI can reference them without any manual setup.
 
-Automatic Analysis: When an alert hits the webhook, DaemonEye looks for a matching runbook to guide the AI's investigation.
+### 🐕 Command Scheduler & Watchdog
 
-Durable Memory: Three-tier persistence for facts, incident records, and session context that is automatically loaded into every AI turn.
+- **Flexible Scheduling** — Run commands or Ghost Shell tasks once at a specific time, on a repeating interval, or on a full cron expression.
+- **Watchdog Monitors** — Active monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
+- **Failure Isolation** — Each job runs in its own dedicated tmux window (`de-sj-*`), left open on failure for manual inspection and cleaned up automatically on success.
 
-🐕 Command Scheduler & Watchdog
-Scheduled Jobs: Set up commands to run once or on a repeating interval.
+### 👻 Autonomous Ghost Shells
 
-Watchdog Monitors: Active monitors use AI-powered analysis to keep an eye on system state.
+When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell that works the problem without a human present.
 
-Failure Isolation: Each job runs in its own tmux window (de-<id>), which is left in place on failure for manual inspection.
+- **Unattended Remediation** — Runs inside a dedicated `de-incident-*` tmux window, executing pre-approved remediation steps and reporting back via a catch-up brief when you next attach.
+- **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`.
+- **Turn Budget** — A configurable hard ceiling on AI turns (default 20) ensures the agent cannot loop indefinitely. Individual runbooks may set a lower limit, but never a higher one.
 
-👻 Autonomous Ghost Shells
-When a critical alert matches an enabled runbook, DaemonEye spawns a Ghost Shell.
+### 🔒 Security & Privacy
 
-Unattended Remediation: Runs inside a dedicated de-incident-* window on the daemon host to fix issues without a human present.
-
-Policy Gating: Non-sudo commands run freely, but sudo access is strictly restricted to scripts listed in auto_approve_scripts.
-
-Turn Budget: A hard ceiling on AI "turns" (default 20) ensures the agent doesn't loop indefinitely.
-
-🔒 Security & Privacy
 Context is filtered before it ever leaves your machine.
 
-Sensitive Data Redaction: A built-in regex filter scrubs AWS access keys, PEM private key blocks, GCP service-account JSON, JWT bearer tokens, GitHub personal access tokens, database/broker connection URLs with embedded credentials, password and API key assignments, URL query-param secrets, credit card numbers, and US Social Security Numbers — replacing each with a labelled placeholder (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.) before the context is sent to any AI provider.
-
-User-Defined Patterns: Add organisation-specific regexes to `extra_patterns` in `config.toml` to extend the built-in set. Built-in patterns always run regardless. Hit counts by category are visible in `daemoneye status` for a quick audit view.
-
-Sudo Password Handling: When a background command requires `sudo`, the chat interface prompts for your password with terminal echo disabled. The password is piped directly to `sudo -S` in memory and is never written to disk, stored in a log, or transmitted to the AI.
-
-sudoers.d Integration: `daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the named script — no wildcards, no `ALL`. Ghost shells can only escalate privilege for pre-vetted scripts that have both an `auto_approve_scripts` entry in the runbook and a corresponding sudoers rule.
+- **Sensitive Data Redaction** — A built-in regex filter scrubs AWS access keys, PEM private key blocks, GCP service-account JSON, JWT bearer tokens, GitHub personal access tokens (classic and fine-grained), database and broker connection URLs with embedded credentials, password and API key assignments, URL query-param secrets, credit card numbers, and US Social Security Numbers — each replaced with a labelled placeholder (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.) before context reaches any AI provider.
+- **User-Defined Patterns** — Add org-specific regexes to `extra_patterns` in `config.toml` to extend the built-in set without replacing it. Per-category hit counts are shown in `daemoneye status` for a continuous audit view.
+- **Sudo Password Handling** — When a background command requires `sudo`, the chat interface prompts for your password with terminal echo disabled. The password is piped directly to `sudo -S` in memory and is never written to disk, stored in a log, or transmitted to the AI.
+- **`sudoers.d` Integration** — `daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the approved script — no wildcards, no `ALL`. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
 
 ---
 
