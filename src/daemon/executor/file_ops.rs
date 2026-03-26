@@ -184,13 +184,15 @@ pub(super) async fn run_read_file(
 
     {
         let de_dir = crate::config::config_dir();
+        let pane_logs = crate::config::pane_logs_dir();
         let candidate = std::fs::canonicalize(path)
             .unwrap_or_else(|_| std::path::PathBuf::from(path));
-        if candidate.starts_with(&de_dir) {
+        if candidate.starts_with(&de_dir) && !candidate.starts_with(&pane_logs) {
             return Ok(ToolCallOutcome::Result(
                 "Error: read_file cannot access the daemoneye configuration \
                  directory. Use the dedicated tools (read_script, read_runbook, \
-                 read_memory, list_memories, etc.) instead."
+                 read_memory, list_memories, etc.) instead. \
+                 Exception: pane log archives under var/log/panes/ are readable."
                     .to_string(),
             ));
         }

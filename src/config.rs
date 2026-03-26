@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Top-level configuration loaded from `~/.daemoneye/config.toml`.
+/// Top-level configuration loaded from `~/.daemoneye/etc/config.toml`.
 /// All sections default to sensible values so the file is optional.
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct Config {
@@ -311,29 +311,69 @@ pub fn config_dir() -> PathBuf {
     p
 }
 
-/// Default path for the daemon log file: `~/.daemoneye/daemon.log`.
-pub fn default_log_path() -> PathBuf {
-    config_dir().join("daemon.log")
+/// `~/.daemoneye/etc/` — user-editable configuration files.
+pub fn etc_dir() -> PathBuf {
+    config_dir().join("etc")
 }
 
-/// Default path for the Unix domain socket: `~/.daemoneye/daemoneye.sock`.
+
+/// `~/.daemoneye/var/run/` — sockets, lock files, mutable runtime state.
+pub fn var_run_dir() -> PathBuf {
+    config_dir().join("var/run")
+}
+
+/// `~/.daemoneye/var/log/` — application and pane interaction logs.
+pub fn var_log_dir() -> PathBuf {
+    config_dir().join("var/log")
+}
+
+/// `~/.daemoneye/var/log/pipe/` — per-pane pipe-pane capture logs.
+pub fn pipe_log_dir() -> PathBuf {
+    config_dir().join("var/log/pipe")
+}
+
+/// `~/.daemoneye/var/log/panes/` — archived background-window scrollback logs.
+pub fn pane_logs_dir() -> PathBuf {
+    config_dir().join("var/log/panes")
+}
+
+
+/// `~/.daemoneye/bin/` — symlinks/wrappers for the compiled agent and scripts.
+pub fn bin_dir() -> PathBuf {
+    config_dir().join("bin")
+}
+
+/// `~/.daemoneye/lib/` — shared SDK modules (de_sdk, Python helpers, etc.).
+pub fn lib_dir() -> PathBuf {
+    config_dir().join("lib")
+}
+
+/// Default path for the daemon log file: `~/.daemoneye/var/log/daemon.log`.
+pub fn default_log_path() -> PathBuf {
+    var_log_dir().join("daemon.log")
+}
+
+/// Default path for the Unix domain socket: `~/.daemoneye/var/run/daemoneye.sock`.
 ///
 /// Using the user's home directory rather than `/tmp` prevents other local users
 /// from pre-creating a symlink or connecting to the socket.
 pub fn default_socket_path() -> PathBuf {
-    config_dir().join("daemoneye.sock")
+    var_run_dir().join("daemoneye.sock")
 }
 
-/// Directory where user prompt TOML files are stored: `~/.daemoneye/prompts/`.
+/// Path for the structured event log: `~/.daemoneye/var/log/events.jsonl`.
+pub fn events_path() -> PathBuf {
+    var_log_dir().join("events.jsonl")
+}
+
+/// Directory where user prompt TOML files are stored: `~/.daemoneye/etc/prompts/`.
 pub fn prompts_dir() -> PathBuf {
-    let mut p = config_dir();
-    p.push("prompts");
-    p
+    etc_dir().join("prompts")
 }
 
-/// Directory where per-session JSONL history files are stored: `~/.daemoneye/sessions/`.
+/// Directory where per-session JSONL history files are stored: `~/.daemoneye/var/log/sessions/`.
 pub fn sessions_dir() -> PathBuf {
-    config_dir().join("sessions")
+    var_log_dir().join("sessions")
 }
 
 /// Resolves the user's home directory from the `HOME` env var.
@@ -345,10 +385,10 @@ fn dirs_next() -> PathBuf {
 }
 
 impl Config {
-    /// Load configuration from `~/.daemoneye/config.toml`.
+    /// Load configuration from `~/.daemoneye/etc/config.toml`.
     /// Returns `Config::default()` if the file does not exist yet.
     pub fn load() -> Result<Self> {
-        let path = config_dir().join("config.toml");
+        let path = etc_dir().join("config.toml");
         if !path.exists() {
             return Ok(Config::default());
         }
@@ -369,22 +409,32 @@ impl Config {
         config_dir().join("runbooks")
     }
 
-    /// Return the path to the schedules JSON store: `~/.daemoneye/schedules.json`.
+    /// Return the path to the schedules JSON store: `~/.daemoneye/var/run/schedules.json`.
     pub fn schedules_path() -> PathBuf {
-        config_dir().join("schedules.json")
+        var_run_dir().join("schedules.json")
     }
 
-    /// Ensure the config directory, example config, and default prompt exist.
+    /// Ensure the config directory tree and default files exist.
     pub fn ensure_dirs() -> Result<()> {
         let dir = config_dir();
         std::fs::create_dir_all(&dir)?;
+        // FHS-inspired subtree
+        std::fs::create_dir_all(etc_dir())?;
+        std::fs::create_dir_all(var_run_dir())?;
+        std::fs::create_dir_all(var_log_dir())?;
+        std::fs::create_dir_all(pipe_log_dir())?;
+        std::fs::create_dir_all(pane_logs_dir())?;
+std::fs::create_dir_all(bin_dir())?;
+        std::fs::create_dir_all(lib_dir())?;
+        // Daemon-managed persistent data
         let pd = prompts_dir();
         std::fs::create_dir_all(&pd)?;
         std::fs::create_dir_all(sessions_dir())?;
+        // User-managed top-level directories
         std::fs::create_dir_all(Self::scripts_dir())?;
         std::fs::create_dir_all(Self::runbooks_dir())?;
 
-        let cfg_path = dir.join("config.toml");
+        let cfg_path = etc_dir().join("config.toml");
         if !cfg_path.exists() {
             std::fs::write(
                 &cfg_path,

@@ -9,7 +9,7 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Native tmux Integration** — DaemonEye runs as a background process and interacts directly with your active `tmux` server.
 - **Session State Caching** — The daemon actively monitors your `tmux` session, summarizing output from all panes. On the **first turn** of each session the full terminal snapshot (active pane contents, non-active pane summaries, session topology, and environment) is automatically included in context. The active pane content is captured from a `pipe-pane` log rather than `capture-pane` when available — giving the AI access to the full output history since the chat started, including content that has scrolled past the tmux scrollback buffer (build output, long test runs, etc.). ANSI colour codes in the captured output are converted to semantic markers: `[ERROR: text]` (red), `[WARN: text]` (yellow), and `[OK: text]` (green) — letting the AI immediately locate failures and confirmations without parsing escape sequences. When no pipe log exists, `capture-pane -e` preserves the colour codes so the same annotation logic applies. On **subsequent turns** the AI requests a fresh snapshot on demand via `get_terminal_context` — keeping mid-conversation messages lean while ensuring the AI always has an accurate view when it needs one. Non-active pane summaries are classified as visible panes (same window as chat), background panes (daemon-launched), or session panes (other user windows), each including the shell's current working directory and its OSC terminal title (set by applications like vim, ssh, and k9s). Non-active panes are also annotated with a temporal activity indicator — `[active Xs ago]`, `[idle Nm]`, or `[idle NhNm]` — derived from tmux's `#{pane_activity}` timestamp, giving the AI a sense of which panes were recently in use. When two or more tmux sessions exist, an `[OTHER SESSIONS]` block is also appended listing each non-current session's name, window count, last-activity age, and whether a client is attached — so the AI can reason about work happening in parallel sessions without switching context. High-signal tmux session environment variables (cloud account, Kubernetes cluster, runtime tier, language runtime, etc.) are captured via `tmux show-environment` against a curated allowlist.
 - **Embedded AI Assistant** — Streams responses from Anthropic Claude, OpenAI, or Google Gemini with automatic context capture and sensitive-data masking.
-- **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Each tool call presents a three-option prompt: `[y]es` (approve once), `[a]pprove session` (auto-approve all commands of this class for the rest of the session), or `[N]o`. If the user types any other text at the approval prompt, the tool chain is aborted and the message is injected as a new conversation turn — allowing course-correction mid-chain without triggering a synthetic error. Two independent approval classes exist — *regular* and *sudo* — so sudo commands always prompt separately until explicitly session-approved. For foreground commands the approval panel shows the target pane's window-relative index and window name (e.g. `→ target: pane 1 in 'main' (%23)`) so the user can map the tool call to their visible tmux layout. Simultaneously, the target pane is highlighted with a dark-blue background tint (`tmux select-pane -P bg=colour17`) during the approval window — a visual anchor that makes the target immediately obvious. The highlight is removed when the command completes or when the user denies. Two execution modes: *background* (runs in a dedicated tmux window `de-bg-<session_name>-...` on the daemon host; returns immediately with the pane ID; when the command finishes a `[Background Task Completed]` context message is injected into the AI session with the exit code and captured output; the window persists for the session — up to 5 at a time — so the AI can run follow-up commands in the same shell; full scrollback is archived to `~/.daemoneye/pane_logs/`; the AI calls `close_background_window(pane_id)` when finished with a window, and windows still open 15 minutes after completion are auto-GC'd) and *foreground* (command is injected into a tmux pane via `send-keys`; completion uses a three-way branch — interactive commands like `ssh`, `mosh`, `telnet`, and `screen` return immediately once the remote shell prompt appears, with a `[Interactive session started]` result and instructions to use `target_pane` for follow-up commands in the open session; remote panes use output-stability polling; local panes use event-driven `pane-title-changed` hook detection). The AI uses `target_pane` (a pane ID from `list_panes` or context blocks) to direct foreground commands at specific panes other than the active one.
+- **Collaborative Execution (Tool Calling)** — The AI can propose commands to fix issues. Each tool call presents a three-option prompt: `[y]es` (approve once), `[a]pprove session` (auto-approve all commands of this class for the rest of the session), or `[N]o`. If the user types any other text at the approval prompt, the tool chain is aborted and the message is injected as a new conversation turn — allowing course-correction mid-chain without triggering a synthetic error. Two independent approval classes exist — *regular* and *sudo* — so sudo commands always prompt separately until explicitly session-approved. For foreground commands the approval panel shows the target pane's window-relative index and window name (e.g. `→ target: pane 1 in 'main' (%23)`) so the user can map the tool call to their visible tmux layout. Simultaneously, the target pane is highlighted with a dark-blue background tint (`tmux select-pane -P bg=colour17`) during the approval window — a visual anchor that makes the target immediately obvious. The highlight is removed when the command completes or when the user denies. Two execution modes: *background* (runs in a dedicated tmux window `de-bg-<session_name>-...` on the daemon host; returns immediately with the pane ID; when the command finishes a `[Background Task Completed]` context message is injected into the AI session with the exit code and captured output; the window persists for the session — up to 5 at a time — so the AI can run follow-up commands in the same shell; full scrollback is archived to `~/.daemoneye/var/log/panes/`; the AI calls `close_background_window(pane_id)` when finished with a window, and windows still open 15 minutes after completion are auto-GC'd) and *foreground* (command is injected into a tmux pane via `send-keys`; completion uses a three-way branch — interactive commands like `ssh`, `mosh`, `telnet`, and `screen` return immediately once the remote shell prompt appears, with a `[Interactive session started]` result and instructions to use `target_pane` for follow-up commands in the open session; remote panes use output-stability polling; local panes use event-driven `pane-title-changed` hook detection). The AI uses `target_pane` (a pane ID from `list_panes` or context blocks) to direct foreground commands at specific panes other than the active one.
 - **Pane Discovery & Identity** — The AI can call `list_panes` to see all active tmux panes in the session (pane ID, window-relative index, window name, command, working directory, title) and then target any of them with `run_terminal_command`. Every pane block in context — `[ACTIVE PANE]`, `[VISIBLE PANE]`, `[BACKGROUND PANE]`, `[SESSION PANE]` — now also carries `idx:N in 'window'`: the 0-based window-relative index that matches what the user sees when they press `ctrl+a q`. The AI is instructed to always address panes by both handle and index (e.g. "pane index 1 in 'main' (%23)") so the user can visually confirm the target before approving.
 - **Command Scheduler & Watchdog** — Schedule commands to run once at a time or on a repeating interval. Set up watchdog monitors with AI-powered runbook analysis. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Watchdog jobs can trigger alerts via a configurable notification hook (`[notifications] on_alert`).
 - **Knowledge System** — Three-tier persistence for AI-generated knowledge: *runbooks* (`~/.daemoneye/runbooks/`, markdown with frontmatter) for watchdog procedures; *memory* (`~/.daemoneye/memory/{session,knowledge,incidents}/`) for durable facts and incident records; and *search* for cross-corpus keyword lookup across runbooks, scripts, memory, and the event log. Session memories are automatically injected into every AI turn. Runbook and memory writes are exposed as AI tools with approval gates for destructive operations.
@@ -17,11 +17,11 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 - **Scripts Directory** — AI and users can create, read, list, and delete reusable scripts in `~/.daemoneye/scripts/`. Scripts can be shell (`.sh`) or Python (`.py`) — the AI defaults to Python for data processing, JSON handling, REST calls, and multi-step logic; shell for simple wrappers. Script writes and deletes are approval-gated. Scripts can be referenced by name in scheduled jobs and autonomous Ghost Shells.
 - **Execution Context Awareness** — On every first turn the AI is told the daemon's hostname and whether your terminal pane is local or connected to a remote host via SSH or mosh. This ensures the AI targets the right machine when choosing between background and foreground execution.
 - **Sudo Password Integration** — Background commands that require `sudo` trigger a password prompt in the chat interface (echo disabled). Foreground sudo commands notify you to type your password in the terminal pane.
-- **Structured Event Logging** — Every executed command, AI turn usage, and lifecycle event is appended to `~/.daemoneye/events.jsonl` as a single structured JSON object. Ghost shell activity has its own event types: `ghost_start`, `ghost_lifecycle` (started/completed/failed/skipped), `ghost_turn` (per-turn tool dispatch with command strings), `ghost_complete`, and `ghost_error`. All ghost events are searchable via `search_repository(kind:"events")`.
+- **Structured Event Logging** — Every executed command, AI turn usage, and lifecycle event is appended to `~/.daemoneye/var/log/events.jsonl` as a single structured JSON object. Ghost shell activity has its own event types: `ghost_start`, `ghost_lifecycle` (started/completed/failed/skipped), `ghost_turn` (per-turn tool dispatch with command strings), `ghost_complete`, and `ghost_error`. All ghost events are searchable via `search_repository(kind:"events")`.
 - **Multi-Turn Chat Memory** — The `chat` subcommand maintains full conversation history across turns within a session. The bottom border of the user input box shows `turn N · Xk / Yk tokens · Z% remaining`, giving you a live read on context consumption relative to the model's context window. The indicator is color-coded: dim when comfortable, yellow past 50 %, bold red past 75 %.
 - **Multi-line Chat Input** — The chat input box word-wraps long text across up to 5 rows instead of scrolling horizontally; the box grows upward as you type and collapses back on submission. The top border shows your `user@host`. Supports history navigation (↑/↓ arrow keys), in-line cursor movement (←/→, Home/End, Ctrl+A/E), and kill shortcuts (Ctrl+K/U). History persists for the lifetime of the chat session.
-- **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`~/.daemoneye/daemoneye.sock`) for instant, non-blocking interaction. The socket lives in the user's home directory (not `/tmp`) so other local users cannot connect to it or pre-create a symlink at that path.
-- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis via a watchdog prompt; the watchdog model emits `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its final line. If `YES` and the runbook has `enabled: true` in its frontmatter, DaemonEye spawns an **Autonomous Ghost Shell** in a dedicated `de-incident-*` tmux window to handle the alert unattended. Sudo access is always restricted to scripts explicitly listed in `auto_approve_scripts`, each requiring a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. The `run_with_sudo: true` runbook field does not grant broader access — it only causes the daemon to auto-prepend `sudo` when executing approved scripts, so the ghost AI can write `script.sh` instead of `sudo script.sh`. A configurable hard turn ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20) caps how much autonomous work any single session can do; individual runbooks may set a lower limit but cannot exceed the daemon ceiling. Ghost session start, completion, and failure events are injected into all active sessions, appear in the next catch-up brief, and are always written to `events.jsonl` for structured search. Full per-turn tool dispatch is logged to `daemon.log`; complete command output is archived to `~/.daemoneye/pane_logs/` without scrollback truncation. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
+- **IPC Architecture** — A lightweight CLI client communicates with the background daemon via a Unix Domain Socket (`~/.daemoneye/var/run/daemoneye.sock`) for instant, non-blocking interaction. The socket lives in the user's home directory (not `/tmp`) so other local users cannot connect to it or pre-create a symlink at that path.
+- **Webhook Alert Ingestion** — Optionally expose an HTTP endpoint (default port 9393) that accepts alerts from Prometheus Alertmanager, Grafana, or any generic JSON tool. Received alerts are deduplicated by fingerprint, masked for sensitive data, injected into active AI session histories, and displayed via `tmux display-message` in all chat panes. A matching runbook triggers automatic AI analysis via a watchdog prompt; the watchdog model emits `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its final line. If `YES` and the runbook has `enabled: true` in its frontmatter, DaemonEye spawns an **Autonomous Ghost Shell** in a dedicated `de-incident-*` tmux window to handle the alert unattended. Sudo access is always restricted to scripts explicitly listed in `auto_approve_scripts`, each requiring a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. The `run_with_sudo: true` runbook field does not grant broader access — it only causes the daemon to auto-prepend `sudo` when executing approved scripts, so the ghost AI can write `script.sh` instead of `sudo script.sh`. A configurable hard turn ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20) caps how much autonomous work any single session can do; individual runbooks may set a lower limit but cannot exceed the daemon ceiling. Ghost session start, completion, and failure events are injected into all active sessions, appear in the next catch-up brief, and are always written to `events.jsonl` for structured search. Full per-turn tool dispatch is logged to `daemon.log`; complete command output is archived to `~/.daemoneye/var/log/panes/` without scrollback truncation. Protected by a configurable Bearer token. Use `GET /health` for liveness probes.
 
 ---
 
@@ -92,7 +92,7 @@ To write daemon logs to a custom path:
 daemoneye daemon --log-file /var/log/daemoneye.log
 ```
 
-Event records (command history, AI turn counts, lifecycle info) are written to `~/.daemoneye/events.jsonl` by default.
+Event records (command history, AI turn counts, lifecycle info) are written to `~/.daemoneye/var/log/events.jsonl` by default.
 
 You can also manage the daemon with systemd — run `daemoneye setup` for the service file.
 
@@ -151,7 +151,7 @@ daemoneye chat
 |---|---|
 | `daemoneye daemon` | Start the background daemon |
 | `daemoneye daemon --console` | Start daemon with output on the console (troubleshooting) |
-| `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/daemon.log` |
+| `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
 | `daemoneye stop` | Stop the daemon gracefully |
 | `daemoneye logs` | Tails the `daemon.log` file |
 | `daemoneye chat` | Start an interactive multi-turn chat session |
@@ -164,9 +164,32 @@ daemoneye chat
 
 ---
 
+## Runtime Root
+
+`~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, logs — lives in a single FHS-inspired tree:
+
+```
+~/.daemoneye/
+  etc/config.toml          ← edit to configure the daemon
+  scripts/                 ← automation scripts
+  runbooks/                ← procedure runbooks
+  memory/                  ← persistent AI memory
+  bin/                     ← executable symlinks / wrappers
+  lib/                     ← shared SDK modules
+  var/run/daemoneye.sock   ← IPC socket
+  var/run/schedules.json   ← job store
+  var/log/events.jsonl         ← structured event log
+  var/log/daemon.log       ← daemon process log
+  var/log/panes/           ← background-command output archives
+  etc/prompts/         ← system prompt files
+  var/log/sessions/        ← conversation history
+```
+
+Run `daemoneye setup` to initialise the tree and print the systemd + tmux configuration.
+
 ## Configuration
 
-DaemonEye stores its configuration in `~/.daemoneye/config.toml`. The file is created automatically on first launch with default values.
+DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values.
 
 ### Full example
 
@@ -212,7 +235,7 @@ prompt   = "sre"
 | `provider` | string | `"anthropic"` | AI backend to use. See valid values below. |
 | `api_key` | string | `""` | API key for the chosen provider. If empty, falls back to the provider's environment variable. Not required for `ollama` or `lmstudio`. |
 | `model` | string | `"claude-sonnet-4-6"` | Model name passed to the provider API. |
-| `prompt` | string | `"sre"` | Name of a prompt file in `~/.daemoneye/prompts/` (without `.toml`). |
+| `prompt` | string | `"sre"` | Name of a prompt file in `~/.daemoneye/etc/prompts/` (without `.toml`). |
 | `position` | string | `"bottom"` | Where `daemoneye setup` places the chat pane: `"bottom"`, `"top"`, `"right"`, or `"left"`. |
 | `base_url` | string | *(provider default)* | Override the API base URL. Useful for pointing at a remote Ollama host, LM Studio instance, or any OpenAI-compatible proxy. |
 | `context_window_tokens` | integer | *(model lookup)* | Override the context-window size in tokens. Set this for local models where the automatic lookup is inaccurate. |
@@ -334,7 +357,7 @@ Ghost AI turn loop (up to max_ghost_turns)
   • watch_pane blocks until command exits before next turn
         │
         ▼
-[Ghost Shell Completed — session log: ~/.daemoneye/sessions/ghost-<name>-<uuid>.jsonl]
+[Ghost Shell Completed — session log: ~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl]
 or [Ghost Shell Failed — session log: ...]
 injected into all active sessions → appears in catch-up brief
 Use read_file(<path>) to review the full ghost conversation
@@ -444,7 +467,7 @@ captures the error log for post-incident review.
 
 ### Step 4 — Enable the webhook and configure Alertmanager
 
-In `~/.daemoneye/config.toml`:
+In `~/.daemoneye/etc/config.toml`:
 
 ```toml
 [webhook]
@@ -521,7 +544,7 @@ daemoneye logs
 Check the event log for the full audit trail:
 
 ```bash
-grep "ghost\|webhook_analysis\|command_approval" ~/.daemoneye/events.jsonl | tail -30
+grep "ghost\|webhook_analysis\|command_approval" ~/.daemoneye/var/log/events.jsonl | tail -30
 ```
 
 ### Monitoring active ghost shells
@@ -573,7 +596,7 @@ tmux list-windows | grep de-incident
 src/
 ├── main.rs          # CLI entry point — parses subcommands (daemon, stop, ping, logs, chat, ask, setup, scripts, sched)
 ├── ipc.rs           # Request/Response enums — the full wire protocol; GhostConfig struct
-├── config.rs        # ~/.daemoneye/config.toml parsing; GhostDaemonConfig; prompt loading; directory helpers
+├── config.rs        # ~/.daemoneye/etc/config.toml parsing; GhostDaemonConfig; prompt loading; directory helpers
 ├── daemon/          # Background process: IPC server, session memory, background execution
 │   ├── mod.rs       # Daemon entry point; supervise() task supervisor; hook installation
 │   ├── server.rs    # IPC connection loop; AI prompt assembly; trigger_ghost_turn()
@@ -594,7 +617,7 @@ src/
 │   ├── mod.rs       # tmux interoperability layer (capture-pane, send-keys, create/kill job windows, etc.)
 │   ├── cache.rs     # Background poller; SessionCache; PaneState; get_labeled_context()
 │   └── session.rs   # Session-level helpers: other_sessions_context(); client_dimensions(); session_exists()
-├── config.rs        # ~/.daemoneye/config.toml parsing, prompt loading, directory helpers
+├── config.rs        # ~/.daemoneye/etc/config.toml parsing, prompt loading, directory helpers
 └── ai/
     ├── mod.rs       # AiClient trait; send_with_retry(); CircuitBreaker
     ├── types.rs     # PendingCall / AiEvent enums; Message; AiUsage
@@ -607,7 +630,7 @@ src/
 
 ## Command Audit Log
 
-Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in `~/.daemoneye/events.jsonl`:
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in `~/.daemoneye/var/log/events.jsonl`:
 
 ```
 [1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...

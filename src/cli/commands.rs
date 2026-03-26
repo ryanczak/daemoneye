@@ -32,7 +32,49 @@ impl SessionApproval {
 }
 
 pub fn run_setup() -> Result<()> {
-    // Write the systemd user service file.
+    // Ensure the full ~/.daemoneye/ directory tree and default files are in place.
+    // (Also called at the top of main(), but being explicit here makes setup self-contained.)
+    crate::config::Config::ensure_dirs()
+        .map_err(|e| anyhow::anyhow!("Failed to initialise config directory: {}", e))?;
+
+    let dir = crate::config::config_dir();
+    println!("Initialised ~/.daemoneye/ layout:");
+    println!("  {}/etc/config.toml       ← edit this to configure the daemon", dir.display());
+    println!("  {}/etc/prompts/           ← system prompt files (.toml)", dir.display());
+    println!("  {}/var/run/               ← socket, schedules, pane prefs", dir.display());
+    println!("  {}/var/log/               ← daemon.log and pipe-pane capture logs", dir.display());
+    println!("  {}/bin/                   ← place symlinks/wrappers here", dir.display());
+    println!("  {}/lib/                   ← shared SDK modules (de_sdk, Python helpers)", dir.display());
+    println!("  {}/scripts/               ← automation scripts", dir.display());
+    println!("  {}/runbooks/              ← procedure runbooks", dir.display());
+    println!("  {}/memory/                ← persistent AI memory", dir.display());
+    println!();
+    println!("Seeded knowledge memories (written once, preserved on upgrade):");
+    let knowledge_dir = dir.join("memory").join("knowledge");
+    let seeded = [
+        "webhook-setup",
+        "runbook-format",
+        "runbook-ghost-template",
+        "ghost-shell-guide",
+        "scheduling-guide",
+        "scripts-and-sudoers",
+    ];
+    for key in &seeded {
+        let exists = knowledge_dir.join(format!("{}.md", key)).exists();
+        println!("  {}  {}", key, if exists { "✓" } else { "(missing)" });
+    }
+    println!();
+
+    // Copy the running binary into ~/.daemoneye/bin/daemoneye.
+    let bin_dest = crate::config::bin_dir().join("daemoneye");
+    let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("daemoneye"));
+    match std::fs::copy(&current_exe, &bin_dest) {
+        Ok(_) => println!("Copied binary → {}", bin_dest.display()),
+        Err(e) => eprintln!("Warning: could not copy binary to {}: {}", bin_dest.display(), e),
+    }
+    println!();
+
+    // Write the systemd user service file using the bin/ path.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let systemd_dir = PathBuf::from(&home).join(".config/systemd/user");
     let service_path = systemd_dir.join("daemoneye.service");
@@ -44,11 +86,11 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.cargo/bin/daemoneye daemon
-ExecStop=%h/.cargo/bin/daemoneye stop
+ExecStart=%h/.daemoneye/bin/daemoneye daemon
+ExecStop=%h/.daemoneye/bin/daemoneye stop
 Restart=on-failure
 RestartSec=5
-Environment=\"PATH=%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin\"
+Environment=\"PATH=%h/.daemoneye/bin:/usr/local/bin:/usr/bin:/bin\"
 
 [Install]
 WantedBy=default.target
@@ -84,13 +126,9 @@ WantedBy=default.target
         _ => "-v", // "bottom" or any unrecognised value
     };
 
-    // Use the absolute path to the running binary so the bind-key works even
-    // when ~/.cargo/bin is not in the PATH inherited by the tmux session (a
-    // common issue when the daemon created the session from a background
-    // process or service with a minimal environment).
-    let daemon_bin = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "daemoneye".to_string());
+    // Use the ~/.daemoneye/bin/ copy so the bind-key is stable across cargo reinstalls
+    // and works even when ~/.cargo/bin is not in the PATH inherited by tmux.
+    let daemon_bin = bin_dest.to_string_lossy().into_owned();
 
     println!();
     println!("# Add this to your ~/.tmux.conf:");

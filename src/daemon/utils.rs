@@ -154,7 +154,7 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     re.is_match(cmd)
 }
 
-/// Write a structured JSONL event record to `~/.daemoneye/events.jsonl`.
+/// Write a structured JSONL event record to `~/.daemoneye/var/events.jsonl`.
 ///
 /// Each call appends one JSON object per line.  The top-level fields
 /// `ts` (ISO-8601 UTC) and `event` (event type name) are always present.
@@ -165,7 +165,7 @@ pub fn command_has_sudo(cmd: &str) -> bool {
 pub fn log_event(event: &str, mut fields: serde_json::Value) {
     use std::io::Write;
 
-    let path = crate::config::config_dir().join("events.jsonl");
+    let path = crate::config::events_path();
     let ts = chrono::Utc::now().to_rfc3339();
 
     if let Some(obj) = fields.as_object_mut() {

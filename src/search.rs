@@ -77,7 +77,7 @@ pub fn search_repository(query: &str, kind: &str, context_lines: usize) -> Vec<S
 
     // Search events.jsonl if requested
     if (kind == "events" || kind == "all") && results.len() < MAX_RESULTS {
-        search_events(&base, &query_lower, context_lines, &mut results);
+        search_events(&crate::config::events_path(), &query_lower, context_lines, &mut results);
     }
 
     results
@@ -164,12 +164,11 @@ fn search_dir(
 }
 
 fn search_events(
-    base: &PathBuf,
+    events_path: &PathBuf,
     query_lower: &str,
     context_lines: usize,
     results: &mut Vec<SearchResult>,
 ) {
-    let events_path = base.join("events.jsonl");
     if !events_path.exists() {
         return;
     }

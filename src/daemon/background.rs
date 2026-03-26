@@ -58,20 +58,24 @@ fn trim_large_output(raw: &str, limit: usize, win_name: &str) -> String {
         .saturating_sub(head.lines().count())
         .saturating_sub(tail.lines().count());
 
-    let archive = format!("~/.daemoneye/pane_logs/{}.log", win_name);
+    // Use the absolute path so the agent can pass it directly to read_file.
+    let archive = crate::config::pane_logs_dir()
+        .join(format!("{}.log", win_name))
+        .to_string_lossy()
+        .to_string();
     // head already ends with '\n'; trim it so the format string doesn't insert a blank line.
     let head = head.trim_end_matches('\n');
     format!("{head}\n... ({omitted} lines omitted — full log: {archive}) ...\n{tail}")
 }
 
-/// Capture and mask pane output, archive the full output to `pane_logs/`.
+/// Capture and mask pane output, archive the full output to `var/log/panes/`.
 /// Returns the masked body string suitable for the AI.
 ///
 /// `pipe_log` — path to the pipe-pane log file started before the command ran.
 /// When present it is read directly (no scrollback cap) and then deleted.
 /// Falls back to `capture_pane` if the file cannot be read.
 ///
-/// The archive at `~/.daemoneye/pane_logs/{win_name}.log` always uses the
+/// The archive at `~/.daemoneye/var/log/panes/{win_name}.log` always uses the
 /// best available content: the full pipe-log when present, otherwise the
 /// scrollback-limited `capture_pane_to_file` fallback.  Ghost shell pane logs
 /// are therefore never truncated due to scrollback limits.
@@ -107,7 +111,7 @@ fn capture_and_archive(
     } else {
         mask_sensitive(&normalized)
     };
-    let logs_dir = crate::config::config_dir().join("pane_logs");
+    let logs_dir = crate::config::pane_logs_dir();
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
         log::warn!(
             "Failed to create pane_logs dir {}: {}",
@@ -163,7 +167,7 @@ fn notify_session(
              Call close_background_window(\"{pane_id}\") when you are done with this window."
         )
     } else {
-        format!("The window was closed. Full log: ~/.daemoneye/pane_logs/{win_name}.log")
+        format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")
     };
 
     let hints = crate::manifest::related_knowledge_hints(body);
@@ -465,7 +469,7 @@ pub async fn run_background_in_window(
                      Use target=\"{pane_id}\" to run follow-up commands in the same shell."
                 )
             } else {
-                format!("The window was closed. Full log: ~/.daemoneye/pane_logs/{win_name}.log")
+                format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")
             };
             format!(
                 "Background command completed (exit {exit_code}).\n{persist_note}\n<output>\n{body}\n</output>"
@@ -778,7 +782,7 @@ pub async fn respawn_background_in_pane(
                      Use target=\"{pane_id}\" to run follow-up commands in the same shell."
                 )
             } else {
-                format!("The window was closed. Full log: ~/.daemoneye/pane_logs/{win_name}.log")
+                format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")
             };
             format!(
                 "Retry command completed (exit {exit_code}).\n{persist_note}\n<output>\n{body}\n</output>"
@@ -912,7 +916,7 @@ pub async fn notify_job_completion(
     );
 
     // Archive logs.
-    let logs_dir = crate::config::config_dir().join("pane_logs");
+    let logs_dir = crate::config::pane_logs_dir();
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
         log::error!("Failed to create pane_logs directory: {}", e);
     } else if let Err(e) =

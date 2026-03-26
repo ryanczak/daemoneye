@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 fn prefs_path() -> std::path::PathBuf {
-    crate::config::config_dir().join("pane_prefs.json")
+    crate::config::var_run_dir().join("pane_prefs.json")
 }
 
 fn load_all() -> HashMap<String, String> {

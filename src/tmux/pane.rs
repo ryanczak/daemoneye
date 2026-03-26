@@ -232,10 +232,10 @@ pub fn capture_pane_to_file(pane_id: &str, out_path: &std::path::Path) -> Result
 /// Derive the pipe log path for a given pane ID.
 ///
 /// The pane ID (e.g. `%3`) is sanitised to a plain number so the path is a
-/// valid filename on every filesystem: `%3` → `/tmp/de-pipe-3.log`.
+/// valid filename on every filesystem: `%3` → `~/.daemoneye/var/log/pipe/de-pipe-3.log`.
 pub fn pipe_log_path(pane_id: &str) -> std::path::PathBuf {
     let safe = pane_id.trim_start_matches('%');
-    std::path::PathBuf::from(format!("/tmp/de-pipe-{}.log", safe))
+    crate::config::pipe_log_dir().join(format!("de-pipe-{}.log", safe))
 }
 
 /// Start piping all output from `pane_id` to its log file.
