@@ -1,9 +1,9 @@
-use crate::daemon::utils::log_event;
-use crate::ipc::{Request, Response, ScheduleListItem};
-use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduleStore, ScheduledJob};
-use crate::daemon::utils::send_response_split;
 use super::ToolCallOutcome;
 use super::USER_PROMPT_TIMEOUT;
+use crate::daemon::utils::log_event;
+use crate::daemon::utils::send_response_split;
+use crate::ipc::{Request, Response, ScheduleListItem};
+use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduleStore, ScheduledJob};
 use std::sync::Arc;
 
 pub(super) struct ScheduleArgs<'a> {
@@ -30,10 +30,25 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let ScheduleArgs { call_id, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron } = args;
+    let ScheduleArgs {
+        call_id,
+        name,
+        command,
+        is_script,
+        run_at,
+        interval,
+        runbook,
+        ghost_runbook,
+        cron,
+    } = args;
     #[allow(deprecated)]
     let (action, runbook) = if let Some(rb) = ghost_runbook {
-        (ActionOn::Ghost { runbook: rb.to_string() }, None)
+        (
+            ActionOn::Ghost {
+                runbook: rb.to_string(),
+            },
+            None,
+        )
     } else if command.is_empty() && !is_script {
         if let Some(rb) = runbook {
             // AI put the runbook name in the watchdog `runbook` field instead of `ghost_runbook`.
@@ -43,7 +58,12 @@ where
                  inferring ghost mode. Use ghost_runbook for ghost jobs.",
                 rb
             );
-            (ActionOn::Ghost { runbook: rb.to_string() }, None)
+            (
+                ActionOn::Ghost {
+                    runbook: rb.to_string(),
+                },
+                None,
+            )
         } else {
             // No ghost_runbook, no command, no script — nothing to run.
             return Ok(ToolCallOutcome::Result(
@@ -66,39 +86,52 @@ where
                     expression: expr.to_string(),
                     next_run: next,
                 },
-                None => return Ok(ToolCallOutcome::Result(format!(
-                    "Cron expression '{}' has no future occurrences.", expr
-                ))),
+                None => {
+                    return Ok(ToolCallOutcome::Result(format!(
+                        "Cron expression '{}' has no future occurrences.",
+                        expr
+                    )));
+                }
             },
-            Err(e) => return Ok(ToolCallOutcome::Result(format!(
-                "Invalid cron expression '{}': {}. \
+            Err(e) => {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Invalid cron expression '{}': {}. \
                  Use 5-field format: minute hour day-of-month month day-of-week. \
                  Example: '*/5 * * * *' (every 5 minutes).",
-                expr, e
-            ))),
+                    expr, e
+                )));
+            }
         }
     } else if let Some(iso) = interval {
         let secs = match crate::scheduler::parse_iso_duration(iso) {
             Some(s) => s,
-            None => return Ok(ToolCallOutcome::Result(format!(
-                "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
-                iso
-            ))),
+            None => {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
+                    iso
+                )));
+            }
         };
         let next = chrono::Utc::now() + chrono::Duration::seconds(secs as i64);
-        ScheduleKind::Every { interval_secs: secs, next_run: next }
+        ScheduleKind::Every {
+            interval_secs: secs,
+            next_run: next,
+        }
     } else if let Some(at_str) = run_at {
         let at = chrono::DateTime::parse_from_rfc3339(at_str)
             .map(|d| d.with_timezone(&chrono::Utc))
             .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::seconds(60));
         ScheduleKind::Once { at }
     } else {
-        ScheduleKind::Once { at: chrono::Utc::now() + chrono::Duration::seconds(60) }
+        ScheduleKind::Once {
+            at: chrono::Utc::now() + chrono::Duration::seconds(60),
+        }
     };
 
     if is_ghost {
         return Ok(ToolCallOutcome::Result(
-            "Error: cannot create scheduled jobs in a Ghost Shell (requires user approval).".to_string(),
+            "Error: cannot create scheduled jobs in a Ghost Shell (requires user approval)."
+                .to_string(),
         ));
     }
 
@@ -110,7 +143,8 @@ where
             kind: kind.describe(),
             action: action.describe(),
         },
-    ).await?;
+    )
+    .await?;
 
     let mut line = String::new();
     let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
@@ -126,7 +160,12 @@ where
     };
 
     if approved {
-        let job = ScheduledJob::new(name.to_string(), kind.clone(), action, runbook.map(|s| s.to_string()));
+        let job = ScheduledJob::new(
+            name.to_string(),
+            kind.clone(),
+            action,
+            runbook.map(|s| s.to_string()),
+        );
         match schedule_store.add(job) {
             Ok(job_id) => {
                 log::info!("Job scheduled: '{}' ({})", name, &job_id[..8]);
@@ -139,9 +178,15 @@ where
                         "kind": kind.describe(),
                     }),
                 );
-                Ok(ToolCallOutcome::Result(format!("Scheduled job '{}' created (id: {})", name, job_id)))
+                Ok(ToolCallOutcome::Result(format!(
+                    "Scheduled job '{}' created (id: {})",
+                    name, job_id
+                )))
             }
-            Err(e) => Ok(ToolCallOutcome::Result(format!("Failed to schedule job: {}", e))),
+            Err(e) => Ok(ToolCallOutcome::Result(format!(
+                "Failed to schedule job: {}",
+                e
+            ))),
         }
     } else {
         log_event(
@@ -153,7 +198,9 @@ where
                 "decision": "denied",
             }),
         );
-        Ok(ToolCallOutcome::Result("Job scheduling denied by user".to_string()))
+        Ok(ToolCallOutcome::Result(
+            "Job scheduling denied by user".to_string(),
+        ))
     }
 }
 
@@ -165,21 +212,34 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     let jobs = schedule_store.list();
-    let items: Vec<ScheduleListItem> = jobs.iter().map(|j| ScheduleListItem {
-        id: j.id.clone(),
-        name: j.name.clone(),
-        kind: j.kind.describe(),
-        action: j.action.describe(),
-        status: j.status.describe(),
-        last_run: j.last_run.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
-        next_run: if matches!(j.status, JobStatus::Pending) {
-            j.kind.next_run().map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
-        } else {
-            None
-        },
-    }).collect();
+    let items: Vec<ScheduleListItem> = jobs
+        .iter()
+        .map(|j| ScheduleListItem {
+            id: j.id.clone(),
+            name: j.name.clone(),
+            kind: j.kind.describe(),
+            action: j.action.describe(),
+            status: j.status.describe(),
+            last_run: j
+                .last_run
+                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string()),
+            next_run: if matches!(j.status, JobStatus::Pending) {
+                j.kind
+                    .next_run()
+                    .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+            } else {
+                None
+            },
+        })
+        .collect();
     let count = items.len();
-    let _ = send_response_split(tx, Response::ScheduleList { jobs: items.clone() }).await;
+    let _ = send_response_split(
+        tx,
+        Response::ScheduleList {
+            jobs: items.clone(),
+        },
+    )
+    .await;
     if count == 0 {
         Ok(ToolCallOutcome::Result("No scheduled jobs.".to_string()))
     } else {

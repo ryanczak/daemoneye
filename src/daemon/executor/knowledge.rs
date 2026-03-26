@@ -1,13 +1,15 @@
+use super::ToolCallOutcome;
+use super::USER_PROMPT_TIMEOUT;
 use crate::ai::filter::mask_sensitive;
-use crate::daemon::session::{FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe};
+use crate::daemon::session::{
+    FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe,
+};
+use crate::daemon::utils::send_response_split;
 use crate::daemon::utils::{log_event, normalize_output};
 use crate::ipc::{MemoryListItem, Request, Response, RunbookListItem, ScriptListItem};
 use crate::scheduler::ScheduleStore;
 use crate::scripts;
-use crate::daemon::utils::send_response_split;
 use crate::util::UnpoisonExt;
-use super::ToolCallOutcome;
-use super::USER_PROMPT_TIMEOUT;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,7 +41,8 @@ where
             script_name: script_name.to_string(),
             content: content.to_string(),
         },
-    ).await?;
+    )
+    .await?;
 
     let mut line = String::new();
     let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
@@ -56,11 +59,19 @@ where
 
     if approved {
         match scripts::write_script(script_name, content) {
-            Ok(()) => Ok(ToolCallOutcome::Result(format!("Script '{}' written successfully", script_name))),
-            Err(e) => Ok(ToolCallOutcome::Result(format!("Failed to write script: {}", e))),
+            Ok(()) => Ok(ToolCallOutcome::Result(format!(
+                "Script '{}' written successfully",
+                script_name
+            ))),
+            Err(e) => Ok(ToolCallOutcome::Result(format!(
+                "Failed to write script: {}",
+                e
+            ))),
         }
     } else {
-        Ok(ToolCallOutcome::Result("Script write denied by user".to_string()))
+        Ok(ToolCallOutcome::Result(
+            "Script write denied by user".to_string(),
+        ))
     }
 }
 
@@ -69,13 +80,19 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     let script_list = scripts::list_scripts().unwrap_or_default();
-    let items: Vec<ScriptListItem> = script_list.iter().map(|s| ScriptListItem {
-        name: s.name.clone(),
-        size: s.size,
-    }).collect();
+    let items: Vec<ScriptListItem> = script_list
+        .iter()
+        .map(|s| ScriptListItem {
+            name: s.name.clone(),
+            size: s.size,
+        })
+        .collect();
     let count = items.len();
     let _ = send_response_split(tx, Response::ScriptList { scripts: items }).await;
-    Ok(ToolCallOutcome::Result(format!("{} script(s) in ~/.daemoneye/scripts/", count)))
+    Ok(ToolCallOutcome::Result(format!(
+        "{} script(s) in ~/.daemoneye/scripts/",
+        count
+    )))
 }
 
 pub(super) fn read_script(script_name: &str) -> String {
@@ -108,7 +125,8 @@ where
             id: id.to_string(),
             script_name: script_name.to_string(),
         },
-    ).await?;
+    )
+    .await?;
 
     let mut line = String::new();
     let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
@@ -131,12 +149,20 @@ where
                     "script_delete",
                     serde_json::json!({ "session": session_id.unwrap_or("-"), "script": script_name }),
                 );
-                Ok(ToolCallOutcome::Result(format!("Script '{}' deleted", script_name)))
+                Ok(ToolCallOutcome::Result(format!(
+                    "Script '{}' deleted",
+                    script_name
+                )))
             }
-            Err(e) => Ok(ToolCallOutcome::Result(format!("Failed to delete script '{}': {}", script_name, e))),
+            Err(e) => Ok(ToolCallOutcome::Result(format!(
+                "Failed to delete script '{}': {}",
+                script_name, e
+            ))),
         }
     } else {
-        Ok(ToolCallOutcome::Result("Script deletion denied by user".to_string()))
+        Ok(ToolCallOutcome::Result(
+            "Script deletion denied by user".to_string(),
+        ))
     }
 }
 
@@ -169,7 +195,8 @@ where
             runbook_name: name.to_string(),
             content: content.to_string(),
         },
-    ).await?;
+    )
+    .await?;
 
     let mut line = String::new();
     let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
@@ -193,13 +220,19 @@ where
                     serde_json::json!({ "session": session_id.unwrap_or("-"), "runbook": name }),
                 );
                 Ok(ToolCallOutcome::Result(format!(
-                    "Runbook '{}' written to ~/.daemoneye/runbooks/{}.md", name, name
+                    "Runbook '{}' written to ~/.daemoneye/runbooks/{}.md",
+                    name, name
                 )))
             }
-            Err(e) => Ok(ToolCallOutcome::Result(format!("Failed to write runbook: {}", e))),
+            Err(e) => Ok(ToolCallOutcome::Result(format!(
+                "Failed to write runbook: {}",
+                e
+            ))),
         }
     } else {
-        Ok(ToolCallOutcome::Result("Runbook write denied by user".to_string()))
+        Ok(ToolCallOutcome::Result(
+            "Runbook write denied by user".to_string(),
+        ))
     }
 }
 
@@ -235,7 +268,8 @@ where
             runbook_name: name.to_string(),
             active_jobs,
         },
-    ).await?;
+    )
+    .await?;
 
     let mut line = String::new();
     let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
@@ -258,12 +292,20 @@ where
                     "runbook_delete",
                     serde_json::json!({ "session": session_id.unwrap_or("-"), "runbook": name }),
                 );
-                Ok(ToolCallOutcome::Result(format!("Runbook '{}' deleted", name)))
+                Ok(ToolCallOutcome::Result(format!(
+                    "Runbook '{}' deleted",
+                    name
+                )))
             }
-            Err(e) => Ok(ToolCallOutcome::Result(format!("Failed to delete runbook: {}", e))),
+            Err(e) => Ok(ToolCallOutcome::Result(format!(
+                "Failed to delete runbook: {}",
+                e
+            ))),
         }
     } else {
-        Ok(ToolCallOutcome::Result("Runbook delete denied by user".to_string()))
+        Ok(ToolCallOutcome::Result(
+            "Runbook delete denied by user".to_string(),
+        ))
     }
 }
 
@@ -280,22 +322,42 @@ where
 {
     let items = crate::runbook::list_runbooks().unwrap_or_default();
     let count = items.len();
-    let runbook_items: Vec<RunbookListItem> = items.iter().map(|r| RunbookListItem {
-        name: r.name.clone(),
-        tags: r.tags.clone(),
-        ghost_config: r.ghost_config.clone(),
-    }).collect();
-    let _ = send_response_split(tx, Response::RunbookList { runbooks: runbook_items }).await;
-    Ok(ToolCallOutcome::Result(format!("{} runbook(s) in ~/.daemoneye/runbooks/", count)))
+    let runbook_items: Vec<RunbookListItem> = items
+        .iter()
+        .map(|r| RunbookListItem {
+            name: r.name.clone(),
+            tags: r.tags.clone(),
+            ghost_config: r.ghost_config.clone(),
+        })
+        .collect();
+    let _ = send_response_split(
+        tx,
+        Response::RunbookList {
+            runbooks: runbook_items,
+        },
+    )
+    .await;
+    Ok(ToolCallOutcome::Result(format!(
+        "{} runbook(s) in ~/.daemoneye/runbooks/",
+        count
+    )))
 }
 
 // ---------------------------------------------------------------------------
 // Memory
 // ---------------------------------------------------------------------------
 
-pub(super) fn add_memory(key: &str, value: &str, category: &str, session_id: Option<&str>) -> String {
+pub(super) fn add_memory(
+    key: &str,
+    value: &str,
+    category: &str,
+    session_id: Option<&str>,
+) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
-        return format!("Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.", category);
+        return format!(
+            "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+            category
+        );
     };
     if value.trim().is_empty() {
         return "Error: memory value cannot be empty.".to_string();
@@ -314,7 +376,10 @@ pub(super) fn add_memory(key: &str, value: &str, category: &str, session_id: Opt
 
 pub(super) fn delete_memory(key: &str, category: &str, session_id: Option<&str>) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
-        return format!("Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.", category);
+        return format!(
+            "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+            category
+        );
     };
     match crate::memory::delete_memory(key, cat) {
         Ok(()) => {
@@ -330,7 +395,10 @@ pub(super) fn delete_memory(key: &str, category: &str, session_id: Option<&str>)
 
 pub(super) fn read_memory(key: &str, category: &str) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
-        return format!("Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.", category);
+        return format!(
+            "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+            category
+        );
     };
     match crate::memory::read_memory(key, cat) {
         Ok(content) => mask_sensitive(&content),
@@ -349,23 +417,38 @@ where
         None => None,
         Some(s) => match crate::memory::MemoryCategory::from_str(s) {
             Some(c) => Some(c),
-            None => return Ok(ToolCallOutcome::Result(format!(
-                "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.", s
-            ))),
+            None => {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+                    s
+                )));
+            }
         },
     };
     let entries = crate::memory::list_memories(cat).unwrap_or_default();
     let count = entries.len();
-    let items: Vec<MemoryListItem> = entries.iter().map(|(c, k)| MemoryListItem {
-        category: c.clone(),
-        key: k.clone(),
-    }).collect();
+    let items: Vec<MemoryListItem> = entries
+        .iter()
+        .map(|(c, k)| MemoryListItem {
+            category: c.clone(),
+            key: k.clone(),
+        })
+        .collect();
     let _ = send_response_split(tx, Response::MemoryList { entries: items }).await;
     if count == 0 {
-        Ok(ToolCallOutcome::Result("No memory entries found.".to_string()))
+        Ok(ToolCallOutcome::Result(
+            "No memory entries found.".to_string(),
+        ))
     } else {
-        let lines: Vec<String> = entries.iter().map(|(c, k)| format!("[{}] {}", c, k)).collect();
-        Ok(ToolCallOutcome::Result(format!("{} memory entries:\n{}", count, lines.join("\n"))))
+        let lines: Vec<String> = entries
+            .iter()
+            .map(|(c, k)| format!("[{}] {}", c, k))
+            .collect();
+        Ok(ToolCallOutcome::Result(format!(
+            "{} memory entries:\n{}",
+            count,
+            lines.join("\n")
+        )))
     }
 }
 
@@ -382,7 +465,11 @@ pub(super) fn search_repository(query: &str, kind: &str) -> String {
 // Background window management
 // ---------------------------------------------------------------------------
 
-pub(super) fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions: &SessionStore) -> String {
+pub(super) fn close_bg_window(
+    pane_id: &str,
+    session_id: Option<&str>,
+    sessions: &SessionStore,
+) -> String {
     let Some(sid) = session_id else {
         return "No active session — cannot close background window.".to_string();
     };
@@ -392,23 +479,39 @@ pub(super) fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions:
             return format!("Session '{}' not found.", sid);
         };
         let Some(win) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id) else {
-            return format!("No background window with pane ID {} found in this session.", pane_id);
+            return format!(
+                "No background window with pane ID {} found in this session.",
+                pane_id
+            );
         };
-        (win.window_name.clone(), win.tmux_session.clone(), win.exit_code.is_none())
+        (
+            win.window_name.clone(),
+            win.tmux_session.clone(),
+            win.exit_code.is_none(),
+        )
     };
 
     if still_running {
-        log::warn!("Agent closing still-running bg window {} (pane {})", win_name, pane_id);
+        log::warn!(
+            "Agent closing still-running bg window {} (pane {})",
+            win_name,
+            pane_id
+        );
     }
 
     if let Err(e) = crate::tmux::kill_job_window(&tmux_session, &win_name) {
-        log::warn!("close_background_window: failed to kill {}: {}", win_name, e);
+        log::warn!(
+            "close_background_window: failed to kill {}: {}",
+            win_name,
+            e
+        );
     }
 
     if let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(sid) {
-            entry.bg_windows.retain(|w| w.pane_id != pane_id);
-        }
+        && let Some(entry) = store.get_mut(sid)
+    {
+        entry.bg_windows.retain(|w| w.pane_id != pane_id);
+    }
 
     log_event(
         "close_bg_window",
@@ -444,7 +547,9 @@ pub(super) fn list_panes(
 
     let mut out = format!(
         "{} pane{} in session '{}' (chat pane excluded):\n",
-        rows.len(), if rows.len() == 1 { "" } else { "s" }, session
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" },
+        session
     );
     let now_secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -462,15 +567,25 @@ pub(super) fn list_panes(
         } else {
             String::new()
         };
-        let ghost_part = if state.window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
-            || state.window_name.starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
-            || state.window_name.starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
+        let ghost_part = if state
+            .window_name
+            .starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
+            || state
+                .window_name
+                .starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
+            || state
+                .window_name
+                .starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
         {
             "  [ghost]"
         } else {
             ""
         };
-        let sync_part = if state.synchronized { "  [synchronized]" } else { "" };
+        let sync_part = if state.synchronized {
+            "  [synchronized]"
+        } else {
+            ""
+        };
         let dead_part = if state.dead {
             format!("  [dead: {}]", state.dead_status.unwrap_or(0))
         } else {
@@ -490,11 +605,21 @@ pub(super) fn list_panes(
         };
         out.push_str(&format!(
             "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}{}\n",
-            id, state.window_name, state.current_cmd, state.current_path,
-            start_part, title_part, ghost_part, sync_part, dead_part, activity_part,
+            id,
+            state.window_name,
+            state.current_cmd,
+            state.current_path,
+            start_part,
+            title_part,
+            ghost_part,
+            sync_part,
+            dead_part,
+            activity_part,
         ));
     }
-    out.push_str("\nUse the pane ID as target_pane in run_terminal_command to execute a command there.");
+    out.push_str(
+        "\nUse the pane ID as target_pane in run_terminal_command to execute a command there.",
+    );
     out
 }
 
@@ -514,11 +639,12 @@ pub(super) fn watch_pane(
 
     let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let hook_name = format!("pane-title-changed[@de_wp_{}]", hook_idx);
-    let current_exe = std::env::current_exe()
-        .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
+    let current_exe =
+        std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
     let notify_cmd = format!(
         "run-shell -b '{} notify activity {} 0 \"{}\"'",
-        current_exe.display(), pane_id,
+        current_exe.display(),
+        pane_id,
         crate::daemon::utils::shell_escape_arg(session_name)
     );
     let _ = std::process::Command::new("tmux")
@@ -535,7 +661,9 @@ pub(super) fn watch_pane(
 
     log::info!(
         "watch_pane: monitoring {} (initial_cmd={:?}) for session {}",
-        pane_id, initial_cmd, session_id_owned
+        pane_id,
+        initial_cmd,
+        session_id_owned
     );
     log_event(
         "watch_pane",
@@ -638,24 +766,26 @@ pub(super) fn watch_pane(
         };
 
         if let Ok(mut store) = sessions_clone.lock()
-            && let Some(entry) = store.get_mut(&session_id_owned) {
-                append_session_message(&session_id_owned, &watch_msg);
-                entry.messages.push(watch_msg);
+            && let Some(entry) = store.get_mut(&session_id_owned)
+        {
+            append_session_message(&session_id_owned, &watch_msg);
+            entry.messages.push(watch_msg);
 
-                let alert = if completed {
-                    format!("Watched pane {} command completed", pane_id_owned)
-                } else {
-                    format!("Watched pane {} timed out", pane_id_owned)
-                };
-                if let Some(ref cp) = entry.chat_pane {
-                    let _ = std::process::Command::new("tmux")
-                        .args(["display-message", "-d", "5000", "-t", cp, &alert])
-                        .output();
-                }
+            let alert = if completed {
+                format!("Watched pane {} command completed", pane_id_owned)
+            } else {
+                format!("Watched pane {} timed out", pane_id_owned)
+            };
+            if let Some(ref cp) = entry.chat_pane {
+                let _ = std::process::Command::new("tmux")
+                    .args(["display-message", "-d", "5000", "-t", cp, &alert])
+                    .output();
             }
+        }
         log::info!(
             "watch_pane {}: {}",
-            pane_id_owned, if completed { "completed" } else { "timed out" }
+            pane_id_owned,
+            if completed { "completed" } else { "timed out" }
         );
     });
 
@@ -699,18 +829,34 @@ pub(super) async fn spawn_ghost(
 
     let rb = match crate::runbook::load_runbook(runbook) {
         Ok(rb) => rb,
-        Err(e) => return Ok(ToolCallOutcome::Result(format!(
-            "Failed to load runbook '{}': {}", runbook, e
-        ))),
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Failed to load runbook '{}': {}",
+                runbook, e
+            )));
+        }
     };
 
     let rb_name = rb.name.clone();
-    match GhostManager::start_session(sessions.clone(), &rb, message, crate::daemon::GS_BG_WINDOW_PREFIX).await {
-        Err(e) => Ok(ToolCallOutcome::Result(format!("Failed to start ghost shell: {}", e))),
+    match GhostManager::start_session(
+        sessions.clone(),
+        &rb,
+        message,
+        crate::daemon::GS_BG_WINDOW_PREFIX,
+    )
+    .await
+    {
+        Err(e) => Ok(ToolCallOutcome::Result(format!(
+            "Failed to start ghost shell: {}",
+            e
+        ))),
         Ok(sid) => {
             inject_ghost_event(
                 sessions,
-                &format!("[Ghost Shell Started] AI-requested ghost shell started for runbook: {}", rb_name),
+                &format!(
+                    "[Ghost Shell Started] AI-requested ghost shell started for runbook: {}",
+                    rb_name
+                ),
             );
             let tool_result = format!(
                 "Ghost shell started (session: {}). It will run autonomously in the background \

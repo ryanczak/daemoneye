@@ -39,15 +39,42 @@ pub fn run_setup() -> Result<()> {
 
     let dir = crate::config::config_dir();
     println!("Initialised ~/.daemoneye/ layout:");
-    println!("  {}/etc/config.toml       ← edit this to configure the daemon", dir.display());
-    println!("  {}/etc/prompts/           ← system prompt files (.toml)", dir.display());
-    println!("  {}/var/run/               ← socket, schedules, pane prefs", dir.display());
-    println!("  {}/var/log/               ← daemon.log and pipe-pane capture logs", dir.display());
-    println!("  {}/bin/                   ← place symlinks/wrappers here", dir.display());
-    println!("  {}/lib/                   ← shared SDK modules (de_sdk, Python helpers)", dir.display());
-    println!("  {}/scripts/               ← automation scripts", dir.display());
-    println!("  {}/runbooks/              ← procedure runbooks", dir.display());
-    println!("  {}/memory/                ← persistent AI memory", dir.display());
+    println!(
+        "  {}/etc/config.toml       ← edit this to configure the daemon",
+        dir.display()
+    );
+    println!(
+        "  {}/etc/prompts/           ← system prompt files (.toml)",
+        dir.display()
+    );
+    println!(
+        "  {}/var/run/               ← socket, schedules, pane prefs",
+        dir.display()
+    );
+    println!(
+        "  {}/var/log/               ← daemon.log and pipe-pane capture logs",
+        dir.display()
+    );
+    println!(
+        "  {}/bin/                   ← place symlinks/wrappers here",
+        dir.display()
+    );
+    println!(
+        "  {}/lib/                   ← shared SDK modules (de_sdk, Python helpers)",
+        dir.display()
+    );
+    println!(
+        "  {}/scripts/               ← automation scripts",
+        dir.display()
+    );
+    println!(
+        "  {}/runbooks/              ← procedure runbooks",
+        dir.display()
+    );
+    println!(
+        "  {}/memory/                ← persistent AI memory",
+        dir.display()
+    );
     println!();
     println!("Seeded knowledge memories (written once, preserved on upgrade):");
     let knowledge_dir = dir.join("memory").join("knowledge");
@@ -70,7 +97,11 @@ pub fn run_setup() -> Result<()> {
     let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("daemoneye"));
     match std::fs::copy(&current_exe, &bin_dest) {
         Ok(_) => println!("Copied binary → {}", bin_dest.display()),
-        Err(e) => eprintln!("Warning: could not copy binary to {}: {}", bin_dest.display(), e),
+        Err(e) => eprintln!(
+            "Warning: could not copy binary to {}: {}",
+            bin_dest.display(),
+            e
+        ),
     }
     println!();
 
@@ -148,11 +179,15 @@ WantedBy=default.target
     println!("# add the appropriate snippet to your shell config:");
     println!();
     println!("# bash (~/.bashrc):");
-    println!("_de_exit_trap() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}");
+    println!(
+        "_de_exit_trap() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}"
+    );
     println!("PROMPT_COMMAND=\"_de_exit_trap${{PROMPT_COMMAND:+; $PROMPT_COMMAND}}\"");
     println!();
     println!("# zsh (~/.zshrc):");
-    println!("_de_precmd() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}");
+    println!(
+        "_de_precmd() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}"
+    );
     println!("precmd_functions+=(_de_precmd)");
 
     Ok(())
@@ -223,12 +258,28 @@ pub async fn run_ask(query: String) -> Result<()> {
     let tmux_session = crate::tmux::current_session_name();
     // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
     let result = ask_with_session(
-        QueryArgs { query: query.clone(), display_query: &query, prompt_override: None },
+        QueryArgs {
+            query: query.clone(),
+            display_query: &query,
+            prompt_override: None,
+        },
         None,
         &mut approval,
-        AskTmuxCtx { session: tmux_session.as_deref(), pane: None },
-        TokenCtx { prompt_tokens: &mut 0, context_window: 0 },
-        StreamCtx { stdin: &stdin, chat_width: Some(terminal_width()), old_termios: old, sigwinch: None, resize: None },
+        AskTmuxCtx {
+            session: tmux_session.as_deref(),
+            pane: None,
+        },
+        TokenCtx {
+            prompt_tokens: &mut 0,
+            context_window: 0,
+        },
+        StreamCtx {
+            stdin: &stdin,
+            chat_width: Some(terminal_width()),
+            old_termios: old,
+            sigwinch: None,
+            resize: None,
+        },
     )
     .await;
     crate::cli::input::restore_termios(old);
@@ -393,7 +444,6 @@ async fn run_chat_inner() -> Result<()> {
         );
         println!("{}\x1b[96m/clear\x1b[0m to reset session", center(23));
         println!("{}\x1b[96m/refresh\x1b[0m to resync context", center(26));
-        println!("{}\x1b[2mcontext: panes · windows · env\x1b[0m", center(30));
         println!();
     }
 
@@ -410,25 +460,40 @@ async fn run_chat_inner() -> Result<()> {
     let model_pre = config.ai.model.clone();
     let ctx_pre = config.ai.context_window();
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &StatusBarState {
-        session_id: &session_id,
-        approval_hint: &hint,
-        model: &model_pre,
-        prompt_tokens: 0,
-        context_window: ctx_pre,
-        daemon_up: false,
-    });
+    draw_status_bar(
+        chat_height,
+        chat_width,
+        &StatusBarState {
+            session_id: &session_id,
+            approval_hint: &hint,
+            model: &model_pre,
+            prompt_tokens: 0,
+            context_window: ctx_pre,
+            daemon_up: false,
+        },
+    );
 
     // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
     let old_termios = crate::cli::input::set_raw_mode()?;
 
     let result = run_chat_inner_raw(
-        InputHandles { state: &mut input_state, stdin: &stdin, sigwinch: &mut sigwinch },
-        TerminalCtx { chat_width, start_time, old_termios },
+        InputHandles {
+            state: &mut input_state,
+            stdin: &stdin,
+            sigwinch: &mut sigwinch,
+        },
+        TerminalCtx {
+            chat_width,
+            start_time,
+            old_termios,
+        },
         session_id,
         current_prompt,
         &mut approval,
-        TmuxCtx { session: tmux_session, pane: target_pane },
+        TmuxCtx {
+            session: tmux_session,
+            pane: target_pane,
+        },
     )
     .await;
 
@@ -461,9 +526,20 @@ async fn run_chat_inner_raw(
     approval: &mut SessionApproval,
     tmux: TmuxCtx,
 ) -> Result<()> {
-    let InputHandles { state: input_state, stdin, sigwinch } = handles;
-    let TerminalCtx { chat_width, start_time, old_termios } = term;
-    let TmuxCtx { session: tmux_session, pane: target_pane } = tmux;
+    let InputHandles {
+        state: input_state,
+        stdin,
+        sigwinch,
+    } = handles;
+    let TerminalCtx {
+        chat_width,
+        start_time,
+        old_termios,
+    } = term;
+    let TmuxCtx {
+        session: tmux_session,
+        pane: target_pane,
+    } = tmux;
     let mut chat_width = chat_width;
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
@@ -502,12 +578,28 @@ async fn run_chat_inner_raw(
             has_frame: false,
         };
         match ask_with_session(
-            QueryArgs { query: "Hello!".to_string(), display_query: "", prompt_override: current_prompt.as_deref() },
+            QueryArgs {
+                query: "Hello!".to_string(),
+                display_query: "",
+                prompt_override: current_prompt.as_deref(),
+            },
             Some(&session_id),
             approval,
-            AskTmuxCtx { session: tmux_session.as_deref(), pane: target_pane.as_deref() },
-            TokenCtx { prompt_tokens: &mut prompt_tokens, context_window },
-            StreamCtx { stdin, chat_width: Some(cw), old_termios, sigwinch: Some(sigwinch), resize: Some(resize) },
+            AskTmuxCtx {
+                session: tmux_session.as_deref(),
+                pane: target_pane.as_deref(),
+            },
+            TokenCtx {
+                prompt_tokens: &mut prompt_tokens,
+                context_window,
+            },
+            StreamCtx {
+                stdin,
+                chat_width: Some(cw),
+                old_termios,
+                sigwinch: Some(sigwinch),
+                resize: Some(resize),
+            },
         )
         .await
         {
@@ -527,14 +619,18 @@ async fn run_chat_inner_raw(
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
-    draw_status_bar(chat_height, chat_width, &StatusBarState {
-        session_id: &session_id,
-        approval_hint: &hint,
-        model: &model,
-        prompt_tokens,
-        context_window,
-        daemon_up,
-    });
+    draw_status_bar(
+        chat_height,
+        chat_width,
+        &StatusBarState {
+            session_id: &session_id,
+            approval_hint: &hint,
+            model: &model,
+            prompt_tokens,
+            context_window,
+            daemon_up,
+        },
+    );
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
@@ -591,14 +687,18 @@ async fn run_chat_inner_raw(
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
             let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(chat_height, chat_width, &StatusBarState {
-                session_id: &session_id,
-                approval_hint: &hint,
-                model: &model,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-            });
+            draw_status_bar(
+                chat_height,
+                chat_width,
+                &StatusBarState {
+                    session_id: &session_id,
+                    approval_hint: &hint,
+                    model: &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                },
+            );
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
@@ -618,14 +718,18 @@ async fn run_chat_inner_raw(
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                 draw_input_frame(chat_height, chat_width, start_time);
                 let hint = approval.hint();
-                draw_status_bar(chat_height, chat_width, &StatusBarState {
-                    session_id: &session_id,
-                    approval_hint: &hint,
-                    model: &model,
-                    prompt_tokens,
-                    context_window,
-                    daemon_up,
-                });
+                draw_status_bar(
+                    chat_height,
+                    chat_width,
+                    &StatusBarState {
+                        session_id: &session_id,
+                        approval_hint: &hint,
+                        model: &model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                    },
+                );
             }
             continue;
         }
@@ -639,14 +743,18 @@ async fn run_chat_inner_raw(
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                     draw_input_frame(chat_height, chat_width, start_time);
                     let hint = approval.hint();
-                    draw_status_bar(chat_height, chat_width, &StatusBarState {
-                        session_id: &session_id,
-                        approval_hint: &hint,
-                        model: &model,
-                        prompt_tokens,
-                        context_window,
-                        daemon_up,
-                    });
+                    draw_status_bar(
+                        chat_height,
+                        chat_width,
+                        &StatusBarState {
+                            session_id: &session_id,
+                            approval_hint: &hint,
+                            model: &model,
+                            prompt_tokens,
+                            context_window,
+                            daemon_up,
+                        },
+                    );
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
@@ -663,12 +771,28 @@ async fn run_chat_inner_raw(
                 has_frame: true,
             };
             match ask_with_session(
-                QueryArgs { query: query.clone(), display_query: &query, prompt_override: current_prompt.as_deref() },
+                QueryArgs {
+                    query: query.clone(),
+                    display_query: &query,
+                    prompt_override: current_prompt.as_deref(),
+                },
                 Some(&session_id),
                 approval,
-                AskTmuxCtx { session: tmux_session.as_deref(), pane: target_pane.as_deref() },
-                TokenCtx { prompt_tokens: &mut prompt_tokens, context_window },
-                StreamCtx { stdin, chat_width: Some(cw), old_termios, sigwinch: Some(sigwinch), resize: Some(resize) },
+                AskTmuxCtx {
+                    session: tmux_session.as_deref(),
+                    pane: target_pane.as_deref(),
+                },
+                TokenCtx {
+                    prompt_tokens: &mut prompt_tokens,
+                    context_window,
+                },
+                StreamCtx {
+                    stdin,
+                    chat_width: Some(cw),
+                    old_termios,
+                    sigwinch: Some(sigwinch),
+                    resize: Some(resize),
+                },
             )
             .await
             {
@@ -685,14 +809,18 @@ async fn run_chat_inner_raw(
         setup_scroll_region(chat_height);
         draw_input_frame(chat_height, chat_width, start_time);
         let hint = approval.hint();
-        draw_status_bar(chat_height, chat_width, &StatusBarState {
-            session_id: &session_id,
-            approval_hint: &hint,
-            model: &model,
-            prompt_tokens,
-            context_window,
-            daemon_up,
-        });
+        draw_status_bar(
+            chat_height,
+            chat_width,
+            &StatusBarState {
+                session_id: &session_id,
+                approval_hint: &hint,
+                model: &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+            },
+        );
     }
 
     teardown_scroll_region(chat_height);
@@ -713,9 +841,11 @@ async fn run_chat_inner_raw(
 fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<String> {
     // 1. Check persisted preference.
     if let Some(saved) = crate::pane_prefs::get(session)
-        && saved != chat_pane && crate::tmux::pane_exists(&saved) {
-            return Some(saved);
-        }
+        && saved != chat_pane
+        && crate::tmux::pane_exists(&saved)
+    {
+        return Some(saved);
+    }
 
     // 2 & 3. Siblings in the same tmux window.
     let window_id = crate::tmux::pane_window_id(chat_pane).unwrap_or_default();
@@ -860,11 +990,13 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
         return None;
     }
     if let Ok(n) = input.parse::<usize>()
-        && n >= 1 && n <= candidates.len() {
-            let chosen = candidates[n - 1].clone();
-            crate::pane_prefs::save(session, &chosen);
-            return Some(chosen);
-        }
+        && n >= 1
+        && n <= candidates.len()
+    {
+        let chosen = candidates[n - 1].clone();
+        crate::pane_prefs::save(session, &chosen);
+        return Some(chosen);
+    }
     println!("Invalid choice. No foreground target set.");
     None
 }
@@ -915,14 +1047,18 @@ fn apply_stream_resize(
     setup_scroll_region(*d.height);
     draw_input_frame(*d.height, *d.width, d.start);
     let hint = approval.hint();
-    draw_status_bar(*d.height, *d.width, &StatusBarState {
-        session_id: session_id.unwrap_or(""),
-        approval_hint: &hint,
-        model: &d.model,
-        prompt_tokens,
-        context_window,
-        daemon_up: d.daemon_up,
-    });
+    draw_status_bar(
+        *d.height,
+        *d.width,
+        &StatusBarState {
+            session_id: session_id.unwrap_or(""),
+            approval_hint: &hint,
+            model: &d.model,
+            prompt_tokens,
+            context_window,
+            daemon_up: d.daemon_up,
+        },
+    );
 }
 
 struct QueryArgs<'a> {
@@ -957,10 +1093,26 @@ async fn ask_with_session(
     tok: TokenCtx<'_>,
     stream: StreamCtx<'_>,
 ) -> Result<()> {
-    let QueryArgs { query, display_query, prompt_override } = qa;
-    let AskTmuxCtx { session: tmux_session, pane: target_pane } = tmux;
-    let TokenCtx { prompt_tokens, context_window } = tok;
-    let StreamCtx { stdin, chat_width, old_termios, sigwinch, resize } = stream;
+    let QueryArgs {
+        query,
+        display_query,
+        prompt_override,
+    } = qa;
+    let AskTmuxCtx {
+        session: tmux_session,
+        pane: target_pane,
+    } = tmux;
+    let TokenCtx {
+        prompt_tokens,
+        context_window,
+    } = tok;
+    let StreamCtx {
+        stdin,
+        chat_width,
+        old_termios,
+        sigwinch,
+        resize,
+    } = stream;
     let mut sigwinch = sigwinch;
     let mut resize = resize;
     use std::io::Write;
@@ -1205,16 +1357,17 @@ async fn ask_with_session(
                 // then immediately restore focus to the chat pane so the user
                 // does not have to manually switch back.
                 if let Some(ref tp) = target_pane
-                    && !background {
+                    && !background
+                {
+                    let _ = std::process::Command::new("tmux")
+                        .args(["select-pane", "-t", tp, "-P", "bg=colour17"])
+                        .output();
+                    if let Ok(my_pane) = std::env::var("TMUX_PANE") {
                         let _ = std::process::Command::new("tmux")
-                            .args(["select-pane", "-t", tp, "-P", "bg=colour17"])
+                            .args(["select-pane", "-t", &my_pane])
                             .output();
-                        if let Ok(my_pane) = std::env::var("TMUX_PANE") {
-                            let _ = std::process::Command::new("tmux")
-                                .args(["select-pane", "-t", &my_pane])
-                                .output();
-                        }
                     }
+                }
 
                 let is_sudo = command_has_sudo(&command);
                 let auto_approved = if is_sudo {
@@ -1286,11 +1439,12 @@ async fn ask_with_session(
                 // so it won't clean up the highlight itself.
                 if !approved
                     && let Some(ref tp) = target_pane
-                        && !background {
-                            let _ = std::process::Command::new("tmux")
-                                .args(["select-pane", "-t", tp, "-P", "default"])
-                                .output();
-                        }
+                    && !background
+                {
+                    let _ = std::process::Command::new("tmux")
+                        .args(["select-pane", "-t", tp, "-P", "default"])
+                        .output();
+                }
 
                 md.reset();
                 send_request(
@@ -1782,4 +1936,3 @@ pub async fn recv(rx: &mut BufReader<OwnedReadHalf>) -> Result<Response> {
     let response: Response = serde_json::from_str(line.trim())?;
     Ok(response)
 }
-

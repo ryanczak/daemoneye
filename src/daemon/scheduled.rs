@@ -1,6 +1,6 @@
 use crate::ai::{AiEvent, Message};
 use crate::config::Config;
-use crate::daemon::background::{notify_job_completion, OwnedJobInfo};
+use crate::daemon::background::{OwnedJobInfo, notify_job_completion};
 use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_turn};
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
@@ -46,9 +46,16 @@ pub async fn run_scheduled_job(
             );
             inject_ghost_event(
                 &sessions,
-                &format!("[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached", job.name),
+                &format!(
+                    "[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached",
+                    job.name
+                ),
             );
-            store.mark_done(&job.id, false, Some("ghost concurrency limit reached".to_string()));
+            store.mark_done(
+                &job.id,
+                false,
+                Some("ghost concurrency limit reached".to_string()),
+            );
             return;
         }
 
@@ -67,7 +74,14 @@ pub async fn run_scheduled_job(
                 store.mark_done(&job.id, false, Some(msg));
             }
             Ok(rb) => {
-                match GhostManager::start_session(sessions.clone(), &rb, &alert_msg, crate::daemon::GS_SCHED_WINDOW_PREFIX).await {
+                match GhostManager::start_session(
+                    sessions.clone(),
+                    &rb,
+                    &alert_msg,
+                    crate::daemon::GS_SCHED_WINDOW_PREFIX,
+                )
+                .await
+                {
                     Err(e) => {
                         let msg = format!(
                             "Scheduled ghost job '{}': failed to start session: {}",
@@ -76,7 +90,10 @@ pub async fn run_scheduled_job(
                         log::error!("{}", msg);
                         inject_ghost_event(
                             &sessions,
-                            &format!("[Ghost Shell Failed] Scheduled job '{}' could not start: {}", job.name, e),
+                            &format!(
+                                "[Ghost Shell Failed] Scheduled job '{}' could not start: {}",
+                                job.name, e
+                            ),
                         );
                         store.mark_done(&job.id, false, Some(msg));
                     }
@@ -91,9 +108,14 @@ pub async fn run_scheduled_job(
                                 job.name, session_log
                             ),
                         );
-                        let result =
-                            trigger_ghost_turn(&sid, &sessions, &config, &cache, &Arc::clone(&store))
-                                .await;
+                        let result = trigger_ghost_turn(
+                            &sid,
+                            &sessions,
+                            &config,
+                            &cache,
+                            &Arc::clone(&store),
+                        )
+                        .await;
                         match result {
                             Ok(()) => {
                                 inject_ghost_event(
@@ -242,43 +264,46 @@ pub async fn run_scheduled_job(
 
     // Runbook / watchdog AI analysis (scheduled-job specific; runs before GC so the pane is still alive)
     if let Some(ref rb_name) = job.runbook
-        && let Ok(rb) = runbook::load_runbook(rb_name) {
-            let api_key = config.ai.resolve_api_key();
-            let client = crate::ai::make_client(
-                &config.ai.provider,
-                api_key,
-                config.ai.model.clone(),
-                config.ai.effective_base_url(),
-            );
-            let system = runbook::watchdog_system_prompt(&rb);
-            let msgs = vec![Message {
-                role: "user".to_string(),
-                content: format!("Command output:\n```\n{}\n```", output),
-                tool_calls: None,
-                tool_results: None,
-            }];
-            let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-            let api_err = client.chat(&system, msgs, ai_tx, false).await.is_err();
-            let mut ai_response = String::new();
-            while let Some(ev) = ai_rx.recv().await {
-                if let AiEvent::Token(t) = ev {
-                    ai_response.push_str(&t);
-                }
-            }
-            let (should_act, trigger_reason) =
-                crate::webhook::evaluate_watchdog_response(&ai_response, api_err);
-            log::info!(
-                "Scheduler watchdog for '{}': should_act={} reason='{}'",
-                job.name, should_act, trigger_reason
-            );
-            if should_act {
-                let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
-                if let Some(ref tx) = notify_tx {
-                    let _ = tx.send(Response::SystemMsg(msg.clone()));
-                }
-                fire_notification(&job.name, &msg, &config);
+        && let Ok(rb) = runbook::load_runbook(rb_name)
+    {
+        let api_key = config.ai.resolve_api_key();
+        let client = crate::ai::make_client(
+            &config.ai.provider,
+            api_key,
+            config.ai.model.clone(),
+            config.ai.effective_base_url(),
+        );
+        let system = runbook::watchdog_system_prompt(&rb);
+        let msgs = vec![Message {
+            role: "user".to_string(),
+            content: format!("Command output:\n```\n{}\n```", output),
+            tool_calls: None,
+            tool_results: None,
+        }];
+        let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+        let api_err = client.chat(&system, msgs, ai_tx, false).await.is_err();
+        let mut ai_response = String::new();
+        while let Some(ev) = ai_rx.recv().await {
+            if let AiEvent::Token(t) = ev {
+                ai_response.push_str(&t);
             }
         }
+        let (should_act, trigger_reason) =
+            crate::webhook::evaluate_watchdog_response(&ai_response, api_err);
+        log::info!(
+            "Scheduler watchdog for '{}': should_act={} reason='{}'",
+            job.name,
+            should_act,
+            trigger_reason
+        );
+        if should_act {
+            let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
+            if let Some(ref tx) = notify_tx {
+                let _ = tx.send(Response::SystemMsg(msg.clone()));
+            }
+            fire_notification(&job.name, &msg, &config);
+        }
+    }
 
     store.mark_done(
         &job.id,
@@ -294,7 +319,11 @@ pub async fn run_scheduled_job(
     let cmd_str = cmd.to_string();
     let started_at = tokio::time::Instant::now() - Duration::from_secs(60);
     tokio::spawn(notify_job_completion(
-        OwnedJobInfo { pane_id, cmd: cmd_str, win_name },
+        OwnedJobInfo {
+            pane_id,
+            cmd: cmd_str,
+            win_name,
+        },
         session,
         exit_code,
         None,

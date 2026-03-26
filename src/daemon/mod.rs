@@ -29,8 +29,8 @@ pub mod background;
 pub mod executor;
 pub mod ghost;
 pub mod policy;
-pub mod server;
 pub mod scheduled;
+pub mod server;
 pub mod session;
 pub mod stats;
 pub mod utils;
@@ -51,8 +51,8 @@ pub const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
 /// Window-name prefix for ghost-shell incident-response (main session) windows (`de-gs-ir-<ts>-<id>`).
 pub const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
 
-pub use server::*;
 pub use scheduled::run_scheduled_job;
+pub use server::*;
 pub use session::*;
 pub use utils::*;
 
@@ -149,9 +149,7 @@ pub fn detect_session() -> Option<String> {
     {
         Ok(o) => o,
         Err(e) => {
-            log::error!(
-                "detect_session: $TMUX is set but `tmux display-message` failed: {e}"
-            );
+            log::error!("detect_session: $TMUX is set but `tmux display-message` failed: {e}");
             return None;
         }
     };
@@ -342,12 +340,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         // dup2 creates independent FDs 1/2 pointing to the file; `file` can drop safely after.
         unsafe {
             if libc::dup2(fd, 1) < 0 {
-                return Err(std::io::Error::last_os_error())
-                    .context(format!("dup2(log_fd → stdout) failed for {}", path.display()));
+                return Err(std::io::Error::last_os_error()).context(format!(
+                    "dup2(log_fd → stdout) failed for {}",
+                    path.display()
+                ));
             }
             if libc::dup2(fd, 2) < 0 {
-                return Err(std::io::Error::last_os_error())
-                    .context(format!("dup2(log_fd → stderr) failed for {}", path.display()));
+                return Err(std::io::Error::last_os_error()).context(format!(
+                    "dup2(log_fd → stderr) failed for {}",
+                    path.display()
+                ));
             }
         }
     }
@@ -579,7 +581,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                         let sessions2 = Arc::clone(&sessions_sched);
                         let cache2 = Arc::clone(&cache_sched);
                         tokio::spawn(async move {
-                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None).await;
+                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None)
+                                .await;
                         });
                     }
                 }

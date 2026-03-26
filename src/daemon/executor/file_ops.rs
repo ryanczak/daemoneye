@@ -1,9 +1,9 @@
+use super::prompt_and_await_approval;
+use super::{ApprovalRequest, GhostCtx, ToolCallOutcome};
 use crate::ai::mask_sensitive;
 use crate::daemon::session::BUFFER_COUNTER;
 use crate::daemon::utils::get_pane_remote_host;
 use crate::tmux;
-use super::{ApprovalRequest, GhostCtx, ToolCallOutcome};
-use super::prompt_and_await_approval;
 
 pub(super) struct EditArgs<'a> {
     pub id: &'a str,
@@ -33,12 +33,18 @@ fn extract_marked(snap: &str, start: &str, end: &str) -> Option<String> {
     let lines: Vec<&str> = snap.lines().collect();
     let s_idx = lines.iter().position(|l| l.contains(start))?;
     let e_idx = lines.iter().rposition(|l| l.contains(end))?;
-    if e_idx <= s_idx { return None; }
+    if e_idx <= s_idx {
+        return None;
+    }
     Some(lines[s_idx + 1..e_idx].join("\n"))
 }
 
 /// Send a command to a pane and poll until a completion marker appears.
-async fn remote_run_and_capture(pane_id: &str, cmd: &str, timeout_secs: u64) -> anyhow::Result<String> {
+async fn remote_run_and_capture(
+    pane_id: &str,
+    cmd: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<String> {
     tmux::send_keys(pane_id, cmd)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
@@ -47,7 +53,9 @@ async fn remote_run_and_capture(pane_id: &str, cmd: &str, timeout_secs: u64) -> 
             anyhow::bail!("Timed out waiting for remote command in pane {}", pane_id);
         }
         let snap = tmux::capture_pane(pane_id, 600).unwrap_or_default();
-        if snap.contains("__DE_DONE__") { return Ok(snap); }
+        if snap.contains("__DE_DONE__") {
+            return Ok(snap);
+        }
     }
 }
 
@@ -104,7 +112,9 @@ async fn local_read_via_buffer(
             anyhow::bail!("Timed out waiting for buffer load in pane {}", pane_id);
         }
         let snap = tmux::capture_pane(pane_id, 5).unwrap_or_default();
-        if snap.contains("__DE_DONE__") { break; }
+        if snap.contains("__DE_DONE__") {
+            break;
+        }
     }
 
     let out = std::process::Command::new("tmux")
@@ -181,7 +191,9 @@ pub(super) async fn run_read_file(
     target_pane: Option<&str>,
 ) -> anyhow::Result<ToolCallOutcome> {
     if path.contains("..") {
-        return Ok(ToolCallOutcome::Result("Error: path must not contain '..'.".to_string()));
+        return Ok(ToolCallOutcome::Result(
+            "Error: path must not contain '..'.".to_string(),
+        ));
     }
     if !std::path::Path::new(path).is_absolute() {
         return Ok(ToolCallOutcome::Result(
@@ -192,8 +204,8 @@ pub(super) async fn run_read_file(
     {
         let de_dir = crate::config::config_dir();
         let pane_logs = crate::config::pane_logs_dir();
-        let candidate = std::fs::canonicalize(path)
-            .unwrap_or_else(|_| std::path::PathBuf::from(path));
+        let candidate =
+            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
         if candidate.starts_with(&de_dir) && !candidate.starts_with(&pane_logs) {
             return Ok(ToolCallOutcome::Result(
                 "Error: read_file cannot access the daemoneye configuration \
@@ -213,7 +225,6 @@ pub(super) async fn run_read_file(
     };
     let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
 
-
     // ── Target-pane path: run sed/grep in target_pane ─────────────────────
     if let Some(pane) = target_pane {
         let start = offset_n + 1;
@@ -231,14 +242,15 @@ pub(super) async fn run_read_file(
                 Ok(s) => s,
                 Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
             };
-            let extracted = extract_marked(&snap, "__DE_S__", "__DE_E__")
-                .unwrap_or_else(|| snap.clone());
+            let extracted =
+                extract_marked(&snap, "__DE_S__", "__DE_E__").unwrap_or_else(|| snap.clone());
             (extracted, true)
         };
 
         if content.trim().is_empty() {
             return Ok(ToolCallOutcome::Result(format!(
-                "{}: no output (file may be empty or lines out of range)", path
+                "{}: no output (file may be empty or lines out of range)",
+                path
             )));
         }
         let body = mask_sensitive(content.trim_end());
@@ -257,11 +269,15 @@ pub(super) async fn run_read_file(
     }
 
     // ── Local path: read directly from daemon-host filesystem ─────────────
-    let real_path = std::fs::canonicalize(path)
-        .unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let real_path = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
     let raw = match std::fs::read_to_string(&real_path) {
         Ok(s) => s,
-        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error reading {}: {}", path, e))),
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error reading {}: {}",
+                path, e
+            )));
+        }
     };
 
     let all_lines: Vec<&str> = raw.lines().collect();
@@ -273,7 +289,12 @@ pub(super) async fn run_read_file(
     let filtered: Vec<&str> = if let Some(pat) = pattern {
         match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
             Ok(re) => limited.into_iter().filter(|l| re.is_match(l)).collect(),
-            Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: invalid pattern regex: {}", e))),
+            Err(e) => {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid pattern regex: {}",
+                    e
+                )));
+            }
         }
     } else {
         limited
@@ -281,7 +302,8 @@ pub(super) async fn run_read_file(
 
     if filtered.is_empty() {
         return Ok(ToolCallOutcome::Result(format!(
-            "{}: no lines matched (total {} lines in file)", path, total
+            "{}: no lines matched (total {} lines in file)",
+            path, total
         )));
     }
 
@@ -289,16 +311,21 @@ pub(super) async fn run_read_file(
     if pattern.is_some() {
         Ok(ToolCallOutcome::Result(format!(
             "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
-            path, filtered.len(),
-            offset_n + 1, (offset_n + limited_len).min(total),
-            total, body
+            path,
+            filtered.len(),
+            offset_n + 1,
+            (offset_n + limited_len).min(total),
+            total,
+            body
         )))
     } else {
         Ok(ToolCallOutcome::Result(format!(
             "{} (lines {}-{} of {}):\n{}",
             path,
-            offset_n + 1, (offset_n + filtered.len()).min(total),
-            total, body
+            offset_n + 1,
+            (offset_n + filtered.len()).min(total),
+            total,
+            body
         )))
     }
 }
@@ -318,22 +345,37 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let EditArgs { id, path, old_string, new_string, target_pane } = args;
-    let GhostCtx { policy: ghost_policy, is_ghost } = ghost_ctx;
+    let EditArgs {
+        id,
+        path,
+        old_string,
+        new_string,
+        target_pane,
+    } = args;
+    let GhostCtx {
+        policy: ghost_policy,
+        is_ghost,
+    } = ghost_ctx;
     if path.contains("..") {
-        return Ok(ToolCallOutcome::Result("Error: path must not contain '..'.".to_string()));
+        return Ok(ToolCallOutcome::Result(
+            "Error: path must not contain '..'.".to_string(),
+        ));
     }
     if !std::path::Path::new(path).is_absolute() {
-        return Ok(ToolCallOutcome::Result("Error: path must be absolute.".to_string()));
+        return Ok(ToolCallOutcome::Result(
+            "Error: path must be absolute.".to_string(),
+        ));
     }
     if old_string.is_empty() {
-        return Ok(ToolCallOutcome::Result("Error: old_string cannot be empty.".to_string()));
+        return Ok(ToolCallOutcome::Result(
+            "Error: old_string cannot be empty.".to_string(),
+        ));
     }
 
     {
         let de_dir = crate::config::config_dir();
-        let candidate = std::fs::canonicalize(path)
-            .unwrap_or_else(|_| std::path::PathBuf::from(path));
+        let candidate =
+            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
         if candidate.starts_with(&de_dir) {
             return Ok(ToolCallOutcome::Result(
                 "Error: edit_file cannot access the daemoneye configuration \
@@ -353,11 +395,24 @@ where
     // ── Remote path: Python3/Perl replacement in target_pane ──────────────
     if let Some(pane) = target_pane {
         let location = format!("{} (remote via pane {})", path, pane);
-        let approval_cmd = format!("edit_file {}\n--- old\n{}\n+++ new\n{}", location, old_string, new_string);
+        let approval_cmd = format!(
+            "edit_file {}\n--- old\n{}\n+++ new\n{}",
+            location, old_string, new_string
+        );
         let cmd_id = match prompt_and_await_approval(
-            ApprovalRequest { id, cmd: &approval_cmd, background: false, target_pane_hint: None },
-            session_id, ghost_policy, tx, rx,
-        ).await? {
+            ApprovalRequest {
+                id,
+                cmd: &approval_cmd,
+                background: false,
+                target_pane_hint: None,
+            },
+            session_id,
+            ghost_policy,
+            tx,
+            rx,
+        )
+        .await?
+        {
             Ok(id) => id,
             Err(outcome) => return Ok(outcome),
         };
@@ -378,32 +433,53 @@ where
                     "file_edit",
                     serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_pane": pane }),
                 );
-                return Ok(ToolCallOutcome::Result(format!("Edited {} via pane {}.", path, pane)));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Edited {} via pane {}.",
+                    path, pane
+                )));
             }
             if line.contains("DE_ERROR:") {
                 crate::daemon::stats::finish_command(cmd_id, 1);
-                return Ok(ToolCallOutcome::Result(format!("Error editing {}: {}", path, line.trim())));
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error editing {}: {}",
+                    path,
+                    line.trim()
+                )));
             }
         }
         crate::daemon::stats::finish_command(cmd_id, 1);
         return Ok(ToolCallOutcome::Result(format!(
-            "Edit command completed but result was unclear. Check {} manually.", path
+            "Edit command completed but result was unclear. Check {} manually.",
+            path
         )));
     }
 
     // ── Local path: direct daemon-host filesystem edit ────────────────────
     let std_path = match std::fs::canonicalize(path) {
         Ok(p) => p,
-        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: cannot resolve path {}: {}", path, e))),
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error: cannot resolve path {}: {}",
+                path, e
+            )));
+        }
     };
     let original = match std::fs::read_to_string(&std_path) {
         Ok(s) => s,
-        Err(e) => return Ok(ToolCallOutcome::Result(format!("Error reading {}: {}", path, e))),
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error reading {}: {}",
+                path, e
+            )));
+        }
     };
 
     let count = original.matches(old_string).count();
     if count == 0 {
-        return Ok(ToolCallOutcome::Result(format!("Error: old_string not found in {}.", path)));
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: old_string not found in {}.",
+            path
+        )));
     }
     if count > 1 {
         return Ok(ToolCallOutcome::Result(format!(
@@ -413,11 +489,24 @@ where
         )));
     }
 
-    let approval_cmd = format!("edit_file {}\n--- old\n{}\n+++ new\n{}", path, old_string, new_string);
+    let approval_cmd = format!(
+        "edit_file {}\n--- old\n{}\n+++ new\n{}",
+        path, old_string, new_string
+    );
     let cmd_id = match prompt_and_await_approval(
-        ApprovalRequest { id, cmd: &approval_cmd, background: false, target_pane_hint: None },
-        session_id, ghost_policy, tx, rx,
-    ).await? {
+        ApprovalRequest {
+            id,
+            cmd: &approval_cmd,
+            background: false,
+            target_pane_hint: None,
+        },
+        session_id,
+        ghost_policy,
+        tx,
+        rx,
+    )
+    .await?
+    {
         Ok(id) => id,
         Err(outcome) => return Ok(outcome),
     };
@@ -426,12 +515,18 @@ where
     let tmp_path = std_path.with_extension("de_tmp");
     if let Err(e) = std::fs::write(&tmp_path, &updated) {
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!("Error writing temp file: {}", e)));
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error writing temp file: {}",
+            e
+        )));
     }
     if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
         let _ = std::fs::remove_file(&tmp_path);
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!("Error committing edit: {}", e)));
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error committing edit: {}",
+            e
+        )));
     }
 
     crate::daemon::stats::finish_command(cmd_id, 0);
@@ -443,7 +538,8 @@ where
     let old_lines = old_string.lines().count();
     let new_lines = new_string.lines().count();
     Ok(ToolCallOutcome::Result(format!(
-        "Edited {}: replaced {} line(s) with {} line(s).", path, old_lines, new_lines
+        "Edited {}: replaced {} line(s) with {} line(s).",
+        path, old_lines, new_lines
     )))
 }
 
@@ -468,17 +564,25 @@ mod tests {
         }
     }
     impl Drop for TmpHome {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
         let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
         let old = env::var("HOME").ok();
-        unsafe { env::set_var("HOME", &tmp.0); }
+        unsafe {
+            env::set_var("HOME", &tmp.0);
+        }
         f();
         match old {
-            Some(v) => unsafe { env::set_var("HOME", v); },
-            None => unsafe { env::remove_var("HOME"); },
+            Some(v) => unsafe {
+                env::set_var("HOME", v);
+            },
+            None => unsafe {
+                env::remove_var("HOME");
+            },
         }
     }
 
@@ -493,8 +597,12 @@ mod tests {
     async fn read_file_default_reads_from_start() {
         let (tmp, path) = simulate_read_file(&["line1", "line2", "line3"]);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         assert!(s.contains("line1"));
         assert!(s.contains("line3"));
     }
@@ -506,8 +614,12 @@ mod tests {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let (tmp, path) = simulate_read_file(&refs);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), Some(5), None, None, None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(path.to_str().unwrap(), Some(5), None, None, None)
+            .await
+            .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         assert!(!s.contains("line01"), "offset should skip line01");
         assert!(s.contains("line05"), "should start from line05");
     }
@@ -518,8 +630,12 @@ mod tests {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let (tmp, path) = simulate_read_file(&refs);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), None, Some(3), None, None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(3), None, None)
+            .await
+            .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         assert!(s.contains("line1"));
         assert!(s.contains("line3"));
         assert!(!s.contains("line4"), "limit=3 should not include line4");
@@ -531,8 +647,12 @@ mod tests {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let (tmp, path) = simulate_read_file(&refs);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), None, Some(600), None, None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(600), None, None)
+            .await
+            .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         // MAX_LINES = 500; line501 should not appear
         assert!(!s.contains("line501"), "should be capped at 500 lines");
     }
@@ -541,8 +661,12 @@ mod tests {
     async fn read_file_pattern_grep_mode_header() {
         let (tmp, path) = simulate_read_file(&["apple", "banana", "cherry"]);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("banana"), None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("banana"), None)
+            .await
+            .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         assert!(s.contains("matching lines"));
         assert!(s.contains("banana"));
     }
@@ -551,8 +675,18 @@ mod tests {
     async fn read_file_pattern_no_match_returns_message() {
         let (tmp, path) = simulate_read_file(&["apple", "banana"]);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("xyzzy_not_found"), None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(
+            path.to_str().unwrap(),
+            None,
+            None,
+            Some("xyzzy_not_found"),
+            None,
+        )
+        .await
+        .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         assert!(s.contains("no lines matched"));
     }
 
@@ -560,8 +694,12 @@ mod tests {
     async fn read_file_offset_beyond_eof_returns_empty() {
         let (tmp, path) = simulate_read_file(&["line1", "line2"]);
         with_home(&tmp, || {});
-        let result = super::run_read_file(path.to_str().unwrap(), Some(1000), None, None, None).await.unwrap();
-        let super::ToolCallOutcome::Result(s) = result else { panic!() };
+        let result = super::run_read_file(path.to_str().unwrap(), Some(1000), None, None, None)
+            .await
+            .unwrap();
+        let super::ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
         assert!(s.contains("no lines matched"));
     }
 }

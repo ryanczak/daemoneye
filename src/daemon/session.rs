@@ -135,9 +135,10 @@ pub fn append_session_message(id: &str, msg: &Message) {
     let path = session_file(id);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
         if let Ok(line) = serde_json::to_string(msg)
-            && let Err(e) = writeln!(f, "{}", line) {
-                log::warn!("Failed to append to session file {}: {}", path.display(), e);
-            }
+            && let Err(e) = writeln!(f, "{}", line)
+        {
+            log::warn!("Failed to append to session file {}: {}", path.display(), e);
+        }
     } else {
         log::warn!("Failed to open session file {} for append", path.display());
     }
@@ -366,8 +367,9 @@ impl SessionEntry {
         // R1: stop pipe-pane and remove the log file if one was started for this session.
         // An empty string is the "failed / skipped" sentinel — nothing to clean up.
         if let Some(ref pane_id) = self.pipe_source_pane
-            && !pane_id.is_empty() {
-                crate::tmux::stop_pipe_pane(pane_id);
-            }
+            && !pane_id.is_empty()
+        {
+            crate::tmux::stop_pipe_pane(pane_id);
+        }
     }
 }

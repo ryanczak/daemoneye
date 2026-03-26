@@ -1,8 +1,8 @@
+use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::BufReader;
-use crate::util::UnpoisonExt;
 
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, load_named_prompt};
@@ -67,14 +67,14 @@ impl GhostManager {
         bg_prefix: &'static str,
     ) -> Result<String> {
         let alert_name = &runbook.name;
-        
+
         // 1. Ensure host tmux session exists (active or detached)
-        let tmux_session = ensure_incident_session()
-            .context("GhostManager: failed to ensure incident session")?;
-        
+        let tmux_session =
+            ensure_incident_session().context("GhostManager: failed to ensure incident session")?;
+
         // 2. Initialize ghost shell entry
         let session_id = format!("ghost-{}-{}", alert_name, uuid::Uuid::new_v4().simple());
-        
+
         let mut messages = Vec::new();
 
         // The alert payload plus the full runbook body form the first user turn.
@@ -91,9 +91,7 @@ impl GhostManager {
             role: "user".to_string(),
             content: format!(
                 "Incoming alert:\n{}\n\nRunbook: {}\n\n{}",
-                alert_msg,
-                runbook.name,
-                runbook.content,
+                alert_msg, runbook.name, runbook.content,
             ),
             tool_calls: None,
             tool_results: None,
@@ -177,19 +175,23 @@ pub async fn trigger_ghost_turn(
     let daemon_ceiling = config.ghost.max_ghost_turns;
     let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target) = {
         let store = sessions.lock().unwrap_or_log();
-        store.get(session_id).and_then(|e| e.ghost_config.as_ref()).map(|gc| {
-            let scripts = if gc.auto_approve_scripts.is_empty() {
-                "none".to_string()
-            } else {
-                gc.auto_approve_scripts.join(", ")
-            };
-            let turns = if gc.max_ghost_turns > 0 {
-                gc.max_ghost_turns.min(daemon_ceiling)
-            } else {
-                daemon_ceiling
-            };
-            (scripts, gc.run_with_sudo, turns, gc.ssh_target.clone())
-        }).unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None))
+        store
+            .get(session_id)
+            .and_then(|e| e.ghost_config.as_ref())
+            .map(|gc| {
+                let scripts = if gc.auto_approve_scripts.is_empty() {
+                    "none".to_string()
+                } else {
+                    gc.auto_approve_scripts.join(", ")
+                };
+                let turns = if gc.max_ghost_turns > 0 {
+                    gc.max_ghost_turns.min(daemon_ceiling)
+                } else {
+                    daemon_ceiling
+                };
+                (scripts, gc.run_with_sudo, turns, gc.ssh_target.clone())
+            })
+            .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None))
     };
     let remote_line = if let Some(ref target) = ssh_target {
         format!(
@@ -220,12 +222,17 @@ pub async fn trigger_ghost_turn(
         tmux_session,
         remote_line,
         if run_with_sudo {
-            "Sudo commands are freely allowed (run_with_sudo is enabled for this runbook).".to_string()
+            "Sudo commands are freely allowed (run_with_sudo is enabled for this runbook)."
+                .to_string()
         } else {
             "Sudo commands require a pre-approved script via install-sudoers.".to_string()
         },
         approved_scripts,
-        if run_with_sudo { " (executed with sudo)" } else { "" },
+        if run_with_sudo {
+            " (executed with sudo)"
+        } else {
+            ""
+        },
         max_ghost_turns,
         sys_context.format_for_ai()
     );
@@ -259,7 +266,8 @@ pub async fn trigger_ghost_turn(
         if turn >= max_ghost_turns {
             log::warn!(
                 "Ghost Shell {}: reached max turns ({}), stopping",
-                session_id, max_ghost_turns
+                session_id,
+                max_ghost_turns
             );
             crate::daemon::utils::log_event(
                 "ghost_error",
@@ -274,12 +282,16 @@ pub async fn trigger_ghost_turn(
 
         log::info!(
             "Ghost Shell {}: starting turn {}/{}",
-            session_id, turn, max_ghost_turns
+            session_id,
+            turn,
+            max_ghost_turns
         );
 
         let chat_messages = {
             let store = sessions.lock().unwrap_or_log();
-            let Some(entry) = store.get(session_id) else { break; };
+            let Some(entry) = store.get(session_id) else {
+                break;
+            };
             entry.messages.clone()
         };
 
@@ -289,7 +301,10 @@ pub async fn trigger_ghost_turn(
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
         tokio::spawn(async move {
-            if let Err(e) = client_clone.chat(&system_clone, chat_messages, ai_tx, true).await {
+            if let Err(e) = client_clone
+                .chat(&system_clone, chat_messages, ai_tx, true)
+                .await
+            {
                 log::error!("Ghost Shell AI error: {}", e);
             }
         });
@@ -304,7 +319,9 @@ pub async fn trigger_ghost_turn(
                 Err(_elapsed) => {
                     log::error!(
                         "Ghost Shell {}: turn {} timed out after {}s",
-                        session_id, turn, GHOST_TURN_TIMEOUT_SECS
+                        session_id,
+                        turn,
+                        GHOST_TURN_TIMEOUT_SECS
                     );
                     crate::daemon::utils::log_event(
                         "ghost_error",
@@ -321,7 +338,14 @@ pub async fn trigger_ghost_turn(
                     AiEvent::Token(t) => {
                         assistant_content.push_str(&t);
                     }
-                    AiEvent::ToolCall(id, command, _background, _target_pane, retry_in_pane, thought_signature) => {
+                    AiEvent::ToolCall(
+                        id,
+                        command,
+                        _background,
+                        _target_pane,
+                        retry_in_pane,
+                        thought_signature,
+                    ) => {
                         pending_calls.push(PendingCall::Background {
                             id,
                             cmd: command,
@@ -330,49 +354,183 @@ pub async fn trigger_ghost_turn(
                             retry_pane: retry_in_pane,
                         });
                     }
-                    AiEvent::ListRunbooks { id, thought_signature } => {
-                        pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
-                    }
-                    AiEvent::ReadRunbook { id, thought_signature, name } => {
-                        pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
-                    }
-                    AiEvent::SearchRepository { id, thought_signature, query, kind } => {
-                        pending_calls.push(PendingCall::SearchRepository { id, thought_signature, query, kind });
-                    }
-                    AiEvent::ListMemories { id, thought_signature, category } => {
-                        pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
-                    }
-                    AiEvent::ReadMemory { id, thought_signature, key, category } => {
-                        pending_calls.push(PendingCall::ReadMemory { id, thought_signature, key, category });
-                    }
-                    AiEvent::GetTerminalContext { id, thought_signature } => {
-                        pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
-                    }
-                    AiEvent::ListPanes { id, thought_signature } => {
-                        pending_calls.push(PendingCall::ListPanes { id, thought_signature });
-                    }
-                    AiEvent::WriteRunbook { id, thought_signature, name, content } => {
-                        pending_calls.push(PendingCall::WriteRunbook { id, thought_signature, name, content });
-                    }
-                    AiEvent::DeleteRunbook { id, thought_signature, name } => {
-                        pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
-                    }
-                    AiEvent::WriteScript { id, thought_signature, script_name, content } => {
-                        pending_calls.push(PendingCall::WriteScript { id, thought_signature, script_name, content });
-                    }
-                    AiEvent::DeleteScript { id, thought_signature, script_name } => {
-                        pending_calls.push(PendingCall::DeleteScript { id, thought_signature, script_name });
-                    }
-                    AiEvent::ScheduleCommand { id, thought_signature, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron } => {
-                        pending_calls.push(PendingCall::ScheduleCommand {
-                            id, thought_signature, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron
+                    AiEvent::ListRunbooks {
+                        id,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::ListRunbooks {
+                            id,
+                            thought_signature,
                         });
                     }
-                    AiEvent::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => {
-                        pending_calls.push(PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane });
+                    AiEvent::ReadRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                    } => {
+                        pending_calls.push(PendingCall::ReadRunbook {
+                            id,
+                            thought_signature,
+                            name,
+                        });
                     }
-                    AiEvent::SpawnGhost { id, runbook, message, thought_signature } => {
-                        pending_calls.push(PendingCall::SpawnGhost { id, thought_signature, runbook, message });
+                    AiEvent::SearchRepository {
+                        id,
+                        thought_signature,
+                        query,
+                        kind,
+                    } => {
+                        pending_calls.push(PendingCall::SearchRepository {
+                            id,
+                            thought_signature,
+                            query,
+                            kind,
+                        });
+                    }
+                    AiEvent::ListMemories {
+                        id,
+                        thought_signature,
+                        category,
+                    } => {
+                        pending_calls.push(PendingCall::ListMemories {
+                            id,
+                            thought_signature,
+                            category,
+                        });
+                    }
+                    AiEvent::ReadMemory {
+                        id,
+                        thought_signature,
+                        key,
+                        category,
+                    } => {
+                        pending_calls.push(PendingCall::ReadMemory {
+                            id,
+                            thought_signature,
+                            key,
+                            category,
+                        });
+                    }
+                    AiEvent::GetTerminalContext {
+                        id,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::GetTerminalContext {
+                            id,
+                            thought_signature,
+                        });
+                    }
+                    AiEvent::ListPanes {
+                        id,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::ListPanes {
+                            id,
+                            thought_signature,
+                        });
+                    }
+                    AiEvent::WriteRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                        content,
+                    } => {
+                        pending_calls.push(PendingCall::WriteRunbook {
+                            id,
+                            thought_signature,
+                            name,
+                            content,
+                        });
+                    }
+                    AiEvent::DeleteRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                    } => {
+                        pending_calls.push(PendingCall::DeleteRunbook {
+                            id,
+                            thought_signature,
+                            name,
+                        });
+                    }
+                    AiEvent::WriteScript {
+                        id,
+                        thought_signature,
+                        script_name,
+                        content,
+                    } => {
+                        pending_calls.push(PendingCall::WriteScript {
+                            id,
+                            thought_signature,
+                            script_name,
+                            content,
+                        });
+                    }
+                    AiEvent::DeleteScript {
+                        id,
+                        thought_signature,
+                        script_name,
+                    } => {
+                        pending_calls.push(PendingCall::DeleteScript {
+                            id,
+                            thought_signature,
+                            script_name,
+                        });
+                    }
+                    AiEvent::ScheduleCommand {
+                        id,
+                        thought_signature,
+                        name,
+                        command,
+                        is_script,
+                        run_at,
+                        interval,
+                        runbook,
+                        ghost_runbook,
+                        cron,
+                    } => {
+                        pending_calls.push(PendingCall::ScheduleCommand {
+                            id,
+                            thought_signature,
+                            name,
+                            command,
+                            is_script,
+                            run_at,
+                            interval,
+                            runbook,
+                            ghost_runbook,
+                            cron,
+                        });
+                    }
+                    AiEvent::EditFile {
+                        id,
+                        thought_signature,
+                        path,
+                        old_string,
+                        new_string,
+                        target_pane,
+                    } => {
+                        pending_calls.push(PendingCall::EditFile {
+                            id,
+                            thought_signature,
+                            path,
+                            old_string,
+                            new_string,
+                            target_pane,
+                        });
+                    }
+                    AiEvent::SpawnGhost {
+                        id,
+                        runbook,
+                        message,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::SpawnGhost {
+                            id,
+                            thought_signature,
+                            runbook,
+                            message,
+                        });
                     }
                     AiEvent::Done(_) => break,
                     AiEvent::Error(e) => {
@@ -400,7 +558,9 @@ pub async fn trigger_ghost_turn(
                 };
                 log::info!(
                     "Ghost Shell {}: turn {} dispatching '{}'{detail}",
-                    session_id, turn, call.tool_name(),
+                    session_id,
+                    turn,
+                    call.tool_name(),
                 );
             }
             crate::daemon::utils::log_event(
@@ -436,7 +596,8 @@ pub async fn trigger_ghost_turn(
                 },
                 cache,
                 schedule_store,
-            ).await?;
+            )
+            .await?;
 
             match outcome {
                 crate::daemon::executor::ToolCallOutcome::Result(r) => {
@@ -455,7 +616,11 @@ pub async fn trigger_ghost_turn(
                     let cache2 = Arc::clone(cache);
                     let store2 = Arc::clone(schedule_store);
                     let config2 = config.clone();
-                    match Box::pin(trigger_ghost_turn(&ghost_sid, &sessions2, &config2, &cache2, &store2)).await {
+                    match Box::pin(trigger_ghost_turn(
+                        &ghost_sid, &sessions2, &config2, &cache2, &store2,
+                    ))
+                    .await
+                    {
                         Ok(()) => {}
                         Err(e) => {
                             log::error!("nested SpawnGhost failed for {}: {}", ghost_sid, e);
@@ -496,8 +661,16 @@ pub async fn trigger_ghost_turn(
         let assistant_msg = Message {
             role: "assistant".to_string(),
             content: assistant_content,
-            tool_calls: if pending_calls.is_empty() { None } else { Some(pending_calls.iter().map(|c| c.to_tool_call()).collect()) },
-            tool_results: if tool_results.is_empty() { None } else { Some(tool_results) },
+            tool_calls: if pending_calls.is_empty() {
+                None
+            } else {
+                Some(pending_calls.iter().map(|c| c.to_tool_call()).collect())
+            },
+            tool_results: if tool_results.is_empty() {
+                None
+            } else {
+                Some(tool_results)
+            },
         };
 
         append_session_message(session_id, &assistant_msg);
@@ -514,10 +687,7 @@ pub async fn trigger_ghost_turn(
         }
     }
 
-    log::info!(
-        "Ghost Shell {}: completed in {} turn(s)",
-        session_id, turn
-    );
+    log::info!("Ghost Shell {}: completed in {} turn(s)", session_id, turn);
     crate::daemon::utils::log_event(
         "ghost_complete",
         serde_json::json!({

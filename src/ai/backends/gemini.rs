@@ -182,82 +182,81 @@ impl AiClient for GeminiClient {
                 leftover = leftover[pos + 1..].to_string();
 
                 if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(v) = serde_json::from_str::<Value>(data) {
-                        if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
-                            && let Some(candidate) = candidates.first() {
-                                // Gemini 2.5 Flash (thinking model) sometimes produces a
-                                // Python-style function call string instead of a structured
-                                // functionCall block.  The API signals this with finishReason
-                                // "MALFORMED_FUNCTION_CALL" and a finishMessage containing
-                                // the raw call text.  Recover by parsing the finishMessage.
-                                if candidate.get("finishReason").and_then(|r| r.as_str())
-                                    == Some("MALFORMED_FUNCTION_CALL")
-                                {
-                                    if let Some(msg) =
-                                        candidate.get("finishMessage").and_then(|m| m.as_str())
-                                    {
-                                        if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
-                                            let _ = tx.send(AiEvent::ToolCall(
-                                                next_tool_id(),
-                                                cmd,
-                                                bg,
-                                                None,
-                                                None,
-                                                None,
-                                            ));
-                                        } else {
-                                            let _ = tx.send(AiEvent::Error(format!(
-                                                "Gemini produced a malformed function call \
+                    && let Ok(v) = serde_json::from_str::<Value>(data)
+                {
+                    if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
+                        && let Some(candidate) = candidates.first()
+                    {
+                        // Gemini 2.5 Flash (thinking model) sometimes produces a
+                        // Python-style function call string instead of a structured
+                        // functionCall block.  The API signals this with finishReason
+                        // "MALFORMED_FUNCTION_CALL" and a finishMessage containing
+                        // the raw call text.  Recover by parsing the finishMessage.
+                        if candidate.get("finishReason").and_then(|r| r.as_str())
+                            == Some("MALFORMED_FUNCTION_CALL")
+                        {
+                            if let Some(msg) =
+                                candidate.get("finishMessage").and_then(|m| m.as_str())
+                            {
+                                if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
+                                    let _ = tx.send(AiEvent::ToolCall(
+                                        next_tool_id(),
+                                        cmd,
+                                        bg,
+                                        None,
+                                        None,
+                                        None,
+                                    ));
+                                } else {
+                                    let _ = tx.send(AiEvent::Error(format!(
+                                        "Gemini produced a malformed function call \
                                                  that could not be recovered.\n\
                                                  Raw: {msg}"
-                                            )));
-                                            return Ok(());
-                                        }
-                                    }
-                                    continue;
+                                    )));
+                                    return Ok(());
                                 }
+                            }
+                            continue;
+                        }
 
-                                if let Some(parts) =
-                                    candidate["content"].get("parts").and_then(|p| p.as_array())
+                        if let Some(parts) =
+                            candidate["content"].get("parts").and_then(|p| p.as_array())
+                        {
+                            for part in parts {
+                                if let Some(t) = part.get("text").and_then(|text| text.as_str())
+                                    && !t.is_empty()
                                 {
-                                    for part in parts {
-                                        if let Some(t) =
-                                            part.get("text").and_then(|text| text.as_str())
-                                            && !t.is_empty() {
-                                                let _ = tx.send(AiEvent::Token(t.to_string()));
-                                            }
-                                        if let Some(call) = part.get("functionCall") {
-                                            let fn_name = call["name"].as_str().unwrap_or("");
-                                            if let Some(args) = call.get("args") {
-                                                let id = next_tool_id();
-                                                let thought_sig = part
-                                                    .get("thoughtSignature")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from);
-                                                if let Some(ev) = dispatch_tool_event(
-                                                    &id,
-                                                    fn_name,
-                                                    args,
-                                                    thought_sig,
-                                                ) {
-                                                    let _ = tx.send(ev);
-                                                }
-                                            }
+                                    let _ = tx.send(AiEvent::Token(t.to_string()));
+                                }
+                                if let Some(call) = part.get("functionCall") {
+                                    let fn_name = call["name"].as_str().unwrap_or("");
+                                    if let Some(args) = call.get("args") {
+                                        let id = next_tool_id();
+                                        let thought_sig = part
+                                            .get("thoughtSignature")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from);
+                                        if let Some(ev) =
+                                            dispatch_tool_event(&id, fn_name, args, thought_sig)
+                                        {
+                                            let _ = tx.send(ev);
                                         }
                                     }
                                 }
                             }
-                        if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
-                            usage.prompt_tokens =
-                                u.get("promptTokenCount")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32;
-                            usage.completion_tokens =
-                                u.get("candidatesTokenCount")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32;
                         }
                     }
+                    if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
+                        usage.prompt_tokens = u
+                            .get("promptTokenCount")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                        usage.completion_tokens = u
+                            .get("candidatesTokenCount")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32;
+                    }
+                }
             }
         }
         let _ = tx.send(AiEvent::Done(usage));

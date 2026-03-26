@@ -317,26 +317,30 @@ pub const INCIDENT_SESSION_NAME: &str = "daemoneye-incidents";
 /// and returns that name.
 pub fn ensure_incident_session() -> Result<String> {
     let sessions = list_sessions();
-    
+
     // 1. Try to find the most recently active attached session.
-    if let Some(s) = sessions.iter()
+    if let Some(s) = sessions
+        .iter()
         .filter(|s| s.attached)
-        .max_by_key(|s| s.last_activity) {
+        .max_by_key(|s| s.last_activity)
+    {
         return Ok(s.name.clone());
     }
 
     // 2. Try to find any existing session (even detached).
-    if let Some(s) = sessions.iter()
-        .max_by_key(|s| s.last_activity) {
+    if let Some(s) = sessions.iter().max_by_key(|s| s.last_activity) {
         return Ok(s.name.clone());
     }
 
     // 3. Fallback: create a new detached session.
-    log::info!("No active tmux sessions found. Creating detached session: {}", INCIDENT_SESSION_NAME);
+    log::info!(
+        "No active tmux sessions found. Creating detached session: {}",
+        INCIDENT_SESSION_NAME
+    );
     let out = Command::new("tmux")
         .args(["new-session", "-d", "-s", INCIDENT_SESSION_NAME])
         .output()?;
-    
+
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         anyhow::bail!("Failed to create incident session: {}", err);

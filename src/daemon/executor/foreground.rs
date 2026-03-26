@@ -1,3 +1,7 @@
+use super::find_best_target_pane;
+use super::prompt_and_await_approval;
+use super::send_response_split;
+use super::{ApprovalRequest, GhostCtx, SessionCtx, ToolCallOutcome};
 use crate::ai::mask_sensitive;
 use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
 use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe};
@@ -8,19 +12,15 @@ use crate::daemon::utils::{
 use crate::ipc::{Request, Response};
 use crate::tmux;
 use crate::util::UnpoisonExt;
-use super::{ApprovalRequest, GhostCtx, SessionCtx, ToolCallOutcome};
-use super::prompt_and_await_approval;
-use super::find_best_target_pane;
-use super::send_response_split;
 
 pub(super) struct FgArgs<'a> {
     pub id: &'a str,
     pub cmd: &'a str,
     pub target: Option<&'a str>,
 }
+use crate::tmux::cache::SessionCache;
 use std::sync::Arc;
 use std::time::Duration;
-use crate::tmux::cache::SessionCache;
 
 // Timing constants specific to command execution.
 const SUDO_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -139,45 +139,64 @@ where
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
     let FgArgs { id, cmd, target } = args;
-    let SessionCtx { session_id, session_name, chat_pane, sessions } = ctx;
-    let GhostCtx { policy: ghost_policy, is_ghost: _ } = ghost_ctx;
+    let SessionCtx {
+        session_id,
+        session_name,
+        chat_pane,
+        sessions,
+    } = ctx;
+    let GhostCtx {
+        policy: ghost_policy,
+        is_ghost: _,
+    } = ghost_ctx;
     // Compute a best-guess target pane hint synchronously so the approval
     // prompt can show which pane will be used.
     let target_hint: Option<String> = (|| {
         if let Some(tp) = target
-            && chat_pane != Some(tp) {
-                let panes = cache.panes.read().unwrap_or_log();
-                if panes.contains_key(tp) {
-                    return Some(tp.to_string());
-                }
+            && chat_pane != Some(tp)
+        {
+            let panes = cache.panes.read().unwrap_or_log();
+            if panes.contains_key(tp) {
+                return Some(tp.to_string());
             }
+        }
         if let Some(sid) = session_id
             && let Ok(store) = sessions.lock()
-                && let Some(entry) = store.get(sid)
-                    && let Some(ref dtp) = entry.default_target_pane
-                        && chat_pane != Some(dtp.as_str()) {
-                            let panes = cache.panes.read().unwrap_or_log();
-                            if panes.contains_key(dtp) {
-                                return Some(dtp.clone());
-                            }
-                        }
+            && let Some(entry) = store.get(sid)
+            && let Some(ref dtp) = entry.default_target_pane
+            && chat_pane != Some(dtp.as_str())
+        {
+            let panes = cache.panes.read().unwrap_or_log();
+            if panes.contains_key(dtp) {
+                return Some(dtp.clone());
+            }
+        }
         None
     })();
 
     let cmd_id = match prompt_and_await_approval(
-        ApprovalRequest { id, cmd, background: false, target_pane_hint: target_hint.as_deref() },
-        session_id, ghost_policy, tx, rx,
-    ).await? {
+        ApprovalRequest {
+            id,
+            cmd,
+            background: false,
+            target_pane_hint: target_hint.as_deref(),
+        },
+        session_id,
+        ghost_policy,
+        tx,
+        rx,
+    )
+    .await?
+    {
         Ok(id) => id,
         Err(outcome) => return Ok(outcome),
     };
 
-    let target_owned = match find_best_target_pane(
-        target, chat_pane, cache, sessions, session_id, tx, rx,
-    ).await {
-        Ok(tp) => tp,
-        Err(_) => return Err(anyhow::anyhow!("EOF")),
-    };
+    let target_owned =
+        match find_best_target_pane(target, chat_pane, cache, sessions, session_id, tx, rx).await {
+            Ok(tp) => tp,
+            Err(_) => return Err(anyhow::anyhow!("EOF")),
+        };
 
     let target_str = target_owned.as_str();
     if target_str.is_empty() {
@@ -186,7 +205,10 @@ where
 
     let is_synchronized = {
         let panes = cache.panes.read().unwrap_or_log();
-        panes.get(target_str).map(|p| p.synchronized).unwrap_or(false)
+        panes
+            .get(target_str)
+            .map(|p| p.synchronized)
+            .unwrap_or(false)
     };
     if is_synchronized {
         let msg = format!(
@@ -203,8 +225,8 @@ where
     let idle_cmd = tmux::pane_current_command(target_str).unwrap_or_default();
     let is_remote_pane = get_pane_remote_host(target_str).is_some();
 
-    let current_exe = std::env::current_exe()
-        .unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
+    let current_exe =
+        std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
     let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let hook_name = format!("pane-title-changed[@de_fg_{}]", hook_idx);
     let notify_cmd = format!(
@@ -231,9 +253,15 @@ where
                     tokio::time::sleep(SUDO_POLL_INTERVAL).await;
                     waited += SUDO_POLL_INTERVAL;
                     let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                    if cur == "sudo" { break true; }
-                    if cur == idle_cmd { break false; }
-                    if waited >= SUDO_DETECT_WINDOW { break false; }
+                    if cur == "sudo" {
+                        break true;
+                    }
+                    if cur == idle_cmd {
+                        break false;
+                    }
+                    if waited >= SUDO_DETECT_WINDOW {
+                        break false;
+                    }
                 };
 
                 if needs_password {
@@ -245,7 +273,8 @@ where
                              Type your password there."
                                 .to_string(),
                         ),
-                    ).await?;
+                    )
+                    .await?;
                     let _ = tmux::select_pane(target_str);
                     switched_to_working = true;
                 }
@@ -257,7 +286,9 @@ where
                 let mut prompt_found = false;
 
                 'connect: loop {
-                    if tokio::time::Instant::now() >= deadline { break; }
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
                     tokio::select! {
                         result = fg_rx.recv() => {
                             if let Ok(notified_pane) = result
@@ -282,10 +313,14 @@ where
                     let stable_deadline = tokio::time::Instant::now() + INTERACTIVE_STABLE_WINDOW;
                     let mut prev = String::new();
                     loop {
-                        if tokio::time::Instant::now() >= stable_deadline { break; }
+                        if tokio::time::Instant::now() >= stable_deadline {
+                            break;
+                        }
                         tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
                         let snap = tmux::capture_pane(target_str, 20).unwrap_or_default();
-                        if snap == prev && !snap.is_empty() { break; }
+                        if snap == prev && !snap.is_empty() {
+                            break;
+                        }
                         prev = snap;
                     }
                 }
@@ -295,7 +330,9 @@ where
                 let deadline = tokio::time::Instant::now() + REMOTE_CMD_TIMEOUT;
 
                 loop {
-                    if tokio::time::Instant::now() >= deadline { break; }
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
                     tokio::select! {
                         result = fg_rx.recv() => {
                             if let Ok(notified_pane) = result
@@ -317,12 +354,21 @@ where
                 // N9: install monitor-silence + alert-silence as secondary completion signal.
                 let silence_hook_name = format!("alert-silence[@de_fg_{}]", hook_idx);
                 let _ = std::process::Command::new("tmux")
-                    .args(["set-hook", "-t", target_str, &silence_hook_name, &notify_cmd])
+                    .args([
+                        "set-hook",
+                        "-t",
+                        target_str,
+                        &silence_hook_name,
+                        &notify_cmd,
+                    ])
                     .output();
                 let _ = std::process::Command::new("tmux")
                     .args([
-                        "set-option", "-t", target_str,
-                        "monitor-silence", &SILENCE_MONITOR_SECS.to_string(),
+                        "set-option",
+                        "-t",
+                        target_str,
+                        "monitor-silence",
+                        &SILENCE_MONITOR_SECS.to_string(),
                     ])
                     .output();
                 fg_hook_guard.add_silence(silence_hook_name.clone());
@@ -333,13 +379,19 @@ where
                     loop {
                         tokio::time::sleep(LOCAL_CHILD_POLL).await;
                         let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                        if cur != idle_cmd { break; }
+                        if cur != idle_cmd {
+                            break;
+                        }
                     }
-                }).await.is_ok();
+                })
+                .await
+                .is_ok();
 
                 if saw_child {
                     loop {
-                        if tokio::time::Instant::now() >= deadline { break; }
+                        if tokio::time::Instant::now() >= deadline {
+                            break;
+                        }
                         tokio::select! {
                             result = fg_rx.recv() => {
                                 if let Ok(notified_pane) = result
@@ -365,9 +417,8 @@ where
                 Ok(snap) if is_interactive => {
                     let destination = interactive_destination(cmd)
                         .unwrap_or_else(|| "the remote host".to_string());
-                    let pane_snap = mask_sensitive(&normalize_output(
-                        &extract_command_output(&snap, cmd),
-                    ));
+                    let pane_snap =
+                        mask_sensitive(&normalize_output(&extract_command_output(&snap, cmd)));
                     format!(
                         "[Interactive session started]\n\
                          `{cmd}` opened an interactive session in pane \
@@ -396,21 +447,34 @@ where
                 Err(_) => "Command sent but could not capture output.".to_string(),
             };
 
-            if switched_to_working
-                && let Some(cp) = chat_pane {
-                    let _ = tmux::select_pane(cp);
-                }
+            if switched_to_working && let Some(cp) = chat_pane {
+                let _ = tmux::select_pane(cp);
+            }
 
             let exit_code = tmux::read_pane_exit_status(target_str).unwrap_or(0);
             crate::daemon::stats::finish_command(cmd_id, exit_code);
             send_response_split(tx, Response::ToolResult(output.clone())).await?;
-            log_command(session_id, "foreground", target_str, cmd, "approved", &output);
+            log_command(
+                session_id,
+                "foreground",
+                target_str,
+                cmd,
+                "approved",
+                &output,
+            );
             output
         }
         Err(e) => {
             crate::daemon::stats::finish_command(cmd_id, 1);
             let msg = format!("Failed to send command: {}", e);
-            log_command(session_id, "foreground", target_str, cmd, "send-failed", &msg);
+            log_command(
+                session_id,
+                "foreground",
+                target_str,
+                cmd,
+                "send-failed",
+                &msg,
+            );
             msg
         }
     };
@@ -435,8 +499,16 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let SessionCtx { session_id, session_name, sessions, .. } = ctx;
-    let GhostCtx { policy: ghost_policy, is_ghost } = ghost_ctx;
+    let SessionCtx {
+        session_id,
+        session_name,
+        sessions,
+        ..
+    } = ctx;
+    let GhostCtx {
+        policy: ghost_policy,
+        is_ghost,
+    } = ghost_ctx;
     // N11: retry path — reuse an existing background pane via respawn-pane.
     if let Some(pane_id) = retry_pane {
         if !crate::tmux::pane_exists(pane_id) {
@@ -452,10 +524,11 @@ where
             let mut name = pane_id.to_string();
             if let Some(sid) = session_id
                 && let Ok(store) = sessions.lock()
-                    && let Some(entry) = store.get(sid)
-                        && let Some(w) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id) {
-                            name = w.window_name.clone();
-                        }
+                && let Some(entry) = store.get(sid)
+                && let Some(w) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id)
+            {
+                name = w.window_name.clone();
+            }
             name
         };
         let resolved_retry_cmd;
@@ -466,14 +539,34 @@ where
             cmd
         };
 
-        let cmd_id = match prompt_and_await_approval(ApprovalRequest { id, cmd, background: true, target_pane_hint: None }, session_id, ghost_policy, tx, rx).await? {
+        let cmd_id = match prompt_and_await_approval(
+            ApprovalRequest {
+                id,
+                cmd,
+                background: true,
+                target_pane_hint: None,
+            },
+            session_id,
+            ghost_policy,
+            tx,
+            rx,
+        )
+        .await?
+        {
             Ok(id) => id,
             Err(outcome) => return Ok(outcome),
         };
         let session_id_owned = session_id.map(|s| s.to_string());
         let output = respawn_background_in_pane(
-            pane_id, &win_name, cmd_id, cmd, session_name, session_id_owned, sessions.clone(),
-        ).await;
+            pane_id,
+            &win_name,
+            cmd_id,
+            cmd,
+            session_name,
+            session_id_owned,
+            sessions.clone(),
+        )
+        .await;
         send_response_split(tx, Response::ToolResult(output.clone())).await?;
         log_command(session_id, "background_retry", "", cmd, "approved", &output);
         return Ok(ToolCallOutcome::Result(output));
@@ -485,50 +578,68 @@ where
         let mut denial = None;
         if let Some(sid) = session_id
             && let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(sid)
-                    && entry.bg_windows.len() >= MAX_BG_WINDOWS_PER_SESSION {
-                        let evict_idx = entry.bg_windows.iter().position(|w| w.exit_code.is_some());
-                        match evict_idx {
-                            Some(i) => {
-                                let evicted = entry.bg_windows.remove(i);
-                                let pane_cmd = crate::tmux::pane_current_command(&evicted.pane_id)
-                                    .unwrap_or_default();
-                                let is_idle = matches!(
-                                    pane_cmd.as_str(),
-                                    "bash" | "sh" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "csh" | ""
-                                );
-                                if is_idle {
-                                    log::info!("Evicting completed bg window {} to stay under cap", evicted.window_name);
-                                    if let Err(e) = crate::tmux::kill_job_window(&evicted.tmux_session, &evicted.window_name) {
-                                        log::warn!("Failed to evict bg window {}: {}", evicted.window_name, e);
-                                    }
-                                } else {
-                                    log::warn!(
-                                        "Skipping eviction of bg window {} — pane is still running '{}'; \
+            && let Some(entry) = store.get_mut(sid)
+            && entry.bg_windows.len() >= MAX_BG_WINDOWS_PER_SESSION
+        {
+            let evict_idx = entry.bg_windows.iter().position(|w| w.exit_code.is_some());
+            match evict_idx {
+                Some(i) => {
+                    let evicted = entry.bg_windows.remove(i);
+                    let pane_cmd =
+                        crate::tmux::pane_current_command(&evicted.pane_id).unwrap_or_default();
+                    let is_idle = matches!(
+                        pane_cmd.as_str(),
+                        "bash" | "sh" | "zsh" | "fish" | "dash" | "ksh" | "tcsh" | "csh" | ""
+                    );
+                    if is_idle {
+                        log::info!(
+                            "Evicting completed bg window {} to stay under cap",
+                            evicted.window_name
+                        );
+                        if let Err(e) = crate::tmux::kill_job_window(
+                            &evicted.tmux_session,
+                            &evicted.window_name,
+                        ) {
+                            log::warn!("Failed to evict bg window {}: {}", evicted.window_name, e);
+                        }
+                    } else {
+                        log::warn!(
+                            "Skipping eviction of bg window {} — pane is still running '{}'; \
                                          re-inserting and denying new background job.",
-                                        evicted.window_name, pane_cmd
-                                    );
-                                    entry.bg_windows.insert(i, evicted);
-                                    denial = Some(format!(
-                                        "Background window cap ({}) reached and the oldest completed window \
+                            evicted.window_name,
+                            pane_cmd
+                        );
+                        entry.bg_windows.insert(i, evicted);
+                        denial = Some(format!(
+                            "Background window cap ({}) reached and the oldest completed window \
                                          is still in use. Close one of the open background windows ({}) \
                                          before starting another.",
-                                        MAX_BG_WINDOWS_PER_SESSION,
-                                        entry.bg_windows.iter().map(|w| w.window_name.as_str()).collect::<Vec<_>>().join(", ")
-                                    ));
-                                }
-                            }
-                            None => {
-                                denial = Some(format!(
-                                    "Background window cap ({}) reached and all windows are still running. \
+                            MAX_BG_WINDOWS_PER_SESSION,
+                            entry
+                                .bg_windows
+                                .iter()
+                                .map(|w| w.window_name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
+                }
+                None => {
+                    denial = Some(format!(
+                        "Background window cap ({}) reached and all windows are still running. \
                                      Wait for one to complete, or ask the user to close one of the open \
                                      background windows ({}) before starting another.",
-                                    MAX_BG_WINDOWS_PER_SESSION,
-                                    entry.bg_windows.iter().map(|w| w.window_name.as_str()).collect::<Vec<_>>().join(", ")
-                                ));
-                            }
-                        }
-                    }
+                        MAX_BG_WINDOWS_PER_SESSION,
+                        entry
+                            .bg_windows
+                            .iter()
+                            .map(|w| w.window_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
+        }
         denial
     };
     if let Some(msg) = cap_denial {
@@ -545,7 +656,20 @@ where
         cmd
     };
 
-    let cmd_id = match prompt_and_await_approval(ApprovalRequest { id, cmd, background: true, target_pane_hint: None }, session_id, ghost_policy, tx, rx).await? {
+    let cmd_id = match prompt_and_await_approval(
+        ApprovalRequest {
+            id,
+            cmd,
+            background: true,
+            target_pane_hint: None,
+        },
+        session_id,
+        ghost_policy,
+        tx,
+        rx,
+    )
+    .await?
+    {
         Ok(id) => id,
         Err(outcome) => return Ok(outcome),
     };
@@ -569,12 +693,15 @@ where
                     id: id.to_string(),
                     prompt: format!("[sudo] password required for: {}", cmd),
                 },
-            ).await?;
+            )
+            .await?;
             let mut cred_line = String::new();
             let result = match tokio::time::timeout(
                 super::USER_PROMPT_TIMEOUT,
                 rx.read_line(&mut cred_line),
-            ).await {
+            )
+            .await
+            {
                 Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
                     Ok(Request::CredentialResponse { credential, .. }) => {
                         Some(zeroize::Zeroizing::new(credential))
@@ -592,10 +719,15 @@ where
 
     let session_id_owned = session_id.map(|s| s.to_string());
     let output = run_background_in_window(
-        session_name, id, cmd_id, cmd,
+        session_name,
+        id,
+        cmd_id,
+        cmd,
         credential.as_ref().map(|z| z.as_str()),
-        session_id_owned, sessions.clone(),
-    ).await;
+        session_id_owned,
+        sessions.clone(),
+    )
+    .await;
     send_response_split(tx, Response::ToolResult(output.clone())).await?;
     log_command(session_id, "background", "", cmd, "approved", &output);
     Ok(ToolCallOutcome::Result(output))
@@ -611,7 +743,9 @@ mod tests {
 
     #[test]
     fn is_shell_prompt_recognises_common_shells() {
-        for sh in &["bash", "zsh", "fish", "sh", "ksh", "csh", "tcsh", "dash", "nu"] {
+        for sh in &[
+            "bash", "zsh", "fish", "sh", "ksh", "csh", "tcsh", "dash", "nu",
+        ] {
             assert!(is_shell_prompt(sh), "{sh} should be a shell prompt");
         }
     }

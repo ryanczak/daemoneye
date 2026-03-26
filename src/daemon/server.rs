@@ -94,7 +94,6 @@ pub(crate) fn build_catchup_brief(
     ))
 }
 
-
 /// Handle one client connection end-to-end.
 ///
 /// ## Request routing
@@ -257,7 +256,9 @@ pub async fn handle_client(
             );
             let recent_commands = crate::daemon::stats::get_recent_commands();
 
-            let runbook_count = crate::runbook::list_runbooks().map(|v| v.len()).unwrap_or(0);
+            let runbook_count = crate::runbook::list_runbooks()
+                .map(|v| v.len())
+                .unwrap_or(0);
             let runbooks_created = crate::daemon::stats::get_runbooks_created();
             let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
             let runbooks_deleted = crate::daemon::stats::get_runbooks_deleted();
@@ -355,9 +356,10 @@ pub async fn handle_client(
                 if let Ok(mut map) = crate::daemon::background::BG_COMMAND_MAP
                     .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
                     .lock()
-                    && let Some(cmd_id) = map.remove(&pane_id) {
-                        crate::daemon::stats::finish_command(cmd_id, exit_code);
-                    }
+                    && let Some(cmd_id) = map.remove(&pane_id)
+                {
+                    crate::daemon::stats::finish_command(cmd_id, exit_code);
+                }
                 // Fix C: use get_or_init so the channel always exists, even if
                 // NotifyComplete arrives before any completion monitor has subscribed.
                 let tx = crate::daemon::session::COMPLETE_TX.get_or_init(|| {
@@ -532,32 +534,36 @@ pub async fn handle_client(
             // it means we attempted and failed (or deliberately skipped), so we
             // fall back to capture-pane for all subsequent turns without retrying.
             if entry.pipe_source_pane.is_none()
-                && let Some(ref pane_id) = client_pane {
-                    // Skip if client_pane == chat_pane: the chat pane runs the
-                    // daemoneye UI, not the user's work.  Piping it is useless and
-                    // can transiently fail immediately after split-window creates the
-                    // pane (pty not yet fully initialized) causing repeated log noise.
-                    let is_chat_pane = chat_pane.as_deref() == Some(pane_id.as_str());
-                    if is_chat_pane {
-                        log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
-                        entry.pipe_source_pane = Some(String::new()); // don't retry
-                    } else if crate::tmux::pane_exists(pane_id) {
-                        match crate::tmux::start_pipe_pane(pane_id) {
-                            Ok(_) => {
-                                entry.pipe_source_pane = Some(pane_id.clone());
-                            }
-                            Err(e) => {
-                                // Pane existed at check time but was gone by the time
-                                // pipe-pane ran (TOCTOU race) — don't retry this session.
-                                log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
-                                entry.pipe_source_pane = Some(String::new()); // don't retry
-                            }
+                && let Some(ref pane_id) = client_pane
+            {
+                // Skip if client_pane == chat_pane: the chat pane runs the
+                // daemoneye UI, not the user's work.  Piping it is useless and
+                // can transiently fail immediately after split-window creates the
+                // pane (pty not yet fully initialized) causing repeated log noise.
+                let is_chat_pane = chat_pane.as_deref() == Some(pane_id.as_str());
+                if is_chat_pane {
+                    log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
+                    entry.pipe_source_pane = Some(String::new()); // don't retry
+                } else if crate::tmux::pane_exists(pane_id) {
+                    match crate::tmux::start_pipe_pane(pane_id) {
+                        Ok(_) => {
+                            entry.pipe_source_pane = Some(pane_id.clone());
                         }
-                    } else {
-                        log::debug!("R1: skipping pipe-pane for {} — pane no longer exists", pane_id);
-                        entry.pipe_source_pane = Some(String::new()); // don't retry
+                        Err(e) => {
+                            // Pane existed at check time but was gone by the time
+                            // pipe-pane ran (TOCTOU race) — don't retry this session.
+                            log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                            entry.pipe_source_pane = Some(String::new()); // don't retry
+                        }
                     }
+                } else {
+                    log::debug!(
+                        "R1: skipping pipe-pane for {} — pane no longer exists",
+                        pane_id
+                    );
+                    entry.pipe_source_pane = Some(String::new()); // don't retry
                 }
+            }
 
             // N15: generate a catch-up brief if the client was detached and new
             // messages arrived while no terminal was attached (background jobs,
@@ -1111,14 +1117,15 @@ pub async fn handle_client(
                         // On-disk: survives daemon restarts.
                         if let Some(ref id) = session_id {
                             if let Ok(mut store) = sessions.lock()
-                                && let Some(entry) = store.get_mut(id) {
-                                    entry.messages = messages.clone();
-                                    entry.last_accessed = Instant::now();
-                                    entry.last_prompt_tokens = usage.prompt_tokens;
-                                    if chat_pane.is_some() {
-                                        entry.chat_pane = chat_pane.clone();
-                                    }
+                                && let Some(entry) = store.get_mut(id)
+                            {
+                                entry.messages = messages.clone();
+                                entry.last_accessed = Instant::now();
+                                entry.last_prompt_tokens = usage.prompt_tokens;
+                                if chat_pane.is_some() {
+                                    entry.chat_pane = chat_pane.clone();
                                 }
+                            }
                             if needs_compaction {
                                 write_session_file(id, &messages);
                             } else {
@@ -1152,9 +1159,10 @@ pub async fn handle_client(
                     // prompt reflects the actual context size of this turn.
                     if let Some(ref id) = session_id
                         && let Ok(mut store) = sessions.lock()
-                            && let Some(entry) = store.get_mut(id) {
-                                entry.last_prompt_tokens = usage.prompt_tokens;
-                            }
+                        && let Some(entry) = store.get_mut(id)
+                    {
+                        entry.last_prompt_tokens = usage.prompt_tokens;
+                    }
 
                     // Push one assistant message listing all tool calls.
                     messages.push(Message {
@@ -1263,16 +1271,19 @@ pub async fn handle_client(
                                 let ghost_sid2 = ghost_sid.clone();
                                 let ghost_rb2 = ghost_rb.clone();
                                 tokio::spawn(async move {
-                                    let session_log = crate::daemon::session::session_file(&ghost_sid2)
-                                        .display()
-                                        .to_string();
+                                    let session_log =
+                                        crate::daemon::session::session_file(&ghost_sid2)
+                                            .display()
+                                            .to_string();
                                     match crate::daemon::ghost::trigger_ghost_turn(
                                         &ghost_sid2,
                                         &ghost_sessions,
                                         &ghost_config,
                                         &ghost_cache,
                                         &ghost_store,
-                                    ).await {
+                                    )
+                                    .await
+                                    {
                                         Ok(()) => {
                                             crate::webhook::inject_ghost_event(
                                                 &ghost_sessions,
@@ -1283,7 +1294,11 @@ pub async fn handle_client(
                                             );
                                         }
                                         Err(e) => {
-                                            log::error!("SpawnGhost: ghost turn failed for {}: {}", ghost_sid2, e);
+                                            log::error!(
+                                                "SpawnGhost: ghost turn failed for {}: {}",
+                                                ghost_sid2,
+                                                e
+                                            );
                                             crate::daemon::stats::inc_ghosts_failed();
                                             crate::webhook::inject_ghost_event(
                                                 &ghost_sessions,

@@ -97,7 +97,6 @@ fn circuit() -> &'static CircuitBreaker {
     CIRCUIT_BREAKER.get_or_init(CircuitBreaker::new)
 }
 
-
 #[async_trait]
 pub trait AiClient: Send + Sync {
     /// Stream a chat completion.

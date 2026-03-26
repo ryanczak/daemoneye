@@ -246,13 +246,14 @@ pub async fn run_background_in_window(
 ) -> String {
     let id_short = &tool_id[..tool_id.len().min(8)];
     let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    
+
     let prefix = if let Some(sid) = &session_id {
         if sid.starts_with("ghost-") {
             // Use the prefix registered on the session entry so webhook-triggered,
             // scheduler-triggered and interactive ghost shells get distinct prefixes.
             let store = sessions.lock().unwrap_or_log();
-            store.get(sid.as_str())
+            store
+                .get(sid.as_str())
                 .map(|e| e.ghost_bg_prefix)
                 .unwrap_or(crate::daemon::GS_BG_WINDOW_PREFIX)
         } else {
@@ -262,13 +263,7 @@ pub async fn run_background_in_window(
         crate::daemon::BG_WINDOW_PREFIX
     };
 
-    let win_name = format!(
-        "{}{}-{}-{}",
-        prefix,
-        session,
-        now,
-        id_short
-    );
+    let win_name = format!("{}{}-{}-{}", prefix, session, now, id_short);
 
     let pane_id = match tmux::create_job_window(session, &win_name) {
         Ok(p) => p,
@@ -363,14 +358,15 @@ pub async fn run_background_in_window(
     // Register in the session's bg_windows list (cap enforcement runs in executor).
     if let Some(ref sid) = session_id
         && let Ok(mut store) = sessions.lock()
-            && let Some(entry) = store.get_mut(sid) {
-                entry.bg_windows.push(BgWindowInfo {
-                    pane_id: pane_id.clone(),
-                    window_name: win_name.clone(),
-                    tmux_session: session.to_string(),
-                    exit_code: None,
-                });
-            }
+        && let Some(entry) = store.get_mut(sid)
+    {
+        entry.bg_windows.push(BgWindowInfo {
+            pane_id: pane_id.clone(),
+            window_name: win_name.clone(),
+            tmux_session: session.to_string(),
+            exit_code: None,
+        });
+    }
 
     log_event(
         "job_start",
@@ -432,11 +428,11 @@ pub async fn run_background_in_window(
             // Update exit_code in bg_windows.
             if let Some(ref sid) = session_id
                 && let Ok(mut store) = sessions.lock()
-                    && let Some(entry) = store.get_mut(sid)
-                        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
-                        {
-                            w.exit_code = Some(exit_code);
-                        }
+                && let Some(entry) = store.get_mut(sid)
+                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+            {
+                w.exit_code = Some(exit_code);
+            }
 
             if !pane_persists {
                 let reason = if exit_code == 124 {
@@ -457,9 +453,10 @@ pub async fn run_background_in_window(
                 }
                 if let Some(ref sid) = session_id
                     && let Ok(mut store) = sessions.lock()
-                        && let Some(entry) = store.get_mut(sid) {
-                            entry.bg_windows.retain(|w| w.pane_id != pane_id);
-                        }
+                    && let Some(entry) = store.get_mut(sid)
+                {
+                    entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                }
             }
 
             let persist_note = if pane_persists {
@@ -468,7 +465,9 @@ pub async fn run_background_in_window(
                      Use target=\"{pane_id}\" to run follow-up commands in the same shell."
                 )
             } else {
-                format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")
+                format!(
+                    "The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log"
+                )
             };
             format!(
                 "Background command completed (exit {exit_code}).\n{persist_note}\n<output>\n{body}\n</output>"
@@ -565,9 +564,10 @@ pub async fn run_background_in_window(
                     }
                     if let Some(ref sid) = session_id_bg
                         && let Ok(mut store) = sessions_bg.lock()
-                            && let Some(entry) = store.get_mut(sid) {
-                                entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
-                            }
+                        && let Some(entry) = store.get_mut(sid)
+                    {
+                        entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
+                    }
                 }
             });
 
@@ -673,10 +673,11 @@ pub async fn respawn_background_in_pane(
     // Reset exit_code in bg_windows so the session knows it's running again.
     if let Some(ref sid) = session_id
         && let Ok(mut store) = sessions.lock()
-            && let Some(entry) = store.get_mut(sid)
-                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
-                    w.exit_code = None;
-                }
+        && let Some(entry) = store.get_mut(sid)
+        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+    {
+        w.exit_code = None;
+    }
 
     log_event(
         "job_retry",
@@ -733,11 +734,11 @@ pub async fn respawn_background_in_pane(
 
             if let Some(ref sid) = session_id
                 && let Ok(mut store) = sessions.lock()
-                    && let Some(entry) = store.get_mut(sid)
-                        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
-                        {
-                            w.exit_code = Some(exit_code);
-                        }
+                && let Some(entry) = store.get_mut(sid)
+                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+            {
+                w.exit_code = Some(exit_code);
+            }
 
             if !pane_persists {
                 let reason = if exit_code == 124 {
@@ -758,9 +759,10 @@ pub async fn respawn_background_in_pane(
                 }
                 if let Some(ref sid) = session_id
                     && let Ok(mut store) = sessions.lock()
-                        && let Some(entry) = store.get_mut(sid) {
-                            entry.bg_windows.retain(|w| w.pane_id != pane_id);
-                        }
+                    && let Some(entry) = store.get_mut(sid)
+                {
+                    entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                }
             }
 
             let persist_note = if pane_persists {
@@ -769,7 +771,9 @@ pub async fn respawn_background_in_pane(
                      Use target=\"{pane_id}\" to run follow-up commands in the same shell."
                 )
             } else {
-                format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")
+                format!(
+                    "The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log"
+                )
             };
             format!(
                 "Retry command completed (exit {exit_code}).\n{persist_note}\n<output>\n{body}\n</output>"
@@ -851,9 +855,10 @@ pub async fn respawn_background_in_pane(
                     }
                     if let Some(ref sid) = session_id_bg
                         && let Ok(mut store) = sessions_bg.lock()
-                            && let Some(entry) = store.get_mut(sid) {
-                                entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
-                            }
+                        && let Some(entry) = store.get_mut(sid)
+                    {
+                        entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
+                    }
                 }
             });
 
@@ -890,7 +895,11 @@ pub async fn notify_job_completion(
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
     started_at: tokio::time::Instant,
 ) {
-    let OwnedJobInfo { pane_id, cmd, win_name } = job;
+    let OwnedJobInfo {
+        pane_id,
+        cmd,
+        win_name,
+    } = job;
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
     log_event(

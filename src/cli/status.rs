@@ -129,7 +129,10 @@ pub async fn run_status() -> Result<()> {
                     left_items.push(("Scheduled:".to_string(), commands_sched_str));
                     left_items.push(("─".to_string(), "".to_string()));
                     left_items.push(("§".to_string(), "Tooling".to_string()));
-                    left_items.push(("Runbooks:".to_string(), format!("{} existing", runbook_count)));
+                    left_items.push((
+                        "Runbooks:".to_string(),
+                        format!("{} existing", runbook_count),
+                    ));
                     left_items.push((
                         "".to_string(),
                         format!(
@@ -145,7 +148,10 @@ pub async fn run_status() -> Result<()> {
                             scripts_created, scripts_executed, scripts_deleted
                         ),
                     ));
-                    left_items.push(("Schedules:".to_string(), format!("{} active", schedule_count)));
+                    left_items.push((
+                        "Schedules:".to_string(),
+                        format!("{} active", schedule_count),
+                    ));
                     left_items.push((
                         "".to_string(),
                         format!(
@@ -187,16 +193,13 @@ pub async fn run_status() -> Result<()> {
                         .collect();
                     mem_cats.sort_by_key(|k| k.0.clone());
                     for (cat, count) in mem_cats {
-                        right_items.push((
-                            format!("  - {}:", cat),
-                            count.to_string(),
-                        ));
+                        right_items.push((format!("  - {}:", cat), count.to_string()));
                     }
 
                     // Use a special marker to indicate this separator needs a top joint (┬)
                     // for the side-by-side divider.
                     right_items.push(("┬─".to_string(), "".to_string()));
-                    
+
                     // We render Redactions and Ghosts side-by-side using a combined list.
                     // The '§' header is handled specially to show both titles.
                     right_items.push((
@@ -213,10 +216,18 @@ pub async fn run_status() -> Result<()> {
                     let mut redact_sorted: Vec<_> = redaction_counts.into_iter().collect();
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-                    let ghost_metrics = [(format!("{:<10}", " Active:   "), ghosts_active.to_string()),
-                        (format!("{:<10}", " Launched: "), ghosts_launched.to_string()),
-                        (format!("{:<10}", " Completed:"), ghosts_completed.to_string()),
-                        (format!("{:<10}", " Failed:   "), ghosts_failed.to_string())];
+                    let ghost_metrics = [
+                        (format!("{:<10}", " Active:   "), ghosts_active.to_string()),
+                        (
+                            format!("{:<10}", " Launched: "),
+                            ghosts_launched.to_string(),
+                        ),
+                        (
+                            format!("{:<10}", " Completed:"),
+                            ghosts_completed.to_string(),
+                        ),
+                        (format!("{:<10}", " Failed:   "), ghosts_failed.to_string()),
+                    ];
 
                     for (i, (rtype, count)) in redact_sorted.into_iter().enumerate() {
                         let left_col = format!(" {:<18} {}", rtype + ":", count);
@@ -235,7 +246,12 @@ pub async fn run_status() -> Result<()> {
                         } else {
                             right_items.push((
                                 "".to_string(),
-                                format!("{:<23}{deep_yellow}│{reset}", left_col, deep_yellow = deep_yellow, reset = reset),
+                                format!(
+                                    "{:<23}{deep_yellow}│{reset}",
+                                    left_col,
+                                    deep_yellow = deep_yellow,
+                                    reset = reset
+                                ),
                             ));
                         }
                     }
@@ -268,9 +284,7 @@ pub async fn run_status() -> Result<()> {
                                     .ok()
                                     .and_then(|f| tiocgwinsz(f.as_raw_fd()))
                             })
-                            .or_else(|| {
-                                std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok())
-                            })
+                            .or_else(|| std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()))
                             .unwrap_or(80)
                     };
 
@@ -332,10 +346,15 @@ pub async fn run_status() -> Result<()> {
                                     let lv_chars: Vec<char> = lv.chars().collect();
                                     if lv_chars.len() > col_width - 19 {
                                         let max_len = col_width - 19 - 3;
-                                        let trunc: String = lv_chars[lv_chars.len() - max_len..].iter().collect();
+                                        let trunc: String =
+                                            lv_chars[lv_chars.len() - max_len..].iter().collect();
                                         format!("...{}", trunc)
-                                    } else { lv.to_string() }
-                                } else { lv.to_string() };
+                                    } else {
+                                        lv.to_string()
+                                    }
+                                } else {
+                                    lv.to_string()
+                                };
                                 if lk.is_empty() {
                                     let vis_len = lv_trunc.chars().count();
                                     let pad = col_width.saturating_sub(vis_len);
@@ -357,7 +376,9 @@ pub async fn run_status() -> Result<()> {
                             if rk == "─" {
                                 println!(
                                     "{} {deep_yellow}├{:─<right_width$}{reset}",
-                                    l_str, "", right_width = right_width
+                                    l_str,
+                                    "",
+                                    right_width = right_width
                                 );
                             } else if rv.is_empty() && rk != "§" {
                                 println!("{} {deep_yellow}│{reset}", l_str);
@@ -429,11 +450,7 @@ pub async fn run_status() -> Result<()> {
                                 }
                             }
 
-                            println!(
-                                "{} {deep_yellow}├{}{reset}",
-                                l_str,
-                                r_line
-                            );
+                            println!("{} {deep_yellow}├{}{reset}", l_str, r_line);
                             continue;
                         }
 
@@ -469,13 +486,15 @@ pub async fn run_status() -> Result<()> {
                         // Truncate right-side values so they don't overflow right_width.
                         // Key takes 19 chars (1 space + 18 padded label), leaving the rest for value.
                         let rv_max = right_width.saturating_sub(20);
-                        let rv_trunc = if !rk.is_empty() && rv.chars().count() > rv_max && rv_max > 3 {
-                            let rv_chars: Vec<char> = rv.chars().collect();
-                            let trunc: String = rv_chars[rv_chars.len() - (rv_max - 3)..].iter().collect();
-                            format!("...{}", trunc)
-                        } else {
-                            rv.clone()
-                        };
+                        let rv_trunc =
+                            if !rk.is_empty() && rv.chars().count() > rv_max && rv_max > 3 {
+                                let rv_chars: Vec<char> = rv.chars().collect();
+                                let trunc: String =
+                                    rv_chars[rv_chars.len() - (rv_max - 3)..].iter().collect();
+                                format!("...{}", trunc)
+                            } else {
+                                rv.clone()
+                            };
 
                         if rk.is_empty() && rv.is_empty() {
                             println!("{} {deep_yellow}│{reset}", l_str);
@@ -488,7 +507,6 @@ pub async fn run_status() -> Result<()> {
                         }
                     }
 
-
                     let mut r_bottom = String::with_capacity(right_width * 3);
                     for i in 0..right_width {
                         if i == 24 {
@@ -497,12 +515,7 @@ pub async fn run_status() -> Result<()> {
                             r_bottom.push('─');
                         }
                     }
-                    let bottom_sep = format!(
-                        "{:─<left$}┴{}",
-                        "",
-                        r_bottom,
-                        left = col_width + 1
-                    );
+                    let bottom_sep = format!("{:─<left$}┴{}", "", r_bottom, left = col_width + 1);
                     println!("{deep_yellow}{}{reset}", bottom_sep);
                     println!("{}Recent Commands{}", blood_red, reset);
                     if recent_commands.is_empty() {
@@ -521,14 +534,9 @@ pub async fn run_status() -> Result<()> {
                                 _ => bold_white,
                             };
 
-                            let approval_fmt = format!(
-                                "{}{:<10}{}",
-                                approval_color, c.approval, reset
-                            );
-                            let exit_fmt = format!(
-                                "{}{:<14}{}",
-                                exit_color, c.status, reset
-                            );
+                            let approval_fmt =
+                                format!("{}{:<10}{}", approval_color, c.approval, reset);
+                            let exit_fmt = format!("{}{:<14}{}", exit_color, c.status, reset);
                             let mode_padded = format!("{:<19}", format!("[{}]", c.mode));
 
                             let mut cmd_disp = c.cmd.clone();

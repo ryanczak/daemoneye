@@ -120,15 +120,17 @@ pub fn list_scripts_with_tags() -> Result<Vec<(ScriptInfo, Vec<String>)>> {
 fn parse_meta_tags(content: &str) -> Vec<String> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("tags") && trimmed.contains('=')
+        if trimmed.starts_with("tags")
+            && trimmed.contains('=')
             && let Some(rest) = trimmed.split_once('=').map(|(_, v)| v.trim())
-                && let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                    return inner
-                        .split(',')
-                        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                }
+            && let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
+        {
+            return inner
+                .split(',')
+                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
     }
     Vec::new()
 }
@@ -168,7 +170,10 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
 
     let script_path = scripts_dir().join(script_name);
     if !script_path.exists() {
-        bail!("Script '{}' not found in ~/.daemoneye/scripts/", script_name);
+        bail!(
+            "Script '{}' not found in ~/.daemoneye/scripts/",
+            script_name
+        );
     }
     let abs_path = script_path
         .canonicalize()
@@ -192,7 +197,13 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
     // Sanitise the script name for use as a filename component.
     let safe_name: String = script_name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let sudoers_file = format!("/etc/sudoers.d/daemoneye-{}", safe_name);
 

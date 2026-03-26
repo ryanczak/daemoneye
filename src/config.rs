@@ -316,7 +316,6 @@ pub fn etc_dir() -> PathBuf {
     config_dir().join("etc")
 }
 
-
 /// `~/.daemoneye/var/run/` — sockets, lock files, mutable runtime state.
 pub fn var_run_dir() -> PathBuf {
     config_dir().join("var/run")
@@ -336,7 +335,6 @@ pub fn pipe_log_dir() -> PathBuf {
 pub fn pane_logs_dir() -> PathBuf {
     config_dir().join("var/log/panes")
 }
-
 
 /// `~/.daemoneye/bin/` — symlinks/wrappers for the compiled agent and scripts.
 pub fn bin_dir() -> PathBuf {
@@ -424,7 +422,7 @@ impl Config {
         std::fs::create_dir_all(var_log_dir())?;
         std::fs::create_dir_all(pipe_log_dir())?;
         std::fs::create_dir_all(pane_logs_dir())?;
-std::fs::create_dir_all(bin_dir())?;
+        std::fs::create_dir_all(bin_dir())?;
         std::fs::create_dir_all(lib_dir())?;
         // Daemon-managed persistent data
         let pd = prompts_dir();
@@ -521,14 +519,16 @@ pub fn load_named_prompt(name: &str) -> PromptDef {
     // First try the file on disk.
     let path = prompts_dir().join(format!("{name}.toml"));
     if let Ok(text) = std::fs::read_to_string(&path)
-        && let Ok(def) = toml::from_str::<PromptDef>(&text) {
-            return def;
-        }
+        && let Ok(def) = toml::from_str::<PromptDef>(&text)
+    {
+        return def;
+    }
     // Fall back to the compiled-in SRE prompt.
     if name == "sre"
-        && let Ok(def) = toml::from_str::<PromptDef>(SRE_PROMPT_TOML) {
-            return def;
-        }
+        && let Ok(def) = toml::from_str::<PromptDef>(SRE_PROMPT_TOML)
+    {
+        return def;
+    }
     PromptDef::builtin_minimal()
 }
 
@@ -544,7 +544,8 @@ const SRE_PROMPT_TOML: &str = include_str!("../assets/prompts/sre.toml");
 
 const WEBHOOK_SETUP_MEMORY: &str = include_str!("../assets/memory/webhook-setup.md");
 const RUNBOOK_FORMAT_MEMORY: &str = include_str!("../assets/memory/runbook-format.md");
-const RUNBOOK_GHOST_TEMPLATE_MEMORY: &str = include_str!("../assets/memory/runbook-ghost-template.md");
+const RUNBOOK_GHOST_TEMPLATE_MEMORY: &str =
+    include_str!("../assets/memory/runbook-ghost-template.md");
 const GHOST_SHELL_GUIDE_MEMORY: &str = include_str!("../assets/memory/ghost-shell-guide.md");
 const SCHEDULING_GUIDE_MEMORY: &str = include_str!("../assets/memory/scheduling-guide.md");
 const SCRIPTS_AND_SUDOERS_MEMORY: &str = include_str!("../assets/memory/scripts-and-sudoers.md");

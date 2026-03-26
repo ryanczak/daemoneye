@@ -51,13 +51,10 @@ pub fn get_redaction_counts() -> std::collections::HashMap<String, usize> {
         ("User Defined", REDACT_USER.load(Ordering::Relaxed)),
         (
             "SSH Secrets",
-            REDACT_SSH_PUBKEY.load(Ordering::Relaxed)
-                + REDACT_SSH_HOST.load(Ordering::Relaxed),
+            REDACT_SSH_PUBKEY.load(Ordering::Relaxed) + REDACT_SSH_HOST.load(Ordering::Relaxed),
         ),
     ];
-    raw.into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect()
+    raw.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
 }
 
 /// Built-in (always-on) pattern definitions: `(regex, replacement)`.
@@ -363,15 +360,24 @@ mod tests {
     fn ssh_rsa_pubkey_masked() {
         let text = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7user@host";
         let out = mask(text);
-        assert!(out.contains("<SSH_PUBKEY>"), "ssh-rsa public key should be masked");
-        assert!(!out.contains("AAAAB3NzaC1yc2E"), "key data should not be present");
+        assert!(
+            out.contains("<SSH_PUBKEY>"),
+            "ssh-rsa public key should be masked"
+        );
+        assert!(
+            !out.contains("AAAAB3NzaC1yc2E"),
+            "key data should not be present"
+        );
     }
 
     #[test]
     fn ssh_ed25519_pubkey_masked() {
         let text = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAbcdef user@laptop";
         let out = mask(text);
-        assert!(out.contains("<SSH_PUBKEY>"), "ssh-ed25519 public key should be masked");
+        assert!(
+            out.contains("<SSH_PUBKEY>"),
+            "ssh-ed25519 public key should be masked"
+        );
     }
 
     #[test]
@@ -398,7 +404,10 @@ mod tests {
     fn ssh_config_hostname_masked() {
         let text = "  HostName 10.0.0.42";
         let out = mask(text);
-        assert!(out.contains("<SSH_HOST>"), "HostName directive should be masked");
+        assert!(
+            out.contains("<SSH_HOST>"),
+            "HostName directive should be masked"
+        );
         assert!(!out.contains("10.0.0.42"));
     }
 
@@ -406,7 +415,10 @@ mod tests {
     fn ssh_config_identityfile_masked() {
         let text = "  IdentityFile ~/.ssh/id_rsa_prod";
         let out = mask(text);
-        assert!(out.contains("<SSH_HOST>"), "IdentityFile directive should be masked");
+        assert!(
+            out.contains("<SSH_HOST>"),
+            "IdentityFile directive should be masked"
+        );
         assert!(!out.contains("id_rsa_prod"));
     }
 

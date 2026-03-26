@@ -228,21 +228,33 @@ mod tests {
     fn resolve_command_bare_name() {
         let p = policy(&["fix.sh"]);
         let resolved = p.resolve_command("fix.sh");
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
     fn resolve_command_relative_path() {
         let p = policy(&["fix.sh"]);
         let resolved = p.resolve_command("./fix.sh");
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
     fn resolve_command_preserves_args() {
         let p = policy(&["fix.sh"]);
         let resolved = p.resolve_command("./fix.sh --dry-run --verbose");
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh --dry-run --verbose"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh --dry-run --verbose"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -263,7 +275,11 @@ mod tests {
         let p = sudo_policy(&["fix.sh"]);
         let resolved = p.resolve_command("fix.sh");
         assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -271,7 +287,11 @@ mod tests {
         let p = sudo_policy(&["fix.sh"]);
         let resolved = p.resolve_command("./fix.sh");
         assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -279,7 +299,11 @@ mod tests {
         let p = sudo_policy(&["fix.sh"]);
         let resolved = p.resolve_command("./fix.sh --dry-run");
         assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh --dry-run"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh --dry-run"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -317,14 +341,22 @@ mod tests {
     fn resolve_command_remote_preserves_args() {
         let p = remote_policy(&["fix.sh"], "user@zap");
         let resolved = p.resolve_command("fix.sh --flag");
-        assert_eq!(resolved, "~/.daemoneye/scripts/fix.sh --flag", "got: {}", resolved);
+        assert_eq!(
+            resolved, "~/.daemoneye/scripts/fix.sh --flag",
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
     fn resolve_command_remote_sudo_prepends_sudo() {
         let p = remote_sudo_policy(&["fix.sh"], "user@zap");
         let resolved = p.resolve_command("fix.sh");
-        assert_eq!(resolved, "sudo ~/.daemoneye/scripts/fix.sh", "got: {}", resolved);
+        assert_eq!(
+            resolved, "sudo ~/.daemoneye/scripts/fix.sh",
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -391,7 +423,11 @@ mod tests {
         // AI emits `sudo script.sh` on a remote policy — must resolve to tilde path.
         let p = remote_policy(&["fix.sh"], "user@zap");
         let resolved = p.resolve_command("sudo fix.sh");
-        assert_eq!(resolved, "sudo ~/.daemoneye/scripts/fix.sh", "got: {}", resolved);
+        assert_eq!(
+            resolved, "sudo ~/.daemoneye/scripts/fix.sh",
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -399,7 +435,11 @@ mod tests {
         // Policy has run_with_sudo=true AND command starts with sudo — must not double-sudo.
         let p = remote_sudo_policy(&["fix.sh"], "user@zap");
         let resolved = p.resolve_command("sudo fix.sh");
-        assert_eq!(resolved, "sudo ~/.daemoneye/scripts/fix.sh", "got: {}", resolved);
+        assert_eq!(
+            resolved, "sudo ~/.daemoneye/scripts/fix.sh",
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
@@ -408,14 +448,22 @@ mod tests {
         let p = sudo_policy(&["fix.sh"]);
         let resolved = p.resolve_command("sudo fix.sh");
         assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-        assert!(resolved.ends_with("/.daemoneye/scripts/fix.sh"), "got: {}", resolved);
+        assert!(
+            resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+            "got: {}",
+            resolved
+        );
     }
 
     #[test]
     fn resolve_command_sudo_prefix_with_args() {
         let p = remote_policy(&["fix.sh"], "user@zap");
         let resolved = p.resolve_command("sudo fix.sh --verbose");
-        assert_eq!(resolved, "sudo ~/.daemoneye/scripts/fix.sh --verbose", "got: {}", resolved);
+        assert_eq!(
+            resolved, "sudo ~/.daemoneye/scripts/fix.sh --verbose",
+            "got: {}",
+            resolved
+        );
     }
 
     /// Full end-to-end: AI emits `sudo script.sh`, resolve then wrap_remote.

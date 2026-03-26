@@ -263,10 +263,11 @@ impl SessionCache {
 
         // Session environment (P5) — best-effort; ignore errors.
         if let Ok(env) = tmux::session_environment(&session)
-            && !env.is_empty() {
-                let mut env_lock = self.environment.write().unwrap_or_log();
-                *env_lock = env;
-            }
+            && !env.is_empty()
+        {
+            let mut env_lock = self.environment.write().unwrap_or_log();
+            *env_lock = env;
+        }
 
         // Window topology (P4) — best-effort; ignore errors.
         if let Ok(wins) = tmux::list_windows(&session) {

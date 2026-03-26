@@ -541,7 +541,6 @@ mod tests {
     fn extract_empty_snap_returns_empty() {
         assert_eq!(extract_command_output("", "ls"), "");
     }
-
 }
 
 use crate::ipc::Response;
@@ -555,10 +554,7 @@ pub async fn send_response(stream: &mut UnixStream, response: Response) -> anyho
     Ok(())
 }
 
-pub async fn send_response_split<W>(
-    tx: &mut W,
-    response: Response,
-) -> anyhow::Result<()>
+pub async fn send_response_split<W>(tx: &mut W, response: Response) -> anyhow::Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {

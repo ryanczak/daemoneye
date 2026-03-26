@@ -79,21 +79,22 @@ pub fn finish_command(id: usize, exit_code: i32) {
     let mut is_bg = false;
     let mut is_sched = false;
     if let Ok(mut cmds) = RECENT_COMMANDS.lock()
-        && let Some(cmd) = cmds.iter_mut().find(|c| c.id == id) {
-            let success = exit_code == 0;
-            cmd.status = if success {
-                "succeeded".to_string()
-            } else {
-                format!("failed ({})", exit_code)
-            };
-            if cmd.mode == "foreground" {
-                is_fg = true;
-            } else if cmd.mode == "scheduled" {
-                is_sched = true;
-            } else {
-                is_bg = true;
-            }
+        && let Some(cmd) = cmds.iter_mut().find(|c| c.id == id)
+    {
+        let success = exit_code == 0;
+        cmd.status = if success {
+            "succeeded".to_string()
+        } else {
+            format!("failed ({})", exit_code)
+        };
+        if cmd.mode == "foreground" {
+            is_fg = true;
+        } else if cmd.mode == "scheduled" {
+            is_sched = true;
+        } else {
+            is_bg = true;
         }
+    }
 
     if is_fg {
         if exit_code == 0 {
@@ -272,9 +273,11 @@ pub fn inc_ghosts_launched() {
 }
 pub fn dec_ghosts_active() {
     // Saturating to guard against any double-decrement.
-    GHOSTS_ACTIVE.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-        Some(v.saturating_sub(1))
-    }).ok();
+    GHOSTS_ACTIVE
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            Some(v.saturating_sub(1))
+        })
+        .ok();
 }
 pub fn inc_ghosts_completed() {
     GHOSTS_COMPLETED.fetch_add(1, Ordering::Relaxed);

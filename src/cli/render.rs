@@ -336,8 +336,7 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
     };
 
     let token_str = if sb.prompt_tokens > 0 && sb.context_window > 0 {
-        let pct_used =
-            (sb.prompt_tokens as f64 / sb.context_window.max(1) as f64 * 100.0) as u32;
+        let pct_used = (sb.prompt_tokens as f64 / sb.context_window.max(1) as f64 * 100.0) as u32;
         format!(
             " ·  {} / {} ({}%) ",
             sb.prompt_tokens, sb.context_window, pct_used

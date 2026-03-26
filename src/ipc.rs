@@ -115,21 +115,42 @@ pub enum Request {
     },
     /// User-supplied credential (password / passphrase) in response to
     /// `Response::CredentialPrompt`. The daemon injects it into the background tmux window.
-    CredentialResponse { id: String, credential: String },
+    CredentialResponse {
+        id: String,
+        credential: String,
+    },
     /// User's pane selection in response to `Response::PaneSelectPrompt`.
-    PaneSelectResponse { id: String, pane_id: String },
+    PaneSelectResponse {
+        id: String,
+        pane_id: String,
+    },
     /// Re-collect the system context (OS info, memory, processes, history).
     /// Daemon responds with Response::Ok when done.
     Refresh,
     /// Approve or deny a script write proposed by the AI.
-    ScriptWriteResponse { id: String, approved: bool },
+    ScriptWriteResponse {
+        id: String,
+        approved: bool,
+    },
     /// Approve or deny a job schedule proposed by the AI.
-    ScheduleWriteResponse { id: String, approved: bool },
+    ScheduleWriteResponse {
+        id: String,
+        approved: bool,
+    },
     /// Approve or deny a runbook write proposed by the AI.
-    RunbookWriteResponse { id: String, approved: bool },
+    RunbookWriteResponse {
+        id: String,
+        approved: bool,
+    },
     /// Approve or deny a runbook delete proposed by the AI.
-    RunbookDeleteResponse { id: String, approved: bool },
-    ScriptDeleteResponse { id: String, approved: bool },
+    RunbookDeleteResponse {
+        id: String,
+        approved: bool,
+    },
+    ScriptDeleteResponse {
+        id: String,
+        approved: bool,
+    },
     /// Notify the daemon of an event (e.g. background pane activity from a tmux hook).
     NotifyActivity {
         pane_id: String,
@@ -151,19 +172,29 @@ pub enum Request {
     },
     /// Notify the daemon that the active window changed (`session-window-changed` hook, N2).
     /// Triggers a targeted window-list refresh so `[SESSION TOPOLOGY]` stays current.
-    NotifyWindowChanged { session_name: String },
+    NotifyWindowChanged {
+        session_name: String,
+    },
     /// Notify the daemon that a new tmux session was created (`after-new-session` hook, N14).
     /// The daemon installs per-session hooks for the new session automatically.
-    NotifySessionCreated { session_name: String },
+    NotifySessionCreated {
+        session_name: String,
+    },
     /// Notify the daemon that a tmux session was destroyed (`session-closed` hook, A6).
     /// The daemon cleans up bg windows and pipe-pane logs for that session.
-    NotifySessionClosed { session_name: String },
+    NotifySessionClosed {
+        session_name: String,
+    },
     /// Notify the daemon that a tmux client attached to a session (`client-attached` hook, N15).
     /// Clears any pending detach state so the catch-up brief is not shown.
-    NotifyClientAttached { session_name: String },
+    NotifyClientAttached {
+        session_name: String,
+    },
     /// Notify the daemon that a tmux client detached from a session (`client-detached` hook, N15).
     /// The daemon records the detach time; the next `Ask` will include a catch-up brief.
-    NotifyClientDetached { session_name: String },
+    NotifyClientDetached {
+        session_name: String,
+    },
     /// Notify the daemon that the attached terminal was resized (`client-resized` hook, N8).
     /// Updates the cached client viewport so the AI knows the current terminal dimensions.
     NotifyResize {
@@ -224,10 +255,7 @@ pub enum Response {
     PaneSelectPrompt { id: String, panes: Vec<PaneInfo> },
     /// The AI wants to delete a script; the client MUST confirm with the user,
     /// then return `Request::ScriptDeleteResponse`.
-    ScriptDeletePrompt {
-        id: String,
-        script_name: String,
-    },
+    ScriptDeletePrompt { id: String, script_name: String },
     /// The AI wants to write a script; the client MUST show the content and
     /// prompt the user for approval, then return `Request::ScriptWriteResponse`.
     ScriptWritePrompt {

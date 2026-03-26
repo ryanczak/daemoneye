@@ -293,9 +293,10 @@ pub fn parse_payload(body: &Value) -> Vec<InternalAlert> {
 
     // Legacy Grafana webhook has a "state" field at the top level.
     if body["state"].is_string()
-        && let Some(a) = parse_grafana_legacy(body) {
-            return vec![a];
-        }
+        && let Some(a) = parse_grafana_legacy(body)
+    {
+        return vec![a];
+    }
 
     // Generic fallback.
     parse_generic(body).map(|a| vec![a]).unwrap_or_default()
@@ -371,14 +372,15 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
         let mut dedup = state.dedup.lock().unwrap_or_log();
         let now = now_secs();
         if let Some(&last_seen) = dedup.get(&alert.fingerprint)
-            && now.saturating_sub(last_seen) < window {
-                log::debug!(
-                    "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
-                    alert.alert_name,
-                    &alert.fingerprint[..alert.fingerprint.len().min(16)]
-                );
-                return;
-            }
+            && now.saturating_sub(last_seen) < window
+        {
+            log::debug!(
+                "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
+                alert.alert_name,
+                &alert.fingerprint[..alert.fingerprint.len().min(16)]
+            );
+            return;
+        }
         // Cap the dedup map to 10,000 entries. When the cap is reached, evict
         // the oldest entry (smallest timestamp) to prevent unbounded growth
         // from alert storms with high fingerprint cardinality.
@@ -388,9 +390,9 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
                 .iter()
                 .min_by_key(|&(_, &ts)| ts)
                 .map(|(k, _)| k.clone())
-            {
-                dedup.remove(&oldest_key);
-            }
+        {
+            dedup.remove(&oldest_key);
+        }
         dedup.insert(alert.fingerprint.clone(), now);
     }
 
@@ -510,10 +512,7 @@ pub(crate) fn inject_ghost_event(sessions: &SessionStore, content: &str) {
     let one_liner = content.lines().next().unwrap_or(content);
     notify_chat_panes(sessions, one_liner);
     // Always mirror ghost lifecycle events to events.jsonl for troubleshooting.
-    crate::daemon::utils::log_event(
-        "ghost_lifecycle",
-        serde_json::json!({ "content": content }),
-    );
+    crate::daemon::utils::log_event("ghost_lifecycle", serde_json::json!({ "content": content }));
 }
 
 // ---------------------------------------------------------------------------
@@ -559,10 +558,7 @@ pub(crate) fn parse_ghost_trigger(response: &str) -> Option<bool> {
 /// `GHOST_TRIGGER: YES/NO` field; falls back to the legacy `ALERT` keyword for
 /// responses that predate the structured format.  Pass `api_error=true` when the
 /// API call itself failed so the reason string is informative.
-pub(crate) fn evaluate_watchdog_response(
-    response: &str,
-    api_error: bool,
-) -> (bool, &'static str) {
+pub(crate) fn evaluate_watchdog_response(response: &str, api_error: bool) -> (bool, &'static str) {
     if api_error && response.is_empty() {
         (false, "api_error — response empty")
     } else if response.is_empty() {
@@ -575,7 +571,10 @@ pub(crate) fn evaluate_watchdog_response(
                 if response.to_uppercase().contains("ALERT") {
                     (true, "legacy ALERT keyword (no GHOST_TRIGGER line found)")
                 } else {
-                    (false, "no GHOST_TRIGGER line and no ALERT keyword in response")
+                    (
+                        false,
+                        "no GHOST_TRIGGER line and no ALERT keyword in response",
+                    )
                 }
             }
         }
@@ -601,9 +600,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         let mut rl = state.rate_limit.lock().unwrap_or_log();
         let now = now_secs();
         if let Some(&last) = rl.get(&alert.alert_name)
-            && now.saturating_sub(last) < state.config.webhook.dedup_window_secs {
-                return;
-            }
+            && now.saturating_sub(last) < state.config.webhook.dedup_window_secs
+        {
+            return;
+        }
         rl.insert(alert.alert_name.clone(), now);
     }
 
@@ -639,7 +639,11 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
     let api_err = if let Err(e) = client.chat(&system, msgs, ai_tx, false).await {
-        log::error!("Webhook: runbook analysis API call failed for '{}': {}", alert.alert_name, e);
+        log::error!(
+            "Webhook: runbook analysis API call failed for '{}': {}",
+            alert.alert_name,
+            e
+        );
         Some(e.to_string())
     } else {
         None
@@ -652,20 +656,28 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         }
     }
 
-    let (should_act, trigger_reason) =
-        evaluate_watchdog_response(&response, api_err.is_some());
+    let (should_act, trigger_reason) = evaluate_watchdog_response(&response, api_err.is_some());
 
     log::info!(
         "Webhook: analysis for '{}' complete — should_act={} reason='{}' ghost_enabled={} (response: {} chars)",
-        alert.alert_name, should_act, trigger_reason, rb.ghost_config.enabled, response.len()
+        alert.alert_name,
+        should_act,
+        trigger_reason,
+        rb.ghost_config.enabled,
+        response.len()
     );
     if !should_act && rb.ghost_config.enabled {
         log::info!(
             "Webhook: ghost shell NOT triggered for '{}' — reason: {}",
-            alert.alert_name, trigger_reason
+            alert.alert_name,
+            trigger_reason
         );
     }
-    log::debug!("Webhook: analysis response for '{}':\n{}", alert.alert_name, response.trim());
+    log::debug!(
+        "Webhook: analysis response for '{}':\n{}",
+        alert.alert_name,
+        response.trim()
+    );
 
     log_event(
         "webhook_analysis",
@@ -695,60 +707,69 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                     ),
                 );
             } else {
-            log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
-            let sessions = state.sessions.clone();
-            let alert_msg = formatted_msg.to_string();
-            let rb_clone = rb.clone();
-            let config_clone = state.config.clone();
-            let cache_clone = state.cache.clone();
-            let schedule_store_clone = state.schedule_store.clone();
+                log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
+                let sessions = state.sessions.clone();
+                let alert_msg = formatted_msg.to_string();
+                let rb_clone = rb.clone();
+                let config_clone = state.config.clone();
+                let cache_clone = state.cache.clone();
+                let schedule_store_clone = state.schedule_store.clone();
 
-            tokio::spawn(async move {
-                match GhostManager::start_session(sessions.clone(), &rb_clone, &alert_msg, crate::daemon::GS_BG_WINDOW_PREFIX).await {
-                    Ok(sid) => {
-                        let session_log = crate::daemon::session::session_file(&sid)
-                            .display()
-                            .to_string();
-                        inject_ghost_event(
-                            &sessions,
-                            &format!(
-                                "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
-                                rb_clone.name, session_log
-                            ),
-                        );
+                tokio::spawn(async move {
+                    match GhostManager::start_session(
+                        sessions.clone(),
+                        &rb_clone,
+                        &alert_msg,
+                        crate::daemon::GS_BG_WINDOW_PREFIX,
+                    )
+                    .await
+                    {
+                        Ok(sid) => {
+                            let session_log = crate::daemon::session::session_file(&sid)
+                                .display()
+                                .to_string();
+                            inject_ghost_event(
+                                &sessions,
+                                &format!(
+                                    "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
+                                    rb_clone.name, session_log
+                                ),
+                            );
 
-                        match crate::daemon::ghost::trigger_ghost_turn(
-                            &sid,
-                            &sessions,
-                            &config_clone,
-                            &cache_clone,
-                            &schedule_store_clone,
-                        ).await {
-                            Ok(()) => {
-                                inject_ghost_event(
-                                    &sessions,
-                                    &format!(
-                                        "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
-                                        rb_clone.name, session_log
-                                    ),
-                                );
-                            }
-                            Err(e) => {
-                                log::error!("Ghost Turn: failed for {}: {}", sid, e);
-                                crate::daemon::stats::inc_ghosts_failed();
-                                inject_ghost_event(
-                                    &sessions,
-                                    &format!(
-                                        "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
-                                        rb_clone.name, e, session_log
-                                    ),
-                                );
+                            match crate::daemon::ghost::trigger_ghost_turn(
+                                &sid,
+                                &sessions,
+                                &config_clone,
+                                &cache_clone,
+                                &schedule_store_clone,
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    inject_ghost_event(
+                                        &sessions,
+                                        &format!(
+                                            "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
+                                            rb_clone.name, session_log
+                                        ),
+                                    );
+                                }
+                                Err(e) => {
+                                    log::error!("Ghost Turn: failed for {}: {}", sid, e);
+                                    crate::daemon::stats::inc_ghosts_failed();
+                                    inject_ghost_event(
+                                        &sessions,
+                                        &format!(
+                                            "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
+                                            rb_clone.name, e, session_log
+                                        ),
+                                    );
+                                }
                             }
                         }
+                        Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
                     }
-                    Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
-                }
-            });
+                });
             } // end else (capacity check)
         }
 
@@ -1151,7 +1172,10 @@ mod tests {
     fn evaluate_no_trigger_no_alert() {
         let (act, reason) = evaluate_watchdog_response("OK: everything looks fine", false);
         assert!(!act);
-        assert_eq!(reason, "no GHOST_TRIGGER line and no ALERT keyword in response");
+        assert_eq!(
+            reason,
+            "no GHOST_TRIGGER line and no ALERT keyword in response"
+        );
     }
 
     #[test]

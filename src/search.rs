@@ -77,7 +77,12 @@ pub fn search_repository(query: &str, kind: &str, context_lines: usize) -> Vec<S
 
     // Search events.jsonl if requested
     if (kind == "events" || kind == "all") && results.len() < MAX_RESULTS {
-        search_events(&crate::config::events_path(), &query_lower, context_lines, &mut results);
+        search_events(
+            &crate::config::events_path(),
+            &query_lower,
+            context_lines,
+            &mut results,
+        );
     }
 
     results
@@ -210,19 +215,20 @@ fn search_events(
 /// Convert a JSON event line to a human-readable key=value string.
 fn json_to_readable(line: &str) -> String {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
-        && let Some(obj) = v.as_object() {
-            return obj
-                .iter()
-                .map(|(k, v)| {
-                    let val = match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    format!("{}={}", k, val)
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-        }
+        && let Some(obj) = v.as_object()
+    {
+        return obj
+            .iter()
+            .map(|(k, v)| {
+                let val = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                format!("{}={}", k, val)
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
     line.to_string()
 }
 

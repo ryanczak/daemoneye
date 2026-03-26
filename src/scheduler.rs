@@ -61,14 +61,21 @@ impl ScheduleKind {
     /// Advance to the next occurrence.
     pub fn advance(&mut self) {
         match self {
-            ScheduleKind::Every { interval_secs, next_run } => {
+            ScheduleKind::Every {
+                interval_secs,
+                next_run,
+            } => {
                 *next_run += chrono::Duration::seconds(*interval_secs as i64);
             }
-            ScheduleKind::Cron { expression, next_run } => {
+            ScheduleKind::Cron {
+                expression,
+                next_run,
+            } => {
                 if let Ok(sched) = parse_cron(expression)
-                    && let Some(n) = sched.upcoming(Utc).next() {
-                        *next_run = n;
-                    }
+                    && let Some(n) = sched.upcoming(Utc).next()
+                {
+                    *next_run = n;
+                }
             }
             ScheduleKind::Once { .. } => {}
         }
@@ -79,20 +86,27 @@ impl ScheduleKind {
     /// longer than one interval (or when the job itself takes longer than its interval).
     pub fn skip_to_future(&mut self) {
         match self {
-            ScheduleKind::Every { interval_secs, next_run } => {
+            ScheduleKind::Every {
+                interval_secs,
+                next_run,
+            } => {
                 let now = Utc::now();
                 while *next_run <= now {
                     *next_run += chrono::Duration::seconds(*interval_secs as i64);
                 }
             }
-            ScheduleKind::Cron { expression, next_run } => {
+            ScheduleKind::Cron {
+                expression,
+                next_run,
+            } => {
                 // `advance()` already calls `upcoming()` which gives the next future time,
                 // but if the stored next_run is still in the past, recompute.
                 if *next_run <= Utc::now()
                     && let Ok(sched) = parse_cron(expression)
-                        && let Some(n) = sched.upcoming(Utc).next() {
-                            *next_run = n;
-                        }
+                    && let Some(n) = sched.upcoming(Utc).next()
+                {
+                    *next_run = n;
+                }
             }
             ScheduleKind::Once { .. } => {}
         }
@@ -232,8 +246,8 @@ impl ScheduleStore {
     /// Saves will succeed but the file is not preserved across daemon restarts.
     /// Used as a last-resort fallback when all persistent paths fail.
     pub fn new_empty() -> Self {
-        let path = std::env::temp_dir()
-            .join(format!("daemoneye_schedules_{}.json", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("daemoneye_schedules_{}.json", std::process::id()));
         ScheduleStore {
             path,
             jobs: RwLock::new(Vec::new()),
@@ -787,6 +801,9 @@ mod tests {
         };
         kind.skip_to_future();
         let next = kind.next_run().unwrap();
-        assert!(next > Utc::now(), "next_run should be in the future after skip_to_future");
+        assert!(
+            next > Utc::now(),
+            "next_run should be in the future after skip_to_future"
+        );
     }
 }

@@ -1,7 +1,7 @@
-mod foreground;
 mod file_ops;
-mod schedule;
+mod foreground;
 mod knowledge;
+mod schedule;
 
 use crate::ai::{PendingCall, next_tool_id};
 use crate::daemon::policy::GhostPolicy;
@@ -62,9 +62,9 @@ pub enum ToolCallOutcome {
 // ---------------------------------------------------------------------------
 
 /// How long a user has to approve or deny a foreground/background tool call.
- const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a user has to respond to a credential or write prompt (sudo password, schedule, script).
- const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ---------------------------------------------------------------------------
 // Main tool dispatcher
@@ -82,7 +82,12 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let SessionCtx { session_id, session_name, chat_pane, sessions } = ctx;
+    let SessionCtx {
+        session_id,
+        session_name,
+        chat_pane,
+        sessions,
+    } = ctx;
     // ── Pre-fetch Ghost Policy ───────────────────────────────────────────────
     let ghost_policy: Option<GhostPolicy> = if let Some(sid) = session_id {
         if let Ok(store) = sessions.lock() {
@@ -119,32 +124,65 @@ where
     // ──────────────────────────────────────────────────────────────────────────
 
     match call {
-        PendingCall::Foreground { id, cmd, target, .. } => {
+        PendingCall::Foreground {
+            id, cmd, target, ..
+        } => {
             foreground::run_foreground(
-                foreground::FgArgs { id, cmd, target: target.as_deref() },
+                foreground::FgArgs {
+                    id,
+                    cmd,
+                    target: target.as_deref(),
+                },
                 ctx,
                 cache,
-                GhostCtx { policy: ghost_policy.as_ref(), is_ghost },
-                tx, rx,
-            ).await
+                GhostCtx {
+                    policy: ghost_policy.as_ref(),
+                    is_ghost,
+                },
+                tx,
+                rx,
+            )
+            .await
         }
 
-        PendingCall::Background { id, cmd, retry_pane, .. } => {
+        PendingCall::Background {
+            id,
+            cmd,
+            retry_pane,
+            ..
+        } => {
             foreground::run_background(
-                id, cmd, retry_pane.as_deref(),
+                id,
+                cmd,
+                retry_pane.as_deref(),
                 ctx,
-                GhostCtx { policy: ghost_policy.as_ref(), is_ghost },
-                tx, rx,
-            ).await
+                GhostCtx {
+                    policy: ghost_policy.as_ref(),
+                    is_ghost,
+                },
+                tx,
+                rx,
+            )
+            .await
         }
 
         PendingCall::ScheduleCommand {
-            id: call_id, name, command, is_script, run_at, interval,
-            runbook, ghost_runbook, cron, ..
+            id: call_id,
+            name,
+            command,
+            is_script,
+            run_at,
+            interval,
+            runbook,
+            ghost_runbook,
+            cron,
+            ..
         } => {
             schedule::run_schedule_command(
                 schedule::ScheduleArgs {
-                    call_id, name, command,
+                    call_id,
+                    name,
+                    command,
                     is_script: *is_script,
                     run_at: run_at.as_deref(),
                     interval: interval.as_deref(),
@@ -152,62 +190,104 @@ where
                     ghost_runbook: ghost_runbook.as_deref(),
                     cron: cron.as_deref(),
                 },
-                session_id, is_ghost, schedule_store, tx, rx,
-            ).await
+                session_id,
+                is_ghost,
+                schedule_store,
+                tx,
+                rx,
+            )
+            .await
         }
 
-        PendingCall::ListSchedules { .. } => {
-            schedule::list_schedules(schedule_store, tx).await
-        }
+        PendingCall::ListSchedules { .. } => schedule::list_schedules(schedule_store, tx).await,
 
-        PendingCall::CancelSchedule { job_id, .. } => {
-            Ok(ToolCallOutcome::Result(schedule::cancel_schedule(schedule_store, job_id, session_id)))
-        }
+        PendingCall::CancelSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
+            schedule::cancel_schedule(schedule_store, job_id, session_id),
+        )),
 
-        PendingCall::DeleteSchedule { job_id, .. } => {
-            Ok(ToolCallOutcome::Result(schedule::delete_schedule(schedule_store, job_id, session_id)))
-        }
+        PendingCall::DeleteSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
+            schedule::delete_schedule(schedule_store, job_id, session_id),
+        )),
 
-        PendingCall::WriteScript { id, script_name, content, .. } => {
-            knowledge::write_script(id, script_name, content, is_ghost, tx, rx).await
-        }
+        PendingCall::WriteScript {
+            id,
+            script_name,
+            content,
+            ..
+        } => knowledge::write_script(id, script_name, content, is_ghost, tx, rx).await,
 
-        PendingCall::ListScripts { .. } => {
-            knowledge::list_scripts(tx).await
-        }
+        PendingCall::ListScripts { .. } => knowledge::list_scripts(tx).await,
 
         PendingCall::ReadScript { script_name, .. } => {
             Ok(ToolCallOutcome::Result(knowledge::read_script(script_name)))
         }
 
-        PendingCall::DeleteScript { id, script_name, .. } => {
-            knowledge::delete_script(id, script_name, is_ghost, session_id, tx, rx).await
-        }
+        PendingCall::DeleteScript {
+            id, script_name, ..
+        } => knowledge::delete_script(id, script_name, is_ghost, session_id, tx, rx).await,
 
-        PendingCall::WatchPane { pane_id, timeout_secs, pattern, .. } => {
-            Ok(ToolCallOutcome::Result(
-                knowledge::watch_pane(pane_id, *timeout_secs, pattern.as_deref(), session_id, session_name, sessions)
-            ))
-        }
+        PendingCall::WatchPane {
+            pane_id,
+            timeout_secs,
+            pattern,
+            ..
+        } => Ok(ToolCallOutcome::Result(knowledge::watch_pane(
+            pane_id,
+            *timeout_secs,
+            pattern.as_deref(),
+            session_id,
+            session_name,
+            sessions,
+        ))),
 
-        PendingCall::ReadFile { path, offset, limit, pattern, target_pane, .. } => {
+        PendingCall::ReadFile {
+            path,
+            offset,
+            limit,
+            pattern,
+            target_pane,
+            ..
+        } => {
             file_ops::run_read_file(
-                path, *offset, *limit, pattern.as_deref(), target_pane.as_deref(),
-            ).await
+                path,
+                *offset,
+                *limit,
+                pattern.as_deref(),
+                target_pane.as_deref(),
+            )
+            .await
         }
 
-        PendingCall::EditFile { id, path, old_string, new_string, target_pane, .. } => {
+        PendingCall::EditFile {
+            id,
+            path,
+            old_string,
+            new_string,
+            target_pane,
+            ..
+        } => {
             file_ops::run_edit_file(
-                file_ops::EditArgs { id, path, old_string, new_string, target_pane: target_pane.as_deref() },
+                file_ops::EditArgs {
+                    id,
+                    path,
+                    old_string,
+                    new_string,
+                    target_pane: target_pane.as_deref(),
+                },
                 session_id,
-                GhostCtx { policy: ghost_policy.as_ref(), is_ghost },
-                tx, rx,
-            ).await
+                GhostCtx {
+                    policy: ghost_policy.as_ref(),
+                    is_ghost,
+                },
+                tx,
+                rx,
+            )
+            .await
         }
 
-        PendingCall::WriteRunbook { id, name, content, .. } => {
-            knowledge::write_runbook(id, name, content, is_ghost, session_id, tx, rx).await
-        }
+        PendingCall::WriteRunbook {
+            id, name, content, ..
+        } => knowledge::write_runbook(id, name, content, is_ghost, session_id, tx, rx).await,
 
         PendingCall::DeleteRunbook { id, name, .. } => {
             knowledge::delete_runbook(id, name, is_ghost, session_id, schedule_store, tx, rx).await
@@ -217,45 +297,48 @@ where
             Ok(ToolCallOutcome::Result(knowledge::read_runbook(name)))
         }
 
-        PendingCall::ListRunbooks { .. } => {
-            knowledge::list_runbooks(tx).await
-        }
+        PendingCall::ListRunbooks { .. } => knowledge::list_runbooks(tx).await,
 
-        PendingCall::AddMemory { key, value, category, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::add_memory(key, value, category, session_id)))
-        }
+        PendingCall::AddMemory {
+            key,
+            value,
+            category,
+            ..
+        } => Ok(ToolCallOutcome::Result(knowledge::add_memory(
+            key, value, category, session_id,
+        ))),
 
-        PendingCall::DeleteMemory { key, category, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::delete_memory(key, category, session_id)))
-        }
+        PendingCall::DeleteMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::delete_memory(key, category, session_id),
+        )),
 
-        PendingCall::ReadMemory { key, category, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::read_memory(key, category)))
-        }
+        PendingCall::ReadMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::read_memory(key, category),
+        )),
 
         PendingCall::ListMemories { category, .. } => {
             knowledge::list_memories(category.as_deref(), tx).await
         }
 
-        PendingCall::SearchRepository { query, kind, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::search_repository(query, kind)))
-        }
+        PendingCall::SearchRepository { query, kind, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::search_repository(query, kind),
+        )),
 
-        PendingCall::GetTerminalContext { .. } => {
-            Ok(ToolCallOutcome::Result(cache.get_labeled_context(chat_pane, chat_pane)))
-        }
+        PendingCall::GetTerminalContext { .. } => Ok(ToolCallOutcome::Result(
+            cache.get_labeled_context(chat_pane, chat_pane),
+        )),
 
-        PendingCall::CloseBackgroundWindow { pane_id, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::close_bg_window(pane_id, session_id, sessions)))
-        }
+        PendingCall::CloseBackgroundWindow { pane_id, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::close_bg_window(pane_id, session_id, sessions),
+        )),
 
-        PendingCall::ListPanes { .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::list_panes(cache, chat_pane)))
-        }
+        PendingCall::ListPanes { .. } => Ok(ToolCallOutcome::Result(knowledge::list_panes(
+            cache, chat_pane,
+        ))),
 
-        PendingCall::SpawnGhost { runbook, message, .. } => {
-            knowledge::spawn_ghost(runbook, message, sessions).await
-        }
+        PendingCall::SpawnGhost {
+            runbook, message, ..
+        } => knowledge::spawn_ghost(runbook, message, sessions).await,
     }
 }
 
@@ -284,8 +367,17 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let ApprovalRequest { id, cmd, background, target_pane_hint } = req;
-    let mode = if background { "background" } else { "foreground" };
+    let ApprovalRequest {
+        id,
+        cmd,
+        background,
+        target_pane_hint,
+    } = req;
+    let mode = if background {
+        "background"
+    } else {
+        "foreground"
+    };
 
     // ── Ghost Shell Logic ──────────────────────────────────────────────────
     if let Some(policy) = ghost_policy {
@@ -478,7 +570,11 @@ where
             return None;
         }
         let panes = cache.panes.read().unwrap_or_log();
-        if panes.contains_key(tp) { Some(tp.to_string()) } else { None }
+        if panes.contains_key(tp) {
+            Some(tp.to_string())
+        } else {
+            None
+        }
     });
 
     if let Some(tp) = ai_target {
@@ -488,14 +584,15 @@ where
     // Check for a user-selected default target pane in the session.
     if let Some(sid) = session_id
         && let Ok(store) = sessions.lock()
-            && let Some(entry) = store.get(sid)
-                && let Some(ref dtp) = entry.default_target_pane
-                    && chat_pane != Some(dtp.as_str()) {
-                        let panes = cache.panes.read().unwrap_or_log();
-                        if panes.contains_key(dtp) {
-                            return Ok(dtp.clone());
-                        }
-                    }
+        && let Some(entry) = store.get(sid)
+        && let Some(ref dtp) = entry.default_target_pane
+        && chat_pane != Some(dtp.as_str())
+    {
+        let panes = cache.panes.read().unwrap_or_log();
+        if panes.contains_key(dtp) {
+            return Ok(dtp.clone());
+        }
+    }
 
     let pane_list: Vec<PaneInfo> = {
         let panes = cache.panes.read().unwrap_or_log();
@@ -532,9 +629,10 @@ where
         Ok(Request::PaneSelectResponse { pane_id, .. }) => {
             if let Some(sid) = session_id
                 && let Ok(mut store) = sessions.lock()
-                    && let Some(entry) = store.get_mut(sid) {
-                        entry.default_target_pane = Some(pane_id.clone());
-                    }
+                && let Some(entry) = store.get_mut(sid)
+            {
+                entry.default_target_pane = Some(pane_id.clone());
+            }
             Ok(pane_id)
         }
         _ => {

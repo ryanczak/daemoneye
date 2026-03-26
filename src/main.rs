@@ -193,10 +193,7 @@ fn main() -> anyhow::Result<()> {
                     std::io::Error::last_os_error()
                 );
             }
-            let devnull = libc::open(
-                c"/dev/null".as_ptr(),
-                libc::O_RDONLY,
-            );
+            let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
             if devnull < 0 {
                 eprintln!(
                     "daemoneye: warning: failed to open /dev/null: {} — stdin not redirected",

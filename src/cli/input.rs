@@ -453,7 +453,17 @@ pub async fn read_input_line(
     sb: &StatusBarState<'_>,
     last_ctrl_c: &mut Option<std::time::Instant>,
 ) -> anyhow::Result<Option<String>> {
-    read_input_line_inner(state, stdin, sigwinch, chat_width, chat_height, start_time, sb, last_ctrl_c).await
+    read_input_line_inner(
+        state,
+        stdin,
+        sigwinch,
+        chat_width,
+        chat_height,
+        start_time,
+        sb,
+        last_ctrl_c,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -478,7 +488,14 @@ async fn read_input_line_inner(
         () => {{
             let needed = input_rows_needed(&state.current, *chat_width, *chat_height);
             if needed != input_rows {
-                resize_input_area(*chat_height, *chat_width, input_rows, needed, start_time, sb);
+                resize_input_area(
+                    *chat_height,
+                    *chat_width,
+                    input_rows,
+                    needed,
+                    start_time,
+                    sb,
+                );
                 input_rows = needed;
             }
             render_input_multiline(&state.current, *chat_height, *chat_width, input_rows);

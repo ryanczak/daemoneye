@@ -1,6 +1,6 @@
+use crate::ipc::GhostConfig;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use crate::ipc::GhostConfig;
 
 /// A runbook loaded from `~/.daemoneye/runbooks/<name>.md`.
 ///
@@ -68,7 +68,12 @@ fn validate_runbook_content(content: &str) -> Result<()> {
 /// `(tags, memories, ghost_config, body_after_frontmatter)`.
 fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, String) {
     if !raw.starts_with("---\n") {
-        return (Vec::new(), Vec::new(), GhostConfig::default(), raw.to_string());
+        return (
+            Vec::new(),
+            Vec::new(),
+            GhostConfig::default(),
+            raw.to_string(),
+        );
     }
     // Find closing delimiter
     let search_from = 4; // after "---\n"
@@ -80,7 +85,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
 
         let tags = parse_list_field(frontmatter, "tags");
         let memories = parse_list_field(frontmatter, "memories");
-        
+
         // Manual parsing for ghost_mode fields. Supports flat keys for now.
         let enabled = parse_bool_field(frontmatter, "enabled");
         let auto_approve_scripts = parse_list_field(frontmatter, "auto_approve_scripts");
@@ -98,7 +103,12 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
 
         (tags, memories, ghost_config, body)
     } else {
-        (Vec::new(), Vec::new(), GhostConfig::default(), raw.to_string())
+        (
+            Vec::new(),
+            Vec::new(),
+            GhostConfig::default(),
+            raw.to_string(),
+        )
     }
 }
 
@@ -228,7 +238,11 @@ pub fn list_runbooks() -> Result<Vec<RunbookInfo>> {
             } else {
                 (Vec::new(), GhostConfig::default())
             };
-            Some(RunbookInfo { name: stem, tags, ghost_config })
+            Some(RunbookInfo {
+                name: stem,
+                tags,
+                ghost_config,
+            })
         })
         .collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -374,10 +388,19 @@ Last updated: 2026-03-01
 
     #[test]
     fn parse_usize_field_basic() {
-        assert_eq!(parse_usize_field("max_ghost_turns: 5\n", "max_ghost_turns"), Some(5));
-        assert_eq!(parse_usize_field("max_ghost_turns: 0\n", "max_ghost_turns"), Some(0));
+        assert_eq!(
+            parse_usize_field("max_ghost_turns: 5\n", "max_ghost_turns"),
+            Some(5)
+        );
+        assert_eq!(
+            parse_usize_field("max_ghost_turns: 0\n", "max_ghost_turns"),
+            Some(0)
+        );
         assert_eq!(parse_usize_field("other: 3\n", "max_ghost_turns"), None);
-        assert_eq!(parse_usize_field("max_ghost_turns: abc\n", "max_ghost_turns"), None);
+        assert_eq!(
+            parse_usize_field("max_ghost_turns: abc\n", "max_ghost_turns"),
+            None
+        );
         assert_eq!(parse_usize_field("", "max_ghost_turns"), None);
     }
 
