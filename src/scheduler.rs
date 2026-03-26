@@ -231,6 +231,18 @@ pub struct ScheduleStore {
 }
 
 impl ScheduleStore {
+    /// Create a transient in-memory store backed by a unique temp file.
+    /// Saves will succeed but the file is not preserved across daemon restarts.
+    /// Used as a last-resort fallback when all persistent paths fail.
+    pub fn new_empty() -> Self {
+        let path = std::env::temp_dir()
+            .join(format!("daemoneye_schedules_{}.json", std::process::id()));
+        ScheduleStore {
+            path,
+            jobs: RwLock::new(Vec::new()),
+        }
+    }
+
     /// Load from `path` or create an empty store if the file does not exist.
     pub fn load_or_create(path: PathBuf) -> Result<Self> {
         let jobs = if path.exists() {

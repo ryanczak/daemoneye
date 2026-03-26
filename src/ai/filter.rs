@@ -118,13 +118,13 @@ fn compile_patterns(extra: &[String]) -> Vec<(Regex, String, bool)> {
     for (pat, rep) in builtin_defs() {
         match Regex::new(pat) {
             Ok(re) => result.push((re, rep.to_string(), false)),
-            Err(e) => eprintln!("Warning: built-in masking pattern failed to compile: {e}"),
+            Err(e) => log::warn!("Built-in masking pattern failed to compile: {e}"),
         }
     }
     for pat in extra {
         match Regex::new(pat) {
             Ok(re) => result.push((re, "<REDACTED>".to_string(), true)),
-            Err(_) => eprintln!("Warning: invalid masking pattern ignored: {pat}"),
+            Err(e) => log::warn!("Invalid masking pattern ignored ({pat}): {e}"),
         }
     }
     result

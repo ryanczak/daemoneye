@@ -187,13 +187,28 @@ fn main() -> anyhow::Result<()> {
             }
             // Child: create a new session so we are no longer attached to the
             // calling terminal, then redirect stdin from /dev/null.
-            libc::setsid();
+            if libc::setsid() < 0 {
+                eprintln!(
+                    "daemoneye: setsid() failed: {} — daemon may not be fully detached from terminal",
+                    std::io::Error::last_os_error()
+                );
+            }
             let devnull = libc::open(
                 b"/dev/null\0".as_ptr() as *const libc::c_char,
                 libc::O_RDONLY,
             );
-            if devnull >= 0 {
-                libc::dup2(devnull, libc::STDIN_FILENO);
+            if devnull < 0 {
+                eprintln!(
+                    "daemoneye: warning: failed to open /dev/null: {} — stdin not redirected",
+                    std::io::Error::last_os_error()
+                );
+            } else {
+                if libc::dup2(devnull, libc::STDIN_FILENO) < 0 {
+                    eprintln!(
+                        "daemoneye: warning: failed to redirect stdin from /dev/null: {}",
+                        std::io::Error::last_os_error()
+                    );
+                }
                 libc::close(devnull);
             }
         }

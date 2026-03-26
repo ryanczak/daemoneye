@@ -143,10 +143,18 @@ pub fn detect_session() -> Option<String> {
     if std::env::var("TMUX").is_err() {
         return None;
     }
-    let out = std::process::Command::new("tmux")
+    let out = match std::process::Command::new("tmux")
         .args(["display-message", "-p", "#S"])
         .output()
-        .ok()?;
+    {
+        Ok(o) => o,
+        Err(e) => {
+            log::error!(
+                "detect_session: $TMUX is set but `tmux display-message` failed: {e}"
+            );
+            return None;
+        }
+    };
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if s.is_empty() { None } else { Some(s) }
 }
@@ -333,8 +341,14 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         // Redirect stdout (1) and stderr (2) to the log file.
         // dup2 creates independent FDs 1/2 pointing to the file; `file` can drop safely after.
         unsafe {
-            libc::dup2(fd, 1);
-            libc::dup2(fd, 2);
+            if libc::dup2(fd, 1) < 0 {
+                return Err(std::io::Error::last_os_error())
+                    .context(format!("dup2(log_fd → stdout) failed for {}", path.display()));
+            }
+            if libc::dup2(fd, 2) < 0 {
+                return Err(std::io::Error::last_os_error())
+                    .context(format!("dup2(log_fd → stderr) failed for {}", path.display()));
+            }
         }
     }
     // Validate API key before binding the socket so the error is immediate
@@ -352,7 +366,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
 
     // R1: clean up any pipe log files left behind by a previous daemon run so
     // stale content from a different session is never shown to the AI.
-    if let Ok(entries) = std::fs::read_dir("/tmp") {
+    if let Ok(entries) = std::fs::read_dir(crate::config::pipe_log_dir()) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
@@ -367,7 +381,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         let env_var = startup_config.ai.api_key_env_var();
         anyhow::bail!(
             "No API key found for provider '{provider}'.\n\
-             Set 'api_key' in ~/.daemoneye/config.toml  or  export {env_var}=<your-key>",
+             Set 'api_key' in ~/.daemoneye/etc/config.toml  or  export {env_var}=<your-key>",
             provider = startup_config.ai.provider,
             env_var = env_var,
         );
@@ -441,7 +455,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         .args(["set-hook", "-g", "after-new-session", &session_created_cmd])
         .output()
     {
-        log::warn!(
+        log::error!(
             "Failed to register global tmux after-new-session hook: {}",
             e
         );
@@ -457,7 +471,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         .args(["set-hook", "-g", "client-attached", &client_attached_cmd])
         .output()
     {
-        log::warn!("Failed to register global tmux client-attached hook: {}", e);
+        log::error!("Failed to register global tmux client-attached hook: {}", e);
     }
 
     // client-detached (N15): notify daemon when the terminal client detaches so it
@@ -470,7 +484,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         .args(["set-hook", "-g", "client-detached", &client_detached_cmd])
         .output()
     {
-        log::warn!("Failed to register global tmux client-detached hook: {}", e);
+        log::error!("Failed to register global tmux client-detached hook: {}", e);
     }
 
     // Install per-session hooks if we already know the session.
@@ -531,9 +545,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
     let schedules_path = Config::schedules_path();
     let schedule_store = Arc::new(
         ScheduleStore::load_or_create(schedules_path).unwrap_or_else(|e| {
-            log::warn!("Could not load schedules: {e}");
-            ScheduleStore::load_or_create(std::env::temp_dir().join("daemoneye_schedules.json"))
-                .expect("fallback schedule store")
+            log::error!("Could not load schedules from primary path: {e} — schedules will not persist this session");
+            ScheduleStore::new_empty()
         }),
     );
 
