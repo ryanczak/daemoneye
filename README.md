@@ -55,6 +55,17 @@ Policy Gating: Non-sudo commands run freely, but sudo access is strictly restric
 
 Turn Budget: A hard ceiling on AI "turns" (default 20) ensures the agent doesn't loop indefinitely.
 
+🔒 Security & Privacy
+Context is filtered before it ever leaves your machine.
+
+Sensitive Data Redaction: A built-in regex filter scrubs AWS access keys, PEM private key blocks, GCP service-account JSON, JWT bearer tokens, GitHub personal access tokens, database/broker connection URLs with embedded credentials, password and API key assignments, URL query-param secrets, credit card numbers, and US Social Security Numbers — replacing each with a labelled placeholder (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.) before the context is sent to any AI provider.
+
+User-Defined Patterns: Add organisation-specific regexes to `extra_patterns` in `config.toml` to extend the built-in set. Built-in patterns always run regardless. Hit counts by category are visible in `daemoneye status` for a quick audit view.
+
+Sudo Password Handling: When a background command requires `sudo`, the chat interface prompts for your password with terminal echo disabled. The password is piped directly to `sudo -S` in memory and is never written to disk, stored in a log, or transmitted to the AI.
+
+sudoers.d Integration: `daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the named script — no wildcards, no `ALL`. Ghost shells can only escalate privilege for pre-vetted scripts that have both an `auto_approve_scripts` entry in the runbook and a corresponding sudoers rule.
+
 ---
 
 ## Platform Support
