@@ -144,7 +144,7 @@ daemoneye setup
 
 #### Directory layout
 
-`daemoneye setup` creates the following tree. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe.
+`daemoneye setup` creates the following tree. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe. `~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, logs — lives in a single place:
 
 ```
 ~/.daemoneye/
@@ -278,29 +278,6 @@ daemoneye chat
 | `daemoneye schedule windows` | List leftover tmux windows from failed scheduled jobs (`de-*`) |
 
 ---
-
-## Runtime Root
-
-`~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, logs — lives in a single FHS-inspired tree:
-
-```
-~/.daemoneye/
-  etc/config.toml          ← edit to configure the daemon
-  scripts/                 ← automation scripts
-  runbooks/                ← procedure runbooks
-  memory/                  ← persistent AI memory
-  bin/                     ← executable symlinks / wrappers
-  lib/                     ← shared SDK modules
-  var/run/daemoneye.sock   ← IPC socket
-  var/run/schedules.json   ← job store
-  var/log/events.jsonl         ← structured event log
-  var/log/daemon.log       ← daemon process log
-  var/log/panes/           ← background-command output archives
-  etc/prompts/         ← system prompt files
-  var/log/sessions/        ← conversation history
-```
-
-Run `daemoneye setup` to initialise the tree and print the systemd + tmux configuration.
 
 ## Configuration
 
