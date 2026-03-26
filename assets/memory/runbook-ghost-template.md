@@ -32,6 +32,6 @@ Lessons learned and manual overrides performed by humans.
 ## Frontmatter Fields for Ghost Mode
 
 - `enabled`: Set to `true` to allow DaemonEye to spawn an autonomous Ghost Shell for this alert.
-- `auto_approve_scripts`: Script names in `~/.daemoneye/scripts/` that may use sudo when `run_with_sudo: false`. Not needed when `run_with_sudo: true`.
-- `run_with_sudo`: `true` = the ghost may run **any** sudo command freely (broad root access). Pair with NOPASSWD sudoers rules for password-free execution. `false` (default) = only scripts listed in `auto_approve_scripts` may use sudo; all other sudo commands are denied.
+- `auto_approve_scripts`: Script names in `~/.daemoneye/scripts/` the ghost may run with sudo. Always required for scripts that need elevated privileges. Each script must have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`.
+- `run_with_sudo`: `true` = the daemon automatically prepends `sudo` when running scripts in `auto_approve_scripts` — the ghost just writes `script.sh` and it executes as `sudo /path/to/script.sh`. `false` (default) = scripts run as the current user; the ghost must explicitly write `sudo script.sh` to run with root. Either way, only scripts in `auto_approve_scripts` may use sudo — arbitrary sudo commands are always denied.
 - `max_ghost_turns`: Maximum number of AI turns before the session is forcibly stopped. Defaults to 20 if omitted or set to 0.

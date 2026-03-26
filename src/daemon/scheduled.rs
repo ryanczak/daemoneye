@@ -82,9 +82,15 @@ pub async fn run_scheduled_job(
                         store.mark_done(&job.id, false, Some(msg));
                     }
                     Ok(sid) => {
+                        let session_log = crate::daemon::session::session_file(&sid)
+                            .display()
+                            .to_string();
                         inject_ghost_event(
                             &sessions,
-                            &format!("[Ghost Shell Started] Scheduled job '{}' started autonomous session", job.name),
+                            &format!(
+                                "[Ghost Shell Started] Scheduled job '{}' started autonomous session — session log: {}",
+                                job.name, session_log
+                            ),
                         );
                         let result =
                             trigger_ghost_turn(&sid, &sessions, &config, &cache, &schedule_store)
@@ -93,7 +99,10 @@ pub async fn run_scheduled_job(
                             Ok(()) => {
                                 inject_ghost_event(
                                     &sessions,
-                                    &format!("[Ghost Shell Completed] Scheduled job '{}' finished", job.name),
+                                    &format!(
+                                        "[Ghost Shell Completed] Scheduled job '{}' finished — session log: {}",
+                                        job.name, session_log
+                                    ),
                                 );
                                 store.mark_done(&job.id, true, None);
                             }
@@ -101,7 +110,10 @@ pub async fn run_scheduled_job(
                                 log::error!("Scheduled ghost job '{}' failed: {}", job.name, e);
                                 inject_ghost_event(
                                     &sessions,
-                                    &format!("[Ghost Shell Failed] Scheduled job '{}' error: {}", job.name, e),
+                                    &format!(
+                                        "[Ghost Shell Failed] Scheduled job '{}' error: {} — session log: {}",
+                                        job.name, e, session_log
+                                    ),
                                 );
                                 store.mark_done(
                                     &job.id,
@@ -137,6 +149,15 @@ pub async fn run_scheduled_job(
             return;
         }
         ActionOn::Command(c) => {
+            if c.is_empty() {
+                let msg = format!(
+                    "Scheduled job '{}' has an empty command and no ghost runbook; marking failed",
+                    job.name
+                );
+                log::error!("{}", msg);
+                store.mark_done(&job.id, false, Some(msg));
+                return;
+            }
             log::warn!(
                 "Scheduled job '{}' uses deprecated ActionOn::Command; migrate to ActionOn::Script",
                 job.name

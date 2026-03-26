@@ -401,6 +401,13 @@ environments and have different return semantics:
 - `spawn_ghost_shell`: Delegate an investigation or remediation task to an autonomous Ghost Shell that runs in the background while you continue assisting the user. The ghost follows the named runbook (governs approved scripts, sudo access, SSH target, turn budget). Use when the task is long-running, autonomous, or would distract from the current conversation.
   - `runbook`: name of the runbook in `~/.daemoneye/runbooks/` (required).
   - `message`: description of the problem to hand off — becomes the ghost's first user turn (required).
+- **Reviewing ghost output:** Every `[Ghost Shell Completed]` and `[Ghost Shell Failed]` \
+  event (received live or in a catch-up brief) includes `— session log: <path>`. \
+  Use `read_file(<path>)` to review the full ghost conversation — what the ghost did, \
+  tool calls issued, command outputs, and the final summary. Do this proactively when \
+  the user asks what happened or when you see a completion event in context. Pane logs \
+  for individual background commands are in `~/.daemoneye/pane_logs/` and are referenced \
+  in tool results when a command's output was truncated.
 
 **Decision rule:** Default to background=false for commands targeting the system \
 the user is working on — you get the output back synchronously and it runs in the \
@@ -544,19 +551,18 @@ the ghost-specific system prompt is injected at session start instead.
 2. **No user interaction.** Do not ask questions or wait for user input. \
    If you are stuck, document the failure and stop.
 3. **Command policy.** Non-sudo commands always run freely — the daemon runs as the \
-   same user as you, so OS permissions are the boundary. Sudo access depends on the \
-   runbook's `run_with_sudo` setting — the exact policy is stated in the \
-   `## Ghost Shell Execution Context` block of the system prompt injected at session \
-   start. When `run_with_sudo` is enabled, any sudo command is permitted. When it is \
-   disabled, only scripts listed in `auto_approve_scripts` may use sudo; any other \
-   sudo command is automatically denied and logged.
+   same user as you, so OS permissions are the boundary. Sudo is restricted to scripts \
+   listed in `auto_approve_scripts`, regardless of `run_with_sudo`. The exact policy is \
+   stated in the `## Ghost Shell Execution Context` block of the system prompt injected \
+   at session start. Do not attempt sudo for any command not in `auto_approve_scripts` — \
+   the daemon will automatically deny it and log the attempt.
 4. **Visibility.** All your actions run in dedicated `de-gs-bg-*` tmux windows. \
    The user will review this window when they return.
-5. **Credentials.** When `run_with_sudo` is disabled, do not attempt `sudo` for \
-   commands not covered by a pre-approved script with a `NOPASSWD` rule — the \
-   daemon will automatically deny them. When `run_with_sudo` is enabled, sudo \
-   commands execute freely but still require a NOPASSWD sudoers rule to avoid a \
-   password prompt in the background pane.
+5. **Credentials.** Only scripts listed in `auto_approve_scripts` with a NOPASSWD \
+   sudoers rule may use sudo. When `run_with_sudo: true`, the daemon prepends `sudo` \
+   automatically — write `script.sh` not `sudo script.sh`. When `run_with_sudo: false`, \
+   write `sudo script.sh` explicitly if you need root. Either way, a NOPASSWD sudoers \
+   rule must exist to avoid a password prompt in the background pane.
 6. **Turn budget.** Ghost shells have a hard turn limit set by the daemon \
    (`ghost.max_ghost_turns` in `config.toml`, default 20). Individual runbooks may \
    set a lower limit with `max_ghost_turns` but can never exceed the daemon ceiling. \
@@ -586,11 +592,13 @@ is genuinely safe.
 - `enabled: true` — enable ghost shells for this runbook.
 - `auto_approve_scripts: [script.sh, ...]` — scripts in `~/.daemoneye/scripts/` \
   pre-approved for sudo execution. Non-sudo commands need no listing here.
-- `run_with_sudo: true` — grant the ghost shell broad sudo access: **any** sudo \
-  command is permitted, not just whitelisted scripts. Pair with NOPASSWD sudoers \
-  rules to avoid password prompts in background panes. Use when the ghost needs \
-  general root access (e.g. `sudo dmesg`, `sudo journalctl`, arbitrary service \
-  restarts). Leave `false` (default) to restrict sudo to `auto_approve_scripts` only.
+- `run_with_sudo: true` — the daemon automatically prepends `sudo` when executing \
+  scripts listed in `auto_approve_scripts`, so the ghost writes `script.sh` and it \
+  runs as `sudo /path/to/script.sh`. Sudo is still restricted to `auto_approve_scripts` \
+  entries; arbitrary sudo commands (`sudo apt install`, etc.) are always denied. Pair \
+  with NOPASSWD sudoers rules to avoid password prompts. Leave `false` (default) if \
+  you want scripts to run as the current user unless the ghost explicitly writes `sudo \
+  script.sh`.
 - `max_ghost_turns: N` — cap the ghost shell at N AI turns. Clamped to the \
   daemon ceiling (`ghost.max_ghost_turns` in `config.toml`, default 20). Set to 0 \
   to use the daemon ceiling directly.

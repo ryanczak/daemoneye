@@ -71,16 +71,20 @@ This writes `/etc/sudoers.d/daemoneye-<name>` with:
 ```
 Then validates the file with `sudo visudo -c` (rolls back on failure).
 
-### Enable sudo in a runbook
+### Enable automatic sudo in a runbook
 
-Set `run_with_sudo: true` in the runbook frontmatter. DaemonEye prepends `sudo` when executing the listed `auto_approve_scripts`. The sudoers rule must already be in place — the daemon will not prompt for a password.
+Set `run_with_sudo: true` in the runbook frontmatter. DaemonEye then automatically prepends `sudo` when executing scripts listed in `auto_approve_scripts` — the ghost AI just writes `script.sh` and it runs as root. The sudoers rule must already be in place; the daemon will not prompt for a password.
+
+With `run_with_sudo: false` (default), scripts in `auto_approve_scripts` run as the current user unless the ghost explicitly writes `sudo script.sh`.
+
+Either way, only scripts in `auto_approve_scripts` may use sudo — arbitrary sudo commands (e.g. `sudo apt install`) are always denied by the ghost policy.
 
 ### Checklist before enabling `run_with_sudo`
 
 1. `write_script("my-script.sh", ...)` — create and review the script
 2. `daemoneye install-sudoers my-script.sh` — install the NOPASSWD rule
 3. Add `my-script.sh` to `auto_approve_scripts` in the runbook frontmatter
-4. Set `run_with_sudo: true` in the runbook frontmatter
+4. Set `run_with_sudo: true` in the runbook frontmatter so it runs automatically with sudo
 
 ### Security notes
 

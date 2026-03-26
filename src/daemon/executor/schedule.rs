@@ -27,12 +27,31 @@ where
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
     #[allow(deprecated)]
-    let action = if let Some(rb) = ghost_runbook {
-        ActionOn::Ghost { runbook: rb.to_string() }
+    let (action, runbook) = if let Some(rb) = ghost_runbook {
+        (ActionOn::Ghost { runbook: rb.to_string() }, None)
+    } else if command.is_empty() && !is_script {
+        if let Some(rb) = runbook {
+            // AI put the runbook name in the watchdog `runbook` field instead of `ghost_runbook`.
+            // Infer ghost mode and clear the runbook field so it isn't misused as a watchdog key.
+            log::warn!(
+                "schedule_command: ghost_runbook not set but command is empty and runbook='{}'; \
+                 inferring ghost mode. Use ghost_runbook for ghost jobs.",
+                rb
+            );
+            (ActionOn::Ghost { runbook: rb.to_string() }, None)
+        } else {
+            // No ghost_runbook, no command, no script — nothing to run.
+            return Ok(ToolCallOutcome::Result(
+                "Error: command is empty and ghost_runbook is not set. \
+                 To schedule a Ghost Shell job set ghost_runbook to a runbook name. \
+                 To schedule a script job set command to a script name and is_script=true."
+                    .to_string(),
+            ));
+        }
     } else if is_script {
-        ActionOn::Script(command.to_string())
+        (ActionOn::Script(command.to_string()), runbook)
     } else {
-        ActionOn::Command(command.to_string())
+        (ActionOn::Command(command.to_string()), runbook)
     };
 
     let kind = if let Some(expr) = cron {

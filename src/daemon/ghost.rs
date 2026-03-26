@@ -238,10 +238,11 @@ pub async fn trigger_ghost_turn(
         );
     }
 
-    let (tx_duplex, _rx_duplex) = tokio::io::duplex(4096);
-    let (rx_half, tx_half) = tokio::io::split(tx_duplex);
-    let mut tx = tx_half;
-    let mut rx = BufReader::new(rx_half);
+    // Ghost shells never have a real IPC client — use sink/empty so that
+    // send_response_split writes never block (they're discarded) and reads
+    // immediately return EOF (ghost policy bypasses all approval prompts anyway).
+    let mut tx = tokio::io::sink();
+    let mut rx = BufReader::new(tokio::io::empty());
 
     let api_key = config.ai.resolve_api_key();
     let client: Arc<Box<dyn crate::ai::AiClient>> = Arc::new(make_client(

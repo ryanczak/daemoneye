@@ -48,8 +48,8 @@ ssh_target: ""
 | Field | Description |
 |---|---|
 | `enabled` | Must be `true` for webhook-triggered ghosts |
-| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` pre-approved for sudo execution. When `run_with_sudo: false`, only these scripts may use sudo. Not needed when `run_with_sudo: true`. |
-| `run_with_sudo` | `true` = all sudo commands are freely allowed (broad root access). `false` (default) = only scripts listed in `auto_approve_scripts` may use sudo. |
+| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` the ghost may run. Only these scripts may use sudo (see `run_with_sudo`). Always required for scripts that need elevated privileges. |
+| `run_with_sudo` | `true` = the daemon automatically prepends `sudo` when executing scripts in `auto_approve_scripts` — the ghost AI just writes `script.sh` and it runs as root. `false` (default) = scripts run as the current user unless the ghost explicitly writes `sudo script.sh` (still requires the script to be in `auto_approve_scripts`). Either way, only scripts in `auto_approve_scripts` may use sudo; arbitrary sudo commands (e.g. `sudo apt install`) are always denied. |
 | `max_ghost_turns` | Hard turn limit (0 = use daemon default of 20) |
 | `ssh_target` | If set (e.g. `user@host`), all commands are wrapped in `ssh <target> <cmd>` |
 
@@ -58,10 +58,11 @@ ssh_target: ""
 The ghost operates under a simple OS-delegation model:
 
 - **Non-sudo commands** — always allowed. The daemon runs as the same user as you; OS file permissions are the boundary.
-- **`run_with_sudo: true`** — all sudo commands are allowed. The runbook author has explicitly granted broad root access. Pair with NOPASSWD sudoers rules for password-free operation.
-- **`run_with_sudo: false` (default) — sudo commands** must be listed in `auto_approve_scripts` AND have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`. Any other sudo command is auto-denied and logged.
+- **Sudo commands** — only allowed when the script basename is listed in `auto_approve_scripts` AND has a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`. Any other sudo command is auto-denied and logged.
+- **`run_with_sudo: true`** — the daemon auto-prepends `sudo` when executing approved scripts, so the ghost AI just writes `script.sh` instead of `sudo script.sh`. Does NOT grant permission to run arbitrary sudo commands.
+- **`run_with_sudo: false` (default)** — approved scripts run as the current user unless the ghost explicitly writes `sudo script.sh`.
 
-This means the ghost can freely run `ps`, `df`, `curl`, `journalctl`, `systemctl status`, etc. without any configuration. Sudo access requires either `run_with_sudo: true` (broad) or explicit `auto_approve_scripts` entries (targeted).
+This means the ghost can freely run `ps`, `df`, `curl`, `journalctl`, `systemctl status`, etc. without any configuration. Sudo access always requires an explicit `auto_approve_scripts` entry and a NOPASSWD sudoers rule.
 
 ## tmux Window Naming
 
@@ -82,10 +83,12 @@ The daemon limits concurrent ghosts via `max_concurrent_ghosts` in `config.toml`
 ## Lifecycle Events in Catch-up Briefs
 
 All ghost lifecycle events are injected into active sessions and surfaced in catch-up briefs after a detach:
-- `[Ghost Shell Started]` — session created and first AI turn started
-- `[Ghost Shell Completed]` — ghost finished within its turn budget
-- `[Ghost Shell Failed]` — an error stopped the ghost (session ID included)
+- `[Ghost Shell Started]` — session created and first AI turn started — includes `— session log: <path>`
+- `[Ghost Shell Completed]` — ghost finished within its turn budget — includes `— session log: <path>`
+- `[Ghost Shell Failed]` — an error stopped the ghost — includes `— session log: <path>`
 - `[Ghost Shell Skipped]` — concurrency cap prevented the ghost from starting
+
+When you see a `[Ghost Shell Completed]` or `[Ghost Shell Failed]` event, use `read_file(<path>)` on the session log path to review the full ghost conversation — what it investigated, which commands it ran, and the final outcome summary. Pane logs for individual background commands are in `~/.daemoneye/pane_logs/` and are referenced in tool results when output was truncated.
 
 ## Troubleshooting Ghost Shells
 

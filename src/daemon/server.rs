@@ -1267,6 +1267,9 @@ pub async fn handle_client(
                                 let ghost_sid2 = ghost_sid.clone();
                                 let ghost_rb2 = ghost_rb.clone();
                                 tokio::spawn(async move {
+                                    let session_log = crate::daemon::session::session_file(&ghost_sid2)
+                                        .display()
+                                        .to_string();
                                     match crate::daemon::ghost::trigger_ghost_turn(
                                         &ghost_sid2,
                                         &ghost_sessions,
@@ -1277,7 +1280,10 @@ pub async fn handle_client(
                                         Ok(()) => {
                                             crate::webhook::inject_ghost_event(
                                                 &ghost_sessions,
-                                                &format!("[Ghost Shell Completed] AI-requested ghost shell finished for runbook: {}", ghost_rb2),
+                                                &format!(
+                                                    "[Ghost Shell Completed] AI-requested ghost shell finished for runbook: {} — session log: {}",
+                                                    ghost_rb2, session_log
+                                                ),
                                             );
                                         }
                                         Err(e) => {
@@ -1285,7 +1291,10 @@ pub async fn handle_client(
                                             crate::daemon::stats::inc_ghosts_failed();
                                             crate::webhook::inject_ghost_event(
                                                 &ghost_sessions,
-                                                &format!("[Ghost Shell Failed] AI-requested ghost shell error for runbook: {} — {}", ghost_rb2, e),
+                                                &format!(
+                                                    "[Ghost Shell Failed] AI-requested ghost shell error for runbook: {} — {} — session log: {}",
+                                                    ghost_rb2, e, session_log
+                                                ),
                                             );
                                         }
                                     }

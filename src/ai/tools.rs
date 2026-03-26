@@ -138,17 +138,20 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "runbook",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional name of a runbook for watchdog AI analysis of script output (script mode only).",
+                description: "Watchdog runbook: name of a runbook for AI analysis of script \
+                              output after the script finishes (script mode only). NOT for ghost \
+                              jobs — use ghost_runbook for that.",
             },
             ParamDef {
                 name: "ghost_runbook",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Name of a runbook to use for autonomous Ghost Shell execution. \
-                              When set, the job spawns a Ghost Shell session that follows the \
-                              runbook autonomously instead of running a command. The runbook \
-                              frontmatter controls ghost policy (approved scripts, sudo, SSH \
-                              target, turn budget). Mutually exclusive with command/is_script.",
+                description: "Ghost mode: name of a runbook that governs an autonomous Ghost \
+                              Shell session. When set, the job spawns a Ghost Shell instead of \
+                              running a command — do NOT also set command/is_script/runbook. \
+                              The runbook frontmatter controls ghost policy (approved scripts, \
+                              sudo, SSH target, turn budget). Mutually exclusive with \
+                              command/is_script.",
             },
             ParamDef {
                 name: "cron",

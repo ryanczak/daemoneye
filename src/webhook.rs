@@ -710,9 +710,15 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             tokio::spawn(async move {
                 match GhostManager::start_session(sessions.clone(), &rb_clone, &alert_msg, crate::daemon::GS_BG_WINDOW_PREFIX).await {
                     Ok(sid) => {
+                        let session_log = crate::daemon::session::session_file(&sid)
+                            .display()
+                            .to_string();
                         inject_ghost_event(
                             &sessions,
-                            &format!("[Ghost Shell Started] Autonomous remediation triggered for alert: {}", rb_clone.name),
+                            &format!(
+                                "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
+                                rb_clone.name, session_log
+                            ),
                         );
 
                         match crate::daemon::ghost::trigger_ghost_turn(
@@ -725,7 +731,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                             Ok(()) => {
                                 inject_ghost_event(
                                     &sessions,
-                                    &format!("[Ghost Shell Completed] Autonomous remediation finished for alert: {}", rb_clone.name),
+                                    &format!(
+                                        "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
+                                        rb_clone.name, session_log
+                                    ),
                                 );
                             }
                             Err(e) => {
@@ -733,7 +742,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                                 crate::daemon::stats::inc_ghosts_failed();
                                 inject_ghost_event(
                                     &sessions,
-                                    &format!("[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {}", rb_clone.name, e),
+                                    &format!(
+                                        "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
+                                        rb_clone.name, e, session_log
+                                    ),
                                 );
                             }
                         }

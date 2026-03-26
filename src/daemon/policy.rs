@@ -1,8 +1,11 @@
 /// Security policy for autonomous Ghost Shells.
 ///
 /// Trust model: non-sudo commands are always allowed — OS user permissions are the
-/// boundary.  Sudo commands must be pre-approved via `auto_approve_scripts` (paired
-/// with a `/etc/sudoers.d/` NOPASSWD entry created by `daemoneye install-sudoers`).
+/// boundary.  Sudo commands are only allowed when the script basename appears in
+/// `auto_approve_scripts` (paired with a `/etc/sudoers.d/` NOPASSWD entry created
+/// by `daemoneye install-sudoers`).  `run_with_sudo` controls whether the daemon
+/// auto-prepends `sudo` when executing approved scripts — it does NOT grant broad
+/// sudo access to arbitrary commands.
 #[derive(Debug, Clone)]
 pub struct GhostPolicy {
     /// List of exact script names (e.g. `restart-nginx.sh`) pre-approved for sudo
@@ -29,23 +32,21 @@ impl GhostPolicy {
     ///
     /// - **Non-sudo commands** are always allowed; the OS user-permission model is the
     ///   boundary — the ghost runs as the same user as the daemon.
-    /// - **`run_with_sudo: true`** — all sudo commands are permitted.  The runbook
-    ///   author has explicitly granted broad sudo access to this ghost shell.
-    /// - **Otherwise, sudo commands** must have their script basename listed in
-    ///   `auto_approve_scripts`.  The leading `sudo` token and any absolute path prefix
-    ///   are stripped before the basename comparison so that both `restart-nginx.sh`
-    ///   and `sudo /home/user/.daemoneye/scripts/restart-nginx.sh` match the same entry.
+    /// - **Sudo commands** must have their script basename listed in
+    ///   `auto_approve_scripts`, regardless of `run_with_sudo`.  The leading `sudo`
+    ///   token and any absolute path prefix are stripped before the basename comparison
+    ///   so that both `restart-nginx.sh` and
+    ///   `sudo /home/user/.daemoneye/scripts/restart-nginx.sh` match the same entry.
+    /// - **`run_with_sudo`** only controls whether `resolve_command()` auto-prepends
+    ///   `sudo` when executing an approved script.  It does NOT grant permission to
+    ///   run arbitrary sudo commands.
     pub fn is_safe(&self, command: &str) -> bool {
         if !crate::daemon::utils::command_has_sudo(command) {
             return true;
         }
 
-        // run_with_sudo grants broad sudo access — any sudo command is allowed.
-        if self.run_with_sudo {
-            return true;
-        }
-
         // Sudo command — check script whitelist.
+        // run_with_sudo does not affect is_safe; it only controls auto-sudo in resolve_command.
         let mut tokens = command.split_whitespace();
         let first_token = tokens.next().unwrap_or("");
         let effective_token = if first_token == "sudo" {
@@ -204,13 +205,16 @@ mod tests {
     }
 
     #[test]
-    fn is_safe_run_with_sudo_allows_any_sudo_command() {
-        // run_with_sudo grants broad sudo access — arbitrary sudo commands are allowed.
+    fn is_safe_run_with_sudo_does_not_allow_arbitrary_sudo() {
+        // run_with_sudo only auto-prepends sudo to approved scripts; it does NOT
+        // permit arbitrary sudo commands.
         let p = sudo_policy(&["ghost-test-remediation.sh"]);
-        assert!(p.is_safe("sudo dmesg | tail -n 50"));
-        assert!(p.is_safe("sudo journalctl -u nginx --since '1 hour ago'"));
-        assert!(p.is_safe("sudo apt install -y vim"));
-        assert!(p.is_safe("sudo rm -rf /tmp/old-data"));
+        assert!(!p.is_safe("sudo dmesg | tail -n 50"));
+        assert!(!p.is_safe("sudo journalctl -u nginx --since '1 hour ago'"));
+        assert!(!p.is_safe("sudo apt install -y vim"));
+        assert!(!p.is_safe("sudo rm -rf /tmp/old-data"));
+        // But the whitelisted script is still allowed with sudo.
+        assert!(p.is_safe("sudo ghost-test-remediation.sh"));
     }
 
     #[test]
