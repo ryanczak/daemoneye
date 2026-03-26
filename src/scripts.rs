@@ -120,17 +120,15 @@ pub fn list_scripts_with_tags() -> Result<Vec<(ScriptInfo, Vec<String>)>> {
 fn parse_meta_tags(content: &str) -> Vec<String> {
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("tags") && trimmed.contains('=') {
-            if let Some(rest) = trimmed.split_once('=').map(|(_, v)| v.trim()) {
-                if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        if trimmed.starts_with("tags") && trimmed.contains('=')
+            && let Some(rest) = trimmed.split_once('=').map(|(_, v)| v.trim())
+                && let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
                     return inner
                         .split(',')
                         .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
                         .filter(|s| !s.is_empty())
                         .collect();
                 }
-            }
-        }
     }
     Vec::new()
 }

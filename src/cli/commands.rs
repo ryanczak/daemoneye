@@ -509,7 +509,7 @@ async fn run_chat_inner_raw(
             "",
             Some(&session_id),
             current_prompt.as_deref(),
-            &stdin,
+            stdin,
             Some(cw),
             approval,
             old_termios,
@@ -739,11 +739,10 @@ async fn run_chat_inner_raw(
 ///    from other windows in the session.
 fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<String> {
     // 1. Check persisted preference.
-    if let Some(saved) = crate::pane_prefs::get(session) {
-        if saved != chat_pane && crate::tmux::pane_exists(&saved) {
+    if let Some(saved) = crate::pane_prefs::get(session)
+        && saved != chat_pane && crate::tmux::pane_exists(&saved) {
             return Some(saved);
         }
-    }
 
     // 2 & 3. Siblings in the same tmux window.
     let window_id = crate::tmux::pane_window_id(chat_pane).unwrap_or_default();
@@ -887,13 +886,12 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
         println!("No foreground target set.");
         return None;
     }
-    if let Ok(n) = input.parse::<usize>() {
-        if n >= 1 && n <= candidates.len() {
+    if let Ok(n) = input.parse::<usize>()
+        && n >= 1 && n <= candidates.len() {
             let chosen = candidates[n - 1].clone();
             crate::pane_prefs::save(session, &chosen);
             return Some(chosen);
         }
-    }
     println!("Invalid choice. No foreground target set.");
     None
 }
@@ -1213,8 +1211,8 @@ async fn ask_with_session(
                 // Visually highlight the target pane while the user decides,
                 // then immediately restore focus to the chat pane so the user
                 // does not have to manually switch back.
-                if let Some(ref tp) = target_pane {
-                    if !background {
+                if let Some(ref tp) = target_pane
+                    && !background {
                         let _ = std::process::Command::new("tmux")
                             .args(["select-pane", "-t", tp, "-P", "bg=colour17"])
                             .output();
@@ -1224,7 +1222,6 @@ async fn ask_with_session(
                                 .output();
                         }
                     }
-                }
 
                 let is_sudo = command_has_sudo(&command);
                 let auto_approved = if is_sudo {
@@ -1294,15 +1291,13 @@ async fn ask_with_session(
 
                 // Remove highlight when denied or redirected — daemon won't execute
                 // so it won't clean up the highlight itself.
-                if !approved {
-                    if let Some(ref tp) = target_pane {
-                        if !background {
+                if !approved
+                    && let Some(ref tp) = target_pane
+                        && !background {
                             let _ = std::process::Command::new("tmux")
                                 .args(["select-pane", "-t", tp, "-P", "default"])
                                 .output();
                         }
-                    }
-                }
 
                 md.reset();
                 send_request(
@@ -1506,12 +1501,11 @@ async fn ask_with_session(
                     let name_w = jobs.iter().map(|j| j.name.len()).max().unwrap_or(4).max(4);
                     let kind_w = jobs.iter().map(|j| j.kind.len()).max().unwrap_or(8).max(8);
                     println!(
-                        "  {:<id_w$}  {:<name_w$}  {:<kind_w$}  {:<12}  {}",
+                        "  {:<id_w$}  {:<name_w$}  {:<kind_w$}  {:<12}  Next Run",
                         "ID",
                         "Name",
                         "Schedule",
                         "Status",
-                        "Next Run",
                         id_w = id_w,
                         name_w = name_w,
                         kind_w = kind_w
@@ -1706,7 +1700,7 @@ async fn ask_with_session(
                         .max()
                         .unwrap_or(3)
                         .max(3);
-                    println!("  {:<cat_w$}  {}", "Category", "Key", cat_w = cat_w);
+                    println!("  {:<cat_w$}  Key", "Category", cat_w = cat_w);
                     println!("  {}  {}", "─".repeat(cat_w), "─".repeat(key_w));
                     for e in &entries {
                         println!(

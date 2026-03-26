@@ -355,11 +355,9 @@ pub async fn handle_client(
                 if let Ok(mut map) = crate::daemon::background::BG_COMMAND_MAP
                     .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
                     .lock()
-                {
-                    if let Some(cmd_id) = map.remove(&pane_id) {
+                    && let Some(cmd_id) = map.remove(&pane_id) {
                         crate::daemon::stats::finish_command(cmd_id, exit_code);
                     }
-                }
                 // Fix C: use get_or_init so the channel always exists, even if
                 // NotifyComplete arrives before any completion monitor has subscribed.
                 let tx = crate::daemon::session::COMPLETE_TX.get_or_init(|| {
@@ -533,8 +531,8 @@ pub async fn handle_client(
             // `pipe_source_pane = Some("")` is used as a "don't retry" sentinel:
             // it means we attempted and failed (or deliberately skipped), so we
             // fall back to capture-pane for all subsequent turns without retrying.
-            if entry.pipe_source_pane.is_none() {
-                if let Some(ref pane_id) = client_pane {
+            if entry.pipe_source_pane.is_none()
+                && let Some(ref pane_id) = client_pane {
                     // Skip if client_pane == chat_pane: the chat pane runs the
                     // daemoneye UI, not the user's work.  Piping it is useless and
                     // can transiently fail immediately after split-window creates the
@@ -560,7 +558,6 @@ pub async fn handle_client(
                         entry.pipe_source_pane = Some(String::new()); // don't retry
                     }
                 }
-            }
 
             // N15: generate a catch-up brief if the client was detached and new
             // messages arrived while no terminal was attached (background jobs,
@@ -1113,8 +1110,8 @@ pub async fn handle_client(
                         // In-memory: fast lookup within the same daemon run.
                         // On-disk: survives daemon restarts.
                         if let Some(ref id) = session_id {
-                            if let Ok(mut store) = sessions.lock() {
-                                if let Some(entry) = store.get_mut(id) {
+                            if let Ok(mut store) = sessions.lock()
+                                && let Some(entry) = store.get_mut(id) {
                                     entry.messages = messages.clone();
                                     entry.last_accessed = Instant::now();
                                     entry.last_prompt_tokens = usage.prompt_tokens;
@@ -1122,7 +1119,6 @@ pub async fn handle_client(
                                         entry.chat_pane = chat_pane.clone();
                                     }
                                 }
-                            }
                             if needs_compaction {
                                 write_session_file(id, &messages);
                             } else {
@@ -1154,13 +1150,11 @@ pub async fn handle_client(
 
                     // Update session token tracking so the budget line in the next
                     // prompt reflects the actual context size of this turn.
-                    if let Some(ref id) = session_id {
-                        if let Ok(mut store) = sessions.lock() {
-                            if let Some(entry) = store.get_mut(id) {
+                    if let Some(ref id) = session_id
+                        && let Ok(mut store) = sessions.lock()
+                            && let Some(entry) = store.get_mut(id) {
                                 entry.last_prompt_tokens = usage.prompt_tokens;
                             }
-                        }
-                    }
 
                     // Push one assistant message listing all tool calls.
                     messages.push(Message {

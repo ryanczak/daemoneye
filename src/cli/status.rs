@@ -213,12 +213,10 @@ pub async fn run_status() -> Result<()> {
                     let mut redact_sorted: Vec<_> = redaction_counts.into_iter().collect();
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-                    let ghost_metrics = vec![
-                        (format!("{:<10}", " Active:   "), ghosts_active.to_string()),
+                    let ghost_metrics = [(format!("{:<10}", " Active:   "), ghosts_active.to_string()),
                         (format!("{:<10}", " Launched: "), ghosts_launched.to_string()),
                         (format!("{:<10}", " Completed:"), ghosts_completed.to_string()),
-                        (format!("{:<10}", " Failed:   "), ghosts_failed.to_string()),
-                    ];
+                        (format!("{:<10}", " Failed:   "), ghosts_failed.to_string())];
 
                     for (i, (rtype, count)) in redact_sorted.into_iter().enumerate() {
                         let left_col = format!(" {:<18} {}", rtype + ":", count);
@@ -326,7 +324,7 @@ pub async fn run_status() -> Result<()> {
                         if lk == "§" || rk == "§" {
                             let l_str = if lk == "§" {
                                 let vis_len = lv.chars().count();
-                                let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                let pad = col_width.saturating_sub(vis_len);
                                 format!("{}{}{reset}{}", blood_red, lv, " ".repeat(pad))
                             } else {
                                 // normal left side
@@ -340,12 +338,12 @@ pub async fn run_status() -> Result<()> {
                                 } else { lv.to_string() };
                                 if lk.is_empty() {
                                     let vis_len = lv_trunc.chars().count();
-                                    let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                    let pad = col_width.saturating_sub(vis_len);
                                     format!("{}{}{reset}{}", l_color, lv_trunc, " ".repeat(pad))
                                 } else {
                                     let f = format!(" {:<18}{}{}{reset}", lk, l_color, lv_trunc);
                                     let vis_len = 19 + lv_trunc.chars().count();
-                                    let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                    let pad = col_width.saturating_sub(vis_len);
                                     format!("{}{}", f, " ".repeat(pad))
                                 }
                             };
@@ -418,11 +416,7 @@ pub async fn run_status() -> Result<()> {
                             } else {
                                 let f = format!(" {:<18}{}{}{reset}", lk, l_color, lv_trunc);
                                 let vis_len = 19 + lv_trunc.chars().count();
-                                let pad = if vis_len < col_width {
-                                    col_width - vis_len
-                                } else {
-                                    0
-                                };
+                                let pad = col_width.saturating_sub(vis_len);
                                 format!("{}{}", f, " ".repeat(pad))
                             };
 
@@ -462,17 +456,13 @@ pub async fn run_status() -> Result<()> {
                                 format!("{:<col_width$}", "", col_width = col_width)
                             } else {
                                 let vis_len = lv_trunc.chars().count();
-                                let pad = if vis_len < col_width { col_width - vis_len } else { 0 };
+                                let pad = col_width.saturating_sub(vis_len);
                                 format!("{}{}{reset}{}", l_color, lv_trunc, " ".repeat(pad))
                             }
                         } else {
                             let f = format!(" {:<18}{}{}{reset}", lk, l_color, lv_trunc);
                             let vis_len = 19 + lv_trunc.chars().count();
-                            let pad = if vis_len < col_width {
-                                col_width - vis_len
-                            } else {
-                                0
-                            };
+                            let pad = col_width.saturating_sub(vis_len);
                             format!("{}{}", f, " ".repeat(pad))
                         };
 

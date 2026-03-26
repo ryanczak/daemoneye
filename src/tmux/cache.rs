@@ -262,12 +262,11 @@ impl SessionCache {
         }
 
         // Session environment (P5) — best-effort; ignore errors.
-        if let Ok(env) = tmux::session_environment(&session) {
-            if !env.is_empty() {
+        if let Ok(env) = tmux::session_environment(&session)
+            && !env.is_empty() {
                 let mut env_lock = self.environment.write().unwrap_or_log();
                 *env_lock = env;
             }
-        }
 
         // Window topology (P4) — best-effort; ignore errors.
         if let Ok(wins) = tmux::list_windows(&session) {
@@ -284,7 +283,7 @@ impl SessionCache {
     /// falls back to the first 50 characters of the last non-empty line.
     /// These heuristics are best-effort: unusual prompts or tools may not match.
     fn summarize(&self, buffer: &str) -> String {
-        let Some(last_line) = buffer.lines().filter(|l| !l.trim().is_empty()).last() else {
+        let Some(last_line) = buffer.lines().filter(|l| !l.trim().is_empty()).next_back() else {
             return "Empty pane".to_string();
         };
         let last_line = last_line.trim();
@@ -494,12 +493,12 @@ impl SessionCache {
 
         let mut others: Vec<_> = panes
             .iter()
-            .filter(|(id, _)| source_pane.map_or(true, |s| s != id.as_str()))
-            .filter(|(id, _)| chat_pane.map_or(true, |c| c != id.as_str()))
+            .filter(|(id, _)| source_pane != Some(id.as_str()))
+            .filter(|(id, _)| chat_pane != Some(id.as_str()))
             .collect();
         others.sort_by_key(|(id, _)| id.as_str());
         for (id, state) in others {
-            let pane_label = if chat_window.map_or(false, |cw| cw == state.window_name) {
+            let pane_label = if chat_window.is_some_and(|cw| cw == state.window_name) {
                 "VISIBLE PANE"
             } else if state.window_name.starts_with("de-bg-")
                 || state.window_name.starts_with("de-sj-")

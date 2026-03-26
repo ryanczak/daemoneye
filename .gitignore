@@ -1,2 +1,22 @@
+# Build output
 /target
+
+# Claude Code
 CLAUDE.md
+.claude/
+
+# Environment / secrets
+.env
+.env.*
+config.toml
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

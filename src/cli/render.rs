@@ -425,7 +425,7 @@ impl WrapWriter {
             match ch {
                 '\n' => {
                     self.emit_word();
-                    print!("\n");
+                    println!();
                     self.col = 0;
                     self.space_before = false;
                 }

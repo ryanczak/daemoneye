@@ -181,10 +181,10 @@ impl AiClient for GeminiClient {
                 let line = leftover[..pos].trim().to_string();
                 leftover = leftover[pos + 1..].to_string();
 
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if let Ok(v) = serde_json::from_str::<Value>(data) {
-                        if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array()) {
-                            if let Some(candidate) = candidates.get(0) {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(v) = serde_json::from_str::<Value>(data) {
+                        if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
+                            && let Some(candidate) = candidates.first() {
                                 // Gemini 2.5 Flash (thinking model) sometimes produces a
                                 // Python-style function call string instead of a structured
                                 // functionCall block.  The API signals this with finishReason
@@ -223,11 +223,9 @@ impl AiClient for GeminiClient {
                                     for part in parts {
                                         if let Some(t) =
                                             part.get("text").and_then(|text| text.as_str())
-                                        {
-                                            if !t.is_empty() {
+                                            && !t.is_empty() {
                                                 let _ = tx.send(AiEvent::Token(t.to_string()));
                                             }
-                                        }
                                         if let Some(call) = part.get("functionCall") {
                                             let fn_name = call["name"].as_str().unwrap_or("");
                                             if let Some(args) = call.get("args") {
@@ -249,7 +247,6 @@ impl AiClient for GeminiClient {
                                     }
                                 }
                             }
-                        }
                         if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
                             usage.prompt_tokens =
                                 u.get("promptTokenCount")
@@ -261,7 +258,6 @@ impl AiClient for GeminiClient {
                                     .unwrap_or(0) as u32;
                         }
                     }
-                }
             }
         }
         let _ = tx.send(AiEvent::Done(usage));

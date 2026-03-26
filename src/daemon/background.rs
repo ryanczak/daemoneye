@@ -353,9 +353,9 @@ pub async fn run_background_in_window(
     }
 
     // Register in the session's bg_windows list (cap enforcement runs in executor).
-    if let Some(ref sid) = session_id {
-        if let Ok(mut store) = sessions.lock() {
-            if let Some(entry) = store.get_mut(sid) {
+    if let Some(ref sid) = session_id
+        && let Ok(mut store) = sessions.lock()
+            && let Some(entry) = store.get_mut(sid) {
                 entry.bg_windows.push(BgWindowInfo {
                     pane_id: pane_id.clone(),
                     window_name: win_name.clone(),
@@ -363,8 +363,6 @@ pub async fn run_background_in_window(
                     exit_code: None,
                 });
             }
-        }
-    }
 
     log_event(
         "job_start",
@@ -385,17 +383,15 @@ pub async fn run_background_in_window(
         loop {
             tokio::select! {
                 result = complete_rx.recv() => {
-                    if let Ok((pid, code)) = result {
-                        if pid == pane_id { return (code, true); }
-                    }
+                    if let Ok((pid, code)) = result
+                        && pid == pane_id { return (code, true); }
                 }
                 result = died_rx.recv() => {
-                    if let Ok(pid) = result {
-                        if pid == pane_id {
+                    if let Ok(pid) = result
+                        && pid == pane_id {
                             let code = tmux::pane_dead_status(&pane_id).unwrap_or(-1);
                             return (code, false);
                         }
-                    }
                 }
             }
         }
@@ -426,16 +422,13 @@ pub async fn run_background_in_window(
             );
 
             // Update exit_code in bg_windows.
-            if let Some(ref sid) = session_id {
-                if let Ok(mut store) = sessions.lock() {
-                    if let Some(entry) = store.get_mut(sid) {
-                        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+            if let Some(ref sid) = session_id
+                && let Ok(mut store) = sessions.lock()
+                    && let Some(entry) = store.get_mut(sid)
+                        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
                         {
                             w.exit_code = Some(exit_code);
                         }
-                    }
-                }
-            }
 
             if !pane_persists {
                 let reason = if exit_code == 124 {
@@ -454,13 +447,11 @@ pub async fn run_background_in_window(
                 if let Err(e) = tmux::kill_job_window(session, &win_name) {
                     log::error!("Failed to GC dead bg window {}: {}", win_name, e);
                 }
-                if let Some(ref sid) = session_id {
-                    if let Ok(mut store) = sessions.lock() {
-                        if let Some(entry) = store.get_mut(sid) {
+                if let Some(ref sid) = session_id
+                    && let Ok(mut store) = sessions.lock()
+                        && let Some(entry) = store.get_mut(sid) {
                             entry.bg_windows.retain(|w| w.pane_id != pane_id);
                         }
-                    }
-                }
             }
 
             let persist_note = if pane_persists {
@@ -496,17 +487,15 @@ pub async fn run_background_in_window(
                         loop {
                             tokio::select! {
                                 result = complete_rx.recv() => {
-                                    if let Ok((pid, code)) = result {
-                                        if pid == pane_id_bg { return (code, true); }
-                                    }
+                                    if let Ok((pid, code)) = result
+                                        && pid == pane_id_bg { return (code, true); }
                                 }
                                 result = died_rx.recv() => {
-                                    if let Ok(pid) = result {
-                                        if pid == pane_id_bg {
+                                    if let Ok(pid) = result
+                                        && pid == pane_id_bg {
                                             let code = tmux::pane_dead_status(&pane_id_bg).unwrap_or(-1);
                                             return (code, false);
                                         }
-                                    }
                                 }
                             }
                         }
@@ -564,13 +553,11 @@ pub async fn run_background_in_window(
                     if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
                         log::error!("Failed to GC dead bg window {}: {}", win_name_bg, e);
                     }
-                    if let Some(ref sid) = session_id_bg {
-                        if let Ok(mut store) = sessions_bg.lock() {
-                            if let Some(entry) = store.get_mut(sid) {
+                    if let Some(ref sid) = session_id_bg
+                        && let Ok(mut store) = sessions_bg.lock()
+                            && let Some(entry) = store.get_mut(sid) {
                                 entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
                             }
-                        }
-                    }
                 }
             });
 
@@ -674,15 +661,12 @@ pub async fn respawn_background_in_pane(
     }
 
     // Reset exit_code in bg_windows so the session knows it's running again.
-    if let Some(ref sid) = session_id {
-        if let Ok(mut store) = sessions.lock() {
-            if let Some(entry) = store.get_mut(sid) {
-                if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
+    if let Some(ref sid) = session_id
+        && let Ok(mut store) = sessions.lock()
+            && let Some(entry) = store.get_mut(sid)
+                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
                     w.exit_code = None;
                 }
-            }
-        }
-    }
 
     log_event(
         "job_retry",
@@ -699,17 +683,15 @@ pub async fn respawn_background_in_pane(
         loop {
             tokio::select! {
                 result = complete_rx.recv() => {
-                    if let Ok((pid, code)) = result {
-                        if pid == pane_id_str { return (code, true); }
-                    }
+                    if let Ok((pid, code)) = result
+                        && pid == pane_id_str { return (code, true); }
                 }
                 result = died_rx.recv() => {
-                    if let Ok(pid) = result {
-                        if pid == pane_id_str {
+                    if let Ok(pid) = result
+                        && pid == pane_id_str {
                             let code = tmux::pane_dead_status(&pane_id_str).unwrap_or(-1);
                             return (code, false);
                         }
-                    }
                 }
             }
         }
@@ -739,16 +721,13 @@ pub async fn respawn_background_in_pane(
                 }),
             );
 
-            if let Some(ref sid) = session_id {
-                if let Ok(mut store) = sessions.lock() {
-                    if let Some(entry) = store.get_mut(sid) {
-                        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+            if let Some(ref sid) = session_id
+                && let Ok(mut store) = sessions.lock()
+                    && let Some(entry) = store.get_mut(sid)
+                        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
                         {
                             w.exit_code = Some(exit_code);
                         }
-                    }
-                }
-            }
 
             if !pane_persists {
                 let reason = if exit_code == 124 {
@@ -767,13 +746,11 @@ pub async fn respawn_background_in_pane(
                 if let Err(e) = tmux::kill_job_window(session, win_name) {
                     log::error!("Failed to GC retried bg window {}: {}", win_name, e);
                 }
-                if let Some(ref sid) = session_id {
-                    if let Ok(mut store) = sessions.lock() {
-                        if let Some(entry) = store.get_mut(sid) {
+                if let Some(ref sid) = session_id
+                    && let Ok(mut store) = sessions.lock()
+                        && let Some(entry) = store.get_mut(sid) {
                             entry.bg_windows.retain(|w| w.pane_id != pane_id);
                         }
-                    }
-                }
             }
 
             let persist_note = if pane_persists {
@@ -807,17 +784,15 @@ pub async fn respawn_background_in_pane(
                         loop {
                             tokio::select! {
                                 result = complete_rx.recv() => {
-                                    if let Ok((pid, code)) = result {
-                                        if pid == pane_id_bg { return (code, true); }
-                                    }
+                                    if let Ok((pid, code)) = result
+                                        && pid == pane_id_bg { return (code, true); }
                                 }
                                 result = died_rx.recv() => {
-                                    if let Ok(pid) = result {
-                                        if pid == pane_id_bg {
+                                    if let Ok(pid) = result
+                                        && pid == pane_id_bg {
                                             let code = tmux::pane_dead_status(&pane_id_bg).unwrap_or(-1);
                                             return (code, false);
                                         }
-                                    }
                                 }
                             }
                         }
@@ -862,13 +837,11 @@ pub async fn respawn_background_in_pane(
                     if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
                         log::error!("Failed to GC retried bg window {}: {}", win_name_bg, e);
                     }
-                    if let Some(ref sid) = session_id_bg {
-                        if let Ok(mut store) = sessions_bg.lock() {
-                            if let Some(entry) = store.get_mut(sid) {
+                    if let Some(ref sid) = session_id_bg
+                        && let Ok(mut store) = sessions_bg.lock()
+                            && let Some(entry) = store.get_mut(sid) {
                                 entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
                             }
-                        }
-                    }
                 }
             });
 
@@ -908,7 +881,7 @@ pub async fn notify_job_completion(
         "job_complete",
         serde_json::json!({
             "session": session_id.as_deref().unwrap_or("-"),
-            "job_id": win_name.split('-').last().unwrap_or(""),
+            "job_id": win_name.split('-').next_back().unwrap_or(""),
             "job_name": win_name,
             "exit_code": exit_code,
             "duration_ms": duration_ms,

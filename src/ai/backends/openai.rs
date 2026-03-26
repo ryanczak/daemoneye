@@ -143,37 +143,32 @@ impl AiClient for OpenAiClient {
                         if let Some(delta) =
                             v["choices"].get(0).and_then(|c| c["delta"].as_object())
                         {
-                            if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
-                                if !content.is_empty() {
+                            if let Some(content) = delta.get("content").and_then(|c| c.as_str())
+                                && !content.is_empty() {
                                     let _ = tx.send(AiEvent::Token(content.to_string()));
                                 }
-                            }
                             if let Some(tool_calls) =
                                 delta.get("tool_calls").and_then(|t| t.as_array())
-                            {
-                                if let Some(tc) = tool_calls.get(0) {
+                                && let Some(tc) = tool_calls.first() {
                                     if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
                                         if !tool_id.is_empty() && tool_id != id {
                                             // Flush previous tool call
                                             if let Ok(args) =
                                                 serde_json::from_str::<Value>(&tool_args)
-                                            {
-                                                if let Some(ev) = dispatch_tool_event(
+                                                && let Some(ev) = dispatch_tool_event(
                                                     &tool_id, &tool_name, &args, None,
                                                 ) {
                                                     let _ = tx.send(ev);
                                                 }
-                                            }
                                         }
                                         tool_id = id.to_string();
                                         tool_args.clear();
                                     }
                                     if let Some(f) = tc.get("function") {
-                                        if let Some(n) = f.get("name").and_then(|n| n.as_str()) {
-                                            if !n.is_empty() {
+                                        if let Some(n) = f.get("name").and_then(|n| n.as_str())
+                                            && !n.is_empty() {
                                                 tool_name = n.to_string();
                                             }
-                                        }
                                         if let Some(args) =
                                             f.get("arguments").and_then(|a| a.as_str())
                                         {
@@ -181,7 +176,6 @@ impl AiClient for OpenAiClient {
                                         }
                                     }
                                 }
-                            }
                         }
                         if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
                             usage.prompt_tokens =
@@ -197,13 +191,11 @@ impl AiClient for OpenAiClient {
         }
 
         // Final flush of any buffered tool call
-        if !tool_id.is_empty() {
-            if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                if let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None) {
+        if !tool_id.is_empty()
+            && let Ok(args) = serde_json::from_str::<Value>(&tool_args)
+                && let Some(ev) = dispatch_tool_event(&tool_id, &tool_name, &args, None) {
                     let _ = tx.send(ev);
                 }
-            }
-        }
 
         let _ = tx.send(AiEvent::Done(usage));
         Ok(())

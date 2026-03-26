@@ -10,7 +10,7 @@ pub fn run_prompts() -> Result<()> {
     if dir.is_dir() {
         let mut paths: Vec<_> = std::fs::read_dir(&dir)?
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |x| x == "toml"))
+            .filter(|e| e.path().extension().is_some_and(|x| x == "toml"))
             .collect();
         paths.sort_by_key(|e| e.file_name());
 
@@ -101,12 +101,11 @@ pub fn run_sched_list() -> Result<()> {
     println!("\x1b[1mScheduled Jobs\x1b[0m");
     println!();
     println!(
-        "  {:<8}  {:<name_w$}  {:<16}  {:<12}  {}",
+        "  {:<8}  {:<name_w$}  {:<16}  {:<12}  Next Run",
         "ID",
         "Name",
         "Schedule",
         "Status",
-        "Next Run",
         name_w = name_w
     );
     println!(
@@ -210,7 +209,7 @@ pub fn run_sched_windows() -> Result<()> {
             let de_windows: Vec<&str> = text
                 .lines()
                 .filter(|l| {
-                    let name = l.splitn(2, ':').nth(1).unwrap_or("");
+                    let name = l.split_once(':').map(|x| x.1).unwrap_or("");
                     name.starts_with(crate::daemon::DAEMON_WINDOW_PREFIX)
                 })
                 .collect();

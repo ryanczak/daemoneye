@@ -62,14 +62,13 @@ impl ScheduleKind {
     pub fn advance(&mut self) {
         match self {
             ScheduleKind::Every { interval_secs, next_run } => {
-                *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+                *next_run += chrono::Duration::seconds(*interval_secs as i64);
             }
             ScheduleKind::Cron { expression, next_run } => {
-                if let Ok(sched) = parse_cron(expression) {
-                    if let Some(n) = sched.upcoming(Utc).next() {
+                if let Ok(sched) = parse_cron(expression)
+                    && let Some(n) = sched.upcoming(Utc).next() {
                         *next_run = n;
                     }
-                }
             }
             ScheduleKind::Once { .. } => {}
         }
@@ -83,19 +82,17 @@ impl ScheduleKind {
             ScheduleKind::Every { interval_secs, next_run } => {
                 let now = Utc::now();
                 while *next_run <= now {
-                    *next_run = *next_run + chrono::Duration::seconds(*interval_secs as i64);
+                    *next_run += chrono::Duration::seconds(*interval_secs as i64);
                 }
             }
             ScheduleKind::Cron { expression, next_run } => {
                 // `advance()` already calls `upcoming()` which gives the next future time,
                 // but if the stored next_run is still in the past, recompute.
-                if *next_run <= Utc::now() {
-                    if let Ok(sched) = parse_cron(expression) {
-                        if let Some(n) = sched.upcoming(Utc).next() {
+                if *next_run <= Utc::now()
+                    && let Ok(sched) = parse_cron(expression)
+                        && let Some(n) = sched.upcoming(Utc).next() {
                             *next_run = n;
                         }
-                    }
-                }
             }
             ScheduleKind::Once { .. } => {}
         }
@@ -471,13 +468,13 @@ fn extract_component(s: &str, unit: char) -> Option<u64> {
 // ---------------------------------------------------------------------------
 
 fn describe_secs(secs: u64) -> String {
-    if secs % 86400 == 0 {
+    if secs.is_multiple_of(86400) {
         return format!("{}d", secs / 86400);
     }
-    if secs % 3600 == 0 {
+    if secs.is_multiple_of(3600) {
         return format!("{}h", secs / 3600);
     }
-    if secs % 60 == 0 {
+    if secs.is_multiple_of(60) {
         return format!("{}m", secs / 60);
     }
     format!("{}s", secs)

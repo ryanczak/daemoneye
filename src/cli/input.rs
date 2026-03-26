@@ -226,8 +226,8 @@ pub fn set_raw_mode() -> anyhow::Result<libc::termios> {
         // This ensures Ctrl+C is read as 0x03 instead of generating SIGINT.
         raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::IEXTEN | libc::ISIG);
         // Return after each byte, no timeout.
-        raw.c_cc[libc::VMIN as usize] = 1;
-        raw.c_cc[libc::VTIME as usize] = 0;
+        raw.c_cc[libc::VMIN] = 1;
+        raw.c_cc[libc::VTIME] = 0;
         if libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &raw) != 0 {
             return Err(anyhow::anyhow!(
                 "tcsetattr: {}",
@@ -255,7 +255,7 @@ fn input_rows_needed(line: &InputLine, chat_width: usize, chat_height: usize) ->
     if len == 0 {
         1
     } else {
-        ((len + avail - 1) / avail).min(cap).max(1)
+        len.div_ceil(avail).min(cap).max(1)
     }
 }
 
@@ -606,13 +606,12 @@ async fn read_input_line_inner(
                         render!();
                     }
                     Key::CtrlC => {
-                        if let Some(t) = last_ctrl_c {
-                            if t.elapsed() < std::time::Duration::from_millis(1000) {
+                        if let Some(t) = last_ctrl_c
+                            && t.elapsed() < std::time::Duration::from_millis(1000) {
                                 collapse_input_area(*chat_height, *chat_width, input_rows,
                                                     start_time, session_id, approval_hint, model, prompt_tokens, context_window, daemon_up);
                                 return Ok(None); // Double Ctrl+C: exit chat
                             }
-                        }
                         *last_ctrl_c = Some(std::time::Instant::now());
                         state.current = InputLine::new();
                         state.history_idx = None;

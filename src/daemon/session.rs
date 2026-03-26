@@ -134,11 +134,10 @@ pub fn append_session_message(id: &str, msg: &Message) {
     use std::io::Write;
     let path = session_file(id);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-        if let Ok(line) = serde_json::to_string(msg) {
-            if let Err(e) = writeln!(f, "{}", line) {
+        if let Ok(line) = serde_json::to_string(msg)
+            && let Err(e) = writeln!(f, "{}", line) {
                 log::warn!("Failed to append to session file {}: {}", path.display(), e);
             }
-        }
     } else {
         log::warn!("Failed to open session file {} for append", path.display());
     }
@@ -162,7 +161,7 @@ pub fn trim_history(messages: Vec<Message>) -> Vec<Message> {
     //   1 (first) + 1 (placeholder) + (N - tail_start) ≤ MAX_HISTORY
     let raw_tail_start = messages.len() - MAX_HISTORY + 2;
     // Round up to even so the tail begins on a user message.
-    let tail_start = if raw_tail_start % 2 == 0 {
+    let tail_start = if raw_tail_start.is_multiple_of(2) {
         raw_tail_start
     } else {
         raw_tail_start + 1
@@ -366,10 +365,9 @@ impl SessionEntry {
         }
         // R1: stop pipe-pane and remove the log file if one was started for this session.
         // An empty string is the "failed / skipped" sentinel — nothing to clean up.
-        if let Some(ref pane_id) = self.pipe_source_pane {
-            if !pane_id.is_empty() {
+        if let Some(ref pane_id) = self.pipe_source_pane
+            && !pane_id.is_empty() {
                 crate::tmux::stop_pipe_pane(pane_id);
             }
-        }
     }
 }

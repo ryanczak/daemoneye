@@ -172,7 +172,7 @@ fn search_events(
     if !events_path.exists() {
         return;
     }
-    let content = match std::fs::read_to_string(&events_path) {
+    let content = match std::fs::read_to_string(events_path) {
         Ok(c) => c,
         Err(_) => return,
     };
@@ -209,8 +209,8 @@ fn search_events(
 
 /// Convert a JSON event line to a human-readable key=value string.
 fn json_to_readable(line: &str) -> String {
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-        if let Some(obj) = v.as_object() {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
+        && let Some(obj) = v.as_object() {
             return obj
                 .iter()
                 .map(|(k, v)| {
@@ -223,7 +223,6 @@ fn json_to_readable(line: &str) -> String {
                 .collect::<Vec<_>>()
                 .join(" ");
         }
-    }
     line.to_string()
 }
 

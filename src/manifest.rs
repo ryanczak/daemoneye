@@ -214,7 +214,7 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
         }
         // Also match on significant keywords from the hyphen/underscore-split name
         let name_keywords: Vec<&str> = name_lc
-            .split(|c| c == '-' || c == '_')
+            .split(['-', '_'])
             .filter(|w| w.len() >= 4)
             .collect();
         if name_keywords.iter().any(|kw| corpus.contains(*kw)) {
@@ -243,7 +243,7 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
         }
         // Also match on significant keywords from the key
         let key_keywords: Vec<&str> = key_lc
-            .split(|c| c == '-' || c == '_')
+            .split(['-', '_'])
             .filter(|w| w.len() >= 4)
             .collect();
         if key_keywords.iter().any(|kw| corpus.contains(*kw)) {

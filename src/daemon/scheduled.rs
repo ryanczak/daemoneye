@@ -223,13 +223,11 @@ pub async fn run_scheduled_job(
         }
         tokio::select! {
             result = rx.recv() => {
-                if let Ok(notified_pane) = result {
-                    if notified_pane == pane_id {
-                        if let Some(code) = tmux::pane_dead_status(&pane_id) {
+                if let Ok(notified_pane) = result
+                    && notified_pane == pane_id
+                        && let Some(code) = tmux::pane_dead_status(&pane_id) {
                             break code;
                         }
-                    }
-                }
             }
             _ = tokio::time::sleep_until(deadline) => {
                 break 124;
@@ -244,8 +242,8 @@ pub async fn run_scheduled_job(
     let success = exit_code == 0;
 
     // Runbook / watchdog AI analysis (scheduled-job specific; runs before GC so the pane is still alive)
-    if let Some(ref rb_name) = job.runbook {
-        if let Ok(rb) = runbook::load_runbook(rb_name) {
+    if let Some(ref rb_name) = job.runbook
+        && let Ok(rb) = runbook::load_runbook(rb_name) {
             let api_key = config.ai.resolve_api_key();
             let client = crate::ai::make_client(
                 &config.ai.provider,
@@ -282,7 +280,6 @@ pub async fn run_scheduled_job(
                 fire_notification(&job.name, &msg, &config);
             }
         }
-    }
 
     store.mark_done(
         &job.id,

@@ -25,12 +25,18 @@ DaemonEye is a lightweight background daemon that integrates with `tmux` to embe
 
 ---
 
+## Platform Support
+
+**Linux only.** DaemonEye uses `fork(2)`, Unix domain sockets, and Linux-specific tmux hooks — it will not build or run on macOS or Windows.
+
+---
+
 ## Requirements
 
 | Dependency | Notes |
 |---|---|
-| Rust 1.75+ | Edition 2024 |
-| tmux | Essential for the presentation layer and session management |
+| Rust 1.79+ | Required by Rust edition 2024 |
+| tmux 2.6+ | Required for hook support (`pane-focus-in`, `client-attached`, `after-new-session`) |
 
 On Debian/Ubuntu:
 

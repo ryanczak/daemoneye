@@ -103,7 +103,7 @@ pub(super) fn is_shell_prompt(cmd: &str) -> bool {
 pub(super) fn looks_like_shell_prompt(snap: &str) -> bool {
     snap.lines()
         .filter(|l| !l.trim().is_empty())
-        .last()
+        .next_back()
         .map(|l| {
             let t = l.trim_end();
             t.ends_with("$ ")
@@ -143,28 +143,23 @@ where
     // Compute a best-guess target pane hint synchronously so the approval
     // prompt can show which pane will be used.
     let target_hint: Option<String> = (|| {
-        if let Some(tp) = target {
-            if chat_pane != Some(tp) {
+        if let Some(tp) = target
+            && chat_pane != Some(tp) {
                 let panes = cache.panes.read().unwrap_or_log();
                 if panes.contains_key(tp) {
                     return Some(tp.to_string());
                 }
             }
-        }
-        if let Some(sid) = session_id {
-            if let Ok(store) = sessions.lock() {
-                if let Some(entry) = store.get(sid) {
-                    if let Some(ref dtp) = entry.default_target_pane {
-                        if chat_pane.as_deref() != Some(dtp.as_str()) {
+        if let Some(sid) = session_id
+            && let Ok(store) = sessions.lock()
+                && let Some(entry) = store.get(sid)
+                    && let Some(ref dtp) = entry.default_target_pane
+                        && chat_pane != Some(dtp.as_str()) {
                             let panes = cache.panes.read().unwrap_or_log();
                             if panes.contains_key(dtp) {
                                 return Some(dtp.clone());
                             }
                         }
-                    }
-                }
-            }
-        }
         None
     })();
 
@@ -264,24 +259,20 @@ where
                     if tokio::time::Instant::now() >= deadline { break; }
                     tokio::select! {
                         result = fg_rx.recv() => {
-                            if let Ok(notified_pane) = result {
-                                if notified_pane == target_str {
-                                    if let Ok(snap) = tmux::capture_pane(target_str, 20) {
-                                        if looks_like_shell_prompt(&snap) {
+                            if let Ok(notified_pane) = result
+                                && notified_pane == target_str
+                                    && let Ok(snap) = tmux::capture_pane(target_str, 20)
+                                        && looks_like_shell_prompt(&snap) {
                                             prompt_found = true;
                                             break 'connect;
                                         }
-                                    }
-                                }
-                            }
                         }
                         _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
-                            if let Ok(snap) = tmux::capture_pane(target_str, 20) {
-                                if looks_like_shell_prompt(&snap) {
+                            if let Ok(snap) = tmux::capture_pane(target_str, 20)
+                                && looks_like_shell_prompt(&snap) {
                                     prompt_found = true;
                                     break 'connect;
                                 }
-                            }
                         }
                     }
                 }
@@ -306,9 +297,8 @@ where
                     if tokio::time::Instant::now() >= deadline { break; }
                     tokio::select! {
                         result = fg_rx.recv() => {
-                            if let Ok(notified_pane) = result {
-                                if notified_pane == target_str { stable_ticks = 0; }
-                            }
+                            if let Ok(notified_pane) = result
+                                && notified_pane == target_str { stable_ticks = 0; }
                         }
                         _ = tokio::time::sleep(REMOTE_POLL_INTERVAL) => {
                             let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
@@ -351,12 +341,11 @@ where
                         if tokio::time::Instant::now() >= deadline { break; }
                         tokio::select! {
                             result = fg_rx.recv() => {
-                                if let Ok(notified_pane) = result {
-                                    if notified_pane == target_str {
+                                if let Ok(notified_pane) = result
+                                    && notified_pane == target_str {
                                         let cur = tmux::pane_current_command(target_str).unwrap_or_default();
                                         if cur == idle_cmd { break; }
                                     }
-                                }
                             }
                             _ = tokio::time::sleep(LOCAL_SLOW_POLL) => {
                                 let cur = tmux::pane_current_command(target_str).unwrap_or_default();
@@ -406,11 +395,10 @@ where
                 Err(_) => "Command sent but could not capture output.".to_string(),
             };
 
-            if switched_to_working {
-                if let Some(cp) = chat_pane {
+            if switched_to_working
+                && let Some(cp) = chat_pane {
                     let _ = tmux::select_pane(cp);
                 }
-            }
 
             let exit_code = tmux::read_pane_exit_status(target_str).unwrap_or(0);
             crate::daemon::stats::finish_command(cmd_id, exit_code);
@@ -462,15 +450,12 @@ where
         }
         let win_name: String = {
             let mut name = pane_id.to_string();
-            if let Some(sid) = session_id {
-                if let Ok(store) = sessions.lock() {
-                    if let Some(entry) = store.get(sid) {
-                        if let Some(w) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id) {
+            if let Some(sid) = session_id
+                && let Ok(store) = sessions.lock()
+                    && let Some(entry) = store.get(sid)
+                        && let Some(w) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id) {
                             name = w.window_name.clone();
                         }
-                    }
-                }
-            }
             name
         };
         let resolved_retry_cmd;
@@ -498,10 +483,10 @@ where
     const MAX_BG_WINDOWS_PER_SESSION: usize = 5;
     let cap_denial: Option<String> = {
         let mut denial = None;
-        if let Some(sid) = session_id {
-            if let Ok(mut store) = sessions.lock() {
-                if let Some(entry) = store.get_mut(sid) {
-                    if entry.bg_windows.len() >= MAX_BG_WINDOWS_PER_SESSION {
+        if let Some(sid) = session_id
+            && let Ok(mut store) = sessions.lock()
+                && let Some(entry) = store.get_mut(sid)
+                    && entry.bg_windows.len() >= MAX_BG_WINDOWS_PER_SESSION {
                         let evict_idx = entry.bg_windows.iter().position(|w| w.exit_code.is_some());
                         match evict_idx {
                             Some(i) => {
@@ -544,9 +529,6 @@ where
                             }
                         }
                     }
-                }
-            }
-        }
         denial
     };
     if let Some(msg) = cap_denial {

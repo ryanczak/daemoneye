@@ -39,9 +39,9 @@ pub enum ToolCallOutcome {
 // ---------------------------------------------------------------------------
 
 /// How long a user has to approve or deny a foreground/background tool call.
-pub(self) const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
+ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a user has to respond to a credential or write prompt (sudo password, schedule, script).
-pub(self) const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
+ const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ---------------------------------------------------------------------------
 // Main tool dispatcher
@@ -460,20 +460,16 @@ where
     }
 
     // Check for a user-selected default target pane in the session.
-    if let Some(sid) = session_id {
-        if let Ok(store) = sessions.lock() {
-            if let Some(entry) = store.get(sid) {
-                if let Some(ref dtp) = entry.default_target_pane {
-                    if chat_pane.as_deref() != Some(dtp.as_str()) {
+    if let Some(sid) = session_id
+        && let Ok(store) = sessions.lock()
+            && let Some(entry) = store.get(sid)
+                && let Some(ref dtp) = entry.default_target_pane
+                    && chat_pane != Some(dtp.as_str()) {
                         let panes = cache.panes.read().unwrap_or_log();
                         if panes.contains_key(dtp) {
                             return Ok(dtp.clone());
                         }
                     }
-                }
-            }
-        }
-    }
 
     let pane_list: Vec<PaneInfo> = {
         let panes = cache.panes.read().unwrap_or_log();
@@ -508,13 +504,11 @@ where
     rx.read_line(&mut pane_line).await?;
     match serde_json::from_str::<Request>(pane_line.trim()) {
         Ok(Request::PaneSelectResponse { pane_id, .. }) => {
-            if let Some(sid) = session_id {
-                if let Ok(mut store) = sessions.lock() {
-                    if let Some(entry) = store.get_mut(sid) {
+            if let Some(sid) = session_id
+                && let Ok(mut store) = sessions.lock()
+                    && let Some(entry) = store.get_mut(sid) {
                         entry.default_target_pane = Some(pane_id.clone());
                     }
-                }
-            }
             Ok(pane_id)
         }
         _ => {

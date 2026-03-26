@@ -237,7 +237,7 @@ fn parse_generic(body: &Value) -> Option<InternalAlert> {
     let description = body["description"]
         .as_str()
         .or_else(|| body["details"].as_str())
-        .unwrap_or_else(|| {
+        .unwrap_or({
             // Fall back to full JSON body as description.
             ""
         })
@@ -292,11 +292,10 @@ pub fn parse_payload(body: &Value) -> Vec<InternalAlert> {
     }
 
     // Legacy Grafana webhook has a "state" field at the top level.
-    if body["state"].is_string() {
-        if let Some(a) = parse_grafana_legacy(body) {
+    if body["state"].is_string()
+        && let Some(a) = parse_grafana_legacy(body) {
             return vec![a];
         }
-    }
 
     // Generic fallback.
     parse_generic(body).map(|a| vec![a]).unwrap_or_default()
@@ -371,8 +370,8 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
         let window = cfg.dedup_window_secs.clamp(1, 86400);
         let mut dedup = state.dedup.lock().unwrap_or_log();
         let now = now_secs();
-        if let Some(&last_seen) = dedup.get(&alert.fingerprint) {
-            if now.saturating_sub(last_seen) < window {
+        if let Some(&last_seen) = dedup.get(&alert.fingerprint)
+            && now.saturating_sub(last_seen) < window {
                 log::debug!(
                     "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
                     alert.alert_name,
@@ -380,20 +379,18 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
                 );
                 return;
             }
-        }
         // Cap the dedup map to 10,000 entries. When the cap is reached, evict
         // the oldest entry (smallest timestamp) to prevent unbounded growth
         // from alert storms with high fingerprint cardinality.
         const DEDUP_MAP_CAP: usize = 10_000;
-        if dedup.len() >= DEDUP_MAP_CAP {
-            if let Some(oldest_key) = dedup
+        if dedup.len() >= DEDUP_MAP_CAP
+            && let Some(oldest_key) = dedup
                 .iter()
                 .min_by_key(|&(_, &ts)| ts)
                 .map(|(k, _)| k.clone())
             {
                 dedup.remove(&oldest_key);
             }
-        }
         dedup.insert(alert.fingerprint.clone(), now);
     }
 
@@ -603,11 +600,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
     {
         let mut rl = state.rate_limit.lock().unwrap_or_log();
         let now = now_secs();
-        if let Some(&last) = rl.get(&alert.alert_name) {
-            if now.saturating_sub(last) < state.config.webhook.dedup_window_secs {
+        if let Some(&last) = rl.get(&alert.alert_name)
+            && now.saturating_sub(last) < state.config.webhook.dedup_window_secs {
                 return;
             }
-        }
         rl.insert(alert.alert_name.clone(), now);
     }
 

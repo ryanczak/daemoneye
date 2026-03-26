@@ -405,11 +405,10 @@ pub(super) fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions:
         log::warn!("close_background_window: failed to kill {}: {}", win_name, e);
     }
 
-    if let Ok(mut store) = sessions.lock() {
-        if let Some(entry) = store.get_mut(sid) {
+    if let Ok(mut store) = sessions.lock()
+        && let Some(entry) = store.get_mut(sid) {
             entry.bg_windows.retain(|w| w.pane_id != pane_id);
         }
-    }
 
     log_event(
         "close_bg_window",
@@ -435,7 +434,7 @@ pub(super) fn list_panes(
 
     let mut rows: Vec<_> = panes
         .iter()
-        .filter(|(id, _)| chat_pane.map_or(true, |c| c != id.as_str()))
+        .filter(|(id, _)| chat_pane != Some(id.as_str()))
         .collect();
     rows.sort_by_key(|(id, _)| id.as_str());
 
@@ -559,12 +558,11 @@ pub(super) fn watch_pane(
                 loop {
                     tokio::select! {
                         result = wp_rx.recv() => {
-                            if let Ok(notified_pane) = result {
-                                if notified_pane == pane_id_owned {
+                            if let Ok(notified_pane) = result
+                                && notified_pane == pane_id_owned {
                                     let snap = crate::tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
                                     if re.is_match(&snap) { break; }
                                 }
-                            }
                         }
                         _ = tokio::time::sleep(slow_poll) => {
                             let snap = crate::tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
@@ -586,12 +584,11 @@ pub(super) fn watch_pane(
                 loop {
                     tokio::select! {
                         result = wp_rx.recv() => {
-                            if let Ok(notified_pane) = result {
-                                if notified_pane == pane_id_owned {
+                            if let Ok(notified_pane) = result
+                                && notified_pane == pane_id_owned {
                                     let cur = crate::tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
                                     if super::foreground::is_shell_prompt(&cur) { break; }
                                 }
-                            }
                         }
                         _ = tokio::time::sleep(slow_poll) => {
                             let cur = crate::tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
@@ -640,8 +637,8 @@ pub(super) fn watch_pane(
             tool_results: None,
         };
 
-        if let Ok(mut store) = sessions_clone.lock() {
-            if let Some(entry) = store.get_mut(&session_id_owned) {
+        if let Ok(mut store) = sessions_clone.lock()
+            && let Some(entry) = store.get_mut(&session_id_owned) {
                 append_session_message(&session_id_owned, &watch_msg);
                 entry.messages.push(watch_msg);
 
@@ -656,7 +653,6 @@ pub(super) fn watch_pane(
                         .output();
                 }
             }
-        }
         log::info!(
             "watch_pane {}: {}",
             pane_id_owned, if completed { "completed" } else { "timed out" }

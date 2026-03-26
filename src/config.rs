@@ -520,17 +520,15 @@ fn seed_knowledge_memory(key: &str, content: &str) -> Result<()> {
 pub fn load_named_prompt(name: &str) -> PromptDef {
     // First try the file on disk.
     let path = prompts_dir().join(format!("{name}.toml"));
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if let Ok(def) = toml::from_str::<PromptDef>(&text) {
+    if let Ok(text) = std::fs::read_to_string(&path)
+        && let Ok(def) = toml::from_str::<PromptDef>(&text) {
             return def;
         }
-    }
     // Fall back to the compiled-in SRE prompt.
-    if name == "sre" {
-        if let Ok(def) = toml::from_str::<PromptDef>(SRE_PROMPT_TOML) {
+    if name == "sre"
+        && let Ok(def) = toml::from_str::<PromptDef>(SRE_PROMPT_TOML) {
             return def;
         }
-    }
     PromptDef::builtin_minimal()
 }
 

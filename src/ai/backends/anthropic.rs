@@ -53,15 +53,14 @@ impl AnthropicClient {
                     // If this tool call was preceded by an extended-thinking block, echo
                     // the full thinking block back (Anthropic requires it for multi-turn).
                     // The block is stored as JSON: {"thinking": "...", "signature": "..."}.
-                    if let Some(ts) = &tc.thought_signature {
-                        if let Ok(block) = serde_json::from_str::<Value>(ts) {
+                    if let Some(ts) = &tc.thought_signature
+                        && let Ok(block) = serde_json::from_str::<Value>(ts) {
                             content.push(json!({
                                 "type": "thinking",
                                 "thinking": block["thinking"],
                                 "signature": block["signature"]
                             }));
                         }
-                    }
                     let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(json!({}));
                     content.push(json!({
                         "type": "tool_use",
@@ -167,11 +166,10 @@ impl AiClient for AnthropicClient {
                             }
                         } else if msg_type == "content_block_delta" {
                             if v["delta"]["type"] == "text_delta" {
-                                if let Some(t) = v["delta"]["text"].as_str() {
-                                    if !t.is_empty() {
+                                if let Some(t) = v["delta"]["text"].as_str()
+                                    && !t.is_empty() {
                                         let _ = tx.send(AiEvent::Token(t.to_string()));
                                     }
-                                }
                             } else if v["delta"]["type"] == "input_json_delta" {
                                 if let Some(partial) = v["delta"]["partial_json"].as_str() {
                                     tool_args.push_str(partial);
@@ -180,11 +178,10 @@ impl AiClient for AnthropicClient {
                                 if let Some(t) = v["delta"]["thinking"].as_str() {
                                     thinking_text.push_str(t);
                                 }
-                            } else if v["delta"]["type"] == "signature_delta" {
-                                if let Some(s) = v["delta"]["signature"].as_str() {
+                            } else if v["delta"]["type"] == "signature_delta"
+                                && let Some(s) = v["delta"]["signature"].as_str() {
                                     thinking_sig.push_str(s);
                                 }
-                            }
                         } else if msg_type == "content_block_stop" {
                             if in_thinking {
                                 // Encode both fields so convert_messages can reconstruct
@@ -200,8 +197,8 @@ impl AiClient for AnthropicClient {
                                 }
                                 in_thinking = false;
                             } else if !tool_id.is_empty() {
-                                if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                                    if let Some(ev) = dispatch_tool_event(
+                                if let Ok(args) = serde_json::from_str::<Value>(&tool_args)
+                                    && let Some(ev) = dispatch_tool_event(
                                         &tool_id,
                                         &tool_name,
                                         &args,
@@ -209,7 +206,6 @@ impl AiClient for AnthropicClient {
                                     ) {
                                         let _ = tx.send(ev);
                                     }
-                                }
                                 tool_id.clear();
                                 tool_name.clear();
                                 tool_args.clear();
@@ -220,28 +216,25 @@ impl AiClient for AnthropicClient {
                                     u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
                                         as u32;
                             }
-                        } else if msg_type == "message_delta" {
-                            if let Some(u) = v["usage"].as_object() {
+                        } else if msg_type == "message_delta"
+                            && let Some(u) = v["usage"].as_object() {
                                 usage.completion_tokens =
                                     u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
                                         as u32;
                             }
-                        }
                     }
                 }
             }
         }
         // Flush any buffered tool call that ended without a content_block_stop event
         // (e.g. network disconnect mid-stream).
-        if !tool_id.is_empty() {
-            if let Ok(args) = serde_json::from_str::<Value>(&tool_args) {
-                if let Some(ev) =
+        if !tool_id.is_empty()
+            && let Ok(args) = serde_json::from_str::<Value>(&tool_args)
+                && let Some(ev) =
                     dispatch_tool_event(&tool_id, &tool_name, &args, pending_thought_sig.take())
                 {
                     let _ = tx.send(ev);
                 }
-            }
-        }
         let _ = tx.send(AiEvent::Done(usage));
         Ok(())
     }

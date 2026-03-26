@@ -78,8 +78,8 @@ pub fn finish_command(id: usize, exit_code: i32) {
     let mut is_fg = false;
     let mut is_bg = false;
     let mut is_sched = false;
-    if let Ok(mut cmds) = RECENT_COMMANDS.lock() {
-        if let Some(cmd) = cmds.iter_mut().find(|c| c.id == id) {
+    if let Ok(mut cmds) = RECENT_COMMANDS.lock()
+        && let Some(cmd) = cmds.iter_mut().find(|c| c.id == id) {
             let success = exit_code == 0;
             cmd.status = if success {
                 "succeeded".to_string()
@@ -94,7 +94,6 @@ pub fn finish_command(id: usize, exit_code: i32) {
                 is_bg = true;
             }
         }
-    }
 
     if is_fg {
         if exit_code == 0 {
