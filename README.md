@@ -132,19 +132,92 @@ daemoneye daemon --log-file /var/log/daemoneye.log
 
 Event records (command history, AI turn counts, lifecycle info) are written to `~/.daemoneye/var/log/events.jsonl` by default.
 
-You can also manage the daemon with systemd — run `daemoneye setup` for the service file.
+You can also manage the daemon with systemd — run `daemoneye setup` to write the service file and get the enable commands (see [Install DaemonEye](#2-install-daemoneye) below).
 
-### 2. Configure tmux
+### 2. Install DaemonEye
 
-Run `daemoneye setup` to get the recommended configuration. It prints three things:
+Run `daemoneye setup` once after building. It initialises the full `~/.daemoneye/` directory tree, copies the binary to a stable location, writes a systemd user service file, and prints the tmux keybinding to add to `~/.tmux.conf`.
 
-**a) systemd service file** — follow the printed instructions to enable the daemon on login.
+```sh
+daemoneye setup
+```
 
-**b) tmux keybinding** — add to `~/.tmux.conf`:
+#### Directory layout
+
+`daemoneye setup` creates the following tree. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe.
+
+```
+~/.daemoneye/
+  bin/
+    daemoneye             ← copy of the running binary; the service file and bind-key point here
+  etc/
+    config.toml           ← main configuration (created once; your edits are preserved)
+    prompts/
+      sre.toml            ← built-in SRE system prompt (recreated only if missing)
+  lib/                    ← place shared SDK modules or Python helpers here
+  memory/
+    knowledge/
+      ghost-shell-guide.md       ← guide to ghost shell usage (seeded once)
+      runbook-format.md          ← runbook markdown format reference (seeded once)
+      runbook-ghost-template.md  ← ghost-enabled runbook template (seeded once)
+      scheduling-guide.md        ← scheduler usage guide (seeded once)
+      scripts-and-sudoers.md     ← scripts and sudoers setup guide (seeded once)
+      webhook-setup.md           ← webhook integration guide (seeded once)
+  runbooks/               ← your procedure runbooks (Markdown + frontmatter)
+  scripts/                ← your automation scripts (set chmod 700 on write)
+  var/
+    log/
+      daemon.log          ← daemon process log (tailed by `daemoneye logs`)
+      events.jsonl        ← structured event log (command history, AI turns, lifecycle)
+      panes/              ← archived background-command output (one .log per job window)
+      pipes/              ← pipe-pane capture logs (raw terminal output, runtime only)
+    run/
+      daemoneye.sock      ← Unix domain socket (created when the daemon starts)
+      pane_prefs.json     ← per-session target-pane preferences
+      schedules.json      ← scheduled job store
+```
+
+#### systemd user service
+
+`daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon` automatically on login.
+
+```sh
+# Enable and start the daemon on login
+systemctl --user daemon-reload
+systemctl --user enable --now daemoneye
+
+# Check status
+systemctl --user status daemoneye
+
+# Stop the daemon
+systemctl --user stop daemoneye
+
+# Restart after a config change
+systemctl --user restart daemoneye
+
+# Disable autostart
+systemctl --user disable daemoneye
+```
+
+View daemon logs directly:
+
+```sh
+daemoneye logs          # tails ~/.daemoneye/var/log/daemon.log
+```
+
+Or through journald:
+
+```sh
+journalctl --user -u daemoneye -f
+```
+
+#### tmux keybinding
+
+Add the printed `bind-key` line to `~/.tmux.conf`. The split direction reflects the `position` setting in `config.toml` (`"bottom"` by default):
 
 ```sh
 # ~/.tmux.conf
-bind-key T split-window -h 'daemoneye chat'
+bind-key T split-window -v '~/.daemoneye/bin/daemoneye chat'
 ```
 
 Reload your tmux config:
@@ -153,7 +226,11 @@ Reload your tmux config:
 tmux source-file ~/.tmux.conf
 ```
 
-**c) Shell hook for exit-code tracking** — add the appropriate snippet to your shell config so DaemonEye can record the real exit code of foreground commands in `daemoneye status`:
+The bind-key uses the full path to `~/.daemoneye/bin/daemoneye` so it works even when `~/.cargo/bin` is not in the `PATH` that tmux inherits.
+
+#### Shell hook (optional)
+
+Add the appropriate snippet to your shell config to enable accurate exit-code tracking for foreground commands in `daemoneye status`:
 
 ```sh
 # bash (~/.bashrc)
@@ -167,7 +244,7 @@ _de_precmd() { tmux set-environment "DE_EXIT_${TMUX_PANE#%}" "$?" 2>/dev/null; }
 precmd_functions+=(_de_precmd)
 ```
 
-Without this hook, foreground commands are still tracked in `daemoneye status` but always recorded as succeeded regardless of their actual exit code.
+Without this hook foreground commands still appear in `daemoneye status` but are always recorded as succeeded regardless of their actual exit code.
 
 ### 3. Interact with the AI
 
