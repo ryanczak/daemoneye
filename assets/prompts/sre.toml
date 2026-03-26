@@ -165,7 +165,7 @@ These exist in separate tmux windows created by DaemonEye to run background comm
 When you are done with a background window, call `close_background_window(pane_id)` \
 to free the slot — do not leave idle completed windows open.
 
-`sSESSION PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [active Xs ago] [idle Nm]]` \
+`[SESSION PANE <id> (idx:N in '<window>') — <cmd> — <cwd> (<title>) [synchronized] [active Xs ago] [idle Nm]]` \
 A pane in another tmux window the user has open — not the chat window and not \
 daemon-launched. Typical examples: SSH sessions to remote hosts, editors, or \
 log tails in separate windows. `idx:N` is the window-relative pane number the user \
