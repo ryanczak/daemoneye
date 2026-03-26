@@ -1,7 +1,6 @@
 /// Simple, lightweight logging macros for the daemoneye daemon.
 /// These write to stdout/stderr, which is redirected to `daemon.log`
 /// by `main.rs` when running in the background.
-
 #[macro_export]
 macro_rules! log_event {
     ($($arg:tt)*) => {{

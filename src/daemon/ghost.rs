@@ -428,11 +428,13 @@ pub async fn trigger_ghost_turn(
                 call,
                 &mut tx,
                 &mut rx,
-                Some(session_id),
-                &tmux_session,
-                None,
+                crate::daemon::executor::SessionCtx {
+                    session_id: Some(session_id),
+                    session_name: &tmux_session,
+                    chat_pane: None,
+                    sessions,
+                },
                 cache,
-                sessions,
                 schedule_store,
             ).await?;
 

@@ -1,7 +1,6 @@
 use crate::ai::mask_sensitive;
 use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
-use crate::daemon::policy::GhostPolicy;
-use crate::daemon::session::{FG_HOOK_COUNTER, SessionStore, bg_done_subscribe};
+use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, get_pane_remote_host, interactive_destination,
     is_interactive_command, log_command, normalize_output, shell_escape_arg,
@@ -9,10 +8,16 @@ use crate::daemon::utils::{
 use crate::ipc::{Request, Response};
 use crate::tmux;
 use crate::util::UnpoisonExt;
-use super::ToolCallOutcome;
+use super::{ApprovalRequest, GhostCtx, SessionCtx, ToolCallOutcome};
 use super::prompt_and_await_approval;
 use super::find_best_target_pane;
 use super::send_response_split;
+
+pub(super) struct FgArgs<'a> {
+    pub id: &'a str,
+    pub cmd: &'a str,
+    pub target: Option<&'a str>,
+}
 use std::sync::Arc;
 use std::time::Duration;
 use crate::tmux::cache::SessionCache;
@@ -102,8 +107,7 @@ pub(super) fn is_shell_prompt(cmd: &str) -> bool {
 /// recognisable shell-prompt character.
 pub(super) fn looks_like_shell_prompt(snap: &str) -> bool {
     snap.lines()
-        .filter(|l| !l.trim().is_empty())
-        .next_back()
+        .rfind(|l| !l.trim().is_empty())
         .map(|l| {
             let t = l.trim_end();
             t.ends_with("$ ")
@@ -123,16 +127,10 @@ pub(super) fn looks_like_shell_prompt(snap: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 pub(super) async fn run_foreground<W, R>(
-    id: &str,
-    cmd: &str,
-    target: Option<&str>,
-    session_id: Option<&str>,
-    session_name: &str,
-    chat_pane: Option<&str>,
+    args: FgArgs<'_>,
+    ctx: SessionCtx<'_>,
     cache: &Arc<SessionCache>,
-    sessions: &SessionStore,
-    ghost_policy: Option<&GhostPolicy>,
-    _is_ghost: bool,
+    ghost_ctx: GhostCtx<'_>,
     tx: &mut W,
     rx: &mut R,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -140,6 +138,9 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let FgArgs { id, cmd, target } = args;
+    let SessionCtx { session_id, session_name, chat_pane, sessions } = ctx;
+    let GhostCtx { policy: ghost_policy, is_ghost: _ } = ghost_ctx;
     // Compute a best-guess target pane hint synchronously so the approval
     // prompt can show which pane will be used.
     let target_hint: Option<String> = (|| {
@@ -164,7 +165,7 @@ where
     })();
 
     let cmd_id = match prompt_and_await_approval(
-        id, cmd, false, target_hint.as_deref(),
+        ApprovalRequest { id, cmd, background: false, target_pane_hint: target_hint.as_deref() },
         session_id, ghost_policy, tx, rx,
     ).await? {
         Ok(id) => id,
@@ -425,11 +426,8 @@ pub(super) async fn run_background<W, R>(
     id: &str,
     cmd: &str,
     retry_pane: Option<&str>,
-    session_id: Option<&str>,
-    session_name: &str,
-    sessions: &SessionStore,
-    ghost_policy: Option<&GhostPolicy>,
-    is_ghost: bool,
+    ctx: SessionCtx<'_>,
+    ghost_ctx: GhostCtx<'_>,
     tx: &mut W,
     rx: &mut R,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -437,6 +435,8 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let SessionCtx { session_id, session_name, sessions, .. } = ctx;
+    let GhostCtx { policy: ghost_policy, is_ghost } = ghost_ctx;
     // N11: retry path — reuse an existing background pane via respawn-pane.
     if let Some(pane_id) = retry_pane {
         if !crate::tmux::pane_exists(pane_id) {
@@ -466,7 +466,7 @@ where
             cmd
         };
 
-        let cmd_id = match prompt_and_await_approval(id, cmd, true, None, session_id, ghost_policy, tx, rx).await? {
+        let cmd_id = match prompt_and_await_approval(ApprovalRequest { id, cmd, background: true, target_pane_hint: None }, session_id, ghost_policy, tx, rx).await? {
             Ok(id) => id,
             Err(outcome) => return Ok(outcome),
         };
@@ -545,7 +545,7 @@ where
         cmd
     };
 
-    let cmd_id = match prompt_and_await_approval(id, cmd, true, None, session_id, ghost_policy, tx, rx).await? {
+    let cmd_id = match prompt_and_await_approval(ApprovalRequest { id, cmd, background: true, target_pane_hint: None }, session_id, ghost_policy, tx, rx).await? {
         Ok(id) => id,
         Err(outcome) => return Ok(outcome),
     };

@@ -14,6 +14,29 @@ use crate::util::UnpoisonExt;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Session identifiers threaded through the tool-call dispatch chain.
+#[derive(Clone, Copy)]
+pub struct SessionCtx<'a> {
+    pub session_id: Option<&'a str>,
+    pub session_name: &'a str,
+    pub chat_pane: Option<&'a str>,
+    pub sessions: &'a SessionStore,
+}
+
+/// Ghost shell policy context.
+#[derive(Clone, Copy)]
+pub(super) struct GhostCtx<'a> {
+    pub policy: Option<&'a crate::daemon::policy::GhostPolicy>,
+    pub is_ghost: bool,
+}
+
+struct ApprovalRequest<'a> {
+    id: &'a str,
+    cmd: &'a str,
+    background: bool,
+    target_pane_hint: Option<&'a str>,
+}
+
 /// The outcome of a single tool call execution.
 pub enum ToolCallOutcome {
     /// Normal result string to feed back to the AI.
@@ -51,17 +74,15 @@ pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
     rx: &mut R,
-    session_id: Option<&str>,
-    session_name: &str,
-    chat_pane: Option<&str>,
+    ctx: SessionCtx<'_>,
     cache: &Arc<SessionCache>,
-    sessions: &SessionStore,
     schedule_store: &Arc<ScheduleStore>,
 ) -> anyhow::Result<ToolCallOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let SessionCtx { session_id, session_name, chat_pane, sessions } = ctx;
     // ── Pre-fetch Ghost Policy ───────────────────────────────────────────────
     let ghost_policy: Option<GhostPolicy> = if let Some(sid) = session_id {
         if let Ok(store) = sessions.lock() {
@@ -100,10 +121,10 @@ where
     match call {
         PendingCall::Foreground { id, cmd, target, .. } => {
             foreground::run_foreground(
-                id, cmd, target.as_deref(),
-                session_id, session_name, chat_pane,
-                cache, sessions,
-                ghost_policy.as_ref(), is_ghost,
+                foreground::FgArgs { id, cmd, target: target.as_deref() },
+                ctx,
+                cache,
+                GhostCtx { policy: ghost_policy.as_ref(), is_ghost },
                 tx, rx,
             ).await
         }
@@ -111,9 +132,8 @@ where
         PendingCall::Background { id, cmd, retry_pane, .. } => {
             foreground::run_background(
                 id, cmd, retry_pane.as_deref(),
-                session_id, session_name,
-                sessions,
-                ghost_policy.as_ref(), is_ghost,
+                ctx,
+                GhostCtx { policy: ghost_policy.as_ref(), is_ghost },
                 tx, rx,
             ).await
         }
@@ -123,9 +143,15 @@ where
             runbook, ghost_runbook, cron, ..
         } => {
             schedule::run_schedule_command(
-                call_id, name, command, *is_script,
-                run_at.as_deref(), interval.as_deref(),
-                runbook.as_deref(), ghost_runbook.as_deref(), cron.as_deref(),
+                schedule::ScheduleArgs {
+                    call_id, name, command,
+                    is_script: *is_script,
+                    run_at: run_at.as_deref(),
+                    interval: interval.as_deref(),
+                    runbook: runbook.as_deref(),
+                    ghost_runbook: ghost_runbook.as_deref(),
+                    cron: cron.as_deref(),
+                },
                 session_id, is_ghost, schedule_store, tx, rx,
             ).await
         }
@@ -172,8 +198,10 @@ where
 
         PendingCall::EditFile { id, path, old_string, new_string, target_pane, .. } => {
             file_ops::run_edit_file(
-                id, path, old_string, new_string, target_pane.as_deref(),
-                session_id, ghost_policy.as_ref(), is_ghost, tx, rx,
+                file_ops::EditArgs { id, path, old_string, new_string, target_pane: target_pane.as_deref() },
+                session_id,
+                GhostCtx { policy: ghost_policy.as_ref(), is_ghost },
+                tx, rx,
             ).await
         }
 
@@ -246,10 +274,7 @@ where
 /// text as a new user turn.
 /// Returns `Err` on connection EOF.
 async fn prompt_and_await_approval<W, R>(
-    id: &str,
-    cmd: &str,
-    background: bool,
-    target_pane_hint: Option<&str>,
+    req: ApprovalRequest<'_>,
     session_id: Option<&str>,
     ghost_policy: Option<&GhostPolicy>,
     tx: &mut W,
@@ -259,6 +284,7 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let ApprovalRequest { id, cmd, background, target_pane_hint } = req;
     let mode = if background { "background" } else { "foreground" };
 
     // ── Ghost Shell Logic ──────────────────────────────────────────────────

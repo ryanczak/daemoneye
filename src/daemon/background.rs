@@ -134,20 +134,28 @@ fn capture_and_archive(
     body
 }
 
+struct BgJobInfo<'a> {
+    pane_id: &'a str,
+    cmd: &'a str,
+    win_name: &'a str,
+    exit_code: i32,
+    body: &'a str,
+    pane_persists: bool,
+}
+
 /// Inject a `[Background Task Completed]` message into the session history,
 /// update `exit_code` in `bg_windows`, and flash a `tmux display-message`.
 ///
 /// `pane_persists` — if true, the window is still open and the AI can reuse it.
-fn notify_session(
-    sessions: &SessionStore,
-    session_id: &str,
-    pane_id: &str,
-    cmd: &str,
-    win_name: &str,
-    exit_code: i32,
-    body: &str,
-    pane_persists: bool,
-) {
+fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJobInfo<'_>) {
+    let BgJobInfo {
+        pane_id,
+        cmd,
+        win_name,
+        exit_code,
+        body,
+        pane_persists,
+    } = job;
     let Ok(mut store) = sessions.lock() else {
         return;
     };
@@ -527,12 +535,14 @@ pub async fn run_background_in_window(
                     notify_session(
                         &sessions_bg,
                         sid,
-                        &pane_id_bg,
-                        &cmd_bg,
-                        &win_name_bg,
-                        exit_code,
-                        &body,
-                        pane_persists,
+                        BgJobInfo {
+                            pane_id: &pane_id_bg,
+                            cmd: &cmd_bg,
+                            win_name: &win_name_bg,
+                            exit_code,
+                            body: &body,
+                            pane_persists,
+                        },
                     );
                 }
 
@@ -824,12 +834,14 @@ pub async fn respawn_background_in_pane(
                     notify_session(
                         &sessions_bg,
                         sid,
-                        &pane_id_bg,
-                        &cmd_bg,
-                        &win_name_bg,
-                        exit_code,
-                        &body,
-                        pane_persists,
+                        BgJobInfo {
+                            pane_id: &pane_id_bg,
+                            cmd: &cmd_bg,
+                            win_name: &win_name_bg,
+                            exit_code,
+                            body: &body,
+                            pane_persists,
+                        },
                     );
                 }
 
@@ -858,6 +870,12 @@ pub async fn respawn_background_in_pane(
 // Scheduled / watchdog job completion handler
 // ---------------------------------------------------------------------------
 
+pub struct OwnedJobInfo {
+    pub pane_id: String,
+    pub cmd: String,
+    pub win_name: String,
+}
+
 /// Completion handler for scheduled and watchdog jobs (called from `server.rs`).
 ///
 /// - Captures and archives pane output.
@@ -865,16 +883,14 @@ pub async fn respawn_background_in_pane(
 /// - **GC**: destroys the window on success (FR-1.2.10); leaves it open on
 ///   failure so the user can inspect it via `daemoneye schedule windows`.
 pub async fn notify_job_completion(
-    pane_id: String,
-    cmd: String,
-    win_name: String,
+    job: OwnedJobInfo,
     session: String,
     exit_code: i32,
     session_id: Option<String>,
-    _sessions: SessionStore,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
     started_at: tokio::time::Instant,
 ) {
+    let OwnedJobInfo { pane_id, cmd, win_name } = job;
     let duration_ms = started_at.elapsed().as_millis() as u64;
 
     log_event(

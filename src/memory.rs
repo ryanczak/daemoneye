@@ -66,7 +66,7 @@ fn parse_memory_tag_field(frontmatter: &str) -> Vec<String> {
     for line in frontmatter.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("tags:") {
-            let rest = trimmed["tags:".len()..].trim();
+            let rest = trimmed.strip_prefix("tags:").unwrap_or("").trim();
             if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
                 return inner
                     .split(',')

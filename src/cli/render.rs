@@ -113,7 +113,6 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_wi
 /// Count the visible (printable) characters in a string, skipping ANSI escape
 /// sequences.  Used to measure word width correctly when the pending word
 /// contains bold or colour codes injected by the markdown renderer.
-
 pub fn wrap_line_hard(s: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for hard_line in s.split('\n') {
@@ -297,33 +296,28 @@ pub fn draw_input_frame_n(
     std::io::stdout().flush().ok();
 }
 
+/// The 6 status-bar fields passed as a single reference to every rendering function.
+pub struct StatusBarState<'a> {
+    pub session_id: &'a str,
+    pub approval_hint: &'a str,
+    pub model: &'a str,
+    pub prompt_tokens: u32,
+    pub context_window: u32,
+    pub daemon_up: bool,
+}
+
 /// Render (or refresh) the status bar in the bottom row.
-/// Uses DEC save/restore cursor (\x1b7 / \x1b8) so this is safe to call
-/// at any point without disturbing the scroll-region cursor position.
-///
-/// `approval_hint` — a label describing the current session approval state.
-/// Shown in bold amber so it stands out.
-/// Render (or refresh) the status bar in the bottom row.
-/// Uses DEC save/restore cursor (\x1b7 / \x1b8) so this is safe to call
+/// Uses DEC save/restore cursor (`\x1b7` / `\x1b8`) so this is safe to call
 /// at any point without disturbing the scroll-region cursor position.
 ///
 /// Layout (left to right, progressively dropped when the terminal is narrow):
-///   base: ` ⬡ daemoneye  ·  session:XXXXXXXX `
-///   + model name
-///   + token budget (`12k / 200k`)
-///   + approval hint (bold amber, only when auto-approve is active)
-pub fn draw_status_bar(
-    height: usize,
-    width: usize,
-    session_id: &str,
-    approval_hint: &str,
-    model: &str,
-    prompt_tokens: u32,
-    context_window: u32,
-    daemon_up: bool,
-) {
+/// - base: ` ⬡ daemoneye  ·  session:XXXXXXXX `
+/// - model name
+/// - token budget (`12k / 200k`)
+/// - approval hint (bold amber, only when auto-approve is active)
+pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
     use std::io::Write;
-    let icon = if daemon_up {
+    let icon = if sb.daemon_up {
         "\x1b[0m\x1b[1m\x1b[31m(\x1b[33m◉\x1b[31m)\x1b[0m\x1b[2m"
     } else {
         "\x1b[0m\x1b[2m(◉)\x1b[0m\x1b[2m"
@@ -331,33 +325,37 @@ pub fn draw_status_bar(
     let base = format!(
         " {} ·  session:{} ",
         icon,
-        &session_id[..8.min(session_id.len())],
+        &sb.session_id[..8.min(sb.session_id.len())],
     );
 
     // Optional segments assembled right-to-left in priority order.
-    let model_str = if model.is_empty() {
+    let model_str = if sb.model.is_empty() {
         String::new()
     } else {
-        format!(" ·  {} ", model)
+        format!(" ·  {} ", sb.model)
     };
 
-    let token_str = if prompt_tokens > 0 && context_window > 0 {
-        let pct_used = (prompt_tokens as f64 / context_window.max(1) as f64 * 100.0) as u32;
-        format!(" ·  {} / {} ({}%) ", prompt_tokens, context_window, pct_used)
+    let token_str = if sb.prompt_tokens > 0 && sb.context_window > 0 {
+        let pct_used =
+            (sb.prompt_tokens as f64 / sb.context_window.max(1) as f64 * 100.0) as u32;
+        format!(
+            " ·  {} / {} ({}%) ",
+            sb.prompt_tokens, sb.context_window, pct_used
+        )
     } else {
         String::new()
     };
 
     // Active auto-approve: bold amber.  Inactive ("auto-approve: off"): dim.
-    let hint_str = if approval_hint.is_empty() {
+    let hint_str = if sb.approval_hint.is_empty() {
         String::new()
-    } else if approval_hint.starts_with('⚡') {
+    } else if sb.approval_hint.starts_with('⚡') {
         format!(
             " ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ",
-            approval_hint
+            sb.approval_hint
         )
     } else {
-        format!(" ·  \x1b[2m{}\x1b[0m ", approval_hint)
+        format!(" ·  \x1b[2m{}\x1b[0m ", sb.approval_hint)
     };
 
     // Try progressively shorter combinations until one fits.
@@ -1039,7 +1037,7 @@ impl MarkdownRenderer {
                 self.wrap.flush();
                 self.wrap.reset();
                 self.in_code_block = true;
-                let lang = line[3..].trim().to_string();
+                let lang = line.strip_prefix("```").unwrap_or("").trim().to_string();
                 let w = terminal_width();
                 let border = w.min(72);
                 if lang.is_empty() {

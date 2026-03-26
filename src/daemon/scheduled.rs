@@ -1,6 +1,6 @@
 use crate::ai::{AiEvent, Message};
 use crate::config::Config;
-use crate::daemon::background::notify_job_completion;
+use crate::daemon::background::{notify_job_completion, OwnedJobInfo};
 use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_turn};
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
@@ -31,7 +31,6 @@ pub async fn run_scheduled_job(
     sessions: SessionStore,
     config: Config,
     cache: Arc<SessionCache>,
-    schedule_store: Arc<ScheduleStore>,
     notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
 ) {
     crate::daemon::stats::inc_schedules_executed();
@@ -93,7 +92,7 @@ pub async fn run_scheduled_job(
                             ),
                         );
                         let result =
-                            trigger_ghost_turn(&sid, &sessions, &config, &cache, &schedule_store)
+                            trigger_ghost_turn(&sid, &sessions, &config, &cache, &Arc::clone(&store))
                                 .await;
                         match result {
                             Ok(()) => {
@@ -295,6 +294,11 @@ pub async fn run_scheduled_job(
     let cmd_str = cmd.to_string();
     let started_at = tokio::time::Instant::now() - Duration::from_secs(60);
     tokio::spawn(notify_job_completion(
-        pane_id, cmd_str, win_name, session, exit_code, None, sessions, notify_tx, started_at,
+        OwnedJobInfo { pane_id, cmd: cmd_str, win_name },
+        session,
+        exit_code,
+        None,
+        notify_tx,
+        started_at,
     ));
 }

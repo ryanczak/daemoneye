@@ -6,16 +6,20 @@ use super::ToolCallOutcome;
 use super::USER_PROMPT_TIMEOUT;
 use std::sync::Arc;
 
+pub(super) struct ScheduleArgs<'a> {
+    pub call_id: &'a str,
+    pub name: &'a str,
+    pub command: &'a str,
+    pub is_script: bool,
+    pub run_at: Option<&'a str>,
+    pub interval: Option<&'a str>,
+    pub runbook: Option<&'a str>,
+    pub ghost_runbook: Option<&'a str>,
+    pub cron: Option<&'a str>,
+}
+
 pub(super) async fn run_schedule_command<W, R>(
-    call_id: &str,
-    name: &str,
-    command: &str,
-    is_script: bool,
-    run_at: Option<&str>,
-    interval: Option<&str>,
-    runbook: Option<&str>,
-    ghost_runbook: Option<&str>,
-    cron: Option<&str>,
+    args: ScheduleArgs<'_>,
     session_id: Option<&str>,
     is_ghost: bool,
     schedule_store: &Arc<ScheduleStore>,
@@ -26,6 +30,7 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let ScheduleArgs { call_id, name, command, is_script, run_at, interval, runbook, ghost_runbook, cron } = args;
     #[allow(deprecated)]
     let (action, runbook) = if let Some(rb) = ghost_runbook {
         (ActionOn::Ghost { runbook: rb.to_string() }, None)

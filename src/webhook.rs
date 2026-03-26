@@ -112,7 +112,7 @@ fn parse_alertmanager(body: &Value) -> Vec<InternalAlert> {
 
     alerts_arr
         .iter()
-        .filter_map(|a| {
+        .map(|a| {
             let labels: HashMap<String, String> = a["labels"]
                 .as_object()
                 .map(|o| {
@@ -151,7 +151,7 @@ fn parse_alertmanager(body: &Value) -> Vec<InternalAlert> {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| fingerprint_from_labels(&labels));
 
-            Some(InternalAlert {
+            InternalAlert {
                 alert_name,
                 status,
                 severity,
@@ -160,7 +160,7 @@ fn parse_alertmanager(body: &Value) -> Vec<InternalAlert> {
                 labels,
                 fingerprint,
                 source: "alertmanager",
-            })
+            }
         })
         .collect()
 }

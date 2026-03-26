@@ -283,7 +283,7 @@ impl SessionCache {
     /// falls back to the first 50 characters of the last non-empty line.
     /// These heuristics are best-effort: unusual prompts or tools may not match.
     fn summarize(&self, buffer: &str) -> String {
-        let Some(last_line) = buffer.lines().filter(|l| !l.trim().is_empty()).next_back() else {
+        let Some(last_line) = buffer.lines().rfind(|l| !l.trim().is_empty()) else {
             return "Empty pane".to_string();
         };
         let last_line = last_line.trim();
@@ -577,11 +577,11 @@ impl SessionCache {
             };
             let idx_part = format!(" (idx:{} in '{}')", state.pane_index, state.window_name);
             out.push_str(&format!(
-                "[{} {}{}{}{}{}{}{}{}{}{}]: {}\n",
+                "[{} {}{} — {}{}{}{}{}{}{}{}]: {}\n",
                 pane_label,
                 id,
                 idx_part,
-                format!(" — {}", state.current_cmd),
+                state.current_cmd,
                 start_part,
                 cwd_part,
                 title_part,

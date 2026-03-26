@@ -86,9 +86,11 @@ pub(super) fn annotate_ansi(s: &str) -> String {
             // This is an SGR sequence.
             match classify_sgr(sgr_params.as_str()) {
                 Some(new_color) => {
-                    if current_color.is_some() && current_color != Some(new_color) {
+                    if let Some(c) = current_color
+                        && c != new_color
+                    {
                         // Colour change mid-span: flush old span first.
-                        flush_span(&mut result, &mut span_buf, current_color.unwrap());
+                        flush_span(&mut result, &mut span_buf, c);
                     }
                     current_color = Some(new_color);
                 }

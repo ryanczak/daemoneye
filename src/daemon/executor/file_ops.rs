@@ -1,10 +1,17 @@
 use crate::ai::mask_sensitive;
-use crate::daemon::policy::GhostPolicy;
 use crate::daemon::session::BUFFER_COUNTER;
 use crate::daemon::utils::get_pane_remote_host;
 use crate::tmux;
-use super::ToolCallOutcome;
+use super::{ApprovalRequest, GhostCtx, ToolCallOutcome};
 use super::prompt_and_await_approval;
+
+pub(super) struct EditArgs<'a> {
+    pub id: &'a str,
+    pub path: &'a str,
+    pub old_string: &'a str,
+    pub new_string: &'a str,
+    pub target_pane: Option<&'a str>,
+}
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -301,14 +308,9 @@ pub(super) async fn run_read_file(
 // ---------------------------------------------------------------------------
 
 pub(super) async fn run_edit_file<W, R>(
-    id: &str,
-    path: &str,
-    old_string: &str,
-    new_string: &str,
-    target_pane: Option<&str>,
+    args: EditArgs<'_>,
     session_id: Option<&str>,
-    ghost_policy: Option<&GhostPolicy>,
-    is_ghost: bool,
+    ghost_ctx: GhostCtx<'_>,
     tx: &mut W,
     rx: &mut R,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -316,6 +318,8 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let EditArgs { id, path, old_string, new_string, target_pane } = args;
+    let GhostCtx { policy: ghost_policy, is_ghost } = ghost_ctx;
     if path.contains("..") {
         return Ok(ToolCallOutcome::Result("Error: path must not contain '..'.".to_string()));
     }
@@ -351,7 +355,8 @@ where
         let location = format!("{} (remote via pane {})", path, pane);
         let approval_cmd = format!("edit_file {}\n--- old\n{}\n+++ new\n{}", location, old_string, new_string);
         let cmd_id = match prompt_and_await_approval(
-            id, &approval_cmd, false, None, session_id, ghost_policy, tx, rx,
+            ApprovalRequest { id, cmd: &approval_cmd, background: false, target_pane_hint: None },
+            session_id, ghost_policy, tx, rx,
         ).await? {
             Ok(id) => id,
             Err(outcome) => return Ok(outcome),
@@ -410,7 +415,8 @@ where
 
     let approval_cmd = format!("edit_file {}\n--- old\n{}\n+++ new\n{}", path, old_string, new_string);
     let cmd_id = match prompt_and_await_approval(
-        id, &approval_cmd, false, None, session_id, ghost_policy, tx, rx,
+        ApprovalRequest { id, cmd: &approval_cmd, background: false, target_pane_hint: None },
+        session_id, ghost_policy, tx, rx,
     ).await? {
         Ok(id) => id,
         Err(outcome) => return Ok(outcome),

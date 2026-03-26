@@ -187,6 +187,7 @@ pub struct RecentCommand {
 
 /// Messages sent from the daemon back to the CLI client.
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)] // DaemonStatus is large by design; boxing would add indirection to every IPC response match
 pub enum Response {
     /// Acknowledgment of a successful request.
     Ok,

@@ -2,12 +2,12 @@
 
 ## 1. Product Overview
 
-**Name**: DaemonEye (aka T.1.K.)  
+**Name**: DaemonEye 
 **Type**: Linux Daemon / Tmux Plugin  
-**Inspiration**: tmux, claude code, T-1000 (Terminator franchise)
+**Inspiration**: tmux, claude code, openclaw
 
 **Vision Statement**:  
-DaemonEye elevates the command-line experience by embedding AI agents like Google Gemini, Anthropic Claude, or OpenAI's ChatGPT directly into your existing terminal workflow via **tmux**. Operating as a lightweight daemon process, DaemonEye manages AI interactions through tmux panes without attempting to replace your terminal emulator. The goal of DaemonEye is to act as an intelligent, context-aware pair-sysadmin, leveraging advanced AI to automate tasks, troubleshoot problems, manage OS settings and security.
+DaemonEye elevates the command-line experience by embedding AI agents directly into your existing terminal workflow via **tmux**. Operating as a lightweight daemon process, DaemonEye manages AI interactions through tmux panes. The goal of DaemonEye is to act as an intelligent, context-aware peer engineer, DaemonEye leverages advanced AI to automate tasks, troubleshoot problems, react to alerts and proactively manage hosts, infrastructure and security. 
 
 ---
 

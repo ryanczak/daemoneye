@@ -578,9 +578,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
                         let cfg2 = cfg.clone();
                         let sessions2 = Arc::clone(&sessions_sched);
                         let cache2 = Arc::clone(&cache_sched);
-                        let store3 = Arc::clone(&store);
                         tokio::spawn(async move {
-                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, store3, None).await;
+                            run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None).await;
                         });
                     }
                 }

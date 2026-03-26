@@ -1218,11 +1218,13 @@ pub async fn handle_client(
                             call,
                             &mut tx,
                             &mut rx,
-                            session_id.as_deref(),
-                            &session_name,
-                            chat_pane.as_deref(),
+                            crate::daemon::executor::SessionCtx {
+                                session_id: session_id.as_deref(),
+                                session_name: &session_name,
+                                chat_pane: chat_pane.as_deref(),
+                                sessions: &sessions,
+                            },
                             &cache,
-                            &sessions,
                             &schedule_store,
                         )
                         .await

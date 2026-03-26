@@ -223,20 +223,12 @@ pub async fn run_ask(query: String) -> Result<()> {
     let tmux_session = crate::tmux::current_session_name();
     // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
     let result = ask_with_session(
-        query.clone(),
-        &query,
+        QueryArgs { query: query.clone(), display_query: &query, prompt_override: None },
         None,
-        None,
-        &stdin,
-        Some(terminal_width()),
         &mut approval,
-        old,
-        tmux_session.as_deref(),
-        None,
-        &mut 0,
-        0,
-        None,
-        None,
+        AskTmuxCtx { session: tmux_session.as_deref(), pane: None },
+        TokenCtx { prompt_tokens: &mut 0, context_window: 0 },
+        StreamCtx { stdin: &stdin, chat_width: Some(terminal_width()), old_termios: old, sigwinch: None, resize: None },
     )
     .await;
     crate::cli::input::restore_termios(old);
@@ -308,18 +300,14 @@ async fn run_chat_inner() -> Result<()> {
     // the correct settled size.
     if pane_id_opt.is_some() {
         const SETTLE_MS: u64 = 500;
-        loop {
-            match tokio::time::timeout(std::time::Duration::from_millis(SETTLE_MS), sigwinch.recv())
-                .await
-            {
-                Ok(_) => {
-                    // Another resize — update dims and restart the quiet timer.
-                    chat_width = terminal_width();
-                    chat_height = terminal_height();
-                }
-                Err(_elapsed) => break, // stable for SETTLE_MS — proceed
-            }
-        }
+        while tokio::time::timeout(std::time::Duration::from_millis(SETTLE_MS), sigwinch.recv())
+            .await
+            .is_ok()
+        {
+            // Another resize — update dims and restart the quiet timer.
+            chat_width = terminal_width();
+            chat_height = terminal_height();
+        } // stable for SETTLE_MS — proceed
     }
 
     // Install the scroll region.  The input frame and status bar are
@@ -422,32 +410,25 @@ async fn run_chat_inner() -> Result<()> {
     let model_pre = config.ai.model.clone();
     let ctx_pre = config.ai.context_window();
     let hint = approval.hint();
-    draw_status_bar(
-        chat_height,
-        chat_width,
-        &session_id,
-        &hint,
-        &model_pre,
-        0,
-        ctx_pre,
-        false,
-    );
+    draw_status_bar(chat_height, chat_width, &StatusBarState {
+        session_id: &session_id,
+        approval_hint: &hint,
+        model: &model_pre,
+        prompt_tokens: 0,
+        context_window: ctx_pre,
+        daemon_up: false,
+    });
 
     // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
     let old_termios = crate::cli::input::set_raw_mode()?;
 
     let result = run_chat_inner_raw(
-        &mut input_state,
-        &stdin,
-        &mut sigwinch,
-        chat_width,
-        start_time,
+        InputHandles { state: &mut input_state, stdin: &stdin, sigwinch: &mut sigwinch },
+        TerminalCtx { chat_width, start_time, old_termios },
         session_id,
         current_prompt,
         &mut approval,
-        old_termios,
-        tmux_session,
-        target_pane,
+        TmuxCtx { session: tmux_session, pane: target_pane },
     )
     .await;
 
@@ -455,19 +436,35 @@ async fn run_chat_inner() -> Result<()> {
     result
 }
 
-async fn run_chat_inner_raw(
-    input_state: &mut InputState,
-    stdin: &AsyncStdin,
-    sigwinch: &mut tokio::signal::unix::Signal,
-    mut chat_width: usize,
+struct InputHandles<'a> {
+    state: &'a mut InputState,
+    stdin: &'a AsyncStdin,
+    sigwinch: &'a mut tokio::signal::unix::Signal,
+}
+
+struct TerminalCtx {
+    chat_width: usize,
     start_time: std::time::Instant,
+    old_termios: libc::termios,
+}
+
+struct TmuxCtx {
+    session: Option<String>,
+    pane: Option<String>,
+}
+
+async fn run_chat_inner_raw(
+    handles: InputHandles<'_>,
+    term: TerminalCtx,
     mut session_id: String,
     mut current_prompt: Option<String>,
     approval: &mut SessionApproval,
-    old_termios: libc::termios,
-    tmux_session: Option<String>,
-    target_pane: Option<String>,
+    tmux: TmuxCtx,
 ) -> Result<()> {
+    let InputHandles { state: input_state, stdin, sigwinch } = handles;
+    let TerminalCtx { chat_width, start_time, old_termios } = term;
+    let TmuxCtx { session: tmux_session, pane: target_pane } = tmux;
+    let mut chat_width = chat_width;
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
     // Accumulated prompt token count — carried across turns so the query box
@@ -505,20 +502,12 @@ async fn run_chat_inner_raw(
             has_frame: false,
         };
         match ask_with_session(
-            "Hello!".to_string(),
-            "",
+            QueryArgs { query: "Hello!".to_string(), display_query: "", prompt_override: current_prompt.as_deref() },
             Some(&session_id),
-            current_prompt.as_deref(),
-            stdin,
-            Some(cw),
             approval,
-            old_termios,
-            tmux_session.as_deref(),
-            target_pane.as_deref(),
-            &mut prompt_tokens,
-            context_window,
-            Some(sigwinch),
-            Some(resize),
+            AskTmuxCtx { session: tmux_session.as_deref(), pane: target_pane.as_deref() },
+            TokenCtx { prompt_tokens: &mut prompt_tokens, context_window },
+            StreamCtx { stdin, chat_width: Some(cw), old_termios, sigwinch: Some(sigwinch), resize: Some(resize) },
         )
         .await
         {
@@ -538,16 +527,14 @@ async fn run_chat_inner_raw(
     setup_scroll_region(chat_height);
     draw_input_frame(chat_height, chat_width, start_time);
     let hint = approval.hint();
-    draw_status_bar(
-        chat_height,
-        chat_width,
-        &session_id,
-        &hint,
-        &model,
+    draw_status_bar(chat_height, chat_width, &StatusBarState {
+        session_id: &session_id,
+        approval_hint: &hint,
+        model: &model,
         prompt_tokens,
         context_window,
         daemon_up,
-    );
+    });
 
     loop {
         // read_input_line handles its own rendering and SIGWINCH internally.
@@ -559,13 +546,15 @@ async fn run_chat_inner_raw(
             &mut chat_width,
             &mut chat_height,
             start_time,
-            &session_id,
-            &hint,
-            &model,
-            prompt_tokens,
-            context_window,
+            &StatusBarState {
+                session_id: &session_id,
+                approval_hint: &hint,
+                model: &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+            },
             &mut last_ctrl_c,
-            daemon_up,
         )
         .await?;
 
@@ -602,16 +591,14 @@ async fn run_chat_inner_raw(
             println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
             let hint = approval.hint();
             draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(
-                chat_height,
-                chat_width,
-                &session_id,
-                &hint,
-                &model,
+            draw_status_bar(chat_height, chat_width, &StatusBarState {
+                session_id: &session_id,
+                approval_hint: &hint,
+                model: &model,
                 prompt_tokens,
                 context_window,
                 daemon_up,
-            );
+            });
             continue;
         }
         if let Some(name) = query.strip_prefix("/prompt ").map(str::trim) {
@@ -631,16 +618,14 @@ async fn run_chat_inner_raw(
                 println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                 draw_input_frame(chat_height, chat_width, start_time);
                 let hint = approval.hint();
-                draw_status_bar(
-                    chat_height,
-                    chat_width,
-                    &session_id,
-                    &hint,
-                    &model,
+                draw_status_bar(chat_height, chat_width, &StatusBarState {
+                    session_id: &session_id,
+                    approval_hint: &hint,
+                    model: &model,
                     prompt_tokens,
                     context_window,
                     daemon_up,
-                );
+                });
             }
             continue;
         }
@@ -654,16 +639,14 @@ async fn run_chat_inner_raw(
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
                     draw_input_frame(chat_height, chat_width, start_time);
                     let hint = approval.hint();
-                    draw_status_bar(
-                        chat_height,
-                        chat_width,
-                        &session_id,
-                        &hint,
-                        &model,
+                    draw_status_bar(chat_height, chat_width, &StatusBarState {
+                        session_id: &session_id,
+                        approval_hint: &hint,
+                        model: &model,
                         prompt_tokens,
                         context_window,
                         daemon_up,
-                    );
+                    });
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
@@ -680,20 +663,12 @@ async fn run_chat_inner_raw(
                 has_frame: true,
             };
             match ask_with_session(
-                query.clone(),
-                &query,
+                QueryArgs { query: query.clone(), display_query: &query, prompt_override: current_prompt.as_deref() },
                 Some(&session_id),
-                current_prompt.as_deref(),
-                stdin,
-                Some(cw),
                 approval,
-                old_termios,
-                tmux_session.as_deref(),
-                target_pane.as_deref(),
-                &mut prompt_tokens,
-                context_window,
-                Some(sigwinch),
-                Some(resize),
+                AskTmuxCtx { session: tmux_session.as_deref(), pane: target_pane.as_deref() },
+                TokenCtx { prompt_tokens: &mut prompt_tokens, context_window },
+                StreamCtx { stdin, chat_width: Some(cw), old_termios, sigwinch: Some(sigwinch), resize: Some(resize) },
             )
             .await
             {
@@ -710,16 +685,14 @@ async fn run_chat_inner_raw(
         setup_scroll_region(chat_height);
         draw_input_frame(chat_height, chat_width, start_time);
         let hint = approval.hint();
-        draw_status_bar(
-            chat_height,
-            chat_width,
-            &session_id,
-            &hint,
-            &model,
+        draw_status_bar(chat_height, chat_width, &StatusBarState {
+            session_id: &session_id,
+            approval_hint: &hint,
+            model: &model,
             prompt_tokens,
             context_window,
             daemon_up,
-        );
+        });
     }
 
     teardown_scroll_region(chat_height);
@@ -942,34 +915,54 @@ fn apply_stream_resize(
     setup_scroll_region(*d.height);
     draw_input_frame(*d.height, *d.width, d.start);
     let hint = approval.hint();
-    draw_status_bar(
-        *d.height,
-        *d.width,
-        session_id.unwrap_or(""),
-        &hint,
-        &d.model,
+    draw_status_bar(*d.height, *d.width, &StatusBarState {
+        session_id: session_id.unwrap_or(""),
+        approval_hint: &hint,
+        model: &d.model,
         prompt_tokens,
         context_window,
-        d.daemon_up,
-    );
+        daemon_up: d.daemon_up,
+    });
+}
+
+struct QueryArgs<'a> {
+    query: String,
+    display_query: &'a str,
+    prompt_override: Option<&'a str>,
+}
+
+struct AskTmuxCtx<'a> {
+    session: Option<&'a str>,
+    pane: Option<&'a str>,
+}
+
+struct TokenCtx<'a> {
+    prompt_tokens: &'a mut u32,
+    context_window: u32,
+}
+
+struct StreamCtx<'a> {
+    stdin: &'a AsyncStdin,
+    chat_width: Option<usize>,
+    old_termios: libc::termios,
+    sigwinch: Option<&'a mut tokio::signal::unix::Signal>,
+    resize: Option<StreamResizeDims<'a>>,
 }
 
 async fn ask_with_session(
-    query: String,
-    display_query: &str,
+    qa: QueryArgs<'_>,
     session_id: Option<&str>,
-    prompt_override: Option<&str>,
-    stdin: &AsyncStdin,
-    chat_width: Option<usize>,
     approval: &mut SessionApproval,
-    old_termios: libc::termios,
-    tmux_session: Option<&str>,
-    target_pane: Option<&str>,
-    prompt_tokens: &mut u32,
-    context_window: u32,
-    mut sigwinch: Option<&mut tokio::signal::unix::Signal>,
-    mut resize: Option<StreamResizeDims<'_>>,
+    tmux: AskTmuxCtx<'_>,
+    tok: TokenCtx<'_>,
+    stream: StreamCtx<'_>,
 ) -> Result<()> {
+    let QueryArgs { query, display_query, prompt_override } = qa;
+    let AskTmuxCtx { session: tmux_session, pane: target_pane } = tmux;
+    let TokenCtx { prompt_tokens, context_window } = tok;
+    let StreamCtx { stdin, chat_width, old_termios, sigwinch, resize } = stream;
+    let mut sigwinch = sigwinch;
+    let mut resize = resize;
     use std::io::Write;
     use std::time::Duration;
 
