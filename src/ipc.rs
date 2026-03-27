@@ -364,6 +364,12 @@ pub enum Response {
         /// Redaction counts by type since daemon start (all built-in types included, even if zero).
         #[serde(default)]
         redaction_counts: std::collections::HashMap<String, usize>,
+        /// Number of session history compaction events since daemon start.
+        #[serde(default)]
+        compactions: usize,
+        /// Cumulative compression ratio (msgs_in / msgs_out) across all compactions.  0.0 if none.
+        #[serde(default)]
+        compaction_ratio: f64,
     },
 }
 
@@ -974,6 +980,8 @@ mod tests {
                 m.insert("Secret".to_string(), 1);
                 m
             },
+            compactions: 2,
+            compaction_ratio: 3.5,
         };
         match roundtrip_resp(&resp) {
             Response::DaemonStatus {

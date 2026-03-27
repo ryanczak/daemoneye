@@ -49,6 +49,10 @@ static GHOSTS_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static GHOSTS_COMPLETED: AtomicUsize = AtomicUsize::new(0);
 static GHOSTS_FAILED: AtomicUsize = AtomicUsize::new(0);
 
+static COMPACTIONS: AtomicUsize = AtomicUsize::new(0);
+static COMPACTION_MSGS_IN: AtomicUsize = AtomicUsize::new(0);
+static COMPACTION_MSGS_OUT: AtomicUsize = AtomicUsize::new(0);
+
 static NEXT_CMD_ID: AtomicUsize = AtomicUsize::new(1);
 static RECENT_COMMANDS: Mutex<VecDeque<RecentCommand>> = Mutex::new(VecDeque::new());
 
@@ -298,4 +302,22 @@ pub fn get_ghosts_completed() -> usize {
 }
 pub fn get_ghosts_failed() -> usize {
     GHOSTS_FAILED.load(Ordering::Relaxed)
+}
+
+pub fn record_compaction(pre: usize, post: usize) {
+    COMPACTIONS.fetch_add(1, Ordering::Relaxed);
+    COMPACTION_MSGS_IN.fetch_add(pre, Ordering::Relaxed);
+    COMPACTION_MSGS_OUT.fetch_add(post, Ordering::Relaxed);
+}
+pub fn get_compactions() -> usize {
+    COMPACTIONS.load(Ordering::Relaxed)
+}
+/// Returns the average compression ratio (msgs_in / msgs_out) across all compaction events.
+/// Returns 0.0 if no compactions have occurred.
+pub fn get_compaction_ratio() -> f64 {
+    let out = COMPACTION_MSGS_OUT.load(Ordering::Relaxed);
+    if out == 0 {
+        return 0.0;
+    }
+    COMPACTION_MSGS_IN.load(Ordering::Relaxed) as f64 / out as f64
 }

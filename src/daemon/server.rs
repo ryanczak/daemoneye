@@ -282,6 +282,8 @@ pub async fn handle_client(
             }
 
             let context_window_tokens = config.ai.context_window();
+            let compactions = crate::daemon::stats::get_compactions();
+            let compaction_ratio = crate::daemon::stats::get_compaction_ratio();
 
             send_response_split(
                 &mut tx,
@@ -330,6 +332,8 @@ pub async fn handle_client(
                     recent_commands,
                     memory_breakdown,
                     redaction_counts: crate::ai::filter::get_redaction_counts(),
+                    compactions,
+                    compaction_ratio,
                 },
             )
             .await?;
@@ -755,6 +759,24 @@ pub async fn handle_client(
     // Notify the user when compaction occurred so the turn counter reset is
     // not mysterious.  Sent before the catch-up brief so it appears first.
     if needs_compaction {
+        let ratio = pre_trim_len as f64 / post_trim_len.max(1) as f64;
+        log::info!(
+            "Session {} history compacted: {} → {} messages ({:.1}:1)",
+            session_id.as_deref().unwrap_or("-"),
+            pre_trim_len,
+            post_trim_len,
+            ratio,
+        );
+        log_event(
+            "compaction",
+            serde_json::json!({
+                "session": session_id.as_deref().unwrap_or("-"),
+                "msgs_before": pre_trim_len,
+                "msgs_after": post_trim_len,
+                "ratio": (ratio * 10.0).round() / 10.0,
+            }),
+        );
+        crate::daemon::stats::record_compaction(pre_trim_len, post_trim_len);
         send_response_split(
             &mut tx,
             Response::SystemMsg(format!(

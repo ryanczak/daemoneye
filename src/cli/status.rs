@@ -60,6 +60,8 @@ pub async fn run_status() -> Result<()> {
                     recent_commands,
                     memory_breakdown,
                     redaction_counts,
+                    compactions,
+                    compaction_ratio,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -175,12 +177,26 @@ pub async fn run_status() -> Result<()> {
                             active_prompt_tokens, context_window_tokens, tokens_pct
                         ),
                     ));
+                    right_items.push((
+                        "Compactions:".to_string(),
+                        if compactions == 0 {
+                            "0".to_string()
+                        } else {
+                            format!("{} ({:.1}:1)", compactions, compaction_ratio)
+                        },
+                    ));
                     right_items.push(("─".to_string(), "".to_string()));
                     right_items.push(("§".to_string(), "Memories".to_string()));
-                    let knowledge_count = memory_breakdown.get("knowledge").copied().unwrap_or(0);
-                    let session_count = memory_breakdown.get("session").copied().unwrap_or(0);
-                    right_items.push(("Knowledge:".to_string(), knowledge_count.to_string()));
-                    right_items.push(("Session:".to_string(), session_count.to_string()));
+                    const KNOWN_CATS: &[&str] = &["knowledge", "session", "incident"];
+                    for cat in KNOWN_CATS {
+                        let count = memory_breakdown.get(*cat).copied().unwrap_or(0);
+                        let label = format!(
+                            "{}{}:",
+                            cat[..1].to_uppercase(),
+                            &cat[1..]
+                        );
+                        right_items.push((label, count.to_string()));
+                    }
                     right_items.push((
                         "".to_string(),
                         format!(
@@ -191,7 +207,7 @@ pub async fn run_status() -> Result<()> {
 
                     let mut mem_cats: Vec<_> = memory_breakdown
                         .into_iter()
-                        .filter(|(cat, _)| cat != "knowledge" && cat != "session")
+                        .filter(|(cat, _)| !KNOWN_CATS.contains(&cat.as_str()))
                         .collect();
                     mem_cats.sort_by_key(|k| k.0.clone());
                     for (cat, count) in mem_cats {
