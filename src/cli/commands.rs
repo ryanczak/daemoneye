@@ -35,7 +35,7 @@ impl SessionApproval {
 ///
 /// - `overwrite_bin`    — copy the current executable to `~/.daemoneye/bin/daemoneye`
 ///   even if a copy already exists there.
-/// - `overwrite_memory` — overwrite the six built-in knowledge memory files with the
+/// - `overwrite_memory` — overwrite the built-in knowledge and session memory files with the
 ///   versions bundled in this binary.
 /// - `overwrite_prompt` — overwrite `~/.daemoneye/etc/prompts/sre.toml` with the
 ///   version bundled in this binary (implied by `--overwrite-all`).
