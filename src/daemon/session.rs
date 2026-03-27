@@ -52,6 +52,9 @@ pub struct SessionEntry {
     /// Defaults to `GS_BG_WINDOW_PREFIX`; set to `GS_SCHED_WINDOW_PREFIX` for scheduler-
     /// originated ghosts so their windows are visually distinct.
     pub ghost_bg_prefix: &'static str,
+    /// Wall-clock time when this session was created. Used by the session digest
+    /// to filter events and detect artifacts created during this session.
+    pub started_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.

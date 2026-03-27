@@ -518,6 +518,7 @@ pub async fn handle_client(
                 is_ghost: false,
                 ghost_config: None,
                 ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+                started_at: chrono::Utc::now(),
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
@@ -586,18 +587,32 @@ pub async fn handle_client(
         None
     };
 
-    // Trim history to keep the context window bounded.
-    // Layout after trim: [messages[0]] [placeholder] [tail...]
-    // messages[0] is the first-turn user message containing sys_ctx.
-    // The placeholder is a synthetic assistant message so role alternation
-    // (user→assistant→user→…) is preserved at the join point.
-    // tail_start is snapped to an even index so the tail always starts on a
-    // user message, which keeps alternation valid regardless of how many
-    // messages are dropped.
+    // Compact history: when the message count reaches the digest threshold,
+    // build a structured digest from events.jsonl + filesystem and replace
+    // the oldest messages with it.  Below the threshold, fall back to the
+    // simple tail-trim that drops old messages with a placeholder.
     let pre_trim_len = messages.len();
-    messages = trim_history(messages);
-    // If trim dropped messages the on-disk file must be fully rewritten to remove
-    // the stale entries.  Otherwise we can append-only at the end of each turn.
+    use crate::daemon::digest::DIGEST_THRESHOLD;
+    if messages.len() >= DIGEST_THRESHOLD {
+        let started_at = session_id
+            .as_ref()
+            .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.started_at));
+        if let Some(since) = started_at {
+            let digest = crate::daemon::digest::build_session_digest(
+                session_id.as_deref().unwrap_or("-"),
+                since,
+                messages.len(),
+            );
+            messages = crate::daemon::digest::compact_with_digest(messages, &digest);
+        } else {
+            messages = trim_history(messages);
+        }
+    } else {
+        messages = trim_history(messages);
+    }
+    // If the message vec shrank the on-disk file must be fully rewritten to
+    // remove the stale entries.  Otherwise we can append-only at the end of
+    // each turn.
     let needs_compaction = messages.len() < pre_trim_len;
     let post_trim_len = messages.len();
 

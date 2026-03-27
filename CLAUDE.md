@@ -38,6 +38,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/executor.rs` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination |
 | `src/daemon/background.rs` | `run_background_in_window`, `notify_job_completion`, GC lifecycle |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
+| `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
 | `src/daemon/ghost.rs` | `GhostManager::start_session()` — allocates `de-gs-bg-*` / `de-gs-sj-*` / `de-gs-ir-*` windows for autonomous remediation |
 | `src/daemon/policy.rs` | `GhostPolicy` — runtime enforcement of `auto_approve_scripts` / `auto_approve_read_only` for ghost shells |
 | `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo`, `is_interactive_command`, `interactive_destination`, `normalize_output` helpers |

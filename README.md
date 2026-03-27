@@ -701,6 +701,7 @@ src/
 │   ├── server.rs    # IPC connection loop; AI prompt assembly; trigger_ghost_turn()
 │   ├── executor.rs  # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
 │   ├── background.rs # run_background_in_window(); notify_job_completion(); GC lifecycle
+│   ├── digest.rs    # Session digest: structured compaction of conversation history at 30 messages
 │   ├── ghost.rs     # GhostManager::start_session() — allocates de-incident-* tmux window
 │   ├── policy.rs    # GhostPolicy — OS-delegation trust model: non-sudo always allowed; sudo requires auto_approve_scripts + install-sudoers
 │   └── stats.rs     # Atomic ghost shell counters (launched / completed / failed / active)
