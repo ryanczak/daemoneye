@@ -503,14 +503,39 @@ prompt   = "sre"
 
 /// Write a knowledge memory file only if it does not already exist.
 fn seed_knowledge_memory(key: &str, content: &str) -> Result<()> {
+    seed_knowledge_memory_inner(key, content, false)
+}
+
+/// Write a knowledge memory file, optionally overwriting an existing one.
+fn seed_knowledge_memory_inner(key: &str, content: &str, force: bool) -> Result<()> {
     let dir = config_dir().join("memory").join("knowledge");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.md", key));
-    if !path.exists() {
+    if force || !path.exists() {
         std::fs::write(&path, content)
             .with_context(|| format!("seeding knowledge memory '{}'", key))?;
     }
     Ok(())
+}
+
+/// Re-seed all built-in knowledge memory files, overwriting existing ones.
+/// Called by `daemoneye setup --overwrite-memory`.
+pub fn overwrite_knowledge_memories() -> Result<()> {
+    seed_knowledge_memory_inner("webhook-setup", WEBHOOK_SETUP_MEMORY, true)?;
+    seed_knowledge_memory_inner("runbook-format", RUNBOOK_FORMAT_MEMORY, true)?;
+    seed_knowledge_memory_inner("runbook-ghost-template", RUNBOOK_GHOST_TEMPLATE_MEMORY, true)?;
+    seed_knowledge_memory_inner("ghost-shell-guide", GHOST_SHELL_GUIDE_MEMORY, true)?;
+    seed_knowledge_memory_inner("scheduling-guide", SCHEDULING_GUIDE_MEMORY, true)?;
+    seed_knowledge_memory_inner("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY, true)?;
+    Ok(())
+}
+
+/// Overwrite the built-in SRE prompt regardless of whether it already exists.
+/// Called by `daemoneye setup --overwrite-all`.
+pub fn overwrite_sre_prompt() -> Result<()> {
+    let sre_path = prompts_dir().join("sre.toml");
+    std::fs::write(&sre_path, SRE_PROMPT_TOML)
+        .with_context(|| format!("overwriting SRE prompt at {}", sre_path.display()))
 }
 
 /// Load a named prompt from ~/.daemoneye/prompts/<name>.toml.

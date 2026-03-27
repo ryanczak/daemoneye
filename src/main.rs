@@ -58,8 +58,22 @@ enum Commands {
     Status,
     /// Stop the background daemon
     Stop,
-    /// Print the tmux configuration for DaemonEye
-    Setup,
+    /// Initialise ~/.daemoneye/ and print tmux/systemd configuration
+    Setup {
+        /// Overwrite ~/.daemoneye/bin/daemoneye with the binary currently running this command.
+        /// Use this after building a new release to update the installed copy.
+        #[arg(long)]
+        overwrite_bin: bool,
+        /// Overwrite the built-in knowledge memory files in ~/.daemoneye/memory/knowledge/
+        /// with the versions bundled in this binary.  User-created memories are not affected.
+        #[arg(long)]
+        overwrite_memory: bool,
+        /// Overwrite all seeded files: binary, knowledge memories, and the built-in SRE prompt.
+        /// Equivalent to passing both --overwrite-bin and --overwrite-memory, and additionally
+        /// refreshes etc/prompts/sre.toml.  User configuration (config.toml) is never touched.
+        #[arg(long)]
+        overwrite_all: bool,
+    },
     /// List available prompts in ~/.daemoneye/prompts/
     Prompts,
     /// List scripts in ~/.daemoneye/scripts/
@@ -248,8 +262,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Stop => {
             cli::run_stop().await?;
         }
-        Commands::Setup => {
-            cli::run_setup()?;
+        Commands::Setup {
+            overwrite_bin,
+            overwrite_memory,
+            overwrite_all,
+        } => {
+            cli::run_setup(overwrite_bin || overwrite_all, overwrite_memory || overwrite_all, overwrite_all)?;
         }
         Commands::Prompts => {
             cli::run_prompts()?;

@@ -117,6 +117,11 @@ graph TD
 
 The tree is created by `Config::ensure_dirs()`, which is called at the top of `main()` before any subcommand and explicitly at the start of `run_setup()`. The AI agent's `read_file` tool is blocked from most of `~/.daemoneye/` (managed data is accessed via dedicated tools), with one exception: `var/log/panes/` is readable so the agent can page through truncated background-command output.
 
+`daemoneye setup` supports three overwrite flags for post-upgrade refresh:
+- `--overwrite-bin` — force-copies the current executable to `~/.daemoneye/bin/daemoneye` (skipped by default when a copy already exists).
+- `--overwrite-memory` — calls `config::overwrite_knowledge_memories()` to force-write all six built-in knowledge memory files; user-created memories in the same directory are unaffected.
+- `--overwrite-all` — implies both flags above and additionally calls `config::overwrite_sre_prompt()` to refresh `etc/prompts/sre.toml`. User `config.toml` is never auto-overwritten by any flag.
+
 ## 3. Core Components
 
 ### 2.1 User Terminal Environment

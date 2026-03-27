@@ -31,7 +31,15 @@ impl SessionApproval {
     }
 }
 
-pub fn run_setup() -> Result<()> {
+/// Run `daemoneye setup`.
+///
+/// - `overwrite_bin`    — copy the current executable to `~/.daemoneye/bin/daemoneye`
+///   even if a copy already exists there.
+/// - `overwrite_memory` — overwrite the six built-in knowledge memory files with the
+///   versions bundled in this binary.
+/// - `overwrite_prompt` — overwrite `~/.daemoneye/etc/prompts/sre.toml` with the
+///   version bundled in this binary (implied by `--overwrite-all`).
+pub fn run_setup(overwrite_bin: bool, overwrite_memory: bool, overwrite_prompt: bool) -> Result<()> {
     // Ensure the full ~/.daemoneye/ directory tree and default files are in place.
     // (Also called at the top of main(), but being explicit here makes setup self-contained.)
     crate::config::Config::ensure_dirs()
@@ -76,7 +84,6 @@ pub fn run_setup() -> Result<()> {
         dir.display()
     );
     println!();
-    println!("Seeded knowledge memories (written once, preserved on upgrade):");
     let knowledge_dir = dir.join("memory").join("knowledge");
     let seeded = [
         "webhook-setup",
@@ -86,24 +93,64 @@ pub fn run_setup() -> Result<()> {
         "scheduling-guide",
         "scripts-and-sudoers",
     ];
-    for key in &seeded {
-        let exists = knowledge_dir.join(format!("{}.md", key)).exists();
-        println!("  {}  {}", key, if exists { "✓" } else { "(missing)" });
+    if overwrite_memory {
+        println!("Overwriting built-in knowledge memories:");
+        match crate::config::overwrite_knowledge_memories() {
+            Ok(()) => {
+                for key in &seeded {
+                    println!("  {}  ✓ (overwritten)", key);
+                }
+            }
+            Err(e) => eprintln!("Warning: could not overwrite knowledge memories: {}", e),
+        }
+    } else {
+        println!("Seeded knowledge memories (written once, preserved on upgrade):");
+        for key in &seeded {
+            let exists = knowledge_dir.join(format!("{}.md", key)).exists();
+            println!("  {}  {}", key, if exists { "✓" } else { "(missing)" });
+        }
     }
     println!();
 
     // Copy the running binary into ~/.daemoneye/bin/daemoneye.
+    // On first run (no binary present) always copy; on upgrade require --overwrite-bin.
     let bin_dest = crate::config::bin_dir().join("daemoneye");
     let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("daemoneye"));
-    match std::fs::copy(&current_exe, &bin_dest) {
-        Ok(_) => println!("Copied binary → {}", bin_dest.display()),
-        Err(e) => eprintln!(
-            "Warning: could not copy binary to {}: {}",
-            bin_dest.display(),
-            e
-        ),
+    let bin_exists = bin_dest.exists();
+    if !bin_exists || overwrite_bin {
+        match std::fs::copy(&current_exe, &bin_dest) {
+            Ok(_) => {
+                if bin_exists {
+                    println!("Updated binary → {}", bin_dest.display());
+                } else {
+                    println!("Copied binary → {}", bin_dest.display());
+                }
+            }
+            Err(e) => eprintln!(
+                "Warning: could not copy binary to {}: {}",
+                bin_dest.display(),
+                e
+            ),
+        }
+    } else {
+        println!(
+            "Binary already installed at {} (use --overwrite-bin to update)",
+            bin_dest.display()
+        );
     }
     println!();
+
+    // Overwrite the built-in SRE prompt when --overwrite-all is in effect.
+    if overwrite_prompt {
+        match crate::config::overwrite_sre_prompt() {
+            Ok(()) => println!(
+                "Refreshed built-in SRE prompt → {}/etc/prompts/sre.toml",
+                dir.display()
+            ),
+            Err(e) => eprintln!("Warning: could not overwrite SRE prompt: {}", e),
+        }
+        println!();
+    }
 
     // Write the systemd user service file using the bin/ path.
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());

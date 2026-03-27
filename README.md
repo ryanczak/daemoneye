@@ -145,6 +145,16 @@ You can also manage the daemon with systemd — run `daemoneye setup` to write t
 
 Run `daemoneye setup` once after building. It initialises the full `~/.daemoneye/` directory tree, copies the binary to a stable location, writes a systemd user service file, and prints the tmux keybinding to add to `~/.tmux.conf`.
 
+After an upgrade, use the overwrite flags to refresh installed files:
+
+| Flag | Effect |
+|---|---|
+| `--overwrite-bin` | Copy the current binary to `~/.daemoneye/bin/daemoneye`, replacing the previously installed version. |
+| `--overwrite-memory` | Overwrite the six built-in knowledge memory files in `~/.daemoneye/memory/knowledge/` with the versions bundled in the new binary. Any user-created memory files are not affected. |
+| `--overwrite-all` | Combines `--overwrite-bin` and `--overwrite-memory`, and also refreshes `~/.daemoneye/etc/prompts/sre.toml`. Your `config.toml` is never overwritten. |
+
+On first run all seeded files (binary, memories, prompt) are written automatically regardless of flags.
+
 ```sh
 daemoneye setup
 ```
@@ -278,7 +288,10 @@ daemoneye chat
 | `daemoneye logs` | Tails the `daemon.log` file |
 | `daemoneye chat` | Start an interactive multi-turn chat session |
 | `daemoneye ask <query>` | Send a single question to the AI |
-| `daemoneye setup` | Print the systemd service file and recommended tmux config |
+| `daemoneye setup` | Initialise `~/.daemoneye/`, install binary, write systemd service, print tmux config |
+| `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
+| `daemoneye setup --overwrite-memory` | Refresh built-in knowledge memory files from the current binary |
+| `daemoneye setup --overwrite-all` | Refresh binary, memories, and built-in SRE prompt (user `config.toml` is never touched) |
 | `daemoneye scripts` | List scripts in `~/.daemoneye/scripts/` |
 | `daemoneye schedule list` | List scheduled jobs and their status |
 | `daemoneye schedule cancel <id>` | Cancel a scheduled job |
