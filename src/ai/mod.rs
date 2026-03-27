@@ -141,7 +141,7 @@ async fn send_with_retry_inner(
         match req.send().await {
             Ok(resp) => {
                 let status = resp.status();
-                if status.is_success() || status == reqwest::StatusCode::BAD_REQUEST {
+                if status.is_success() {
                     return Ok(resp);
                 }
                 if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
