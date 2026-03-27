@@ -267,7 +267,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             overwrite_memory,
             overwrite_all,
         } => {
-            cli::run_setup(overwrite_bin || overwrite_all, overwrite_memory || overwrite_all, overwrite_all)?;
+            cli::run_setup(
+                overwrite_bin || overwrite_all,
+                overwrite_memory || overwrite_all,
+                overwrite_all,
+            )?;
         }
         Commands::Prompts => {
             cli::run_prompts()?;

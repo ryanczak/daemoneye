@@ -498,7 +498,10 @@ prompt   = "sre"
         seed_knowledge_memory("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY)?;
 
         // Seed built-in session memories if they don't already exist.
-        seed_session_memory("pane-referencing-convention", PANE_REFERENCING_CONVENTION_MEMORY)?;
+        seed_session_memory(
+            "pane-referencing-convention",
+            PANE_REFERENCING_CONVENTION_MEMORY,
+        )?;
         seed_session_memory("unicode-decoration-pref", UNICODE_DECORATION_PREF_MEMORY)?;
 
         Ok(())
@@ -538,8 +541,18 @@ pub fn overwrite_knowledge_memories() -> Result<()> {
         RUNBOOK_GHOST_TEMPLATE_MEMORY,
         true,
     )?;
-    seed_memory_inner("knowledge", "ghost-shell-guide", GHOST_SHELL_GUIDE_MEMORY, true)?;
-    seed_memory_inner("knowledge", "scheduling-guide", SCHEDULING_GUIDE_MEMORY, true)?;
+    seed_memory_inner(
+        "knowledge",
+        "ghost-shell-guide",
+        GHOST_SHELL_GUIDE_MEMORY,
+        true,
+    )?;
+    seed_memory_inner(
+        "knowledge",
+        "scheduling-guide",
+        SCHEDULING_GUIDE_MEMORY,
+        true,
+    )?;
     seed_memory_inner(
         "knowledge",
         "scripts-and-sudoers",

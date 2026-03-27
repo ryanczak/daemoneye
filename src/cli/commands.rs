@@ -39,7 +39,11 @@ impl SessionApproval {
 ///   versions bundled in this binary.
 /// - `overwrite_prompt` — overwrite `~/.daemoneye/etc/prompts/sre.toml` with the
 ///   version bundled in this binary (implied by `--overwrite-all`).
-pub fn run_setup(overwrite_bin: bool, overwrite_memory: bool, overwrite_prompt: bool) -> Result<()> {
+pub fn run_setup(
+    overwrite_bin: bool,
+    overwrite_memory: bool,
+    overwrite_prompt: bool,
+) -> Result<()> {
     // Ensure the full ~/.daemoneye/ directory tree and default files are in place.
     // (Also called at the top of main(), but being explicit here makes setup self-contained.)
     crate::config::Config::ensure_dirs()
@@ -110,12 +114,26 @@ pub fn run_setup(overwrite_bin: bool, overwrite_memory: bool, overwrite_prompt: 
     } else {
         println!("Seeded memories (written once, preserved on upgrade):");
         for key in &seeded_knowledge {
-            let exists = memory_dir.join("knowledge").join(format!("{}.md", key)).exists();
-            println!("  knowledge/{}  {}", key, if exists { "✓" } else { "(missing)" });
+            let exists = memory_dir
+                .join("knowledge")
+                .join(format!("{}.md", key))
+                .exists();
+            println!(
+                "  knowledge/{}  {}",
+                key,
+                if exists { "✓" } else { "(missing)" }
+            );
         }
         for key in &seeded_session {
-            let exists = memory_dir.join("session").join(format!("{}.md", key)).exists();
-            println!("  session/{}  {}", key, if exists { "✓" } else { "(missing)" });
+            let exists = memory_dir
+                .join("session")
+                .join(format!("{}.md", key))
+                .exists();
+            println!(
+                "  session/{}  {}",
+                key,
+                if exists { "✓" } else { "(missing)" }
+            );
         }
     }
     println!();

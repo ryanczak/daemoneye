@@ -190,11 +190,7 @@ pub async fn run_status() -> Result<()> {
                     const KNOWN_CATS: &[&str] = &["knowledge", "session", "incident"];
                     for cat in KNOWN_CATS {
                         let count = memory_breakdown.get(*cat).copied().unwrap_or(0);
-                        let label = format!(
-                            "{}{}:",
-                            cat[..1].to_uppercase(),
-                            &cat[1..]
-                        );
+                        let label = format!("{}{}:", cat[..1].to_uppercase(), &cat[1..]);
                         right_items.push((label, count.to_string()));
                     }
                     right_items.push((
