@@ -224,9 +224,14 @@ pub enum Response {
     Ok,
     /// An error occurred on the daemon side.
     Error(String),
-    /// Sent once before streaming begins; carries the number of stored messages
-    /// from prior turns so the client can display a session indicator.
-    SessionInfo { message_count: usize },
+    /// Sent once before streaming begins; carries session state so the client
+    /// can display a stable turn counter and context-budget indicator.
+    SessionInfo {
+        message_count: usize,
+        /// Ever-increasing turn number for this session (never reset by compaction).
+        #[serde(default)]
+        turn_count: usize,
+    },
     /// A stream of tokens from the AI.
     Token(String),
     /// A system-level notification from the daemon (sudo alerts, pane-switch
@@ -306,6 +311,9 @@ pub enum Response {
         uptime_secs: u64,
         pid: u32,
         active_sessions: usize,
+        /// Sum of turn_count across all active sessions.
+        #[serde(default)]
+        total_turns: usize,
         provider: String,
         model: String,
         socket_path: String,
@@ -593,9 +601,18 @@ mod tests {
 
     #[test]
     fn response_session_info_roundtrip() {
-        let resp = Response::SessionInfo { message_count: 7 };
+        let resp = Response::SessionInfo {
+            message_count: 7,
+            turn_count: 3,
+        };
         match roundtrip_resp(&resp) {
-            Response::SessionInfo { message_count } => assert_eq!(message_count, 7),
+            Response::SessionInfo {
+                message_count,
+                turn_count,
+            } => {
+                assert_eq!(message_count, 7);
+                assert_eq!(turn_count, 3);
+            }
             _ => panic!("wrong variant"),
         }
     }
@@ -904,6 +921,7 @@ mod tests {
             uptime_secs: 3661,
             pid: 12345,
             active_sessions: 2,
+            total_turns: 42,
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
             socket_path: "/tmp/daemoneye.sock".to_string(),

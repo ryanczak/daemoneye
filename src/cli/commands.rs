@@ -1287,13 +1287,15 @@ async fn ask_with_session(
                 eprintln!("\n\x1b[31m✗\x1b[0m {}", e);
                 break;
             }
-            Response::SessionInfo { message_count } => {
+            Response::SessionInfo {
+                message_count: _,
+                turn_count,
+            } => {
                 // Print the user query as a bordered box with token budget in the bottom border.
                 // Skip for the greeting turn (display_query is empty).
-                let turn = (message_count / 2) + 1; // each turn = 1 user + 1 assistant msg
                 print!("\r\x1b[K"); // erase spinner line
                 if !display_query.is_empty() {
-                    print_user_query(&display_query, turn, *prompt_tokens, context_window);
+                    print_user_query(&display_query, turn_count, *prompt_tokens, context_window);
                 }
             }
             Response::UsageUpdate { prompt_tokens: pt } => {

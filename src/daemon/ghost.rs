@@ -116,6 +116,7 @@ impl GhostManager {
             ghost_config: Some(runbook.ghost_config.clone()),
             ghost_bg_prefix: bg_prefix,
             started_at: chrono::Utc::now(),
+            turn_count: 0,
         };
 
         {

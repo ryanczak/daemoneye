@@ -55,6 +55,10 @@ pub struct SessionEntry {
     /// Wall-clock time when this session was created. Used by the session digest
     /// to filter events and detect artifacts created during this session.
     pub started_at: chrono::DateTime<chrono::Utc>,
+    /// Number of user-visible turns completed in this session.  Incremented on
+    /// every Ask and never reset by compaction — used by the client to display
+    /// a stable, ever-increasing turn counter.
+    pub turn_count: usize,
 }
 
 /// Thread-safe, shared session store passed to every client handler.

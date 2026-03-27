@@ -227,9 +227,11 @@ pub async fn handle_client(
             let pid = std::process::id();
             let mut active_sessions = 0;
             let mut active_prompt_tokens = 0;
+            let mut total_turns = 0;
             if let Ok(sess_map) = sessions.lock() {
                 active_sessions = sess_map.len();
                 active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
+                total_turns = sess_map.values().map(|s| s.turn_count).sum();
             }
             let schedule_count = schedule_store.list().len();
 
@@ -287,6 +289,7 @@ pub async fn handle_client(
                     uptime_secs,
                     pid,
                     active_sessions,
+                    total_turns,
                     provider: config.ai.provider.clone(),
                     model: config.ai.model.clone(),
                     socket_path: default_socket_path().display().to_string(),
@@ -519,6 +522,7 @@ pub async fn handle_client(
                 ghost_config: None,
                 ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
                 started_at: chrono::Utc::now(),
+                turn_count: 0,
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
@@ -624,6 +628,22 @@ pub async fn handle_client(
         .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
         .unwrap_or(0);
 
+    // Read the current turn count and increment it for this turn.  Never reset
+    // by compaction — this gives the client a stable, ever-increasing indicator.
+    let this_turn_count = session_id
+        .as_ref()
+        .and_then(|id| {
+            sessions.lock().ok().map(|mut store| {
+                if let Some(entry) = store.get_mut(id) {
+                    entry.turn_count += 1;
+                    entry.turn_count
+                } else {
+                    1
+                }
+            })
+        })
+        .unwrap_or(1);
+
     let safe_query = mask_sensitive(&initial_query);
 
     // Current time — injected on every turn so the AI always has ground truth
@@ -727,9 +747,23 @@ pub async fn handle_client(
         &mut tx,
         Response::SessionInfo {
             message_count: history_count,
+            turn_count: this_turn_count,
         },
     )
     .await?;
+
+    // Notify the user when compaction occurred so the turn counter reset is
+    // not mysterious.  Sent before the catch-up brief so it appears first.
+    if needs_compaction {
+        send_response_split(
+            &mut tx,
+            Response::SystemMsg(format!(
+                "↩ Session history compacted ({} messages → {}) — full context preserved in digest",
+                pre_trim_len, post_trim_len
+            )),
+        )
+        .await?;
+    }
 
     // N15: send catch-up brief as a SystemMsg immediately after SessionInfo so
     // it appears before any streaming tokens from the AI.

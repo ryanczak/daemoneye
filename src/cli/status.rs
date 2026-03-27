@@ -19,6 +19,7 @@ pub async fn run_status() -> Result<()> {
                     uptime_secs,
                     pid,
                     active_sessions,
+                    total_turns,
                     provider,
                     model,
                     socket_path,
@@ -166,6 +167,7 @@ pub async fn run_status() -> Result<()> {
                         "Active model:".to_string(),
                         format!("{}/{}", provider, model),
                     ));
+                    right_items.push(("Turn count:".to_string(), total_turns.to_string()));
                     right_items.push((
                         "Token budget:".to_string(),
                         format!(
@@ -380,6 +382,16 @@ pub async fn run_status() -> Result<()> {
                                     "",
                                     right_width = right_width
                                 );
+                            } else if rk == "┬─" {
+                                let mut r_line = String::with_capacity(right_width * 3);
+                                for j in 0..right_width {
+                                    if j == 24 {
+                                        r_line.push('┬');
+                                    } else {
+                                        r_line.push('─');
+                                    }
+                                }
+                                println!("{} {deep_yellow}├{}{reset}", l_str, r_line);
                             } else if rv.is_empty() && rk != "§" {
                                 println!("{} {deep_yellow}│{reset}", l_str);
                             } else {
