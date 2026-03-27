@@ -84,8 +84,8 @@ pub fn run_setup(overwrite_bin: bool, overwrite_memory: bool, overwrite_prompt: 
         dir.display()
     );
     println!();
-    let knowledge_dir = dir.join("memory").join("knowledge");
-    let seeded = [
+    let memory_dir = dir.join("memory");
+    let seeded_knowledge = [
         "webhook-setup",
         "runbook-format",
         "runbook-ghost-template",
@@ -93,21 +93,29 @@ pub fn run_setup(overwrite_bin: bool, overwrite_memory: bool, overwrite_prompt: 
         "scheduling-guide",
         "scripts-and-sudoers",
     ];
+    let seeded_session = ["pane-referencing-convention", "unicode-decoration-pref"];
     if overwrite_memory {
-        println!("Overwriting built-in knowledge memories:");
+        println!("Overwriting built-in memories:");
         match crate::config::overwrite_knowledge_memories() {
             Ok(()) => {
-                for key in &seeded {
-                    println!("  {}  ✓ (overwritten)", key);
+                for key in &seeded_knowledge {
+                    println!("  knowledge/{}  ✓ (overwritten)", key);
+                }
+                for key in &seeded_session {
+                    println!("  session/{}  ✓ (overwritten)", key);
                 }
             }
-            Err(e) => eprintln!("Warning: could not overwrite knowledge memories: {}", e),
+            Err(e) => eprintln!("Warning: could not overwrite memories: {}", e),
         }
     } else {
-        println!("Seeded knowledge memories (written once, preserved on upgrade):");
-        for key in &seeded {
-            let exists = knowledge_dir.join(format!("{}.md", key)).exists();
-            println!("  {}  {}", key, if exists { "✓" } else { "(missing)" });
+        println!("Seeded memories (written once, preserved on upgrade):");
+        for key in &seeded_knowledge {
+            let exists = memory_dir.join("knowledge").join(format!("{}.md", key)).exists();
+            println!("  knowledge/{}  {}", key, if exists { "✓" } else { "(missing)" });
+        }
+        for key in &seeded_session {
+            let exists = memory_dir.join("session").join(format!("{}.md", key)).exists();
+            println!("  session/{}  {}", key, if exists { "✓" } else { "(missing)" });
         }
     }
     println!();
