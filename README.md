@@ -10,15 +10,6 @@ DaemonEye is not perfect, it will eat your important stuff if you are not carefu
 
 ---
 
-## 🚀 At a Glance
-
-- **Native tmux Integration** — A lightweight background daemon that integrates directly into your active sessions with no window manager or GUI required.
-- **Hybrid Model Support** — Stream intelligence from Anthropic, OpenAI, or Google Gemini, or run 100% locally via Ollama or LM Studio with no API key.
-- **Autonomous Ghost Shells** — Specialized sub-agents that spawn in dedicated tmux windows to investigate and remediate alerts completely unattended.
-- **Context-Aware Execution** — The AI sees your full terminal state — scrollback history, environment variables, pane layout, and ANSI-coded errors — to understand problems the moment you ask.
-
----
-
 ## ✨ Key Features
 
 ### 🛠️ Collaborative Execution & Safety
