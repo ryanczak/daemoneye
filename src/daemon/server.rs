@@ -123,14 +123,10 @@ pub async fn handle_client(
     schedule_store: Arc<ScheduleStore>,
     bg_session: Arc<std::sync::Mutex<String>>,
 ) -> Result<()> {
-    let mut config = Config::load().unwrap_or_else(|_| {
+    let config = Config::load().unwrap_or_else(|_| {
         log::warn!("Failed to load config, using defaults");
         Config::default()
     });
-    // Ensure API key is resolved from env if missing in config file
-    if config.ai.api_key.is_empty() {
-        config.ai.api_key = config.ai.resolve_api_key();
-    }
 
     /// Maximum size of a single incoming IPC message (1 MiB).
     /// Prevents a malicious or buggy client from exhausting daemon memory by
@@ -206,6 +202,7 @@ pub async fn handle_client(
             chat_width,
             tmux_session,
             target_pane,
+            model: _ask_model,
         } => (
             query,
             tmux_pane,
@@ -221,6 +218,50 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
+        Request::SetModel {
+            session_id,
+            model: model_name,
+        } => {
+            let available = config.available_models();
+            if available.contains(&model_name.as_str()) {
+                if let Ok(mut store) = sessions.lock()
+                    && let Some(entry) = store.get_mut(&session_id)
+                {
+                    entry.active_model = Some(model_name.clone());
+                }
+                send_response_split(&mut tx, Response::ModelChanged { model: model_name }).await?;
+            } else {
+                let list = available.join(", ");
+                send_response_split(
+                    &mut tx,
+                    Response::Error(format!(
+                        "Unknown model '{model_name}'. Configured models: {list}"
+                    )),
+                )
+                .await?;
+            }
+            return Ok(());
+        }
+        Request::ListModels { session_id } => {
+            let models: Vec<(String, String)> = config
+                .available_models()
+                .into_iter()
+                .map(|key| {
+                    let model_id = config.resolve_model(Some(key)).model.clone();
+                    (key.to_string(), model_id)
+                })
+                .collect();
+            let active = if let Ok(store) = sessions.lock()
+                && let Some(entry) = store.get(&session_id)
+                && let Some(ref m) = entry.active_model
+            {
+                m.clone()
+            } else {
+                "default".to_string()
+            };
+            send_response_split(&mut tx, Response::ModelList { models, active }).await?;
+            return Ok(());
+        }
         // F1: return a live status snapshot to `daemoneye status`.
         Request::Status => {
             let uptime_secs = crate::daemon::daemon_uptime_secs();
@@ -228,10 +269,17 @@ pub async fn handle_client(
             let mut active_sessions = 0;
             let mut active_prompt_tokens = 0;
             let mut total_turns = 0;
+            // Model name from the most recently accessed non-ghost session, if any.
+            let mut status_active_model: Option<String> = None;
             if let Ok(sess_map) = sessions.lock() {
                 active_sessions = sess_map.len();
                 active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
                 total_turns = sess_map.values().map(|s| s.turn_count).sum();
+                status_active_model = sess_map
+                    .values()
+                    .filter(|s| !s.is_ghost)
+                    .max_by_key(|s| s.last_accessed)
+                    .and_then(|s| s.active_model.clone());
             }
             let schedule_count = schedule_store.list().len();
 
@@ -281,7 +329,8 @@ pub async fn handle_client(
                 }
             }
 
-            let context_window_tokens = config.ai.context_window();
+            let active_entry = config.resolve_model(status_active_model.as_deref());
+            let context_window_tokens = active_entry.context_window();
             let compactions = crate::daemon::stats::get_compactions();
             let compaction_ratio = crate::daemon::stats::get_compaction_ratio();
 
@@ -292,8 +341,13 @@ pub async fn handle_client(
                     pid,
                     active_sessions,
                     total_turns,
-                    provider: config.ai.provider.clone(),
-                    model: config.ai.model.clone(),
+                    provider: active_entry.provider.clone(),
+                    model: active_entry.model.clone(),
+                    available_models: config
+                        .available_models()
+                        .into_iter()
+                        .map(|s| s.to_string())
+                        .collect(),
                     socket_path: default_socket_path().display().to_string(),
                     schedule_count,
                     commands_fg_succeeded,
@@ -527,6 +581,7 @@ pub async fn handle_client(
                 ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
                 started_at: chrono::Utc::now(),
                 turn_count: 0,
+                active_model: None,
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
@@ -591,6 +646,16 @@ pub async fn handle_client(
         } else {
             None
         }
+    } else {
+        None
+    };
+
+    // Read the session's active model override once so it stays consistent for
+    // the whole turn (including the budget line and every AI loop iteration).
+    let session_active_model: Option<String> = if let Some(ref id) = session_id
+        && let Ok(store) = sessions.lock()
+    {
+        store.get(id.as_str()).and_then(|e| e.active_model.clone())
     } else {
         None
     };
@@ -703,7 +768,9 @@ pub async fn handle_client(
     } else {
         // Inject a context-budget line so the AI knows how much context it has consumed.
         // Use percentage thresholds so the signal is meaningful regardless of model.
-        let context_window = config.ai.context_window();
+        let context_window = config
+            .resolve_model(session_active_model.as_deref())
+            .context_window();
         let pct_used = if context_window > 0 {
             (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
         } else {
@@ -796,11 +863,12 @@ pub async fn handle_client(
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
+        let active_entry = config.resolve_model(session_active_model.as_deref());
         let client_instance = make_client(
-            &config.ai.provider,
-            config.ai.resolve_api_key(),
-            config.ai.model.clone(),
-            config.ai.effective_base_url(),
+            &active_entry.provider,
+            active_entry.resolve_api_key(),
+            active_entry.model.clone(),
+            active_entry.effective_base_url(),
         );
         let sys_prompt_turn = sys_prompt.clone();
         let messages_clone = messages.clone();
@@ -1177,7 +1245,7 @@ pub async fn handle_client(
                             "ai_turn",
                             serde_json::json!({
                                 "session": session_id.as_deref().unwrap_or("-"),
-                                "model": config.ai.model,
+                                "model": config.resolve_model(session_active_model.as_deref()).model,
                                 "prompt_tokens": usage.prompt_tokens,
                                 "completion_tokens": usage.completion_tokens,
                             }),
@@ -1220,7 +1288,7 @@ pub async fn handle_client(
                         "ai_turn",
                         serde_json::json!({
                             "session": session_id.as_deref().unwrap_or("-"),
-                            "model": config.ai.model,
+                            "model": config.resolve_model(None).model,
                             "prompt_tokens": usage.prompt_tokens,
                             "completion_tokens": usage.completion_tokens,
                         }),

@@ -52,6 +52,11 @@ pub struct GhostConfig {
     /// The AI is instructed not to SSH manually — the policy handles it transparently.
     #[serde(default)]
     pub ssh_target: Option<String>,
+    /// Optional model name override (a key from `[models.<name>]` in config).
+    /// When set, this ghost shell uses the named model instead of the daemon default.
+    /// Falls back to the default model if the name is not found in config.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Summary of a runbook for the `RunbookList` response.
@@ -101,6 +106,11 @@ pub enum Request {
         /// detection or user prompt. Eliminates mid-conversation pane picker prompts.
         #[serde(default)]
         target_pane: Option<String>,
+        /// Optional model override for this session.  When set on the first turn, the
+        /// daemon pins this model for the lifetime of the session.  Later turns with a
+        /// different or absent value have no effect once the session model is pinned.
+        #[serde(default)]
+        model: Option<String>,
     },
     /// Approve or deny a tool call.  When `approved` is false and `user_message`
     /// is `Some`, the daemon discards the pending tool chain and injects the
@@ -201,6 +211,18 @@ pub enum Request {
         width: u16,
         height: u16,
         session_name: String,
+    },
+    /// Switch the active model for the given session.
+    /// The daemon validates the name against configured models and responds with
+    /// `Response::ModelChanged` on success or `Response::Error` if unknown.
+    SetModel {
+        session_id: String,
+        model: String,
+    },
+    /// List all configured model names and the session's current active model.
+    /// The daemon responds with `Response::ModelList`.
+    ListModels {
+        session_id: String,
     },
     /// Query the daemon's current operational status (F1).
     Status,
@@ -306,6 +328,15 @@ pub enum Response {
     /// the next token. The client treats this as a no-op; receiving it resets
     /// the per-token deadline so slow local models don't trigger a timeout.
     KeepAlive,
+    /// Confirmation that the session's active model was changed (response to `SetModel`).
+    ModelChanged { model: String },
+    /// All configured model names and the session's current active model
+    /// (response to `ListModels`).
+    /// Each entry is `(key_name, model_id)` — e.g. `("opus", "claude-opus-4-6")`.
+    ModelList {
+        models: Vec<(String, String)>,
+        active: String,
+    },
     /// Daemon status snapshot returned in response to `Request::Status` (F1).
     DaemonStatus {
         uptime_secs: u64,
@@ -316,6 +347,9 @@ pub enum Response {
         total_turns: usize,
         provider: String,
         model: String,
+        /// All model names configured in `[models.*]` sections, sorted.
+        #[serde(default)]
+        available_models: Vec<String>,
         socket_path: String,
         schedule_count: usize,
         commands_fg_succeeded: usize,
@@ -418,6 +452,7 @@ mod tests {
             chat_width: Some(54),
             tmux_session: Some("mysession".to_string()),
             target_pane: Some("%1".to_string()),
+            model: Some("opus".to_string()),
         };
         match roundtrip_req(&req) {
             Request::Ask {
@@ -429,6 +464,7 @@ mod tests {
                 chat_width,
                 tmux_session,
                 target_pane,
+                model,
             } => {
                 assert_eq!(query, "what is load avg?");
                 assert_eq!(tmux_pane, Some("%3".to_string()));
@@ -438,6 +474,7 @@ mod tests {
                 assert_eq!(chat_width, Some(54));
                 assert_eq!(tmux_session, Some("mysession".to_string()));
                 assert_eq!(target_pane, Some("%1".to_string()));
+                assert_eq!(model, Some("opus".to_string()));
             }
             _ => panic!("wrong variant"),
         }
@@ -454,6 +491,7 @@ mod tests {
             chat_width: None,
             tmux_session: None,
             target_pane: None,
+            model: None,
         };
         match roundtrip_req(&req) {
             Request::Ask {
@@ -930,6 +968,7 @@ mod tests {
             total_turns: 42,
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
+            available_models: vec!["default".to_string(), "opus".to_string()],
             socket_path: "/tmp/daemoneye.sock".to_string(),
             schedule_count: 3,
             commands_fg_succeeded: 5,

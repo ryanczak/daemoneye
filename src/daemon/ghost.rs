@@ -117,6 +117,7 @@ impl GhostManager {
             ghost_bg_prefix: bg_prefix,
             started_at: chrono::Utc::now(),
             turn_count: 0,
+            active_model: runbook.ghost_config.model.clone(),
         };
 
         {
@@ -157,7 +158,7 @@ pub async fn trigger_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
-    let (_messages, _ghost_config, tmux_session, _target_pane) = {
+    let (_messages, _ghost_config, tmux_session, _target_pane, ghost_active_model) = {
         let store = sessions.lock().unwrap_or_log();
         let Some(entry) = store.get(session_id) else {
             anyhow::bail!("Ghost Shell '{}' not found", session_id);
@@ -167,6 +168,7 @@ pub async fn trigger_ghost_turn(
             entry.ghost_config.clone(),
             entry.tmux_session.clone(),
             entry.default_target_pane.clone(),
+            entry.active_model.clone(),
         )
     };
 
@@ -253,12 +255,15 @@ pub async fn trigger_ghost_turn(
     let mut tx = tokio::io::sink();
     let mut rx = BufReader::new(tokio::io::empty());
 
-    let api_key = config.ai.resolve_api_key();
+    let model_entry = config.resolve_model(ghost_active_model.as_deref());
+    if let Some(ref name) = ghost_active_model {
+        log::info!("Ghost Shell {}: using model '{}'", session_id, name);
+    }
     let client: Arc<Box<dyn crate::ai::AiClient>> = Arc::new(make_client(
-        &config.ai.provider,
-        api_key,
-        config.ai.model.clone(),
-        config.ai.effective_base_url(),
+        &model_entry.provider,
+        model_entry.resolve_api_key(),
+        model_entry.model.clone(),
+        model_entry.effective_base_url(),
     ));
 
     const GHOST_TURN_TIMEOUT_SECS: u64 = 300;

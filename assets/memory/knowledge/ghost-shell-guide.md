@@ -42,6 +42,7 @@ auto_approve_scripts: [check-disk.sh, cleanup-logs.sh]
 run_with_sudo: false
 max_ghost_turns: 20
 ssh_target: ""
+model: opus
 ---
 ```
 
@@ -52,6 +53,7 @@ ssh_target: ""
 | `run_with_sudo` | `true` = the daemon automatically prepends `sudo` when executing scripts in `auto_approve_scripts` — the ghost AI just writes `script.sh` and it runs as root. `false` (default) = scripts run as the current user unless the ghost explicitly writes `sudo script.sh` (still requires the script to be in `auto_approve_scripts`). Either way, only scripts in `auto_approve_scripts` may use sudo; arbitrary sudo commands (e.g. `sudo apt install`) are always denied. |
 | `max_ghost_turns` | Hard turn limit (0 = use daemon default of 20) |
 | `ssh_target` | If set (e.g. `user@host`), all commands are wrapped in `ssh <target> <cmd>` |
+| `model` | Optional. Name of a `[models.<name>]` entry in `config.toml`. When set, this ghost uses that model instead of `[models.default]`. Omit to use the default. |
 
 ## Ghost Policy — What Gets Approved
 

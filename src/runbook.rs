@@ -92,6 +92,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let max_ghost_turns = parse_usize_field(frontmatter, "max_ghost_turns").unwrap_or(0);
         let run_with_sudo = parse_bool_field(frontmatter, "run_with_sudo");
         let ssh_target = parse_string_field(frontmatter, "ssh_target");
+        let model = parse_string_field(frontmatter, "model");
 
         let ghost_config = GhostConfig {
             enabled,
@@ -99,6 +100,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             max_ghost_turns,
             run_with_sudo,
             ssh_target,
+            model,
         };
 
         (tags, memories, ghost_config, body)

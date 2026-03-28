@@ -629,12 +629,12 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         tool_results: None,
     }];
 
-    let api_key = state.config.ai.resolve_api_key();
+    let model_entry = state.config.resolve_model(None);
     let client = crate::ai::make_client(
-        &state.config.ai.provider,
-        api_key,
-        state.config.ai.model.clone(),
-        state.config.ai.effective_base_url(),
+        &model_entry.provider,
+        model_entry.resolve_api_key(),
+        model_entry.model.clone(),
+        model_entry.effective_base_url(),
     );
 
     let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();

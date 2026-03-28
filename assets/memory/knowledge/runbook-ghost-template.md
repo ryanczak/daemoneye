@@ -10,6 +10,7 @@ enabled: true
 auto_approve_scripts: [remediation-script.sh]
 run_with_sudo: false
 max_ghost_turns: 20
+# model: opus   ← optional: name of a [models.<name>] entry; omit to use default
 ---
 # Runbook: <name>
 
@@ -35,3 +36,4 @@ Lessons learned and manual overrides performed by humans.
 - `auto_approve_scripts`: Script names in `~/.daemoneye/scripts/` the ghost may run with sudo. Always required for scripts that need elevated privileges. Each script must have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers <script>`.
 - `run_with_sudo`: `true` = the daemon automatically prepends `sudo` when running scripts in `auto_approve_scripts` — the ghost just writes `script.sh` and it executes as `sudo /path/to/script.sh`. `false` (default) = scripts run as the current user; the ghost must explicitly write `sudo script.sh` to run with root. Either way, only scripts in `auto_approve_scripts` may use sudo — arbitrary sudo commands are always denied.
 - `max_ghost_turns`: Maximum number of AI turns before the session is forcibly stopped. Defaults to 20 if omitted or set to 0.
+- `model`: Optional. Name of a `[models.<name>]` entry in `config.toml` (e.g. `opus`). When set, the ghost uses that model instead of `[models.default]`. Omit to use the default model.

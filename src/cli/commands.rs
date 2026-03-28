@@ -222,13 +222,7 @@ WantedBy=default.target
         }
     }
 
-    let position = Config::load().unwrap_or_default().ai.position;
-    let split_flag = match position.as_str() {
-        "right" => "-h",
-        "left" => "-bh",
-        "top" => "-bv",
-        _ => "-v", // "bottom" or any unrecognised value
-    };
+    let split_flag = "-v";
 
     // Use the ~/.daemoneye/bin/ copy so the bind-key is stable across cargo reinstalls
     // and works even when ~/.cargo/bin is not in the PATH inherited by tmux.
@@ -517,6 +511,10 @@ async fn run_chat_inner() -> Result<()> {
         );
         println!("{}\x1b[96m/clear\x1b[0m to reset session", center(23));
         println!("{}\x1b[96m/refresh\x1b[0m to resync context", center(26));
+        println!(
+            "{}\x1b[96m/model [name]\x1b[0m to list or switch model",
+            center(38)
+        );
         println!();
     }
 
@@ -530,8 +528,8 @@ async fn run_chat_inner() -> Result<()> {
     // session), #{session_attached} is already ≥ 1 so the loop exits on the
     // first check with no perceptible delay.
     let config = Config::load().unwrap_or_default();
-    let model_pre = config.ai.model.clone();
-    let ctx_pre = config.ai.context_window();
+    let model_pre = config.resolve_model(None).model.clone();
+    let ctx_pre = config.resolve_model(None).context_window();
     let hint = approval.hint();
     draw_status_bar(
         chat_height,
@@ -620,8 +618,8 @@ async fn run_chat_inner_raw(
     // shows the context size from the *previous* completed turn.
     let mut prompt_tokens: u32 = 0;
     let config = Config::load().unwrap_or_default();
-    let context_window = config.ai.context_window();
-    let model = config.ai.model.clone();
+    let mut context_window = config.resolve_model(None).context_window();
+    let mut model = config.resolve_model(None).model.clone();
 
     loop {
         let attached = std::process::Command::new("tmux")
@@ -803,6 +801,58 @@ async fn run_chat_inner_raw(
                         daemon_up,
                     },
                 );
+            }
+            continue;
+        }
+        if query == "/model" {
+            match send_list_models(&session_id).await {
+                Ok((models, active)) => {
+                    let col_w = models.iter().map(|(key, _)| key.len()).max().unwrap_or(0);
+                    println!();
+                    for (key, model_id) in &models {
+                        if key == &active {
+                            println!(
+                                "  \x1b[32m▸\x1b[0m \x1b[1m{:<col_w$}  {}\x1b[0m \x1b[90m(active)\x1b[0m",
+                                key,
+                                model_id,
+                                col_w = col_w
+                            );
+                        } else {
+                            println!("    {:<col_w$}  {}", key, model_id, col_w = col_w);
+                        }
+                    }
+                    println!();
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /model failed: {}", e),
+            }
+            continue;
+        }
+        if let Some(name) = query.strip_prefix("/model ").map(str::trim) {
+            let name = name.to_string();
+            match send_set_model(&session_id, &name).await {
+                Ok(new_model) => {
+                    // Update the local model name and context window for the status bar.
+                    model = new_model.clone();
+                    context_window = config.resolve_model(Some(&name)).context_window();
+                    let label = format!(" model: {} ", new_model);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                    draw_input_frame(chat_height, chat_width, start_time);
+                    let hint = approval.hint();
+                    draw_status_bar(
+                        chat_height,
+                        chat_width,
+                        &StatusBarState {
+                            session_id: &session_id,
+                            approval_hint: &hint,
+                            model: &model,
+                            prompt_tokens,
+                            context_window,
+                            daemon_up,
+                        },
+                    );
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  {}", e),
             }
             continue;
         }
@@ -1217,6 +1267,7 @@ async fn ask_with_session(
             chat_width,
             tmux_session: tmux_session.map(|s| s.to_string()),
             target_pane: target_pane.map(|s| s.to_string()),
+            model: None,
         },
     )
     .await?;
@@ -1939,6 +1990,42 @@ async fn ask_with_session(
             Response::DaemonStatus { .. } => {
                 // Not expected in the AI streaming loop; ignore.
             }
+            Response::ModelChanged { model } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!(
+                    "\n  \x1b[32m✓\x1b[0m Active model switched to \x1b[96m{}\x1b[0m",
+                    model
+                );
+                println!();
+                md.reset();
+            }
+            Response::ModelList { models, active } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                let col_w = models.iter().map(|(key, _)| key.len()).max().unwrap_or(0);
+                println!();
+                for (key, model_id) in &models {
+                    if key == &active {
+                        println!(
+                            "  \x1b[32m▸\x1b[0m \x1b[1m{:<col_w$}  {}\x1b[0m \x1b[90m(active)\x1b[0m",
+                            key,
+                            model_id,
+                            col_w = col_w
+                        );
+                    } else {
+                        println!("    {:<col_w$}  {}", key, model_id, col_w = col_w);
+                    }
+                }
+                println!();
+                md.reset();
+            }
         }
     }
 
@@ -1963,6 +2050,55 @@ fn new_session_id() -> String {
         .unwrap_or(0);
     let pid = std::process::id();
     format!("{:08x}{:08x}", nanos ^ pid, pid.wrapping_mul(2_654_435_761))
+}
+
+/// List all configured model names and the session's current active model.
+/// Returns a list of `(key_name, model_id)` pairs and the active key name.
+async fn send_list_models(session_id: &str) -> Result<(Vec<(String, String)>, String)> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::ListModels {
+            session_id: session_id.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::ModelList { models, active } => Ok((models, active)),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+/// Switch the active model for the given session.
+/// Returns the confirmed new model name on success.
+async fn send_set_model(session_id: &str, model: &str) -> Result<String> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::SetModel {
+            session_id: session_id.to_string(),
+            model: model.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::ModelChanged { model } => Ok(model),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
 }
 
 /// Ask the daemon to re-collect system context (OS info, memory, processes, history).

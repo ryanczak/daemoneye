@@ -22,6 +22,7 @@ pub async fn run_status() -> Result<()> {
                     total_turns,
                     provider,
                     model,
+                    available_models: _,
                     socket_path,
                     schedule_count,
                     commands_fg_succeeded,

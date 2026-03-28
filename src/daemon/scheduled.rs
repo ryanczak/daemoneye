@@ -266,12 +266,12 @@ pub async fn run_scheduled_job(
     if let Some(ref rb_name) = job.runbook
         && let Ok(rb) = runbook::load_runbook(rb_name)
     {
-        let api_key = config.ai.resolve_api_key();
+        let model_entry = config.resolve_model(None);
         let client = crate::ai::make_client(
-            &config.ai.provider,
-            api_key,
-            config.ai.model.clone(),
-            config.ai.effective_base_url(),
+            &model_entry.provider,
+            model_entry.resolve_api_key(),
+            model_entry.model.clone(),
+            model_entry.effective_base_url(),
         );
         let system = runbook::watchdog_system_prompt(&rb);
         let msgs = vec![Message {

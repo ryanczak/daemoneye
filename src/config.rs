@@ -4,10 +4,14 @@ use std::path::PathBuf;
 
 /// Top-level configuration loaded from `~/.daemoneye/etc/config.toml`.
 /// All sections default to sensible values so the file is optional.
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     #[serde(default)]
     pub ai: AiConfig,
+    /// Named model configurations.  At minimum a `[models.default]` entry should
+    /// be present; it is used when no session-level override is active.
+    #[serde(default = "default_models")]
+    pub models: std::collections::HashMap<String, ModelEntry>,
     #[serde(default)]
     pub masking: MaskingConfig,
     #[serde(default)]
@@ -18,6 +22,20 @@ pub struct Config {
     pub webhook: WebhookConfig,
     #[serde(default)]
     pub ghost: GhostDaemonConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            ai: AiConfig::default(),
+            models: default_models(),
+            masking: MaskingConfig::default(),
+            context: ContextConfig::default(),
+            notifications: NotificationsConfig::default(),
+            webhook: WebhookConfig::default(),
+            ghost: GhostDaemonConfig::default(),
+        }
+    }
 }
 
 /// Daemon-wide limits for autonomous Ghost Shells.
@@ -156,25 +174,41 @@ pub struct MaskingConfig {
     pub extra_patterns: Vec<String>,
 }
 
-/// AI provider settings from the `[ai]` section of `config.toml`.
+/// Per-model AI provider configuration.  Define one or more named entries in
+/// `config.toml` under `[models.<name>]`.  A `[models.default]` entry is
+/// required; it is used when no model override is in effect.
+///
+/// Example:
+/// ```toml
+/// [models.default]
+/// provider = "anthropic"
+/// model    = "claude-sonnet-4-6"
+///
+/// [models.opus]
+/// provider = "anthropic"
+/// model    = "claude-opus-4-6"
+///
+/// [models.local]
+/// provider = "ollama"
+/// model    = "llama3:70b"
+/// base_url = "http://localhost:11434/v1"
+/// context_window_tokens = 8192
+/// ```
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct AiConfig {
+pub struct ModelEntry {
     /// "anthropic" | "openai" | "gemini" | "ollama" | "lmstudio"
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// API key.  Empty → resolved from the provider's environment variable
+    /// (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`).
     #[serde(default)]
     pub api_key: String,
+    /// Model identifier passed to the API (e.g. `"claude-sonnet-4-6"`,
+    /// `"gpt-4o"`, `"gemini-2.5-pro"`, `"llama3:70b"`).
     #[serde(default = "default_model")]
     pub model: String,
-    /// Name of a prompt file in ~/.daemoneye/prompts/ (without .toml extension).
-    /// Defaults to "sre".
-    #[serde(default = "default_prompt")]
-    pub prompt: String,
-    /// "bottom" | "left" | "right"
-    #[serde(default = "default_position")]
-    pub position: String,
-    /// Override the API base URL. Useful for pointing at a custom Ollama host,
-    /// a LMStudio instance on another machine, or any OpenAI-compatible proxy.
+    /// Override the API base URL.  Useful for custom Ollama/LMStudio hosts or
+    /// any OpenAI-compatible proxy.
     /// Defaults: ollama → http://localhost:11434/v1,
     ///           lmstudio → http://localhost:1234/v1,
     ///           openai → https://api.openai.com/v1 (or $OPENAI_API_BASE).
@@ -182,7 +216,6 @@ pub struct AiConfig {
     pub base_url: Option<String>,
     /// Override the model's context-window size in tokens.
     /// Set this for local models where the automatic lookup is wrong.
-    /// Example: 8192 for a 4-bit quantised 8 B model loaded with 8 k context.
     #[serde(default)]
     pub context_window_tokens: Option<u32>,
 }
@@ -193,14 +226,21 @@ fn default_provider() -> String {
 fn default_model() -> String {
     "claude-sonnet-4-6".to_string()
 }
-fn default_prompt() -> String {
-    "sre".to_string()
-}
-fn default_position() -> String {
-    "bottom".to_string()
+
+impl Default for ModelEntry {
+    fn default() -> Self {
+        ModelEntry {
+            provider: default_provider(),
+            api_key: String::new(),
+            model: default_model(),
+            base_url: None,
+            context_window_tokens: None,
+        }
+    }
 }
 
-impl AiConfig {
+impl ModelEntry {
+    /// The environment variable name that holds the API key for this provider.
     pub fn api_key_env_var(&self) -> &'static str {
         match self.provider.as_str() {
             "openai" => "OPENAI_API_KEY",
@@ -210,6 +250,7 @@ impl AiConfig {
         }
     }
 
+    /// Resolve the API key: explicit config value → env var → dummy for local providers.
     pub fn resolve_api_key(&self) -> String {
         if !self.api_key.is_empty() {
             return self.api_key.clone();
@@ -227,8 +268,8 @@ impl AiConfig {
         std::env::var(env_var).unwrap_or_default()
     }
 
-    /// Resolve the effective API base URL for the configured provider.
-    /// Priority: explicit `base_url` in config → provider default → env var fallback (openai).
+    /// Resolve the effective API base URL.
+    /// Priority: explicit `base_url` → provider default → $OPENAI_API_BASE (openai only).
     pub fn effective_base_url(&self) -> String {
         if let Some(ref u) = self.base_url {
             return u.clone();
@@ -238,13 +279,12 @@ impl AiConfig {
             "lmstudio" => "http://localhost:1234/v1".to_string(),
             "openai" => std::env::var("OPENAI_API_BASE")
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
-            _ => String::new(), // anthropic / gemini don't use this
+            _ => String::new(),
         }
     }
 
-    /// Return the context-window size (in tokens) for the configured model.
-    /// `context_window_tokens` in config always wins; otherwise a built-in table
-    /// is consulted. Local models default to 32 768 (a conservative 32 k window).
+    /// Context-window size in tokens.  `context_window_tokens` wins; otherwise
+    /// a built-in table is consulted.  Local/unknown models default to 32 768.
     pub fn context_window(&self) -> u32 {
         if let Some(override_val) = self.context_window_tokens {
             return override_val;
@@ -261,23 +301,35 @@ impl AiConfig {
         } else if m.starts_with("gpt-3.5") {
             16_000
         } else {
-            // Local / unknown models: conservative 32 k default.
-            // Users should set context_window_tokens in config.toml.
             32_768
         }
     }
 }
 
+fn default_models() -> std::collections::HashMap<String, ModelEntry> {
+    let mut m = std::collections::HashMap::new();
+    m.insert("default".to_string(), ModelEntry::default());
+    m
+}
+
+/// Global AI settings from the `[ai]` section of `config.toml`.
+/// Provider and model configuration has moved to `[models.<name>]` entries.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct AiConfig {
+    /// Name of a prompt file in `~/.daemoneye/prompts/` (without `.toml`).
+    /// Defaults to `"sre"`.
+    #[serde(default = "default_prompt")]
+    pub prompt: String,
+}
+
+fn default_prompt() -> String {
+    "sre".to_string()
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         AiConfig {
-            provider: default_provider(),
-            api_key: String::new(),
-            model: default_model(),
             prompt: default_prompt(),
-            position: default_position(),
-            base_url: None,
-            context_window_tokens: None,
         }
     }
 }
@@ -383,6 +435,26 @@ fn dirs_next() -> PathBuf {
 }
 
 impl Config {
+    /// Resolve a named model entry.  `name = None` resolves the `"default"` model.
+    /// Falls back to `"default"` if the named key is absent, then to any first
+    /// entry.  Panics only if the models map is completely empty (should never
+    /// happen with `Default::default()`).
+    pub fn resolve_model(&self, name: Option<&str>) -> &ModelEntry {
+        let key = name.unwrap_or("default");
+        self.models
+            .get(key)
+            .or_else(|| self.models.get("default"))
+            .or_else(|| self.models.values().next())
+            .expect("models map must not be empty")
+    }
+
+    /// Return a sorted list of all configured model names.
+    pub fn available_models(&self) -> Vec<&str> {
+        let mut keys: Vec<&str> = self.models.keys().map(|s| s.as_str()).collect();
+        keys.sort();
+        keys
+    }
+
     /// Load configuration from `~/.daemoneye/etc/config.toml`.
     /// Returns `Config::default()` if the file does not exist yet.
     pub fn load() -> Result<Self> {
@@ -436,24 +508,32 @@ impl Config {
         if !cfg_path.exists() {
             std::fs::write(
                 &cfg_path,
-                r#"[ai]
+                r#"# The default model used for all interactive chat sessions.
+# Add additional [models.<name>] sections to define alternatives selectable
+# via the /model slash command.  Ghost shell runbooks may specify a model
+# by name in their frontmatter with `model: <name>`.
+[models.default]
 provider = "anthropic"
 api_key  = ""
 model    = "claude-sonnet-4-6"
-prompt   = "sre"
 
-# --- Local LLM examples (no API key required) ---
-# [ai]
-# provider = "ollama"
-# model    = "llama3.2"          # any model pulled via `ollama pull`
-# # base_url = "http://localhost:11434/v1"  # default; change if Ollama runs elsewhere
-# # context_window_tokens = 8192           # set if the model uses a non-32k context
+# --- Additional model examples ---
+# [models.opus]
+# provider = "anthropic"
+# model    = "claude-opus-4-6"
 #
-# [ai]
-# provider = "lmstudio"
-# model    = "lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF"
-# # base_url = "http://localhost:1234/v1"   # default LM Studio port
-# # context_window_tokens = 8192
+# [models.local]
+# provider  = "ollama"
+# model     = "llama3.2"
+# base_url  = "http://localhost:11434/v1"
+# context_window_tokens = 8192
+#
+# [models.gpt]
+# provider = "openai"
+# model    = "gpt-4o"
+
+[ai]
+prompt = "sre"
 
 # [context]
 # Declare the operating environment so the AI calibrates its advice accordingly.
@@ -638,13 +718,11 @@ mod tests {
     // ── Default values ───────────────────────────────────────────────────────
 
     #[test]
-    fn default_config_ai_provider() {
-        assert_eq!(Config::default().ai.provider, "anthropic");
-    }
-
-    #[test]
-    fn default_config_ai_model() {
-        assert_eq!(Config::default().ai.model, "claude-sonnet-4-6");
+    fn default_config_has_default_model() {
+        let cfg = Config::default();
+        let entry = cfg.resolve_model(None);
+        assert_eq!(entry.provider, "anthropic");
+        assert_eq!(entry.model, "claude-sonnet-4-6");
     }
 
     #[test]
@@ -665,16 +743,25 @@ mod tests {
     // ── TOML parsing ─────────────────────────────────────────────────────────
 
     #[test]
-    fn parse_ai_section() {
+    fn parse_models_section() {
         let toml = r#"
-            [ai]
+            [models.default]
             provider = "openai"
             model    = "gpt-4o"
-            prompt   = "custom"
+
+            [models.big]
+            provider = "anthropic"
+            model    = "claude-opus-4-6"
+
+            [ai]
+            prompt = "custom"
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.ai.provider, "openai");
-        assert_eq!(cfg.ai.model, "gpt-4o");
+        let def = cfg.resolve_model(None);
+        assert_eq!(def.provider, "openai");
+        assert_eq!(def.model, "gpt-4o");
+        let big = cfg.resolve_model(Some("big"));
+        assert_eq!(big.model, "claude-opus-4-6");
         assert_eq!(cfg.ai.prompt, "custom");
     }
 
@@ -702,22 +789,55 @@ mod tests {
     #[test]
     fn missing_sections_fall_back_to_defaults() {
         let cfg: Config = toml::from_str("").unwrap();
-        assert_eq!(cfg.ai.provider, "anthropic");
+        let entry = cfg.resolve_model(None);
+        assert_eq!(entry.provider, "anthropic");
         assert_eq!(cfg.context.environment, "personal");
         assert!(cfg.masking.extra_patterns.is_empty());
     }
 
     #[test]
-    fn partial_ai_section_fills_missing_fields() {
-        // Only override provider — model, prompt, position stay at defaults.
+    fn resolve_model_unknown_name_falls_back_to_default() {
+        let cfg = Config::default();
+        let entry = cfg.resolve_model(Some("nonexistent"));
+        assert_eq!(entry.provider, "anthropic");
+    }
+
+    #[test]
+    fn available_models_returns_sorted_keys() {
         let toml = r#"
-            [ai]
-            provider = "gemini"
+            [models.default]
+            provider = "anthropic"
+            model    = "claude-sonnet-4-6"
+            [models.opus]
+            provider = "anthropic"
+            model    = "claude-opus-4-6"
+            [models.local]
+            provider = "ollama"
+            model    = "llama3.2"
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.ai.provider, "gemini");
-        assert_eq!(cfg.ai.model, "claude-sonnet-4-6");
-        assert_eq!(cfg.ai.prompt, "sre");
+        let names = cfg.available_models();
+        assert_eq!(names, vec!["default", "local", "opus"]);
+    }
+
+    // ── ModelEntry methods ───────────────────────────────────────────────────
+
+    #[test]
+    fn model_entry_context_window_claude() {
+        let entry = ModelEntry {
+            model: "claude-sonnet-4-6".to_string(),
+            ..ModelEntry::default()
+        };
+        assert_eq!(entry.context_window(), 200_000);
+    }
+
+    #[test]
+    fn model_entry_context_window_override() {
+        let entry = ModelEntry {
+            context_window_tokens: Some(8192),
+            ..ModelEntry::default()
+        };
+        assert_eq!(entry.context_window(), 8192);
     }
 
     // ── Builtin prompt ───────────────────────────────────────────────────────

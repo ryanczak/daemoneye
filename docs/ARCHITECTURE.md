@@ -99,7 +99,7 @@ graph TD
 
 | Path | Purpose |
 |---|---|
-| `etc/config.toml` | Daemon configuration (API key, model, webhook, ghost limits) |
+| `etc/config.toml` | Daemon configuration (`[models.*]` entries, webhook, ghost limits) |
 | `scripts/` | Executable automation scripts (chmod 700, `.sh` / `.py`) |
 | `runbooks/` | Procedure runbooks (markdown + YAML frontmatter) |
 | `memory/` | Persistent AI memory (`session/`, `knowledge/`, `incidents/`) |
@@ -134,6 +134,7 @@ The tree is created by `Config::ensure_dirs()`, which is called at the top of `m
   - Inline markdown rendering: bold, italic, and `code` spans; AI prose is tinted bright-white.
   - Context-budget indicator embedded into the right-hand side of the bottom border of the user input box after each `SessionInfo` response. Shows `turn N · Xk / Yk tokens · Z% remaining`, where the context window (Yk) is derived from `AiConfig::context_window()` per model. Color-coded by percentage: dim when under 50 % used, yellow at 50–74 %, bold red at ≥ 75 %. Driven by the `UsageUpdate { prompt_tokens }` IPC response sent by the daemon after each completed AI turn; the `prompt_tokens` value is carried across turns as a `&mut u32` parameter so subsequent query boxes display the count from the previous turn.
   - `/clear` in-chat command: generates a new session ID so the next message starts a clean context, prints a dim separator, and updates the header hint.
+  - `/model` — lists all configured model names, highlighting the session's active one. `/model <name>` switches the session to a named `[models.<name>]` entry and updates the status bar immediately; the daemon validates the name and returns `Response::Error` if unknown.
   - `SystemMsg` responses rendered with an amber ⚙ prefix.
   - `ToolResult` responses rendered as a dimmed bordered panel capped at 10 rows with a truncation indicator.
   - **Session-level command approval**: `ToolCallPrompt` responses display a three-option prompt — `[Y]es` (once), `[A]pprove for session` (session-wide), `[N]o` (deny). If the user types any other text at the approval prompt, the pending tool chain is aborted (the assistant message listing the tool calls is popped from history), and the typed text is injected as a new user turn so the agent can course-correct without seeing a synthetic tool error. `ToolCallResponse` carries an optional `user_message` field for this path. Two independent approval classes are tracked in `SessionApproval { regular: bool, sudo: bool }`, stored in `run_chat_inner` and passed into `ask_with_session`. `daemon::utils::command_has_sudo` (regex `(?:^|[;&|])\s*sudo\b`) classifies each command — the CLI and daemon share a single implementation with no duplication. Once a class is session-approved, subsequent commands in that class display `✓ auto-approved (session)` without prompting. Approval state resets on `/clear`, `/prompt`, and `/refresh`.
@@ -145,9 +146,11 @@ The tree is created by `Config::ensure_dirs()`, which is called at the top of `m
 - **Request types**:
   - `Ping` — liveness check.
   - `Shutdown` — graceful stop.
-  - `Status` — query daemon status (uptime, sessions, provider, circuit state); daemon responds with `DaemonStatus` (F1).
-  - `Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane }` — start or continue a conversation turn. `tmux_session` and `target_pane` are resolved client-side before connecting; `target_pane` is stored as `SessionEntry.default_target_pane` so `find_best_target_pane()` never prompts mid-conversation.
+  - `Status` — query daemon status (uptime, sessions, provider, model, available models, circuit state); daemon responds with `DaemonStatus` (F1).
+  - `Ask { query, tmux_pane, session_id, chat_pane, prompt, chat_width, tmux_session, target_pane, model }` — start or continue a conversation turn. `tmux_session` and `target_pane` are resolved client-side before connecting; `target_pane` is stored as `SessionEntry.default_target_pane` so `find_best_target_pane()` never prompts mid-conversation. `model` is an optional name that pins the session to a specific `[models.<name>]` entry on the first turn.
   - `Refresh` — re-collect system context (OS, memory, processes, history) via `refresh_sys_context()`; daemon responds with `Ok`.
+  - `SetModel { session_id, model }` — switch the active model for a session. The daemon validates the name against configured `[models.*]` keys and responds with `ModelChanged` on success or `Error` if unknown.
+  - `ListModels { session_id }` — list all configured model names and the session's current active model; daemon responds with `ModelList`.
   - `ToolCallResponse { id, approved, user_message }` — user's approval decision for a proposed command. When `approved=false` and `user_message` is `Some`, the daemon aborts the pending tool chain and injects the text as a new user turn so the AI can course-correct.
   - `CredentialResponse { id, credential }` — user-supplied sudo password for an approved background command, sent in response to `CredentialPrompt`.
   - `PaneSelectResponse { id, pane_id }` — user's pane selection, sent in response to `PaneSelectPrompt`.
@@ -183,7 +186,9 @@ The tree is created by `Config::ensure_dirs()`, which is called at the top of `m
   - `RunbookList { runbooks: Vec<RunbookListItem> }` — list of runbooks in `~/.daemoneye/runbooks/` with name and tags.
   - `MemoryList { entries: Vec<MemoryListItem> }` — list of memory entries with category and key.
   - `UsageUpdate { prompt_tokens: u32 }` — sent once per completed AI turn immediately before `Ok`; carries the prompt token count so the CLI can display an accurate context-budget indicator.
-  - `DaemonStatus { uptime_secs, pid, active_sessions, provider, model, socket_path, schedule_count, circuit_state, redaction_counts }` — response to `Request::Status` (F1). `redaction_counts` is a `HashMap<String, usize>` of per-type redaction totals since daemon start (keys: `"AWS Key"`, `"Private Key"`, `"GCP Key"`, `"JWT"`, `"GitHub Token"`, `"DB URL"`, `"Secret"`, `"Card"`, `"SSN"`, `"User Defined"`); all built-in types are always present even when their count is zero; `"User Defined"` accumulates hits from any `[masking] extra_patterns` the user has configured. Old daemons that omit this field are handled via `#[serde(default)]`.
+  - `ModelChanged { model }` — confirmation that the session's active model was switched (response to `SetModel`).
+  - `ModelList { models: Vec<String>, active: String }` — sorted list of all configured model names and the session's current active model (response to `ListModels`).
+  - `DaemonStatus { uptime_secs, pid, active_sessions, provider, model, available_models, socket_path, schedule_count, circuit_state, redaction_counts }` — response to `Request::Status` (F1). `available_models` is a sorted list of all `[models.*]` names from config. `redaction_counts` is a `HashMap<String, usize>` of per-type redaction totals since daemon start (keys: `"AWS Key"`, `"Private Key"`, `"GCP Key"`, `"JWT"`, `"GitHub Token"`, `"DB URL"`, `"Secret"`, `"Card"`, `"SSN"`, `"User Defined"`); all built-in types are always present even when their count is zero; `"User Defined"` accumulates hits from any `[masking] extra_patterns` the user has configured. Old daemons that omit fields are handled via `#[serde(default)]`.
 - Each client connection handles exactly one request/response lifecycle. `Ask` connections receive a token stream (interleaved with zero or more tool-call approval round-trips) terminated by `Ok` or `Error`. Incoming IPC messages are capped at 1 MiB (`MAX_IPC_MESSAGE_BYTES` in `server.rs`); oversized payloads are rejected with `Response::Error` and the connection is closed (S14).
 
 ### 2.3 DaemonEye Background Daemon

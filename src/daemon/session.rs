@@ -59,6 +59,9 @@ pub struct SessionEntry {
     /// every Ask and never reset by compaction — used by the client to display
     /// a stable, ever-increasing turn counter.
     pub turn_count: usize,
+    /// Session-level model override set by `/model` slash command.
+    /// `None` means use the daemon default (`[models.default]` from config).
+    pub active_model: Option<String>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
