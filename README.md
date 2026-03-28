@@ -59,7 +59,7 @@ Context is filtered before it ever leaves your machine.
 
 - **Sensitive Data Redaction** — A built-in regex filter scrubs AWS access keys, PEM private key blocks, GCP service-account JSON, JWT bearer tokens, GitHub personal access tokens (classic and fine-grained), database and broker connection URLs with embedded credentials, password and API key assignments, URL query-param secrets, credit card numbers, and US Social Security Numbers — each replaced with a labelled placeholder (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.) before context reaches any AI provider.
 - **User-Defined Patterns** — Add org-specific regexes to `extra_patterns` in `config.toml` to extend the built-in set without replacing it. Per-category hit counts are shown in `daemoneye status` for a continuous audit view.
-- **Sudo Password Handling** — When a background command requires `sudo`, the chat interface prompts for your password with terminal echo disabled. The password is piped directly to `sudo -S` in memory and is never written to disk, stored in a log, or transmitted to the AI.
+- **Sudo Password Handling** — When a command requires `sudo`, the daemon first checks whether credentials are already cached (`sudo -n true`). If not, the chat interface prompts for your password with terminal echo disabled — for both foreground and background commands the password is always typed in the chat pane, eliminating the risk of keystrokes landing in the wrong terminal window. Up to 3 attempts are allowed; a wrong password is detected and re-prompted automatically. If all attempts fail, the AI receives a structured error with an `install-sudoers` suggestion. The password is never written to disk, stored in a log, or transmitted to the AI.
 - **`sudoers.d` Integration** — `daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the approved script — no wildcards, no `ALL`. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
 
 ---
@@ -778,12 +778,20 @@ To register organisation-specific patterns, add them to your config (see [maskin
 
 ### Sudo passwords
 
-When the AI requests a background command that requires `sudo`, the chat interface
-prompts you for your password with terminal echo disabled. The password is piped
-directly to `sudo -S` and is never written to disk, logged, or sent to the AI.
+When a command (foreground or background) requires `sudo`, the daemon first checks
+whether credentials are already cached (`sudo -n true`). If cached, the command
+runs without any interruption. If not cached, the chat interface prompts for your
+password with terminal echo disabled — you always type it in the chat pane, not
+in the terminal pane, eliminating the risk of keystrokes landing in the wrong window.
 
-For foreground commands run in your terminal pane, you type the password directly
-into the pane — DaemonEye never sees it.
+Up to 3 attempts are permitted. A wrong password is detected from the pane output
+("Sorry, try again.") and you are re-prompted automatically. If all attempts fail
+or you cancel, the AI receives a structured error describing what happened and
+suggesting `daemoneye install-sudoers` where appropriate.
+
+The password is never written to disk, stored in a log file, or transmitted to the
+AI. The in-memory credential is held in a `zeroize::Zeroizing<String>` that
+overwrites the allocation on drop.
 
 ---
 
