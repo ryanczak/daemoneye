@@ -7,8 +7,8 @@ use crate::daemon::background::{respawn_background_in_pane, run_background_in_wi
 use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, get_pane_remote_host, interactive_destination,
-    is_interactive_command, log_command, normalize_output, shell_escape_arg,
-    sudo_auth_failed, sudo_credentials_cached, wait_for_sudo_prompt_and_inject,
+    is_interactive_command, log_command, normalize_output, shell_escape_arg, sudo_auth_failed,
+    sudo_credentials_cached, wait_for_sudo_prompt_and_inject,
 };
 use crate::ipc::{Request, Response};
 use crate::tmux;
@@ -378,11 +378,7 @@ where
                             drop(fg_hook_guard);
                             tmux::unhighlight_pane(target_str, chat_pane);
                             crate::daemon::stats::finish_command(cmd_id, 1);
-                            send_response_split(
-                                tx,
-                                Response::ToolResult(msg.clone()),
-                            )
-                            .await?;
+                            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
                             log_command(
                                 session_id,
                                 "foreground",
