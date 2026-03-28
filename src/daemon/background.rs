@@ -3,7 +3,10 @@ use crate::ai::filter::mask_sensitive;
 use crate::daemon::session::{
     BgWindowInfo, SessionStore, append_session_message, bg_done_subscribe, complete_subscribe,
 };
-use crate::daemon::utils::{log_event, normalize_output, shell_escape_arg};
+use crate::daemon::utils::{
+    command_has_sudo, log_event, normalize_output, shell_escape_arg, sudo_auth_failed,
+    wait_for_sudo_prompt_and_inject,
+};
 use crate::ipc::Response;
 use crate::tmux;
 use crate::util::UnpoisonExt;
@@ -309,6 +312,17 @@ pub async fn run_background_in_window(
         pane_id = pane_id,
         session = shell_escape_arg(session),
     );
+    // P5: inject a locale-independent sentinel as the sudo password prompt so
+    // credential detection below does not rely on translated "password" strings.
+    // Only applied when a credential will actually be injected.
+    let sentineled_cmd;
+    let cmd: &str = if command_has_sudo(cmd) && credential.is_some() {
+        sentineled_cmd = format!("SUDO_PROMPT='[de-sudo-prompt]' {cmd}");
+        &sentineled_cmd
+    } else {
+        cmd
+    };
+
     let wrapped = if exit_var == "$status" {
         // fish: use set to capture status before running notify
         format!("{cmd}; set __de_ec $status; {notify}")
@@ -337,21 +351,23 @@ pub async fn run_background_in_window(
     }
 
     // Inject sudo credential synchronously (≤10 s); must happen before we return.
+    // P3: detect auth failure and log a warning — the failed exit code propagates
+    // through the completion monitor and will be visible to the AI.
     if let Some(cred) = credential {
-        let poll = Duration::from_millis(200);
-        let prompt_timeout = Duration::from_secs(10);
-        let mut waited = Duration::ZERO;
-        loop {
-            tokio::time::sleep(poll).await;
-            waited += poll;
-            let snap = tmux::capture_pane(&pane_id, 50).unwrap_or_default();
-            if snap.contains("password") || snap.contains("Password") || snap.contains("[sudo]") {
-                let _ = tmux::send_keys(&pane_id, cred);
-                break;
+        if wait_for_sudo_prompt_and_inject(&pane_id, cred).await {
+            if sudo_auth_failed(&pane_id).await {
+                log::warn!(
+                    "sudo authentication failed for background command in {}: {}",
+                    pane_id,
+                    cmd
+                );
             }
-            if waited >= prompt_timeout || tmux::pane_dead_status(&pane_id).is_some() {
-                break;
-            }
+        } else {
+            log::warn!(
+                "sudo prompt not detected for background command in {}: {}",
+                pane_id,
+                cmd
+            );
         }
     }
 

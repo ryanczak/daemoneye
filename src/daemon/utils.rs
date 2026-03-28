@@ -154,6 +154,72 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     re.is_match(cmd)
 }
 
+/// Returns `true` if the current user's sudo credentials are cached, i.e.
+/// `sudo -n true` exits 0 without requiring a password.
+///
+/// Used as a pre-flight check before prompting the user or switching pane
+/// focus.  A `false` return means a password will be required; `true` means
+/// the command can proceed without interaction.
+pub async fn sudo_credentials_cached() -> bool {
+    tokio::process::Command::new("sudo")
+        .args(["-n", "true"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Poll `pane_id` until a sudo password prompt appears in the scrollback, then
+/// inject `credential` via `send-keys`.  Returns `true` if injection happened,
+/// `false` if the prompt never appeared within the timeout.
+///
+/// Detects the locale-independent `[de-sudo-prompt]` sentinel (set by
+/// `background.rs` for background windows) as well as the standard English
+/// prompt strings for foreground panes.
+pub async fn wait_for_sudo_prompt_and_inject(pane_id: &str, credential: &str) -> bool {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(200);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let mut waited = std::time::Duration::ZERO;
+    loop {
+        tokio::time::sleep(POLL).await;
+        waited += POLL;
+        let snap = crate::tmux::capture_pane(pane_id, 20).unwrap_or_default();
+        if snap.contains("[de-sudo-prompt]")
+            || snap.contains("[sudo]")
+            || snap.contains("password")
+            || snap.contains("Password")
+        {
+            let _ = crate::tmux::send_keys(pane_id, credential);
+            return true;
+        }
+        if waited >= TIMEOUT || crate::tmux::pane_dead_status(pane_id).is_some() {
+            return false;
+        }
+    }
+}
+
+/// After injecting a sudo credential, poll the pane scrollback to see if sudo
+/// rejected it ("Sorry, try again.").  Returns `true` if authentication failed
+/// and a retry is needed, `false` if the credential was accepted.
+pub async fn sudo_auth_failed(pane_id: &str) -> bool {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(150);
+    const WINDOW: std::time::Duration = std::time::Duration::from_millis(2500);
+    let mut waited = std::time::Duration::ZERO;
+    loop {
+        tokio::time::sleep(POLL).await;
+        waited += POLL;
+        let snap = crate::tmux::capture_pane(pane_id, 20).unwrap_or_default();
+        if snap.contains("Sorry, try again") {
+            return true;
+        }
+        if waited >= WINDOW {
+            return false;
+        }
+    }
+}
+
 /// Write a structured JSONL event record to `~/.daemoneye/var/events.jsonl`.
 ///
 /// Each call appends one JSON object per line.  The top-level fields

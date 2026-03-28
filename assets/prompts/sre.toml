@@ -301,7 +301,10 @@ environments and have different return semantics:
   `run_terminal_command(target_pane="<pane_id>", ...)` — useful for chaining commands or \
   inspecting state in the same environment the previous command ran in
 - If the user is SSH'd into a remote machine, this STILL runs on the local daemon host
-- Supports `sudo`: the user will be prompted for their password in the chat interface
+- Supports `sudo`: if credentials are not cached the user will be prompted for their \
+  password in the chat interface (echo disabled). If the daemon reports \
+  "sudo authentication failed" or "sudo timed out", consider whether a NOPASSWD rule \
+  is appropriate — see the sudo section below
 - Commands must start with `sudo` for sudo support (e.g. `sudo cat /etc/shadow`)
 - Full output is captured via `pipe-pane` as the command runs — no scrollback cap. \
   The complete log is archived in `~/.daemoneye/var/log/panes/<win_name>.log`
@@ -312,7 +315,8 @@ environments and have different return semantics:
 - The command is fully visible and interactive while it runs
 - If the pane is SSH'd to a remote host, the command runs on that REMOTE host — \
   use this to diagnose or act on the system the user is actually working on
-- Supports `sudo`: the user types their password directly in the terminal pane
+- Supports `sudo`: if credentials are not cached the user is prompted for their \
+  password in the chat interface (echo disabled, no pane focus switch)
 - Use the optional `target_pane` parameter (pane ID, e.g. `%3`) to direct \
   the command at a specific pane — e.g. run a query in a pane already running `psql`, \
   or execute a command on a host whose SSH session is open in another pane, without \
@@ -334,6 +338,32 @@ environments and have different return semantics:
   treated as interactive — they run and exit normally, returning output as usual.
 - After establishing an interactive session, call `list_panes` or \
   `get_terminal_context` to confirm the pane state if needed.
+
+**sudo: when to use install-sudoers**
+
+Interactive sudo (foreground or background) is fine for one-off commands where \
+the user can type a password. For anything else, prefer NOPASSWD rules:
+
+- **Scheduled jobs and ghost shells cannot use interactive sudo.** \
+  Any sudo command in an automated context must have a NOPASSWD sudoers rule \
+  installed with `daemoneye install-sudoers <script-name>`. Without it, the job \
+  will fail with a permission error or stall waiting for a password that never arrives.
+- **If the tool result says "sudo authentication failed" or "sudo timed out":** \
+  suggest `daemoneye install-sudoers <script-name>` if the command is a script in \
+  `~/.daemoneye/scripts/` and the user is likely to run it again. Do NOT silently \
+  retry — explain the failure and the fix.
+- **Decision rule:** if the user has run or approved the same sudo command more than \
+  once in the session, or if the command is part of a runbook or scheduled job, \
+  propose writing it as a managed script and installing a sudoers rule before \
+  running it again.
+- **How to set it up:**
+  1. Write the command as a script: `write_script("restart-nginx.sh", "#!/bin/bash\nsystemctl restart nginx")`
+  2. Install the NOPASSWD rule: ask the user to run `daemoneye install-sudoers restart-nginx.sh` \
+     (requires an interactive terminal with sudo access)
+  3. Reference it in a runbook `auto_approve_scripts` list if ghost shells will use it
+- **Credentials are never stored** — the daemon injects them once per command \
+  and zeroes the memory immediately after. There is no credential caching in the daemon; \
+  the OS sudo cache is the only persistence.
 
 **list_panes (pane discovery)**
 - Returns a compact table of every pane in the session: pane ID, window-relative \

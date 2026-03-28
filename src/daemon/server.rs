@@ -1246,7 +1246,7 @@ pub async fn handle_client(
                     // Per-turn tool-call loop guard.
                     // Prevents the AI from looping endlessly through the same tools.
                     const MAX_SAME_TOOL: u32 = 2;
-                    const MAX_TOTAL_CALLS: u32 = 12;
+                    const MAX_TOTAL_CALLS: u32 = 16;
                     let mut tool_call_counts: std::collections::HashMap<&'static str, u32> =
                         std::collections::HashMap::new();
 

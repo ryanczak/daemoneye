@@ -8,6 +8,7 @@ use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, get_pane_remote_host, interactive_destination,
     is_interactive_command, log_command, normalize_output, shell_escape_arg,
+    sudo_auth_failed, sudo_credentials_cached, wait_for_sudo_prompt_and_inject,
 };
 use crate::ipc::{Request, Response};
 use crate::tmux;
@@ -25,6 +26,8 @@ use std::time::Duration;
 // Timing constants specific to command execution.
 const SUDO_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SUDO_DETECT_WINDOW: Duration = Duration::from_secs(3);
+/// Maximum sudo password attempts before aborting (matches sudo's own default).
+const MAX_SUDO_RETRIES: usize = 3;
 const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REMOTE_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_CHILD_POLL: Duration = Duration::from_millis(25);
@@ -248,35 +251,149 @@ where
             let mut is_interactive = false;
 
             if command_has_sudo(cmd) {
-                let mut waited = Duration::ZERO;
-                let needs_password = loop {
-                    tokio::time::sleep(SUDO_POLL_INTERVAL).await;
-                    waited += SUDO_POLL_INTERVAL;
-                    let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                    if cur == "sudo" {
-                        break true;
+                // For local panes, probe the credential cache immediately (P1).
+                // For remote panes the cache lives on the remote host, so fall
+                // back to the polling approach.
+                let needs_password = if is_remote_pane {
+                    let mut waited = Duration::ZERO;
+                    loop {
+                        tokio::time::sleep(SUDO_POLL_INTERVAL).await;
+                        waited += SUDO_POLL_INTERVAL;
+                        let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+                        if cur == "sudo" {
+                            break true;
+                        }
+                        if cur == idle_cmd {
+                            break false;
+                        }
+                        if waited >= SUDO_DETECT_WINDOW {
+                            break false;
+                        }
                     }
-                    if cur == idle_cmd {
-                        break false;
-                    }
-                    if waited >= SUDO_DETECT_WINDOW {
-                        break false;
-                    }
+                } else {
+                    !sudo_credentials_cached().await
                 };
 
                 if needs_password {
-                    send_response_split(
-                        tx,
-                        Response::SystemMsg(
-                            "sudo password prompt detected — \
-                             switching to your terminal pane. \
-                             Type your password there."
-                                .to_string(),
-                        ),
-                    )
-                    .await?;
-                    let _ = tmux::select_pane(target_str);
-                    switched_to_working = true;
+                    if is_remote_pane {
+                        // Remote pane: can't inject password into a remote pty
+                        // reliably; fall back to manual focus switch.
+                        send_response_split(
+                            tx,
+                            Response::SystemMsg(
+                                "sudo password prompt detected — \
+                                 switching to your terminal pane. \
+                                 Type your password there."
+                                    .to_string(),
+                            ),
+                        )
+                        .await?;
+                        let _ = tmux::select_pane(target_str);
+                        switched_to_working = true;
+                    } else {
+                        // P2: Prompt in the chat pane (no focus switch).
+                        // P3: Retry on wrong password, up to MAX_SUDO_RETRIES.
+                        // P6: Track failure reason for structured error reporting.
+                        enum SudoFail {
+                            Cancelled,
+                            AuthExhausted,
+                        }
+                        let mut sudo_fail: Option<SudoFail> = None;
+                        let mut attempt = 0usize;
+                        'sudo: while attempt < MAX_SUDO_RETRIES {
+                            let prompt = if attempt == 0 {
+                                format!("[sudo] password required for: {}", cmd)
+                            } else {
+                                format!(
+                                    "sudo: Sorry, try again. \
+                                     Password for attempt {}/{}: {}",
+                                    attempt + 1,
+                                    MAX_SUDO_RETRIES,
+                                    cmd
+                                )
+                            };
+                            send_response_split(
+                                tx,
+                                Response::CredentialPrompt {
+                                    id: id.to_string(),
+                                    prompt,
+                                },
+                            )
+                            .await?;
+                            let mut cred_line = String::new();
+                            let cred = match tokio::time::timeout(
+                                super::USER_PROMPT_TIMEOUT,
+                                rx.read_line(&mut cred_line),
+                            )
+                            .await
+                            {
+                                Ok(Ok(_)) => {
+                                    match serde_json::from_str::<Request>(cred_line.trim()) {
+                                        Ok(Request::CredentialResponse { credential, .. }) => {
+                                            Some(zeroize::Zeroizing::new(credential))
+                                        }
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            };
+                            zeroize::Zeroize::zeroize(&mut cred_line);
+                            let Some(cred) = cred else {
+                                sudo_fail = Some(SudoFail::Cancelled);
+                                break 'sudo;
+                            };
+                            if !wait_for_sudo_prompt_and_inject(target_str, &cred).await {
+                                break 'sudo; // prompt not found; credentials may be cached
+                            }
+                            if sudo_auth_failed(target_str).await {
+                                attempt += 1;
+                                continue 'sudo;
+                            }
+                            break 'sudo; // credential accepted
+                        }
+                        if attempt >= MAX_SUDO_RETRIES {
+                            sudo_fail = Some(SudoFail::AuthExhausted);
+                        }
+
+                        // P6: Return a structured error to the AI on sudo failure.
+                        if let Some(fail) = sudo_fail {
+                            let msg = match fail {
+                                SudoFail::Cancelled => format!(
+                                    "sudo timed out waiting for a password — \
+                                     `{}` was not executed.\n\
+                                     For repeated sudo operations, install a NOPASSWD \
+                                     sudoers rule with: \
+                                     `daemoneye install-sudoers <script-name>`",
+                                    cmd
+                                ),
+                                SudoFail::AuthExhausted => format!(
+                                    "sudo authentication failed after {} incorrect password \
+                                     attempts — `{}` was not executed.\n\
+                                     To avoid password prompts for repeated operations, \
+                                     install a NOPASSWD sudoers rule with: \
+                                     `daemoneye install-sudoers <script-name>`",
+                                    MAX_SUDO_RETRIES, cmd
+                                ),
+                            };
+                            drop(fg_hook_guard);
+                            tmux::unhighlight_pane(target_str, chat_pane);
+                            crate::daemon::stats::finish_command(cmd_id, 1);
+                            send_response_split(
+                                tx,
+                                Response::ToolResult(msg.clone()),
+                            )
+                            .await?;
+                            log_command(
+                                session_id,
+                                "foreground",
+                                target_str,
+                                cmd,
+                                "sudo-failed",
+                                &msg,
+                            );
+                            return Ok(ToolCallOutcome::Result(msg));
+                        }
+                    }
                 }
             }
 
@@ -685,6 +802,9 @@ where
 
     let credential: Option<zeroize::Zeroizing<String>> = if command_has_sudo(cmd) {
         if is_ghost {
+            None
+        } else if sudo_credentials_cached().await {
+            // Credentials are cached; sudo will not prompt — skip the password flow (P1).
             None
         } else {
             send_response_split(
