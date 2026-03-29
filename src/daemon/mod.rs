@@ -447,14 +447,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
                     log::error!(
                         "Failed to create managed session '{}': {} — falling back to detect_session()",
-                        name, stderr
+                        name,
+                        stderr
                     );
                     detect_session()
                 }
                 Err(e) => {
                     log::error!(
                         "tmux new-session failed for '{}': {} — falling back to detect_session()",
-                        name, e
+                        name,
+                        e
                     );
                     detect_session()
                 }

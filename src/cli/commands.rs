@@ -413,7 +413,8 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
                 // exec() only returns on error.
                 anyhow::bail!(
                     "Failed to attach to managed tmux session '{}': {}",
-                    sname, err
+                    sname,
+                    err
                 );
             } else {
                 eprintln!(

@@ -491,13 +491,15 @@ pub async fn handle_client(
                         let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
                         log::warn!(
                             "Failed to recreate managed session '{}': {}",
-                            session_name, stderr
+                            session_name,
+                            stderr
                         );
                     }
                     Err(e) => {
                         log::warn!(
                             "tmux new-session for managed session '{}' failed: {}",
-                            session_name, e
+                            session_name,
+                            e
                         );
                     }
                 }
