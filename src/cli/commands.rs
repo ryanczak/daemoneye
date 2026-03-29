@@ -190,7 +190,8 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.daemoneye/bin/daemoneye daemon
+# --console: don't fork; write logs to stdout so systemd/journald captures them.
+ExecStart=%h/.daemoneye/bin/daemoneye daemon --console
 ExecStop=%h/.daemoneye/bin/daemoneye stop
 Restart=on-failure
 RestartSec=5
@@ -256,6 +257,16 @@ WantedBy=default.target
         "_de_precmd() {{ tmux set-environment \"DE_EXIT_${{TMUX_PANE#%}}\" \"$?\" 2>/dev/null; }}"
     );
     println!("precmd_functions+=(_de_precmd)");
+
+    println!();
+    println!("# ── Server / systemd use ────────────────────────────────────────────────────");
+    println!("# When running as a systemd user service, add to ~/.daemoneye/etc/config.toml:");
+    println!("#");
+    println!("#   [daemon]");
+    println!("#   tmux_session = \"daemoneye\"   # session the daemon creates at startup");
+    println!("#");
+    println!("# The daemon will create the session automatically and `daemoneye chat`");
+    println!("# will attach to it when run from outside tmux.");
 
     Ok(())
 }
