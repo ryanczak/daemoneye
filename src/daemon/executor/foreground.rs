@@ -306,8 +306,7 @@ where
                             while waited < FP_WINDOW {
                                 tokio::time::sleep(FP_POLL).await;
                                 waited += FP_POLL;
-                                let snap =
-                                    tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
                                 if is_fingerprint_prompt(&snap) {
                                     detected = true;
                                     break;
@@ -337,104 +336,104 @@ where
                             // Fall through — command completes via the normal
                             // completion-detection path once the fingerprint is accepted.
                         } else {
-                        // P2: Prompt in the chat pane (no focus switch).
-                        // P3: Retry on wrong password, up to MAX_SUDO_RETRIES.
-                        // P6: Track failure reason for structured error reporting.
-                        enum SudoFail {
-                            Cancelled,
-                            AuthExhausted,
-                        }
-                        let mut sudo_fail: Option<SudoFail> = None;
-                        let mut attempt = 0usize;
-                        'sudo: while attempt < MAX_SUDO_RETRIES {
-                            let prompt = if attempt == 0 {
-                                format!("[sudo] password required for: {}", cmd)
-                            } else {
-                                format!(
-                                    "sudo: Sorry, try again. \
+                            // P2: Prompt in the chat pane (no focus switch).
+                            // P3: Retry on wrong password, up to MAX_SUDO_RETRIES.
+                            // P6: Track failure reason for structured error reporting.
+                            enum SudoFail {
+                                Cancelled,
+                                AuthExhausted,
+                            }
+                            let mut sudo_fail: Option<SudoFail> = None;
+                            let mut attempt = 0usize;
+                            'sudo: while attempt < MAX_SUDO_RETRIES {
+                                let prompt = if attempt == 0 {
+                                    format!("[sudo] password required for: {}", cmd)
+                                } else {
+                                    format!(
+                                        "sudo: Sorry, try again. \
                                      Password for attempt {}/{}: {}",
-                                    attempt + 1,
-                                    MAX_SUDO_RETRIES,
-                                    cmd
+                                        attempt + 1,
+                                        MAX_SUDO_RETRIES,
+                                        cmd
+                                    )
+                                };
+                                send_response_split(
+                                    tx,
+                                    Response::CredentialPrompt {
+                                        id: id.to_string(),
+                                        prompt,
+                                    },
                                 )
-                            };
-                            send_response_split(
-                                tx,
-                                Response::CredentialPrompt {
-                                    id: id.to_string(),
-                                    prompt,
-                                },
-                            )
-                            .await?;
-                            let mut cred_line = String::new();
-                            let cred = match tokio::time::timeout(
-                                super::USER_PROMPT_TIMEOUT,
-                                rx.read_line(&mut cred_line),
-                            )
-                            .await
-                            {
-                                Ok(Ok(_)) => {
-                                    match serde_json::from_str::<Request>(cred_line.trim()) {
-                                        Ok(Request::CredentialResponse { credential, .. }) => {
-                                            Some(zeroize::Zeroizing::new(credential))
+                                .await?;
+                                let mut cred_line = String::new();
+                                let cred = match tokio::time::timeout(
+                                    super::USER_PROMPT_TIMEOUT,
+                                    rx.read_line(&mut cred_line),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(_)) => {
+                                        match serde_json::from_str::<Request>(cred_line.trim()) {
+                                            Ok(Request::CredentialResponse {
+                                                credential, ..
+                                            }) => Some(zeroize::Zeroizing::new(credential)),
+                                            _ => None,
                                         }
-                                        _ => None,
                                     }
+                                    _ => None,
+                                };
+                                zeroize::Zeroize::zeroize(&mut cred_line);
+                                let Some(cred) = cred else {
+                                    sudo_fail = Some(SudoFail::Cancelled);
+                                    break 'sudo;
+                                };
+                                if !wait_for_sudo_prompt_and_inject(target_str, &cred).await {
+                                    break 'sudo; // prompt not found; credentials may be cached
                                 }
-                                _ => None,
-                            };
-                            zeroize::Zeroize::zeroize(&mut cred_line);
-                            let Some(cred) = cred else {
-                                sudo_fail = Some(SudoFail::Cancelled);
-                                break 'sudo;
-                            };
-                            if !wait_for_sudo_prompt_and_inject(target_str, &cred).await {
-                                break 'sudo; // prompt not found; credentials may be cached
+                                if sudo_auth_failed(target_str).await {
+                                    attempt += 1;
+                                    continue 'sudo;
+                                }
+                                break 'sudo; // credential accepted
                             }
-                            if sudo_auth_failed(target_str).await {
-                                attempt += 1;
-                                continue 'sudo;
+                            if attempt >= MAX_SUDO_RETRIES {
+                                sudo_fail = Some(SudoFail::AuthExhausted);
                             }
-                            break 'sudo; // credential accepted
-                        }
-                        if attempt >= MAX_SUDO_RETRIES {
-                            sudo_fail = Some(SudoFail::AuthExhausted);
-                        }
 
-                        // P6: Return a structured error to the AI on sudo failure.
-                        if let Some(fail) = sudo_fail {
-                            let msg = match fail {
-                                SudoFail::Cancelled => format!(
-                                    "sudo timed out waiting for a password — \
+                            // P6: Return a structured error to the AI on sudo failure.
+                            if let Some(fail) = sudo_fail {
+                                let msg = match fail {
+                                    SudoFail::Cancelled => format!(
+                                        "sudo timed out waiting for a password — \
                                      `{}` was not executed.\n\
                                      For repeated sudo operations, install a NOPASSWD \
                                      sudoers rule with: \
                                      `daemoneye install-sudoers <script-name>`",
-                                    cmd
-                                ),
-                                SudoFail::AuthExhausted => format!(
-                                    "sudo authentication failed after {} incorrect password \
+                                        cmd
+                                    ),
+                                    SudoFail::AuthExhausted => format!(
+                                        "sudo authentication failed after {} incorrect password \
                                      attempts — `{}` was not executed.\n\
                                      To avoid password prompts for repeated operations, \
                                      install a NOPASSWD sudoers rule with: \
                                      `daemoneye install-sudoers <script-name>`",
-                                    MAX_SUDO_RETRIES, cmd
-                                ),
-                            };
-                            drop(fg_hook_guard);
-                            tmux::unhighlight_pane(target_str, chat_pane);
-                            crate::daemon::stats::finish_command(cmd_id, 1);
-                            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
-                            log_command(
-                                session_id,
-                                "foreground",
-                                target_str,
-                                cmd,
-                                "sudo-failed",
-                                &msg,
-                            );
-                            return Ok(ToolCallOutcome::Result(msg));
-                        }
+                                        MAX_SUDO_RETRIES, cmd
+                                    ),
+                                };
+                                drop(fg_hook_guard);
+                                tmux::unhighlight_pane(target_str, chat_pane);
+                                crate::daemon::stats::finish_command(cmd_id, 1);
+                                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                                log_command(
+                                    session_id,
+                                    "foreground",
+                                    target_str,
+                                    cmd,
+                                    "sudo-failed",
+                                    &msg,
+                                );
+                                return Ok(ToolCallOutcome::Result(msg));
+                            }
                         } // end password-injection else
                     }
                 }
@@ -863,7 +862,14 @@ where
                  for this command, or run it in a foreground pane instead."
             );
             send_response_split(tx, Response::ToolResult(msg.clone())).await?;
-            log_command(session_id, "background", "", cmd, "fingerprint-rejected", &msg);
+            log_command(
+                session_id,
+                "background",
+                "",
+                cmd,
+                "fingerprint-rejected",
+                &msg,
+            );
             return Ok(ToolCallOutcome::Result(msg));
         } else {
             send_response_split(
