@@ -22,6 +22,8 @@ pub struct Config {
     pub webhook: WebhookConfig,
     #[serde(default)]
     pub ghost: GhostDaemonConfig,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
 }
 
 impl Default for Config {
@@ -34,6 +36,33 @@ impl Default for Config {
             notifications: NotificationsConfig::default(),
             webhook: WebhookConfig::default(),
             ghost: GhostDaemonConfig::default(),
+            daemon: DaemonConfig::default(),
+        }
+    }
+}
+
+/// Daemon startup and session management configuration.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct DaemonConfig {
+    /// Tmux session name the daemon creates/adopts at startup.
+    /// When set, the daemon ensures this session exists before serving any
+    /// requests, so ghost shells and scheduled jobs work immediately without
+    /// waiting for a `daemoneye chat` client to connect.
+    /// Empty string (default) = legacy behaviour: adopt session from the first
+    /// connecting client.
+    #[serde(default)]
+    pub tmux_session: String,
+    /// Create the tmux session if it doesn't already exist.
+    /// Only applies when `tmux_session` is non-empty. Default: true.
+    #[serde(default = "default_true")]
+    pub auto_create_session: bool,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            tmux_session: String::new(),
+            auto_create_session: default_true(),
         }
     }
 }
@@ -558,6 +587,13 @@ prompt = "sre"
 # severity_threshold = "warning"   # "info" | "warning" | "critical"
 # dedup_window_secs = 300
 # bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
+
+# [daemon]
+# Tmux session the daemon creates/owns at startup.
+# Set this when running as a systemd service so ghost shells and scheduled
+# jobs work before any `daemoneye chat` client connects.
+# tmux_session = "daemoneye"
+# auto_create_session = true
 "#,
             )?;
         }

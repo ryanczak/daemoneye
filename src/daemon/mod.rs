@@ -312,7 +312,7 @@ pub async fn daemon_is_running() -> bool {
 /// 5. Bind the Unix domain socket and enter the accept loop.
 /// 6. Optionally open the chat pane if the daemon just created the tmux session.
 /// 7. Shut down cleanly on SIGTERM or SIGINT.
-pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
+pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<String>) -> Result<()> {
     // Record daemon start time for uptime reporting (F1).
     DAEMON_START.get_or_init(Instant::now);
 
@@ -412,6 +412,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>) -> Result<()> {
         default_model.provider,
         default_model.model
     );
+
+    // Resolve the configured managed session name: CLI override > config > empty (legacy).
+    let _managed_session: Option<String> = session_override.or_else(|| {
+        let s = startup_config.daemon.tmux_session.clone();
+        if s.is_empty() { None } else { Some(s) }
+    });
 
     let initial_session = detect_session();
     match &initial_session {

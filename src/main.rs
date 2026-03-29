@@ -41,6 +41,10 @@ enum Commands {
         /// Log to the console instead of a file (useful for troubleshooting)
         #[arg(long)]
         console: bool,
+        /// Override the tmux session name from config.toml [daemon] tmux_session.
+        /// Useful for testing or running multiple daemon instances.
+        #[arg(long, value_name = "NAME")]
+        session: Option<String>,
     },
     /// Tail the daemon log
     Logs {
@@ -235,13 +239,17 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Daemon { log_file, console } => {
+        Commands::Daemon {
+            log_file,
+            console,
+            session,
+        } => {
             let log_file = if console {
                 None
             } else {
                 Some(log_file.unwrap_or_else(config::default_log_path))
             };
-            daemon::run_daemon(log_file).await?;
+            daemon::run_daemon(log_file, session).await?;
         }
         Commands::Logs { log_file } => {
             let path = log_file.unwrap_or_else(config::default_log_path);
