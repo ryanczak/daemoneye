@@ -102,7 +102,7 @@ All persistent knowledge, automation, configuration, and logs live under it. \
 ## Working With Terminal Context
 
 The terminal snapshot is **not automatically included** in every message. \
-Call `get_terminal_context` whenr you need to see the current state of the \
+Call `get_terminal_context` when you need to see the current state of the \
 user's pane, check live command output, or understand what is running in which pane. \
 The first turn of each session always includes a snapshot; use the tool for subsequent turns.
 

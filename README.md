@@ -193,7 +193,16 @@ daemoneye setup
 
 #### systemd user service
 
-`daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon` automatically on login.
+`daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon --console` automatically on login. The `--console` flag is required for `Type=simple` systemd services: without it the daemon forks, the parent exits, and systemd loses track of the process.
+
+For server or headless setups where ghost shells and scheduled jobs should work without an interactive `daemoneye chat` session, add a `[daemon]` section to `~/.daemoneye/etc/config.toml` before starting the service:
+
+```toml
+[daemon]
+tmux_session = "daemoneye"   # session the daemon creates at startup
+```
+
+With this set the daemon creates (and owns) the named tmux session on startup, making all autonomous features available immediately — no client connection required.
 
 ```sh
 # Enable and start the daemon on login
@@ -281,9 +290,11 @@ daemoneye chat
 | `daemoneye daemon` | Start the background daemon |
 | `daemoneye daemon --console` | Start daemon with output on the console (troubleshooting) |
 | `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
+| `daemoneye daemon --session NAME` | Override the managed tmux session name from config (useful for testing or running multiple instances) |
 | `daemoneye stop` | Stop the daemon gracefully |
 | `daemoneye logs` | Tails the `daemon.log` file |
-| `daemoneye chat` | Start an interactive multi-turn chat session |
+| `daemoneye chat` | Start an interactive multi-turn chat session (auto-attaches to managed tmux session when outside tmux) |
+| `daemoneye chat --session NAME` | Open a chat window in a specific tmux session and attach to it |
 | `daemoneye ask <query>` | Send a single question to the AI |
 | `daemoneye setup` | Initialise `~/.daemoneye/`, install binary, write systemd service, print tmux config |
 | `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
@@ -333,6 +344,10 @@ prompt = "sre"
 
 # [ghost]
 # max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
+
+# [daemon]
+# tmux_session = "daemoneye"   # session the daemon creates/owns at startup
+# auto_create_session = true   # create the session if it doesn't exist (default: true)
 
 # [webhook]
 # enabled = false
@@ -441,6 +456,17 @@ Daemon-wide hard limits for autonomous Ghost Shells. These are ceilings — indi
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost shell. A runbook's `max_ghost_turns` is clamped to this value. Set lower in production to constrain blast radius. |
+
+### `[daemon]` section
+
+Controls daemon startup and session ownership. Use this when running DaemonEye as a systemd user service so ghost shells, scheduled jobs, and webhook-triggered automation work without any `daemoneye chat` client connected.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `tmux_session` | string | `""` | Name of the tmux session the daemon creates (or adopts, if it already exists) at startup. Empty = legacy behaviour: the daemon borrows whatever session the first `daemoneye chat` client connects from. |
+| `auto_create_session` | bool | `true` | Create the session with `tmux new-session -d` if it does not already exist. Only applies when `tmux_session` is set. If the session is killed, the daemon recreates it automatically. |
+
+When `tmux_session` is set, `daemoneye chat` invoked **outside** of tmux will open a new chat window inside the managed session and exec-attach to it, dropping the user straight into the right place.
 
 ---
 
