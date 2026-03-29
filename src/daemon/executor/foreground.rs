@@ -855,12 +855,11 @@ where
             // asking the user for a credential — to avoid leaking the password into the
             // background pane when the fingerprint prompt appears and eventually times
             // out to a password fallback.
-            let msg = format!(
-                "sudo requires fingerprint authentication which cannot be satisfied in a \
+            let msg = "sudo requires fingerprint authentication which cannot be satisfied in a \
                  background pane — the fingerprint reader requires a foreground terminal. \
                  Use `daemoneye install-sudoers <script-name>` to create a NOPASSWD rule \
                  for this command, or run it in a foreground pane instead."
-            );
+                .to_string();
             send_response_split(tx, Response::ToolResult(msg.clone())).await?;
             log_command(
                 session_id,

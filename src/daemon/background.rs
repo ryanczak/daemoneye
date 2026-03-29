@@ -373,12 +373,11 @@ pub async fn run_background_in_window(
                     cmd
                 );
                 let _ = crate::tmux::kill_job_window(session, &win_name);
-                return format!(
-                    "sudo failed: fingerprint authentication is not supported in background \
+                return "sudo failed: fingerprint authentication is not supported in background \
                      panes — the pane has no TTY for a reader interaction. \
                      Use `daemoneye install-sudoers <script-name>` to create a NOPASSWD \
                      sudoers rule for this command, or run it in a foreground pane."
-                );
+                    .to_string();
             }
             log::warn!(
                 "sudo prompt not detected for background command in {}: {}",

@@ -153,10 +153,10 @@ pub fn interactive_destination(cmd: &str) -> Option<String> {
 /// fall back to the normal password-prompt path.
 pub fn fingerprint_pam_configured() -> bool {
     for path in &["/etc/pam.d/sudo", "/etc/pam.d/sudo-i"] {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if content.contains("pam_fprintd") {
-                return true;
-            }
+        if let Ok(content) = std::fs::read_to_string(path)
+            && content.contains("pam_fprintd")
+        {
+            return true;
         }
     }
     false
