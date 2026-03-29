@@ -6,9 +6,10 @@ use crate::ai::mask_sensitive;
 use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
 use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe};
 use crate::daemon::utils::{
-    command_has_sudo, extract_command_output, get_pane_remote_host, interactive_destination,
-    is_interactive_command, log_command, normalize_output, shell_escape_arg, sudo_auth_failed,
-    sudo_credentials_cached, wait_for_sudo_prompt_and_inject,
+    command_has_sudo, extract_command_output, fingerprint_pam_configured, get_pane_remote_host,
+    interactive_destination, is_fingerprint_prompt, is_interactive_command, log_command,
+    normalize_output, shell_escape_arg, sudo_auth_failed, sudo_credentials_cached,
+    wait_for_sudo_prompt_and_inject,
 };
 use crate::ipc::{Request, Response};
 use crate::tmux;
@@ -291,6 +292,51 @@ where
                         let _ = tmux::select_pane(target_str);
                         switched_to_working = true;
                     } else {
+                        // Detect fingerprint-reader prompts before asking for a password.
+                        // Poll briefly — the reader prompt appears almost immediately after
+                        // send_keys.  If we see it, notify the user and skip the password
+                        // flow; the command will complete once the fingerprint is accepted.
+                        // Exit the detection loop early when a password prompt is found so
+                        // we don't add unnecessary latency to the normal (no-reader) path.
+                        const FP_POLL: Duration = Duration::from_millis(100);
+                        const FP_WINDOW: Duration = Duration::from_secs(2);
+                        let fingerprint_auth = {
+                            let mut waited = Duration::ZERO;
+                            let mut detected = false;
+                            while waited < FP_WINDOW {
+                                tokio::time::sleep(FP_POLL).await;
+                                waited += FP_POLL;
+                                let snap =
+                                    tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                if is_fingerprint_prompt(&snap) {
+                                    detected = true;
+                                    break;
+                                }
+                                if snap.contains("[de-sudo-prompt]")
+                                    || snap.contains("[sudo]")
+                                    || snap.contains("password")
+                                    || snap.contains("Password")
+                                {
+                                    break;
+                                }
+                            }
+                            detected
+                        };
+
+                        if fingerprint_auth {
+                            send_response_split(
+                                tx,
+                                Response::SystemMsg(
+                                    "sudo is waiting for fingerprint authentication — \
+                                     touch the fingerprint reader \
+                                     (the target pane is highlighted)"
+                                        .to_string(),
+                                ),
+                            )
+                            .await?;
+                            // Fall through — command completes via the normal
+                            // completion-detection path once the fingerprint is accepted.
+                        } else {
                         // P2: Prompt in the chat pane (no focus switch).
                         // P3: Retry on wrong password, up to MAX_SUDO_RETRIES.
                         // P6: Track failure reason for structured error reporting.
@@ -389,6 +435,7 @@ where
                             );
                             return Ok(ToolCallOutcome::Result(msg));
                         }
+                        } // end password-injection else
                     }
                 }
             }
@@ -802,6 +849,22 @@ where
         } else if sudo_credentials_cached().await {
             // Credentials are cached; sudo will not prompt — skip the password flow (P1).
             None
+        } else if fingerprint_pam_configured() {
+            // Fingerprint auth is configured for sudo.  Background panes have no TTY
+            // that the user can interact with, so the fingerprint reader can never be
+            // satisfied here.  Fail immediately — before the command is sent and before
+            // asking the user for a credential — to avoid leaking the password into the
+            // background pane when the fingerprint prompt appears and eventually times
+            // out to a password fallback.
+            let msg = format!(
+                "sudo requires fingerprint authentication which cannot be satisfied in a \
+                 background pane — the fingerprint reader requires a foreground terminal. \
+                 Use `daemoneye install-sudoers <script-name>` to create a NOPASSWD rule \
+                 for this command, or run it in a foreground pane instead."
+            );
+            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            log_command(session_id, "background", "", cmd, "fingerprint-rejected", &msg);
+            return Ok(ToolCallOutcome::Result(msg));
         } else {
             send_response_split(
                 tx,

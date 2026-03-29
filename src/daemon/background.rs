@@ -4,8 +4,8 @@ use crate::daemon::session::{
     BgWindowInfo, SessionStore, append_session_message, bg_done_subscribe, complete_subscribe,
 };
 use crate::daemon::utils::{
-    command_has_sudo, log_event, normalize_output, shell_escape_arg, sudo_auth_failed,
-    wait_for_sudo_prompt_and_inject,
+    command_has_sudo, is_fingerprint_prompt, log_event, normalize_output, shell_escape_arg,
+    sudo_auth_failed, wait_for_sudo_prompt_and_inject,
 };
 use crate::ipc::Response;
 use crate::tmux;
@@ -363,6 +363,23 @@ pub async fn run_background_in_window(
                 );
             }
         } else {
+            // Distinguish fingerprint-reader failures from plain timeouts so the
+            // AI receives an actionable error rather than just a non-zero exit code.
+            let snap = crate::tmux::capture_pane(&pane_id, 10).unwrap_or_default();
+            if is_fingerprint_prompt(&snap) {
+                log::warn!(
+                    "sudo fingerprint auth not supported in background panes ({}): {}",
+                    pane_id,
+                    cmd
+                );
+                let _ = crate::tmux::kill_job_window(session, &win_name);
+                return format!(
+                    "sudo failed: fingerprint authentication is not supported in background \
+                     panes — the pane has no TTY for a reader interaction. \
+                     Use `daemoneye install-sudoers <script-name>` to create a NOPASSWD \
+                     sudoers rule for this command, or run it in a foreground pane."
+                );
+            }
             log::warn!(
                 "sudo prompt not detected for background command in {}: {}",
                 pane_id,

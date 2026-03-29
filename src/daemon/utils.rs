@@ -145,6 +145,34 @@ pub fn interactive_destination(cmd: &str) -> Option<String> {
     }
 }
 
+/// Returns `true` when the system's PAM sudo configuration includes `pam_fprintd`,
+/// indicating that fingerprint authentication may be requested for `sudo`.
+///
+/// Checks the standard PAM service files used by `sudo` on Linux.  Returns
+/// `false` when the files cannot be read, which is the safe default — callers
+/// fall back to the normal password-prompt path.
+pub fn fingerprint_pam_configured() -> bool {
+    for path in &["/etc/pam.d/sudo", "/etc/pam.d/sudo-i"] {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            if content.contains("pam_fprintd") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True if the pane output contains a fingerprint-reader authentication prompt.
+///
+/// When PAM is configured to use a fingerprint reader, sudo replaces the normal
+/// password prompt with a reader-specific message.  DaemonEye cannot satisfy
+/// these prompts programmatically — callers must notify the user or abort.
+pub fn is_fingerprint_prompt(output: &str) -> bool {
+    output.contains("Place your finger on the fingerprint reader")
+        || output.contains("Swipe your finger across the fingerprint reader")
+        || output.contains("Failed to match fingerprint")
+}
+
 /// True if the command string contains `sudo` as a standalone word.
 pub fn command_has_sudo(cmd: &str) -> bool {
     use regex::Regex;
@@ -186,6 +214,11 @@ pub async fn wait_for_sudo_prompt_and_inject(pane_id: &str, credential: &str) ->
         tokio::time::sleep(POLL).await;
         waited += POLL;
         let snap = crate::tmux::capture_pane(pane_id, 20).unwrap_or_default();
+        // Fingerprint prompts cannot be satisfied programmatically — fail fast
+        // instead of waiting the full timeout.
+        if is_fingerprint_prompt(&snap) {
+            return false;
+        }
         if snap.contains("[de-sudo-prompt]")
             || snap.contains("[sudo]")
             || snap.contains("password")
