@@ -252,89 +252,135 @@ where
             let mut is_interactive = false;
 
             if command_has_sudo(cmd) {
-                // For local panes, probe the credential cache immediately (P1).
-                // For remote panes the cache lives on the remote host, so fall
-                // back to the polling approach.
-                let needs_password = if is_remote_pane {
+                // Unified sudo authentication detection.
+                //
+                // We determine both *whether* auth is needed and *what kind* in a
+                // single loop, rather than two separate stages (needs_password →
+                // fingerprint_detection).  The two-stage approach had two failure
+                // modes when credentials were cached:
+                //
+                //   1. A transient `pane_current_command == "sudo"` observation
+                //      during a fast cached-credential run could set needs_password,
+                //      triggering the fingerprint/password flow when none was needed.
+                //
+                //   2. The fingerprint detection loop checked pane scrollback with
+                //      no concurrent `pane_current_command` guard, so stale "Place
+                //      your finger" text from a prior sudo invocation still visible
+                //      in the buffer was mistaken for a live fingerprint prompt.
+                //
+                // The fix: only conclude auth is required when we see an actual
+                // prompt in the pane output *while* `pane_current_command` is still
+                // "sudo" — a stale scrollback prompt cannot match because sudo has
+                // already exited.  For local panes, a single transient "sudo"
+                // observation with no accompanying prompt is followed by one
+                // confirmation poll; only if "sudo" persists do we conclude it is
+                // blocked on input.
+
+                enum SudoAuth {
+                    None,
+                    Password,
+                    Fingerprint,
+                }
+
+                let auth = {
                     let mut waited = Duration::ZERO;
-                    loop {
+                    let mut result = SudoAuth::None;
+
+                    'detect: loop {
                         tokio::time::sleep(SUDO_POLL_INTERVAL).await;
                         waited += SUDO_POLL_INTERVAL;
+
                         let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+
                         if cur == "sudo" {
-                            break true;
+                            // sudo is the foreground process; inspect the pane
+                            // output *now* to determine what it is waiting for.
+                            // Checking while "sudo" is confirmed current prevents
+                            // stale scrollback from triggering a false positive.
+                            let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
+                            if is_fingerprint_prompt(&snap) {
+                                result = SudoAuth::Fingerprint;
+                                break 'detect;
+                            }
+                            if snap.contains("[sudo]")
+                                || snap.contains("password")
+                                || snap.contains("Password")
+                                || snap.contains("[de-sudo-prompt]")
+                            {
+                                result = SudoAuth::Password;
+                                break 'detect;
+                            }
+                            // sudo is running but hasn't printed a prompt yet.
+                            // Remote panes: sudo stays "sudo" only when blocked on
+                            // stdin — treat as password needed.
+                            // Local panes: a fast cached-credential run can be
+                            // observed transiently as "sudo" — do one confirmation
+                            // poll before concluding it is blocked.
+                            if is_remote_pane {
+                                result = SudoAuth::Password;
+                                break 'detect;
+                            }
+                            tokio::time::sleep(SUDO_POLL_INTERVAL).await;
+                            waited += SUDO_POLL_INTERVAL;
+                            let cur2 =
+                                tmux::pane_current_command(target_str).unwrap_or_default();
+                            if cur2 == "sudo" {
+                                // Persisted for two consecutive polls: blocked on
+                                // input.  Re-check the pane in case the prompt just
+                                // rendered between polls.
+                                let snap2 =
+                                    tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                if is_fingerprint_prompt(&snap2) {
+                                    result = SudoAuth::Fingerprint;
+                                } else {
+                                    result = SudoAuth::Password;
+                                }
+                                break 'detect;
+                            }
+                            // "sudo" transitioned away — credentials were cached.
+                        } else if cur == idle_cmd {
+                            break 'detect;
                         }
-                        if cur == idle_cmd {
-                            break false;
-                        }
+
                         if waited >= SUDO_DETECT_WINDOW {
-                            break false;
+                            break 'detect;
                         }
                     }
-                } else {
-                    !sudo_credentials_cached().await
+                    result
                 };
 
-                if needs_password {
-                    if is_remote_pane {
-                        // Remote pane: can't inject password into a remote pty
-                        // reliably; fall back to manual focus switch.
+                match auth {
+                    SudoAuth::None => {}
+                    SudoAuth::Fingerprint => {
                         send_response_split(
                             tx,
                             Response::SystemMsg(
-                                "sudo password prompt detected — \
-                                 switching to your terminal pane. \
-                                 Type your password there."
+                                "sudo is waiting for fingerprint authentication — \
+                                 touch the fingerprint reader \
+                                 (the target pane is highlighted)"
                                     .to_string(),
                             ),
                         )
                         .await?;
-                        let _ = tmux::select_pane(target_str);
-                        switched_to_working = true;
-                    } else {
-                        // Detect fingerprint-reader prompts before asking for a password.
-                        // Poll briefly — the reader prompt appears almost immediately after
-                        // send_keys.  If we see it, notify the user and skip the password
-                        // flow; the command will complete once the fingerprint is accepted.
-                        // Exit the detection loop early when a password prompt is found so
-                        // we don't add unnecessary latency to the normal (no-reader) path.
-                        const FP_POLL: Duration = Duration::from_millis(100);
-                        const FP_WINDOW: Duration = Duration::from_secs(2);
-                        let fingerprint_auth = {
-                            let mut waited = Duration::ZERO;
-                            let mut detected = false;
-                            while waited < FP_WINDOW {
-                                tokio::time::sleep(FP_POLL).await;
-                                waited += FP_POLL;
-                                let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
-                                if is_fingerprint_prompt(&snap) {
-                                    detected = true;
-                                    break;
-                                }
-                                if snap.contains("[de-sudo-prompt]")
-                                    || snap.contains("[sudo]")
-                                    || snap.contains("password")
-                                    || snap.contains("Password")
-                                {
-                                    break;
-                                }
-                            }
-                            detected
-                        };
-
-                        if fingerprint_auth {
+                        // Fall through — command completes via the normal
+                        // completion-detection path once the fingerprint is accepted.
+                    }
+                    SudoAuth::Password => {
+                        if is_remote_pane {
+                            // Remote pane: can't inject password into a remote pty
+                            // reliably; fall back to manual focus switch.
                             send_response_split(
                                 tx,
                                 Response::SystemMsg(
-                                    "sudo is waiting for fingerprint authentication — \
-                                     touch the fingerprint reader \
-                                     (the target pane is highlighted)"
+                                    "sudo password prompt detected — \
+                                     switching to your terminal pane. \
+                                     Type your password there."
                                         .to_string(),
                                 ),
                             )
                             .await?;
-                            // Fall through — command completes via the normal
-                            // completion-detection path once the fingerprint is accepted.
+                            let _ = tmux::select_pane(target_str);
+                            switched_to_working = true;
                         } else {
                             // P2: Prompt in the chat pane (no focus switch).
                             // P3: Retry on wrong password, up to MAX_SUDO_RETRIES.
@@ -423,7 +469,8 @@ where
                                 drop(fg_hook_guard);
                                 tmux::unhighlight_pane(target_str, chat_pane);
                                 crate::daemon::stats::finish_command(cmd_id, 1);
-                                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                                send_response_split(tx, Response::ToolResult(msg.clone()))
+                                    .await?;
                                 log_command(
                                     session_id,
                                     "foreground",
@@ -434,7 +481,7 @@ where
                                 );
                                 return Ok(ToolCallOutcome::Result(msg));
                             }
-                        } // end password-injection else
+                        }
                     }
                 }
             }
