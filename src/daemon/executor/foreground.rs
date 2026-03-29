@@ -322,14 +322,12 @@ where
                             }
                             tokio::time::sleep(SUDO_POLL_INTERVAL).await;
                             waited += SUDO_POLL_INTERVAL;
-                            let cur2 =
-                                tmux::pane_current_command(target_str).unwrap_or_default();
+                            let cur2 = tmux::pane_current_command(target_str).unwrap_or_default();
                             if cur2 == "sudo" {
                                 // Persisted for two consecutive polls: blocked on
                                 // input.  Re-check the pane in case the prompt just
                                 // rendered between polls.
-                                let snap2 =
-                                    tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                let snap2 = tmux::capture_pane(target_str, 10).unwrap_or_default();
                                 if is_fingerprint_prompt(&snap2) {
                                     result = SudoAuth::Fingerprint;
                                 } else {
@@ -469,8 +467,7 @@ where
                                 drop(fg_hook_guard);
                                 tmux::unhighlight_pane(target_str, chat_pane);
                                 crate::daemon::stats::finish_command(cmd_id, 1);
-                                send_response_split(tx, Response::ToolResult(msg.clone()))
-                                    .await?;
+                                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
                                 log_command(
                                     session_id,
                                     "foreground",
