@@ -414,19 +414,70 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     );
 
     // Resolve the configured managed session name: CLI override > config > empty (legacy).
-    let _managed_session: Option<String> = session_override.or_else(|| {
+    let managed_session: Option<String> = session_override.or_else(|| {
         let s = startup_config.daemon.tmux_session.clone();
         if s.is_empty() { None } else { Some(s) }
     });
 
-    let initial_session = detect_session();
-    match &initial_session {
-        Some(s) => log::info!("Attaching to existing tmux session: {}", s),
-        None => log::warn!(
-            "No tmux session detected at startup. \
-             DaemonEye will begin monitoring once `daemoneye chat` is run."
-        ),
-    }
+    // Determine (and if necessary create) the initial tmux session.
+    //
+    // When a managed session name is configured the daemon owns that session:
+    //   - If it already exists, adopt it immediately.
+    //   - If it doesn't exist and auto_create_session is true, create it as a
+    //     detached session so ghost shells and scheduled jobs can run right away
+    //     without waiting for a `daemoneye chat` client to connect.
+    //   - On failure or when auto_create is off, fall back to detect_session()
+    //     so the legacy "adopt from first client" behaviour is preserved.
+    //
+    // When no managed session is configured, detect_session() is used as before.
+    let initial_session: Option<String> = if let Some(ref name) = managed_session {
+        if crate::tmux::session_exists(name) {
+            log::info!("Managed tmux session '{}' already exists — adopting.", name);
+            Some(name.clone())
+        } else if startup_config.daemon.auto_create_session {
+            match std::process::Command::new("tmux")
+                .args(["new-session", "-d", "-s", name])
+                .output()
+            {
+                Ok(o) if o.status.success() => {
+                    log::info!("Created managed tmux session '{}'.", name);
+                    Some(name.clone())
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                    log::error!(
+                        "Failed to create managed session '{}': {} — falling back to detect_session()",
+                        name, stderr
+                    );
+                    detect_session()
+                }
+                Err(e) => {
+                    log::error!(
+                        "tmux new-session failed for '{}': {} — falling back to detect_session()",
+                        name, e
+                    );
+                    detect_session()
+                }
+            }
+        } else {
+            log::info!(
+                "Managed session '{}' not found and auto_create_session = false — \
+                 waiting for a client to adopt a session.",
+                name
+            );
+            detect_session()
+        }
+    } else {
+        let s = detect_session();
+        match &s {
+            Some(name) => log::info!("Attaching to existing tmux session: {}", name),
+            None => log::warn!(
+                "No tmux session detected at startup. \
+                 DaemonEye will begin monitoring once `daemoneye chat` is run."
+            ),
+        }
+        s
+    };
 
     log_event(
         "daemon_start",
@@ -501,6 +552,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     if let Some(ref sn) = initial_session {
         install_session_hooks(sn, &hook_exe_path);
     }
+
+    // Wrap managed_session in an Arc so it can be shared cheaply across
+    // all spawned handle_client tasks.
+    let managed_session: Arc<Option<String>> = Arc::new(managed_session);
 
     // bg_session is the tmux session used for background/scheduled job windows.
     // Starts empty when started by systemd; adopted from the first connecting client.
@@ -692,8 +747,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         let sessions_conn = Arc::clone(&sessions);
                         let sched_conn = Arc::clone(&schedule_store);
                         let bg_conn = Arc::clone(&bg_session);
+                        let managed_conn = Arc::clone(&managed_session);
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, sched_conn, bg_conn).await {
+                            if let Err(e) = handle_client(stream, cache_conn, sessions_conn, sched_conn, bg_conn, managed_conn).await {
                                 log::error!("Error handling client: {}", e);
                             }
                         });

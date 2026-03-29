@@ -122,6 +122,7 @@ pub async fn handle_client(
     sessions: SessionStore,
     schedule_store: Arc<ScheduleStore>,
     bg_session: Arc<std::sync::Mutex<String>>,
+    managed_session: Arc<Option<String>>,
 ) -> Result<()> {
     let config = Config::load().unwrap_or_else(|_| {
         log::warn!("Failed to load config, using defaults");
@@ -468,6 +469,38 @@ pub async fn handle_client(
                         true
                     }
                 });
+            }
+            // If this was the daemon-managed session, recreate it so ghost shells
+            // and the scheduler can resume without a daemon restart.
+            // Per-session hooks are installed automatically via the NotifySessionCreated
+            // path once tmux fires the after-new-session global hook.
+            if managed_session.as_deref() == Some(session_name.as_str()) {
+                match std::process::Command::new("tmux")
+                    .args(["new-session", "-d", "-s", &session_name])
+                    .output()
+                {
+                    Ok(o) if o.status.success() => {
+                        log::info!(
+                            "Recreated managed tmux session '{}' after close.",
+                            session_name
+                        );
+                        *bg_session.lock().unwrap_or_log() = session_name.clone();
+                        cache.set_session(&session_name);
+                    }
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
+                        log::warn!(
+                            "Failed to recreate managed session '{}': {}",
+                            session_name, stderr
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "tmux new-session for managed session '{}' failed: {}",
+                            session_name, e
+                        );
+                    }
+                }
             }
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
