@@ -353,8 +353,8 @@ pub async fn run_ask(query: String) -> Result<()> {
     result
 }
 
-pub async fn run_chat() -> Result<()> {
-    let result = run_chat_inner().await;
+pub async fn run_chat(session_override: Option<String>) -> Result<()> {
+    let result = run_chat_inner(session_override).await;
     if let Err(ref e) = result {
         // AsyncStdin has been dropped by now; synchronous stdin is safe.
         use std::io::Write;
@@ -366,7 +366,56 @@ pub async fn run_chat() -> Result<()> {
     result
 }
 
-async fn run_chat_inner() -> Result<()> {
+async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
+    // ── Managed-session auto-attach ────────────────────────────────────────────
+    // When the daemon is configured with a managed tmux session and `daemoneye chat`
+    // is invoked from outside tmux, transparently open a chat window in that session
+    // and exec-attach so the user lands in the right place.
+    //
+    // This is a no-op when:
+    //   - $TMUX_PANE is already set (already inside tmux), or
+    //   - no managed session is configured, or
+    //   - tmux is not available.
+    if std::env::var("TMUX_PANE").is_err() {
+        use std::os::unix::process::CommandExt as _;
+        let managed = session_override.clone().or_else(|| {
+            let cfg = Config::load().unwrap_or_default();
+            let s = cfg.daemon.tmux_session;
+            if s.is_empty() { None } else { Some(s) }
+        });
+        if let Some(ref sname) = managed {
+            if crate::tmux::session_exists(sname) {
+                // Open a chat window in the managed session.  The new window
+                // runs its own `daemoneye chat` invocation which will find
+                // $TMUX_PANE set and proceed normally.
+                let chat_cmd = std::env::current_exe()
+                    .map(|p| format!("{} chat", p.display()))
+                    .unwrap_or_else(|_| "daemoneye chat".to_string());
+                let _ = std::process::Command::new("tmux")
+                    .args(["new-window", "-t", sname, "-n", "chat", &chat_cmd])
+                    .output();
+                // Replace this process with `tmux attach-session`.  The user's
+                // terminal is now "inside" the session where the chat window lives.
+                let err = std::process::Command::new("tmux")
+                    .args(["attach-session", "-t", sname])
+                    .exec();
+                // exec() only returns on error.
+                anyhow::bail!(
+                    "Failed to attach to managed tmux session '{}': {}",
+                    sname, err
+                );
+            } else {
+                eprintln!(
+                    "Managed tmux session '{}' does not exist yet.\n\
+                     Is the daemon running?  daemoneye daemon\n\
+                     Once it starts, run: tmux attach -t {}",
+                    sname, sname
+                );
+                anyhow::bail!("Managed session '{}' not found", sname);
+            }
+        }
+    }
+
     let start_time = std::time::Instant::now();
     let session_id = new_session_id();
     // None = use daemon's configured default prompt; Some(name) = override.
