@@ -556,27 +556,12 @@ pub async fn handle_client(
     };
 
     // Derive the tmux session name: prefer what the client told us, fall back
-    // to whatever is already stored in bg_session (e.g. detected at startup).
+    // to whatever the daemon adopted at startup.
     let session_name: String = client_tmux_session
         .as_deref()
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| bg_session.lock().unwrap_or_log().clone());
-
-    // Adopt the session if the daemon doesn't have one yet (systemd startup case).
-    if !session_name.is_empty() {
-        let mut current = bg_session.lock().unwrap_or_log();
-        if current.is_empty() {
-            *current = session_name.clone();
-            drop(current);
-            cache.set_session(&session_name);
-            let hook_exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "daemoneye".to_string());
-            crate::daemon::install_session_hooks(&session_name, &hook_exe);
-            log::info!("Adopted tmux session from client: {}", session_name);
-        }
-    }
 
     // Load existing message history for this session (if any).
     // Fast path: in-memory store (same daemon run).

@@ -195,14 +195,14 @@ daemoneye setup
 
 `daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon --console` automatically on login. The `--console` flag is required for `Type=simple` systemd services: without it the daemon forks, the parent exits, and systemd loses track of the process.
 
-For server or headless setups where ghost shells and scheduled jobs should work without an interactive `daemoneye chat` session, add a `[daemon]` section to `~/.daemoneye/etc/config.toml` before starting the service:
+When running as a systemd service the daemon starts outside tmux and automatically creates (and owns) a tmux session named `"daemoneye"` — ghost shells, scheduled jobs, and webhook-triggered automation are available immediately with no interactive client connection required.
+
+To use a different session name, add a `[daemon]` section to `~/.daemoneye/etc/config.toml`:
 
 ```toml
 [daemon]
-tmux_session = "daemoneye"   # session the daemon creates at startup
+tmux_session = "myserver"   # override the default "daemoneye" session name
 ```
-
-With this set the daemon creates (and owns) the named tmux session on startup, making all autonomous features available immediately — no client connection required.
 
 ```sh
 # Enable and start the daemon on login

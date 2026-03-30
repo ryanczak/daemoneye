@@ -413,72 +413,45 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         default_model.model
     );
 
-    // Resolve the configured managed session name: CLI override > config > empty (legacy).
-    let managed_session: Option<String> = session_override.or_else(|| {
-        let s = startup_config.daemon.tmux_session.clone();
-        if s.is_empty() { None } else { Some(s) }
-    });
-
-    // Determine (and if necessary create) the initial tmux session.
+    // Determine the initial tmux session and whether the daemon owns it.
     //
-    // When a managed session name is configured the daemon owns that session:
-    //   - If it already exists, adopt it immediately.
-    //   - If it doesn't exist and auto_create_session is true, create it as a
-    //     detached session so ghost shells and scheduled jobs can run right away
-    //     without waiting for a `daemoneye chat` client to connect.
-    //   - On failure or when auto_create is off, fall back to detect_session()
-    //     so the legacy "adopt from first client" behaviour is preserved.
+    // Priority:
+    //   1. If launched inside tmux ($TMUX is set), adopt the current session.
+    //      The daemon does not own this session and will not recreate it if destroyed.
+    //   2. Otherwise, use the configured name (CLI override > config.daemon.tmux_session
+    //      > default "daemoneye").  If the session already exists, adopt it; if not,
+    //      create it with `tmux new-session -d -s <name>` and bail on failure.
     //
-    // When no managed session is configured, detect_session() is used as before.
-    let initial_session: Option<String> = if let Some(ref name) = managed_session {
-        if crate::tmux::session_exists(name) {
+    // A tmux session is always required — there is no degraded "no session" mode.
+    let inside_session = detect_session();
+    let (initial_session, managed_session): (Option<String>, Option<String>) = if let Some(name) =
+        inside_session
+    {
+        log::info!("Launched inside tmux — adopting session '{}'.", name);
+        (Some(name), None)
+    } else {
+        let name = session_override.unwrap_or_else(|| startup_config.daemon.tmux_session.clone());
+        if crate::tmux::session_exists(&name) {
             log::info!("Managed tmux session '{}' already exists — adopting.", name);
-            Some(name.clone())
-        } else if startup_config.daemon.auto_create_session {
+            (Some(name.clone()), Some(name))
+        } else {
             match std::process::Command::new("tmux")
-                .args(["new-session", "-d", "-s", name])
+                .args(["new-session", "-d", "-s", &name])
                 .output()
             {
                 Ok(o) if o.status.success() => {
                     log::info!("Created managed tmux session '{}'.", name);
-                    Some(name.clone())
+                    (Some(name.clone()), Some(name))
                 }
                 Ok(o) => {
                     let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                    log::error!(
-                        "Failed to create managed session '{}': {} — falling back to detect_session()",
-                        name,
-                        stderr
-                    );
-                    detect_session()
+                    anyhow::bail!("Failed to create tmux session '{}': {}", name, stderr);
                 }
                 Err(e) => {
-                    log::error!(
-                        "tmux new-session failed for '{}': {} — falling back to detect_session()",
-                        name,
-                        e
-                    );
-                    detect_session()
+                    anyhow::bail!("tmux new-session failed for '{}': {}", name, e);
                 }
             }
-        } else {
-            log::info!(
-                "Managed session '{}' not found and auto_create_session = false — \
-                 waiting for a client to adopt a session.",
-                name
-            );
-            detect_session()
         }
-    } else {
-        let s = detect_session();
-        match &s {
-            Some(name) => log::info!("Attaching to existing tmux session: {}", name),
-            None => log::warn!(
-                "No tmux session detected at startup. \
-                 DaemonEye will begin monitoring once `daemoneye chat` is run."
-            ),
-        }
-        s
     };
 
     log_event(
@@ -495,8 +468,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "daemoneye".to_string());
 
-    // pane-died is a global hook — install it regardless of whether a session
-    // is known yet, so it fires as soon as the user's session appears.
+    // pane-died is a global hook — install it so it fires for all sessions.
     let global_notify_cmd = format!(
         "run-shell -b '{} notify activity #{{pane_id}} 0 #{{session_name}}'",
         hook_exe_path,

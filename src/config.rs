@@ -44,25 +44,29 @@ impl Default for Config {
 /// Daemon startup and session management configuration.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DaemonConfig {
-    /// Tmux session name the daemon creates/adopts at startup.
-    /// When set, the daemon ensures this session exists before serving any
-    /// requests, so ghost shells and scheduled jobs work immediately without
-    /// waiting for a `daemoneye chat` client to connect.
-    /// Empty string (default) = legacy behaviour: adopt session from the first
-    /// connecting client.
-    #[serde(default)]
+    /// Tmux session name the daemon creates or adopts at startup.
+    ///
+    /// Used when the daemon is launched outside of tmux (e.g. as a systemd service).
+    /// If the named session already exists it is adopted; if not, the daemon creates
+    /// it with `tmux new-session -d -s <name>` so ghost shells, scheduled jobs, and
+    /// webhook-triggered automation are available immediately.
+    ///
+    /// When the daemon is launched from *inside* an active tmux session, it adopts
+    /// that session directly and this setting is ignored.
+    ///
+    /// Default: `"daemoneye"`.
+    #[serde(default = "default_tmux_session")]
     pub tmux_session: String,
-    /// Create the tmux session if it doesn't already exist.
-    /// Only applies when `tmux_session` is non-empty. Default: true.
-    #[serde(default = "default_true")]
-    pub auto_create_session: bool,
+}
+
+fn default_tmux_session() -> String {
+    "daemoneye".to_string()
 }
 
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
-            tmux_session: String::new(),
-            auto_create_session: default_true(),
+            tmux_session: default_tmux_session(),
         }
     }
 }
@@ -535,67 +539,7 @@ impl Config {
 
         let cfg_path = etc_dir().join("config.toml");
         if !cfg_path.exists() {
-            std::fs::write(
-                &cfg_path,
-                r#"# The default model used for all interactive chat sessions.
-# Add additional [models.<name>] sections to define alternatives selectable
-# via the /model slash command.  Ghost shell runbooks may specify a model
-# by name in their frontmatter with `model: <name>`.
-[models.default]
-provider = "anthropic"
-api_key  = ""
-model    = "claude-sonnet-4-6"
-
-# --- Additional model examples ---
-# [models.opus]
-# provider = "anthropic"
-# model    = "claude-opus-4-6"
-#
-# [models.local]
-# provider  = "ollama"
-# model     = "llama3.2"
-# base_url  = "http://localhost:11434/v1"
-# context_window_tokens = 8192
-#
-# [models.gpt]
-# provider = "openai"
-# model    = "gpt-4o"
-
-[ai]
-prompt = "sre"
-
-# [context]
-# Declare the operating environment so the AI calibrates its advice accordingly.
-# Values: "personal" | "development" | "staging" | "production"
-# environment = "personal"
-
-# [masking]
-# Add org-specific patterns to redact before context is sent to the AI.
-# Built-in patterns (AWS keys, JWTs, DB URLs, private keys, etc.) always run.
-# extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
-
-# [notifications]
-# Shell command to run when a watchdog alert fires.
-# Available env vars: $DAEMONEYE_JOB (job name), $DAEMONEYE_MSG (alert message).
-# on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
-
-# [webhook]
-# enabled = false
-# port = 9393
-# secret = ""            # Bearer token; empty = no auth
-# auto_analyze = true
-# severity_threshold = "warning"   # "info" | "warning" | "critical"
-# dedup_window_secs = 300
-# bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
-
-# [daemon]
-# Tmux session the daemon creates/owns at startup.
-# Set this when running as a systemd service so ghost shells and scheduled
-# jobs work before any `daemoneye chat` client connects.
-# tmux_session = "daemoneye"
-# auto_create_session = true
-"#,
-            )?;
+            std::fs::write(&cfg_path, include_str!("../assets/etc/config.toml"))?;
         }
 
         // Write the built-in SRE prompt if it doesn't already exist.

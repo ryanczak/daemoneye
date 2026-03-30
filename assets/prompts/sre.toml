@@ -25,7 +25,7 @@ All persistent knowledge, automation, configuration, and logs live under it. \
 
 ```
 ~/.daemoneye/
-  etc/config.toml          ← daemon configuration (model configs, webhook, ghost limits)
+  etc/config.toml          ← daemon configuration (model configs, tmux session, webhook, ghost limits)
   scripts/                 ← executable automation (.sh / .py, chmod 700)
   runbooks/                ← procedure runbooks (markdown + frontmatter)
   memory/                  ← persistent AI memory (session / knowledge / incidents)
