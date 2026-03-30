@@ -6,7 +6,7 @@ I wrote DaemonEye after discovering OpenClaw and being completely blown away by 
 
 DaemonEye runbooks can be prescriptive, limitng the agent to a fixed script, or they can be open-ended, allowing the agent autonomy. Either way, runbooks can limit the number of turns an agent has to perform an action, preventing run-away agents and wasted tokens. Runbooks can specify which AI is used so you can use powerful AIs when you need them and cheap, local AIs, when the task is simple or sensitive. Speaking of sensitive, DaemonEye redacts sensitive information like API keys so your secrets are never shared with the AI. Webhooks make it easy to integrate DaemonEye with Prometheus, Grafana, and other services. Webhooks use runbooks to enable autonomous end-to-end incident response and other scripted action. Webhooks enable DaemonEye instances to interoperate in cool ways too.
 
-DaemonEye is not perfect, it will eat your important stuff if you are not careful. It is not as powerful as Claude Code or OpenClaw, but it does a pretty good job helping me manage my hosts and services so maybe it will be useful to you as well.  
+DaemonEye is not perfect, it will eat your important stuff if you are not careful. It is not as powerful as Claude Code or OpenClaw, but it does a pretty good job helping me manage my hosts and services so maybe it will be useful to you as well. 
 
 ---
 
