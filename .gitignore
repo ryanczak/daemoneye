@@ -8,7 +8,6 @@ CLAUDE.md
 # Environment / secrets
 .env
 .env.*
-config.toml
 
 # Editor files
 .vscode/

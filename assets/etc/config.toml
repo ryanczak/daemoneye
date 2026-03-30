@@ -1,0 +1,54 @@
+# The default model used for all interactive chat sessions.
+# Add additional [models.<name>] sections to define alternatives selectable
+# via the /model slash command.  Ghost shell runbooks may specify a model
+# by name in their frontmatter with `model: <name>`.
+[models.default]
+provider = "anthropic"
+api_key  = ""
+model    = "claude-sonnet-4-6"
+
+# --- Additional model examples ---
+# [models.opus]
+# provider = "anthropic"
+# model    = "claude-opus-4-6"
+#
+# [models.local]
+# provider  = "ollama"
+# model     = "llama3.2"
+# base_url  = "http://localhost:11434/v1"
+# context_window_tokens = 8192
+#
+# [models.gpt]
+# provider = "openai"
+# model    = "gpt-4o"
+
+[ai]
+prompt = "sre"
+
+# [context]
+# Declare the operating environment so the AI calibrates its advice accordingly.
+# Values: "personal" | "development" | "staging" | "production"
+# environment = "personal"
+
+# [masking]
+# Add org-specific patterns to redact before context is sent to the AI.
+# Built-in patterns (AWS keys, JWTs, DB URLs, private keys, etc.) always run.
+# extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
+
+# [notifications]
+# Shell command to run when a watchdog alert fires.
+# Available env vars: $DAEMONEYE_JOB (job name), $DAEMONEYE_MSG (alert message).
+# on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+
+# [webhook]
+# enabled = false
+# port = 9393
+# secret = ""            # Bearer token; empty = no auth
+# auto_analyze = true
+# severity_threshold = "warning"   # "info" | "warning" | "critical"
+# dedup_window_secs = 300
+# bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
+
+# [daemon]
+# tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux
+#                              # (default is "daemoneye"; override to use a different name)
