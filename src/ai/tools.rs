@@ -76,8 +76,12 @@ pub static TOOLS: &[ToolDef] = &[
                 ty: ParamTy::Str,
                 required: false,
                 description: "Optional: tmux pane ID (e.g. \"%3\") to target for foreground \
-                              commands. Get IDs from [VISIBLE PANE], [BACKGROUND PANE], or \
-                              [SESSION PANE] context blocks, or call list_panes to discover them. \
+                              commands. Resolve from the [PANE MAP] line present in every turn \
+                              (format: idx:N=<id>) — users refer to panes by their index N \
+                              (shown via ctrl+a q); map that index to the pane ID before calling. \
+                              IDs also appear in [VISIBLE PANE], [BACKGROUND PANE], and \
+                              [SESSION PANE] context blocks, or call list_panes to refresh. \
+                              If you are unsure which pane to target, ask the user first. \
                               Background commands always run on the daemon host — do not set \
                               target_pane for them.",
             },

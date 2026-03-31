@@ -153,6 +153,29 @@ where
         policy: ghost_policy,
         is_ghost: _,
     } = ghost_ctx;
+
+    // C3: stale-pane guard — if the AI specified a target_pane that is no longer
+    // in the cache (pane was closed or session changed), return an error with the
+    // current pane map so the AI can re-discover panes before retrying.
+    if let Some(tp) = target {
+        if chat_pane != Some(tp) {
+            let pane_exists = {
+                let panes = cache.panes.read().unwrap_or_log();
+                panes.contains_key(tp)
+            };
+            if !pane_exists {
+                let pane_map = cache.pane_map_summary(chat_pane);
+                let msg = format!(
+                    "Error: target_pane '{tp}' no longer exists in the current session. \
+                     Call list_panes to discover current pane IDs, or use the [PANE MAP] below.\n\
+                     {pane_map}"
+                );
+                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                return Ok(ToolCallOutcome::Result(msg));
+            }
+        }
+    }
+
     // Compute a best-guess target pane hint synchronously so the approval
     // prompt can show which pane will be used.
     let target_hint: Option<String> = (|| {

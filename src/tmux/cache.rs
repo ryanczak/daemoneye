@@ -311,6 +311,48 @@ impl SessionCache {
     /// `chat_pane` is the pane running `daemoneye chat` — it is excluded from the
     /// background pane listing so the AI cannot accidentally target it with foreground
     /// commands.
+    /// Returns a compact `[PANE MAP]` line mapping window-relative pane indices to
+    /// absolute pane IDs.
+    ///
+    /// Emitted on every AI turn so the AI always has current idx→ID mappings
+    /// regardless of when the conversation started.  Excludes daemon-owned
+    /// background windows (`de-bg-*`, `de-sj-*`, `de-gs-*`) and the chat pane
+    /// itself.  Returns an empty string when no targetable panes are known.
+    pub fn pane_map_summary(&self, chat_pane: Option<&str>) -> String {
+        let panes = self.panes.read().unwrap_or_log();
+        let mut entries: Vec<_> = panes
+            .iter()
+            .filter(|(id, _)| chat_pane != Some(id.as_str()))
+            .filter(|(_, state)| {
+                !state.window_name.starts_with("de-bg-")
+                    && !state.window_name.starts_with("de-sj-")
+                    && !state.window_name.starts_with("de-gs-bg-")
+                    && !state.window_name.starts_with("de-gs-sj-")
+                    && !state.window_name.starts_with("de-gs-ir-")
+            })
+            .collect();
+        if entries.is_empty() {
+            return String::new();
+        }
+        entries.sort_by_key(|(_, s)| (s.window_name.as_str(), s.pane_index));
+        let active_id: Option<String> = self.active_pane.read().unwrap_or_log().clone();
+        let parts: Vec<String> = entries
+            .iter()
+            .map(|(id, state)| {
+                let active_mark = if active_id.as_deref() == Some(id.as_str()) {
+                    "*"
+                } else {
+                    ""
+                };
+                format!(
+                    "idx:{}={}{}  ({}, '{}')",
+                    state.pane_index, id, active_mark, state.current_cmd, state.window_name
+                )
+            })
+            .collect();
+        format!("[PANE MAP] {}\n", parts.join(" | "))
+    }
+
     pub fn get_labeled_context(
         &self,
         source_pane: Option<&str>,

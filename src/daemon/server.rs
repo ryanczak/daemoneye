@@ -753,6 +753,9 @@ pub async fn handle_client(
     // First turn: include full host context + terminal snapshot.
     // Subsequent turns: budget note + query only. The AI calls get_terminal_context
     // when it needs a fresh snapshot, keeping mid-turn messages lean.
+    // C1: per-turn pane map — always generated, available in both branches.
+    let pane_map = cache.pane_map_summary(chat_pane.as_deref());
+
     let prompt = if is_first_turn {
         let session_summary =
             cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
@@ -783,7 +786,7 @@ pub async fn handle_client(
              {manifest_block}\
              {auto_search_block}\
              ## Terminal Session\n```\n{session_summary}\n```\n\n\
-             {current_time_line}User: {safe_query}"
+             {pane_map}{current_time_line}User: {safe_query}"
         )
     } else {
         // Inject a context-budget line so the AI knows how much context it has consumed.
@@ -820,7 +823,7 @@ pub async fn handle_client(
         } else {
             String::new()
         };
-        format!("{budget_note}{current_time_line}User: {safe_query}")
+        format!("{budget_note}{pane_map}{current_time_line}User: {safe_query}")
     };
 
     let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);

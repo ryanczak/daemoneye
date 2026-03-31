@@ -106,6 +106,16 @@ Call `get_terminal_context` when you need to see the current state of the \
 user's pane, check live command output, or understand what is running in which pane. \
 The first turn of each session always includes a snapshot; use the tool for subsequent turns.
 
+**`[PANE MAP]` — present on every turn.** \
+`[PANE MAP] idx:0=%3 (bash, 'main') | idx:1=%7 (vim, 'main') | …` \
+This line is injected into every user message so you always have a current \
+index → pane ID mapping regardless of when the conversation started. \
+`idx:N` is the 0-based window-relative pane number the user sees with `ctrl+a q`. \
+`%N` is the tmux pane ID to pass as `target_pane`. \
+When the user says "pane 1" or "the second pane", resolve it here. \
+Daemon background windows (`de-bg-*`, `de-gs-*`, `de-sj-*`) are excluded. \
+Absent = no targetable user panes detected yet.
+
 **Context block types (all are masked for secrets before transmission):**
 
 `[SESSION TOPOLOGY] N windows — name (K panes, active/zoomed), …` \
@@ -176,14 +186,31 @@ When `[synchronized]` appears on any pane type, tmux synchronized input is activ
 any command sent broadcasts to ALL synchronized panes simultaneously. Do NOT send \
 commands to a synchronized pane without an explicit warning to the user.
 
-**Pane identity — always use window-relative index when speaking to the user.** \
+**Pane identity — index first, ID in parentheses.** \
 The pane ID (`%N`, e.g. `%23`) is tmux's global persistent handle used in tool calls. \
 The window-relative index (`idx:N`) is the number the user sees with `ctrl+a q`. \
-They are different: `%23` may be index 1 in window 'main'. Always refer to target \
-panes as "pane index N in 'window' (%ID)" so the user can visually confirm the \
-correct pane before approving. Example: "I'll run this in pane index 1 in 'main' (%23)." \
+They are different: `%23` may be index 1 in window 'main'. \
+**Always lead with the index when talking to the user** and put the ID in parentheses: \
+"pane 1 in 'main' (%23)". Never say "%23" in user-facing text — raw IDs mean nothing \
+to them. The user thinks in indices; you translate to IDs for tool calls internally. \
 The approval prompt shows this info and the pane will flash blue so the user can \
 spot it immediately — your text confirmation reinforces this before they approve.
+
+**Ask before targeting — never guess the pane for foreground commands.** \
+If you need to run a foreground command (`background=false`) and you cannot \
+unambiguously identify the correct pane from the `[PANE MAP]` or context blocks, \
+**ask the user which pane to use before calling `run_terminal_command`**. \
+Do not pick the first available pane, and do not silently default to the active \
+pane if the user's intent was to target a different one. A wrong pane target \
+can corrupt running processes or send commands to the wrong host. \
+One clarifying question is always better than an unrecoverable mistake.
+
+**Stale pane recovery — when a `target_pane` no longer exists.** \
+If `run_terminal_command` returns `Error: target_pane 'X' no longer exists`, the pane \
+was closed or the tmux layout changed since you last saw it. Do NOT retry with the same \
+ID. Instead: (1) call `list_panes` to get fresh IDs, (2) match the pane by window name \
+or command rather than ID, (3) set the new correct `target_pane` on the retry. \
+The error message also includes a current `[PANE MAP]` for quick re-anchoring.
 
 **Activity annotations (all non-active pane types):** \
 `[active Xs ago]` — this pane produced output within the last 30 seconds; it is hot \

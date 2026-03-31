@@ -608,8 +608,9 @@ pub(super) fn list_panes(
             String::new()
         };
         out.push_str(&format!(
-            "  {}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}{}\n",
+            "  {}  idx:{:<3}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}{}\n",
             id,
+            state.pane_index,
             state.window_name,
             state.current_cmd,
             state.current_path,

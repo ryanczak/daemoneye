@@ -324,9 +324,11 @@ where
             knowledge::search_repository(query, kind),
         )),
 
-        PendingCall::GetTerminalContext { .. } => Ok(ToolCallOutcome::Result(
-            cache.get_labeled_context(chat_pane, chat_pane),
-        )),
+        PendingCall::GetTerminalContext { .. } => {
+            let ctx = cache.get_labeled_context(chat_pane, chat_pane);
+            let pane_map = cache.pane_map_summary(chat_pane);
+            Ok(ToolCallOutcome::Result(format!("{ctx}\n{pane_map}")))
+        }
 
         PendingCall::CloseBackgroundWindow { pane_id, .. } => Ok(ToolCallOutcome::Result(
             knowledge::close_bg_window(pane_id, session_id, sessions),
