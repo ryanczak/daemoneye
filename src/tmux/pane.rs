@@ -32,6 +32,10 @@ pub struct RichPaneInfo {
     /// Window-relative pane index (0-based) as shown by `ctrl+a q` / `tmux display-panes`.
     /// This is the number the user sees in their tmux layout.
     pub pane_index: usize,
+    /// PID of the foreground process running in the pane (`#{pane_pid}`).
+    /// This is the shell PID when idle, or the child command PID when a command is running.
+    /// Zero when tmux did not return a value.
+    pub pane_pid: u32,
 }
 
 /// List all panes in the session with rich metadata using a single tmux call.
@@ -42,7 +46,7 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
     let output = Command::new("tmux")
         .args([
             "list-panes", "-a", "-F",
-            "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_activity}\t#{pane_start_command}\t#{pane_index}",
+            "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_activity}\t#{pane_start_command}\t#{pane_index}\t#{pane_pid}",
         ])
         .output()?;
 
@@ -53,7 +57,7 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut panes = Vec::new();
     for line in stdout.lines() {
-        let fields: Vec<&str> = line.splitn(15, '\t').collect();
+        let fields: Vec<&str> = line.splitn(16, '\t').collect();
         if fields.len() < 12 {
             continue;
         }
@@ -93,6 +97,10 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
             pane_index: fields
                 .get(14)
                 .and_then(|s| s.trim().parse::<usize>().ok())
+                .unwrap_or(0),
+            pane_pid: fields
+                .get(15)
+                .and_then(|s| s.trim().parse::<u32>().ok())
                 .unwrap_or(0),
         });
     }
@@ -284,6 +292,25 @@ pub fn pane_current_command(pane_id: &str) -> Result<String> {
         anyhow::bail!("Failed to query pane_current_command for '{}'", pane_id);
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Return the PID of the foreground process running in a pane.
+///
+/// This is the shell PID when idle, or the child command PID when a command
+/// is running.  Used for completion detection: when `pane_pid` returns to the
+/// value captured before a command was sent, the command has finished.
+pub fn pane_pid(pane_id: &str) -> Result<u32> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to query pane_pid for '{}'", pane_id);
+    }
+    let pid = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .unwrap_or(0);
+    Ok(pid)
 }
 
 /// Query the current width of a pane in columns.

@@ -106,6 +106,11 @@ pub struct PaneState {
     pub start_cmd: String,
     /// Window-relative pane index (0-based) as shown by `ctrl+a q` / `tmux display-panes`.
     pub pane_index: usize,
+    /// PID of the foreground process in this pane (`#{pane_pid}`).
+    /// Captured on every 2 s refresh.  Used as the baseline shell PID for
+    /// foreground completion detection: command finished when `pane_pid`
+    /// returns to this value.  Zero when unknown.
+    pub shell_pid: u32,
 }
 
 /// Shared, periodically-refreshed view of all panes in a tmux session.
@@ -244,6 +249,7 @@ impl SessionCache {
                         last_activity: 0,
                         start_cmd: String::new(),
                         pane_index: 0,
+                        shell_pid: 0,
                     });
 
                 entry.current_cmd = info.current_cmd;
@@ -259,6 +265,7 @@ impl SessionCache {
                 entry.last_activity = info.last_activity;
                 entry.start_cmd = info.start_cmd;
                 entry.pane_index = info.pane_index;
+                entry.shell_pid = info.pane_pid;
 
                 if entry.buffer != content {
                     entry.buffer = content;
@@ -826,6 +833,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -861,6 +869,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -895,6 +904,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
             panes.insert(
@@ -916,6 +926,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -1012,6 +1023,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -1046,6 +1058,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -1085,6 +1098,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -1120,6 +1134,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -1156,6 +1171,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
             // Pane running daemoneye chat.
@@ -1178,6 +1194,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }
@@ -1219,6 +1236,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
             // Visible peer — same window as chat.
@@ -1241,6 +1259,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
             // Daemon-launched background window.
@@ -1263,6 +1282,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
             // User's session pane in a different window.
@@ -1285,6 +1305,7 @@ mod tests {
                     last_activity: 0,
                     start_cmd: String::new(),
                     pane_index: 0,
+                    shell_pid: 0,
                 },
             );
         }

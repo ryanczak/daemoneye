@@ -249,7 +249,7 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
 
-    let idle_cmd = tmux::pane_current_command(target_str).unwrap_or_default();
+    let idle_pid = tmux::pane_pid(target_str).unwrap_or(0);
     let is_remote_pane = get_pane_remote_host(target_str).is_some();
 
     let current_exe =
@@ -359,7 +359,9 @@ where
                                 break 'detect;
                             }
                             // "sudo" transitioned away — credentials were cached.
-                        } else if cur == idle_cmd {
+                        } else if idle_pid != 0
+                            && tmux::pane_pid(target_str).unwrap_or(0) == idle_pid
+                        {
                             break 'detect;
                         }
 
@@ -601,17 +603,24 @@ where
 
                 let deadline = tokio::time::Instant::now() + LOCAL_CMD_TIMEOUT;
 
-                let saw_child = tokio::time::timeout(LOCAL_CHILD_START_WINDOW, async {
-                    loop {
-                        tokio::time::sleep(LOCAL_CHILD_POLL).await;
-                        let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                        if cur != idle_cmd {
-                            break;
+                // Wait until the child process is visible via a PID change.
+                // idle_pid == 0 means the query failed; treat as child-started
+                // immediately so we fall through to the hook-based completion wait.
+                let saw_child = if idle_pid == 0 {
+                    true
+                } else {
+                    tokio::time::timeout(LOCAL_CHILD_START_WINDOW, async {
+                        loop {
+                            tokio::time::sleep(LOCAL_CHILD_POLL).await;
+                            let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
+                            if cur_pid != idle_pid {
+                                break;
+                            }
                         }
-                    }
-                })
-                .await
-                .is_ok();
+                    })
+                    .await
+                    .is_ok()
+                };
 
                 if saw_child {
                     loop {
@@ -622,13 +631,14 @@ where
                             result = fg_rx.recv() => {
                                 if let Ok(notified_pane) = result
                                     && notified_pane == target_str {
-                                        let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                                        if cur == idle_cmd { break; }
+                                        let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
+                                        // idle_pid == 0: rely solely on hook signals
+                                        if idle_pid != 0 && cur_pid == idle_pid { break; }
                                     }
                             }
                             _ = tokio::time::sleep(LOCAL_SLOW_POLL) => {
-                                let cur = tmux::pane_current_command(target_str).unwrap_or_default();
-                                if cur == idle_cmd { break; }
+                                let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
+                                if idle_pid != 0 && cur_pid == idle_pid { break; }
                             }
                         }
                     }
