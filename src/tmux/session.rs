@@ -10,6 +10,10 @@ pub struct OtherSessionInfo {
     pub last_activity: u64,
     /// True when at least one tmux client is currently attached.
     pub attached: bool,
+    /// True when any window in this session is holding an uncleared bell (`!`).
+    pub has_bell: bool,
+    /// True when any window in this session has unseen activity (`#`).
+    pub has_activity: bool,
 }
 
 /// Return a list of all tmux sessions visible to the server.
@@ -43,9 +47,48 @@ pub fn list_sessions() -> Vec<OtherSessionInfo> {
                 windows: p[1].parse().unwrap_or(0),
                 last_activity: p[2].parse().unwrap_or(0),
                 attached: p[3] == "1",
+                has_bell: false,
+                has_activity: false,
             })
         })
         .collect()
+}
+
+/// Query bell (`!`) and activity (`#`) flags for every window across all
+/// sessions in a single `list-windows -a` call.
+///
+/// Returns a map of `session_name → (has_bell, has_activity)`.
+/// Empty map when tmux is unavailable.
+fn list_session_flags() -> HashMap<String, (bool, bool)> {
+    let out = match Command::new("tmux")
+        .args([
+            "list-windows",
+            "-a",
+            "-F",
+            "#{session_name}\t#{window_flags}",
+        ])
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return HashMap::new(),
+    };
+    let mut map: HashMap<String, (bool, bool)> = HashMap::new();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut parts = line.splitn(2, '\t');
+        let session = match parts.next() {
+            Some(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        let flags = parts.next().unwrap_or("");
+        let entry = map.entry(session.to_string()).or_insert((false, false));
+        if flags.contains('!') {
+            entry.0 = true;
+        }
+        if flags.contains('#') {
+            entry.1 = true;
+        }
+    }
+    map
 }
 
 /// Build a `[OTHER SESSIONS]` context line for the AI, omitting `current_session`.
@@ -56,7 +99,16 @@ pub fn other_sessions_context(current_session: &str) -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    format_other_sessions(current_session, &list_sessions(), now)
+    let mut sessions = list_sessions();
+    // Enrich with bell/activity flags from a single list-windows -a call.
+    let flags = list_session_flags();
+    for s in &mut sessions {
+        if let Some(&(bell, activity)) = flags.get(&s.name) {
+            s.has_bell = bell;
+            s.has_activity = activity;
+        }
+    }
+    format_other_sessions(current_session, &sessions, now)
 }
 
 /// Pure formatting helper — separated from tmux I/O for testability.
@@ -90,13 +142,26 @@ pub(crate) fn format_other_sessions(
                 "unknown activity".to_string()
             };
             let attach_state = if s.attached { "attached" } else { "detached" };
+            let mut alerts = Vec::new();
+            if s.has_bell {
+                alerts.push("bell!");
+            }
+            if s.has_activity {
+                alerts.push("activity");
+            }
+            let alert_part = if alerts.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", alerts.join(", "))
+            };
             format!(
-                "{} ({} window{}, {}, {})",
+                "{} ({} window{}, {}, {}{})",
                 s.name,
                 s.windows,
                 if s.windows == 1 { "" } else { "s" },
                 age,
                 attach_state,
+                alert_part,
             )
         })
         .collect();
@@ -224,6 +289,26 @@ mod tests {
             windows,
             last_activity,
             attached,
+            has_bell: false,
+            has_activity: false,
+        }
+    }
+
+    fn sess_with_flags(
+        name: &str,
+        windows: usize,
+        last_activity: u64,
+        attached: bool,
+        has_bell: bool,
+        has_activity: bool,
+    ) -> OtherSessionInfo {
+        OtherSessionInfo {
+            name: name.to_string(),
+            windows,
+            last_activity,
+            attached,
+            has_bell,
+            has_activity,
         }
     }
 
@@ -304,6 +389,38 @@ mod tests {
             out.ends_with('\n'),
             "output should end with newline: {out:?}"
         );
+    }
+
+    #[test]
+    fn format_other_sessions_bell_shown() {
+        let sessions = vec![sess_with_flags("staging", 2, 990, true, true, false)];
+        let out = format_other_sessions("prod", &sessions, 1000);
+        assert!(out.contains("bell!"), "expected bell marker: {out}");
+        assert!(!out.contains("activity"), "should not show activity: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_activity_shown() {
+        let sessions = vec![sess_with_flags("staging", 2, 990, false, false, true)];
+        let out = format_other_sessions("prod", &sessions, 1000);
+        assert!(out.contains("activity"), "expected activity marker: {out}");
+        assert!(!out.contains("bell!"), "should not show bell: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_bell_and_activity_shown() {
+        let sessions = vec![sess_with_flags("staging", 1, 990, true, true, true)];
+        let out = format_other_sessions("prod", &sessions, 1000);
+        assert!(out.contains("bell!"), "expected bell: {out}");
+        assert!(out.contains("activity"), "expected activity: {out}");
+    }
+
+    #[test]
+    fn format_other_sessions_no_alert_markers_when_quiet() {
+        let sessions = vec![sess("staging", 2, 990, true)];
+        let out = format_other_sessions("prod", &sessions, 1000);
+        assert!(!out.contains("bell!"), "unexpected bell: {out}");
+        assert!(!out.contains("activity"), "unexpected activity: {out}");
     }
 }
 

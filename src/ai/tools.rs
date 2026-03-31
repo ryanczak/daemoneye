@@ -317,40 +317,67 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "edit_file",
-        description: "Safely replace an exact string in a file. Finds `old_string` (must appear \
-                      exactly once), replaces with `new_string`, writes atomically. \
-                      User approval required before the write is committed. \
-                      Without target_pane: edits on the DAEMON HOST filesystem. \
-                      With target_pane: runs a Python3/Perl replacement script in that pane — \
-                      use this for files on a remote SSH host.",
+        description: "Perform a file operation on the daemon-host filesystem (or a remote host \
+                      via target_pane). Requires user approval before any change is committed. \
+                      The approval prompt shows a colored unified diff. \
+                      operation=\"edit\" (default): atomically replace old_string with new_string — \
+                        old_string must appear exactly once. \
+                      operation=\"create\": write a new file with the given content — \
+                        fails if the file already exists. \
+                      operation=\"delete\": permanently remove a file — \
+                        shows the full file content as a deletion diff before prompting. \
+                      operation=\"copy\": copy path to dest_path — \
+                        fails if dest_path already exists.",
         params: &[
             ParamDef {
                 name: "path",
                 ty: ParamTy::Str,
                 required: true,
-                description: "Absolute path to the file to edit.",
+                description: "Absolute path to the target file.",
+            },
+            ParamDef {
+                name: "operation",
+                ty: ParamTy::Str,
+                required: false,
+                description: "One of: \"edit\" (default), \"create\", \"delete\", \"copy\". \
+                              Determines which other parameters are required.",
             },
             ParamDef {
                 name: "old_string",
                 ty: ParamTy::Str,
-                required: true,
-                description: "Exact text to find in the file. Must appear exactly once. \
-                                     Include enough surrounding context (e.g. the whole line) to \
-                                     be unique.",
+                required: false,
+                description: "Required for operation=\"edit\". \
+                              Exact text to find — must appear exactly once. \
+                              Include enough surrounding context to be unique.",
             },
             ParamDef {
                 name: "new_string",
                 ty: ParamTy::Str,
-                required: true,
-                description: "Replacement text. Use empty string to delete old_string.",
+                required: false,
+                description: "Required for operation=\"edit\". \
+                              Replacement text. Use empty string to delete old_string.",
+            },
+            ParamDef {
+                name: "content",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Required for operation=\"create\". \
+                              Full content to write to the new file.",
+            },
+            ParamDef {
+                name: "dest_path",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Required for operation=\"copy\". \
+                              Absolute destination path. Fails if the destination already exists.",
             },
             ParamDef {
                 name: "target_pane",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional tmux pane ID. When set, the edit runs inside that \
-                                     pane via Python3 (Perl fallback) — use this for files on a \
-                                     remote SSH host. Omit for daemon-host files.",
+                description: "Optional tmux pane ID. When set, the operation runs inside that \
+                              pane via shell commands — use this for files on a remote SSH host. \
+                              Omit for daemon-host files.",
             },
         ],
     },
@@ -765,8 +792,11 @@ pub fn dispatch_tool_event(
         "edit_file" => Some(AiEvent::EditFile {
             id: id.to_string(),
             path: args["path"].as_str().unwrap_or("").to_string(),
-            old_string: args["old_string"].as_str().unwrap_or("").to_string(),
-            new_string: args["new_string"].as_str().unwrap_or("").to_string(),
+            operation: args["operation"].as_str().unwrap_or("edit").to_string(),
+            old_string: args["old_string"].as_str().map(|s| s.to_string()),
+            new_string: args["new_string"].as_str().map(|s| s.to_string()),
+            content: args["content"].as_str().map(|s| s.to_string()),
+            dest_path: args["dest_path"].as_str().map(|s| s.to_string()),
             target_pane: args["target_pane"].as_str().map(|s| s.to_string()),
             thought_signature: ts,
         }),
@@ -908,7 +938,7 @@ mod tests {
         let req = rtc["parameters"]["required"].as_array().unwrap();
         assert_eq!(req, &[serde_json::json!("command")]);
 
-        // edit_file: path, old_string, new_string are required
+        // edit_file: only "path" is required; old_string/new_string/content/operation are optional
         let ef = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
         let req_ef: Vec<&str> = ef["parameters"]["required"]
             .as_array()
@@ -917,8 +947,8 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert!(req_ef.contains(&"path"));
-        assert!(req_ef.contains(&"old_string"));
-        assert!(req_ef.contains(&"new_string"));
+        assert!(!req_ef.contains(&"old_string"), "old_string should now be optional");
+        assert!(!req_ef.contains(&"new_string"), "new_string should now be optional");
     }
 
     /// Tools with no params must not have a "required" key (would be an API error).

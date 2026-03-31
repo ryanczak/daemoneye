@@ -1,15 +1,19 @@
-use super::prompt_and_await_approval;
-use super::{ApprovalRequest, GhostCtx, ToolCallOutcome};
+use super::{GhostCtx, ToolCallOutcome, USER_PROMPT_TIMEOUT};
 use crate::ai::mask_sensitive;
 use crate::daemon::session::BUFFER_COUNTER;
+use crate::daemon::utils::send_response_split;
 use crate::daemon::utils::get_pane_remote_host;
+use crate::ipc::{Request, Response};
 use crate::tmux;
 
 pub(super) struct EditArgs<'a> {
     pub id: &'a str,
     pub path: &'a str,
-    pub old_string: &'a str,
-    pub new_string: &'a str,
+    pub operation: &'a str,
+    pub old_string: Option<&'a str>,
+    pub new_string: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub dest_path: Option<&'a str>,
     pub target_pane: Option<&'a str>,
 }
 use std::time::Duration;
@@ -348,14 +352,16 @@ where
     let EditArgs {
         id,
         path,
+        operation,
         old_string,
         new_string,
+        content,
+        dest_path,
         target_pane,
     } = args;
-    let GhostCtx {
-        policy: ghost_policy,
-        is_ghost,
-    } = ghost_ctx;
+    let GhostCtx { is_ghost, .. } = ghost_ctx;
+
+    // ── Common validation ─────────────────────────────────────────────────
     if path.contains("..") {
         return Ok(ToolCallOutcome::Result(
             "Error: path must not contain '..'.".to_string(),
@@ -366,12 +372,6 @@ where
             "Error: path must be absolute.".to_string(),
         ));
     }
-    if old_string.is_empty() {
-        return Ok(ToolCallOutcome::Result(
-            "Error: old_string cannot be empty.".to_string(),
-        ));
-    }
-
     {
         let de_dir = crate::config::config_dir();
         let candidate =
@@ -385,37 +385,116 @@ where
             ));
         }
     }
-
     if is_ghost {
         return Ok(ToolCallOutcome::Result(
-            "Error: cannot edit files in a Ghost Shell (requires user approval).".to_string(),
+            "Error: file operations require user approval and cannot run in a Ghost Shell."
+                .to_string(),
         ));
     }
 
-    // ── Remote path: Python3/Perl replacement in target_pane ──────────────
+    match operation {
+        "create" => run_create(id, path, content, target_pane, session_id, tx, rx).await,
+        "delete" => run_delete(id, path, target_pane, session_id, tx, rx).await,
+        "copy"   => run_copy(id, path, dest_path, target_pane, session_id, tx, rx).await,
+        _ => {
+            // "edit" (default) and any unrecognised value fall through here.
+            let old = match old_string {
+                Some(s) if !s.is_empty() => s,
+                _ => return Ok(ToolCallOutcome::Result(
+                    "Error: old_string is required and cannot be empty for operation=\"edit\"."
+                        .to_string(),
+                )),
+            };
+            let new = new_string.unwrap_or("");
+            run_edit(id, path, old, new, target_pane, session_id, tx, rx).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// await_edit_file_response — shared response-await helper
+// ---------------------------------------------------------------------------
+
+async fn await_edit_file_response<R>(
+    id: &str,
+    rx: &mut R,
+) -> anyhow::Result<Result<bool, ToolCallOutcome>>
+where
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let mut line = String::new();
+    let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+    if matches!(read_result, Ok(Ok(0))) {
+        return Err(anyhow::anyhow!("EOF"));
+    }
+    match read_result {
+        Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+            Ok(Request::EditFileResponse {
+                id: resp_id,
+                approved,
+                user_message,
+            }) if resp_id == id => {
+                if let Some(msg) = user_message {
+                    return Ok(Err(ToolCallOutcome::UserMessage(msg)));
+                }
+                if !approved {
+                    return Ok(Err(ToolCallOutcome::Result(
+                        "User denied execution".to_string(),
+                    )));
+                }
+                Ok(Ok(true))
+            }
+            _ => Ok(Err(ToolCallOutcome::Result(
+                "User denied execution".to_string(),
+            ))),
+        },
+        _ => Ok(Err(ToolCallOutcome::Result(
+            "User denied execution".to_string(),
+        ))),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// operation = "edit"
+// ---------------------------------------------------------------------------
+
+async fn run_edit<W, R>(
+    id: &str,
+    path: &str,
+    old_string: &str,
+    new_string: &str,
+    target_pane: Option<&str>,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    // ── Remote path ───────────────────────────────────────────────────────
     if let Some(pane) = target_pane {
-        let location = format!("{} (remote via pane {})", path, pane);
-        let approval_cmd = format!(
-            "edit_file {}\n--- old\n{}\n+++ new\n{}",
-            location, old_string, new_string
-        );
-        let cmd_id = match prompt_and_await_approval(
-            ApprovalRequest {
-                id,
-                cmd: &approval_cmd,
-                background: false,
-                target_pane_hint: None,
-            },
-            session_id,
-            ghost_policy,
+        send_response_split(
             tx,
-            rx,
+            Response::EditFilePrompt {
+                id: id.to_string(),
+                path: format!("{} (remote via pane {})", path, pane),
+                operation: "edit".to_string(),
+                // For remote files we can't read the full file locally, so show
+                // the old_string → new_string substitution as the diff context.
+                existing_content: Some(old_string.to_string()),
+                new_content: Some(new_string.to_string()),
+                dest_path: None,
+            },
         )
-        .await?
-        {
-            Ok(id) => id,
+        .await?;
+
+        match await_edit_file_response(id, rx).await? {
             Err(outcome) => return Ok(outcome),
-        };
+            Ok(_) => {}
+        }
+        let cmd_id =
+            crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
 
         let cmd = build_remote_edit_cmd(path, old_string, new_string);
         let snap = match remote_run_and_capture(pane, &cmd, 30).await {
@@ -425,7 +504,6 @@ where
                 return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
             }
         };
-
         for line in snap.lines().rev() {
             if line.contains("DE_OK:") {
                 crate::daemon::stats::finish_command(cmd_id, 0);
@@ -454,7 +532,7 @@ where
         )));
     }
 
-    // ── Local path: direct daemon-host filesystem edit ────────────────────
+    // ── Local path ────────────────────────────────────────────────────────
     let std_path = match std::fs::canonicalize(path) {
         Ok(p) => p,
         Err(e) => {
@@ -489,29 +567,28 @@ where
         )));
     }
 
-    let approval_cmd = format!(
-        "edit_file {}\n--- old\n{}\n+++ new\n{}",
-        path, old_string, new_string
-    );
-    let cmd_id = match prompt_and_await_approval(
-        ApprovalRequest {
-            id,
-            cmd: &approval_cmd,
-            background: false,
-            target_pane_hint: None,
-        },
-        session_id,
-        ghost_policy,
-        tx,
-        rx,
-    )
-    .await?
-    {
-        Ok(id) => id,
-        Err(outcome) => return Ok(outcome),
-    };
-
     let updated = original.replacen(old_string, new_string, 1);
+
+    send_response_split(
+        tx,
+        Response::EditFilePrompt {
+            id: id.to_string(),
+            path: path.to_string(),
+            operation: "edit".to_string(),
+            existing_content: Some(original.clone()),
+            new_content: Some(updated.clone()),
+            dest_path: None,
+        },
+    )
+    .await?;
+
+    match await_edit_file_response(id, rx).await? {
+        Err(outcome) => return Ok(outcome),
+        Ok(_) => {}
+    }
+
+    let cmd_id =
+        crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
     let tmp_path = std_path.with_extension("de_tmp");
     if let Err(e) = std::fs::write(&tmp_path, &updated) {
         crate::daemon::stats::finish_command(cmd_id, 1);
@@ -540,6 +617,544 @@ where
     Ok(ToolCallOutcome::Result(format!(
         "Edited {}: replaced {} line(s) with {} line(s).",
         path, old_lines, new_lines
+    )))
+}
+
+// ---------------------------------------------------------------------------
+// operation = "create"
+// ---------------------------------------------------------------------------
+
+fn build_remote_create_cmd(path: &str, content: &str) -> String {
+    let path_hex = to_hex(path);
+    let content_hex = to_hex(content);
+
+    let py = format!(
+        "import os,sys\n\
+         p=bytes.fromhex('{path_hex}').decode()\n\
+         c=bytes.fromhex('{content_hex}').decode()\n\
+         if os.path.exists(p): print('DE_ERROR: file already exists: '+p); sys.exit(1)\n\
+         os.makedirs(os.path.dirname(p) or '.', exist_ok=True)\n\
+         t=p+'.de_tmp'\n\
+         open(t,'w').write(c)\n\
+         os.rename(t,p)\n\
+         print('DE_OK: Created '+p)\n"
+    );
+    let py_hex = to_hex(&py);
+
+    let pl = format!(
+        "my $p=pack('H*','{path_hex}');\n\
+         my $c=pack('H*','{content_hex}');\n\
+         if(-e $p){{print \"DE_ERROR: file already exists\\n\";exit 1}}\n\
+         my $t=\"$p.de_tmp\";\n\
+         open(my $f,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         print $f $c;close $f;\n\
+         rename($t,$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         print \"DE_OK: Created $p\\n\";\n"
+    );
+    let pl_hex = to_hex(&pl);
+
+    format!(
+        "if command -v python3 >/dev/null 2>&1; then \
+            python3 -c \"exec(bytes.fromhex('{py_hex}').decode())\" 2>&1; \
+         else \
+            perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))' 2>&1; \
+         fi; echo '__DE_DONE__'"
+    )
+}
+
+async fn run_create<W, R>(
+    id: &str,
+    path: &str,
+    content: Option<&str>,
+    target_pane: Option<&str>,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let content = match content {
+        Some(c) => c,
+        None => {
+            return Ok(ToolCallOutcome::Result(
+                "Error: content is required for operation=\"create\".".to_string(),
+            ))
+        }
+    };
+
+    // ── Remote path ───────────────────────────────────────────────────────
+    if let Some(pane) = target_pane {
+        send_response_split(
+            tx,
+            Response::EditFilePrompt {
+                id: id.to_string(),
+                path: format!("{} (remote via pane {})", path, pane),
+                operation: "create".to_string(),
+                existing_content: None,
+                new_content: Some(content.to_string()),
+                dest_path: None,
+            },
+        )
+        .await?;
+
+        match await_edit_file_response(id, rx).await? {
+            Err(outcome) => return Ok(outcome),
+            Ok(_) => {}
+        }
+        let cmd_id =
+            crate::daemon::stats::start_command(&format!("create_file {}", path), "foreground");
+
+        let cmd = build_remote_create_cmd(path, content);
+        let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+            Ok(s) => s,
+            Err(e) => {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
+            }
+        };
+        for line in snap.lines().rev() {
+            if line.contains("DE_OK:") {
+                crate::daemon::stats::finish_command(cmd_id, 0);
+                crate::daemon::utils::log_event(
+                    "file_create",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_pane": pane }),
+                );
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Created {} via pane {}.",
+                    path, pane
+                )));
+            }
+            if line.contains("DE_ERROR:") {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error creating {}: {}",
+                    path,
+                    line.trim()
+                )));
+            }
+        }
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Create command completed but result was unclear. Check {} manually.",
+            path
+        )));
+    }
+
+    // ── Local path ────────────────────────────────────────────────────────
+    // For create, path need not exist yet — use parent to check directory.
+    let std_path = std::path::Path::new(path);
+    if std_path.exists() {
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: file already exists: {}. Use operation=\"edit\" to modify it.",
+            path
+        )));
+    }
+
+    send_response_split(
+        tx,
+        Response::EditFilePrompt {
+            id: id.to_string(),
+            path: path.to_string(),
+            operation: "create".to_string(),
+            existing_content: None,
+            new_content: Some(content.to_string()),
+            dest_path: None,
+        },
+    )
+    .await?;
+
+    match await_edit_file_response(id, rx).await? {
+        Err(outcome) => return Ok(outcome),
+        Ok(_) => {}
+    }
+
+    let cmd_id =
+        crate::daemon::stats::start_command(&format!("create_file {}", path), "foreground");
+
+    // Ensure parent directory exists.
+    if let Some(parent) = std_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error creating parent directory: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    let tmp_path = std_path.with_extension("de_tmp");
+    if let Err(e) = std::fs::write(&tmp_path, content) {
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error writing temp file: {}",
+            e
+        )));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, std_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error committing new file: {}",
+            e
+        )));
+    }
+
+    crate::daemon::stats::finish_command(cmd_id, 0);
+    crate::daemon::utils::log_event(
+        "file_create",
+        serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path }),
+    );
+    let line_count = content.lines().count();
+    Ok(ToolCallOutcome::Result(format!(
+        "Created {}: {} line(s).",
+        path, line_count
+    )))
+}
+
+// ---------------------------------------------------------------------------
+// operation = "delete"
+// ---------------------------------------------------------------------------
+
+async fn run_delete<W, R>(
+    id: &str,
+    path: &str,
+    target_pane: Option<&str>,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    // ── Remote path ───────────────────────────────────────────────────────
+    if let Some(pane) = target_pane {
+        // We can't read the remote file locally, so show the path only.
+        send_response_split(
+            tx,
+            Response::EditFilePrompt {
+                id: id.to_string(),
+                path: format!("{} (remote via pane {})", path, pane),
+                operation: "delete".to_string(),
+                existing_content: None,
+                new_content: None,
+                dest_path: None,
+            },
+        )
+        .await?;
+
+        match await_edit_file_response(id, rx).await? {
+            Err(outcome) => return Ok(outcome),
+            Ok(_) => {}
+        }
+        let cmd_id =
+            crate::daemon::stats::start_command(&format!("delete_file {}", path), "foreground");
+
+        let safe_path = sq_escape(path);
+        let cmd = format!(
+            "if [ -e '{safe_path}' ]; then rm -- '{safe_path}' && echo 'DE_OK: Deleted {safe_path}'; \
+             else echo 'DE_ERROR: file not found: {safe_path}'; fi; echo '__DE_DONE__'"
+        );
+        let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+            Ok(s) => s,
+            Err(e) => {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
+            }
+        };
+        for line in snap.lines().rev() {
+            if line.contains("DE_OK:") {
+                crate::daemon::stats::finish_command(cmd_id, 0);
+                crate::daemon::utils::log_event(
+                    "file_delete",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_pane": pane }),
+                );
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Deleted {} via pane {}.",
+                    path, pane
+                )));
+            }
+            if line.contains("DE_ERROR:") {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error deleting {}: {}",
+                    path,
+                    line.trim()
+                )));
+            }
+        }
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Delete command completed but result was unclear. Check {} manually.",
+            path
+        )));
+    }
+
+    // ── Local path ────────────────────────────────────────────────────────
+    let std_path = match std::fs::canonicalize(path) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error: cannot resolve path {}: {}",
+                path, e
+            )));
+        }
+    };
+    let existing = match std::fs::read_to_string(&std_path) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error reading {}: {}",
+                path, e
+            )));
+        }
+    };
+
+    send_response_split(
+        tx,
+        Response::EditFilePrompt {
+            id: id.to_string(),
+            path: path.to_string(),
+            operation: "delete".to_string(),
+            existing_content: Some(existing.clone()),
+            new_content: None,
+            dest_path: None,
+        },
+    )
+    .await?;
+
+    match await_edit_file_response(id, rx).await? {
+        Err(outcome) => return Ok(outcome),
+        Ok(_) => {}
+    }
+
+    let cmd_id =
+        crate::daemon::stats::start_command(&format!("delete_file {}", path), "foreground");
+
+    if let Err(e) = std::fs::remove_file(&std_path) {
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error deleting {}: {}",
+            path, e
+        )));
+    }
+
+    crate::daemon::stats::finish_command(cmd_id, 0);
+    crate::daemon::utils::log_event(
+        "file_delete",
+        serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path }),
+    );
+    let line_count = existing.lines().count();
+    Ok(ToolCallOutcome::Result(format!(
+        "Deleted {}: {} line(s) removed.",
+        path, line_count
+    )))
+}
+
+// ---------------------------------------------------------------------------
+// operation = "copy"
+// ---------------------------------------------------------------------------
+
+async fn run_copy<W, R>(
+    id: &str,
+    src_path: &str,
+    dest_path: Option<&str>,
+    target_pane: Option<&str>,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let dest = match dest_path {
+        Some(d) if !d.is_empty() => d,
+        _ => {
+            return Ok(ToolCallOutcome::Result(
+                "Error: dest_path is required for operation=\"copy\".".to_string(),
+            ))
+        }
+    };
+
+    if dest.contains("..") || !std::path::Path::new(dest).is_absolute() {
+        return Ok(ToolCallOutcome::Result(
+            "Error: dest_path must be an absolute path and must not contain '..'.".to_string(),
+        ));
+    }
+
+    // ── Remote path ───────────────────────────────────────────────────────
+    if let Some(pane) = target_pane {
+        let safe_src = sq_escape(src_path);
+        let safe_dst = sq_escape(dest);
+        let cmd = format!(
+            "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
+             elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
+             else cp -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
+             || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
+        );
+
+        // Show the approval prompt before executing — no local content available
+        // for remote files, so show path info only (new_content = None).
+        send_response_split(
+            tx,
+            Response::EditFilePrompt {
+                id: id.to_string(),
+                path: format!("{} (remote via pane {})", src_path, pane),
+                operation: "copy".to_string(),
+                existing_content: None,
+                new_content: None,
+                dest_path: Some(format!("{} (remote via pane {})", dest, pane)),
+            },
+        )
+        .await?;
+
+        match await_edit_file_response(id, rx).await? {
+            Err(outcome) => return Ok(outcome),
+            Ok(_) => {}
+        }
+        let cmd_id =
+            crate::daemon::stats::start_command(&format!("copy_file {} {}", src_path, dest), "foreground");
+
+        let snap = match remote_run_and_capture(pane, &cmd, 30).await {
+            Ok(s) => s,
+            Err(e) => {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
+            }
+        };
+        for line in snap.lines().rev() {
+            if line.contains("DE_OK:") {
+                crate::daemon::stats::finish_command(cmd_id, 0);
+                crate::daemon::utils::log_event(
+                    "file_copy",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "src": src_path, "dest": dest, "remote_pane": pane }),
+                );
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Copied {} to {} via pane {}.",
+                    src_path, dest, pane
+                )));
+            }
+            if line.contains("DE_ERROR:") {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error copying {} to {}: {}",
+                    src_path,
+                    dest,
+                    line.trim()
+                )));
+            }
+        }
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Copy command completed but result was unclear. Check {} manually.",
+            dest
+        )));
+    }
+
+    // ── Local path ────────────────────────────────────────────────────────
+    let src_std = match std::fs::canonicalize(src_path) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error: cannot resolve source path {}: {}",
+                src_path, e
+            )))
+        }
+    };
+
+    // Block copying from the daemoneye config dir.
+    {
+        let de_dir = crate::config::config_dir();
+        if src_std.starts_with(&de_dir) {
+            return Ok(ToolCallOutcome::Result(
+                "Error: edit_file cannot access the daemoneye configuration directory."
+                    .to_string(),
+            ));
+        }
+    }
+
+    let dest_std = std::path::Path::new(dest);
+    if dest_std.exists() {
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: destination already exists: {}. Remove it first or choose a different path.",
+            dest
+        )));
+    }
+
+    let source_content = match std::fs::read_to_string(&src_std) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error reading source {}: {}",
+                src_path, e
+            )))
+        }
+    };
+
+    send_response_split(
+        tx,
+        Response::EditFilePrompt {
+            id: id.to_string(),
+            path: src_path.to_string(),
+            operation: "copy".to_string(),
+            existing_content: None,
+            new_content: Some(source_content.clone()),
+            dest_path: Some(dest.to_string()),
+        },
+    )
+    .await?;
+
+    match await_edit_file_response(id, rx).await? {
+        Err(outcome) => return Ok(outcome),
+        Ok(_) => {}
+    }
+
+    let cmd_id =
+        crate::daemon::stats::start_command(&format!("copy_file {} {}", src_path, dest), "foreground");
+
+    if let Some(parent) = dest_std.parent() {
+        if !parent.as_os_str().is_empty() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error creating destination directory: {}",
+                    e
+                )));
+            }
+        }
+    }
+
+    let tmp_path = dest_std.with_extension("de_tmp");
+    if let Err(e) = std::fs::write(&tmp_path, &source_content) {
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error writing temp file: {}",
+            e
+        )));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, dest_std) {
+        let _ = std::fs::remove_file(&tmp_path);
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error committing copy: {}",
+            e
+        )));
+    }
+
+    crate::daemon::stats::finish_command(cmd_id, 0);
+    crate::daemon::utils::log_event(
+        "file_copy",
+        serde_json::json!({ "session": session_id.unwrap_or("-"), "src": src_path, "dest": dest }),
+    );
+    let line_count = source_content.lines().count();
+    Ok(ToolCallOutcome::Result(format!(
+        "Copied {} to {}: {} line(s).",
+        src_path, dest, line_count
     )))
 }
 

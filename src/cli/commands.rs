@@ -22,6 +22,9 @@ struct SessionApproval {
     sudo: bool,
     scripts: HashSet<String>,
     runbooks: HashSet<String>,
+    /// Paths auto-approved for the rest of this session via `[A]pprove for session`
+    /// on an `EditFilePrompt`. Keyed by the canonical path string.
+    file_edits: HashSet<String>,
 }
 
 impl SessionApproval {
@@ -43,6 +46,11 @@ impl SessionApproval {
             let mut names: Vec<&str> = self.runbooks.iter().map(|s| s.as_str()).collect();
             names.sort_unstable();
             active.push(format!("runbooks({})", names.join(", ")));
+        }
+        if !self.file_edits.is_empty() {
+            let mut names: Vec<&str> = self.file_edits.iter().map(|s| s.as_str()).collect();
+            names.sort_unstable();
+            active.push(format!("files({})", names.join(", ")));
         }
         if active.is_empty() {
             "auto-approve: off".to_string()
@@ -503,6 +511,17 @@ async fn run_ask_raw(query: String) -> Result<()> {
                     Request::RunbookWriteResponse {
                         id,
                         approved: false,
+                    },
+                )
+                .await?;
+            }
+            Response::EditFilePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::EditFileResponse {
+                        id,
+                        approved: false,
+                        user_message: None,
                     },
                 )
                 .await?;
@@ -2224,6 +2243,113 @@ async fn ask_with_session(
                 };
                 md.reset();
                 send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
+            }
+            Response::EditFilePrompt {
+                id,
+                path,
+                operation,
+                existing_content,
+                new_content,
+                dest_path,
+            } => {
+                if !response_started {
+                    print!("\r\x1b[K");
+                    response_started = true;
+                }
+                md.flush();
+                println!();
+
+                let op_label = match operation.as_str() {
+                    "create" => "create file",
+                    "delete" => "delete file",
+                    "copy"   => "copy file",
+                    _        => "edit file",
+                };
+                println!(
+                    "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to {}:\x1b[0m \x1b[96m{}\x1b[0m",
+                    op_label, path
+                );
+                if operation == "copy" {
+                    if let Some(ref dst) = dest_path {
+                        println!("  \x1b[2m→ destination: {}\x1b[0m", dst);
+                    }
+                }
+                println!();
+
+                // Render the diff using the same engine as script/runbook writes.
+                let diff_name = if operation == "copy" {
+                    dest_path.as_deref().unwrap_or(&path)
+                } else {
+                    &path
+                };
+                let diff_lines = crate::cli::diff::render_diff(
+                    diff_name,
+                    existing_content.as_deref(),
+                    new_content.as_deref().unwrap_or(""),
+                );
+                for line in &diff_lines {
+                    println!("  {}", line);
+                }
+                println!();
+
+                // Session-level auto-approval is keyed by path for file edits.
+                let auto_approved = approval.file_edits.contains(&path);
+
+                enum FileDecision {
+                    Approved,
+                    ApprovedSession,
+                    Denied,
+                    UserMessage(String),
+                }
+
+                let decision = if auto_approved {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
+                    FileDecision::Approved
+                } else {
+                    print!(
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92my\x1b[0m]es  \
+                         [\x1b[1;93mA\x1b[0m]pprove for session  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         or type a message to redirect \
+                         \x1b[32m›\x1b[0m "
+                    );
+                    std::io::stdout().flush()?;
+                    crate::cli::input::restore_termios(old_termios);
+                    let input = stdin.read_line().await.unwrap_or_default();
+                    let _ = crate::cli::input::set_raw_mode();
+                    let trimmed = input.trim();
+                    if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
+                        println!("  \x1b[32m✓ approved\x1b[0m");
+                        FileDecision::Approved
+                    } else if trimmed.eq_ignore_ascii_case("a") {
+                        approval.file_edits.insert(path.clone());
+                        println!(
+                            "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
+                            path
+                        );
+                        FileDecision::ApprovedSession
+                    } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {
+                        println!("  \x1b[2m✗ denied\x1b[0m");
+                        FileDecision::Denied
+                    } else {
+                        println!("  \x1b[33m↩ redirecting agent with your message…\x1b[0m");
+                        FileDecision::UserMessage(trimmed.to_string())
+                    }
+                };
+
+                let (approved, user_message) = match decision {
+                    FileDecision::Approved | FileDecision::ApprovedSession => (true, None),
+                    FileDecision::Denied => (false, None),
+                    FileDecision::UserMessage(msg) => (false, Some(msg)),
+                };
+
+                md.reset();
+                send_request(
+                    &mut tx,
+                    Request::EditFileResponse { id, approved, user_message },
+                )
+                .await?;
             }
             Response::RunbookDeletePrompt {
                 id,

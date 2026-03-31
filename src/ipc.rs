@@ -157,6 +157,13 @@ pub enum Request {
         id: String,
         approved: bool,
     },
+    /// Approve or deny a file operation proposed by the AI (edit_file tool).
+    EditFileResponse {
+        id: String,
+        approved: bool,
+        #[serde(default)]
+        user_message: Option<String>,
+    },
     ScriptDeleteResponse {
         id: String,
         approved: bool,
@@ -327,6 +334,26 @@ pub enum Response {
     },
     /// The current list of runbooks in `~/.daemoneye/runbooks/`.
     RunbookList { runbooks: Vec<RunbookListItem> },
+    /// The AI wants to perform a file operation; the client MUST show a colored
+    /// diff and prompt the user for approval, then return `Request::EditFileResponse`.
+    ///
+    /// `operation` is one of `"edit"` | `"create"` | `"delete"` | `"copy"`.
+    /// For `"edit"`: `existing_content` = original file, `new_content` = result after replacement.
+    /// For `"create"`: `existing_content` = None, `new_content` = content to write.
+    /// For `"delete"`: `existing_content` = current file content, `new_content` = None.
+    /// For `"copy"`:  `existing_content` = None, `new_content` = source content,
+    ///                `dest_path` = destination path.
+    EditFilePrompt {
+        id: String,
+        path: String,
+        operation: String,
+        #[serde(default)]
+        existing_content: Option<String>,
+        #[serde(default)]
+        new_content: Option<String>,
+        #[serde(default)]
+        dest_path: Option<String>,
+    },
     /// The current list of memory entries.
     MemoryList { entries: Vec<MemoryListItem> },
     /// Sent after each AI turn completes, carrying the prompt token count from

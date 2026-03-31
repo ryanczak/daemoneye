@@ -513,16 +513,22 @@ pub async fn trigger_ghost_turn(
                         id,
                         thought_signature,
                         path,
+                        operation,
                         old_string,
                         new_string,
+                        content,
+                        dest_path,
                         target_pane,
                     } => {
                         pending_calls.push(PendingCall::EditFile {
                             id,
                             thought_signature,
                             path,
+                            operation,
                             old_string,
                             new_string,
+                            content,
+                            dest_path,
                             target_pane,
                         });
                     }

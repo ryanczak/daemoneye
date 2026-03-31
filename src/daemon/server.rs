@@ -1081,8 +1081,11 @@ pub async fn handle_client(
                 AiEvent::EditFile {
                     id,
                     path,
+                    operation,
                     old_string,
                     new_string,
+                    content,
+                    dest_path,
                     target_pane,
                     thought_signature,
                 } => {
@@ -1090,8 +1093,11 @@ pub async fn handle_client(
                         id,
                         thought_signature,
                         path,
+                        operation,
                         old_string,
                         new_string,
+                        content,
+                        dest_path,
                         target_pane,
                     });
                 }

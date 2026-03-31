@@ -30,6 +30,8 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **Visual Anchors:** During the command approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
 
+**Pane Map:** Every AI turn includes a `[PANE MAP]` summary (`idx:0=%3* bash | idx:1=%7 vim`) mapping window-relative indices to pane IDs, with the active pane marked `*`. The AI always refers to panes by index first (`pane 1 in 'main'`) so approval prompts are human-readable. If a pane disappears before a command is approved, the stale-pane guard returns the current pane map automatically so the AI can recover without manual intervention.
+
 **`/auto-approval`** — type this at the chat prompt to inspect which approvals are currently active. Use `/auto-approval off` to instantly revoke all session approvals and return to explicit confirmation for everything.
 
 ### 📡 Webhook Alert Ingestion
@@ -51,6 +53,7 @@ Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prom
 - **Flexible Scheduling** — Run commands or Ghost Shell tasks once at a specific time, on a repeating interval, or on a full cron expression.
 - **Watchdog Monitors** — Active monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
 - **Failure Isolation** — Each job runs in its own dedicated tmux window (`de-sj-*`), left open on failure for manual inspection and cleaned up automatically on success.
+- **Bell Recovery** — Every 2-second poll checks `#{window_flags}` for uncleared bells (`!`) and unseen activity (`#`) on all windows. Newly-discovered bells are logged to `events.jsonl` so notifications missed during a daemon restart are recovered automatically. Bell and activity state appears as `, bell!` / `, activity` annotations in the `[SESSION TOPOLOGY]` and `[OTHER SESSIONS]` context blocks.
 
 ### 👻 Autonomous Ghost Shells
 

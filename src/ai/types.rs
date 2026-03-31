@@ -116,8 +116,11 @@ pub enum PendingCall {
         id: String,
         thought_signature: Option<String>,
         path: String,
-        old_string: String,
-        new_string: String,
+        operation: String,
+        old_string: Option<String>,
+        new_string: Option<String>,
+        content: Option<String>,
+        dest_path: Option<String>,
         target_pane: Option<String>,
     },
     WriteRunbook {
@@ -285,11 +288,11 @@ impl PendingCall {
                 name: "read_file".to_string(),
                 arguments: serde_json::json!({"path": path, "offset": offset, "limit": limit, "pattern": pattern, "target_pane": target_pane}).to_string(),
             },
-            PendingCall::EditFile { id, thought_signature, path, old_string, new_string, target_pane } => ToolCall {
+            PendingCall::EditFile { id, thought_signature, path, operation, old_string, new_string, content, dest_path, target_pane } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "edit_file".to_string(),
-                arguments: serde_json::json!({"path": path, "old_string": old_string, "new_string": new_string, "target_pane": target_pane}).to_string(),
+                arguments: serde_json::json!({"path": path, "operation": operation, "old_string": old_string, "new_string": new_string, "content": content, "dest_path": dest_path, "target_pane": target_pane}).to_string(),
             },
             PendingCall::WriteRunbook { id, thought_signature, name, content } => ToolCall {
                 id: id.clone(),
@@ -514,8 +517,11 @@ pub enum AiEvent {
     EditFile {
         id: String,
         path: String,
-        old_string: String,
-        new_string: String,
+        operation: String,
+        old_string: Option<String>,
+        new_string: Option<String>,
+        content: Option<String>,
+        dest_path: Option<String>,
         target_pane: Option<String>,
         thought_signature: Option<String>,
     },

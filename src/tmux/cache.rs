@@ -4,7 +4,7 @@ use crate::tmux;
 use crate::util::UnpoisonExt;
 use anyhow::Result;
 use chrono::Local;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 /// Maximum bytes to read from the tail of a pipe log when using it as the
@@ -129,6 +129,11 @@ pub struct SessionCache {
     pub windows: RwLock<Vec<tmux::WindowState>>,
     /// Attached terminal client dimensions in columns × rows (N7). (0, 0) = unknown.
     pub client_size: RwLock<(u16, u16)>,
+    /// Window IDs currently showing a bell (`!` flag) in non-daemon windows.
+    ///
+    /// Compared on each 2 s refresh to detect bells that the `alert-bell` hook
+    /// may have missed (e.g. daemon restart while a bell was pending).
+    bell_windows: RwLock<HashSet<String>>,
 }
 
 impl SessionCache {
@@ -140,6 +145,7 @@ impl SessionCache {
             environment: RwLock::new(HashMap::new()),
             windows: RwLock::new(Vec::new()),
             client_size: RwLock::new((0, 0)),
+            bell_windows: RwLock::new(HashSet::new()),
         }
     }
 
@@ -147,9 +153,10 @@ impl SessionCache {
     /// connects and tells the daemon which tmux session to observe.
     pub fn set_session(&self, name: &str) {
         *self.session_name.write().unwrap_or_log() = name.to_string();
-        // Clear stale pane state from any previous (empty) session.
+        // Clear stale state from any previous (empty) session.
         self.panes.write().unwrap_or_log().clear();
         self.windows.write().unwrap_or_log().clear();
+        self.bell_windows.write().unwrap_or_log().clear();
     }
 
     /// Instantly update the active pane without waiting for the next 2 s poll.
@@ -271,6 +278,50 @@ impl SessionCache {
 
         // Window topology (P4) — best-effort; ignore errors.
         if let Ok(wins) = tmux::list_windows(&session) {
+            // Bell recovery: detect `!` flags on non-daemon windows that the
+            // `alert-bell` hook may have missed (e.g. daemon was restarted
+            // while a bell was pending).  The `!` flag persists in tmux until
+            // the user visits the window, making it reliable for this purpose.
+            let newly_belled: Vec<String> = {
+                let prev = self.bell_windows.read().unwrap_or_log();
+                wins.iter()
+                    .filter(|w| w.has_bell())
+                    .filter(|w| {
+                        !w.window_name.starts_with("de-bg-")
+                            && !w.window_name.starts_with("de-sj-")
+                            && !w.window_name.starts_with("de-gs-bg-")
+                            && !w.window_name.starts_with("de-gs-sj-")
+                            && !w.window_name.starts_with("de-gs-ir-")
+                    })
+                    .filter(|w| !prev.contains(&w.window_id))
+                    .map(|w| w.window_id.clone())
+                    .collect()
+            };
+            for window_id in &newly_belled {
+                let name = wins
+                    .iter()
+                    .find(|w| &w.window_id == window_id)
+                    .map(|w| w.window_name.as_str())
+                    .unwrap_or("?");
+                log::debug!("Bell recovery: bell detected on window {} ('{}') via window_flags", window_id, name);
+                crate::daemon::utils::log_event(
+                    "bell_recovery",
+                    serde_json::json!({
+                        "window_id": window_id,
+                        "window_name": name,
+                        "session": session,
+                    }),
+                );
+            }
+            // Update the tracked bell set to the current snapshot.
+            {
+                let mut prev = self.bell_windows.write().unwrap_or_log();
+                *prev = wins
+                    .iter()
+                    .filter(|w| w.has_bell())
+                    .map(|w| w.window_id.clone())
+                    .collect();
+            }
             let mut win_lock = self.windows.write().unwrap_or_log();
             *win_lock = wins;
         }
@@ -383,6 +434,12 @@ impl SessionCache {
                         }
                         if w.last_active {
                             desc.push_str(", last active");
+                        }
+                        if w.has_bell() {
+                            desc.push_str(", bell!");
+                        }
+                        if w.has_activity() {
+                            desc.push_str(", activity");
                         }
                         desc.push(')');
                         desc
@@ -876,6 +933,7 @@ mod tests {
                 pane_count: 2,
                 zoomed: false,
                 last_active: false,
+                flags: String::new(),
             });
             wins.push(tmux::WindowState {
                 window_id: "@2".to_string(),
@@ -884,6 +942,7 @@ mod tests {
                 pane_count: 1,
                 zoomed: false,
                 last_active: true,
+                flags: String::new(),
             });
         }
         let ctx = c.get_labeled_context(None, None);
@@ -915,6 +974,7 @@ mod tests {
                 pane_count: 1,
                 zoomed: false,
                 last_active: false,
+                flags: String::new(),
             });
         }
         let ctx = c.get_labeled_context(None, None);

@@ -261,8 +261,11 @@ where
         PendingCall::EditFile {
             id,
             path,
+            operation,
             old_string,
             new_string,
+            content,
+            dest_path,
             target_pane,
             ..
         } => {
@@ -270,8 +273,11 @@ where
                 file_ops::EditArgs {
                     id,
                     path,
-                    old_string,
-                    new_string,
+                    operation,
+                    old_string: old_string.as_deref(),
+                    new_string: new_string.as_deref(),
+                    content: content.as_deref(),
+                    dest_path: dest_path.as_deref(),
                     target_pane: target_pane.as_deref(),
                 },
                 session_id,
