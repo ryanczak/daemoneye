@@ -16,7 +16,9 @@ struct TtyFd(libc::c_int);
 
 impl Drop for TtyFd {
     fn drop(&mut self) {
-        unsafe { libc::close(self.0); }
+        unsafe {
+            libc::close(self.0);
+        }
     }
 }
 
@@ -58,8 +60,7 @@ impl AsyncStdin {
         let fd = self.0.get_ref().0;
         loop {
             let mut guard = self.0.readable().await.ok()?;
-            let n =
-                unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+            let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 1) };
             if n == 1 {
                 return Some(buf[0]); // guard dropped → readiness retained for next byte
             } else if n == 0 {

@@ -829,7 +829,9 @@ mod tests {
             existing_content: Some("#!/bin/bash\ndf -h".to_string()),
         };
         match roundtrip_resp(&resp2) {
-            Response::ScriptWritePrompt { existing_content, .. } => {
+            Response::ScriptWritePrompt {
+                existing_content, ..
+            } => {
                 assert!(existing_content.is_some());
             }
             _ => panic!("wrong variant"),
@@ -868,7 +870,9 @@ mod tests {
             existing_content: Some("# Runbook: disk-alert\n## Alert Criteria\ndf -h".to_string()),
         };
         match roundtrip_resp(&resp2) {
-            Response::RunbookWritePrompt { existing_content, .. } => {
+            Response::RunbookWritePrompt {
+                existing_content, ..
+            } => {
                 assert!(existing_content.is_some());
             }
             _ => panic!("wrong variant"),

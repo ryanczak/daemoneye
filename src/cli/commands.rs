@@ -454,26 +454,68 @@ async fn run_ask_raw(query: String) -> Result<()> {
             }
             // Auto-deny all other interactive prompts.
             Response::CredentialPrompt { id, .. } => {
-                send_request(&mut tx, Request::CredentialResponse { id, credential: String::new() }).await?;
+                send_request(
+                    &mut tx,
+                    Request::CredentialResponse {
+                        id,
+                        credential: String::new(),
+                    },
+                )
+                .await?;
             }
             Response::PaneSelectPrompt { id, panes } => {
                 let pane_id = panes.into_iter().next().map(|p| p.id).unwrap_or_default();
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
             }
             Response::ScriptDeletePrompt { id, .. } => {
-                send_request(&mut tx, Request::ScriptDeleteResponse { id, approved: false }).await?;
+                send_request(
+                    &mut tx,
+                    Request::ScriptDeleteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
             }
             Response::ScriptWritePrompt { id, .. } => {
-                send_request(&mut tx, Request::ScriptWriteResponse { id, approved: false }).await?;
+                send_request(
+                    &mut tx,
+                    Request::ScriptWriteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
             }
             Response::ScheduleWritePrompt { id, .. } => {
-                send_request(&mut tx, Request::ScheduleWriteResponse { id, approved: false }).await?;
+                send_request(
+                    &mut tx,
+                    Request::ScheduleWriteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
             }
             Response::RunbookWritePrompt { id, .. } => {
-                send_request(&mut tx, Request::RunbookWriteResponse { id, approved: false }).await?;
+                send_request(
+                    &mut tx,
+                    Request::RunbookWriteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
             }
             Response::RunbookDeletePrompt { id, .. } => {
-                send_request(&mut tx, Request::RunbookDeleteResponse { id, approved: false }).await?;
+                send_request(
+                    &mut tx,
+                    Request::RunbookDeleteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
             }
             // Informational responses — silently skip.
             Response::SessionInfo { .. }
@@ -1081,8 +1123,16 @@ async fn run_chat_inner_raw(
             println!();
             println!("  \x1b[1mAuto-approval status\x1b[0m");
             println!();
-            let cmd_regular = if approval.regular { "\x1b[32m⚡ session\x1b[0m" } else { "\x1b[2moff\x1b[0m" };
-            let cmd_sudo    = if approval.sudo    { "\x1b[32m⚡ session\x1b[0m" } else { "\x1b[2moff\x1b[0m" };
+            let cmd_regular = if approval.regular {
+                "\x1b[32m⚡ session\x1b[0m"
+            } else {
+                "\x1b[2moff\x1b[0m"
+            };
+            let cmd_sudo = if approval.sudo {
+                "\x1b[32m⚡ session\x1b[0m"
+            } else {
+                "\x1b[2moff\x1b[0m"
+            };
             println!("  Terminal commands (regular)  {}", cmd_regular);
             println!("  Terminal commands (sudo)     {}", cmd_sudo);
             if approval.scripts.is_empty() {

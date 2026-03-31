@@ -9,7 +9,11 @@ const NEW_FILE_LINE_CAP: usize = 80;
 /// - `existing_content = Some`  → modified file: standard unified diff
 ///
 /// Returns a Vec of pre-colored lines ready to print.
-pub(crate) fn render_diff(name: &str, existing_content: Option<&str>, new_content: &str) -> Vec<String> {
+pub(crate) fn render_diff(
+    name: &str,
+    existing_content: Option<&str>,
+    new_content: &str,
+) -> Vec<String> {
     match existing_content {
         None => render_new_file(name, new_content),
         Some(old) => render_unified(name, old, new_content),
@@ -28,10 +32,7 @@ fn render_new_file(name: &str, content: &str) -> Vec<String> {
         out.push(format!("\x1b[32m+{}\x1b[0m", line));
     }
     if total > shown {
-        out.push(format!(
-            "\x1b[2m  … ({} more lines)\x1b[0m",
-            total - shown
-        ));
+        out.push(format!("\x1b[2m  … ({} more lines)\x1b[0m", total - shown));
     }
     out
 }
@@ -66,10 +67,22 @@ fn render_unified(name: &str, old: &str, new: &str) -> Vec<String> {
         });
 
         // Compute the full range of the group for old and new
-        let old_start = group.first().map(|op| op.old_range().start + 1).unwrap_or(1);
-        let old_end = group.last().map(|op| op.old_range().end).unwrap_or(old_start);
-        let new_start = group.first().map(|op| op.new_range().start + 1).unwrap_or(1);
-        let new_end = group.last().map(|op| op.new_range().end).unwrap_or(new_start);
+        let old_start = group
+            .first()
+            .map(|op| op.old_range().start + 1)
+            .unwrap_or(1);
+        let old_end = group
+            .last()
+            .map(|op| op.old_range().end)
+            .unwrap_or(old_start);
+        let new_start = group
+            .first()
+            .map(|op| op.new_range().start + 1)
+            .unwrap_or(1);
+        let new_end = group
+            .last()
+            .map(|op| op.new_range().end)
+            .unwrap_or(new_start);
         let _ = (old_range, new_range); // suppress unused warnings
 
         out.push(format!(
