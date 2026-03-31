@@ -2262,17 +2262,15 @@ async fn ask_with_session(
                 let op_label = match operation.as_str() {
                     "create" => "create file",
                     "delete" => "delete file",
-                    "copy"   => "copy file",
-                    _        => "edit file",
+                    "copy" => "copy file",
+                    _ => "edit file",
                 };
                 println!(
                     "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to {}:\x1b[0m \x1b[96m{}\x1b[0m",
                     op_label, path
                 );
-                if operation == "copy" {
-                    if let Some(ref dst) = dest_path {
-                        println!("  \x1b[2m→ destination: {}\x1b[0m", dst);
-                    }
+                if operation == "copy" && let Some(ref dst) = dest_path {
+                    println!("  \x1b[2m→ destination: {}\x1b[0m", dst);
                 }
                 println!();
 
@@ -2347,7 +2345,11 @@ async fn ask_with_session(
                 md.reset();
                 send_request(
                     &mut tx,
-                    Request::EditFileResponse { id, approved, user_message },
+                    Request::EditFileResponse {
+                        id,
+                        approved,
+                        user_message,
+                    },
                 )
                 .await?;
             }

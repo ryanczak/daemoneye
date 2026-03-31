@@ -947,8 +947,14 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert!(req_ef.contains(&"path"));
-        assert!(!req_ef.contains(&"old_string"), "old_string should now be optional");
-        assert!(!req_ef.contains(&"new_string"), "new_string should now be optional");
+        assert!(
+            !req_ef.contains(&"old_string"),
+            "old_string should now be optional"
+        );
+        assert!(
+            !req_ef.contains(&"new_string"),
+            "new_string should now be optional"
+        );
     }
 
     /// Tools with no params must not have a "required" key (would be an API error).

@@ -1,8 +1,8 @@
 use super::{GhostCtx, ToolCallOutcome, USER_PROMPT_TIMEOUT};
 use crate::ai::mask_sensitive;
 use crate::daemon::session::BUFFER_COUNTER;
-use crate::daemon::utils::send_response_split;
 use crate::daemon::utils::get_pane_remote_host;
+use crate::daemon::utils::send_response_split;
 use crate::ipc::{Request, Response};
 use crate::tmux;
 
@@ -395,16 +395,17 @@ where
     match operation {
         "create" => run_create(id, path, content, target_pane, session_id, tx, rx).await,
         "delete" => run_delete(id, path, target_pane, session_id, tx, rx).await,
-        "copy"   => run_copy(id, path, dest_path, target_pane, session_id, tx, rx).await,
+        "copy" => run_copy(id, path, dest_path, target_pane, session_id, tx, rx).await,
         _ => {
             // "edit" (default) and any unrecognised value fall through here.
-            let old = match old_string {
-                Some(s) if !s.is_empty() => s,
-                _ => return Ok(ToolCallOutcome::Result(
-                    "Error: old_string is required and cannot be empty for operation=\"edit\"."
-                        .to_string(),
-                )),
-            };
+            let old =
+                match old_string {
+                    Some(s) if !s.is_empty() => s,
+                    _ => return Ok(ToolCallOutcome::Result(
+                        "Error: old_string is required and cannot be empty for operation=\"edit\"."
+                            .to_string(),
+                    )),
+                };
             let new = new_string.unwrap_or("");
             run_edit(id, path, old, new, target_pane, session_id, tx, rx).await
         }
@@ -489,9 +490,8 @@ where
         )
         .await?;
 
-        match await_edit_file_response(id, rx).await? {
-            Err(outcome) => return Ok(outcome),
-            Ok(_) => {}
+        if let Err(outcome) = await_edit_file_response(id, rx).await? {
+            return Ok(outcome);
         }
         let cmd_id =
             crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
@@ -582,13 +582,11 @@ where
     )
     .await?;
 
-    match await_edit_file_response(id, rx).await? {
-        Err(outcome) => return Ok(outcome),
-        Ok(_) => {}
+    if let Err(outcome) = await_edit_file_response(id, rx).await? {
+        return Ok(outcome);
     }
 
-    let cmd_id =
-        crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
+    let cmd_id = crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
     let tmp_path = std_path.with_extension("de_tmp");
     if let Err(e) = std::fs::write(&tmp_path, &updated) {
         crate::daemon::stats::finish_command(cmd_id, 1);
@@ -680,7 +678,7 @@ where
         None => {
             return Ok(ToolCallOutcome::Result(
                 "Error: content is required for operation=\"create\".".to_string(),
-            ))
+            ));
         }
     };
 
@@ -699,9 +697,8 @@ where
         )
         .await?;
 
-        match await_edit_file_response(id, rx).await? {
-            Err(outcome) => return Ok(outcome),
-            Ok(_) => {}
+        if let Err(outcome) = await_edit_file_response(id, rx).await? {
+            return Ok(outcome);
         }
         let cmd_id =
             crate::daemon::stats::start_command(&format!("create_file {}", path), "foreground");
@@ -765,25 +762,23 @@ where
     )
     .await?;
 
-    match await_edit_file_response(id, rx).await? {
-        Err(outcome) => return Ok(outcome),
-        Ok(_) => {}
+    if let Err(outcome) = await_edit_file_response(id, rx).await? {
+        return Ok(outcome);
     }
 
     let cmd_id =
         crate::daemon::stats::start_command(&format!("create_file {}", path), "foreground");
 
     // Ensure parent directory exists.
-    if let Some(parent) = std_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                crate::daemon::stats::finish_command(cmd_id, 1);
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Error creating parent directory: {}",
-                    e
-                )));
-            }
-        }
+    if let Some(parent) = std_path.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error creating parent directory: {}",
+            e
+        )));
     }
 
     let tmp_path = std_path.with_extension("de_tmp");
@@ -847,9 +842,8 @@ where
         )
         .await?;
 
-        match await_edit_file_response(id, rx).await? {
-            Err(outcome) => return Ok(outcome),
-            Ok(_) => {}
+        if let Err(outcome) = await_edit_file_response(id, rx).await? {
+            return Ok(outcome);
         }
         let cmd_id =
             crate::daemon::stats::start_command(&format!("delete_file {}", path), "foreground");
@@ -927,9 +921,8 @@ where
     )
     .await?;
 
-    match await_edit_file_response(id, rx).await? {
-        Err(outcome) => return Ok(outcome),
-        Ok(_) => {}
+    if let Err(outcome) = await_edit_file_response(id, rx).await? {
+        return Ok(outcome);
     }
 
     let cmd_id =
@@ -977,7 +970,7 @@ where
         _ => {
             return Ok(ToolCallOutcome::Result(
                 "Error: dest_path is required for operation=\"copy\".".to_string(),
-            ))
+            ));
         }
     };
 
@@ -1013,12 +1006,13 @@ where
         )
         .await?;
 
-        match await_edit_file_response(id, rx).await? {
-            Err(outcome) => return Ok(outcome),
-            Ok(_) => {}
+        if let Err(outcome) = await_edit_file_response(id, rx).await? {
+            return Ok(outcome);
         }
-        let cmd_id =
-            crate::daemon::stats::start_command(&format!("copy_file {} {}", src_path, dest), "foreground");
+        let cmd_id = crate::daemon::stats::start_command(
+            &format!("copy_file {} {}", src_path, dest),
+            "foreground",
+        );
 
         let snap = match remote_run_and_capture(pane, &cmd, 30).await {
             Ok(s) => s,
@@ -1063,7 +1057,7 @@ where
             return Ok(ToolCallOutcome::Result(format!(
                 "Error: cannot resolve source path {}: {}",
                 src_path, e
-            )))
+            )));
         }
     };
 
@@ -1072,8 +1066,7 @@ where
         let de_dir = crate::config::config_dir();
         if src_std.starts_with(&de_dir) {
             return Ok(ToolCallOutcome::Result(
-                "Error: edit_file cannot access the daemoneye configuration directory."
-                    .to_string(),
+                "Error: edit_file cannot access the daemoneye configuration directory.".to_string(),
             ));
         }
     }
@@ -1092,7 +1085,7 @@ where
             return Ok(ToolCallOutcome::Result(format!(
                 "Error reading source {}: {}",
                 src_path, e
-            )))
+            )));
         }
     };
 
@@ -1109,24 +1102,24 @@ where
     )
     .await?;
 
-    match await_edit_file_response(id, rx).await? {
-        Err(outcome) => return Ok(outcome),
-        Ok(_) => {}
+    if let Err(outcome) = await_edit_file_response(id, rx).await? {
+        return Ok(outcome);
     }
 
-    let cmd_id =
-        crate::daemon::stats::start_command(&format!("copy_file {} {}", src_path, dest), "foreground");
+    let cmd_id = crate::daemon::stats::start_command(
+        &format!("copy_file {} {}", src_path, dest),
+        "foreground",
+    );
 
-    if let Some(parent) = dest_std.parent() {
-        if !parent.as_os_str().is_empty() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                crate::daemon::stats::finish_command(cmd_id, 1);
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Error creating destination directory: {}",
-                    e
-                )));
-            }
-        }
+    if let Some(parent) = dest_std.parent()
+        && !parent.as_os_str().is_empty()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error creating destination directory: {}",
+            e
+        )));
     }
 
     let tmp_path = dest_std.with_extension("de_tmp");

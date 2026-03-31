@@ -303,7 +303,11 @@ impl SessionCache {
                     .find(|w| &w.window_id == window_id)
                     .map(|w| w.window_name.as_str())
                     .unwrap_or("?");
-                log::debug!("Bell recovery: bell detected on window {} ('{}') via window_flags", window_id, name);
+                log::debug!(
+                    "Bell recovery: bell detected on window {} ('{}') via window_flags",
+                    window_id,
+                    name
+                );
                 crate::daemon::utils::log_event(
                     "bell_recovery",
                     serde_json::json!({
