@@ -424,6 +424,10 @@ the user can type a password. For anything else, prefer NOPASSWD rules:
   you do not need `watch_pane` just to receive the result
 
 **read_file (file reader — daemon host, local pane, or remote pane)**
+- **Prefer `read_file` over `cat`/`head`/`tail` for reading files on the daemon host.** \
+  `read_file` is direct — no subprocess, no approval prompt, no pane output. \
+  Use `run_terminal_command` only when you need shell processing (pipes, recursive grep, etc.) \
+  or when reading from a remote pane.
 - Reads a file with line-range pagination and optional grep filtering. Sensitive data masked.
 - **Cannot access most of `~/.daemoneye/`** — use the dedicated tools (`read_script`, \
   `read_runbook`, `read_memory`, etc.) for daemoneye-managed data. \

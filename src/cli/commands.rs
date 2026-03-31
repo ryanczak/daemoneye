@@ -767,7 +767,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             center(38)
         );
         println!(
-            "{}\x1b[96m/approvals [off]\x1b[0m to manage approvals",
+            "{}\x1b[96m/approvals [revoke]\x1b[0m to manage approvals",
             center(40)
         );
         println!();
@@ -1181,11 +1181,11 @@ async fn run_chat_inner_raw(
                 }
             }
             println!();
-            println!("  Use \x1b[96m/approvals off\x1b[0m to reset all approvals.");
+            println!("  Use \x1b[96m/approvals revoke\x1b[0m to reset all approvals.");
             println!();
             continue;
         }
-        if query == "/approvals off" {
+        if query == "/approvals revoke" {
             *approval = SessionApproval::default();
             let label = " all approvals reset ";
             let dashes = chat_width.min(72).saturating_sub(visual_len(label) + 1);
