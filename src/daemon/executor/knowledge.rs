@@ -34,12 +34,14 @@ where
             "Error: cannot write scripts in a Ghost Shell (requires user approval).".to_string(),
         ));
     }
+    let existing_content = scripts::read_script(script_name).ok();
     send_response_split(
         tx,
         Response::ScriptWritePrompt {
             id: id.to_string(),
             script_name: script_name.to_string(),
             content: content.to_string(),
+            existing_content,
         },
     )
     .await?;
@@ -188,12 +190,14 @@ where
             "Error: cannot write runbooks in a Ghost Shell (requires user approval).".to_string(),
         ));
     }
+    let existing_content = crate::runbook::load_runbook(name).ok().map(|rb| rb.content);
     send_response_split(
         tx,
         Response::RunbookWritePrompt {
             id: id.to_string(),
             runbook_name: name.to_string(),
             content: content.to_string(),
+            existing_content,
         },
     )
     .await?;

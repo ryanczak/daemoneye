@@ -14,13 +14,23 @@ DaemonEye is not perfect, it will eat your important stuff if you are not carefu
 
 ### 🛠️ Collaborative Execution & Safety
 
-The AI doesn't just suggest — it acts. Every proposed command goes through a triple-action approval prompt before anything runs:
+The AI doesn't just suggest — it acts. Every proposed action goes through an explicit approval prompt before anything runs.
+
+**Terminal commands** show a three-option prompt:
 
 - **`[y]es`** — Approve a single execution.
-- **`[a]pprove session`** — Trust the AI for this command class for the rest of the session.
+- **`[A]pprove for session`** — Trust the AI for this command class for the rest of the session.
 - **`[N]o`** — Reject, or type a message to redirect the AI mid-stream.
 
-**Visual Anchors:** During the approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
+**Script and runbook writes** show an ANSI diff before asking for approval:
+
+- New files display all lines in green with `+` prefixes so you can read exactly what will be written.
+- Modifications display a standard unified diff — red `-` for removed lines, green `+` for added lines, with `@@` hunk headers — so you can see precisely what changed.
+- **`[A]pprove for session`** is available here too: once approved, future writes to that specific script or runbook auto-proceed (the diff is still shown, the gate is skipped).
+
+**Visual Anchors:** During the command approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
+
+**`/auto-approval`** — type this at the chat prompt to inspect which approvals are currently active. Use `/auto-approval off` to instantly revoke all session approvals and return to explicit confirmation for everything.
 
 ### 📡 Webhook Alert Ingestion
 

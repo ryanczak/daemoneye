@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -10,23 +11,43 @@ use crate::config::{Config, default_socket_path};
 use crate::daemon::utils::command_has_sudo;
 use crate::ipc::{Request, Response};
 
-/// Per-session auto-approval flags for the two command classes.
-/// Once set, the corresponding class is approved without prompting
-/// for the rest of the chat session.
+/// Per-session auto-approval state.
+///
+/// - `regular` / `sudo`: class-wide approval for terminal commands.
+/// - `scripts` / `runbooks`: name-scoped approval; each entry auto-approves
+///   future writes to that specific script or runbook for the rest of the session.
 #[derive(Default, Clone)]
 struct SessionApproval {
-    regular: bool, // auto-approve non-sudo commands
-    sudo: bool,    // auto-approve sudo commands
+    regular: bool,
+    sudo: bool,
+    scripts: HashSet<String>,
+    runbooks: HashSet<String>,
 }
 
 impl SessionApproval {
-    /// Build the status-bar hint string.
+    /// Build the status-bar hint string shown in the chat frame.
     fn hint(&self) -> String {
+        let mut active: Vec<String> = Vec::new();
         match (self.regular, self.sudo) {
-            (false, false) => "auto-approve: off".to_string(),
-            (true, false) => "⚡ auto-approve: regular  ·  Ctrl+C to stop".to_string(),
-            (false, true) => "⚡ auto-approve: sudo  ·  Ctrl+C to stop".to_string(),
-            (true, true) => "⚡ auto-approve: all  ·  Ctrl+C to stop".to_string(),
+            (true, true) => active.push("all commands".to_string()),
+            (true, false) => active.push("regular commands".to_string()),
+            (false, true) => active.push("sudo commands".to_string()),
+            (false, false) => {}
+        }
+        if !self.scripts.is_empty() {
+            let mut names: Vec<&str> = self.scripts.iter().map(|s| s.as_str()).collect();
+            names.sort_unstable();
+            active.push(format!("scripts({})", names.join(", ")));
+        }
+        if !self.runbooks.is_empty() {
+            let mut names: Vec<&str> = self.runbooks.iter().map(|s| s.as_str()).collect();
+            names.sort_unstable();
+            active.push(format!("runbooks({})", names.join(", ")));
+        }
+        if active.is_empty() {
+            "auto-approve: off".to_string()
+        } else {
+            format!("⚡ auto-approve: {}  ·  Ctrl+C to stop", active.join(", "))
         }
     }
 }
@@ -673,7 +694,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
         let center =
             |vis_len: usize| -> String { " ".repeat((chat_width.saturating_sub(vis_len)) / 2) };
         println!();
-        // visible lengths (no ANSI): 22, 23, 26, 30
+        // visible lengths (no ANSI): 22, 23, 26, 38, 40
         println!(
             "{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",
             center(22)
@@ -683,6 +704,10 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
         println!(
             "{}\x1b[96m/model [name]\x1b[0m to list or switch model",
             center(38)
+        );
+        println!(
+            "{}\x1b[96m/auto-approval [off]\x1b[0m to manage approvals",
+            center(40)
         );
         println!();
     }
@@ -1050,6 +1075,66 @@ async fn run_chat_inner_raw(
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  Refresh failed: {}", e),
             }
+            continue;
+        }
+        if query == "/auto-approval" {
+            println!();
+            println!("  \x1b[1mAuto-approval status\x1b[0m");
+            println!();
+            let cmd_regular = if approval.regular { "\x1b[32m⚡ session\x1b[0m" } else { "\x1b[2moff\x1b[0m" };
+            let cmd_sudo    = if approval.sudo    { "\x1b[32m⚡ session\x1b[0m" } else { "\x1b[2moff\x1b[0m" };
+            println!("  Terminal commands (regular)  {}", cmd_regular);
+            println!("  Terminal commands (sudo)     {}", cmd_sudo);
+            if approval.scripts.is_empty() {
+                println!("  Scripts                      \x1b[2mnone\x1b[0m");
+            } else {
+                let mut names: Vec<&str> = approval.scripts.iter().map(|s| s.as_str()).collect();
+                names.sort_unstable();
+                for (i, name) in names.iter().enumerate() {
+                    if i == 0 {
+                        println!("  Scripts                      \x1b[32m⚡\x1b[0m {}", name);
+                    } else {
+                        println!("                               \x1b[32m⚡\x1b[0m {}", name);
+                    }
+                }
+            }
+            if approval.runbooks.is_empty() {
+                println!("  Runbooks                     \x1b[2mnone\x1b[0m");
+            } else {
+                let mut names: Vec<&str> = approval.runbooks.iter().map(|s| s.as_str()).collect();
+                names.sort_unstable();
+                for (i, name) in names.iter().enumerate() {
+                    if i == 0 {
+                        println!("  Runbooks                     \x1b[32m⚡\x1b[0m {}", name);
+                    } else {
+                        println!("                               \x1b[32m⚡\x1b[0m {}", name);
+                    }
+                }
+            }
+            println!();
+            println!("  Use \x1b[96m/auto-approval off\x1b[0m to reset all approvals.");
+            println!();
+            continue;
+        }
+        if query == "/auto-approval off" {
+            *approval = SessionApproval::default();
+            let label = " all approvals reset ";
+            let dashes = chat_width.min(72).saturating_sub(visual_len(label) + 1);
+            println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+            let hint = approval.hint();
+            draw_input_frame(chat_height, chat_width, start_time);
+            draw_status_bar(
+                chat_height,
+                chat_width,
+                &StatusBarState {
+                    session_id: &session_id,
+                    approval_hint: &hint,
+                    model: &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                },
+            );
             continue;
         }
         {
@@ -1862,6 +1947,7 @@ async fn ask_with_session(
                 id,
                 script_name,
                 content,
+                existing_content,
             } => {
                 if !response_started {
                     print!("\r\x1b[K");
@@ -1874,26 +1960,46 @@ async fn ask_with_session(
                     script_name
                 );
                 println!();
-                // Show up to 40 lines of the script content
-                let lines: Vec<&str> = content.lines().collect();
-                let show = lines.len().min(40);
-                for line in &lines[..show] {
-                    println!("  \x1b[2m{}\x1b[0m", line);
-                }
-                if lines.len() > 40 {
-                    println!("  \x1b[2m… ({} more lines)\x1b[0m", lines.len() - 40);
+                let diff_lines = crate::cli::diff::render_diff(
+                    &script_name,
+                    existing_content.as_deref(),
+                    &content,
+                );
+                for line in &diff_lines {
+                    println!("  {}", line);
                 }
                 println!();
-                print!(
-                    "  Approve writing to ~/.daemoneye/scripts/{}? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ",
-                    script_name
-                );
-                std::io::stdout().flush()?;
-                // Temporarily revert to cooked mode for user input
-                crate::cli::input::restore_termios(old_termios);
-                let input = stdin.read_line().await.unwrap_or_default();
-                let _ = crate::cli::input::set_raw_mode(); // back to raw mode for turn trap
-                let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
+                let approved = if approval.scripts.contains(&script_name) {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
+                    true
+                } else {
+                    print!(
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92my\x1b[0m]es  \
+                         [\x1b[1;93mA\x1b[0m]pprove for session  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         \x1b[32m›\x1b[0m "
+                    );
+                    std::io::stdout().flush()?;
+                    crate::cli::input::restore_termios(old_termios);
+                    let input = stdin.read_line().await.unwrap_or_default();
+                    let _ = crate::cli::input::set_raw_mode();
+                    let trimmed = input.trim();
+                    if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
+                        println!("  \x1b[32m✓ approved\x1b[0m");
+                        true
+                    } else if trimmed.eq_ignore_ascii_case("a") {
+                        approval.scripts.insert(script_name.clone());
+                        println!(
+                            "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
+                            script_name
+                        );
+                        true
+                    } else {
+                        println!("  \x1b[2m✗ denied\x1b[0m");
+                        false
+                    }
+                };
                 md.reset();
                 send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
             }
@@ -2013,6 +2119,7 @@ async fn ask_with_session(
                 id,
                 runbook_name,
                 content,
+                existing_content,
             } => {
                 if !response_started {
                     print!("\r\x1b[K");
@@ -2025,24 +2132,46 @@ async fn ask_with_session(
                     runbook_name
                 );
                 println!();
-                let lines: Vec<&str> = content.lines().collect();
-                let show = lines.len().min(40);
-                for line in &lines[..show] {
-                    println!("  \x1b[2m{}\x1b[0m", line);
-                }
-                if lines.len() > 40 {
-                    println!("  \x1b[2m… ({} more lines)\x1b[0m", lines.len() - 40);
+                let diff_lines = crate::cli::diff::render_diff(
+                    &runbook_name,
+                    existing_content.as_deref(),
+                    &content,
+                );
+                for line in &diff_lines {
+                    println!("  {}", line);
                 }
                 println!();
-                print!(
-                    "  Approve writing to ~/.daemoneye/runbooks/{}.md? \x1b[32m[y/N]\x1b[0m \x1b[32m›\x1b[0m ",
-                    runbook_name
-                );
-                std::io::stdout().flush()?;
-                crate::cli::input::restore_termios(old_termios);
-                let input = stdin.read_line().await.unwrap_or_default();
-                let _ = crate::cli::input::set_raw_mode();
-                let approved = matches!(input.trim().to_lowercase().as_str(), "y" | "yes");
+                let approved = if approval.runbooks.contains(&runbook_name) {
+                    println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
+                    true
+                } else {
+                    print!(
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92my\x1b[0m]es  \
+                         [\x1b[1;93mA\x1b[0m]pprove for session  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         \x1b[32m›\x1b[0m "
+                    );
+                    std::io::stdout().flush()?;
+                    crate::cli::input::restore_termios(old_termios);
+                    let input = stdin.read_line().await.unwrap_or_default();
+                    let _ = crate::cli::input::set_raw_mode();
+                    let trimmed = input.trim();
+                    if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
+                        println!("  \x1b[32m✓ approved\x1b[0m");
+                        true
+                    } else if trimmed.eq_ignore_ascii_case("a") {
+                        approval.runbooks.insert(runbook_name.clone());
+                        println!(
+                            "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
+                            runbook_name
+                        );
+                        true
+                    } else {
+                        println!("  \x1b[2m✗ denied\x1b[0m");
+                        false
+                    }
+                };
                 md.reset();
                 send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
             }

@@ -285,10 +285,14 @@ pub enum Response {
     ScriptDeletePrompt { id: String, script_name: String },
     /// The AI wants to write a script; the client MUST show the content and
     /// prompt the user for approval, then return `Request::ScriptWriteResponse`.
+    /// `existing_content` is `Some` when the script already exists on disk so
+    /// the client can render a diff instead of the raw new content.
     ScriptWritePrompt {
         id: String,
         script_name: String,
         content: String,
+        #[serde(default)]
+        existing_content: Option<String>,
     },
     /// The AI wants to schedule a job; the client MUST show the details and
     /// prompt the user for approval, then return `Request::ScheduleWriteResponse`.
@@ -304,10 +308,14 @@ pub enum Response {
     ScriptList { scripts: Vec<ScriptListItem> },
     /// The AI wants to write a runbook; the client MUST show the content and
     /// prompt the user for approval, then return `Request::RunbookWriteResponse`.
+    /// `existing_content` is `Some` when the runbook already exists on disk so
+    /// the client can render a diff instead of the raw new content.
     RunbookWritePrompt {
         id: String,
         runbook_name: String,
         content: String,
+        #[serde(default)]
+        existing_content: Option<String>,
     },
     /// The AI wants to delete a runbook; the client MUST show affected jobs and
     /// prompt the user for approval, then return `Request::RunbookDeleteResponse`.
@@ -791,20 +799,77 @@ mod tests {
 
     #[test]
     fn response_script_write_prompt_roundtrip() {
+        // New file: no existing content
         let resp = Response::ScriptWritePrompt {
             id: "sw_2".to_string(),
             script_name: "check-disk.sh".to_string(),
             content: "#!/bin/bash\ndf -h".to_string(),
+            existing_content: None,
         };
         match roundtrip_resp(&resp) {
             Response::ScriptWritePrompt {
                 id,
                 script_name,
                 content,
+                existing_content,
             } => {
                 assert_eq!(id, "sw_2");
                 assert_eq!(script_name, "check-disk.sh");
                 assert!(content.contains("df -h"));
+                assert!(existing_content.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        // Modified file: existing content provided
+        let resp2 = Response::ScriptWritePrompt {
+            id: "sw_3".to_string(),
+            script_name: "check-disk.sh".to_string(),
+            content: "#!/bin/bash\ndf -h\necho done".to_string(),
+            existing_content: Some("#!/bin/bash\ndf -h".to_string()),
+        };
+        match roundtrip_resp(&resp2) {
+            Response::ScriptWritePrompt { existing_content, .. } => {
+                assert!(existing_content.is_some());
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn response_runbook_write_prompt_roundtrip() {
+        // New runbook: no existing content
+        let resp = Response::RunbookWritePrompt {
+            id: "rw_1".to_string(),
+            runbook_name: "disk-alert".to_string(),
+            content: "# Runbook: disk-alert\n## Alert Criteria\ndf -h".to_string(),
+            existing_content: None,
+        };
+        match roundtrip_resp(&resp) {
+            Response::RunbookWritePrompt {
+                id,
+                runbook_name,
+                content,
+                existing_content,
+            } => {
+                assert_eq!(id, "rw_1");
+                assert_eq!(runbook_name, "disk-alert");
+                assert!(content.contains("df -h"));
+                assert!(existing_content.is_none());
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        // Modified runbook: existing content provided
+        let resp2 = Response::RunbookWritePrompt {
+            id: "rw_2".to_string(),
+            runbook_name: "disk-alert".to_string(),
+            content: "# Runbook: disk-alert\n## Alert Criteria\ndf -h\nnew line".to_string(),
+            existing_content: Some("# Runbook: disk-alert\n## Alert Criteria\ndf -h".to_string()),
+        };
+        match roundtrip_resp(&resp2) {
+            Response::RunbookWritePrompt { existing_content, .. } => {
+                assert!(existing_content.is_some());
             }
             _ => panic!("wrong variant"),
         }

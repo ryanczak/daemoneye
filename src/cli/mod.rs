@@ -1,6 +1,7 @@
 // CLI Module
 
 pub mod commands;
+pub(crate) mod diff;
 pub mod input;
 pub mod local_cmds;
 pub mod notify;
