@@ -32,9 +32,9 @@ impl SessionApproval {
     fn hint(&self) -> String {
         let mut active: Vec<String> = Vec::new();
         match (self.regular, self.sudo) {
-            (true, true) => active.push("all commands".to_string()),
-            (true, false) => active.push("regular commands".to_string()),
-            (false, true) => active.push("sudo commands".to_string()),
+            (true, true) => active.push("all".to_string()),
+            (true, false) => active.push("standard".to_string()),
+            (false, true) => active.push("sudo".to_string()),
             (false, false) => {}
         }
         if !self.scripts.is_empty() {
@@ -55,7 +55,7 @@ impl SessionApproval {
         if active.is_empty() {
             "approvals: off".to_string()
         } else {
-            format!("⚡ approvals: {}  ·  Ctrl+C to stop", active.join(", "))
+            format!("⚡approvals: {} · Ctrl+C revokes", active.join(", "))
         }
     }
 }
@@ -1507,6 +1507,37 @@ fn apply_stream_resize(
     );
 }
 
+/// Redraws only the status bar after an in-flight approval state change.
+///
+/// `draw_status_bar` uses DEC save/restore cursor (`\x1b7`/`\x1b8`) so it is
+/// safe to call mid-stream without disturbing the scroll region.  No-ops when
+/// the frame has not been drawn yet (`has_frame = false`) or `resize` is `None`.
+fn refresh_status_bar(
+    resize: &Option<StreamResizeDims<'_>>,
+    session_id: Option<&str>,
+    approval: &SessionApproval,
+    prompt_tokens: u32,
+    context_window: u32,
+) {
+    let Some(d) = resize else { return };
+    if !d.has_frame {
+        return;
+    }
+    let hint = approval.hint();
+    draw_status_bar(
+        *d.height,
+        *d.width,
+        &StatusBarState {
+            session_id: session_id.unwrap_or(""),
+            approval_hint: &hint,
+            model: &d.model,
+            prompt_tokens,
+            context_window,
+            daemon_up: d.daemon_up,
+        },
+    );
+}
+
 struct QueryArgs<'a> {
     query: String,
     display_query: &'a str,
@@ -1867,6 +1898,13 @@ async fn ask_with_session(
                             "  \x1b[32m✓ approved — all {} commands auto-approved for this session\x1b[0m",
                             if is_sudo { "sudo" } else { "regular" }
                         );
+                        refresh_status_bar(
+                            &resize,
+                            session_id,
+                            approval,
+                            *prompt_tokens,
+                            context_window,
+                        );
                         ApprovalDecision::ApprovedSession
                     } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {
                         println!("  \x1b[2m✗ skipped\x1b[0m");
@@ -2063,6 +2101,13 @@ async fn ask_with_session(
                             "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
                             script_name
                         );
+                        refresh_status_bar(
+                            &resize,
+                            session_id,
+                            approval,
+                            *prompt_tokens,
+                            context_window,
+                        );
                         true
                     } else {
                         println!("  \x1b[2m✗ denied\x1b[0m");
@@ -2235,6 +2280,13 @@ async fn ask_with_session(
                             "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
                             runbook_name
                         );
+                        refresh_status_bar(
+                            &resize,
+                            session_id,
+                            approval,
+                            *prompt_tokens,
+                            context_window,
+                        );
                         true
                     } else {
                         println!("  \x1b[2m✗ denied\x1b[0m");
@@ -2327,6 +2379,13 @@ async fn ask_with_session(
                         println!(
                             "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
                             path
+                        );
+                        refresh_status_bar(
+                            &resize,
+                            session_id,
+                            approval,
+                            *prompt_tokens,
+                            context_window,
                         );
                         FileDecision::ApprovedSession
                     } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {

@@ -323,7 +323,7 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
         "\x1b[0m\x1b[2m(◉)\x1b[0m\x1b[2m"
     };
     let base = format!(
-        " {} ·  session:{} ",
+        " {} · session:{} ",
         icon,
         &sb.session_id[..8.min(sb.session_id.len())],
     );
@@ -332,13 +332,13 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
     let model_str = if sb.model.is_empty() {
         String::new()
     } else {
-        format!(" ·  {} ", sb.model)
+        format!("· {} ", sb.model)
     };
 
     let token_str = if sb.prompt_tokens > 0 && sb.context_window > 0 {
         let pct_used = (sb.prompt_tokens as f64 / sb.context_window.max(1) as f64 * 100.0) as u32;
         format!(
-            " ·  {} / {} ({}%) ",
+            "· {} / {} ({}%) ",
             sb.prompt_tokens, sb.context_window, pct_used
         )
     } else {
@@ -350,11 +350,11 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
         String::new()
     } else if sb.approval_hint.starts_with('⚡') {
         format!(
-            " ·  \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ",
+            "· \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ",
             sb.approval_hint
         )
     } else {
-        format!(" ·  \x1b[2m{}\x1b[0m ", sb.approval_hint)
+        format!("· \x1b[2m{}\x1b[0m ", sb.approval_hint)
     };
 
     // Try progressively shorter combinations until one fits.
