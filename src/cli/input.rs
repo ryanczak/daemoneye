@@ -41,7 +41,7 @@ impl AsyncStdin {
         // stdin/stdout/stderr (fd 0/1/2) in blocking mode.
         let fd = unsafe {
             libc::open(
-                b"/dev/tty\0".as_ptr() as *const libc::c_char,
+                c"/dev/tty".as_ptr(),
                 libc::O_RDONLY | libc::O_NONBLOCK,
             )
         };

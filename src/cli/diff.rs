@@ -57,13 +57,13 @@ fn render_unified(name: &str, old: &str, new: &str) -> Vec<String> {
 
     for group in diff.grouped_ops(CONTEXT_LINES) {
         // Hunk header
-        let old_range = group.first().and_then(|op| {
+        let old_range = group.first().map(|op| {
             let r = op.old_range();
-            Some((r.start + 1, r.len()))
+            (r.start + 1, r.len())
         });
-        let new_range = group.last().and_then(|op| {
+        let new_range = group.last().map(|op| {
             let r = op.new_range();
-            Some((r.start + 1, r.len()))
+            (r.start + 1, r.len())
         });
 
         // Compute the full range of the group for old and new
