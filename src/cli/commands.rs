@@ -2269,7 +2269,9 @@ async fn ask_with_session(
                     "  \x1b[33m⚙\x1b[0m \x1b[1mAI wants to {}:\x1b[0m \x1b[96m{}\x1b[0m",
                     op_label, path
                 );
-                if operation == "copy" && let Some(ref dst) = dest_path {
+                if operation == "copy"
+                    && let Some(ref dst) = dest_path
+                {
                     println!("  \x1b[2m→ destination: {}\x1b[0m", dst);
                 }
                 println!();
