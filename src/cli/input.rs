@@ -39,12 +39,7 @@ impl AsyncStdin {
         // Open the controlling terminal as a fresh, independent file description
         // with O_NONBLOCK.  This leaves the file description shared by
         // stdin/stdout/stderr (fd 0/1/2) in blocking mode.
-        let fd = unsafe {
-            libc::open(
-                c"/dev/tty".as_ptr(),
-                libc::O_RDONLY | libc::O_NONBLOCK,
-            )
-        };
+        let fd = unsafe { libc::open(c"/dev/tty".as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK) };
         if fd < 0 {
             return Err(anyhow::anyhow!(
                 "open /dev/tty: {}",
