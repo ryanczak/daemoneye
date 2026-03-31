@@ -61,7 +61,14 @@ enum Commands {
         session: Option<String>,
     },
     /// Ask the AI agent a question
-    Ask { query: String },
+    Ask {
+        query: String,
+        /// Output only the agent's response text and exit, with no decorations,
+        /// spinner, or interactive prompts. Tool calls are auto-denied. Useful
+        /// for scripting and piping.
+        #[arg(long)]
+        min_output: bool,
+    },
     /// Check whether the daemon is running
     Ping,
     /// Show daemon status (uptime, sessions, provider, circuit breaker)
@@ -264,8 +271,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Chat { session } => {
             cli::run_chat(session).await?;
         }
-        Commands::Ask { query } => {
-            cli::run_ask(query).await?;
+        Commands::Ask { query, min_output } => {
+            cli::run_ask(query, min_output).await?;
         }
         Commands::Ping => {
             cli::run_ping().await?;

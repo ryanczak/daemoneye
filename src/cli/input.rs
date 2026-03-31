@@ -2,39 +2,64 @@ use crate::cli::render::*;
 
 // ── Async stdin wrapper ───────────────────────────────────────────────────────
 
-/// Non-owning handle to fd 0 used with `AsyncFd`.  Does not close the fd on
-/// drop — closing stdin would break the process.
-struct StdinRawFd;
+/// Owned file descriptor for /dev/tty opened with O_NONBLOCK.
+///
+/// We open a *fresh* file description for the controlling terminal rather than
+/// setting O_NONBLOCK on STDIN_FILENO (fd 0).  fcntl(F_SETFL) operates on the
+/// open file description, which stdin/stdout/stderr typically share (they are
+/// dup'd from the same terminal fd).  Setting O_NONBLOCK on fd 0 therefore
+/// propagates to fd 1 (stdout), causing write() to return EAGAIN when the
+/// terminal output buffer is full — which Rust's print! macro converts into a
+/// panic.  By using an independent /dev/tty fd we avoid touching the shared
+/// file description at all.
+struct TtyFd(libc::c_int);
 
-impl std::os::unix::io::AsRawFd for StdinRawFd {
-    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
-        libc::STDIN_FILENO
+impl Drop for TtyFd {
+    fn drop(&mut self) {
+        unsafe { libc::close(self.0); }
     }
 }
 
-/// Single async reader over stdin (fd 0), shared by the main input loop and
-/// tool-call approval prompts.  Supports raw-mode byte-at-a-time reading
-/// (for the interactive line editor) and cooked-mode line reading (for simple
-/// y/n prompts) through the same `AsyncFd` registration.
-pub struct AsyncStdin(tokio::io::unix::AsyncFd<StdinRawFd>);
+impl std::os::unix::io::AsRawFd for TtyFd {
+    fn as_raw_fd(&self) -> std::os::unix::io::RawFd {
+        self.0
+    }
+}
+
+/// Single async reader over the controlling terminal, shared by the main input
+/// loop and tool-call approval prompts.  Supports raw-mode byte-at-a-time
+/// reading (for the interactive line editor) and cooked-mode line reading (for
+/// simple y/n prompts) through the same `AsyncFd` registration.
+pub struct AsyncStdin(tokio::io::unix::AsyncFd<TtyFd>);
 
 impl AsyncStdin {
     pub fn new() -> anyhow::Result<Self> {
-        // AsyncFd requires the fd to be in O_NONBLOCK mode.
-        unsafe {
-            let flags = libc::fcntl(libc::STDIN_FILENO, libc::F_GETFL, 0);
-            libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK);
+        // Open the controlling terminal as a fresh, independent file description
+        // with O_NONBLOCK.  This leaves the file description shared by
+        // stdin/stdout/stderr (fd 0/1/2) in blocking mode.
+        let fd = unsafe {
+            libc::open(
+                b"/dev/tty\0".as_ptr() as *const libc::c_char,
+                libc::O_RDONLY | libc::O_NONBLOCK,
+            )
+        };
+        if fd < 0 {
+            return Err(anyhow::anyhow!(
+                "open /dev/tty: {}",
+                std::io::Error::last_os_error()
+            ));
         }
-        Ok(Self(tokio::io::unix::AsyncFd::new(StdinRawFd)?))
+        Ok(Self(tokio::io::unix::AsyncFd::new(TtyFd(fd))?))
     }
 
-    /// Read one raw byte from stdin asynchronously.
+    /// Read one raw byte from the terminal asynchronously.
     pub async fn read_byte(&self) -> Option<u8> {
         let mut buf = [0u8; 1];
+        let fd = self.0.get_ref().0;
         loop {
             let mut guard = self.0.readable().await.ok()?;
             let n =
-                unsafe { libc::read(libc::STDIN_FILENO, buf.as_mut_ptr() as *mut libc::c_void, 1) };
+                unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, 1) };
             if n == 1 {
                 return Some(buf[0]); // guard dropped → readiness retained for next byte
             } else if n == 0 {

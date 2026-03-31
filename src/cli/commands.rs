@@ -328,7 +328,11 @@ pub async fn run_ping() -> Result<()> {
     Ok(())
 }
 
-pub async fn run_ask(query: String) -> Result<()> {
+pub async fn run_ask(query: String, min_output: bool) -> Result<()> {
+    if min_output {
+        return run_ask_min_output(query).await;
+    }
+
     let stdin = AsyncStdin::new()?;
     let mut approval = SessionApproval::default(); // never persists; single-shot has no session
 
@@ -362,6 +366,110 @@ pub async fn run_ask(query: String) -> Result<()> {
     .await;
     crate::cli::input::restore_termios(old);
     result
+}
+
+/// Minimal ask: sends the query, prints only the agent's response tokens to stdout,
+/// and auto-denies any tool calls or interactive prompts. No spinner, no decorations.
+/// Intended for scripting and piping.
+async fn run_ask_min_output(query: String) -> Result<()> {
+    use std::io::Write;
+    use std::time::Duration;
+
+    let tmux_session = crate::tmux::current_session_name();
+    let tmux_pane = std::env::var("TMUX_PANE").ok();
+    let chat_pane = tmux_pane.clone();
+
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    let mut rx = BufReader::new(rx);
+
+    send_request(
+        &mut tx,
+        Request::Ask {
+            query,
+            tmux_pane,
+            session_id: None,
+            chat_pane,
+            prompt: None,
+            chat_width: None,
+            tmux_session: tmux_session.map(|s| s.to_string()),
+            target_pane: None,
+            model: None,
+        },
+    )
+    .await?;
+
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(120), recv(&mut rx))
+            .await
+            .map_err(|_| anyhow::anyhow!("Daemon stopped responding (120 s timeout)"))?
+            .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?;
+
+        match msg {
+            Response::KeepAlive => continue,
+            Response::Ok => {
+                println!();
+                break;
+            }
+            Response::Error(e) => {
+                eprintln!("{}", e);
+                anyhow::bail!("{}", e);
+            }
+            Response::Token(t) => {
+                print!("{}", t);
+                std::io::stdout().flush()?;
+            }
+            // Auto-deny tool calls — daemon will inform the AI and it will respond in text.
+            Response::ToolCallPrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::ToolCallResponse {
+                        id,
+                        approved: false,
+                        user_message: None,
+                    },
+                )
+                .await?;
+            }
+            // Auto-deny all other interactive prompts.
+            Response::CredentialPrompt { id, .. } => {
+                send_request(&mut tx, Request::CredentialResponse { id, credential: String::new() }).await?;
+            }
+            Response::PaneSelectPrompt { id, panes } => {
+                let pane_id = panes.into_iter().next().map(|p| p.id).unwrap_or_default();
+                send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
+            }
+            Response::ScriptDeletePrompt { id, .. } => {
+                send_request(&mut tx, Request::ScriptDeleteResponse { id, approved: false }).await?;
+            }
+            Response::ScriptWritePrompt { id, .. } => {
+                send_request(&mut tx, Request::ScriptWriteResponse { id, approved: false }).await?;
+            }
+            Response::ScheduleWritePrompt { id, .. } => {
+                send_request(&mut tx, Request::ScheduleWriteResponse { id, approved: false }).await?;
+            }
+            Response::RunbookWritePrompt { id, .. } => {
+                send_request(&mut tx, Request::RunbookWriteResponse { id, approved: false }).await?;
+            }
+            Response::RunbookDeletePrompt { id, .. } => {
+                send_request(&mut tx, Request::RunbookDeleteResponse { id, approved: false }).await?;
+            }
+            // Informational responses — silently skip.
+            Response::SessionInfo { .. }
+            | Response::UsageUpdate { .. }
+            | Response::SystemMsg(_)
+            | Response::ToolResult(_)
+            | Response::ScheduleList { .. }
+            | Response::ScriptList { .. }
+            | Response::RunbookList { .. }
+            | Response::MemoryList { .. }
+            | Response::ModelChanged { .. }
+            | Response::ModelList { .. }
+            | Response::DaemonStatus { .. } => {}
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn run_chat(session_override: Option<String>) -> Result<()> {
