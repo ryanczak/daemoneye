@@ -32,7 +32,7 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **Pane Map:** Every AI turn includes a `[PANE MAP]` summary (`idx:0=%3* bash | idx:1=%7 vim`) mapping window-relative indices to pane IDs, with the active pane marked `*`. The AI always refers to panes by index first (`pane 1 in 'main'`) so approval prompts are human-readable. If a pane disappears before a command is approved, the stale-pane guard returns the current pane map automatically so the AI can recover without manual intervention.
 
-**`/auto-approval`** — type this at the chat prompt to inspect which approvals are currently active. Use `/auto-approval off` to instantly revoke all session approvals and return to explicit confirmation for everything.
+**`/approvals`** — type this at the chat prompt to inspect which approvals are currently active. Use `/approvals off` to instantly revoke all session approvals and return to explicit confirmation for everything.
 
 ### 📡 Webhook Alert Ingestion
 

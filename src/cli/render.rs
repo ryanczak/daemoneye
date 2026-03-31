@@ -345,7 +345,7 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
         String::new()
     };
 
-    // Active auto-approve: bold amber.  Inactive ("auto-approve: off"): dim.
+    // Active approvals: bold amber.  Inactive ("approvals: off"): dim.
     let hint_str = if sb.approval_hint.is_empty() {
         String::new()
     } else if sb.approval_hint.starts_with('⚡') {

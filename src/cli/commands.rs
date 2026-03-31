@@ -53,9 +53,9 @@ impl SessionApproval {
             active.push(format!("files({})", names.join(", ")));
         }
         if active.is_empty() {
-            "auto-approve: off".to_string()
+            "approvals: off".to_string()
         } else {
-            format!("⚡ auto-approve: {}  ·  Ctrl+C to stop", active.join(", "))
+            format!("⚡ approvals: {}  ·  Ctrl+C to stop", active.join(", "))
         }
     }
 }
@@ -767,7 +767,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             center(38)
         );
         println!(
-            "{}\x1b[96m/auto-approval [off]\x1b[0m to manage approvals",
+            "{}\x1b[96m/approvals [off]\x1b[0m to manage approvals",
             center(40)
         );
         println!();
@@ -1138,9 +1138,9 @@ async fn run_chat_inner_raw(
             }
             continue;
         }
-        if query == "/auto-approval" {
+        if query == "/approvals" {
             println!();
-            println!("  \x1b[1mAuto-approval status\x1b[0m");
+            println!("  \x1b[1mApproval status\x1b[0m");
             println!();
             let cmd_regular = if approval.regular {
                 "\x1b[32m⚡ session\x1b[0m"
@@ -1181,11 +1181,11 @@ async fn run_chat_inner_raw(
                 }
             }
             println!();
-            println!("  Use \x1b[96m/auto-approval off\x1b[0m to reset all approvals.");
+            println!("  Use \x1b[96m/approvals off\x1b[0m to reset all approvals.");
             println!();
             continue;
         }
-        if query == "/auto-approval off" {
+        if query == "/approvals off" {
             *approval = SessionApproval::default();
             let label = " all approvals reset ";
             let dashes = chat_width.min(72).saturating_sub(visual_len(label) + 1);
