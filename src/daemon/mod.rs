@@ -767,11 +767,20 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }
     }
 
-    // 3. Cleanup all active sessions: kill background windows and stop pipe logs.
+    // 3. Stop pipe-pane logs but leave background windows alive.
+    //    Killing daemon-managed (de-*) windows during shutdown can deplete the
+    //    session's window count and cause tmux to destroy the session, losing any
+    //    user-created panes and windows.  Windows are left intact so the session
+    //    survives; orphaned de-* windows from this run are cleaned up automatically
+    //    the next time the session's 30-minute GC fires or on daemon restart.
     {
-        let mut store = sessions.lock().unwrap_or_log();
-        for (_, entry) in store.iter_mut() {
-            entry.cleanup_bg_windows();
+        let store = sessions.lock().unwrap_or_log();
+        for (_, entry) in store.iter() {
+            if let Some(ref pane_id) = entry.pipe_source_pane
+                && !pane_id.is_empty()
+            {
+                crate::tmux::stop_pipe_pane(pane_id);
+            }
         }
     }
 

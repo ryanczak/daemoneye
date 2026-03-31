@@ -328,9 +328,9 @@ pub async fn run_ping() -> Result<()> {
     Ok(())
 }
 
-pub async fn run_ask(query: String, min_output: bool) -> Result<()> {
-    if min_output {
-        return run_ask_min_output(query).await;
+pub async fn run_ask(query: String, raw: bool) -> Result<()> {
+    if raw {
+        return run_ask_raw(query).await;
     }
 
     let stdin = AsyncStdin::new()?;
@@ -371,7 +371,7 @@ pub async fn run_ask(query: String, min_output: bool) -> Result<()> {
 /// Minimal ask: sends the query, prints only the agent's response tokens to stdout,
 /// and auto-denies any tool calls or interactive prompts. No spinner, no decorations.
 /// Intended for scripting and piping.
-async fn run_ask_min_output(query: String) -> Result<()> {
+async fn run_ask_raw(query: String) -> Result<()> {
     use std::io::Write;
     use std::time::Duration;
 

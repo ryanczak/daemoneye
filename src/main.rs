@@ -67,7 +67,7 @@ enum Commands {
         /// spinner, or interactive prompts. Tool calls are auto-denied. Useful
         /// for scripting and piping.
         #[arg(long)]
-        min_output: bool,
+        raw: bool,
     },
     /// Check whether the daemon is running
     Ping,
@@ -271,8 +271,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::Chat { session } => {
             cli::run_chat(session).await?;
         }
-        Commands::Ask { query, min_output } => {
-            cli::run_ask(query, min_output).await?;
+        Commands::Ask { query, raw } => {
+            cli::run_ask(query, raw).await?;
         }
         Commands::Ping => {
             cli::run_ping().await?;
