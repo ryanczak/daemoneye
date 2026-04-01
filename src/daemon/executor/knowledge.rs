@@ -6,7 +6,7 @@ use crate::daemon::session::{
 };
 use crate::daemon::utils::send_response_split;
 use crate::daemon::utils::{log_event, normalize_output};
-use crate::ipc::{MemoryListItem, Request, Response, RunbookListItem, ScriptListItem};
+use crate::ipc::{Request, Response, RunbookListItem, ScriptListItem};
 use crate::scheduler::ScheduleStore;
 use crate::scripts;
 use crate::util::UnpoisonExt;
@@ -469,7 +469,7 @@ pub(super) fn read_memory(key: &str, category: &str) -> String {
 
 pub(super) async fn list_memories<W>(
     category: Option<&str>,
-    tx: &mut W,
+    _tx: &mut W,
 ) -> anyhow::Result<ToolCallOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
@@ -488,14 +488,6 @@ where
     };
     let infos = crate::memory::list_memories_with_tags(cat).unwrap_or_default();
     let count = infos.len();
-    let items: Vec<MemoryListItem> = infos
-        .iter()
-        .map(|info| MemoryListItem {
-            category: info.category.clone(),
-            key: info.key.clone(),
-        })
-        .collect();
-    let _ = send_response_split(tx, Response::MemoryList { entries: items }).await;
     if count == 0 {
         Ok(ToolCallOutcome::Result(
             "No memory entries found.".to_string(),
@@ -511,7 +503,11 @@ where
                 };
                 // Append the date portion of updated (or created as fallback) when present.
                 let ts_opt = info.updated.as_ref().or(info.created.as_ref());
-                let label = if info.updated.is_some() { "updated" } else { "created" };
+                let label = if info.updated.is_some() {
+                    "updated"
+                } else {
+                    "created"
+                };
                 if let Some(ts) = ts_opt {
                     let date = ts.split('T').next().unwrap_or(ts.as_str());
                     if !date.is_empty() {

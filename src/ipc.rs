@@ -67,13 +67,6 @@ pub struct RunbookListItem {
     pub ghost_config: GhostConfig,
 }
 
-/// An entry in the `MemoryList` response.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MemoryListItem {
-    pub category: String,
-    pub key: String,
-}
-
 /// Messages sent from the CLI client to the daemon.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -354,8 +347,7 @@ pub enum Response {
         #[serde(default)]
         dest_path: Option<String>,
     },
-    /// The current list of memory entries.
-    MemoryList { entries: Vec<MemoryListItem> },
+
     /// Sent after each AI turn completes, carrying the prompt token count from
     /// that turn. The client uses this to update the context-budget display.
     UsageUpdate { prompt_tokens: u32 },

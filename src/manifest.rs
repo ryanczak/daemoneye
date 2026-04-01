@@ -105,11 +105,7 @@ pub fn build_knowledge_manifest() -> String {
     }
 
     if !e.knowledge.is_empty() {
-        let items: Vec<String> = e
-            .knowledge
-            .iter()
-            .map(memory_manifest_item)
-            .collect();
+        let items: Vec<String> = e.knowledge.iter().map(memory_manifest_item).collect();
         let line = build_section_line(
             &format!("Knowledge memories ({}): ", e.knowledge.len()),
             &items,
@@ -120,11 +116,7 @@ pub fn build_knowledge_manifest() -> String {
     }
 
     if !e.incidents.is_empty() {
-        let items: Vec<String> = e
-            .incidents
-            .iter()
-            .map(memory_manifest_item)
-            .collect();
+        let items: Vec<String> = e.incidents.iter().map(memory_manifest_item).collect();
         let line = build_section_line(
             &format!("Incidents ({}): ", e.incidents.len()),
             &items,

@@ -544,7 +544,6 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::ScheduleList { .. }
             | Response::ScriptList { .. }
             | Response::RunbookList { .. }
-            | Response::MemoryList { .. }
             | Response::ModelChanged { .. }
             | Response::ModelList { .. }
             | Response::DaemonStatus { .. } => {}
@@ -2486,44 +2485,7 @@ async fn ask_with_session(
                 println!();
                 md.reset();
             }
-            Response::MemoryList { entries } => {
-                if !response_started {
-                    print!("\r\x1b[K");
-                    response_started = true;
-                }
-                md.flush();
-                println!();
-                if entries.is_empty() {
-                    println!("  No memory entries in ~/.daemoneye/memory/");
-                } else {
-                    println!("  \x1b[1mMemory Entries\x1b[0m  (~/.daemoneye/memory/)");
-                    println!();
-                    let cat_w = entries
-                        .iter()
-                        .map(|e| e.category.len())
-                        .max()
-                        .unwrap_or(8)
-                        .max(8);
-                    let key_w = entries
-                        .iter()
-                        .map(|e| e.key.len())
-                        .max()
-                        .unwrap_or(3)
-                        .max(3);
-                    println!("  {:<cat_w$}  Key", "Category", cat_w = cat_w);
-                    println!("  {}  {}", "─".repeat(cat_w), "─".repeat(key_w));
-                    for e in &entries {
-                        println!(
-                            "  \x1b[2m{:<cat_w$}\x1b[0m  \x1b[96m{}\x1b[0m",
-                            e.category,
-                            e.key,
-                            cat_w = cat_w
-                        );
-                    }
-                }
-                println!();
-                md.reset();
-            }
+
             Response::DaemonStatus { .. } => {
                 // Not expected in the AI streaming loop; ignore.
             }
