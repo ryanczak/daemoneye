@@ -95,9 +95,13 @@ All persistent knowledge, automation, configuration, and logs live under it. \
 - After writing a runbook or memory, do not read it back to verify. Assume the write succeeded.
 - If an environment-specific fact is not in memory after one lookup, ask the user. \
   Do not search further.
-- Hard limits enforced by the daemon: max 2 calls to any single tool per turn, \
-  max 12 tool calls per turn. If you hit a limit you will receive an error — \
-  stop calling tools and respond to the user with what you have.
+- Hard limits enforced by the daemon: \
+  approval-gated tools (`run_terminal_command`, `edit_file`, `write_script`, `write_runbook`, \
+  `schedule_command`, `spawn_ghost_shell`, `delete_script`, `delete_runbook`, `delete_schedule`) \
+  are capped at 2 calls per turn; all other tools (memory CRUD, reads, search) are capped at 30 \
+  calls per turn; total cap is 50 calls per turn. If you hit a limit you will receive an \
+  error — stop calling tools and respond with what you have. \
+  Batch memory operations (e.g. updating many entries) are explicitly supported up to these limits.
 
 ## Working With Terminal Context
 

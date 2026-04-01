@@ -1367,8 +1367,33 @@ pub async fn handle_client(
 
                     // Per-turn tool-call loop guard.
                     // Prevents the AI from looping endlessly through the same tools.
-                    const MAX_SAME_TOOL: u32 = 2;
-                    const MAX_TOTAL_CALLS: u32 = 16;
+                    //
+                    // Two-tier per-tool limit:
+                    //   - Approval-gated tools (run_terminal_command, edit_file, write_script,
+                    //     write_runbook, schedule_command, spawn_ghost_shell, delete_script,
+                    //     delete_runbook, delete_schedule): cap at 2 — each requires user input,
+                    //     so repeating many times in one turn is almost certainly a mistake.
+                    //   - No-approval tools (memory CRUD, reads, search): cap at 30 — legitimate
+                    //     batch operations like updating many memories need room to work.
+                    const MAX_SAME_TOOL_APPROVAL: u32 = 2;
+                    const MAX_SAME_TOOL_BATCH: u32 = 30;
+                    const MAX_TOTAL_CALLS: u32 = 50;
+
+                    fn per_tool_limit(tool_name: &str) -> u32 {
+                        match tool_name {
+                            "run_terminal_command"
+                            | "edit_file"
+                            | "write_script"
+                            | "write_runbook"
+                            | "schedule_command"
+                            | "spawn_ghost_shell"
+                            | "delete_script"
+                            | "delete_runbook"
+                            | "delete_schedule" => MAX_SAME_TOOL_APPROVAL,
+                            _ => MAX_SAME_TOOL_BATCH,
+                        }
+                    }
+
                     let mut tool_call_counts: std::collections::HashMap<&'static str, u32> =
                         std::collections::HashMap::new();
 
@@ -1395,19 +1420,20 @@ pub async fn handle_client(
                             continue;
                         }
 
-                        // Per-tool cap: block repeated calls to the same tool.
+                        // Per-tool cap: block repeated calls to the same tool beyond its limit.
                         let tool_name = call.tool_name();
+                        let limit = per_tool_limit(tool_name);
                         let count = tool_call_counts.entry(tool_name).or_insert(0);
                         *count += 1;
-                        if *count > MAX_SAME_TOOL {
+                        if *count > limit {
                             log::warn!(
-                                "Per-tool limit for `{tool_name}` reached ({MAX_SAME_TOOL}); blocking call"
+                                "Per-tool limit for `{tool_name}` reached ({limit}); blocking call"
                             );
                             tool_results.push(ToolResult {
                                 tool_call_id: call_id,
                                 tool_name: tool_name.to_string(),
                                 content: format!(
-                                    "Error: `{tool_name}` has been called {MAX_SAME_TOOL} times \
+                                    "Error: `{tool_name}` has been called {limit} times \
                                      this turn. This call was not executed. Proceed with the \
                                      information already gathered and do not call this tool again."
                                 ),
