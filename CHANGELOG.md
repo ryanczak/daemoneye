@@ -2,6 +2,19 @@
 
 All notable changes to DaemonEye are documented here.
 
+## [0.9.1]
+
+### Added
+- **Structured memory frontmatter** — memory entries now support `summary`, `relates_to`, `created`, `updated`, and `expires` fields alongside the existing `tags` field; `build_frontmatter()` serialises all fields consistently
+- **`update_memory` AI tool** — partial field updates without a full read+rewrite cycle; only the supplied fields are changed, all others are preserved; `updated` timestamp is set automatically; `created` timestamp is set once on first write and never overwritten
+- **`list_memories` output** now shows `[knowledge] key — summary` when a summary is available
+- **`## Available Knowledge` manifest** entries now rendered as `key — summary [tags]` / `key — summary` / `key [tags]` / `key` depending on available metadata
+- **Contextual auto-search** (`auto_search_context`) now matches on summary words (≥4 chars) in addition to names and tags, and follows `relates_to` links from matched knowledge memories to include related entries up to the 3-item cap — no direct keyword hit required for related entries to surface
+- **Related knowledge hints** (`related_knowledge_hints`) now match on memory summary words in addition to names and tags
+- SRE prompt updated with **Memory Frontmatter** guidance: tag synonym examples (`[postgres, postgresql, pg, database]`), summary writing conventions, `relates_to` cross-linking, `expires` for time-bounded facts, and `update_memory` call patterns
+
+---
+
 ## [0.9.0]
 
 ### Added
