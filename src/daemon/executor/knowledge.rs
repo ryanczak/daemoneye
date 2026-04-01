@@ -504,11 +504,21 @@ where
         let lines: Vec<String> = infos
             .iter()
             .map(|info| {
-                if let Some(ref s) = info.summary {
-                    format!("[{}] {} — {}", info.category, info.key, s)
-                } else {
-                    format!("[{}] {}", info.category, info.key)
+                // Build: [category] key — summary (updated YYYY-MM-DD)
+                let mut line = match &info.summary {
+                    Some(s) => format!("[{}] {} — {}", info.category, info.key, s),
+                    None => format!("[{}] {}", info.category, info.key),
+                };
+                // Append the date portion of updated (or created as fallback) when present.
+                let ts_opt = info.updated.as_ref().or(info.created.as_ref());
+                let label = if info.updated.is_some() { "updated" } else { "created" };
+                if let Some(ts) = ts_opt {
+                    let date = ts.split('T').next().unwrap_or(ts.as_str());
+                    if !date.is_empty() {
+                        line.push_str(&format!(" ({} {})", label, date));
+                    }
                 }
+                line
             })
             .collect();
         Ok(ToolCallOutcome::Result(format!(

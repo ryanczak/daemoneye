@@ -49,6 +49,18 @@ pub struct MemoryInfo {
     pub expires: Option<String>,
 }
 
+impl MemoryInfo {
+    /// Returns true if `expires` is set and the date (YYYY-MM-DD) is strictly before today.
+    pub fn is_expired(&self) -> bool {
+        let Some(ref exp) = self.expires else {
+            return false;
+        };
+        // Compare lexicographically — ISO date strings sort correctly as strings.
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        exp.trim() < today.as_str()
+    }
+}
+
 /// Parsed frontmatter fields from a memory file.
 struct ParsedFrontmatter {
     tags: Vec<String>,
@@ -158,10 +170,10 @@ pub fn build_frontmatter(
             .join(", ");
         lines.push(format!("tags: [{}]", items));
     }
-    if let Some(s) = summary {
-        if !s.is_empty() {
-            lines.push(format!("summary: \"{}\"", s.replace('"', "'")));
-        }
+    if let Some(s) = summary
+        && !s.is_empty()
+    {
+        lines.push(format!("summary: \"{}\"", s.replace('"', "'")));
     }
     if !relates_to.is_empty() {
         let items = relates_to
@@ -171,20 +183,20 @@ pub fn build_frontmatter(
             .join(", ");
         lines.push(format!("relates_to: [{}]", items));
     }
-    if let Some(s) = created {
-        if !s.is_empty() {
-            lines.push(format!("created: \"{}\"", s));
-        }
+    if let Some(s) = created
+        && !s.is_empty()
+    {
+        lines.push(format!("created: \"{}\"", s));
     }
-    if let Some(s) = updated {
-        if !s.is_empty() {
-            lines.push(format!("updated: \"{}\"", s));
-        }
+    if let Some(s) = updated
+        && !s.is_empty()
+    {
+        lines.push(format!("updated: \"{}\"", s));
     }
-    if let Some(s) = expires {
-        if !s.is_empty() {
-            lines.push(format!("expires: \"{}\"", s));
-        }
+    if let Some(s) = expires
+        && !s.is_empty()
+    {
+        lines.push(format!("expires: \"{}\"", s));
     }
     if lines.is_empty() {
         String::new()
@@ -412,7 +424,9 @@ pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<M
                     expires: None,
                 }
             };
-            results.push(info);
+            if !info.is_expired() {
+                results.push(info);
+            }
         }
     }
     Ok(results)

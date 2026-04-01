@@ -108,7 +108,7 @@ pub fn build_knowledge_manifest() -> String {
         let items: Vec<String> = e
             .knowledge
             .iter()
-            .map(|m| memory_manifest_item(m))
+            .map(memory_manifest_item)
             .collect();
         let line = build_section_line(
             &format!("Knowledge memories ({}): ", e.knowledge.len()),
@@ -123,7 +123,7 @@ pub fn build_knowledge_manifest() -> String {
         let items: Vec<String> = e
             .incidents
             .iter()
-            .map(|m| memory_manifest_item(m))
+            .map(memory_manifest_item)
             .collect();
         let line = build_section_line(
             &format!("Incidents ({}): ", e.incidents.len()),
