@@ -378,6 +378,52 @@ pub(super) fn add_memory(
     }
 }
 
+pub(super) fn update_memory(
+    key: &str,
+    category: &str,
+    body: Option<&str>,
+    append: bool,
+    tags: Option<&[String]>,
+    summary: Option<&str>,
+    relates_to: Option<&[String]>,
+    expires: Option<&str>,
+    session_id: Option<&str>,
+) -> String {
+    let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
+        return format!(
+            "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
+            category
+        );
+    };
+    match crate::memory::update_memory(key, cat, body, append, tags, summary, relates_to, expires) {
+        Ok(()) => {
+            log_event(
+                "memory_write",
+                serde_json::json!({ "session": session_id, "op": "update", "category": category, "key": key }),
+            );
+            let mut updated_fields: Vec<&str> = Vec::new();
+            if body.is_some() {
+                updated_fields.push(if append { "body (appended)" } else { "body" });
+            }
+            if tags.is_some() { updated_fields.push("tags"); }
+            if summary.is_some() { updated_fields.push("summary"); }
+            if relates_to.is_some() { updated_fields.push("relates_to"); }
+            if expires.is_some() { updated_fields.push("expires"); }
+            if updated_fields.is_empty() {
+                format!("Memory '{}' [{}] updated (timestamp refreshed).", key, category)
+            } else {
+                format!(
+                    "Memory '{}' [{}] updated: {}.",
+                    key,
+                    category,
+                    updated_fields.join(", ")
+                )
+            }
+        }
+        Err(e) => format!("Error updating memory '{}': {}", key, e),
+    }
+}
+
 pub(super) fn delete_memory(key: &str, category: &str, session_id: Option<&str>) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
         return format!(
@@ -429,13 +475,13 @@ where
             }
         },
     };
-    let entries = crate::memory::list_memories(cat).unwrap_or_default();
-    let count = entries.len();
-    let items: Vec<MemoryListItem> = entries
+    let infos = crate::memory::list_memories_with_tags(cat).unwrap_or_default();
+    let count = infos.len();
+    let items: Vec<MemoryListItem> = infos
         .iter()
-        .map(|(c, k)| MemoryListItem {
-            category: c.clone(),
-            key: k.clone(),
+        .map(|info| MemoryListItem {
+            category: info.category.clone(),
+            key: info.key.clone(),
         })
         .collect();
     let _ = send_response_split(tx, Response::MemoryList { entries: items }).await;
@@ -444,9 +490,15 @@ where
             "No memory entries found.".to_string(),
         ))
     } else {
-        let lines: Vec<String> = entries
+        let lines: Vec<String> = infos
             .iter()
-            .map(|(c, k)| format!("[{}] {}", c, k))
+            .map(|info| {
+                if let Some(ref s) = info.summary {
+                    format!("[{}] {} — {}", info.category, info.key, s)
+                } else {
+                    format!("[{}] {}", info.category, info.key)
+                }
+            })
             .collect();
         Ok(ToolCallOutcome::Result(format!(
             "{} memory entries:\n{}",

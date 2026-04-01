@@ -1160,6 +1160,31 @@ pub async fn handle_client(
                         category,
                     });
                 }
+                AiEvent::UpdateMemory {
+                    id,
+                    key,
+                    category,
+                    body,
+                    append,
+                    tags,
+                    summary,
+                    relates_to,
+                    expires,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::UpdateMemory {
+                        id,
+                        thought_signature,
+                        key,
+                        category,
+                        body,
+                        append,
+                        tags,
+                        summary,
+                        relates_to,
+                        expires,
+                    });
+                }
                 AiEvent::DeleteMemory {
                     id,
                     key,

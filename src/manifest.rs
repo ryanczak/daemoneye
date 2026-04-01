@@ -108,13 +108,7 @@ pub fn build_knowledge_manifest() -> String {
         let items: Vec<String> = e
             .knowledge
             .iter()
-            .map(|m| {
-                if m.tags.is_empty() {
-                    m.key.clone()
-                } else {
-                    format!("{} [{}]", m.key, m.tags.join(", "))
-                }
-            })
+            .map(|m| memory_manifest_item(m))
             .collect();
         let line = build_section_line(
             &format!("Knowledge memories ({}): ", e.knowledge.len()),
@@ -129,13 +123,7 @@ pub fn build_knowledge_manifest() -> String {
         let items: Vec<String> = e
             .incidents
             .iter()
-            .map(|m| {
-                if m.tags.is_empty() {
-                    m.key.clone()
-                } else {
-                    format!("{} [{}]", m.key, m.tags.join(", "))
-                }
-            })
+            .map(|m| memory_manifest_item(m))
             .collect();
         let line = build_section_line(
             &format!("Incidents ({}): ", e.incidents.len()),
@@ -184,13 +172,25 @@ fn build_section_line(prefix: &str, items: &[String], budget: usize) -> String {
     result
 }
 
+/// Format a memory entry for the knowledge manifest.
+/// Format: `key — summary [tag1, tag2]` / `key — summary` / `key [tag1, tag2]` / `key`
+fn memory_manifest_item(m: &crate::memory::MemoryInfo) -> String {
+    match (&m.summary, m.tags.is_empty()) {
+        (Some(s), false) => format!("{} — {} [{}]", m.key, s, m.tags.join(", ")),
+        (Some(s), true) => format!("{} — {}", m.key, s),
+        (None, false) => format!("{} [{}]", m.key, m.tags.join(", ")),
+        (None, true) => m.key.clone(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4: Contextual auto-search
 // ---------------------------------------------------------------------------
 
 /// Scan user query + pane content for terms matching stored knowledge.
-/// Loads up to 3 matching items (runbook > tag > memory key > script name),
-/// applies sensitive-data masking, caps at 4096 bytes.
+/// Loads up to 3 matching items (runbook > tag > memory key/summary > script name),
+/// then follows `relates_to` links on matched memories to pull in related entries.
+/// Applies sensitive-data masking, caps at 4096 bytes.
 /// Returns empty string when no matches.
 pub fn auto_search_context(query: &str, pane_content: &str) -> String {
     const MAX_ITEMS: usize = 3;
@@ -203,7 +203,7 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
     let e = load_all_entries();
 
     // Collect (priority, kind, key, optional_category)
-    // Priority: 0=runbook name, 1=runbook tag, 2=memory key, 3=script name
+    // Priority: 0=runbook name, 1=runbook tag, 2=memory key/summary/tag, 3=script name
     let mut matches: Vec<(u8, &'static str, String, Option<String>)> = Vec::new();
 
     for rb in &e.runbooks {
@@ -230,34 +230,34 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
     for mem in &e.knowledge {
         let key_lc = mem.key.to_lowercase();
         if corpus.contains(&key_lc) {
-            matches.push((
-                2,
-                "knowledge",
-                mem.key.clone(),
-                Some("knowledge".to_string()),
-            ));
+            matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
             continue;
         }
         // Also match on significant keywords from the key
         let key_keywords: Vec<&str> = key_lc.split(['-', '_']).filter(|w| w.len() >= 4).collect();
         if key_keywords.iter().any(|kw| corpus.contains(*kw)) {
-            matches.push((
-                2,
-                "knowledge",
-                mem.key.clone(),
-                Some("knowledge".to_string()),
-            ));
+            matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
             continue;
+        }
+        // Match on summary text
+        if let Some(ref s) = mem.summary {
+            let summary_lc = s.to_lowercase();
+            if !summary_lc.is_empty() && corpus.contains(&summary_lc) {
+                matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+                continue;
+            }
+            // Also match on significant words from the summary
+            let summary_words: Vec<&str> =
+                summary_lc.split_whitespace().filter(|w| w.len() >= 4).collect();
+            if summary_words.iter().any(|w| corpus.contains(*w)) {
+                matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+                continue;
+            }
         }
         for tag in &mem.tags {
             let tag_lc = tag.to_lowercase();
             if !tag_lc.is_empty() && corpus.contains(&tag_lc) {
-                matches.push((
-                    2,
-                    "knowledge",
-                    mem.key.clone(),
-                    Some("knowledge".to_string()),
-                ));
+                matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
                 break;
             }
         }
@@ -282,7 +282,40 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
     matches.sort_by_key(|(p, k, n, _)| (*p, k.to_string(), n.clone()));
     matches.dedup_by_key(|(_, kind, key, _)| format!("{}/{}", kind, key));
 
-    let top: Vec<_> = matches.into_iter().take(MAX_ITEMS).collect();
+    let mut top: Vec<_> = matches.into_iter().take(MAX_ITEMS).collect();
+
+    // Follow relates_to links: for each matched knowledge memory, check its relates_to
+    // references and load them if we still have budget and they aren't already included.
+    if top.len() < MAX_ITEMS {
+        let loaded_keys: std::collections::HashSet<String> =
+            top.iter().map(|(_, _, k, _)| k.clone()).collect();
+        let knowledge_key_set: std::collections::HashSet<String> =
+            e.knowledge.iter().map(|m| m.key.clone()).collect();
+        let runbook_name_set: std::collections::HashSet<String> =
+            e.runbooks.iter().map(|r| r.name.clone()).collect();
+
+        let mut related: Vec<(u8, &'static str, String, Option<String>)> = Vec::new();
+        for (_, kind, key, _) in &top {
+            if *kind != "knowledge" {
+                continue;
+            }
+            if let Some(mem) = e.knowledge.iter().find(|m| &m.key == key) {
+                for ref_key in &mem.relates_to {
+                    if loaded_keys.contains(ref_key) {
+                        continue;
+                    }
+                    if knowledge_key_set.contains(ref_key) {
+                        related.push((4, "knowledge", ref_key.clone(), Some("knowledge".to_string())));
+                    } else if runbook_name_set.contains(ref_key) {
+                        related.push((4, "runbook", ref_key.clone(), None));
+                    }
+                }
+            }
+        }
+        related.dedup_by_key(|(_, kind, key, _)| format!("{}/{}", kind, key));
+        let budget = MAX_ITEMS - top.len();
+        top.extend(related.into_iter().take(budget));
+    }
     if top.is_empty() {
         return String::new();
     }
@@ -383,6 +416,18 @@ pub fn related_knowledge_hints(output: &str) -> String {
         if corpus.contains(&key_lc) && seen.insert(format!("memory:{}", mem.key)) {
             hints.push(format!("memory \"{}\"", mem.key));
             continue;
+        }
+        // Match on summary text
+        if let Some(ref s) = mem.summary {
+            let summary_lc = s.to_lowercase();
+            let summary_words: Vec<&str> =
+                summary_lc.split_whitespace().filter(|w| w.len() >= 4).collect();
+            if summary_words.iter().any(|w| corpus.contains(*w))
+                && seen.insert(format!("memory:{}", mem.key))
+            {
+                hints.push(format!("memory \"{}\"", mem.key));
+                continue;
+            }
         }
         for tag in &mem.tags {
             let tag_lc = tag.to_lowercase();
@@ -836,6 +881,85 @@ mod tests {
             assert!(
                 result.contains("postgres-config"),
                 "tag-based memory match missing: {result}"
+            );
+        });
+    }
+
+    // --- Phase 3 tests ---
+
+    #[test]
+    fn manifest_shows_summary() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            // Write memory file with summary frontmatter directly
+            let dir = crate::config::config_dir().join("memory").join("knowledge");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("db-quirks.md"),
+                "---\nsummary: Postgres runs on port 5433 not 5432\ntags: [postgres]\n---\nSome content\n",
+            ).unwrap();
+            let m = build_knowledge_manifest();
+            assert!(m.contains("db-quirks"), "key missing: {m}");
+            assert!(m.contains("5433"), "summary missing from manifest: {m}");
+        });
+    }
+
+    #[test]
+    fn auto_search_matches_summary_text() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("memory").join("knowledge");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("db-quirks.md"),
+                "---\nsummary: Postgres runs on port 5433 not 5432\n---\nDetailed connection info here.\n",
+            ).unwrap();
+            // Query contains a word from the summary
+            let result = auto_search_context("connection failed postgres port", "");
+            assert!(
+                result.contains("db-quirks"),
+                "summary-based match missing: {result}"
+            );
+        });
+    }
+
+    #[test]
+    fn auto_search_follows_relates_to_links() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("memory").join("knowledge");
+            std::fs::create_dir_all(&dir).unwrap();
+            // Primary memory: matches query directly
+            std::fs::write(
+                dir.join("db-hosts.md"),
+                "---\nrelates_to: [db-quirks]\n---\ndb1.internal, db2.internal\n",
+            ).unwrap();
+            // Related memory: should be pulled in via relates_to even without direct match
+            std::fs::write(
+                dir.join("db-quirks.md"),
+                "---\n---\nPostgres runs on port 5433\n",
+            ).unwrap();
+            let result = auto_search_context("db-hosts connection string", "");
+            assert!(result.contains("db-hosts"), "primary match missing: {result}");
+            assert!(result.contains("db-quirks"), "relates_to link not followed: {result}");
+        });
+    }
+
+    #[test]
+    fn hints_matches_summary_text() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("memory").join("knowledge");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("redis-config.md"),
+                "---\nsummary: Redis cluster failover procedure\n---\nDetails here.\n",
+            ).unwrap();
+            // Output contains a word from the summary
+            let hints = related_knowledge_hints("redis failover detected in cluster logs");
+            assert!(
+                hints.contains("redis-config"),
+                "summary-based hint missing: {hints}"
             );
         });
     }

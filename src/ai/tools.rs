@@ -456,6 +456,63 @@ pub static TOOLS: &[ToolDef] = &[
         ],
     },
     ToolDef {
+        name: "update_memory",
+        description: "Update specific fields of an existing memory entry without rewriting the \
+                      entire file. Only provided fields are changed; omitted fields are preserved. \
+                      Creates the entry if it does not exist. Automatically sets the `updated` \
+                      timestamp. Prefer this over read+delete+add_memory cycles for partial updates.",
+        params: &[
+            ParamDef {
+                name: "key",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Key of the memory entry to update.",
+            },
+            ParamDef {
+                name: "category",
+                ty: ParamTy::Str,
+                required: true,
+                description: "'session', 'knowledge', or 'incident'.",
+            },
+            ParamDef {
+                name: "body",
+                ty: ParamTy::Str,
+                required: false,
+                description: "New body content. Replaces existing body unless append=true.",
+            },
+            ParamDef {
+                name: "append",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "If true, append body to existing content instead of replacing. Default false.",
+            },
+            ParamDef {
+                name: "tags",
+                ty: ParamTy::Str,
+                required: false,
+                description: "JSON array of tags, e.g. [\"postgres\",\"database\"]. Replaces existing tags.",
+            },
+            ParamDef {
+                name: "summary",
+                ty: ParamTy::Str,
+                required: false,
+                description: "One-line description of this memory entry.",
+            },
+            ParamDef {
+                name: "relates_to",
+                ty: ParamTy::Str,
+                required: false,
+                description: "JSON array of related memory keys, runbook names, or script names.",
+            },
+            ParamDef {
+                name: "expires",
+                ty: ParamTy::Str,
+                required: false,
+                description: "ISO date when this memory expires, e.g. '2026-04-15'. For time-bounded facts.",
+            },
+        ],
+    },
+    ToolDef {
         name: "delete_memory",
         description: "Remove a memory entry from ~/.daemoneye/memory/<category>/<key>.md.",
         params: &[
@@ -827,6 +884,40 @@ pub fn dispatch_tool_event(
             category: args["category"].as_str().unwrap_or("knowledge").to_string(),
             thought_signature: ts,
         }),
+        "update_memory" => {
+            let tags: Option<Vec<String>> = args["tags"]
+                .as_str()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .or_else(|| {
+                    args["tags"].as_array().map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                });
+            let relates_to: Option<Vec<String>> = args["relates_to"]
+                .as_str()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .or_else(|| {
+                    args["relates_to"].as_array().map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                });
+            Some(AiEvent::UpdateMemory {
+                id: id.to_string(),
+                key: args["key"].as_str().unwrap_or("").to_string(),
+                category: args["category"].as_str().unwrap_or("knowledge").to_string(),
+                body: args["body"].as_str().map(|s| s.to_string()),
+                append: args["append"].as_bool().unwrap_or(false),
+                tags,
+                summary: args["summary"].as_str().map(|s| s.to_string()),
+                relates_to,
+                expires: args["expires"].as_str().map(|s| s.to_string()),
+                thought_signature: ts,
+            })
+        }
         "delete_memory" => Some(AiEvent::DeleteMemory {
             id: id.to_string(),
             key: args["key"].as_str().unwrap_or("").to_string(),

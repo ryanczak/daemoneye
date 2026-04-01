@@ -314,6 +314,28 @@ where
             key, value, category, session_id,
         ))),
 
+        PendingCall::UpdateMemory {
+            key,
+            category,
+            body,
+            append,
+            tags,
+            summary,
+            relates_to,
+            expires,
+            ..
+        } => Ok(ToolCallOutcome::Result(knowledge::update_memory(
+            key,
+            category,
+            body.as_deref(),
+            *append,
+            tags.as_deref(),
+            summary.as_deref(),
+            relates_to.as_deref(),
+            expires.as_deref(),
+            session_id,
+        ))),
+
         PendingCall::DeleteMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
             knowledge::delete_memory(key, category, session_id),
         )),

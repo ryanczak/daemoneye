@@ -193,7 +193,7 @@ The tree is created by `Config::ensure_dirs()`, which is called at the top of `m
   - `ScheduleList { jobs: Vec<ScheduleListItem> }` — list of scheduled jobs with id, name, kind, action, status, last_run, next_run.
   - `ScriptList { scripts: Vec<ScriptListItem> }` — list of scripts in `~/.daemoneye/scripts/` with name and size.
   - `RunbookList { runbooks: Vec<RunbookListItem> }` — list of runbooks in `~/.daemoneye/runbooks/` with name and tags.
-  - `MemoryList { entries: Vec<MemoryListItem> }` — list of memory entries with category and key.
+  - `MemoryList { entries: Vec<MemoryListItem> }` — list of memory entries with category, key, and optional summary.
   - `UsageUpdate { prompt_tokens: u32 }` — sent once per completed AI turn immediately before `Ok`; carries the prompt token count so the CLI can display an accurate context-budget indicator.
   - `ModelChanged { model }` — confirmation that the session's active model was switched (response to `SetModel`).
   - `ModelList { models: Vec<String>, active: String }` — sorted list of all configured model names and the session's current active model (response to `ListModels`).
@@ -239,7 +239,8 @@ The tree is created by `Config::ensure_dirs()`, which is called at the top of `m
 - **Schedule Store** (`scheduler.rs`): Thread-safe, file-backed store for scheduled jobs. Persistence is atomic: writes go to `.tmp` then rename over `~/.daemoneye/var/run/schedules.json`. Provides `add`, `cancel`, `list`, `take_due`, `mark_done` operations.
 - **Scripts Module** (`scripts.rs`): Manages `~/.daemoneye/scripts/` — executable scripts (chmod 700). Provides `list_scripts`, `write_script`, `read_script`, `delete_script`, `resolve_script` operations.
 - **Runbook Module** (`runbook.rs`): Manages markdown runbook files in `~/.daemoneye/runbooks/<name>.md`. Parses YAML-style frontmatter to extract `tags: [...]` and `memories: [...]` fields. Validates content on write (requires `# Runbook:` heading and `## Alert Criteria` section). CRUD operations — `load_runbook`, `write_runbook` (approval-gated), `delete_runbook` (approval-gated, warns if active jobs reference it), `list_runbooks` — are exposed as AI tools. `watchdog_system_prompt()` loads any knowledge memory keys listed in `memories:` from `memory/knowledge/` and injects them as a `## Runbook Memory Context` block in the watchdog AI prompt.
-- **Memory Module** (`memory.rs`): Provides persistent key-value storage under `~/.daemoneye/memory/` in three categories: `session/` (loaded into every AI turn as a `## Persistent Memory` block, capped at 32 KB), `knowledge/` (loaded on-demand by runbooks or `read_memory` tool), and `incidents/` (historical records, searchable only). CRUD operations — `add_memory`, `delete_memory`, `read_memory`, `list_memories` — are exposed as AI tools without approval gates. `load_session_memory_block()` applies the sensitive-data masking filter and is called by `server.rs` on the first turn of every conversation.
+- **Memory Module** (`memory.rs`): Provides persistent key-value storage under `~/.daemoneye/memory/` in three categories: `session/` (loaded into every AI turn as a `## Persistent Memory` block, capped at 32 KB), `knowledge/` (loaded on-demand by runbooks or `read_memory` tool), and `incidents/` (historical records, searchable only). CRUD operations — `add_memory`, `update_memory`, `delete_memory`, `read_memory`, `list_memories` — are exposed as AI tools without approval gates. `load_session_memory_block()` applies the sensitive-data masking filter and is called by `server.rs` on the first turn of every conversation. Memory entries support structured YAML frontmatter: `tags` (for retrieval matching), `summary` (one-line description shown in `list_memories` output and used for auto-search matching), `relates_to` (cross-references to other memory keys, runbooks, or scripts), `created`/`updated` (ISO timestamps managed automatically), and `expires` (optional TTL for time-bounded facts). `build_frontmatter()` serializes these fields consistently. `update_memory()` performs partial updates — merging only the provided fields and preserving all others — automatically setting the `updated` timestamp.
+- **Manifest Module** (`manifest.rs`): Knowledge manifest builder and contextual auto-search. Three public functions: `build_knowledge_manifest()` — compact 1 KB text index of all stored runbooks, scripts, knowledge memories, and incidents, shown as `## Available Knowledge` on the first AI turn; `auto_search_context(query, pane)` — auto-loads up to 3 matching entries into `## Auto-loaded Knowledge` on the first turn, matching on names, tags, and summary words (≥4 chars), then following `relates_to` links from matched knowledge memories to pull in related entries without a direct keyword hit; `related_knowledge_hints(output)` — scans tool output and returns a `[Related knowledge: …]` hint line matching on runbook/memory names, tags, and summary words.
 - **Search Module** (`search.rs`): Keyword search across all knowledge-base directories. `search_repository(query, kind, context_lines)` searches `runbooks/`, `scripts/`, `memory/{session,knowledge,incidents}/`, and the last 10,000 lines of `events.jsonl` depending on `kind` (`"runbooks"` \| `"scripts"` \| `"memory"` \| `"events"` \| `"all"`). Matches are case-insensitive; filenames are matched in addition to content. Results are capped at 50 and formatted with line numbers and surrounding context. Exposed as the `search_repository` AI tool.
 
 ### 2.4 Knowledge System
@@ -268,10 +269,27 @@ memories: [disk_thresholds]
 ```
 The AI uses `write_runbook` (approval-gated), `read_runbook`, `list_runbooks`, and `delete_runbook` (approval-gated). Before writing a new runbook the AI is instructed to call `list_runbooks` to avoid duplicates.
 
-**Memory** (`memory.rs`, `~/.daemoneye/memory/`): Three-tier persistent key-value store. Each entry is a `.md` file in the appropriate category subdirectory:
+**Memory** (`memory.rs`, `~/.daemoneye/memory/`): Three-tier persistent key-value store. Each entry is a `.md` file in the appropriate category subdirectory. Entries support structured YAML frontmatter for richer retrieval and cross-referencing:
+
+```markdown
+---
+tags: ["postgres", "database", "db", "pg"]
+summary: "Primary/replica connection strings and lag thresholds"
+relates_to: ["postgres-failover-runbook", "prod-db-hosts"]
+created: "2026-01-15T10:00:00Z"
+updated: "2026-03-31T09:00:00Z"
+expires: "2026-12-31"
+---
+db1.internal:5432 (primary), db2.internal:5432 (replica)
+```
+
 - `session/` — User preferences and recurring environment notes. Automatically loaded into every AI turn (via `load_session_memory_block()`), capped at 32 KB with masking applied.
-- `knowledge/` — Named service configs, host quirks, port tables. Loaded on-demand by watchdog runbooks (`memories:` frontmatter) or the `read_memory` tool.
+- `knowledge/` — Named service configs, host quirks, port tables. Loaded on-demand by watchdog runbooks (`memories:` frontmatter) or the `read_memory` tool. The `## Available Knowledge` manifest block (injected on the first AI turn) shows each entry as `key — summary [tags]` / `key — summary` / `key [tags]` / `key` depending on available metadata. `auto_search_context()` matches on names, tag words, and summary words (≥4 chars), then follows `relates_to` links on matched entries to include related knowledge even without a direct keyword hit — e.g. a query matching `db-hosts` can automatically surface `db-quirks` and `postgres-failover-runbook` via their `relates_to` fields.
 - `incidents/` — Historical incident records. Never auto-loaded; discovered via `search_repository`.
+
+AI tools: `add_memory`, `update_memory` (partial field update — preserves unspecified fields, auto-sets `updated` timestamp), `delete_memory`, `read_memory`, `list_memories` (output shows key and summary when available: `[knowledge] prod-db-hosts — Primary/replica connection strings`).
+
+**Manifest and auto-search** (`manifest.rs`): On the first turn, `server.rs` calls `build_knowledge_manifest()` (injected as `## Available Knowledge`) and `auto_search_context(first_query, pane_content)` (injected as `## Auto-loaded Knowledge` when matches are found). Auto-search scores matches by priority — runbook name (0), runbook tag (1), knowledge key/summary/tag (2), script name (3) — deduplicates, takes the top 3, then follows `relates_to` links on matched knowledge entries to fill remaining slots up to the 3-item cap. `related_knowledge_hints()` appends `[Related knowledge: runbook "…", memory "…"]` to tool results when the output text contains terms matching stored entries by name, tag, or summary word.
 
 **Search** (`search.rs`): Cross-corpus keyword search. `search_repository(query, kind)` covers runbooks, scripts, all three memory tiers, and the event log. Results are grouped by file, annotated with line numbers and context, and capped at 50 matches.
 

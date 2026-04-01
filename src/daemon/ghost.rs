@@ -418,6 +418,31 @@ pub async fn trigger_ghost_turn(
                             category,
                         });
                     }
+                    AiEvent::UpdateMemory {
+                        id,
+                        key,
+                        category,
+                        body,
+                        append,
+                        tags,
+                        summary,
+                        relates_to,
+                        expires,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::UpdateMemory {
+                            id,
+                            thought_signature,
+                            key,
+                            category,
+                            body,
+                            append,
+                            tags,
+                            summary,
+                            relates_to,
+                            expires,
+                        });
+                    }
                     AiEvent::GetTerminalContext {
                         id,
                         thought_signature,

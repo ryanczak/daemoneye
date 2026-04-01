@@ -37,17 +37,42 @@ impl MemoryCategory {
     }
 }
 
-/// Memory entry with optional tags parsed from frontmatter.
+/// Memory entry with optional metadata parsed from frontmatter.
 pub struct MemoryInfo {
     pub key: String,
+    pub category: String,
     pub tags: Vec<String>,
+    pub summary: Option<String>,
+    pub relates_to: Vec<String>,
+    pub created: Option<String>,
+    pub updated: Option<String>,
+    pub expires: Option<String>,
+}
+
+/// Parsed frontmatter fields from a memory file.
+struct ParsedFrontmatter {
+    tags: Vec<String>,
+    summary: Option<String>,
+    relates_to: Vec<String>,
+    created: Option<String>,
+    updated: Option<String>,
+    expires: Option<String>,
 }
 
 /// Parse optional YAML frontmatter from a memory file.
-/// Returns `(tags, body)`. If no frontmatter, body is the full content and tags are empty.
-fn parse_memory_frontmatter(raw: &str) -> (Vec<String>, String) {
+/// Returns `(ParsedFrontmatter, body)`. If no frontmatter, body is the full content and all
+/// fields are empty/None.
+fn parse_memory_frontmatter(raw: &str) -> (ParsedFrontmatter, String) {
+    let empty = ParsedFrontmatter {
+        tags: Vec::new(),
+        summary: None,
+        relates_to: Vec::new(),
+        created: None,
+        updated: None,
+        expires: None,
+    };
     if !raw.starts_with("---\n") {
-        return (Vec::new(), raw.to_string());
+        return (empty, raw.to_string());
     }
     let search_from = 4;
     let end_marker = "\n---\n";
@@ -55,28 +80,110 @@ fn parse_memory_frontmatter(raw: &str) -> (Vec<String>, String) {
         let fm_end = search_from + rel_pos;
         let frontmatter = &raw[search_from..fm_end];
         let body = raw[fm_end + end_marker.len()..].to_string();
-        let tags = parse_memory_tag_field(frontmatter);
-        (tags, body)
+        let parsed = parse_frontmatter_fields(frontmatter);
+        (parsed, body)
     } else {
-        (Vec::new(), raw.to_string())
+        (empty, raw.to_string())
     }
 }
 
-fn parse_memory_tag_field(frontmatter: &str) -> Vec<String> {
+fn parse_frontmatter_fields(frontmatter: &str) -> ParsedFrontmatter {
+    let mut tags = Vec::new();
+    let mut summary = None;
+    let mut relates_to = Vec::new();
+    let mut created = None;
+    let mut updated = None;
+    let mut expires = None;
+
     for line in frontmatter.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("tags:") {
-            let rest = trimmed.strip_prefix("tags:").unwrap_or("").trim();
-            if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                return inner
-                    .split(',')
-                    .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
+            tags = parse_bracket_list(trimmed.strip_prefix("tags:").unwrap_or("").trim());
+        } else if trimmed.starts_with("relates_to:") {
+            relates_to =
+                parse_bracket_list(trimmed.strip_prefix("relates_to:").unwrap_or("").trim());
+        } else if trimmed.starts_with("summary:") {
+            let val = trimmed.strip_prefix("summary:").unwrap_or("").trim();
+            summary = Some(val.trim_matches('"').trim_matches('\'').to_string());
+        } else if trimmed.starts_with("created:") {
+            let val = trimmed.strip_prefix("created:").unwrap_or("").trim();
+            created = Some(val.trim_matches('"').to_string());
+        } else if trimmed.starts_with("updated:") {
+            let val = trimmed.strip_prefix("updated:").unwrap_or("").trim();
+            updated = Some(val.trim_matches('"').to_string());
+        } else if trimmed.starts_with("expires:") {
+            let val = trimmed.strip_prefix("expires:").unwrap_or("").trim();
+            expires = Some(val.trim_matches('"').to_string());
         }
     }
-    Vec::new()
+
+    ParsedFrontmatter { tags, summary, relates_to, created, updated, expires }
+}
+
+fn parse_bracket_list(s: &str) -> Vec<String> {
+    if let Some(inner) = s.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        inner
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Serialize frontmatter fields back to a `---\n...\n---\n` block.
+/// Only includes fields that have values. Omits the block entirely if all are empty/None.
+pub fn build_frontmatter(
+    tags: &[String],
+    summary: Option<&str>,
+    relates_to: &[String],
+    created: Option<&str>,
+    updated: Option<&str>,
+    expires: Option<&str>,
+) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    if !tags.is_empty() {
+        let items = tags
+            .iter()
+            .map(|t| format!("\"{}\"", t))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("tags: [{}]", items));
+    }
+    if let Some(s) = summary {
+        if !s.is_empty() {
+            lines.push(format!("summary: \"{}\"", s.replace('"', "'")));
+        }
+    }
+    if !relates_to.is_empty() {
+        let items = relates_to
+            .iter()
+            .map(|r| format!("\"{}\"", r))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("relates_to: [{}]", items));
+    }
+    if let Some(s) = created {
+        if !s.is_empty() {
+            lines.push(format!("created: \"{}\"", s));
+        }
+    }
+    if let Some(s) = updated {
+        if !s.is_empty() {
+            lines.push(format!("updated: \"{}\"", s));
+        }
+    }
+    if let Some(s) = expires {
+        if !s.is_empty() {
+            lines.push(format!("expires: \"{}\"", s));
+        }
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("---\n{}\n---\n", lines.join("\n"))
+    }
 }
 
 fn memory_dir(category: &MemoryCategory) -> PathBuf {
@@ -97,6 +204,91 @@ fn validate_memory_key(key: &str) -> Result<()> {
     if key.contains('/') || key.contains('\0') || key == "." || key == ".." {
         bail!("Invalid memory key: '{}'", key);
     }
+    Ok(())
+}
+
+/// Update specific fields of an existing memory entry without rewriting the whole file.
+/// Only provided (Some) fields are changed; omitted fields are preserved.
+/// If the entry does not exist, a new one is created.
+/// `updated` timestamp is always set to the current UTC time.
+pub fn update_memory(
+    key: &str,
+    category: MemoryCategory,
+    body: Option<&str>,
+    append: bool,
+    tags: Option<&[String]>,
+    summary: Option<&str>,
+    relates_to: Option<&[String]>,
+    expires: Option<&str>,
+) -> Result<()> {
+    validate_memory_key(key)?;
+    ensure_memory_dir(&category)?;
+    let path = memory_dir(&category).join(format!("{}.md", key));
+
+    // Read existing content (if any).
+    let (mut fm, mut existing_body) = if path.exists() {
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading memory key '{}' for update", key))?;
+        parse_memory_frontmatter(&raw)
+    } else {
+        (
+            ParsedFrontmatter {
+                tags: Vec::new(),
+                summary: None,
+                relates_to: Vec::new(),
+                created: None,
+                updated: None,
+                expires: None,
+            },
+            String::new(),
+        )
+    };
+
+    // Merge provided fields.
+    if let Some(t) = tags {
+        fm.tags = t.to_vec();
+    }
+    if let Some(s) = summary {
+        fm.summary = Some(s.to_string());
+    }
+    if let Some(r) = relates_to {
+        fm.relates_to = r.to_vec();
+    }
+    if let Some(e) = expires {
+        fm.expires = Some(e.to_string());
+    }
+
+    // Set/update the `updated` timestamp.
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    if fm.created.is_none() {
+        fm.created = Some(now.clone());
+    }
+    fm.updated = Some(now);
+
+    // Update body if provided.
+    if let Some(b) = body {
+        if append && !existing_body.is_empty() {
+            if !existing_body.ends_with('\n') {
+                existing_body.push('\n');
+            }
+            existing_body.push_str(b);
+        } else {
+            existing_body = b.to_string();
+        }
+    }
+
+    let frontmatter = build_frontmatter(
+        &fm.tags,
+        fm.summary.as_deref(),
+        &fm.relates_to,
+        fm.created.as_deref(),
+        fm.updated.as_deref(),
+        fm.expires.as_deref(),
+    );
+    let content = format!("{}{}", frontmatter, existing_body);
+    std::fs::write(&path, &content)
+        .with_context(|| format!("writing updated memory key '{}'", key))?;
+    crate::daemon::stats::inc_memories_created();
     Ok(())
 }
 
@@ -189,13 +381,31 @@ pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<M
         entries.sort();
         for name in entries {
             let path = dir.join(format!("{}.md", name));
-            let tags = if let Ok(raw) = std::fs::read_to_string(&path) {
-                let (t, _) = parse_memory_frontmatter(&raw);
-                t
+            let info = if let Ok(raw) = std::fs::read_to_string(&path) {
+                let (fm, _) = parse_memory_frontmatter(&raw);
+                MemoryInfo {
+                    key: name,
+                    category: cat.canonical_name().to_string(),
+                    tags: fm.tags,
+                    summary: fm.summary,
+                    relates_to: fm.relates_to,
+                    created: fm.created,
+                    updated: fm.updated,
+                    expires: fm.expires,
+                }
             } else {
-                Vec::new()
+                MemoryInfo {
+                    key: name,
+                    category: cat.canonical_name().to_string(),
+                    tags: Vec::new(),
+                    summary: None,
+                    relates_to: Vec::new(),
+                    created: None,
+                    updated: None,
+                    expires: None,
+                }
             };
-            results.push(MemoryInfo { key: name, tags });
+            results.push(info);
         }
     }
     Ok(results)
@@ -427,6 +637,200 @@ mod tests {
             assert_eq!(infos.len(), 2);
             let k2 = infos.iter().find(|m| m.key == "k2").unwrap();
             assert_eq!(k2.tags, vec!["foo"]);
+        });
+    }
+
+    #[test]
+    fn memory_frontmatter_summary_parsed() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory(
+                "meta-key",
+                "---\ntags: [foo]\nsummary: \"A useful description\"\nrelates_to: [other-key, runbook-x]\ncreated: \"2026-01-01T00:00:00Z\"\nupdated: \"2026-03-31T12:00:00Z\"\nexpires: \"2026-12-31\"\n---\nBody content",
+                MemoryCategory::Knowledge,
+            )
+            .unwrap();
+            let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+            let info = infos.iter().find(|m| m.key == "meta-key").expect("key not found");
+            assert_eq!(info.summary.as_deref(), Some("A useful description"));
+            assert_eq!(info.relates_to, vec!["other-key", "runbook-x"]);
+            assert_eq!(info.created.as_deref(), Some("2026-01-01T00:00:00Z"));
+            assert_eq!(info.updated.as_deref(), Some("2026-03-31T12:00:00Z"));
+            assert_eq!(info.expires.as_deref(), Some("2026-12-31"));
+        });
+    }
+
+    #[test]
+    fn memory_without_frontmatter_has_empty_metadata() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory("bare", "Just content", MemoryCategory::Knowledge).unwrap();
+            let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+            let info = infos.iter().find(|m| m.key == "bare").expect("key not found");
+            assert!(info.summary.is_none());
+            assert!(info.relates_to.is_empty());
+            assert!(info.expires.is_none());
+        });
+    }
+
+    #[test]
+    fn build_frontmatter_roundtrip() {
+        let tags = vec!["postgres".to_string(), "database".to_string()];
+        let relates_to = vec!["runbook-x".to_string()];
+        let fm = build_frontmatter(
+            &tags,
+            Some("Primary DB hosts"),
+            &relates_to,
+            Some("2026-01-01T00:00:00Z"),
+            Some("2026-03-31T00:00:00Z"),
+            None,
+        );
+        assert!(fm.starts_with("---\n"));
+        assert!(fm.contains("tags:"));
+        assert!(fm.contains("postgres"));
+        assert!(fm.contains("summary:"));
+        assert!(fm.contains("Primary DB hosts"));
+        assert!(fm.contains("relates_to:"));
+        assert!(fm.contains("runbook-x"));
+        assert!(fm.contains("created:"));
+        assert!(!fm.contains("expires:"), "expires should be omitted when None");
+        // Round-trip: parse what we built
+        let full = format!("{}Body text", fm);
+        let (parsed, body) = parse_memory_frontmatter(&full);
+        assert_eq!(parsed.tags, tags);
+        assert_eq!(parsed.summary.as_deref(), Some("Primary DB hosts"));
+        assert_eq!(parsed.relates_to, relates_to);
+        assert_eq!(body, "Body text");
+    }
+
+    #[test]
+    fn build_frontmatter_empty_returns_empty_string() {
+        let fm = build_frontmatter(&[], None, &[], None, None, None);
+        assert!(fm.is_empty());
+    }
+
+    #[test]
+    fn update_memory_creates_new_entry() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let tags = vec!["foo".to_string()];
+            update_memory(
+                "new-key",
+                MemoryCategory::Knowledge,
+                Some("initial body"),
+                false,
+                Some(&tags),
+                Some("A summary"),
+                None,
+                None,
+            )
+            .unwrap();
+            let raw = read_memory("new-key", MemoryCategory::Knowledge).unwrap();
+            assert!(raw.contains("initial body"));
+            assert!(raw.contains("foo"));
+            assert!(raw.contains("A summary"));
+            assert!(raw.contains("created:"));
+            assert!(raw.contains("updated:"));
+        });
+    }
+
+    #[test]
+    fn update_memory_partial_update_preserves_other_fields() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            // Write initial entry with full frontmatter.
+            add_memory(
+                "existing",
+                "---\ntags: [alpha, beta]\nsummary: \"original summary\"\nrelates_to: [\"other\"]\n---\nOriginal body",
+                MemoryCategory::Knowledge,
+            )
+            .unwrap();
+            // Update only summary.
+            update_memory(
+                "existing",
+                MemoryCategory::Knowledge,
+                None,
+                false,
+                None,
+                Some("new summary"),
+                None,
+                None,
+            )
+            .unwrap();
+            let raw = read_memory("existing", MemoryCategory::Knowledge).unwrap();
+            // Tags and relates_to preserved.
+            assert!(raw.contains("alpha"), "tags should be preserved: {raw}");
+            assert!(raw.contains("other"), "relates_to should be preserved: {raw}");
+            // Summary updated.
+            assert!(raw.contains("new summary"), "summary should be updated: {raw}");
+            // Body preserved.
+            assert!(raw.contains("Original body"), "body should be preserved: {raw}");
+        });
+    }
+
+    #[test]
+    fn update_memory_append_mode() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory("append-key", "First line", MemoryCategory::Session).unwrap();
+            update_memory(
+                "append-key",
+                MemoryCategory::Session,
+                Some("Second line"),
+                true,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let raw = read_memory("append-key", MemoryCategory::Session).unwrap();
+            assert!(raw.contains("First line"), "original body missing: {raw}");
+            assert!(raw.contains("Second line"), "appended body missing: {raw}");
+        });
+    }
+
+    #[test]
+    fn update_memory_replace_body() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            add_memory("replace-key", "Old body", MemoryCategory::Session).unwrap();
+            update_memory(
+                "replace-key",
+                MemoryCategory::Session,
+                Some("New body"),
+                false,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let raw = read_memory("replace-key", MemoryCategory::Session).unwrap();
+            assert!(!raw.contains("Old body"), "old body should be gone: {raw}");
+            assert!(raw.contains("New body"), "new body missing: {raw}");
+        });
+    }
+
+    #[test]
+    fn update_memory_sets_updated_timestamp() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            update_memory(
+                "ts-key",
+                MemoryCategory::Knowledge,
+                Some("body"),
+                false,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+            let info = infos.iter().find(|m| m.key == "ts-key").expect("key not found");
+            assert!(info.updated.is_some(), "updated timestamp should be set");
+            assert!(info.created.is_some(), "created timestamp should be set");
         });
     }
 

@@ -611,8 +611,8 @@ Use memory to persist lessons learned across sessions:
   result contains all keys. Use `read_memory` to fetch the content of specific keys \
   the user wants to see; do not call `list_memories` again.
 - **knowledge**: Specific technical facts (service configs, host quirks, port tables). \
-  Loaded on-demand via runbook references or `read_memory`. Add optional `tags: [...]` \
-  YAML frontmatter to enable tag-based discovery: `---\ntags: [postgres, production]\n---\ncontent`.
+  Loaded on-demand via runbook references or `read_memory`. Always add structured \
+  frontmatter to improve discovery and cross-referencing (see **Memory Frontmatter** below).
 - **incident**: Historical incident records. Never auto-loaded; use \
   `search_repository(kind:"memory")` to find them.
 
@@ -621,6 +621,38 @@ Write a `knowledge` memory when you discover something specific about a named se
 Write an `incident` memory when closing a significant issue (document root cause, symptoms, fix). \
 Use `delete_memory(key, category)` to remove entries that are stale, incorrect, or no longer \
 relevant — do not let outdated facts accumulate. Audit with `list_memories` before pruning.
+
+**Memory Frontmatter** — include these fields when writing `knowledge` and `incident` memories:
+```
+---
+tags: [primary-term, synonym1, synonym2, abbrev]
+summary: One-line description shown in list_memories and ## Available Knowledge
+relates_to: [other-memory-key, runbook-name]
+expires: 2026-06-01
+---
+```
+- **tags**: Include the primary term AND common synonyms and abbreviations so the memory \
+  is found even when the user phrases the query differently. Examples: `[postgres, postgresql, pg, database]`; \
+  `[kubernetes, k8s, kube]`; `[ssl, tls, certs, certificates]`; `[aws, amazon, cloud]`. \
+  At least two synonyms per technology name. Tags are matched against user queries and pane content \
+  to auto-load the memory — poor tags mean the memory is never found.
+- **summary**: One concise line describing what is stored. Shown in `list_memories` output \
+  and in `## Available Knowledge` manifest. Should contain the key terms someone would search for. \
+  Example: `Postgres runs on port 5433 not 5432 on prod-db hosts`.
+- **relates_to**: Link to other memory keys or runbook names that are conceptually related. \
+  When this memory is matched in auto-search, its relates_to entries are automatically pulled in \
+  as additional context. Use to group related facts: `[db-hosts, db-backup-schedule, high-load-runbook]`.
+- **expires**: ISO date (YYYY-MM-DD) for time-bounded facts — maintenance windows, deploy freezes, \
+  temporary config overrides. Omit for permanent facts.
+
+**Updating memories** — use `update_memory` to change individual fields without a full read+rewrite cycle:
+- `update_memory(key, category, tags=[...])` — add or replace tags only
+- `update_memory(key, category, summary="...")` — update the summary only
+- `update_memory(key, category, relates_to=[...])` — set cross-references only
+- `update_memory(key, category, body="...", append=true)` — append new facts to the body
+- `update_memory(key, category, expires="2026-06-01")` — set or extend an expiry
+- Prefer `update_memory` over `read_memory` + `delete_memory` + `add_memory` sequences — \
+  it preserves the existing `created` timestamp and is atomic.
 
 ### Scripts
 Use script tools to manage reusable automation on the daemon host:

@@ -45,7 +45,7 @@ Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prom
 ### 📖 Runbooks & Knowledge
 
 - **Procedure Runbooks** — Store troubleshooting steps in `~/.daemoneye/runbooks/` as Markdown with YAML frontmatter. When an alert fires, DaemonEye finds the matching runbook and uses it to guide the investigation.
-- **Durable Memory** — Three-tier persistence for session context, knowledge facts, and incident records. Session memories are injected into every AI turn automatically; knowledge and incident memories are available on demand.
+- **Durable Memory** — Three-tier persistence for session context, knowledge facts, and incident records. Session memories are injected into every AI turn automatically; knowledge and incident memories are available on demand. Entries carry structured frontmatter — `tags` (with synonyms for broader matching), `summary` (one-liner surfaced in listings and contextual auto-search), `relates_to` (links to related memories, runbooks, or scripts), and `expires` (TTL for time-bounded facts). Use `update_memory` to update individual fields in place without a full rewrite. Contextual auto-search pre-loads matching knowledge into the first turn and follows `relates_to` links to pull in related entries automatically.
 - **Built-in Guides** — Six knowledge memory files are seeded on first run covering webhooks, runbook format, ghost shell usage, scheduling, scripts, and sudoers setup — the AI can reference them without any manual setup.
 
 ### 🐕 Command Scheduler & Watchdog
