@@ -117,7 +117,14 @@ fn parse_frontmatter_fields(frontmatter: &str) -> ParsedFrontmatter {
         }
     }
 
-    ParsedFrontmatter { tags, summary, relates_to, created, updated, expires }
+    ParsedFrontmatter {
+        tags,
+        summary,
+        relates_to,
+        created,
+        updated,
+        expires,
+    }
 }
 
 fn parse_bracket_list(s: &str) -> Vec<String> {
@@ -651,7 +658,10 @@ mod tests {
             )
             .unwrap();
             let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
-            let info = infos.iter().find(|m| m.key == "meta-key").expect("key not found");
+            let info = infos
+                .iter()
+                .find(|m| m.key == "meta-key")
+                .expect("key not found");
             assert_eq!(info.summary.as_deref(), Some("A useful description"));
             assert_eq!(info.relates_to, vec!["other-key", "runbook-x"]);
             assert_eq!(info.created.as_deref(), Some("2026-01-01T00:00:00Z"));
@@ -666,7 +676,10 @@ mod tests {
         with_home(&tmp, || {
             add_memory("bare", "Just content", MemoryCategory::Knowledge).unwrap();
             let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
-            let info = infos.iter().find(|m| m.key == "bare").expect("key not found");
+            let info = infos
+                .iter()
+                .find(|m| m.key == "bare")
+                .expect("key not found");
             assert!(info.summary.is_none());
             assert!(info.relates_to.is_empty());
             assert!(info.expires.is_none());
@@ -693,7 +706,10 @@ mod tests {
         assert!(fm.contains("relates_to:"));
         assert!(fm.contains("runbook-x"));
         assert!(fm.contains("created:"));
-        assert!(!fm.contains("expires:"), "expires should be omitted when None");
+        assert!(
+            !fm.contains("expires:"),
+            "expires should be omitted when None"
+        );
         // Round-trip: parse what we built
         let full = format!("{}Body text", fm);
         let (parsed, body) = parse_memory_frontmatter(&full);
@@ -760,11 +776,20 @@ mod tests {
             let raw = read_memory("existing", MemoryCategory::Knowledge).unwrap();
             // Tags and relates_to preserved.
             assert!(raw.contains("alpha"), "tags should be preserved: {raw}");
-            assert!(raw.contains("other"), "relates_to should be preserved: {raw}");
+            assert!(
+                raw.contains("other"),
+                "relates_to should be preserved: {raw}"
+            );
             // Summary updated.
-            assert!(raw.contains("new summary"), "summary should be updated: {raw}");
+            assert!(
+                raw.contains("new summary"),
+                "summary should be updated: {raw}"
+            );
             // Body preserved.
-            assert!(raw.contains("Original body"), "body should be preserved: {raw}");
+            assert!(
+                raw.contains("Original body"),
+                "body should be preserved: {raw}"
+            );
         });
     }
 
@@ -828,7 +853,10 @@ mod tests {
             )
             .unwrap();
             let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
-            let info = infos.iter().find(|m| m.key == "ts-key").expect("key not found");
+            let info = infos
+                .iter()
+                .find(|m| m.key == "ts-key")
+                .expect("key not found");
             assert!(info.updated.is_some(), "updated timestamp should be set");
             assert!(info.created.is_some(), "created timestamp should be set");
         });

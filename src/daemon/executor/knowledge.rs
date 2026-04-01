@@ -405,12 +405,23 @@ pub(super) fn update_memory(
             if body.is_some() {
                 updated_fields.push(if append { "body (appended)" } else { "body" });
             }
-            if tags.is_some() { updated_fields.push("tags"); }
-            if summary.is_some() { updated_fields.push("summary"); }
-            if relates_to.is_some() { updated_fields.push("relates_to"); }
-            if expires.is_some() { updated_fields.push("expires"); }
+            if tags.is_some() {
+                updated_fields.push("tags");
+            }
+            if summary.is_some() {
+                updated_fields.push("summary");
+            }
+            if relates_to.is_some() {
+                updated_fields.push("relates_to");
+            }
+            if expires.is_some() {
+                updated_fields.push("expires");
+            }
             if updated_fields.is_empty() {
-                format!("Memory '{}' [{}] updated (timestamp refreshed).", key, category)
+                format!(
+                    "Memory '{}' [{}] updated (timestamp refreshed).",
+                    key, category
+                )
             } else {
                 format!(
                     "Memory '{}' [{}] updated: {}.",

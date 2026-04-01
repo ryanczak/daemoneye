@@ -230,34 +230,61 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
     for mem in &e.knowledge {
         let key_lc = mem.key.to_lowercase();
         if corpus.contains(&key_lc) {
-            matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+            matches.push((
+                2,
+                "knowledge",
+                mem.key.clone(),
+                Some("knowledge".to_string()),
+            ));
             continue;
         }
         // Also match on significant keywords from the key
         let key_keywords: Vec<&str> = key_lc.split(['-', '_']).filter(|w| w.len() >= 4).collect();
         if key_keywords.iter().any(|kw| corpus.contains(*kw)) {
-            matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+            matches.push((
+                2,
+                "knowledge",
+                mem.key.clone(),
+                Some("knowledge".to_string()),
+            ));
             continue;
         }
         // Match on summary text
         if let Some(ref s) = mem.summary {
             let summary_lc = s.to_lowercase();
             if !summary_lc.is_empty() && corpus.contains(&summary_lc) {
-                matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+                matches.push((
+                    2,
+                    "knowledge",
+                    mem.key.clone(),
+                    Some("knowledge".to_string()),
+                ));
                 continue;
             }
             // Also match on significant words from the summary
-            let summary_words: Vec<&str> =
-                summary_lc.split_whitespace().filter(|w| w.len() >= 4).collect();
+            let summary_words: Vec<&str> = summary_lc
+                .split_whitespace()
+                .filter(|w| w.len() >= 4)
+                .collect();
             if summary_words.iter().any(|w| corpus.contains(*w)) {
-                matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+                matches.push((
+                    2,
+                    "knowledge",
+                    mem.key.clone(),
+                    Some("knowledge".to_string()),
+                ));
                 continue;
             }
         }
         for tag in &mem.tags {
             let tag_lc = tag.to_lowercase();
             if !tag_lc.is_empty() && corpus.contains(&tag_lc) {
-                matches.push((2, "knowledge", mem.key.clone(), Some("knowledge".to_string())));
+                matches.push((
+                    2,
+                    "knowledge",
+                    mem.key.clone(),
+                    Some("knowledge".to_string()),
+                ));
                 break;
             }
         }
@@ -305,7 +332,12 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
                         continue;
                     }
                     if knowledge_key_set.contains(ref_key) {
-                        related.push((4, "knowledge", ref_key.clone(), Some("knowledge".to_string())));
+                        related.push((
+                            4,
+                            "knowledge",
+                            ref_key.clone(),
+                            Some("knowledge".to_string()),
+                        ));
                     } else if runbook_name_set.contains(ref_key) {
                         related.push((4, "runbook", ref_key.clone(), None));
                     }
@@ -420,8 +452,10 @@ pub fn related_knowledge_hints(output: &str) -> String {
         // Match on summary text
         if let Some(ref s) = mem.summary {
             let summary_lc = s.to_lowercase();
-            let summary_words: Vec<&str> =
-                summary_lc.split_whitespace().filter(|w| w.len() >= 4).collect();
+            let summary_words: Vec<&str> = summary_lc
+                .split_whitespace()
+                .filter(|w| w.len() >= 4)
+                .collect();
             if summary_words.iter().any(|w| corpus.contains(*w))
                 && seen.insert(format!("memory:{}", mem.key))
             {
@@ -933,15 +967,23 @@ mod tests {
             std::fs::write(
                 dir.join("db-hosts.md"),
                 "---\nrelates_to: [db-quirks]\n---\ndb1.internal, db2.internal\n",
-            ).unwrap();
+            )
+            .unwrap();
             // Related memory: should be pulled in via relates_to even without direct match
             std::fs::write(
                 dir.join("db-quirks.md"),
                 "---\n---\nPostgres runs on port 5433\n",
-            ).unwrap();
+            )
+            .unwrap();
             let result = auto_search_context("db-hosts connection string", "");
-            assert!(result.contains("db-hosts"), "primary match missing: {result}");
-            assert!(result.contains("db-quirks"), "relates_to link not followed: {result}");
+            assert!(
+                result.contains("db-hosts"),
+                "primary match missing: {result}"
+            );
+            assert!(
+                result.contains("db-quirks"),
+                "relates_to link not followed: {result}"
+            );
         });
     }
 
@@ -954,7 +996,8 @@ mod tests {
             std::fs::write(
                 dir.join("redis-config.md"),
                 "---\nsummary: Redis cluster failover procedure\n---\nDetails here.\n",
-            ).unwrap();
+            )
+            .unwrap();
             // Output contains a word from the summary
             let hints = related_knowledge_hints("redis failover detected in cluster logs");
             assert!(
