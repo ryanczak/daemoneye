@@ -1119,7 +1119,9 @@ async fn run_chat_inner_raw(
         if query == "/pane" {
             match send_list_panes_for_session(&session_id).await {
                 Ok(panes) if panes.is_empty() => {
-                    println!("\x1b[90mNo targetable panes found. Open a terminal pane alongside chat.\x1b[0m");
+                    println!(
+                        "\x1b[90mNo targetable panes found. Open a terminal pane alongside chat.\x1b[0m"
+                    );
                 }
                 Ok(panes) => {
                     println!();
@@ -1134,7 +1136,9 @@ async fn run_chat_inner_raw(
                         }
                     }
                     println!();
-                    println!("\x1b[90mUse \x1b[0m\x1b[96m/pane %N\x1b[0m\x1b[90m to pin a pane by ID.\x1b[0m");
+                    println!(
+                        "\x1b[90mUse \x1b[0m\x1b[96m/pane %N\x1b[0m\x1b[90m to pin a pane by ID.\x1b[0m"
+                    );
                     println!();
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  /pane failed: {}", e),
@@ -2685,7 +2689,10 @@ async fn send_set_pane(session_id: &str, pane_id: &str) -> Result<(String, Strin
     let mut line = String::new();
     rx.read_line(&mut line).await?;
     match serde_json::from_str::<Response>(line.trim())? {
-        Response::PaneChanged { pane_id, description } => Ok((pane_id, description)),
+        Response::PaneChanged {
+            pane_id,
+            description,
+        } => Ok((pane_id, description)),
         Response::Error(e) => anyhow::bail!("{}", e),
         _ => anyhow::bail!("unexpected response from daemon"),
     }

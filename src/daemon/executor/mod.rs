@@ -353,14 +353,8 @@ where
         )),
 
         PendingCall::GetTerminalContext { .. } => {
-            let target_pane: Option<String> = session_id.and_then(|sid| {
-                sessions
-                    .lock()
-                    .ok()?
-                    .get(sid)?
-                    .default_target_pane
-                    .clone()
-            });
+            let target_pane: Option<String> = session_id
+                .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone());
             let ctx = cache.get_labeled_context(chat_pane, chat_pane);
             let pane_map = cache.pane_map_summary(chat_pane);
             let fg_line = target_pane
