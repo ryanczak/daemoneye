@@ -453,6 +453,21 @@ pub enum Response {
         /// Cumulative compression ratio (msgs_in / msgs_out) across all compactions.  0.0 if none.
         #[serde(default)]
         compaction_ratio: f64,
+        /// Script write approvals/denials since daemon start.
+        #[serde(default)]
+        scripts_approved: usize,
+        #[serde(default)]
+        scripts_denied: usize,
+        /// Runbook write approvals/denials since daemon start.
+        #[serde(default)]
+        runbooks_approved: usize,
+        #[serde(default)]
+        runbooks_denied: usize,
+        /// File edit approvals/denials since daemon start.
+        #[serde(default)]
+        file_edits_approved: usize,
+        #[serde(default)]
+        file_edits_denied: usize,
     },
 }
 

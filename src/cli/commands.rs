@@ -38,19 +38,13 @@ impl SessionApproval {
             (false, false) => {}
         }
         if !self.scripts.is_empty() {
-            let mut names: Vec<&str> = self.scripts.iter().map(|s| s.as_str()).collect();
-            names.sort_unstable();
-            active.push(format!("scripts({})", names.join(", ")));
+            active.push(format!("scripts: {}", self.scripts.len()));
         }
         if !self.runbooks.is_empty() {
-            let mut names: Vec<&str> = self.runbooks.iter().map(|s| s.as_str()).collect();
-            names.sort_unstable();
-            active.push(format!("runbooks({})", names.join(", ")));
+            active.push(format!("runbooks: {}", self.runbooks.len()));
         }
         if !self.file_edits.is_empty() {
-            let mut names: Vec<&str> = self.file_edits.iter().map(|s| s.as_str()).collect();
-            names.sort_unstable();
-            active.push(format!("files({})", names.join(", ")));
+            active.push(format!("files: {}", self.file_edits.len()));
         }
         if active.is_empty() {
             "approvals: off".to_string()
@@ -772,7 +766,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             center(39)
         );
         println!(
-            "{}\x1b[96m/approvals [revoke]\x1b[0m to manage approvals",
+            "{}\x1b[96m/approvals [revoke]\x1b[0m to list or revoke approvals",
             center(40)
         );
         println!();
@@ -1245,31 +1239,87 @@ async fn run_chat_inner_raw(
                     }
                 }
             }
+            if approval.file_edits.is_empty() {
+                println!("  Files                        \x1b[2mnone\x1b[0m");
+            } else {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let mut paths: Vec<&str> = approval.file_edits.iter().map(|s| s.as_str()).collect();
+                paths.sort_unstable();
+                for (i, path) in paths.iter().enumerate() {
+                    let display = if !home.is_empty() && path.starts_with(&home) {
+                        format!("~{}", &path[home.len()..])
+                    } else {
+                        path.to_string()
+                    };
+                    if i == 0 {
+                        println!(
+                            "  Files                        \x1b[32m⚡\x1b[0m {}",
+                            display
+                        );
+                    } else {
+                        println!(
+                            "                               \x1b[32m⚡\x1b[0m {}",
+                            display
+                        );
+                    }
+                }
+            }
             println!();
-            println!("  Use \x1b[96m/approvals revoke\x1b[0m to reset all approvals.");
+            println!("  Use \x1b[96m/approvals revoke\x1b[0m to reset all, or revoke by class:");
+            println!(
+                "    \x1b[96m/approvals revoke commands\x1b[0m  \
+                 \x1b[96m/approvals revoke scripts\x1b[0m"
+            );
+            println!(
+                "    \x1b[96m/approvals revoke runbooks\x1b[0m  \
+                 \x1b[96m/approvals revoke files\x1b[0m"
+            );
             println!();
             continue;
         }
+        // Per-class revoke helpers: update approval, print separator, refresh bar.
+        macro_rules! do_revoke {
+            ($label:expr) => {{
+                let label = $label;
+                let dashes = chat_width.min(72).saturating_sub(visual_len(label) + 1);
+                println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                let hint = approval.hint();
+                draw_input_frame(chat_height, chat_width, start_time);
+                draw_status_bar(
+                    chat_height,
+                    chat_width,
+                    &StatusBarState {
+                        session_id: &session_id,
+                        approval_hint: &hint,
+                        model: &model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                    },
+                );
+                continue;
+            }};
+        }
         if query == "/approvals revoke" {
             *approval = SessionApproval::default();
-            let label = " all approvals reset ";
-            let dashes = chat_width.min(72).saturating_sub(visual_len(label) + 1);
-            println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-            let hint = approval.hint();
-            draw_input_frame(chat_height, chat_width, start_time);
-            draw_status_bar(
-                chat_height,
-                chat_width,
-                &StatusBarState {
-                    session_id: &session_id,
-                    approval_hint: &hint,
-                    model: &model,
-                    prompt_tokens,
-                    context_window,
-                    daemon_up,
-                },
-            );
-            continue;
+            do_revoke!(" all approvals reset ");
+        }
+        if query == "/approvals revoke commands" {
+            approval.regular = false;
+            approval.sudo = false;
+            do_revoke!(" command approvals reset ");
+        }
+        if query == "/approvals revoke scripts" {
+            approval.scripts.clear();
+            do_revoke!(" script approvals reset ");
+        }
+        if query == "/approvals revoke runbooks" {
+            approval.runbooks.clear();
+            do_revoke!(" runbook approvals reset ");
+        }
+        if query == "/approvals revoke files" {
+            approval.file_edits.clear();
+            do_revoke!(" file approvals reset ");
         }
         {
             let cw = chat_width; // copy for Request::Ask

@@ -517,6 +517,12 @@ pub async fn handle_client(
                     redaction_counts: crate::ai::filter::get_redaction_counts(),
                     compactions,
                     compaction_ratio,
+                    scripts_approved: crate::daemon::stats::get_scripts_approved(),
+                    scripts_denied: crate::daemon::stats::get_scripts_denied(),
+                    runbooks_approved: crate::daemon::stats::get_runbooks_approved(),
+                    runbooks_denied: crate::daemon::stats::get_runbooks_denied(),
+                    file_edits_approved: crate::daemon::stats::get_file_edits_approved(),
+                    file_edits_denied: crate::daemon::stats::get_file_edits_denied(),
                 },
             )
             .await?;

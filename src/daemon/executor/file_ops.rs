@@ -436,22 +436,31 @@ where
                 user_message,
             }) if resp_id == id => {
                 if let Some(msg) = user_message {
+                    crate::daemon::stats::inc_file_edits_denied();
                     return Ok(Err(ToolCallOutcome::UserMessage(msg)));
                 }
                 if !approved {
+                    crate::daemon::stats::inc_file_edits_denied();
                     return Ok(Err(ToolCallOutcome::Result(
                         "User denied execution".to_string(),
                     )));
                 }
+                crate::daemon::stats::inc_file_edits_approved();
                 Ok(Ok(true))
             }
-            _ => Ok(Err(ToolCallOutcome::Result(
-                "User denied execution".to_string(),
-            ))),
+            _ => {
+                crate::daemon::stats::inc_file_edits_denied();
+                Ok(Err(ToolCallOutcome::Result(
+                    "User denied execution".to_string(),
+                )))
+            }
         },
-        _ => Ok(Err(ToolCallOutcome::Result(
-            "User denied execution".to_string(),
-        ))),
+        _ => {
+            crate::daemon::stats::inc_file_edits_denied();
+            Ok(Err(ToolCallOutcome::Result(
+                "User denied execution".to_string(),
+            )))
+        }
     }
 }
 

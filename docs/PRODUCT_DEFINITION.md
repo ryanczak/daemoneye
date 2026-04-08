@@ -48,9 +48,10 @@ This is where every team starts. The AI is useful from minute one: reading error
 
 Once you've seen the AI handle a class of operations reliably, grant session-level approval. Regular commands, sudo commands, specific scripts, specific runbooks, and specific file paths each have independent approval scopes.
 
-- `/approvals` shows what's currently trusted. `/approvals off` revokes everything instantly.
-- Session approvals reset on `/clear`, `/prompt`, `/refresh`, and Ctrl+C -- they never persist beyond the current interaction.
-- The status bar shows active approvals at all times so there's no ambiguity about what the AI can do.
+- `/approvals` shows what's currently trusted across all five scopes (commands, sudo, scripts, runbooks, files), listing each approved item by name. `/approvals revoke` revokes everything instantly; `/approvals revoke <class>` revokes just that class (`commands`, `scripts`, `runbooks`, or `files`).
+- Session approvals reset on `/clear`, `/prompt`, `/refresh`, and Ctrl+C — they never persist beyond the current interaction.
+- The status bar shows active approvals at all times using compact count-based segments (e.g. `⚡approvals: all · scripts: 2 · files: 1 · Ctrl+C revokes`) so there is never any ambiguity about what the AI can do.
+- Cumulative approval and denial counts for script writes, runbook writes, and file edits are tracked by the daemon and surfaced in `daemoneye status`, giving long-running sessions an audit trail.
 
 ### Level 3: Scheduled Operations
 

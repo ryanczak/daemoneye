@@ -60,6 +60,7 @@ where
     };
 
     if approved {
+        crate::daemon::stats::inc_scripts_approved();
         match scripts::write_script(script_name, content) {
             Ok(()) => Ok(ToolCallOutcome::Result(format!(
                 "Script '{}' written successfully",
@@ -71,6 +72,7 @@ where
             ))),
         }
     } else {
+        crate::daemon::stats::inc_scripts_denied();
         Ok(ToolCallOutcome::Result(
             "Script write denied by user".to_string(),
         ))
@@ -216,6 +218,7 @@ where
     };
 
     if approved {
+        crate::daemon::stats::inc_runbooks_approved();
         match crate::runbook::write_runbook(name, content) {
             Ok(()) => {
                 log::info!("Runbook '{}' written", name);
@@ -234,6 +237,7 @@ where
             ))),
         }
     } else {
+        crate::daemon::stats::inc_runbooks_denied();
         Ok(ToolCallOutcome::Result(
             "Runbook write denied by user".to_string(),
         ))

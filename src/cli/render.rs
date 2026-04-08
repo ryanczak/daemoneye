@@ -161,6 +161,19 @@ pub fn visual_len(s: &str) -> usize {
     count
 }
 
+/// Truncate `s` (no ANSI escapes) to at most `max_chars` visible characters.
+/// Returns the truncated string without any ellipsis — callers append `…` as needed.
+fn truncate_to_visual(s: &str, max_chars: usize) -> &str {
+    let mut end = s.len();
+    for (count, (i, _ch)) in s.char_indices().enumerate() {
+        if count >= max_chars {
+            end = i;
+            break;
+        }
+    }
+    &s[..end]
+}
+
 /// Query the visible column width of the terminal on stdout.
 /// Uses `ioctl(TIOCGWINSZ)` so the value is always live — pane resizes are
 /// reflected automatically.  Falls back to `$COLUMNS`, then to 79.
@@ -357,17 +370,45 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
         format!("· \x1b[2m{}\x1b[0m ", sb.approval_hint)
     };
 
+    // If the hint still overflows when paired only with base, build a truncated
+    // version that fits.  The hint_str layout is "· {text} " (3 visual chars of
+    // overhead); we reserve at least 6 visible chars for the truncated text plus
+    // the ellipsis, otherwise we skip the hint entirely.
+    let hint_str_truncated: String = {
+        let avail = width.saturating_sub(visual_len(&base));
+        let hint_vis = visual_len(&hint_str);
+        if hint_vis <= avail || avail < 9 {
+            // Fits already, or too narrow to be useful — handled by cascade below.
+            String::new()
+        } else {
+            // "· " (2) + text + "… " (2) must fit in avail.
+            let text_budget = avail.saturating_sub(4);
+            let truncated = truncate_to_visual(sb.approval_hint, text_budget);
+            if sb.approval_hint.starts_with('⚡') {
+                format!("· \x1b[1m\x1b[33m{}…\x1b[0m\x1b[22m\x1b[2m ", truncated)
+            } else {
+                format!("· \x1b[2m{}…\x1b[0m ", truncated)
+            }
+        }
+    };
+
     // Try progressively shorter combinations until one fits.
-    let candidates: &[&dyn Fn() -> String] = &[
-        &|| format!("{}{}{}{}", base, model_str, token_str, hint_str),
-        &|| format!("{}{}{}", base, model_str, hint_str),
-        &|| format!("{}{}", base, hint_str),
-        &|| base.clone(),
+    // The truncated-hint candidate is only inserted when a truncated string was
+    // produced (i.e. the full hint overflows base alone but the terminal is wide
+    // enough to show something useful).
+    let mut candidates: Vec<Box<dyn Fn() -> String>> = vec![
+        Box::new(|| format!("{}{}{}{}", base, model_str, token_str, hint_str)),
+        Box::new(|| format!("{}{}{}", base, model_str, hint_str)),
+        Box::new(|| format!("{}{}", base, hint_str)),
     ];
+    if !hint_str_truncated.is_empty() {
+        candidates.push(Box::new(|| format!("{}{}", base, hint_str_truncated)));
+    }
+    candidates.push(Box::new(|| base.clone()));
 
     let mut out = base.clone();
     let mut vis = visual_len(&base);
-    for candidate in candidates {
+    for candidate in &candidates {
         let s = candidate();
         let v = visual_len(&s);
         if v <= width {

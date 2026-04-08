@@ -38,7 +38,7 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 - **Drift detection** — if the foreground target changes between turns (pane closed, user moved focus), the daemon sends a `[Pane target changed]` system message before the first AI token so the model updates its mental model without manual intervention.
 - **Format validation** — if the AI passes a malformed pane ID (e.g. `"1"` instead of `"%7"`), the daemon returns an error with the correct ID so the model can self-correct on the same turn.
 
-**`/approvals`** — type this at the chat prompt to inspect which approvals are currently active. Use `/approvals off` to instantly revoke all session approvals and return to explicit confirmation for everything.
+**`/approvals`** — type this at the chat prompt to inspect which approvals are currently active across all five scopes: terminal commands (regular and sudo), scripts, runbooks, and file paths. Use `/approvals revoke` to instantly revoke all session approvals, or revoke a single class with `/approvals revoke commands`, `/approvals revoke scripts`, `/approvals revoke runbooks`, or `/approvals revoke files`. The status bar shows a compact count-based summary (e.g. `⚡approvals: all · files: 2 · Ctrl+C revokes`) so you always know what the AI can do without opening `/approvals`. Cumulative write-approval and denial counts for scripts, runbooks, and file edits are tracked by the daemon and shown in `daemoneye status`.
 
 ### 📡 Webhook Alert Ingestion
 

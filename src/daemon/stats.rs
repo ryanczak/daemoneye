@@ -25,6 +25,13 @@ static COMMANDS_BG_DENIED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_SCHED_SUCCEEDED: AtomicUsize = AtomicUsize::new(0);
 static COMMANDS_SCHED_FAILED: AtomicUsize = AtomicUsize::new(0);
 
+static SCRIPTS_APPROVED: AtomicUsize = AtomicUsize::new(0);
+static SCRIPTS_DENIED: AtomicUsize = AtomicUsize::new(0);
+static RUNBOOKS_APPROVED: AtomicUsize = AtomicUsize::new(0);
+static RUNBOOKS_DENIED: AtomicUsize = AtomicUsize::new(0);
+static FILE_EDITS_APPROVED: AtomicUsize = AtomicUsize::new(0);
+static FILE_EDITS_DENIED: AtomicUsize = AtomicUsize::new(0);
+
 static WEBHOOKS_RECEIVED: AtomicUsize = AtomicUsize::new(0);
 static WEBHOOKS_REJECTED: AtomicUsize = AtomicUsize::new(0);
 
@@ -169,6 +176,42 @@ pub fn inc_commands_bg_approved() {
 }
 pub fn inc_commands_bg_denied() {
     COMMANDS_BG_DENIED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_scripts_approved() {
+    SCRIPTS_APPROVED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_scripts_denied() {
+    SCRIPTS_DENIED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_scripts_approved() -> usize {
+    SCRIPTS_APPROVED.load(Ordering::Relaxed)
+}
+pub fn get_scripts_denied() -> usize {
+    SCRIPTS_DENIED.load(Ordering::Relaxed)
+}
+pub fn inc_runbooks_approved() {
+    RUNBOOKS_APPROVED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_runbooks_denied() {
+    RUNBOOKS_DENIED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_runbooks_approved() -> usize {
+    RUNBOOKS_APPROVED.load(Ordering::Relaxed)
+}
+pub fn get_runbooks_denied() -> usize {
+    RUNBOOKS_DENIED.load(Ordering::Relaxed)
+}
+pub fn inc_file_edits_approved() {
+    FILE_EDITS_APPROVED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn inc_file_edits_denied() {
+    FILE_EDITS_DENIED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_file_edits_approved() -> usize {
+    FILE_EDITS_APPROVED.load(Ordering::Relaxed)
+}
+pub fn get_file_edits_denied() -> usize {
+    FILE_EDITS_DENIED.load(Ordering::Relaxed)
 }
 pub fn get_commands_sched_succeeded() -> usize {
     COMMANDS_SCHED_SUCCEEDED.load(Ordering::Relaxed)

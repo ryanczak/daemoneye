@@ -63,6 +63,12 @@ pub async fn run_status() -> Result<()> {
                     redaction_counts,
                     compactions,
                     compaction_ratio,
+                    scripts_approved,
+                    scripts_denied,
+                    runbooks_approved,
+                    runbooks_denied,
+                    file_edits_approved,
+                    file_edits_denied,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -144,12 +150,33 @@ pub async fn run_status() -> Result<()> {
                             runbooks_created, runbooks_executed, runbooks_deleted
                         ),
                     ));
+                    left_items.push((
+                        "".to_string(),
+                        format!(
+                            "  {} approved, {} denied (writes)",
+                            runbooks_approved, runbooks_denied
+                        ),
+                    ));
                     left_items.push(("Scripts:".to_string(), format!("{} existing", script_count)));
                     left_items.push((
                         "".to_string(),
                         format!(
                             "  {} created, {} executed, {} deleted",
                             scripts_created, scripts_executed, scripts_deleted
+                        ),
+                    ));
+                    left_items.push((
+                        "".to_string(),
+                        format!(
+                            "  {} approved, {} denied (writes)",
+                            scripts_approved, scripts_denied
+                        ),
+                    ));
+                    left_items.push((
+                        "File edits:".to_string(),
+                        format!(
+                            "{} approved, {} denied",
+                            file_edits_approved, file_edits_denied
                         ),
                     ));
                     left_items.push((
