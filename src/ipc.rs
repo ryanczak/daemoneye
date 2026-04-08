@@ -1146,6 +1146,12 @@ mod tests {
             },
             compactions: 2,
             compaction_ratio: 3.5,
+            scripts_approved: 0,
+            scripts_denied: 0,
+            runbooks_approved: 0,
+            runbooks_denied: 0,
+            file_edits_approved: 0,
+            file_edits_denied: 0,
         };
         match roundtrip_resp(&resp) {
             Response::DaemonStatus {
