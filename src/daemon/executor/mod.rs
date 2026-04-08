@@ -353,9 +353,28 @@ where
         )),
 
         PendingCall::GetTerminalContext { .. } => {
+            let target_pane: Option<String> = session_id.and_then(|sid| {
+                sessions
+                    .lock()
+                    .ok()?
+                    .get(sid)?
+                    .default_target_pane
+                    .clone()
+            });
             let ctx = cache.get_labeled_context(chat_pane, chat_pane);
             let pane_map = cache.pane_map_summary(chat_pane);
-            Ok(ToolCallOutcome::Result(format!("{ctx}\n{pane_map}")))
+            let fg_line = target_pane
+                .as_deref()
+                .map(|tp| {
+                    format!(
+                        "[FOREGROUND TARGET] {} — target_pane=\"{}\" for run_terminal_command(background=false)\n",
+                        tp, tp
+                    )
+                })
+                .unwrap_or_default();
+            Ok(ToolCallOutcome::Result(format!(
+                "{fg_line}{ctx}\n{pane_map}"
+            )))
         }
 
         PendingCall::CloseBackgroundWindow { pane_id, .. } => Ok(ToolCallOutcome::Result(

@@ -226,6 +226,18 @@ pub enum Request {
     },
     /// Query the daemon's current operational status (F1).
     Status,
+    /// Pin the foreground target pane for the given session.
+    /// The daemon updates `default_target_pane`, persists to `pane_prefs.json`,
+    /// and responds with `Response::PaneChanged`.
+    SetPane {
+        session_id: String,
+        pane_id: String,
+    },
+    /// List targetable panes known to the daemon for the given session.
+    /// The daemon responds with `Response::PaneList`.
+    ListPanesForSession {
+        session_id: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -363,6 +375,16 @@ pub enum Response {
     ModelList {
         models: Vec<(String, String)>,
         active: String,
+    },
+    /// Confirmation that the session's foreground target pane was changed (response to `SetPane`).
+    PaneChanged {
+        pane_id: String,
+        description: String,
+    },
+    /// List of targetable panes (response to `ListPanesForSession`).
+    /// Each entry is `(pane_id, current_cmd, window_name, is_current_target)`.
+    PaneList {
+        panes: Vec<(String, String, String, bool)>,
     },
     /// Daemon status snapshot returned in response to `Request::Status` (F1).
     DaemonStatus {

@@ -29,6 +29,40 @@ fn is_valid_pane_id(id: &str) -> bool {
     id.starts_with('%') && id.len() > 1 && id[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Prepend a `[FOREGROUND TARGET]` line to the session context block.
+///
+/// This pins the model to a specific pane ID for foreground execution so it
+/// never has to infer the target from topology.  If `target_pane` is `None`
+/// or the pane is not in the cache, returns the context unchanged.
+fn prepend_foreground_target(
+    ctx: &str,
+    target_pane: Option<&str>,
+    cache: &crate::tmux::cache::SessionCache,
+) -> String {
+    let Some(pane_id) = target_pane else {
+        return ctx.to_string();
+    };
+    let (cmd, window) = {
+        let panes = cache.panes.read().unwrap_or_log();
+        if let Some(p) = panes.get(pane_id) {
+            (p.current_cmd.clone(), p.window_name.clone())
+        } else {
+            (String::new(), String::new())
+        }
+    };
+    let detail = if !cmd.is_empty() && !window.is_empty() {
+        format!(" ({}, '{}')", cmd, window)
+    } else if !cmd.is_empty() {
+        format!(" ({})", cmd)
+    } else {
+        String::new()
+    };
+    format!(
+        "[FOREGROUND TARGET] {}{} — for run_terminal_command(background=false), always pass target_pane=\"{}\"\n{}",
+        pane_id, detail, pane_id, ctx
+    )
+}
+
 /// Build the N15 catch-up brief from messages injected while the client was away.
 ///
 /// `new_msgs` is the slice of messages added after detach.
@@ -261,6 +295,84 @@ pub async fn handle_client(
                 "default".to_string()
             };
             send_response_split(&mut tx, Response::ModelList { models, active }).await?;
+            return Ok(());
+        }
+        Request::SetPane { session_id, pane_id } => {
+            // Validate it looks like a tmux pane ID.
+            if !is_valid_pane_id(&pane_id) {
+                send_response_split(
+                    &mut tx,
+                    Response::Error(format!(
+                        "Invalid pane ID '{}'. Use the format %N (e.g. %3).",
+                        pane_id
+                    )),
+                )
+                .await?;
+                return Ok(());
+            }
+            // Update the session entry.
+            if let Ok(mut store) = sessions.lock()
+                && let Some(entry) = store.get_mut(&session_id)
+            {
+                entry.default_target_pane = Some(pane_id.clone());
+                // Persist so the preference survives daemon restarts.
+                crate::pane_prefs::save(&entry.tmux_session, &pane_id);
+            }
+            // Build a human-readable description from the cache.
+            let (cmd, window) = {
+                let panes = cache.panes.read().unwrap_or_log();
+                panes
+                    .get(&pane_id)
+                    .map(|p| (p.current_cmd.clone(), p.window_name.clone()))
+                    .unwrap_or_default()
+            };
+            let description = if !cmd.is_empty() && !window.is_empty() {
+                format!("{} ({})", pane_id, cmd)
+            } else {
+                pane_id.clone()
+            };
+            send_response_split(&mut tx, Response::PaneChanged { pane_id, description }).await?;
+            return Ok(());
+        }
+        Request::ListPanesForSession { session_id } => {
+            let current_target = if let Ok(store) = sessions.lock() {
+                store
+                    .get(&session_id)
+                    .and_then(|e| e.default_target_pane.clone())
+            } else {
+                None
+            };
+            let chat_pane_id: Option<String> = if let Ok(store) = sessions.lock() {
+                store.get(&session_id).and_then(|e| e.chat_pane.clone())
+            } else {
+                None
+            };
+            let panes_snapshot = {
+                let panes = cache.panes.read().unwrap_or_log();
+                let mut entries: Vec<_> = panes
+                    .iter()
+                    .filter(|(id, _)| chat_pane_id.as_deref() != Some(id.as_str()))
+                    .filter(|(_, s)| {
+                        !s.window_name.starts_with("de-bg-")
+                            && !s.window_name.starts_with("de-sj-")
+                            && !s.window_name.starts_with("de-gs-bg-")
+                            && !s.window_name.starts_with("de-gs-sj-")
+                            && !s.window_name.starts_with("de-gs-ir-")
+                    })
+                    .map(|(id, s)| {
+                        let is_target = current_target.as_deref() == Some(id.as_str());
+                        (
+                            id.clone(),
+                            s.current_cmd.clone(),
+                            s.window_name.clone(),
+                            is_target,
+                        )
+                    })
+                    .collect();
+                entries.sort_by_key(|(_, _, win, _)| win.clone());
+                entries
+            };
+            send_response_split(&mut tx, Response::PaneList { panes: panes_snapshot }).await?;
             return Ok(());
         }
         // F1: return a live status snapshot to `daemoneye status`.
@@ -582,8 +694,10 @@ pub async fn handle_client(
 
     // Upsert the session entry: create it with the client-resolved target pane if
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
-    // Also capture any pending catch-up brief (N15) to send after SessionInfo.
-    let catchup_brief: Option<String> = if let Some(ref id) = session_id {
+    // Also capture any pending catch-up brief (N15) and pane-drift notice to
+    // send after SessionInfo.
+    let (catchup_brief, pane_drift_msg): (Option<String>, Option<String>) =
+        if let Some(ref id) = session_id {
         if let Ok(mut store) = sessions.lock() {
             let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
                 messages: Vec::new(),
@@ -605,9 +719,29 @@ pub async fn handle_client(
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
-            if entry.default_target_pane.is_none() {
-                entry.default_target_pane = client_target_pane.clone();
-            }
+
+            // Detect pane drift: the client resolved a different target pane than
+            // what was stored.  Announce the change to the model as a SystemMsg so
+            // it doesn't keep using the old pane ID.  Always adopt the new value —
+            // resolve_target_pane() on the client already respects pane_prefs.json,
+            // so if the user pinned a pane via /pane it will persist correctly.
+            let drift_msg =
+                match (&entry.default_target_pane, &client_target_pane) {
+                    (Some(old), Some(new)) if old != new => {
+                        let old_clone = old.clone();
+                        entry.default_target_pane = Some(new.clone());
+                        Some(format!(
+                            "[Pane target changed] Foreground target is now {} (was {}). \
+                             Use target_pane=\"{}\" for run_terminal_command(background=false).",
+                            new, old_clone, new
+                        ))
+                    }
+                    (None, Some(new)) => {
+                        entry.default_target_pane = Some(new.clone());
+                        None // first assignment — no drift to announce
+                    }
+                    _ => None,
+                };
 
             // R1: start pipe-pane for the source pane on the first Ask so we can
             // capture full terminal output history (including content that has scrolled
@@ -662,12 +796,12 @@ pub async fn handle_client(
             // Clear detach state regardless of whether we generated a brief.
             entry.last_detach = None;
 
-            brief
+            (brief, drift_msg)
         } else {
-            None
+            (None, None)
         }
     } else {
-        None
+        (None, None)
     };
 
     // Read the session's active model override once so it stays consistent for
@@ -756,9 +890,18 @@ pub async fn handle_client(
     // C1: per-turn pane map — always generated, available in both branches.
     let pane_map = cache.pane_map_summary(chat_pane.as_deref());
 
+    // Read the default foreground target pane for this session so we can inject
+    // an explicit [FOREGROUND TARGET] line into the context block.  This tells the
+    // model exactly which pane ID to pass to run_terminal_command(background=false)
+    // without needing to infer it from the topology.
+    let default_target_pane: Option<String> = session_id
+        .as_ref()
+        .and_then(|id| sessions.lock().ok()?.get(id)?.default_target_pane.clone());
+
     let prompt = if is_first_turn {
         let session_summary =
             cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
+        let session_summary = prepend_foreground_target(&session_summary, default_target_pane.as_deref(), &cache);
         let sys_ctx = get_or_init_sys_context().format_for_ai();
         let daemon_host = daemon_hostname();
         let environment = &config.context.environment;
@@ -823,7 +966,11 @@ pub async fn handle_client(
         } else {
             String::new()
         };
-        format!("{budget_note}{pane_map}{current_time_line}User: {safe_query}")
+        let fg_target_line = default_target_pane
+            .as_deref()
+            .map(|tp| format!("[FOREGROUND TARGET] {} — target_pane=\"{}\" for run_terminal_command(background=false)\n", tp, tp))
+            .unwrap_or_default();
+        format!("{budget_note}{fg_target_line}{pane_map}{current_time_line}User: {safe_query}")
     };
 
     let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);
@@ -881,6 +1028,12 @@ pub async fn handle_client(
     // it appears before any streaming tokens from the AI.
     if let Some(ref brief) = catchup_brief {
         send_response_split(&mut tx, Response::SystemMsg(brief.clone())).await?;
+    }
+
+    // Pane drift: notify the model when the foreground target changed since
+    // the last turn so it doesn't keep using the stale pane ID.
+    if let Some(ref msg) = pane_drift_msg {
+        send_response_split(&mut tx, Response::SystemMsg(msg.clone())).await?;
     }
 
     loop {

@@ -15,6 +15,9 @@ use crate::tmux;
 use crate::tmux::cache::SessionCache;
 use crate::tmux::ensure_incident_session;
 
+/// Static ghost shell operating rules, appended to the ghost system prompt.
+const GHOST_SHELL_RULES: &str = include_str!("../../assets/prompts/ghost-shell.txt");
+
 /// Return `true` if another ghost shell may be started without exceeding the
 /// configured concurrency limit.
 ///
@@ -211,15 +214,13 @@ pub async fn trigger_ghost_turn(
     let system = format!(
         "{}\n\n\
          ## Ghost Shell Execution Context\n\
-         You are operating autonomously — no human user is present.\n\
-         All terminal commands MUST use background mode (they run in de-gs-bg-* or de-gs-sj-* windows).\n\
-         Do NOT ask questions or wait for user input.\n\
          Daemon Host: {}\n\
          Tmux Session: {}\n\
          {}Command Policy: non-sudo commands run freely (OS permissions are the boundary). \
          {}\n\
          Pre-approved Sudo Scripts: {}{}\n\
          Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
+         {}\n\n\
          {}",
         system_base,
         daemon_hostname(),
@@ -238,7 +239,8 @@ pub async fn trigger_ghost_turn(
             ""
         },
         max_ghost_turns,
-        sys_context.format_for_ai()
+        sys_context.format_for_ai(),
+        GHOST_SHELL_RULES,
     );
 
     if !tmux::session_exists(&tmux_session) {

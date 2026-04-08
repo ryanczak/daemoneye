@@ -1,120 +1,243 @@
-# Product Definition Document: DaemonEye
+# Product Definition: DaemonEye
 
-## 1. Product Overview
+## The Problem
 
-**Name**: DaemonEye 
-**Type**: Linux Daemon / Tmux Plugin  
-**Inspiration**: tmux, claude code, openclaw
+Infrastructure operations are stuck between two extremes. On one side: human operators manually SSHing into servers, reading logs, running commands, and firefighting incidents at 3am. On the other: fully autonomous AI agents that terrify anyone who has ever seen `rm -rf` go wrong.
 
-**Vision Statement**:  
-DaemonEye elevates the command-line experience by embedding AI agents directly into your existing terminal workflow via **tmux**. Operating as a lightweight daemon process, DaemonEye manages AI interactions through tmux panes. The goal of DaemonEye is to act as an intelligent, context-aware peer engineer, DaemonEye leverages advanced AI to automate tasks, troubleshoot problems, react to alerts and proactively manage hosts, infrastructure and security. 
+The gap between "I need help" and "I trust you to do it alone" is where most AI tooling fails. Chatbots suggest commands but can't run them. Autonomous agents run commands but can't be trusted. Neither approach lets an organization incrementally transfer operational knowledge and authority from humans to AI in a controlled, auditable way.
 
----
+DaemonEye closes that gap.
 
-## 2. Target Audience
+## What DaemonEye Is
 
-- **System Administrators (Sysadmins)**: Managing fleets of internal/external servers, deploying applications, performing configuration management, and troubleshooting live production issues.
-- **SREs & Platform Engineers**: Operating and troubleshooting OS, scripts, apps, CI/CD pipelines and cloud infrastructure directly from the terminal, via control plane APIs, and scrappiness as required to get the job done.
-- **Developers**: Writing code, managing local environments, reading complex build logs, and seeking rapid, context-aware debugging support.
+DaemonEye is a Linux daemon that embeds AI operators directly into your terminal workflow via tmux. It pairs human experts with AI agents across a trust spectrum -- from fully supervised pair-programming to fully autonomous incident response -- with every point in between available and every action logged.
 
----
+The key insight: **autonomy is not binary**. A team that starts with "approve every command" can progressively grant the AI more authority -- per-command-class, per-script, per-runbook -- as trust is earned through observable, measurable behavior. DaemonEye makes this progression natural, safe, and reversible.
 
-## 3. Core Features & Capabilities
-
-### 3.1 Native tmux Integration
-
-- **tmux Backend Process**: DaemonEye runs as a background daemon and integrates directly with your active `tmux` server.
-- **Seamless Attachment**: Attach to an existing tmux session, or start a new one, and invoke the AI agent. The AI agent will appear in a newly spawned tmux pane alongside your work.
-- **Session Persistence**: Sessions, panes, and window layouts are fully preserved through native tmux capabilities, meaning users can detach and reattach to remote or local environments without dropping their AI context.
-
-### 3.2 Deep AI Integration
-
-- **Context-Aware Assistance**: DaemonEye's "killer feature" is its ability to feed the terminal's visible output, backscroll history, and deeply audited host configuration (OS state, uptime, running processes, and command history) into AI agents. On the first turn of each session the full terminal snapshot is provided automatically. On subsequent turns the AI requests a fresh snapshot on demand via the `get_terminal_context` tool — keeping context lean for conversational exchanges and ensuring a current view when the AI actually needs to inspect the screen. The AI knows *what* the user is looking at and *what* commands were recently executed within the tmux session. Per-pane context includes each pane's current working directory, OSC terminal title (set by running applications such as vim, ssh, and k9s via escape sequences), synchronized-input flag, and dead-pane status with exit code (so the AI knows when a background job has finished and with what result). Non-active panes are also annotated with a temporal activity indicator — `[active Xs ago]`, `[idle Nm]`, or `[idle NhNm]` — derived from tmux's `pane_activity` timestamp, giving the AI a sense of which panes are actively in use. ANSI SGR colour codes in the active pane content are converted to semantic markers — `[ERROR: text]` (red), `[WARN: text]` (yellow), `[OK: text]` (green) — so the AI can identify failures and successes at a glance without needing to interpret raw terminal escape sequences. When two or more tmux sessions exist, an `[OTHER SESSIONS]` block is appended listing each non-current session's name, window count, last-activity age, and attachment state — so the AI can reason across parallel workstreams (e.g. a staging session running alongside a production session) without requiring the user to switch contexts. High-signal tmux session environment variables — including cloud account (AWS_PROFILE), Kubernetes cluster (KUBECONFIG), vault address (VAULT_ADDR), runtime environment tier (NODE_ENV), and active language runtime (VIRTUAL_ENV, etc.) — are captured via `tmux show-environment` with a curated allowlist and included in the AI's context snapshot.
-- **Instant Activation**: Summon an AI agent instantly via a tmux keybinding or CLI command. This opens an interactive AI session in a dynamically positioned tmux pane.
-- **AI-Powered Capabilities**:
-  - **Pair-Programming & Troubleshooting**: The AI doesn't just suggest commands; it uses Tool Calling to propose executing commands directly in your active tmux session. Each proposed command presents a three-option approval prompt — approve once, approve the entire class of commands for the session, or deny. This session-level approval (independent for regular and sudo command classes) eliminates repetitive prompts in trusted automated sequences while keeping privilege-escalation commands under separate control.
-  - **Dual Execution Modes**: The AI chooses between two command execution modes. *Background mode* runs the command in a dedicated tmux window (`de-bg-*`) on the daemon host using the user's configured shell. The call returns immediately with the assigned pane ID; when the command finishes, a `[Background Task Completed]` context message containing the exit code and captured output is injected into the AI session. The shell is kept alive after each command so the AI can chain follow-up commands in the same environment using the returned pane ID. Up to 5 background windows persist per session; the oldest completed window is evicted when the cap is reached. The full scrollback is always archived to `~/.daemoneye/pane_logs/`. The AI can explicitly close a background window when it is no longer needed via `close_background_window(pane_id)` (no approval required); background windows that remain open 15 minutes after completion are automatically garbage-collected by the daemon as a safety net. *Foreground mode* injects the command into your active terminal pane via `send-keys` and detects completion cleanly by attaching a temporary `pane-title-changed` tmux hook, eliminating terminal clutter while remaining completely event-driven; the command is visible and interactive in your pane. If the AI does not explicitly specify a target pane, the client auto-selects the sole sibling pane, presents a numbered picker when multiple siblings exist, or offers to split the window side-by-side when the chat pane is alone; the chosen pane is persisted to `~/.daemoneye/pane_prefs.json` so the user is never prompted again after the first run. The AI knows your daemon's hostname and whether your pane is SSH'd to a remote machine, and selects the mode accordingly. Interactive session commands (`ssh`, `mosh`, `telnet`, `screen`) are treated as a distinct sub-case of foreground mode: the daemon returns as soon as the remote connection is established and instructs the AI to use `target_pane` to direct follow-up commands into the open session — no re-connection needed. Exit codes for foreground commands are captured via a shell hook (`PROMPT_COMMAND` / `precmd`) that writes the exit status to the tmux session environment after each command; `daemoneye setup` prints the one-line snippet to add to `~/.bashrc` or `~/.zshrc`.
-  - **Command Scheduler & Watchdog**: The AI can schedule commands to run once at a specific UTC time or repeatedly on an interval. Watchdog jobs run a command on a schedule and pass the output to the AI for analysis using a named runbook (markdown with YAML frontmatter) — triggering alerts when issues are detected. Runbooks reference knowledge memory keys whose content is automatically injected into the watchdog prompt. Each scheduled job runs in its own tmux window (`de-<id>`), left in place on failure for inspection. Alerts can be forwarded to an external notification command via `[notifications] on_alert`.
-  - **Knowledge System**: Three-tier AI-writable persistence. *Runbooks* (`~/.daemoneye/runbooks/`, markdown) encode watchdog procedures, alert criteria, and remediation steps; they can reference named knowledge memories. *Memory* (`~/.daemoneye/memory/`) stores durable facts in three categories: `session` entries are auto-injected into every AI turn (32 KB cap); `knowledge` entries are loaded on-demand by runbooks or the `read_memory` tool; `incident` records are historical and searchable. Memory entries support rich structured frontmatter — `tags` (with synonyms for broader matching), `summary` (shown in listings and used for contextual auto-search), `relates_to` (cross-references to related memories, runbooks, or scripts), and `expires` (TTL for time-bounded facts like maintenance windows or deploy freezes). The `update_memory` tool allows the AI to modify individual fields — body, tags, summary, relates_to, or expires — without rewriting the entire entry. Contextual auto-search (`auto_search_context`) matches on entry names, tags, and summary words and follows `relates_to` links to include related entries automatically — so a match on `db-hosts` can surface `db-quirks` and the `postgres-failover` runbook without the user needing to know those keys exist. *Search* lets the AI locate anything across runbooks, scripts, memory, and the full event log in a single tool call. Runbook and memory writes are immediately available to the next turn without any daemon restart.
-  - **Passive Pane Monitoring**: The daemon registers hooks at startup using the absolute path of the running binary. Four global hooks: `pane-died` (notifies the daemon when a background pane exits), `after-new-session` (automatically installs all per-session hooks for any tmux session created after the daemon starts — no manual reconfiguration needed), `client-detached` (records detach time and history watermark so the next AI turn can issue a catch-up brief), and `client-attached` (clears the detach record so the brief fires only once per detach cycle). Three per-session hooks: `alert-bell` (existing), `pane-focus-in` (instantly updates the active-pane state when the user switches panes — eliminates up to 2 s staleness from the background poll), and `session-window-changed` (instantly refreshes window topology when the user switches windows). When the user re-attaches after ≥ 30 seconds away and new events have accumulated (background task completions, webhook alerts, watchdog results, or watch-pane outcomes), the daemon delivers a `[Catch-up] N events while you were away (Xm): …` system message at the top of the next AI turn — keeping the user informed without requiring manual review of session history. When a background pane exits, the daemon issues a `tmux display-message` overlay, injects a `[Background Task Completed]` context message into the AI's session history, and GC-kills the window. The AI can also passively monitor arbitrary panes via `watch_pane`.
-  - **Scripts Directory**: The AI can author, update, list, and delete reusable scripts in `~/.daemoneye/scripts/`. Scripts may be shell (`.sh`) or Python (`.py`) — the AI defaults to Python for any task involving data processing, JSON handling, REST calls, or multi-step logic, falling back to shell for simple orchestration wrappers. Script writes and deletes require a user approval step before any change is made. Scripts can be referenced by name in scheduled jobs and autonomous Ghost Shells.
-  - **Sudo Integration**: Commands requiring elevated privileges are handled gracefully in both modes. Background sudo prompts appear in the chat interface with echo-disabled password input. Foreground sudo commands notify you to type your password in the terminal pane.
-  - **Webhook Alert Receiver**: An optional HTTP endpoint (default port 9393, disabled by default) accepts alert payloads from Prometheus Alertmanager, Grafana, or any JSON source. Alerts are deduplicated by fingerprint, masked for sensitive data, injected into the AI's active session histories, and displayed via `tmux display-message` in all chat panes — turning DaemonEye into a true on-call responder without user intervention. A matching runbook triggers automatic AI analysis. If the runbook has `enabled: true` in its frontmatter, DaemonEye spawns an **Autonomous Ghost Shell** in a dedicated incident window (`de-incident-*`). Ghost shells operate under an OS-delegation trust model: non-sudo commands run freely (the daemon runs as the same user, so file permissions are the boundary); sudo commands require explicit pre-approval via `auto_approve_scripts` in the runbook frontmatter paired with a NOPASSWD sudoers rule installed by `daemoneye install-sudoers`. If the AI detects an alert condition it notifies all sessions and fires the configured `on_alert` notification hook. Protected by an optional Bearer token.
-  - **Task Automation & Fleet Management**: Generate scripts or run on-the-fly automation commands to manage single host configurations or automated fleet deployments. The AI agent acts as an expert sysadmin.
-  - **Security Auditing**: Have the AI agent analyze system states, running processes, or security scan outputs to recommend and automatically apply remediation solutions.
-  - **Structured Event Log**: Every command the AI executes, AI usage metrics, and system events are written to `~/.daemoneye/events.jsonl` as structured JSON objects.
-  - **Prompt Library**: A library of pre-defined prompts for common tasks. Users can also create and save their own prompts. The prompts are stored in the user's home directory in the `.daemoneye/prompts` directory.
-
-### 3.3 Extensibility & Community Ecosystem
-
-- **Robust Plugin Architecture**: A native plugin system allowing the community to extend DaemonEye.
-- **Third-Party Integrations**: Easily bolt-on additional features like custom AI prompts, specialized cloud provider API integrations (AWS/GCP/Azure CLI enhancements), or specific tooling workflows (Docker, k8s).
+**Type**: Linux daemon + tmux integration
+**Written in**: Rust (single static binary, no runtime dependencies beyond tmux)
+**AI Providers**: Anthropic Claude, OpenAI, Google Gemini, Ollama, LM Studio -- switchable per-session or per-runbook
 
 ---
 
-## 4. Key User Workflows
+## Target Audience
 
-### Workflow 1: The "What went wrong?" Troubleshooting
-
-1. A user attempts to start a local database service in a tmux pane, but it fails with a cryptic 50-line error trace.
-2. The user hits the **AI agent keybinding**.
-3. DaemonEye captures the last 200 lines of history from the active pane, notes the daemon hostname and that the pane is local, then passes everything to the AI agent.
-4. The AI agent's tmux pane opens, explaining the error in plain English: *"It looks like port 5432 is already bound by another zombie process."* It proposes `sudo kill -9 <PID>`. The user approves; the chat interface prompts for the sudo password with echo disabled, runs the command, and reports the result — all without leaving the AI pane.
-
-### Workflow 2: Rapid Fleet Configuration
-
-1. A sysadmin is SSH'd into a jump server via a tmux session.
-2. They open the AI agent pane and ask: *"exexcute an ssh-keyscan loop to update my known_hosts for the 15 web servers listed in `fleet.txt`, then write a command to update Nginx on all of them."*
-3. The AI agent provides the exact bash loops and the sysadmin executes them. The sysadmin can also have the AI agent execute the commands for them.
-
-### Workflow 3: Watchdog Monitoring
-
-1. A user asks the AI: *"Set up a watchdog that checks disk usage every 10 minutes. Store the alert threshold in memory so we can tune it later."*
-2. The AI calls `add_memory("disk_thresholds", "Alert when usage > 85%", category="knowledge")`, then `write_runbook("disk-check", ...)` with `memories: [disk_thresholds]` in the frontmatter and the standard `## Alert Criteria` section.
-3. The user approves the runbook write in the chat interface. The AI then creates a scheduled watchdog job referencing the `disk-check` runbook.
-4. When the job fires, the daemon captures `df -h` output, loads the `disk_thresholds` knowledge memory, and builds the watchdog prompt with both the runbook content and the memory context.
-5. If disk usage exceeds the threshold, the AI emits a `SystemMsg` notification in the chat pane. If `[notifications] on_alert` is configured (e.g. `notify-send`), the alert is also sent there.
-6. On success the window is cleaned up; on failure it is left in place for inspection.
-
-### Workflow 4: Knowledge Accumulation Across Sessions
-
-1. The AI learns that a particular host runs a non-standard Postgres port. It calls `add_memory("db-host-quirks", "pg on :5433 not :5432", category="knowledge")`.
-2. In a later session the user asks about a connection failure. The AI calls `search_repository("pg", kind="memory")` and finds the quirk immediately.
-3. After resolving a major incident, the AI writes an `incident` memory with root cause, symptoms, and fix — making it available for future `search_repository` queries even though it is never auto-loaded.
-
-### Workflow 5: Security Remediation
-
-1. The user runs a vulnerability scanner (`lynis` or `chkrootkit`) on a server.
-2. The output is massive. The user hits the AI agent keybinding: *"Summarize the critical vulnerabilities found and generate the commands to patch them."*
-3. The AI agent outputs a curated markdown list of issues alongside copy-pasteable (or one-click executable) remediation scripts.
-
-### Workflow 6: On-Call Alert Response
-
-1. A disk-usage Prometheus alert fires and Alertmanager POSTs the payload to `http://localhost:9393/webhook`.
-2. DaemonEye checks the fingerprint — this is a new alert, not a duplicate.
-3. The alert is masked for sensitive data, logged to `events.jsonl`, and formatted as a `[Webhook Alert]` message.
-4. The message is injected into all active AI session JSONL files. A `tmux display-message` overlay appears in every chat pane: `[FIRING] HighDiskUsage — Disk /dev/sda1 at 93% (alertmanager)`.
-5. Severity `"critical"` meets the `severity_threshold = "warning"` gate, so `fire_notification()` runs the user's `on_alert` command.
-6. `auto_analyze = true` triggers runbook lookup: `"HighDiskUsage"` → `high-disk-usage.md` is found.
-7. The AI analyses the alert against the runbook and responds with `ALERT: /dev/sda1 needs immediate attention — remediation steps: …`.
-8. The analysis is injected into sessions and displayed in chat panes.
-9. On the next AI turn the user sees both the raw alert and the runbook analysis in context, ready to act on the AI's proposed remediation.
+- **SREs and Platform Engineers** managing production infrastructure, responding to alerts, and maintaining complex systems across multiple hosts and cloud accounts.
+- **System Administrators** running fleets of servers, deploying applications, performing configuration management, and troubleshooting live production issues.
+- **DevOps Teams** operating CI/CD pipelines, cloud infrastructure, and container orchestration from the terminal.
+- **Security Engineers** auditing systems, analyzing scan output, and applying remediation at scale.
 
 ---
 
-## 5. Technical Requirements
+## The Trust Spectrum: From Supervised to Autonomous
 
-- **Platform**: Linux Environment.
-- **Core Dependencies**: `tmux` (must be installed on the host machine). DaemonEye runs as a headless daemon.
-- **API Access**: Requires a valid API Key for an AI agent (e.g., Google Gemini, Anthropic Claude, or OpenAI's ChatGPT) configured in the daemon.
-- **Privacy & Security Framework**:
-  - Explicit user controls over what terminal context is sent to the LLM.
-  - Sensitive data masking: a multi-pattern regex filter runs on all terminal context before transmission. Built-in patterns cover AWS keys, PEM/GCP private keys, JWTs, GitHub PATs, database connection URLs, password/token assignments, URL query-param secrets, credit cards, and SSNs. Users extend the filter with org-specific patterns via `[masking] extra_patterns` in `config.toml`; built-in patterns cannot be disabled. Per-type redaction counts (AWS Key, JWT, DB URL, etc.) are tracked atomically and visible in `daemoneye status` so operators can audit how much sensitive data has been filtered. All built-in types are always shown, even at zero. Hits from user-configured patterns are aggregated into a separate `"User Defined"` counter.
+DaemonEye's design principle is that organizations should be able to dial AI autonomy up or down based on risk, context, and earned trust. Every feature maps to a point on this spectrum.
+
+### Level 1: Supervised Pair-Programming
+
+The AI sees your terminal -- scrollback, environment variables, running processes, command history -- and proposes actions. Every command requires explicit approval before execution.
+
+- **Three-option approval**: Approve once, approve the command class for the session, or deny. Sudo commands have a separate approval scope.
+- **Visual confirmation**: The target pane highlights blue during the approval window so you always know where a command will land.
+- **Mid-stream redirect**: Instead of approving or denying, type a message to redirect the AI's approach entirely -- no synthetic errors, no wasted context.
+
+This is where every team starts. The AI is useful from minute one: reading error logs, suggesting commands, explaining failures. But it cannot act without your say-so.
+
+### Level 2: Session-Level Trust
+
+Once you've seen the AI handle a class of operations reliably, grant session-level approval. Regular commands, sudo commands, specific scripts, specific runbooks, and specific file paths each have independent approval scopes.
+
+- `/approvals` shows what's currently trusted. `/approvals off` revokes everything instantly.
+- Session approvals reset on `/clear`, `/prompt`, `/refresh`, and Ctrl+C -- they never persist beyond the current interaction.
+- The status bar shows active approvals at all times so there's no ambiguity about what the AI can do.
+
+### Level 3: Scheduled Operations
+
+The AI can schedule commands, scripts, or Ghost Shell tasks to run once, on an interval, or on a cron expression. Watchdog monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
+
+- Each job runs in an isolated tmux window, left open on failure for inspection.
+- Watchdog jobs reference runbooks and knowledge memories, giving the AI structured context for its analysis.
+- Results appear in your next catch-up brief if you were away.
+
+### Level 4: Autonomous Ghost Shells
+
+When a critical alert fires, DaemonEye can spawn a Ghost Shell -- an unattended AI agent that investigates and remediates the problem in a dedicated tmux window while you sleep.
+
+Ghost Shells are the highest trust level, and they are the most tightly controlled:
+
+- **Opt-in per runbook**: Only runbooks with `enabled: true` can trigger a Ghost Shell. No runbook, no autonomy.
+- **Script whitelisting**: Sudo commands are restricted to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Both gates must pass. Everything else is denied.
+- **Turn budget**: A hard ceiling on AI turns (default 20, configurable per-runbook and per-daemon) prevents runaway agents. The ghost is forcibly stopped when the limit is reached.
+- **Concurrency cap**: A daemon-wide limit (default 3) prevents ghost shell storms during cascading failures.
+- **Full audit trail**: Every command, approval, result, and lifecycle event is logged to `events.jsonl`. Ghost session transcripts are preserved for post-incident review.
+- **Catch-up briefs**: When you re-attach after being away, DaemonEye delivers a summary of everything that happened -- ghost shells started, completed, or failed; alerts received; watchdog results.
 
 ---
 
-## 6. Success Metrics
+## Core Capabilities
 
-- **Adoption**: Number of active daily users / GitHub stars.
-- **AI Engagement**: Percentage of terminal sessions where the AI agent is invoked.
-- **Community Growth**: Number of community-developed plugins created and published to the DaemonEye ecosystem within the first 6 months.
+### Deep Terminal Awareness
+
+DaemonEye doesn't just read your current pane. It understands the full topology of your tmux session:
+
+- **Session topology**: Window names, pane counts, active/zoomed state, bell and activity flags.
+- **Per-pane context**: Current working directory, running command, OSC terminal title, synchronized-input state, dead-pane exit codes, activity recency.
+- **Environment capture**: Cloud account (AWS_PROFILE), Kubernetes cluster (KUBECONFIG), vault address, runtime environment, and active language runtimes -- via a curated allowlist from `tmux show-environment`.
+- **Cross-session awareness**: When multiple tmux sessions exist, the AI sees all of them -- names, window counts, last activity, attachment state -- so it can reason across parallel workstreams.
+- **Semantic ANSI parsing**: Red terminal output becomes `[ERROR: text]`, yellow becomes `[WARN: text]`, green becomes `[OK: text]` -- the AI identifies failures at a glance.
+- **Viewport awareness**: The AI knows your terminal dimensions and adjusts output accordingly.
+- **On-demand refresh**: After the first turn's full snapshot, the AI requests fresh context only when it needs it, keeping conversation lean.
+
+### Dual Execution Modes
+
+- **Background mode**: Commands run in dedicated daemon-host windows (`de-bg-*`), returning immediately with a pane ID. Output is archived. Up to 5 background windows persist per session. The AI can chain follow-up commands in the same environment.
+- **Foreground mode**: Commands are injected into your active terminal pane via `send-keys`. Completion is detected via PID tracking (local panes) or output stability (remote panes). Interactive commands like `ssh` and `mosh` are handled as a special case -- the daemon returns once the connection is established.
+
+### Knowledge System
+
+Three-tier persistence that lets the AI accumulate and apply operational knowledge:
+
+- **Session memory**: Auto-injected into every AI turn. Facts the AI should always know during this engagement.
+- **Knowledge memory**: Loaded on-demand by runbooks, watchdogs, and the AI itself. Organizational knowledge that outlives any single session.
+- **Incident records**: Historical, searchable records of past incidents with root cause, symptoms, and resolution.
+
+Memory entries support tags (with synonym matching), summaries, cross-references (`relates_to`), and TTLs (`expires`). Contextual auto-search follows relationship links to surface relevant knowledge automatically -- a match on `db-hosts` can pull in `db-quirks` and the `postgres-failover` runbook without anyone needing to know those keys exist.
+
+Six built-in knowledge guides are seeded on first run covering webhooks, runbook format, ghost shells, scheduling, scripts, and sudoers setup.
+
+### Scripts and Runbooks
+
+- **Scripts** (`~/.daemoneye/scripts/`): Shell or Python, chmod 700, managed via AI tools with approval diffs. The AI defaults to Python for data processing and multi-step logic, shell for simple orchestration.
+- **Runbooks** (`~/.daemoneye/runbooks/`): Markdown with structured frontmatter. Define alert criteria, remediation steps, ghost shell policy, model selection, SSH targets, and referenced knowledge memories. Runbooks can be prescriptive (fixed script) or open-ended (AI has latitude to investigate).
+
+### Webhook Alert Ingestion
+
+An optional HTTP endpoint (default port 9393) accepts alerts from Prometheus Alertmanager, Grafana, or any JSON source.
+
+- **Deduplication** by fingerprint within a configurable window.
+- **Sensitive data masking** before alerts enter the AI conversation.
+- **Automatic runbook matching**: Alert names are matched to runbook filenames (kebab-case conversion).
+- **Watchdog analysis**: Matching runbooks trigger AI-powered analysis that can escalate to a Ghost Shell.
+- **Session injection**: Alerts appear in all active AI sessions and as tmux overlay messages.
+- **Notification hooks**: Configurable external commands (`notify-send`, PagerDuty, Slack) fire on alert conditions.
+
+### Multi-Model Support
+
+Different tasks deserve different models. DaemonEye supports multiple named model configurations:
+
+- Switch models mid-session with `/model <name>`.
+- Pin a specific model to a runbook via frontmatter -- use a powerful model for complex incident response, a cheap local model for routine checks.
+- Supports Anthropic, OpenAI, Gemini, Ollama, and LM Studio out of the box.
+
+---
+
+## Security
+
+Giving an AI access to your terminal is a security decision. DaemonEye treats it as one. Every feature that increases the AI's capability has a corresponding control that limits its blast radius, and every action the AI takes is logged in a format designed for audit and incident review.
+
+### Secrets Never Leave the Host
+
+Before any terminal output, file content, or environment variable reaches an AI provider, DaemonEye's masking filter strips it of secrets. This is not optional and cannot be disabled.
+
+- **Built-in patterns**: AWS access keys, PEM private keys, GCP service account credentials, JWTs, GitHub tokens, database connection strings, passwords in URLs, credit card numbers, and SSNs are all caught by default.
+- **User-defined patterns**: Organizations can add custom regexes for internal secret formats. Built-in patterns cannot be removed.
+- **Per-type counters**: `daemoneye status` shows how many redactions have occurred per category, so you can verify the filter is catching what it should.
+- **Applied everywhere**: Redaction runs on terminal capture, file reads, environment snapshots, and webhook alert payloads -- every path into the AI conversation.
+
+### Auditable Root Access
+
+DaemonEye never asks for blanket sudo. Instead, it provides a controlled pipeline from script creation to privileged execution:
+
+1. The AI writes a script to `~/.daemoneye/scripts/` (chmod 700, diff-reviewed and approved by the user).
+2. An administrator runs `daemoneye install-sudoers <script-name>`, which writes a NOPASSWD rule to `/etc/sudoers.d/daemoneye-<name>` pinning the exact file path. No wildcards. No `ALL`.
+3. Ghost shells and scheduled jobs can only sudo scripts that pass **both** gates: listed in the runbook's `auto_approve_scripts` **and** backed by an installed sudoers rule. If either gate fails, the command is denied.
+
+Interactive sudo passwords are collected in the chat pane with terminal echo disabled. The password is never written to disk, never stored in memory beyond the immediate use, and never transmitted to the AI provider.
+
+### Complete Audit Trail
+
+Every action the AI takes is recorded to `events.jsonl` as structured JSON:
+
+- **Command executions**: The command, target pane, approval decision (approve/session-approve/deny/redirect), exit code, and captured output.
+- **AI interactions**: Tool calls, tool results, model responses, and token usage.
+- **Ghost shell lifecycle**: Start, completion, failure, turn count, and the runbook that triggered it.
+- **Webhook alerts**: Incoming alert payloads (post-redaction), dedup decisions, runbook matches, and watchdog analysis results.
+- **Session transcripts**: Ghost shell transcripts are preserved in full for post-incident review.
+
+This log is append-only and designed for grep, jq, and integration with centralized logging systems.
+
+### Guardrails on Autonomy
+
+The trust spectrum is also a security architecture. Each level of autonomy has hard limits:
+
+- **Session approvals reset automatically** on `/clear`, `/prompt`, `/refresh`, and Ctrl+C. They never persist beyond the current interaction.
+- **Ghost shells require opt-in per runbook** (`enabled: true`). No runbook, no autonomy.
+- **Turn budgets** cap how many actions a ghost shell can take (default 20, configurable per-runbook). The ghost is forcibly stopped when the limit is reached.
+- **Concurrency caps** prevent ghost shell storms during cascading failures (default 3 concurrent ghosts, daemon-wide).
+- **Path-restricted file access**: The `read_file` and `edit_file` tools are blocked from reading or modifying anything under `~/.daemoneye/`, preventing the AI from tampering with its own configuration, runbooks, or memory.
+
+---
+
+## Key Workflows
+
+### Workflow 1: Interactive Troubleshooting
+
+A database service fails with a cryptic 50-line error trace. You hit the AI keybinding. DaemonEye captures the scrollback, identifies the error, and proposes `sudo kill -9 <PID>` for the zombie process holding the port. You approve; the AI runs the command, verifies the port is free, and restarts the service. Total time: under a minute, zero context-switching.
+
+### Workflow 2: Unattended Incident Response
+
+At 2am, Prometheus fires a `HighDiskUsage` alert. The webhook hits DaemonEye. The daemon matches the alert to the `high-disk-usage` runbook, runs a watchdog analysis, and determines autonomous remediation is warranted. A Ghost Shell spawns, identifies stale log files consuming 40GB, runs the pre-approved cleanup script, verifies disk usage is back under threshold, and shuts down. When you check in the morning, the catch-up brief reads: *"1 event while you were away (4h): Ghost Shell completed -- HighDiskUsage resolved, /var/log cleaned, disk at 62%."*
+
+### Workflow 3: Progressive Trust Building
+
+Week 1: You approve every command. The AI helps you write a disk-cleanup script and a runbook. Week 2: You session-approve regular commands -- the AI handles routine checks without prompting. Week 3: You enable the webhook and let watchdog analysis run overnight, reviewing results each morning. Week 4: You set `enabled: true` on the runbook, install the sudoers rule, and the AI handles disk alerts end-to-end. Each step is a deliberate, reversible decision.
+
+### Workflow 4: Knowledge Accumulation
+
+The AI discovers a host runs Postgres on a non-standard port and stores the fact as a knowledge memory. Weeks later, during a connection failure, contextual auto-search surfaces the quirk automatically. After resolving a major outage, the AI writes an incident record with root cause, symptoms, and resolution -- searchable forever, available to every future session and ghost shell.
+
+### Workflow 5: Fleet Operations
+
+From a jump server, you ask the AI to update Nginx across 15 web servers listed in `fleet.txt`. The AI writes a Python script that parallelizes the rollout with health checks between batches. You review the diff, approve, and watch the progress in a background pane while continuing your work in the foreground.
+
+### Workflow 6: Scheduled Monitoring
+
+You ask the AI to set up a watchdog that checks disk usage every 10 minutes. It stores the alert threshold in a knowledge memory, writes a runbook with alert criteria, and creates a cron-scheduled watchdog job. Every 10 minutes, the daemon runs `df -h`, loads the threshold from memory, and has the AI evaluate whether action is needed. If usage exceeds the threshold, a notification fires. If the runbook is ghost-enabled, autonomous cleanup follows.
+
+---
+
+## Why DaemonEye
+
+**It meets teams where they are.** Not every organization is ready for fully autonomous AI operations. DaemonEye doesn't force that choice. Start with pair-programming, graduate to autonomy as trust is earned.
+
+**It works inside your existing workflow.** No new tools to learn, no dashboards to monitor, no agents to deploy. DaemonEye lives in tmux -- the same terminal environment operators already use. A keybinding summons the AI; detach and it keeps working.
+
+**Every action is observable and auditable.** Structured event logs, session transcripts, redaction counters, ghost shell turn limits, catch-up briefs. There is no black box. When something goes wrong, you can trace exactly what happened and why.
+
+**Security is structural, not bolted on.** Secrets are redacted before they can reach any AI provider -- always on, not configurable off. Sudo access requires two independent gates (script whitelist + sudoers rule) with no wildcards. Every command, approval, and AI interaction is logged as structured JSON. The AI cannot read or modify its own configuration. These are not features you enable; they are constraints you cannot remove.
+
+**Autonomy is granular and reversible.** Per-command-class session approvals. Per-script sudo whitelisting. Per-runbook ghost enablement. Per-runbook model selection. Per-runbook turn budgets. Daemon-wide concurrency caps. Every dial can be turned independently, and every dial can be turned back.
+
+**It gets smarter over time.** Knowledge memories, incident records, and runbooks create an organizational knowledge base that persists across sessions, operators, and incidents. The AI doesn't start from zero each time -- it builds on everything it has learned.
+
+---
+
+## Technical Requirements
+
+| Requirement | Detail |
+|---|---|
+| Platform | Linux only (uses `fork(2)`, Unix domain sockets, Linux-specific tmux hooks) |
+| Runtime dependency | tmux 2.6+ |
+| Build dependency | Rust 1.79+ |
+| AI provider | At least one configured: Anthropic, OpenAI, Gemini, Ollama, or LM Studio |
+| Installation | Single binary; `daemoneye setup` initializes config, systemd service, and tmux keybinding |
+
+---
+
+## Success Metrics
+
+- **Time to resolve**: Reduction in mean time to resolution for incidents handled with DaemonEye assistance vs. manual response.
+- **Autonomy progression**: Percentage of runbooks that have graduated to `enabled: true` (ghost-capable) over time.
+- **Knowledge coverage**: Number of knowledge memories and runbooks created, and their hit rate in contextual auto-search.
+- **Redaction effectiveness**: Per-type redaction counts as a proxy for sensitive data exposure prevention.
+- **Operator confidence**: Qualitative measure of willingness to grant higher trust levels, tracked through approval scope expansion over time.

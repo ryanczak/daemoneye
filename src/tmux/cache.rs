@@ -490,7 +490,7 @@ impl SessionCache {
         // Active pane — full capture, explicitly labelled.
         if let Some(pane_id) = source_pane {
             // Pull CWD, command, title, scroll position, mode flags, and pane index from cache in one lock.
-            let (cwd, cmd, title, scroll_pos, in_copy_mode, pane_idx, window_name_for_active) = {
+            let (cwd, cmd, title, scroll_pos, in_copy_mode, _pane_idx, _window_name_for_active) = {
                 let panes = self.panes.read().unwrap_or_log();
                 if let Some(p) = panes.get(pane_id) {
                     (
@@ -568,15 +568,9 @@ impl SessionCache {
                 String::new()
             };
 
-            let idx_label = if window_name_for_active.is_empty() {
-                format!(" | idx:{}", pane_idx)
-            } else {
-                format!(" | idx:{} in '{}'", pane_idx, window_name_for_active)
-            };
             out.push_str(&format!(
-                "[ACTIVE PANE {}{}{}{}{}{}]\n{}\n",
+                "[ACTIVE PANE {}{}{}{}{}]\n{}\n",
                 pane_id,
-                idx_label,
                 cwd_label,
                 title_label,
                 scroll_note,
@@ -686,12 +680,10 @@ impl SessionCache {
             } else {
                 String::new()
             };
-            let idx_part = format!(" (idx:{} in '{}')", state.pane_index, state.window_name);
             out.push_str(&format!(
-                "[{} {}{} — {}{}{}{}{}{}{}{}]: {}\n",
+                "[{} {} — {}{}{}{}{}{}{}{}]: {}\n",
                 pane_label,
                 id,
-                idx_part,
                 state.current_cmd,
                 start_part,
                 cwd_part,

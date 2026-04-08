@@ -154,7 +154,39 @@ where
         is_ghost: _,
     } = ghost_ctx;
 
-    // C3: stale-pane guard — if the AI specified a target_pane that is no longer
+    // C3a: pane ID format guard — reject anything that doesn't look like %N.
+    // Models occasionally pass window-relative indices ("0", "1") instead of
+    // the actual tmux pane ID ("%7").  Catch this early and return a corrective
+    // error so the model can self-fix without a silent wrong-pane execution.
+    if let Some(tp) = target
+        && !tp.is_empty()
+        && chat_pane != Some(tp)
+    {
+        let valid_format =
+            tp.starts_with('%') && tp.len() > 1 && tp[1..].bytes().all(|b| b.is_ascii_digit());
+        if !valid_format {
+            let correct = session_id
+                .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone())
+                .unwrap_or_default();
+            let suggestion = if correct.is_empty() {
+                "Check [PANE MAP] or call list_panes to find the correct pane ID.".to_string()
+            } else {
+                format!(
+                    "The foreground target for this session is {correct}. \
+                     Pass target_pane=\"{correct}\" or omit it to use the default."
+                )
+            };
+            let msg = format!(
+                "Error: '{tp}' is not a valid tmux pane ID. \
+                 Pane IDs start with '%' followed by digits (e.g. \"%3\"). \
+                 {suggestion}"
+            );
+            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            return Ok(ToolCallOutcome::Result(msg));
+        }
+    }
+
+    // C3b: stale-pane guard — if the AI specified a target_pane that is no longer
     // in the cache (pane was closed or session changed), return an error with the
     // current pane map so the AI can re-discover panes before retrying.
     if let Some(tp) = target
@@ -165,11 +197,22 @@ where
             panes.contains_key(tp)
         };
         if !pane_exists {
+            let correct = session_id
+                .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone())
+                .unwrap_or_default();
+            let suggestion = if correct.is_empty() {
+                "Call list_panes to discover current pane IDs, or use the [PANE MAP] below."
+                    .to_string()
+            } else {
+                format!(
+                    "The foreground target for this session is {correct}. \
+                     Pass target_pane=\"{correct}\" or omit it to use the default."
+                )
+            };
             let pane_map = cache.pane_map_summary(chat_pane);
             let msg = format!(
                 "Error: target_pane '{tp}' no longer exists in the current session. \
-                 Call list_panes to discover current pane IDs, or use the [PANE MAP] below.\n\
-                 {pane_map}"
+                 {suggestion}\n{pane_map}"
             );
             send_response_split(tx, Response::ToolResult(msg.clone())).await?;
             return Ok(ToolCallOutcome::Result(msg));

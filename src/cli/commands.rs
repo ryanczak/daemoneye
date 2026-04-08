@@ -546,6 +546,8 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::RunbookList { .. }
             | Response::ModelChanged { .. }
             | Response::ModelList { .. }
+            | Response::PaneChanged { .. }
+            | Response::PaneList { .. }
             | Response::DaemonStatus { .. } => {}
         }
     }
@@ -764,6 +766,10 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
         println!(
             "{}\x1b[96m/model [name]\x1b[0m to list or switch model",
             center(38)
+        );
+        println!(
+            "{}\x1b[96m/pane [%%N]\x1b[0m to list or pin target pane",
+            center(39)
         );
         println!(
             "{}\x1b[96m/approvals [revoke]\x1b[0m to manage approvals",
@@ -1105,6 +1111,62 @@ async fn run_chat_inner_raw(
                             daemon_up,
                         },
                     );
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  {}", e),
+            }
+            continue;
+        }
+        if query == "/pane" {
+            match send_list_panes_for_session(&session_id).await {
+                Ok(panes) if panes.is_empty() => {
+                    println!("\x1b[90mNo targetable panes found. Open a terminal pane alongside chat.\x1b[0m");
+                }
+                Ok(panes) => {
+                    println!();
+                    for (id, cmd, window, is_target) in &panes {
+                        if *is_target {
+                            println!(
+                                "  \x1b[32m▸\x1b[0m \x1b[1m{:<6}  {:<14}  {}\x1b[0m \x1b[90m(current target)\x1b[0m",
+                                id, cmd, window
+                            );
+                        } else {
+                            println!("    {:<6}  {:<14}  {}", id, cmd, window);
+                        }
+                    }
+                    println!();
+                    println!("\x1b[90mUse \x1b[0m\x1b[96m/pane %N\x1b[0m\x1b[90m to pin a pane by ID.\x1b[0m");
+                    println!();
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /pane failed: {}", e),
+            }
+            continue;
+        }
+        if let Some(arg) = query.strip_prefix("/pane ").map(str::trim) {
+            // Accept "%N" pane IDs directly.
+            let pane_id = arg.to_string();
+            match send_set_pane(&session_id, &pane_id).await {
+                Ok((id, desc)) => {
+                    let label = format!(" pane target: {} ", desc);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                    draw_input_frame(chat_height, chat_width, start_time);
+                    let hint = approval.hint();
+                    draw_status_bar(
+                        chat_height,
+                        chat_width,
+                        &StatusBarState {
+                            session_id: &session_id,
+                            approval_hint: &hint,
+                            model: &model,
+                            prompt_tokens,
+                            context_window,
+                            daemon_up,
+                        },
+                    );
+                    // Emit a system message into the AI context so it knows the target changed.
+                    // We inject it as a user turn on the next send — but simpler: just note it
+                    // locally. The [FOREGROUND TARGET] line on the next turn carries the update.
+                    let _ = id; // used in the label above
                 }
                 Err(e) => println!("\x1b[31m✗\x1b[0m  {}", e),
             }
@@ -2525,6 +2587,10 @@ async fn ask_with_session(
                 println!();
                 md.reset();
             }
+            Response::PaneChanged { .. } | Response::PaneList { .. } => {
+                // These are handled synchronously by the /pane slash command
+                // path and should not arrive during a streaming AI turn.
+            }
         }
     }
 
@@ -2595,6 +2661,57 @@ async fn send_set_model(session_id: &str, model: &str) -> Result<String> {
     rx.read_line(&mut line).await?;
     match serde_json::from_str::<Response>(line.trim())? {
         Response::ModelChanged { model } => Ok(model),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+/// Pin the foreground target pane for the given session.
+/// Returns `(pane_id, description)` on success.
+async fn send_set_pane(session_id: &str, pane_id: &str) -> Result<(String, String)> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::SetPane {
+            session_id: session_id.to_string(),
+            pane_id: pane_id.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::PaneChanged { pane_id, description } => Ok((pane_id, description)),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+/// List targetable panes for the given session.
+/// Returns `Vec<(pane_id, current_cmd, window_name, is_current_target)>`.
+async fn send_list_panes_for_session(
+    session_id: &str,
+) -> Result<Vec<(String, String, String, bool)>> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::ListPanesForSession {
+            session_id: session_id.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::PaneList { panes } => Ok(panes),
         Response::Error(e) => anyhow::bail!("{}", e),
         _ => anyhow::bail!("unexpected response from daemon"),
     }

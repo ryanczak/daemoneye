@@ -48,14 +48,16 @@ pub static TOOLS: &[ToolDef] = &[
         name: "run_terminal_command",
         description: "Execute a bash command in one of two modes:\n\
              - background=true: Runs in a dedicated tmux window on the DAEMON HOST. Output is \
-             captured silently and returned to you. Use for read-only diagnostics (ls, ps, cat, \
-             grep, df, curl, etc.). If the user is SSH'd into a remote host, this still runs \
-             locally on the daemon machine. Supports sudo: the user will be prompted for their \
-             password in the chat interface.\n\
+             captured silently and returned to you. Use for system diagnostics (ls, ps, df, \
+             curl, systemctl, etc.) and commands that need shell features (pipes, loops, process \
+             control). For reading files, prefer read_file instead. If the user is SSH'd into a \
+             remote host, this still runs locally on the daemon machine. Supports sudo: the user \
+             will be prompted for their password in the chat interface.\n\
              - background=false (default): Injects the command into the USER'S TERMINAL PANE via \
              tmux send-keys. The command is visible and interactive. Use for state-changing \
-             commands, service restarts, file edits, or anything that must run on the user's \
-             active host. If the user's pane is SSH'd to a remote machine, the command runs \
+             commands, service restarts, or anything that must run on the user's active host. \
+             For file edits prefer edit_file; for file reads prefer read_file. \
+             If the user's pane is SSH'd to a remote machine, the command runs \
              there. Supports sudo: the user types their password directly in the terminal pane.",
         params: &[
             ParamDef {
@@ -75,15 +77,11 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "target_pane",
                 ty: ParamTy::Str,
                 required: false,
-                description: "Optional: tmux pane ID (e.g. \"%3\") to target for foreground \
-                              commands. Resolve from the [PANE MAP] line present in every turn \
-                              (format: idx:N=<id>) — users refer to panes by their index N \
-                              (shown via ctrl+a q); map that index to the pane ID before calling. \
-                              IDs also appear in [VISIBLE PANE], [BACKGROUND PANE], and \
-                              [SESSION PANE] context blocks, or call list_panes to refresh. \
-                              If you are unsure which pane to target, ask the user first. \
-                              Background commands always run on the daemon host — do not set \
-                              target_pane for them.",
+                description: "Optional: tmux pane ID (e.g. \"%3\") for foreground commands. \
+                              Use the pane ID from [FOREGROUND TARGET] when present — that is \
+                              the user's designated work pane. Otherwise resolve from [PANE MAP] \
+                              (format: idx:N=<id>). If still unsure, call list_panes or ask the \
+                              user. Do not set this for background=true commands.",
             },
             ParamDef {
                 name: "retry_in_pane",
@@ -274,10 +272,11 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "read_file",
-        description: "Read a file with line-range pagination and optional grep filtering. \
+        description: "Preferred over cat/head/tail/grep for reading files. \
+                      Read a file with line-range pagination and optional grep filtering. \
                       Sensitive data is masked. \
                       Without target_pane: reads directly from the DAEMON HOST filesystem. \
-                      With target_pane: runs sed/grep in that pane — use this when the file \
+                      With target_pane: runs in that pane — use this when the file \
                       is on a remote SSH host the user is connected to.",
         params: &[
             ParamDef {
@@ -317,7 +316,8 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "edit_file",
-        description: "Perform a file operation on the daemon-host filesystem (or a remote host \
+        description: "Preferred over sed/awk/echo/tee for file modifications. \
+                      Perform a file operation on the daemon-host filesystem (or a remote host \
                       via target_pane). Requires user approval before any change is committed. \
                       The approval prompt shows a colored unified diff. \
                       operation=\"edit\" (default): atomically replace old_string with new_string — \
