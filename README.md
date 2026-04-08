@@ -30,7 +30,13 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **Visual Anchors:** During the command approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
 
-**Pane Map:** Every AI turn includes a `[PANE MAP]` summary (`idx:0=%3* bash | idx:1=%7 vim`) mapping window-relative indices to pane IDs, with the active pane marked `*`. The AI always refers to panes by index first (`pane 1 in 'main'`) so approval prompts are human-readable. If a pane disappears before a command is approved, the stale-pane guard returns the current pane map automatically so the AI can recover without manual intervention.
+**Pane Targeting:** DaemonEye pins the AI to a specific pane ID on every turn so it never has to guess where to run foreground commands.
+
+- **`[FOREGROUND TARGET]`** — injected into every AI turn, names the exact `%N` pane ID the AI must pass to `run_terminal_command`. When absent (first chat with no sibling panes), the AI asks before acting rather than guessing.
+- **`[PANE MAP]`** — also present every turn, mapping window-relative indices to pane IDs (`idx:0=%3* bash | idx:1=%7 vim`) with the active pane marked `*`. Used by the AI to translate user references like "pane 1" into the correct `%N`.
+- **`/pane`** — type this at the chat prompt to list available panes and see which one is the current target. Use `/pane %N` to pin a specific pane; the preference is saved to `pane_prefs.json` and survives daemon restarts. The AI is notified of the change immediately.
+- **Drift detection** — if the foreground target changes between turns (pane closed, user moved focus), the daemon sends a `[Pane target changed]` system message before the first AI token so the model updates its mental model without manual intervention.
+- **Format validation** — if the AI passes a malformed pane ID (e.g. `"1"` instead of `"%7"`), the daemon returns an error with the correct ID so the model can self-correct on the same turn.
 
 **`/approvals`** — type this at the chat prompt to inspect which approvals are currently active. Use `/approvals off` to instantly revoke all session approvals and return to explicit confirmation for everything.
 

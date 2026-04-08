@@ -39,6 +39,7 @@ The AI sees your terminal -- scrollback, environment variables, running processe
 
 - **Three-option approval**: Approve once, approve the command class for the session, or deny. Sudo commands have a separate approval scope.
 - **Visual confirmation**: The target pane highlights blue during the approval window so you always know where a command will land.
+- **Pinned pane targeting**: Every AI turn includes a `[FOREGROUND TARGET]` line naming the exact pane where foreground commands will run. Use `/pane` to list options or `/pane %N` to change it. If the target shifts (pane closed, focus moved), the daemon announces the change before the AI responds.
 - **Mid-stream redirect**: Instead of approving or denying, type a message to redirect the AI's approach entirely -- no synthetic errors, no wasted context.
 
 This is where every team starts. The AI is useful from minute one: reading error logs, suggesting commands, explaining failures. But it cannot act without your say-so.
@@ -91,7 +92,7 @@ DaemonEye doesn't just read your current pane. It understands the full topology 
 ### Dual Execution Modes
 
 - **Background mode**: Commands run in dedicated daemon-host windows (`de-bg-*`), returning immediately with a pane ID. Output is archived. Up to 5 background windows persist per session. The AI can chain follow-up commands in the same environment.
-- **Foreground mode**: Commands are injected into your active terminal pane via `send-keys`. Completion is detected via PID tracking (local panes) or output stability (remote panes). Interactive commands like `ssh` and `mosh` are handled as a special case -- the daemon returns once the connection is established.
+- **Foreground mode**: Commands are injected into your active terminal pane via `send-keys`. Completion is detected via PID tracking (local panes) or output stability (remote panes). Interactive commands like `ssh` and `mosh` are handled as a special case -- the daemon returns once the connection is established. The target pane is pinned at session start and injected as `[FOREGROUND TARGET]` on every AI turn so the agent never has to guess where a command will land. Use `/pane` to list targets or `/pane %N` to pin a different one; the AI is notified on the next turn automatically.
 
 ### Knowledge System
 
