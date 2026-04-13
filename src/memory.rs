@@ -230,6 +230,7 @@ fn validate_memory_key(key: &str) -> Result<()> {
 /// Only provided (Some) fields are changed; omitted fields are preserved.
 /// If the entry does not exist, a new one is created.
 /// `updated` timestamp is always set to the current UTC time.
+#[allow(clippy::too_many_arguments)]
 pub fn update_memory(
     key: &str,
     category: MemoryCategory,

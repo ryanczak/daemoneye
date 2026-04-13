@@ -382,6 +382,7 @@ pub(super) fn add_memory(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn update_memory(
     key: &str,
     category: &str,

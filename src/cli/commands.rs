@@ -749,9 +749,19 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
     {
         // (left_cmd, left_desc, right_cmd, right_desc)
         let rows: &[(&str, &str, &str, &str)] = &[
-            ("/exit",     "quit",             "/model [name]",       "list or switch model"),
-            ("/clear",    "reset session",    "/pane [%N]",          "list or pin target pane"),
-            ("/refresh",  "resync context",   "/approvals [revoke]", "list or revoke approvals"),
+            ("/exit", "quit", "/model [name]", "list or switch model"),
+            (
+                "/clear",
+                "reset session",
+                "/pane [%N]",
+                "list or pin target pane",
+            ),
+            (
+                "/refresh",
+                "resync context",
+                "/approvals [revoke]",
+                "list or revoke approvals",
+            ),
         ];
         let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
         let ld_w = rows.iter().map(|(_, d, _, _)| d.len()).max().unwrap_or(0);
@@ -764,7 +774,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
         println!();
         println!("{divider}");
         for (lc, ld, rc, rd) in rows {
-            let left_cmd  = format!("\x1b[96m{lc:<lc_w$}\x1b[0m");
+            let left_cmd = format!("\x1b[96m{lc:<lc_w$}\x1b[0m");
             let left_desc = format!("\x1b[2m— {ld:<ld_w$}\x1b[0m");
             let right_cmd = format!("\x1b[96m{rc:<rc_w$}\x1b[0m");
             let right_desc = format!("\x1b[2m— {rd}\x1b[0m");
@@ -1122,8 +1132,8 @@ async fn run_chat_inner_raw(
                 Ok(panes) => {
                     println!();
                     println!(
-                        "    \x1b[2m{:<6}  {:<4}  {:<14}  {}\x1b[0m",
-                        "ID", "IDX", "COMMAND", "WINDOW"
+                        "    \x1b[2m{:<6}  {:<4}  {:<14}  WINDOW\x1b[0m",
+                        "ID", "IDX", "COMMAND"
                     );
                     for (id, cmd, window, pane_idx, is_target) in &panes {
                         if *is_target {

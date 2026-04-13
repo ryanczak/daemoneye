@@ -280,7 +280,12 @@ pub async fn run_background_in_window(
     let win_name = match tmux::rename_window(session, &temp_name, &final_name) {
         Ok(()) => final_name,
         Err(e) => {
-            log::warn!("Failed to rename bg window {} -> {}: {}", temp_name, final_name, e);
+            log::warn!(
+                "Failed to rename bg window {} -> {}: {}",
+                temp_name,
+                final_name,
+                e
+            );
             temp_name
         }
     };
@@ -1016,9 +1021,7 @@ const DEAD_THRESHOLD_SECS: u64 = 30;
 /// the GC reclaims its window.
 const IDLE_THRESHOLD_SECS: u64 = 120;
 
-const IDLE_SHELLS: &[&str] = &[
-    "bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh",
-];
+const IDLE_SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh"];
 
 /// Pure decision function: given the current tracked windows and live pane
 /// state, returns the pane IDs whose windows should be killed.
@@ -1038,14 +1041,12 @@ pub(crate) fn plan_gc_actions(
                 to_kill.push(win.pane_id.clone());
             }
             Some(info) => {
-                if info.dead
-                    && now_unix.saturating_sub(info.last_activity) > DEAD_THRESHOLD_SECS
-                {
-                    to_kill.push(win.pane_id.clone());
-                } else if win.exit_code.is_some()
-                    && info.idle_shell
-                    && now_unix.saturating_sub(info.last_activity) > IDLE_THRESHOLD_SECS
-                {
+                let elapsed = now_unix.saturating_sub(info.last_activity);
+                let should_kill = (info.dead && elapsed > DEAD_THRESHOLD_SECS)
+                    || (win.exit_code.is_some()
+                        && info.idle_shell
+                        && elapsed > IDLE_THRESHOLD_SECS);
+                if should_kill {
                     to_kill.push(win.pane_id.clone());
                 }
             }
@@ -1107,7 +1108,10 @@ pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
             .iter()
             .any(|prefix| p.window_name.starts_with(prefix));
         if is_daemon_window {
-            daemon_windows.insert(p.pane_id.clone(), (p.session_name.clone(), p.window_name.clone()));
+            daemon_windows.insert(
+                p.pane_id.clone(),
+                (p.session_name.clone(), p.window_name.clone()),
+            );
         }
     }
 
@@ -1131,7 +1135,11 @@ pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
             // Look up window info before removing.
             if let Some(win) = entry.bg_windows.iter().find(|w| &w.pane_id == pane_id) {
                 let reason = if pane_map.contains_key(pane_id) {
-                    if pane_map[pane_id].dead { "pane_dead" } else { "idle_completed" }
+                    if pane_map[pane_id].dead {
+                        "pane_dead"
+                    } else {
+                        "idle_completed"
+                    }
                 } else {
                     "pane_gone"
                 };
@@ -1172,7 +1180,11 @@ pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
                 }),
             );
             if let Err(e) = tmux::kill_job_window(tmux_session, window_name) {
-                log::warn!("gc_bg_windows: failed to kill orphan {}: {}", window_name, e);
+                log::warn!(
+                    "gc_bg_windows: failed to kill orphan {}: {}",
+                    window_name,
+                    e
+                );
             }
         }
     }
@@ -1255,11 +1267,19 @@ mod tests {
     }
 
     fn alive(idle: bool, last_activity: u64) -> PaneGcInfo {
-        PaneGcInfo { dead: false, idle_shell: idle, last_activity }
+        PaneGcInfo {
+            dead: false,
+            idle_shell: idle,
+            last_activity,
+        }
     }
 
     fn dead(last_activity: u64) -> PaneGcInfo {
-        PaneGcInfo { dead: true, idle_shell: true, last_activity }
+        PaneGcInfo {
+            dead: true,
+            idle_shell: true,
+            last_activity,
+        }
     }
 
     fn now() -> u64 {

@@ -468,6 +468,7 @@ where
 // operation = "edit"
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 async fn run_edit<W, R>(
     id: &str,
     path: &str,

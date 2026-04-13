@@ -419,8 +419,8 @@ pub fn sanitize_cmd_for_window(cmd: &str, max_len: usize) -> String {
 
     // If it's an interpreter, advance to the next token.
     const INTERPRETERS: &[&str] = &[
-        "bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh",
-        "python", "python2", "python3", "node", "ruby", "perl",
+        "bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh", "python", "python2", "python3",
+        "node", "ruby", "perl",
     ];
     let raw = if INTERPRETERS.contains(&first_base) {
         if let Some(next) = tokens.get(idx + 1) {
@@ -755,7 +755,10 @@ mod tests {
 
     #[test]
     fn sanitize_strips_sudo() {
-        assert_eq!(sanitize_cmd_for_window("sudo apt-get install foo", 30), "apt-get");
+        assert_eq!(
+            sanitize_cmd_for_window("sudo apt-get install foo", 30),
+            "apt-get"
+        );
     }
 
     #[test]
@@ -776,12 +779,18 @@ mod tests {
 
     #[test]
     fn sanitize_strips_path_prefix() {
-        assert_eq!(sanitize_cmd_for_window("/usr/bin/curl -s http://example.com", 30), "curl");
+        assert_eq!(
+            sanitize_cmd_for_window("/usr/bin/curl -s http://example.com", 30),
+            "curl"
+        );
     }
 
     #[test]
     fn sanitize_interpreter_uses_script_name() {
-        assert_eq!(sanitize_cmd_for_window("/usr/bin/python3 script.py", 30), "script.py");
+        assert_eq!(
+            sanitize_cmd_for_window("/usr/bin/python3 script.py", 30),
+            "script.py"
+        );
     }
 
     #[test]
@@ -792,7 +801,10 @@ mod tests {
 
     #[test]
     fn sanitize_node_script() {
-        assert_eq!(sanitize_cmd_for_window("node /home/user/app.js", 30), "app.js");
+        assert_eq!(
+            sanitize_cmd_for_window("node /home/user/app.js", 30),
+            "app.js"
+        );
     }
 
     #[test]
@@ -805,7 +817,10 @@ mod tests {
 
     #[test]
     fn sanitize_special_chars_replaced() {
-        assert_eq!(sanitize_cmd_for_window("./run@test#1.sh", 30), "run-test-1.sh");
+        assert_eq!(
+            sanitize_cmd_for_window("./run@test#1.sh", 30),
+            "run-test-1.sh"
+        );
     }
 
     #[test]
@@ -838,7 +853,10 @@ mod tests {
 
     #[test]
     fn sanitize_cargo_build() {
-        assert_eq!(sanitize_cmd_for_window("cargo build --release", 30), "cargo");
+        assert_eq!(
+            sanitize_cmd_for_window("cargo build --release", 30),
+            "cargo"
+        );
     }
 }
 
