@@ -8,7 +8,7 @@ use crate::ai::Message;
 pub struct BgWindowInfo {
     /// tmux pane ID (e.g. `%7`) — can be passed to `watch_pane` or used as foreground target.
     pub pane_id: String,
-    /// Full tmux window name (e.g. `de-bg-main-20240101120000-abc12345`).
+    /// Full tmux window name (e.g. `de-bg-42-1712937600-cargo-build`).
     pub window_name: String,
     /// The tmux session the window belongs to (needed to kill it on eviction).
     pub tmux_session: String,

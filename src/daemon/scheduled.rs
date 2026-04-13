@@ -154,9 +154,8 @@ pub async fn run_scheduled_job(
         crate::daemon::stats::inc_scripts_executed();
     }
 
-    let id_short = &job.id[..job.id.len().min(8)];
-    let now = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let win_name = format!("{}{}-{}", crate::daemon::SCHED_WINDOW_PREFIX, now, id_short);
+    let unix_ts = chrono::Utc::now().timestamp();
+    let temp_win_name = format!("{}tmp-{}", crate::daemon::SCHED_WINDOW_PREFIX, unix_ts);
     #[allow(deprecated)]
     let cmd = match &job.action {
         ActionOn::Alert => {
@@ -201,7 +200,7 @@ pub async fn run_scheduled_job(
 
     let wrapped = format!("{}; exit $?", cmd);
 
-    let pane_id = match tmux::create_job_window(&session, &win_name) {
+    let pane_id = match tmux::create_job_window(&session, &temp_win_name) {
         Ok(p) => p,
         Err(e) => {
             let msg = format!(
@@ -213,6 +212,29 @@ pub async fn run_scheduled_job(
                 let _ = tx.send(Response::SystemMsg(msg));
             }
             return;
+        }
+    };
+
+    // Build final name: prefix + pane-number + unix-ts + command-slug.
+    let pane_num = pane_id.trim_start_matches('%');
+    let cmd_slug = crate::daemon::utils::sanitize_cmd_for_window(&cmd, 30);
+    let final_win_name = format!(
+        "{}{}-{}-{}",
+        crate::daemon::SCHED_WINDOW_PREFIX,
+        pane_num,
+        unix_ts,
+        cmd_slug
+    );
+    let win_name = match tmux::rename_window(&session, &temp_win_name, &final_win_name) {
+        Ok(()) => final_win_name,
+        Err(e) => {
+            log::warn!(
+                "Failed to rename sched window {} -> {}: {}",
+                temp_win_name,
+                final_win_name,
+                e
+            );
+            temp_win_name
         }
     };
 

@@ -745,30 +745,32 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
         println!("{pad}\x1b[2m{subtitle}\x1b[0m");
     }
 
-    // One-time usage hints — stacked vertically, centered in the pane.
+    // Two-column slash-command table, centered as a block.
     {
-        let center =
-            |vis_len: usize| -> String { " ".repeat((chat_width.saturating_sub(vis_len)) / 2) };
+        // (left_cmd, left_desc, right_cmd, right_desc)
+        let rows: &[(&str, &str, &str, &str)] = &[
+            ("/exit",     "quit",             "/model [name]",       "list or switch model"),
+            ("/clear",    "reset session",    "/pane [%N]",          "list or pin target pane"),
+            ("/refresh",  "resync context",   "/approvals [revoke]", "list or revoke approvals"),
+        ];
+        let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
+        let ld_w = rows.iter().map(|(_, d, _, _)| d.len()).max().unwrap_or(0);
+        let rc_w = rows.iter().map(|(_, _, c, _)| c.len()).max().unwrap_or(0);
+        let rd_w = rows.iter().map(|(_, _, _, d)| d.len()).max().unwrap_or(0);
+        // visible block width: lc_w + " — " (3) + ld_w + "    " (4) + rc_w + " — " (3) + rd_w
+        let block_w = lc_w + 3 + ld_w + 4 + rc_w + 3 + rd_w;
+        let pad = " ".repeat((chat_width.saturating_sub(block_w)) / 2);
+        let divider = format!("{pad}\x1b[2m{}\x1b[0m", "─".repeat(block_w));
         println!();
-        // visible lengths (no ANSI): 22, 23, 26, 38, 40
-        println!(
-            "{}\x1b[93mexit\x1b[0m or \x1b[93mCtrl-C\x1b[0m to quit",
-            center(22)
-        );
-        println!("{}\x1b[96m/clear\x1b[0m to reset session", center(23));
-        println!("{}\x1b[96m/refresh\x1b[0m to resync context", center(26));
-        println!(
-            "{}\x1b[96m/model [name]\x1b[0m to list or switch model",
-            center(38)
-        );
-        println!(
-            "{}\x1b[96m/pane [%%N]\x1b[0m to list or pin target pane",
-            center(39)
-        );
-        println!(
-            "{}\x1b[96m/approvals [revoke]\x1b[0m to list or revoke approvals",
-            center(40)
-        );
+        println!("{divider}");
+        for (lc, ld, rc, rd) in rows {
+            let left_cmd  = format!("\x1b[96m{lc:<lc_w$}\x1b[0m");
+            let left_desc = format!("\x1b[2m— {ld:<ld_w$}\x1b[0m");
+            let right_cmd = format!("\x1b[96m{rc:<rc_w$}\x1b[0m");
+            let right_desc = format!("\x1b[2m— {rd}\x1b[0m");
+            println!("{pad}{left_cmd} {left_desc}    {right_cmd} {right_desc}");
+        }
+        println!("{divider}");
         println!();
     }
 
@@ -1000,7 +1002,7 @@ async fn run_chat_inner_raw(
         // Push to history before processing so /clear etc. are also navigable.
         input_state.push_history(query.clone());
 
-        if query == "exit" || query == "quit" {
+        if query == "/exit" || query == "/quit" || query == "exit" || query == "quit" {
             break;
         }
         if query == "/clear" {
@@ -1119,14 +1121,18 @@ async fn run_chat_inner_raw(
                 }
                 Ok(panes) => {
                     println!();
-                    for (id, cmd, window, is_target) in &panes {
+                    println!(
+                        "    \x1b[2m{:<6}  {:<4}  {:<14}  {}\x1b[0m",
+                        "ID", "IDX", "COMMAND", "WINDOW"
+                    );
+                    for (id, cmd, window, pane_idx, is_target) in &panes {
                         if *is_target {
                             println!(
-                                "  \x1b[32m▸\x1b[0m \x1b[1m{:<6}  {:<14}  {}\x1b[0m \x1b[90m(current target)\x1b[0m",
-                                id, cmd, window
+                                "  \x1b[32m▸\x1b[0m \x1b[1m{:<6}  {:<4}  {:<14}  {}\x1b[0m \x1b[90m(current target)\x1b[0m",
+                                id, pane_idx, cmd, window
                             );
                         } else {
-                            println!("    {:<6}  {:<14}  {}", id, cmd, window);
+                            println!("    {:<6}  {:<4}  {:<14}  {}", id, pane_idx, cmd, window);
                         }
                     }
                     println!();
@@ -2752,7 +2758,7 @@ async fn send_set_pane(session_id: &str, pane_id: &str) -> Result<(String, Strin
 /// Returns `Vec<(pane_id, current_cmd, window_name, is_current_target)>`.
 async fn send_list_panes_for_session(
     session_id: &str,
-) -> Result<Vec<(String, String, String, bool)>> {
+) -> Result<Vec<(String, String, String, usize, bool)>> {
     use crate::ipc::{Request, Response};
     use tokio::io::AsyncBufReadExt;
     let stream = connect().await?;

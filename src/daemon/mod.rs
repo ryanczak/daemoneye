@@ -39,14 +39,18 @@ pub mod utils;
 /// Shared prefix for all daemon-managed tmux windows.  Used by the CLI to
 /// filter windows from `tmux list-windows` output.
 pub const DAEMON_WINDOW_PREFIX: &str = "de-";
-/// Window-name prefix for background execution windows (`de-bg-<session>-<ts>-<id>`).
+/// Window-name prefix for background execution windows.
+/// Format: `de-bg-<pane_num>-<unix_ts>-<cmd_slug>`, e.g. `de-bg-42-1712937600-cargo-build`.
 pub const BG_WINDOW_PREFIX: &str = "de-bg-";
-/// Window-name prefix for regular scheduled-job windows (`de-sj-<ts>-<id>`).
+/// Window-name prefix for regular scheduled-job windows.
+/// Format: `de-sj-<pane_num>-<unix_ts>-<cmd_slug>`, e.g. `de-sj-43-1712937600-backup.sh`.
 pub const SCHED_WINDOW_PREFIX: &str = "de-sj-";
-/// Window-name prefix for ghost-shell background execution windows (`de-gs-bg-<session>-<ts>-<id>`).
+/// Window-name prefix for ghost-shell background execution windows.
+/// Format: `de-gs-bg-<pane_num>-<unix_ts>-<cmd_slug>`.
 /// Used when a ghost is triggered by a webhook or interactive `spawn_ghost_shell`.
 pub const GS_BG_WINDOW_PREFIX: &str = "de-gs-bg-";
-/// Window-name prefix for ghost-shell scheduled-job windows (`de-gs-sj-<session>-<ts>-<id>`).
+/// Window-name prefix for ghost-shell scheduled-job windows.
+/// Format: `de-gs-sj-<pane_num>-<unix_ts>-<cmd_slug>`.
 /// Used when a ghost is triggered by a scheduled job (`ActionOn::Ghost`).
 pub const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
 /// Window-name prefix for ghost-shell incident-response (main session) windows (`de-gs-ir-<ts>-<id>`).
@@ -677,6 +681,22 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             true
                         }
                     });
+                }
+            }
+        },
+    ));
+
+    // Periodic GC of background windows: kills dead, idle-completed, and orphaned windows.
+    let sessions_gc_sup = Arc::clone(&sessions);
+    tokio::spawn(supervise(
+        "bg-window-gc",
+        Arc::clone(&shutdown),
+        move || {
+            let sessions_gc = Arc::clone(&sessions_gc_sup);
+            async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    crate::daemon::background::gc_bg_windows(&sessions_gc);
                 }
             }
         },

@@ -369,17 +369,19 @@ pub async fn handle_client(
                             && !s.window_name.starts_with("de-gs-sj-")
                             && !s.window_name.starts_with("de-gs-ir-")
                     })
+                    .filter(|(id, _)| crate::tmux::pane_exists(id))
                     .map(|(id, s)| {
                         let is_target = current_target.as_deref() == Some(id.as_str());
                         (
                             id.clone(),
                             s.current_cmd.clone(),
                             s.window_name.clone(),
+                            s.pane_index,
                             is_target,
                         )
                     })
                     .collect();
-                entries.sort_by_key(|(_, _, win, _)| win.clone());
+                entries.sort_by_key(|(_, _, win, idx, _)| (win.clone(), *idx));
                 entries
             };
             send_response_split(

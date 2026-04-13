@@ -382,9 +382,9 @@ pub enum Response {
         description: String,
     },
     /// List of targetable panes (response to `ListPanesForSession`).
-    /// Each entry is `(pane_id, current_cmd, window_name, is_current_target)`.
+    /// Each entry is `(pane_id, current_cmd, window_name, pane_index, is_current_target)`.
     PaneList {
-        panes: Vec<(String, String, String, bool)>,
+        panes: Vec<(String, String, String, usize, bool)>,
     },
     /// Daemon status snapshot returned in response to `Request::Status` (F1).
     DaemonStatus {

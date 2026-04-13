@@ -100,6 +100,24 @@ pub fn create_job_window(session: &str, name: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// Rename an existing tmux window.
+pub fn rename_window(session: &str, old_name: &str, new_name: &str) -> Result<()> {
+    let target = format!("{}:{}", session, old_name);
+    let output = Command::new("tmux")
+        .args(["rename-window", "-t", &target, new_name])
+        .output()?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "Failed to rename window '{}' -> '{}': {}",
+            old_name,
+            new_name,
+            err.trim()
+        );
+    }
+    Ok(())
+}
+
 /// Kill a background window by name.  Silently ignores missing windows.
 pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
     let _ = Command::new("tmux")

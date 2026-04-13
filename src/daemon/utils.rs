@@ -374,6 +374,111 @@ pub fn normalize_output(s: &str) -> String {
     trimmed[start..end].join("\n")
 }
 
+/// Sanitize a shell command string into a short slug suitable for use as a
+/// tmux window-name suffix.
+///
+/// Rules (applied in order):
+/// 1. Tokenise on whitespace.
+/// 2. Skip leading wrapper tokens: `sudo`, `env`, `nohup`, and any bare
+///    `VAR=value` assignments.
+/// 3. Take the basename of the first remaining token (strips path prefix).
+/// 4. If that token is a common interpreter (`bash`, `sh`, `zsh`, `dash`,
+///    `fish`, `ksh`, `python`, `python3`, `node`, `ruby`, `perl`), skip it
+///    and use the basename of the *next* token instead (the script name).
+/// 5. Replace any character outside `[a-zA-Z0-9._-]` with `-`.
+/// 6. Collapse consecutive `-` characters into one.
+/// 7. Truncate to `max_len` characters.
+/// 8. Strip leading/trailing `-`.
+/// 9. If the result is empty, return `"cmd"` as a fallback.
+pub fn sanitize_cmd_for_window(cmd: &str, max_len: usize) -> String {
+    let tokens: Vec<&str> = cmd.split_whitespace().collect();
+
+    // Skip wrapper tokens at the front.
+    let mut idx = 0;
+    while idx < tokens.len() {
+        let t = tokens[idx];
+        if t == "sudo" || t == "env" || t == "nohup" {
+            idx += 1;
+        } else if t.contains('=') && !t.starts_with('-') {
+            // bare VAR=value assignment
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    let Some(first) = tokens.get(idx) else {
+        return "cmd".to_string();
+    };
+
+    // Take basename (strip path prefix).
+    let first_base = std::path::Path::new(first)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(first);
+
+    // If it's an interpreter, advance to the next token.
+    const INTERPRETERS: &[&str] = &[
+        "bash", "sh", "zsh", "dash", "fish", "ksh", "tcsh", "csh",
+        "python", "python2", "python3", "node", "ruby", "perl",
+    ];
+    let raw = if INTERPRETERS.contains(&first_base) {
+        if let Some(next) = tokens.get(idx + 1) {
+            // Skip flags (e.g. `bash -c`)
+            let next = if next.starts_with('-') {
+                tokens.get(idx + 2).unwrap_or(next)
+            } else {
+                next
+            };
+            std::path::Path::new(next)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(next)
+        } else {
+            first_base
+        }
+    } else {
+        first_base
+    };
+
+    // Sanitise: replace unsafe chars with '-', collapse runs, truncate.
+    let sanitised: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    // Collapse consecutive dashes.
+    let mut result = String::with_capacity(sanitised.len());
+    let mut prev_dash = false;
+    for c in sanitised.chars() {
+        if c == '-' {
+            if !prev_dash {
+                result.push(c);
+            }
+            prev_dash = true;
+        } else {
+            result.push(c);
+            prev_dash = false;
+        }
+    }
+
+    // Truncate, then strip leading/trailing dashes.
+    let truncated: String = result.chars().take(max_len).collect();
+    let slug = truncated.trim_matches('-').to_string();
+
+    if slug.is_empty() {
+        "cmd".to_string()
+    } else {
+        slug
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -639,6 +744,101 @@ mod tests {
     #[test]
     fn extract_empty_snap_returns_empty() {
         assert_eq!(extract_command_output("", "ls"), "");
+    }
+
+    // ── sanitize_cmd_for_window ───────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_simple_command() {
+        assert_eq!(sanitize_cmd_for_window("ls -la /tmp", 30), "ls");
+    }
+
+    #[test]
+    fn sanitize_strips_sudo() {
+        assert_eq!(sanitize_cmd_for_window("sudo apt-get install foo", 30), "apt-get");
+    }
+
+    #[test]
+    fn sanitize_strips_env_prefix() {
+        assert_eq!(
+            sanitize_cmd_for_window("DEBIAN_FRONTEND=noninteractive apt update", 30),
+            "apt"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_sudo_and_env() {
+        assert_eq!(
+            sanitize_cmd_for_window("sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade", 30),
+            "apt-get"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_path_prefix() {
+        assert_eq!(sanitize_cmd_for_window("/usr/bin/curl -s http://example.com", 30), "curl");
+    }
+
+    #[test]
+    fn sanitize_interpreter_uses_script_name() {
+        assert_eq!(sanitize_cmd_for_window("/usr/bin/python3 script.py", 30), "script.py");
+    }
+
+    #[test]
+    fn sanitize_bash_c_skips_flag() {
+        // bash -c 'echo hi' — flag "-c" should be skipped, use next token
+        assert_eq!(sanitize_cmd_for_window("bash -c 'echo hi'", 30), "echo");
+    }
+
+    #[test]
+    fn sanitize_node_script() {
+        assert_eq!(sanitize_cmd_for_window("node /home/user/app.js", 30), "app.js");
+    }
+
+    #[test]
+    fn sanitize_script_path_basename() {
+        assert_eq!(
+            sanitize_cmd_for_window("/home/user/.daemoneye/scripts/backup.sh", 30),
+            "backup.sh"
+        );
+    }
+
+    #[test]
+    fn sanitize_special_chars_replaced() {
+        assert_eq!(sanitize_cmd_for_window("./run@test#1.sh", 30), "run-test-1.sh");
+    }
+
+    #[test]
+    fn sanitize_truncates_to_max_len() {
+        let long = "averylongcommandnamethatexceedslimit --flag";
+        let result = sanitize_cmd_for_window(long, 10);
+        assert!(result.len() <= 10);
+    }
+
+    #[test]
+    fn sanitize_empty_returns_fallback() {
+        assert_eq!(sanitize_cmd_for_window("", 30), "cmd");
+    }
+
+    #[test]
+    fn sanitize_only_env_vars_returns_fallback() {
+        assert_eq!(sanitize_cmd_for_window("FOO=bar BAZ=qux", 30), "cmd");
+    }
+
+    #[test]
+    fn sanitize_only_special_chars_returns_fallback() {
+        assert_eq!(sanitize_cmd_for_window("@@@", 30), "cmd");
+    }
+
+    #[test]
+    fn sanitize_collapses_consecutive_dashes() {
+        // Multiple adjacent non-alphanumeric chars become a single dash.
+        assert_eq!(sanitize_cmd_for_window("a@@b", 30), "a-b");
+    }
+
+    #[test]
+    fn sanitize_cargo_build() {
+        assert_eq!(sanitize_cmd_for_window("cargo build --release", 30), "cargo");
     }
 }
 
