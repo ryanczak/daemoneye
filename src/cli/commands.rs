@@ -2457,7 +2457,8 @@ async fn ask_with_session(
                     println!("  {}", line);
                 }
                 println!();
-                let approved = if approval.runbooks_all || approval.runbooks.contains(&runbook_name) {
+                let approved = if approval.runbooks_all || approval.runbooks.contains(&runbook_name)
+                {
                     println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
                     true
                 } else {
@@ -3085,7 +3086,11 @@ mod tests {
         let mut a = SessionApproval::default();
         a.scripts_all = true;
         let h = a.hint();
-        assert!(h.contains("scripts: all"), "hint='{}' should contain 'scripts: all'", h);
+        assert!(
+            h.contains("scripts: all"),
+            "hint='{}' should contain 'scripts: all'",
+            h
+        );
     }
 
     #[test]
@@ -3094,6 +3099,10 @@ mod tests {
         a.scripts.insert("foo.sh".to_string());
         a.scripts.insert("bar.sh".to_string());
         let h = a.hint();
-        assert!(h.contains("scripts: 2"), "hint='{}' should contain 'scripts: 2'", h);
+        assert!(
+            h.contains("scripts: 2"),
+            "hint='{}' should contain 'scripts: 2'",
+            h
+        );
     }
 }

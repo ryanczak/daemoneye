@@ -495,7 +495,10 @@ mod tests {
     fn auto_approve_commands_does_not_affect_non_sudo_already_allowed() {
         // Non-sudo commands are always allowed regardless of the flag.
         let p_off = policy(&[]);
-        let p_on = GhostPolicy { auto_approve_commands: true, ..policy(&[]) };
+        let p_on = GhostPolicy {
+            auto_approve_commands: true,
+            ..policy(&[])
+        };
         assert!(p_off.is_safe("df -h"));
         assert!(p_on.is_safe("df -h"));
     }
@@ -503,7 +506,10 @@ mod tests {
     #[test]
     fn auto_approve_commands_does_not_grant_sudo() {
         // The flag must never allow arbitrary sudo commands.
-        let p = GhostPolicy { auto_approve_commands: true, ..policy(&[]) };
+        let p = GhostPolicy {
+            auto_approve_commands: true,
+            ..policy(&[])
+        };
         assert!(!p.is_safe("sudo apt install vim"));
         assert!(!p.is_safe("sudo rm -rf /tmp"));
     }

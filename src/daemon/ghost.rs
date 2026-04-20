@@ -204,7 +204,13 @@ pub async fn trigger_ghost_turn(
                 } else {
                     daemon_ceiling
                 };
-                (scripts, gc.run_with_sudo, turns, gc.ssh_target.clone(), gc.auto_approve_commands)
+                (
+                    scripts,
+                    gc.run_with_sudo,
+                    turns,
+                    gc.ssh_target.clone(),
+                    gc.auto_approve_commands,
+                )
             })
             .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))
     };

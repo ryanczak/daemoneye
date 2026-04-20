@@ -927,7 +927,10 @@ mod tests {
     #[test]
     fn default_approvals_match_current_behavior() {
         let cfg = ApprovalsConfig::default();
-        assert!(cfg.commands, "non-sudo commands must default to auto-approved");
+        assert!(
+            cfg.commands,
+            "non-sudo commands must default to auto-approved"
+        );
         assert!(!cfg.sudo);
         assert!(!cfg.scripts);
         assert!(!cfg.runbooks);
@@ -973,7 +976,10 @@ mod tests {
             sudo = true
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert!(cfg.approvals.commands, "commands must still default to true");
+        assert!(
+            cfg.approvals.commands,
+            "commands must still default to true"
+        );
         assert!(cfg.approvals.sudo);
         assert!(!cfg.approvals.scripts);
         assert!(!cfg.approvals.ghost_commands);
