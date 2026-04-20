@@ -115,7 +115,7 @@ graph TD
 | `etc/prompts/` | System prompt TOML files (written by daemon at startup) |
 | `var/log/sessions/` | Per-session JSONL conversation history |
 
-The tree is created by `Config::ensure_dirs()`, which is called at the top of `main()` before any subcommand and explicitly at the start of `run_setup()`. The AI agent's `read_file` tool is blocked from most of `~/.daemoneye/` (managed data is accessed via dedicated tools), with one exception: `var/log/panes/` is readable so the agent can page through truncated background-command output.
+The tree is created by `Config::ensure_dirs()`, which is called at the top of `main()` before any subcommand and explicitly at the start of `run_setup()`. The AI agent's `read_file` tool is blocked only from `etc/config.toml` and `etc/prompts/sre.toml` (which contain API credentials). All other paths under `~/.daemoneye/` are readable, including `var/log/`, `var/run/`, `scripts/`, `runbooks/`, and `memory/`. The `edit_file` tool remains fully blocked from all of `~/.daemoneye/` — daemoneye-managed data should be written only through dedicated tools.
 
 `daemoneye setup` supports three overwrite flags for post-upgrade refresh:
 - `--overwrite-bin` — force-copies the current executable to `~/.daemoneye/bin/daemoneye` (skipped by default when a copy already exists).

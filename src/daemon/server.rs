@@ -740,6 +740,7 @@ pub async fn handle_client(
                     started_at: chrono::Utc::now(),
                     turn_count: 0,
                     active_model: None,
+                    last_snapshot_activity: 0,
                 });
                 entry.chat_pane = chat_pane.clone();
                 entry.tmux_session = session_name.clone();
@@ -908,9 +909,10 @@ pub async fn handle_client(
     };
 
     // First turn: include full host context + terminal snapshot.
-    // Subsequent turns: budget note + query only. The AI calls get_terminal_context
-    // when it needs a fresh snapshot, keeping mid-turn messages lean.
-    // C1: per-turn pane map — always generated, available in both branches.
+    // Subsequent turns: budget note + query only, unless the foreground pane has
+    // had new activity since the last snapshot — in which case a fresh snapshot is
+    // auto-injected so the AI sees current output without needing get_terminal_context.
+    // C1: per-turn pane map — always generated, available in all branches.
     let pane_map = cache.pane_map_summary(chat_pane.as_deref());
 
     // Read the default foreground target pane for this session so we can inject
@@ -920,6 +922,43 @@ pub async fn handle_client(
     let default_target_pane: Option<String> = session_id
         .as_ref()
         .and_then(|id| sessions.lock().ok()?.get(id)?.default_target_pane.clone());
+
+    // Activity-based snapshot refresh: compare the foreground pane's current
+    // last_activity timestamp against the value recorded when we last injected a
+    // snapshot.  If it has advanced, the pane received new output since then and
+    // we inject a fresh snapshot automatically.
+    let pane_activity: u64 = default_target_pane
+        .as_deref()
+        .and_then(|tp| {
+            cache
+                .panes
+                .read()
+                .unwrap_or_log()
+                .get(tp)
+                .map(|s| s.last_activity)
+        })
+        .unwrap_or(0);
+    let last_snapshot_activity: u64 = session_id
+        .as_ref()
+        .and_then(|id| {
+            sessions
+                .lock()
+                .ok()?
+                .get(id)
+                .map(|e| e.last_snapshot_activity)
+        })
+        .unwrap_or(0);
+    let inject_snapshot = is_first_turn || (pane_activity > 0 && pane_activity > last_snapshot_activity);
+
+    // Record the activity timestamp so the next turn can detect further changes.
+    if inject_snapshot
+        && pane_activity > 0
+        && let Some(ref id) = session_id
+        && let Ok(mut store) = sessions.lock()
+        && let Some(entry) = store.get_mut(id)
+    {
+        entry.last_snapshot_activity = pane_activity;
+    }
 
     let prompt = if is_first_turn {
         let session_summary =
@@ -956,45 +995,97 @@ pub async fn handle_client(
              {pane_map}{current_time_line}User: {safe_query}"
         )
     } else {
-        // Inject a context-budget line so the AI knows how much context it has consumed.
-        // Use percentage thresholds so the signal is meaningful regardless of model.
+        // Inject a unified [BUDGET] line covering every dimension the AI could be
+        // constrained by this turn: turn count (ghost sessions only), message
+        // history position, and prompt-token pressure.  Attached chat sessions
+        // have no hard turn cap — the turn slot is omitted for them.
         let context_window = config
             .resolve_model(session_active_model.as_deref())
             .context_window();
-        let pct_used = if context_window > 0 {
+        let token_pct = if context_window > 0 {
             (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
         } else {
             0
         };
-        let budget_note = if pct_used >= 75 {
-            format!(
-                "[Token Budget] Context at {}k / {}k tokens ({}% used) — NEAR LIMIT. Be very concise. Suggest `/clear` if the task is complete.\n\n",
+        let history_count = messages.len() + 1; // + the user turn about to be pushed
+        let history_pct =
+            (history_count as f64 / crate::daemon::session::MAX_HISTORY as f64 * 100.0) as u32;
+
+        // Ghost sessions: resolve the effective turn cap (runbook value clamped
+        // to daemon ceiling; 0 = use the ceiling).  Returns None for regular chat.
+        let ghost_turn_limit: Option<usize> = session_id
+            .as_ref()
+            .and_then(|id| {
+                let store = sessions.lock().ok()?;
+                let entry = store.get(id)?;
+                if !entry.is_ghost {
+                    return None;
+                }
+                let ceiling = config.ghost.max_ghost_turns;
+                let limit = entry
+                    .ghost_config
+                    .as_ref()
+                    .map(|gc| {
+                        if gc.max_ghost_turns > 0 {
+                            gc.max_ghost_turns.min(ceiling)
+                        } else {
+                            ceiling
+                        }
+                    })
+                    .unwrap_or(ceiling);
+                Some(limit)
+            });
+        let turn_pct = ghost_turn_limit
+            .filter(|l| *l > 0)
+            .map(|l| (this_turn_count as f64 / l as f64 * 100.0) as u32)
+            .unwrap_or(0);
+
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(limit) = ghost_turn_limit {
+            parts.push(format!("turn {}/{}", this_turn_count, limit));
+        }
+        parts.push(format!(
+            "history {}/{}",
+            history_count,
+            crate::daemon::session::MAX_HISTORY
+        ));
+        if context_window > 0 && last_prompt_tokens > 0 {
+            parts.push(format!(
+                "prompt {}k/{}k ({}%)",
                 last_prompt_tokens / 1000,
                 context_window / 1000,
-                pct_used
-            )
-        } else if pct_used >= 50 {
-            format!(
-                "[Token Budget] Context at {}k / {}k tokens ({}% used) — prefer concise responses, avoid redundant tool calls.\n\n",
-                last_prompt_tokens / 1000,
-                context_window / 1000,
-                pct_used
-            )
-        } else if last_prompt_tokens > 0 {
-            format!(
-                "[Token Budget] Context at {}k / {}k tokens ({}% used).\n\n",
-                last_prompt_tokens / 1000,
-                context_window / 1000,
-                pct_used
-            )
+                token_pct
+            ));
+        }
+
+        let max_pct = turn_pct.max(history_pct).max(token_pct);
+        let warning = if max_pct >= 75 {
+            " — NEAR LIMIT. Summarize progress, persist critical state to memory, and wrap up."
+        } else if max_pct >= 50 {
+            " — approaching budget; prefer concise responses and avoid redundant tool calls."
         } else {
-            String::new()
+            ""
         };
+        let budget_note = format!("[BUDGET] {}{}\n\n", parts.join(" · "), warning);
         let fg_target_line = default_target_pane
             .as_deref()
             .map(|tp| format!("[FOREGROUND TARGET] {} — target_pane=\"{}\" for run_terminal_command(background=false)\n", tp, tp))
             .unwrap_or_default();
-        format!("{budget_note}{fg_target_line}{pane_map}{current_time_line}User: {safe_query}")
+
+        if inject_snapshot {
+            // Pane had new activity since the last snapshot — auto-inject a fresh one.
+            let session_summary =
+                cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
+            let session_summary =
+                prepend_foreground_target(&session_summary, default_target_pane.as_deref(), &cache);
+            format!(
+                "{budget_note}{fg_target_line}{pane_map}{current_time_line}\
+                 [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
+                 ```\n{session_summary}\n```\n\nUser: {safe_query}"
+            )
+        } else {
+            format!("{budget_note}{fg_target_line}{pane_map}{current_time_line}User: {safe_query}")
+        }
     };
 
     let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);
@@ -1543,20 +1634,13 @@ pub async fn handle_client(
                     });
 
                     // Per-turn tool-call loop guard.
-                    // Prevents the AI from looping endlessly through the same tools.
-                    //
-                    // Two-tier per-tool limit:
-                    //   - Approval-gated tools (run_terminal_command, edit_file, write_script,
-                    //     write_runbook, schedule_command, spawn_ghost_shell, delete_script,
-                    //     delete_runbook, delete_schedule): cap at 2 — each requires user input,
-                    //     so repeating many times in one turn is almost certainly a mistake.
-                    //   - No-approval tools (memory CRUD, reads, search): cap at 30 — legitimate
-                    //     batch operations like updating many memories need room to work.
-                    const MAX_SAME_TOOL_APPROVAL: u32 = 2;
-                    const MAX_SAME_TOOL_BATCH: u32 = 30;
-                    const MAX_TOTAL_CALLS: u32 = 50;
+                    // Only caps no-approval batch tools to prevent runaway reads/searches.
+                    // Approval-gated tools (run_terminal_command, edit_file, write_script, etc.)
+                    // are already rate-limited by the user at each approval prompt, so no
+                    // additional cap is needed there.
+                    const MAX_SAME_TOOL_BATCH: u32 = 100;
 
-                    fn per_tool_limit(tool_name: &str) -> u32 {
+                    fn per_tool_limit(tool_name: &str) -> Option<u32> {
                         match tool_name {
                             "run_terminal_command"
                             | "edit_file"
@@ -1566,8 +1650,8 @@ pub async fn handle_client(
                             | "spawn_ghost_shell"
                             | "delete_script"
                             | "delete_runbook"
-                            | "delete_schedule" => MAX_SAME_TOOL_APPROVAL,
-                            _ => MAX_SAME_TOOL_BATCH,
+                            | "delete_schedule" => None, // user approval is the gate
+                            _ => Some(MAX_SAME_TOOL_BATCH),
                         }
                     }
 
@@ -1576,46 +1660,39 @@ pub async fn handle_client(
 
                     let mut tool_results = Vec::new();
                     let mut user_message_redirect: Option<String> = None;
-                    for (call_idx, call) in pending_calls.iter().enumerate() {
+                    for call in pending_calls.iter() {
                         let call_id = call.id().to_string();
 
-                        // Hard total cap: block all calls beyond the limit.
-                        if call_idx as u32 >= MAX_TOTAL_CALLS {
-                            log::warn!(
-                                "Turn tool-call total limit ({MAX_TOTAL_CALLS}) reached; blocking call {}",
-                                call_idx + 1
-                            );
-                            tool_results.push(ToolResult {
-                                tool_call_id: call_id,
-                                tool_name: call.tool_name().to_string(),
-                                content: format!(
-                                    "Error: turn tool-call limit ({MAX_TOTAL_CALLS}) reached. \
-                                     This call was not executed. Stop calling tools and \
-                                     respond to the user with what you have."
-                                ),
-                            });
-                            continue;
-                        }
-
-                        // Per-tool cap: block repeated calls to the same tool beyond its limit.
+                        // Per-tool cap: only applied to no-approval batch tools.
+                        // tool_budget_hint carries a one-line suffix appended to the result
+                        // when the running count is close to the cap, so the AI sees the
+                        // approach and can slow down before the hard block triggers.
                         let tool_name = call.tool_name();
-                        let limit = per_tool_limit(tool_name);
-                        let count = tool_call_counts.entry(tool_name).or_insert(0);
-                        *count += 1;
-                        if *count > limit {
-                            log::warn!(
-                                "Per-tool limit for `{tool_name}` reached ({limit}); blocking call"
-                            );
-                            tool_results.push(ToolResult {
-                                tool_call_id: call_id,
-                                tool_name: tool_name.to_string(),
-                                content: format!(
-                                    "Error: `{tool_name}` has been called {limit} times \
-                                     this turn. This call was not executed. Proceed with the \
-                                     information already gathered and do not call this tool again."
-                                ),
-                            });
-                            continue;
+                        let mut tool_budget_hint: Option<String> = None;
+                        if let Some(limit) = per_tool_limit(tool_name) {
+                            let count = tool_call_counts.entry(tool_name).or_insert(0);
+                            *count += 1;
+                            if *count > limit {
+                                log::warn!(
+                                    "Per-tool limit for `{tool_name}` reached ({limit}); blocking call"
+                                );
+                                tool_results.push(ToolResult {
+                                    tool_call_id: call_id,
+                                    tool_name: tool_name.to_string(),
+                                    content: format!(
+                                        "Error: `{tool_name}` has been called {limit} times \
+                                         this turn. This call was not executed. Proceed with the \
+                                         information already gathered and do not call this tool again."
+                                    ),
+                                });
+                                continue;
+                            }
+                            if *count * 2 >= limit {
+                                tool_budget_hint = Some(format!(
+                                    "\n\n[note: {}/{} `{}` calls this turn — approaching per-turn cap]",
+                                    *count, limit, tool_name
+                                ));
+                            }
                         }
 
                         let outcome = match crate::daemon::executor::execute_tool_call(
@@ -1647,10 +1724,14 @@ pub async fn handle_client(
                                 break;
                             }
                             crate::daemon::executor::ToolCallOutcome::Result(result) => {
+                                let content = match tool_budget_hint {
+                                    Some(hint) => format!("{}{}", result, hint),
+                                    None => result,
+                                };
                                 tool_results.push(ToolResult {
                                     tool_call_id: call_id,
                                     tool_name: tool_name.to_string(),
-                                    content: result,
+                                    content,
                                 });
                             }
                             crate::daemon::executor::ToolCallOutcome::SpawnGhostSession {
@@ -1731,7 +1812,7 @@ pub async fn handle_client(
                     // Truncate tool results before storing in history.
                     // The full output was already delivered to the AI as the live result;
                     // only the history copy needs to be capped to prevent context bloat.
-                    const MAX_TOOL_RESULT_CHARS: usize = 4_000;
+                    const MAX_TOOL_RESULT_CHARS: usize = 16_000;
                     let history_results: Vec<ToolResult> = tool_results.into_iter().map(|r| {
                         if r.content.len() <= MAX_TOOL_RESULT_CHARS {
                             r

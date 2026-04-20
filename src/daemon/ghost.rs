@@ -121,6 +121,7 @@ impl GhostManager {
             started_at: chrono::Utc::now(),
             turn_count: 0,
             active_model: runbook.ghost_config.model.clone(),
+            last_snapshot_activity: 0,
         };
 
         {
@@ -271,11 +272,16 @@ pub async fn trigger_ghost_turn(
     const GHOST_TURN_TIMEOUT_SECS: u64 = 300;
 
     let mut turn = 0usize;
+    // Tracks whether the wrap-up turn has already been injected so we run it
+    // exactly once before breaking the loop.
+    let mut wrap_up_turn = false;
     loop {
-        if turn >= max_ghost_turns {
+        if wrap_up_turn {
+            // The previous iteration was the wrap-up turn — stop now.
             log::warn!(
-                "Ghost Shell {}: reached max turns ({}), stopping",
+                "Ghost Shell {}: wrap-up turn complete, stopping after {} turns (limit {})",
                 session_id,
+                turn,
                 max_ghost_turns
             );
             crate::daemon::utils::log_event(
@@ -287,13 +293,44 @@ pub async fn trigger_ghost_turn(
             );
             break;
         }
+        if turn >= max_ghost_turns {
+            // Inject a synthetic user message asking the agent to wrap up, then
+            // run one final turn so it can leave a clean handoff rather than
+            // stopping mid-thought.
+            log::warn!(
+                "Ghost Shell {}: reached max turns ({}), running wrap-up turn",
+                session_id,
+                max_ghost_turns
+            );
+            let wrap_up = crate::ai::Message {
+                role: "user".to_string(),
+                content: format!(
+                    "[BUDGET EXHAUSTED — turn {0}/{0} reached. This is your final turn. \
+                     Summarize what was accomplished, record any critical state or follow-ups \
+                     to memory (add_memory), and stop. Do not call run_terminal_command, \
+                     edit_file, write_script, schedule_command, or spawn_ghost_shell in this turn.]",
+                    max_ghost_turns
+                ),
+                tool_calls: None,
+                tool_results: None,
+            };
+            {
+                let mut store = sessions.lock().unwrap_or_log();
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages.push(wrap_up.clone());
+                    crate::daemon::session::append_session_message(session_id, &wrap_up);
+                }
+            }
+            wrap_up_turn = true;
+        }
         turn += 1;
 
         log::info!(
-            "Ghost Shell {}: starting turn {}/{}",
+            "Ghost Shell {}: starting turn {}/{}{}",
             session_id,
             turn,
-            max_ghost_turns
+            max_ghost_turns,
+            if wrap_up_turn { " (wrap-up)" } else { "" }
         );
 
         let chat_messages = {

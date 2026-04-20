@@ -207,17 +207,22 @@ pub(super) async fn run_read_file(
 
     {
         let de_dir = crate::config::config_dir();
-        let pane_logs = crate::config::pane_logs_dir();
         let candidate =
             std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
-        if candidate.starts_with(&de_dir) && !candidate.starts_with(&pane_logs) {
-            return Ok(ToolCallOutcome::Result(
-                "Error: read_file cannot access the daemoneye configuration \
-                 directory. Use the dedicated tools (read_script, read_runbook, \
-                 read_memory, list_memories, etc.) instead. \
-                 Exception: pane log archives under var/log/panes/ are readable."
-                    .to_string(),
-            ));
+        if candidate.starts_with(&de_dir) {
+            let blocked = [
+                de_dir.join("etc").join("config.toml"),
+                de_dir.join("etc").join("prompts").join("sre.toml"),
+            ];
+            if blocked.contains(&candidate) {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: read_file cannot access daemoneye credential files \
+                     (etc/config.toml, etc/prompts/sre.toml). These may contain \
+                     sensitive API keys. Use read_script, read_runbook, read_memory, \
+                     or search_repository for other daemoneye-managed data."
+                        .to_string(),
+                ));
+            }
         }
     }
 

@@ -176,7 +176,7 @@ The trust spectrum is also a security architecture. Each level of autonomy has h
 - **Ghost shells require opt-in per runbook** (`enabled: true`). No runbook, no autonomy.
 - **Turn budgets** cap how many actions a ghost shell can take (default 20, configurable per-runbook). The ghost is forcibly stopped when the limit is reached.
 - **Concurrency caps** prevent ghost shell storms during cascading failures (default 3 concurrent ghosts, daemon-wide).
-- **Path-restricted file access**: The `read_file` and `edit_file` tools are blocked from reading or modifying anything under `~/.daemoneye/`, preventing the AI from tampering with its own configuration, runbooks, or memory.
+- **Path-restricted file access**: `read_file` is blocked only from `etc/config.toml` and `etc/prompts/sre.toml` (API credential files); all other `~/.daemoneye/` paths are readable so the agent can self-introspect its audit trail, logs, and managed data. `edit_file` remains fully blocked from all of `~/.daemoneye/` — daemoneye-managed data is written only through dedicated tools (`write_script`, `write_runbook`, `add_memory`, etc.).
 
 ---
 

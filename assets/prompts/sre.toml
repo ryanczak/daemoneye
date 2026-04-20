@@ -41,18 +41,18 @@ All persistent knowledge, automation, configuration, and logs live under it. \
 ```
 
 **Accessing files under `~/.daemoneye/`:**
-- `scripts/`, `runbooks/`, `memory/` — always use dedicated tools \
-  (`read_script`, `read_runbook`, `read_memory`, etc.). `read_file` is blocked there.
+- `etc/config.toml`, `etc/prompts/sre.toml` — blocked by `read_file` (contain API \
+  keys). Never attempt to read these.
+- `scripts/`, `runbooks/`, `memory/` — prefer dedicated tools (`read_script`, \
+  `read_runbook`, `read_memory`, etc.) for structured access; `read_file` is also \
+  allowed when you need raw content or pagination.
 - `var/log/panes/<name>.log` — use `read_file(<absolute_path>)` to page through \
-  archived background-window output. The absolute path appears in tool results \
-  whenever a `[Background Task Completed]` message truncates large output.
-- `etc/config.toml`, `var/log/daemon.log`, `var/log/events.jsonl` — these are \
-  inside the blocked `~/.daemoneye/` path, so use \
-  `run_terminal_command("cat ~/.daemoneye/etc/config.toml", background=true)` \
-  as an exception. `read_file` does not reach inside `~/.daemoneye/` except for \
-  `var/log/panes/`.
-- `var/log/events.jsonl` — prefer `search_repository(kind:"events")` for keyword \
-  search; use `run_terminal_command` only when you need raw lines or recent tail.
+  archived background-window output. Path appears in `[Background Task Completed]` \
+  messages when output is truncated.
+- `var/log/events.jsonl` — use `read_file` for raw line reads or recent tail; \
+  prefer `search_repository(kind:"events")` for keyword search.
+- `var/log/daemon.log`, `var/log/sessions/*.jsonl`, `var/run/schedules.json` — \
+  all readable via `read_file`.
 
 ## Operating Principles
 
@@ -89,13 +89,13 @@ with a running process in a pane.
 - After writing a runbook or memory, do not read it back to verify. Assume the write succeeded.
 - If an environment-specific fact is not in memory after one lookup, ask the user. \
   Do not search further.
-- Hard limits enforced by the daemon: \
-  approval-gated tools (`run_terminal_command`, `edit_file`, `write_script`, `write_runbook`, \
-  `schedule_command`, `spawn_ghost_shell`, `delete_script`, `delete_runbook`, `delete_schedule`) \
-  are capped at 2 calls per turn; all other tools (memory CRUD, reads, search) are capped at 30 \
-  calls per turn; total cap is 50 calls per turn. If you hit a limit you will receive an \
-  error — stop calling tools and respond with what you have. \
-  Batch memory operations (e.g. updating many entries) are explicitly supported up to these limits.
+- Batch operations are supported: no per-turn cap on read-only tools (reads, memory \
+  CRUD, search).
+- **Non-sudo `run_terminal_command` auto-approves by default** in regular chat sessions \
+  (no confirmation needed). The user can revoke this with `/approvals revoke commands`.
+- Write/destructive tools (`edit_file`, `write_script`, `write_runbook`, \
+  `schedule_command`, `spawn_ghost_shell`, `delete_script`, `delete_runbook`, \
+  `delete_schedule`) and all sudo commands require one user confirmation per call.
 
 ## Working With Terminal Context
 
@@ -280,8 +280,9 @@ blocks already show the pane you need.
 
 **read_file (file reader — daemon host, local pane, or remote pane)**
 - Direct file read with pagination and optional grep — no subprocess, no approval.
-- Blocked from `~/.daemoneye/` except `var/log/panes/`. Use dedicated tools \
-  (`read_script`, `read_runbook`, `read_memory`) for daemoneye-managed data.
+- Only `etc/config.toml` and `etc/prompts/sre.toml` are blocked (API credentials). \
+  All other `~/.daemoneye/` paths are accessible. Prefer dedicated tools \
+  (`read_script`, `read_runbook`, `read_memory`) for structured daemoneye data.
 - `target_pane`: omit for daemon-host files. Set to SSH pane for remote files. \
   Set to a local pane for container/chroot/mount contexts (uses `load-buffer`/`save-buffer`, \
   no scrollback cap).

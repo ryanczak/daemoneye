@@ -62,13 +62,19 @@ pub struct SessionEntry {
     /// Session-level model override set by `/model` slash command.
     /// `None` means use the daemon default (`[models.default]` from config).
     pub active_model: Option<String>,
+    /// Unix timestamp (`#{pane_activity}`) of the foreground pane when a terminal
+    /// snapshot was last injected into the prompt (first turn or auto-refresh).
+    /// On the next turn, if the foreground pane's `last_activity` has advanced past
+    /// this value the daemon automatically injects a fresh snapshot without requiring
+    /// a `get_terminal_context` tool call.
+    pub last_snapshot_activity: u64,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
 pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
 
 /// Maximum number of messages retained per session (in memory and on disk).
-pub const MAX_HISTORY: usize = 40;
+pub const MAX_HISTORY: usize = 80;
 
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();

@@ -16,8 +16,12 @@ use crate::ipc::{Request, Response};
 /// - `regular` / `sudo`: class-wide approval for terminal commands.
 /// - `scripts` / `runbooks`: name-scoped approval; each entry auto-approves
 ///   future writes to that specific script or runbook for the rest of the session.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct SessionApproval {
+    /// Non-sudo commands auto-approve without prompting.  `true` by default —
+    /// non-sudo commands run as the daemon user and are bounded by OS permissions,
+    /// the same trust model used by ghost shells.  Set to `false` via
+    /// `/approvals revoke commands` to require explicit confirmation for every command.
     regular: bool,
     sudo: bool,
     scripts: HashSet<String>,
@@ -27,15 +31,27 @@ struct SessionApproval {
     file_edits: HashSet<String>,
 }
 
+impl Default for SessionApproval {
+    fn default() -> Self {
+        Self {
+            regular: true, // non-sudo commands auto-approve by default
+            sudo: false,
+            scripts: HashSet::new(),
+            runbooks: HashSet::new(),
+            file_edits: HashSet::new(),
+        }
+    }
+}
+
 impl SessionApproval {
     /// Build the status-bar hint string shown in the chat frame.
     fn hint(&self) -> String {
         let mut active: Vec<String> = Vec::new();
         match (self.regular, self.sudo) {
             (true, true) => active.push("all".to_string()),
-            (true, false) => active.push("standard".to_string()),
+            (true, false) => {} // default state; shown as baseline label below
             (false, true) => active.push("sudo".to_string()),
-            (false, false) => {}
+            (false, false) => active.push("cmds: gated".to_string()),
         }
         if !self.scripts.is_empty() {
             active.push(format!("scripts: {}", self.scripts.len()));
@@ -47,7 +63,8 @@ impl SessionApproval {
             active.push(format!("files: {}", self.file_edits.len()));
         }
         if active.is_empty() {
-            "approvals: off".to_string()
+            // Default: regular=true, nothing else elevated. Quiet label, no lightning.
+            "cmds: auto".to_string()
         } else {
             format!("⚡approvals: {} · Ctrl+C revokes", active.join(", "))
         }
@@ -1218,9 +1235,9 @@ async fn run_chat_inner_raw(
             println!("  \x1b[1mApproval status\x1b[0m");
             println!();
             let cmd_regular = if approval.regular {
-                "\x1b[32m⚡ session\x1b[0m"
+                "\x1b[32m⚡ auto (default — revoke to gate)\x1b[0m"
             } else {
-                "\x1b[2moff\x1b[0m"
+                "\x1b[31m✗ gated (requires confirmation)\x1b[0m"
             };
             let cmd_sudo = if approval.sudo {
                 "\x1b[32m⚡ session\x1b[0m"
@@ -1317,13 +1334,19 @@ async fn run_chat_inner_raw(
             }};
         }
         if query == "/approvals revoke" {
-            *approval = SessionApproval::default();
-            do_revoke!(" all approvals reset ");
+            *approval = SessionApproval {
+                regular: false,
+                sudo: false,
+                scripts: HashSet::new(),
+                runbooks: HashSet::new(),
+                file_edits: HashSet::new(),
+            };
+            do_revoke!(" all approvals revoked — commands now require confirmation ");
         }
         if query == "/approvals revoke commands" {
             approval.regular = false;
             approval.sudo = false;
-            do_revoke!(" command approvals reset ");
+            do_revoke!(" command approvals revoked — commands now require confirmation ");
         }
         if query == "/approvals revoke scripts" {
             approval.scripts.clear();
