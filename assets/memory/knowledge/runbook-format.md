@@ -45,6 +45,19 @@ DaemonEye auto-analysis looks up runbooks by this converted name when an alert f
 - `max_ghost_turns`: (int) turn budget for the Ghost Shell; 0 or omitted = daemon default (20)
 - `ssh_target`: (string) if set (e.g. `user@host`), approved scripts are wrapped in `ssh <target> <cmd>`
 
+## Unified Header Format
+
+All three DaemonEye artifact types share the same field names:
+
+| Artifact | Header style | Sentinel |
+|---|---|---|
+| Runbook | YAML `---` frontmatter | `---` / `---` |
+| Memory | YAML `---` frontmatter | `---` / `---` |
+| Script | Comment block | `# --- daemoneye ---` / `# --- /daemoneye ---` |
+
+Fields (`tags`, `summary`, `relates_to`, `expires`) mean the same thing in all three.
+Scripts also support extra fields like `run_with_sudo: true` in their header.
+
 ## Key Rules
 
 - `write_runbook` OR `search_repository` (not both) to check for duplicates before creating

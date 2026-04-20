@@ -882,11 +882,12 @@ mod tests {
     fn manifest_shows_script_tags() {
         let tmp = TmpHome::new();
         with_home(&tmp, || {
-            crate::scripts::write_script("rotate-certs.sh", "#!/bin/bash\necho done").unwrap();
-            let meta = crate::config::config_dir()
-                .join("scripts")
-                .join("rotate-certs.sh.meta.toml");
-            std::fs::write(meta, "tags = [\"certs\", \"ssl\"]\n").unwrap();
+            let content = "#!/bin/bash\n\
+                           # --- daemoneye ---\n\
+                           # tags: [certs, ssl]\n\
+                           # --- /daemoneye ---\n\
+                           echo done\n";
+            crate::scripts::write_script("rotate-certs.sh", content).unwrap();
             let m = build_knowledge_manifest();
             assert!(m.contains("rotate-certs.sh"), "script missing: {m}");
             assert!(m.contains("certs"), "tag missing: {m}");

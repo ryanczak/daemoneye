@@ -178,8 +178,6 @@ fn scan_artifacts(since: DateTime<Utc>) -> ArtifactChanges {
         &[],
         &mut changes.scripts,
     );
-    // Remove .meta.toml sidecar files from the list.
-    changes.scripts.retain(|n| !n.ends_with(".meta.toml"));
 
     // Memories (three category subdirs)
     for (category, dir_name) in &[

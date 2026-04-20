@@ -197,7 +197,14 @@ pub static TOOLS: &[ToolDef] = &[
         name: "write_script",
         description: "Create or update a reusable script in ~/.daemoneye/scripts/. The user will \
                       be shown the full content and must approve before it is written. Scripts are \
-                      saved with chmod 700.",
+                      saved with chmod 700. Always include a comment header block immediately after \
+                      the shebang line so the script is discoverable by tags and search: \
+                      `# --- daemoneye ---` / `# tags: [tag1, tag2]` / \
+                      `# summary: one-line description` / `# relates_to: [runbook-name]` / \
+                      `# --- /daemoneye ---`. Use `//` as the prefix for JS/TS/Rust/Go scripts. \
+                      The same field names are used by memory frontmatter — one mental model for \
+                      all artifact types. Extra fields (e.g. `run_with_sudo: true`) are also \
+                      supported and captured in the header.",
         params: &[
             ParamDef {
                 name: "script_name",
@@ -209,7 +216,8 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "content",
                 ty: ParamTy::Str,
                 required: true,
-                description: "Full content of the script, including the shebang line.",
+                description: "Full content of the script, including the shebang line and \
+                              the daemoneye comment header block.",
             },
         ],
     },
@@ -231,7 +239,7 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "delete_script",
         description: "Permanently delete a script from ~/.daemoneye/scripts/. The user must \
-                      approve before the file is removed. Also removes any sidecar .meta.toml.",
+                      approve before the file is removed.",
         params: &[ParamDef {
             name: "script_name",
             ty: ParamTy::Str,

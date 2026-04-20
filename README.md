@@ -28,6 +28,8 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 - Modifications display a standard unified diff — red `-` for removed lines, green `+` for added lines, with `@@` hunk headers — so you can see precisely what changed.
 - **`[A]pprove for session`** is available here too: once approved, future writes to that specific script or runbook auto-proceed (the diff is still shown, the gate is skipped).
 
+**Script headers:** Scripts carry an inline comment header immediately after the shebang (`# --- daemoneye ---` … `# --- /daemoneye ---`) that holds `tags`, `summary`, and `relates_to` fields. The field names are identical to memory YAML frontmatter, so the same mental model applies to all three artifact types. Tags are indexed by `list_scripts` and `search_repository` without any sidecar files.
+
 **Visual Anchors:** During the command approval window the target pane is highlighted with a dark-blue background (`colour17`) so you always know exactly where a command will land before you commit.
 
 **Pane Targeting:** DaemonEye pins the AI to a specific pane ID on every turn so it never has to guess where to run foreground commands.

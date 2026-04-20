@@ -327,7 +327,8 @@ The scheduler runs as a background tokio task that polls `ScheduleStore::take_du
 - All scripts are written with `chmod 700` (owner-only, no group/other access).
 - The AI can **write** scripts via the `write_script` tool, which triggers a `ScriptWritePrompt` IPC round-trip: the client displays the full script content and prompts the user to approve or deny. The daemon only writes the file on approval.
 - The AI can **list** and **read** scripts without approval (read-only operations).
-- The AI can **delete** scripts via the `delete_script` tool, which triggers a `ScriptDeletePrompt` IPC round-trip: the client confirms with the user before the file is removed. Also removes the sidecar `.meta.toml` if present.
+- The AI can **delete** scripts via the `delete_script` tool, which triggers a `ScriptDeletePrompt` IPC round-trip: the client confirms with the user before the file is removed.
+- Scripts carry an optional inline comment header (`# --- daemoneye ---` … `# --- /daemoneye ---`) immediately after the shebang. The header holds `tags`, `summary`, `relates_to`, and any artifact-specific fields (e.g. `run_with_sudo: true`). `list_scripts` reads the first 4 KiB of each file to extract tags; `search_repository` matches header content via its normal grep path. The field names are identical to memory YAML frontmatter — one format across scripts, runbooks, and memories.
 - Scripts can be referenced by scheduled jobs (`ActionOn::Script(name)`) and are resolved to their full path at job execution time.
 - Script names are validated to reject path traversal (no `/`, `\0`, `.`, or `..`).
 

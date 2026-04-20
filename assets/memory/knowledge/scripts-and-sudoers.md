@@ -22,11 +22,31 @@ Scripts are stored with `chmod 700`. Path traversal (e.g., `../../etc/passwd`) i
 4. **Idempotent where possible** — the ghost may re-run a script if it is unsure of the result.
 5. **Python preferred for complexity** — use Python for JSON parsing, REST calls, arithmetic on metrics, or any logic that would require 3+ piped shell commands.
 
+### Script header
+
+Every script should include a comment header immediately after the shebang. The
+header uses `# --- daemoneye ---` sentinels and the same field names as memory
+frontmatter, so `list_scripts` and `search_repository` can surface it by tag:
+
+```
+# --- daemoneye ---
+# tags: [tag1, tag2]
+# summary: one-line description for discovery
+# relates_to: [runbook-or-memory-key]
+# --- /daemoneye ---
+```
+
+Use `//` as the prefix for JS/TS/Rust/Go scripts. Extra fields such as
+`run_with_sudo: true` are also captured.
+
 ### Python script example
 
 ```python
 #!/usr/bin/env python3
-# check-disk.py — report disk usage; exit 1 if above threshold
+# --- daemoneye ---
+# tags: [disk, storage]
+# summary: Report disk usage; exit 1 if above threshold
+# --- /daemoneye ---
 import subprocess, sys
 
 THRESHOLD = 90
@@ -48,7 +68,10 @@ print("OK")
 
 ```bash
 #!/bin/bash
-# restart-nginx.sh — reload nginx config and restart if needed
+# --- daemoneye ---
+# tags: [nginx, web]
+# summary: Reload nginx config and restart if needed
+# --- /daemoneye ---
 set -euo pipefail
 nginx -t 2>&1 && echo "Config OK" || { echo "Config invalid"; exit 1; }
 systemctl restart nginx

@@ -393,10 +393,26 @@ expires: 2026-06-01
 `tags`, `summary`, `relates_to`, `body` (with `append=true`), `expires`. \
 Prefer over full rewrite cycles.
 
+> **Unified header format:** memories use YAML `---` frontmatter; scripts use a \
+> `# --- daemoneye ---` comment block. Both use the same field names. One mental \
+> model for all three artifact types (memories, runbooks, scripts).
+
 ### Scripts
 - `write_script(name, content)`: chmod 700. Prefer `.py` for data processing/JSON; `.sh` for simple wrappers.
 - `read_script`, `list_scripts`, `delete_script`: standard CRUD. Check manifest before creating duplicates.
-- Optional sidecar `<name>.meta.toml` (`tags = ["disk", "cleanup"]`) improves discovery.
+- Always embed a comment header block directly after the shebang so the script is \
+  discoverable by `list_scripts` and `search_repository`:
+```
+#!/usr/bin/env bash
+# --- daemoneye ---
+# tags: [tag1, tag2]
+# summary: one-line description for discovery
+# relates_to: [runbook-or-memory-key]
+# --- /daemoneye ---
+```
+  Use `//` prefix for JS/TS/Rust/Go. The field names (`tags`, `summary`, `relates_to`, \
+  `expires`) are identical to memory frontmatter — one format for all artifact types. \
+  Extra fields such as `run_with_sudo: true` are also captured and stored.
 
 ### Search
 - `search_repository(query, kind)` — runbooks, scripts, memory, or events.

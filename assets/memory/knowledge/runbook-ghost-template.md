@@ -30,6 +30,13 @@ Brief description of the service and the specific issue this runbook addresses.
 Lessons learned and manual overrides performed by humans.
 ```
 
+## Note on Header Formats
+
+Runbooks use YAML `---` frontmatter; scripts use a `# --- daemoneye ---` comment
+block. Both use the same field names (`tags`, `summary`, `relates_to`, `expires`).
+Scripts additionally support extra fields such as `run_with_sudo: true` in their
+header. See `runbook-format` and `scripts-and-sudoers` knowledge entries for details.
+
 ## Frontmatter Fields for Ghost Mode
 
 - `enabled`: Set to `true` to allow DaemonEye to spawn an autonomous Ghost Shell for this alert.

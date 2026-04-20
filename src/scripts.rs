@@ -33,9 +33,6 @@ pub fn list_scripts() -> Result<Vec<ScriptInfo>> {
                 return None;
             }
             let name = path.file_name()?.to_string_lossy().to_string();
-            if name.ends_with(".meta.toml") {
-                return None;
-            }
             let size = e.metadata().ok()?.len();
             Some(ScriptInfo { name, size })
         })
@@ -68,14 +65,10 @@ pub fn resolve_script(name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Delete a named script and its sidecar `.meta.toml` if present.
+/// Delete a named script.
 pub fn delete_script(name: &str) -> Result<()> {
     let path = resolve_script(name)?;
     std::fs::remove_file(&path).with_context(|| format!("deleting script {}", path.display()))?;
-    let meta = meta_path(name);
-    if meta.exists() {
-        let _ = std::fs::remove_file(&meta);
-    }
     crate::daemon::stats::inc_scripts_deleted();
     Ok(())
 }
@@ -86,53 +79,34 @@ pub fn read_script(name: &str) -> Result<String> {
     std::fs::read_to_string(&path).with_context(|| format!("reading script {}", path.display()))
 }
 
-/// Optional sidecar metadata for a script, stored in `<name>.meta.toml`.
-pub struct ScriptMeta {
-    pub tags: Vec<String>,
-}
-
-fn meta_path(name: &str) -> std::path::PathBuf {
-    scripts_dir().join(format!("{}.meta.toml", name))
-}
-
-/// Read the sidecar metadata for a script, if it exists.
-pub fn read_script_meta(name: &str) -> Option<ScriptMeta> {
-    let path = meta_path(name);
-    let content = std::fs::read_to_string(&path).ok()?;
-    Some(ScriptMeta {
-        tags: parse_meta_tags(&content),
-    })
-}
-
-/// List all scripts with their optional sidecar tags.
+/// List all scripts with their inline-header tags.
+///
+/// Tags are read from the `# --- daemoneye ---` comment header embedded in
+/// each script file.  Scripts without a header return an empty tag list.
 pub fn list_scripts_with_tags() -> Result<Vec<(ScriptInfo, Vec<String>)>> {
     Ok(list_scripts()?
         .into_iter()
         .map(|s| {
-            let tags = read_script_meta(&s.name)
-                .map(|m| m.tags)
-                .unwrap_or_default();
+            let tags = read_script_tags(&s.name);
             (s, tags)
         })
         .collect())
 }
 
-fn parse_meta_tags(content: &str) -> Vec<String> {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("tags")
-            && trimmed.contains('=')
-            && let Some(rest) = trimmed.split_once('=').map(|(_, v)| v.trim())
-            && let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']'))
-        {
-            return inner
-                .split(',')
-                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        }
-    }
-    Vec::new()
+/// Read the tags from a script's inline comment header (first 4 KiB only).
+fn read_script_tags(name: &str) -> Vec<String> {
+    let path = scripts_dir().join(name);
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    // Only scan the first 4 KiB — headers always appear near the top.
+    let sample = if content.len() > 4096 {
+        &content[..4096]
+    } else {
+        &content
+    };
+    let (header, _) = crate::header::parse_comment_header(sample);
+    header.tags
 }
 
 /// Reject names containing path separators or other unsafe characters.
@@ -284,50 +258,52 @@ mod tests {
     }
 
     #[test]
-    fn script_meta_roundtrip() {
-        let tmp = std::env::temp_dir().join(format!("de_sc_meta_test_{}", std::process::id()));
+    fn script_inline_header_roundtrip() {
+        let tmp = std::env::temp_dir().join(format!("de_sc_hdr_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         with_home(&tmp, || {
-            write_script("my-script.sh", "#!/bin/bash\necho hi").unwrap();
-            std::fs::write(
-                meta_path("my-script.sh"),
-                "tags = [\"disk\", \"cleanup\"]\n",
-            )
-            .unwrap();
-            let meta = read_script_meta("my-script.sh").expect("meta not found");
-            assert!(meta.tags.contains(&"disk".to_string()));
-            assert!(meta.tags.contains(&"cleanup".to_string()));
+            let content = "#!/bin/bash\n\
+                           # --- daemoneye ---\n\
+                           # tags: [disk, cleanup]\n\
+                           # --- /daemoneye ---\n\
+                           echo hi\n";
+            write_script("my-script.sh", content).unwrap();
+            let tags = read_script_tags("my-script.sh");
+            assert!(tags.contains(&"disk".to_string()));
+            assert!(tags.contains(&"cleanup".to_string()));
         });
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
-    fn script_without_meta_has_no_tags() {
+    fn script_without_header_has_no_tags() {
         let tmp = std::env::temp_dir().join(format!("de_sc_notags_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         with_home(&tmp, || {
             write_script("plain.sh", "#!/bin/bash\necho hi").unwrap();
-            let meta = read_script_meta("plain.sh");
-            assert!(meta.is_none() || meta.unwrap().tags.is_empty());
+            let tags = read_script_tags("plain.sh");
+            assert!(tags.is_empty());
         });
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
-    fn list_scripts_with_tags_includes_meta() {
+    fn list_scripts_with_tags_reads_inline_header() {
         let tmp = std::env::temp_dir().join(format!("de_sc_tags_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         with_home(&tmp, || {
-            write_script("tagged.sh", "#!/bin/bash\necho hi").unwrap();
-            std::fs::write(meta_path("tagged.sh"), "tags = [\"certs\"]\n").unwrap();
+            let tagged = "#!/bin/bash\n\
+                          # --- daemoneye ---\n\
+                          # tags: [certs]\n\
+                          # --- /daemoneye ---\n\
+                          echo done\n";
+            write_script("tagged.sh", tagged).unwrap();
             write_script("plain.sh", "#!/bin/bash\necho hi").unwrap();
             let all = list_scripts_with_tags().unwrap();
-            let tagged = all.iter().find(|(s, _)| s.name == "tagged.sh").unwrap();
-            assert_eq!(tagged.1, vec!["certs"]);
-            let plain = all.iter().find(|(s, _)| s.name == "plain.sh").unwrap();
-            assert!(plain.1.is_empty());
-            // .meta.toml should not appear in the list
-            assert!(!all.iter().any(|(s, _)| s.name.ends_with(".meta.toml")));
+            let tagged_entry = all.iter().find(|(s, _)| s.name == "tagged.sh").unwrap();
+            assert_eq!(tagged_entry.1, vec!["certs"]);
+            let plain_entry = all.iter().find(|(s, _)| s.name == "plain.sh").unwrap();
+            assert!(plain_entry.1.is_empty());
         });
         let _ = std::fs::remove_dir_all(&tmp);
     }

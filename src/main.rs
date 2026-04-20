@@ -2,6 +2,7 @@ mod ai;
 mod cli;
 mod config;
 mod daemon;
+mod header;
 mod ipc;
 mod log;
 mod manifest;
