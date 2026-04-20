@@ -57,6 +57,14 @@ pub struct GhostConfig {
     /// Falls back to the default model if the name is not found in config.
     #[serde(default)]
     pub model: Option<String>,
+    /// Allow the ghost to run non-sudo commands freely without listing them in
+    /// `auto_approve_scripts`.  Non-sudo commands are already permitted by the OS
+    /// permission boundary; this flag makes that permission explicit in the ghost
+    /// shell system prompt and in `/approvals` status output.
+    /// Set per-runbook via `auto_approve_commands: true` in frontmatter, or
+    /// daemon-wide via `[approvals] ghost_commands = true` in `config.toml`.
+    #[serde(default)]
+    pub auto_approve_commands: bool,
 }
 
 /// Summary of a runbook for the `RunbookList` response.

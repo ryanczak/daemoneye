@@ -79,6 +79,7 @@ pub async fn run_scheduled_job(
                     &rb,
                     &alert_msg,
                     crate::daemon::GS_SCHED_WINDOW_PREFIX,
+                    config.approvals.ghost_commands,
                 )
                 .await
                 {

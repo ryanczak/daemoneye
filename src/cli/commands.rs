@@ -14,36 +14,57 @@ use crate::ipc::{Request, Response};
 /// Per-session auto-approval state.
 ///
 /// - `regular` / `sudo`: class-wide approval for terminal commands.
-/// - `scripts` / `runbooks`: name-scoped approval; each entry auto-approves
-///   future writes to that specific script or runbook for the rest of the session.
+/// - `scripts_all` / `runbooks_all` / `file_edits_all`: class-wide approval seeded from
+///   `config.toml [approvals]`; bypasses the per-name `HashSet` check entirely.
+/// - `scripts` / `runbooks` / `file_edits`: name/path-scoped approval; each entry
+///   auto-approves future writes to that specific artifact for the rest of the session.
 #[derive(Clone)]
 struct SessionApproval {
-    /// Non-sudo commands auto-approve without prompting.  `true` by default —
-    /// non-sudo commands run as the daemon user and are bounded by OS permissions,
-    /// the same trust model used by ghost shells.  Set to `false` via
-    /// `/approvals revoke commands` to require explicit confirmation for every command.
+    /// Non-sudo commands auto-approve without prompting.
     regular: bool,
     sudo: bool,
+    /// All script writes pre-approved (config-seeded class-wide flag).
+    scripts_all: bool,
     scripts: HashSet<String>,
+    /// All runbook writes pre-approved (config-seeded class-wide flag).
+    runbooks_all: bool,
     runbooks: HashSet<String>,
-    /// Paths auto-approved for the rest of this session via `[A]pprove for session`
-    /// on an `EditFilePrompt`. Keyed by the canonical path string.
+    /// All file edits pre-approved (config-seeded class-wide flag).
+    file_edits_all: bool,
+    /// Paths auto-approved for the rest of this session via `[A]pprove for session`.
+    /// Keyed by the canonical path string.
     file_edits: HashSet<String>,
 }
 
 impl Default for SessionApproval {
     fn default() -> Self {
         Self {
-            regular: true, // non-sudo commands auto-approve by default
+            regular: true,
             sudo: false,
+            scripts_all: false,
             scripts: HashSet::new(),
+            runbooks_all: false,
             runbooks: HashSet::new(),
+            file_edits_all: false,
             file_edits: HashSet::new(),
         }
     }
 }
 
 impl SessionApproval {
+    /// Build initial approval state from `config.toml [approvals]` settings.
+    /// Called at session start (chat, ask, and in-session resets via /clear etc.).
+    fn from_config(cfg: &crate::config::ApprovalsConfig) -> Self {
+        Self {
+            regular: cfg.commands,
+            sudo: cfg.sudo,
+            scripts_all: cfg.scripts,
+            runbooks_all: cfg.runbooks,
+            file_edits_all: cfg.file_edits,
+            ..Self::default()
+        }
+    }
+
     /// Build the status-bar hint string shown in the chat frame.
     fn hint(&self) -> String {
         let mut active: Vec<String> = Vec::new();
@@ -53,17 +74,22 @@ impl SessionApproval {
             (false, true) => active.push("sudo".to_string()),
             (false, false) => active.push("cmds: gated".to_string()),
         }
-        if !self.scripts.is_empty() {
+        if self.scripts_all {
+            active.push("scripts: all".to_string());
+        } else if !self.scripts.is_empty() {
             active.push(format!("scripts: {}", self.scripts.len()));
         }
-        if !self.runbooks.is_empty() {
+        if self.runbooks_all {
+            active.push("runbooks: all".to_string());
+        } else if !self.runbooks.is_empty() {
             active.push(format!("runbooks: {}", self.runbooks.len()));
         }
-        if !self.file_edits.is_empty() {
+        if self.file_edits_all {
+            active.push("files: all".to_string());
+        } else if !self.file_edits.is_empty() {
             active.push(format!("files: {}", self.file_edits.len()));
         }
         if active.is_empty() {
-            // Default: regular=true, nothing else elevated. Quiet label, no lightning.
             "cmds: auto".to_string()
         } else {
             format!("⚡approvals: {} · Ctrl+C revokes", active.join(", "))
@@ -374,7 +400,8 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     }
 
     let stdin = AsyncStdin::new()?;
-    let mut approval = SessionApproval::default(); // never persists; single-shot has no session
+    let ask_config = Config::load().unwrap_or_default();
+    let mut approval = SessionApproval::from_config(&ask_config.approvals);
 
     let old = crate::cli::input::set_raw_mode()?;
     let tmux_session = crate::tmux::current_session_name();
@@ -636,7 +663,8 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
     let current_prompt: Option<String> = None;
     let stdin = crate::cli::input::AsyncStdin::new()?;
     let mut input_state = InputState::new();
-    let mut approval = SessionApproval::default();
+    let chat_start_config = Config::load().unwrap_or_default();
+    let mut approval = SessionApproval::from_config(&chat_start_config.approvals);
     // Register the SIGWINCH listener before doing anything that depends on
     // terminal size.  tokio queues signals from the moment the listener is
     // created, so no resize event can slip through the gap between process
@@ -1034,7 +1062,7 @@ async fn run_chat_inner_raw(
         }
         if query == "/clear" {
             session_id = new_session_id();
-            *approval = SessionApproval::default();
+            *approval = SessionApproval::from_config(&config.approvals);
             current_prompt = None;
             let label = format!(" session cleared · new session:{} ", &session_id[..8]);
             let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
@@ -1065,7 +1093,7 @@ async fn run_chat_inner_raw(
                 );
             } else {
                 session_id = new_session_id();
-                *approval = SessionApproval::default();
+                *approval = SessionApproval::from_config(&config.approvals);
                 current_prompt = Some(name.clone());
                 let label = format!(" prompt: {}  ·  new session:{} ", name, &session_id[..8]);
                 let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
@@ -1207,7 +1235,7 @@ async fn run_chat_inner_raw(
             match send_refresh().await {
                 Ok(()) => {
                     session_id = new_session_id();
-                    *approval = SessionApproval::default();
+                    *approval = SessionApproval::from_config(&config.approvals);
                     let label = format!(" context refreshed  ·  new session:{} ", &session_id[..8]);
                     let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
                     println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
@@ -1246,7 +1274,9 @@ async fn run_chat_inner_raw(
             };
             println!("  Terminal commands (regular)  {}", cmd_regular);
             println!("  Terminal commands (sudo)     {}", cmd_sudo);
-            if approval.scripts.is_empty() {
+            if approval.scripts_all {
+                println!("  Scripts                      \x1b[32m⚡ all (config)\x1b[0m");
+            } else if approval.scripts.is_empty() {
                 println!("  Scripts                      \x1b[2mnone\x1b[0m");
             } else {
                 let mut names: Vec<&str> = approval.scripts.iter().map(|s| s.as_str()).collect();
@@ -1259,7 +1289,9 @@ async fn run_chat_inner_raw(
                     }
                 }
             }
-            if approval.runbooks.is_empty() {
+            if approval.runbooks_all {
+                println!("  Runbooks                     \x1b[32m⚡ all (config)\x1b[0m");
+            } else if approval.runbooks.is_empty() {
                 println!("  Runbooks                     \x1b[2mnone\x1b[0m");
             } else {
                 let mut names: Vec<&str> = approval.runbooks.iter().map(|s| s.as_str()).collect();
@@ -1272,7 +1304,9 @@ async fn run_chat_inner_raw(
                     }
                 }
             }
-            if approval.file_edits.is_empty() {
+            if approval.file_edits_all {
+                println!("  Files                        \x1b[32m⚡ all (config)\x1b[0m");
+            } else if approval.file_edits.is_empty() {
                 println!("  Files                        \x1b[2mnone\x1b[0m");
             } else {
                 let home = std::env::var("HOME").unwrap_or_default();
@@ -1337,8 +1371,11 @@ async fn run_chat_inner_raw(
             *approval = SessionApproval {
                 regular: false,
                 sudo: false,
+                scripts_all: false,
                 scripts: HashSet::new(),
+                runbooks_all: false,
                 runbooks: HashSet::new(),
+                file_edits_all: false,
                 file_edits: HashSet::new(),
             };
             do_revoke!(" all approvals revoked — commands now require confirmation ");
@@ -1349,14 +1386,17 @@ async fn run_chat_inner_raw(
             do_revoke!(" command approvals revoked — commands now require confirmation ");
         }
         if query == "/approvals revoke scripts" {
+            approval.scripts_all = false;
             approval.scripts.clear();
             do_revoke!(" script approvals reset ");
         }
         if query == "/approvals revoke runbooks" {
+            approval.runbooks_all = false;
             approval.runbooks.clear();
             do_revoke!(" runbook approvals reset ");
         }
         if query == "/approvals revoke files" {
+            approval.file_edits_all = false;
             approval.file_edits.clear();
             do_revoke!(" file approvals reset ");
         }
@@ -1833,7 +1873,8 @@ async fn ask_with_session(
                         if byte == Some(0x03) { // Ctrl+C during spinner
                             md.flush();
                             println!("\r\x1b[K\n\x1b[33m⚠ Interrupted\x1b[0m  Session approval revoked.");
-                            *approval = SessionApproval::default();
+                            let revoke_cfg = Config::load().unwrap_or_default();
+                            *approval = SessionApproval::from_config(&revoke_cfg.approvals);
                             return Ok(());
                         }
                     }
@@ -1877,7 +1918,8 @@ async fn ask_with_session(
                         if byte == Some(0x03) { // Ctrl+C
                             md.flush();
                             println!("\n\x1b[33m⚠ Interrupted\x1b[0m  Session approval revoked.");
-                            *approval = SessionApproval::default();
+                            let revoke_cfg = Config::load().unwrap_or_default();
+                            *approval = SessionApproval::from_config(&revoke_cfg.approvals);
                             return Ok(());
                         }
                         // any other key while streaming is ignored
@@ -2230,17 +2272,23 @@ async fn ask_with_session(
                     println!("  {}", line);
                 }
                 println!();
-                let approved = if approval.scripts.contains(&script_name) {
+                let approved = if approval.scripts_all || approval.scripts.contains(&script_name) {
                     println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
                     true
                 } else {
-                    print!(
+                    let prompt = if approval.scripts_all {
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92my\x1b[0m]es  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         \x1b[32m›\x1b[0m "
+                    } else {
                         "  \x1b[32mApprove?\x1b[0m \
                          [\x1b[1;92my\x1b[0m]es  \
                          [\x1b[1;93mA\x1b[0m]pprove for session  \
                          [\x1b[1;91mN\x1b[0m]o  \
                          \x1b[32m›\x1b[0m "
-                    );
+                    };
+                    print!("{}", prompt);
                     std::io::stdout().flush()?;
                     crate::cli::input::restore_termios(old_termios);
                     let input = stdin.read_line().await.unwrap_or_default();
@@ -2249,7 +2297,7 @@ async fn ask_with_session(
                     if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
                         println!("  \x1b[32m✓ approved\x1b[0m");
                         true
-                    } else if trimmed.eq_ignore_ascii_case("a") {
+                    } else if trimmed.eq_ignore_ascii_case("a") && !approval.scripts_all {
                         approval.scripts.insert(script_name.clone());
                         println!(
                             "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
@@ -2409,17 +2457,23 @@ async fn ask_with_session(
                     println!("  {}", line);
                 }
                 println!();
-                let approved = if approval.runbooks.contains(&runbook_name) {
+                let approved = if approval.runbooks_all || approval.runbooks.contains(&runbook_name) {
                     println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
                     true
                 } else {
-                    print!(
+                    let prompt = if approval.runbooks_all {
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92my\x1b[0m]es  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         \x1b[32m›\x1b[0m "
+                    } else {
                         "  \x1b[32mApprove?\x1b[0m \
                          [\x1b[1;92my\x1b[0m]es  \
                          [\x1b[1;93mA\x1b[0m]pprove for session  \
                          [\x1b[1;91mN\x1b[0m]o  \
                          \x1b[32m›\x1b[0m "
-                    );
+                    };
+                    print!("{}", prompt);
                     std::io::stdout().flush()?;
                     crate::cli::input::restore_termios(old_termios);
                     let input = stdin.read_line().await.unwrap_or_default();
@@ -2428,7 +2482,7 @@ async fn ask_with_session(
                     if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
                         println!("  \x1b[32m✓ approved\x1b[0m");
                         true
-                    } else if trimmed.eq_ignore_ascii_case("a") {
+                    } else if trimmed.eq_ignore_ascii_case("a") && !approval.runbooks_all {
                         approval.runbooks.insert(runbook_name.clone());
                         println!(
                             "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
@@ -2499,7 +2553,7 @@ async fn ask_with_session(
                 println!();
 
                 // Session-level auto-approval is keyed by path for file edits.
-                let auto_approved = approval.file_edits.contains(&path);
+                let auto_approved = approval.file_edits_all || approval.file_edits.contains(&path);
 
                 enum FileDecision {
                     Approved,
@@ -2512,14 +2566,21 @@ async fn ask_with_session(
                     println!("  \x1b[32m✓\x1b[0m \x1b[2mauto-approved (session)\x1b[0m");
                     FileDecision::Approved
                 } else {
-                    print!(
+                    let file_prompt = if approval.file_edits_all {
+                        "  \x1b[32mApprove?\x1b[0m \
+                         [\x1b[1;92my\x1b[0m]es  \
+                         [\x1b[1;91mN\x1b[0m]o  \
+                         or type a message to redirect \
+                         \x1b[32m›\x1b[0m "
+                    } else {
                         "  \x1b[32mApprove?\x1b[0m \
                          [\x1b[1;92my\x1b[0m]es  \
                          [\x1b[1;93mA\x1b[0m]pprove for session  \
                          [\x1b[1;91mN\x1b[0m]o  \
                          or type a message to redirect \
                          \x1b[32m›\x1b[0m "
-                    );
+                    };
+                    print!("{}", file_prompt);
                     std::io::stdout().flush()?;
                     crate::cli::input::restore_termios(old_termios);
                     let input = stdin.read_line().await.unwrap_or_default();
@@ -2528,7 +2589,7 @@ async fn ask_with_session(
                     if trimmed.eq_ignore_ascii_case("y") || trimmed.eq_ignore_ascii_case("yes") {
                         println!("  \x1b[32m✓ approved\x1b[0m");
                         FileDecision::Approved
-                    } else if trimmed.eq_ignore_ascii_case("a") {
+                    } else if trimmed.eq_ignore_ascii_case("a") && !approval.file_edits_all {
                         approval.file_edits.insert(path.clone());
                         println!(
                             "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
@@ -2858,4 +2919,181 @@ pub async fn recv(rx: &mut BufReader<OwnedReadHalf>) -> Result<Response> {
     }
     let response: Response = serde_json::from_str(line.trim())?;
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ApprovalsConfig;
+
+    fn approvals_all() -> ApprovalsConfig {
+        ApprovalsConfig {
+            commands: true,
+            sudo: true,
+            scripts: true,
+            runbooks: true,
+            file_edits: true,
+            ghost_commands: true,
+        }
+    }
+
+    fn approvals_none() -> ApprovalsConfig {
+        ApprovalsConfig {
+            commands: false,
+            sudo: false,
+            scripts: false,
+            runbooks: false,
+            file_edits: false,
+            ghost_commands: false,
+        }
+    }
+
+    // ── from_config ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn from_config_default_matches_commands_true_others_false() {
+        let cfg = ApprovalsConfig::default();
+        let a = SessionApproval::from_config(&cfg);
+        assert!(a.regular);
+        assert!(!a.sudo);
+        assert!(!a.scripts_all);
+        assert!(!a.runbooks_all);
+        assert!(!a.file_edits_all);
+        assert!(a.scripts.is_empty());
+        assert!(a.runbooks.is_empty());
+        assert!(a.file_edits.is_empty());
+    }
+
+    #[test]
+    fn from_config_all_true_sets_all_flags() {
+        let a = SessionApproval::from_config(&approvals_all());
+        assert!(a.regular);
+        assert!(a.sudo);
+        assert!(a.scripts_all);
+        assert!(a.runbooks_all);
+        assert!(a.file_edits_all);
+    }
+
+    #[test]
+    fn from_config_all_false_clears_all_flags() {
+        let a = SessionApproval::from_config(&approvals_none());
+        assert!(!a.regular);
+        assert!(!a.sudo);
+        assert!(!a.scripts_all);
+        assert!(!a.runbooks_all);
+        assert!(!a.file_edits_all);
+    }
+
+    // ── *_all bypass ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn scripts_all_bypasses_per_name_check() {
+        let mut a = SessionApproval::from_config(&approvals_all());
+        // scripts_all is true; the per-name set is empty — approval should still succeed.
+        assert!(a.scripts_all || a.scripts.contains("any-script"));
+        // Adding a name to the set doesn't change the *_all semantics.
+        a.scripts.insert("other.sh".to_string());
+        assert!(a.scripts_all || a.scripts.contains("new-script"));
+    }
+
+    #[test]
+    fn runbooks_all_bypasses_per_name_check() {
+        let a = SessionApproval::from_config(&approvals_all());
+        assert!(a.runbooks_all || a.runbooks.contains("any-runbook"));
+    }
+
+    #[test]
+    fn file_edits_all_bypasses_path_check() {
+        let a = SessionApproval::from_config(&approvals_all());
+        assert!(a.file_edits_all || a.file_edits.contains("/any/path"));
+    }
+
+    #[test]
+    fn without_all_flag_per_name_is_required() {
+        let a = SessionApproval::from_config(&approvals_none());
+        assert!(!(a.scripts_all || a.scripts.contains("my-script")));
+        assert!(!(a.runbooks_all || a.runbooks.contains("my-runbook")));
+        assert!(!(a.file_edits_all || a.file_edits.contains("/tmp/f")));
+    }
+
+    #[test]
+    fn per_name_set_works_when_all_flag_is_false() {
+        let mut a = SessionApproval::from_config(&approvals_none());
+        a.scripts.insert("specific.sh".to_string());
+        assert!(a.scripts_all || a.scripts.contains("specific.sh"));
+        assert!(!(a.scripts_all || a.scripts.contains("other.sh")));
+    }
+
+    // ── revoke ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn revoke_scripts_clears_flag_and_set() {
+        let mut a = SessionApproval::from_config(&approvals_all());
+        a.scripts.insert("foo.sh".to_string());
+        // simulate revoke scripts
+        a.scripts_all = false;
+        a.scripts.clear();
+        assert!(!a.scripts_all);
+        assert!(a.scripts.is_empty());
+        assert!(!(a.scripts_all || a.scripts.contains("foo.sh")));
+    }
+
+    #[test]
+    fn revoke_all_clears_every_scope() {
+        let mut a = SessionApproval::from_config(&approvals_all());
+        a.scripts.insert("foo.sh".to_string());
+        a.runbooks.insert("rb".to_string());
+        a.file_edits.insert("/tmp/f".to_string());
+        // simulate /approvals revoke (full struct replacement)
+        a = SessionApproval {
+            regular: false,
+            sudo: false,
+            scripts_all: false,
+            scripts: HashSet::new(),
+            runbooks_all: false,
+            runbooks: HashSet::new(),
+            file_edits_all: false,
+            file_edits: HashSet::new(),
+        };
+        assert!(!a.regular);
+        assert!(!a.sudo);
+        assert!(!a.scripts_all);
+        assert!(a.scripts.is_empty());
+        assert!(!a.runbooks_all);
+        assert!(a.runbooks.is_empty());
+        assert!(!a.file_edits_all);
+        assert!(a.file_edits.is_empty());
+    }
+
+    // ── hint ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn hint_default_is_auto() {
+        let a = SessionApproval::default();
+        assert_eq!(a.hint(), "cmds: auto");
+    }
+
+    #[test]
+    fn hint_shows_all_when_both_command_flags_true() {
+        let a = SessionApproval::from_config(&approvals_all());
+        let h = a.hint();
+        assert!(h.contains("all"), "hint='{}' should contain 'all'", h);
+    }
+
+    #[test]
+    fn hint_shows_scripts_all_when_flag_set() {
+        let mut a = SessionApproval::default();
+        a.scripts_all = true;
+        let h = a.hint();
+        assert!(h.contains("scripts: all"), "hint='{}' should contain 'scripts: all'", h);
+    }
+
+    #[test]
+    fn hint_shows_per_name_count_when_all_flag_false() {
+        let mut a = SessionApproval::default();
+        a.scripts.insert("foo.sh".to_string());
+        a.scripts.insert("bar.sh".to_string());
+        let h = a.hint();
+        assert!(h.contains("scripts: 2"), "hint='{}' should contain 'scripts: 2'", h);
+    }
 }

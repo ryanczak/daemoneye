@@ -70,3 +70,18 @@ prompt = "sre"
 #                              # natural-language summary of the compacted
 #                              # turns to each digest.  Uses [models.digest]
 #                              # if defined, otherwise [models.default].
+
+# [approvals]
+# Controls which action classes auto-approve at the start of every chat
+# session.  All defaults preserve the original behaviour — only `commands`
+# starts as true because non-sudo commands are bounded by OS file permissions.
+# Individual approvals can always be revoked at runtime with /approvals revoke.
+# `revoke` always fully gates, regardless of these defaults.
+#
+# commands      = true   # non-sudo terminal commands (default: true)
+# sudo          = false  # sudo terminal commands (default: false)
+# scripts       = false  # all write_script calls (default: false)
+# runbooks      = false  # all write_runbook calls (default: false)
+# file_edits    = false  # all edit_file calls (default: false)
+# ghost_commands = false # ghost shell non-sudo commands without auto_approve_scripts
+#                        # (can also be set per-runbook: auto_approve_commands: true)

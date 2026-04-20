@@ -923,6 +923,7 @@ pub(super) async fn spawn_ghost(
         &rb,
         message,
         crate::daemon::GS_BG_WINDOW_PREFIX,
+        spawn_config.approvals.ghost_commands,
     )
     .await
     {

@@ -724,6 +724,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                         &rb_clone,
                         &alert_msg,
                         crate::daemon::GS_BG_WINDOW_PREFIX,
+                        config_clone.approvals.ghost_commands,
                     )
                     .await
                     {

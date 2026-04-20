@@ -42,6 +42,20 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 
 **`/approvals`** — type this at the chat prompt to inspect which approvals are currently active across all five scopes: terminal commands (regular and sudo), scripts, runbooks, and file paths. Use `/approvals revoke` to instantly revoke all session approvals, or revoke a single class with `/approvals revoke commands`, `/approvals revoke scripts`, `/approvals revoke runbooks`, or `/approvals revoke files`. The status bar shows a compact count-based summary (e.g. `⚡approvals: all · files: 2 · Ctrl+C revokes`) so you always know what the AI can do without opening `/approvals`. Cumulative write-approval and denial counts for scripts, runbooks, and file edits are tracked by the daemon and shown in `daemoneye status`.
 
+**Configurable defaults** — Add an `[approvals]` section to `~/.daemoneye/etc/config.toml` to seed the initial approval state at the start of every session (both `daemoneye chat` and `daemoneye ask`):
+
+```toml
+[approvals]
+commands    = true    # non-sudo terminal commands (default: true — the baseline)
+sudo        = false   # sudo commands (default: false)
+scripts     = false   # all script writes (default: false — per-script [A] still works)
+runbooks    = false   # all runbook writes (default: false)
+file_edits  = false   # all file edits (default: false)
+ghost_commands = false # explicitly tell ghost shells they may run investigation commands freely
+```
+
+When a class flag is `true`, approval is pre-granted for the entire class at session start — the `[A]pprove for session` prompt is suppressed since it would be redundant. Ctrl+C or `/approvals revoke` resets all flags back to the config defaults.
+
 ### 📡 Webhook Alert Ingestion
 
 Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prometheus Alertmanager, Grafana, or any tool that can POST JSON.
@@ -633,6 +647,7 @@ captures the error log for post-incident review.
 | `run_with_sudo` | bool | `false` | Auto-prepend `sudo` when executing scripts listed in `auto_approve_scripts`. The ghost AI can then write `script.sh` instead of `sudo script.sh`. Does **not** grant permission to run arbitrary sudo commands — the `auto_approve_scripts` whitelist is always enforced. Each approved script still requires a NOPASSWD sudoers rule via `daemoneye install-sudoers`. |
 | `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
 | `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all commands are transparently wrapped in `ssh <target> <cmd>` before execution. Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host. The AI is instructed not to SSH manually — omit this field for local-only execution. |
+| `auto_approve_commands` | bool | `false` | Explicitly tell the ghost shell it may run non-sudo investigation commands freely. Non-sudo commands are always permitted by OS permissions regardless of this flag; setting it to `true` makes that explicit in the system prompt so the model does not withhold useful investigation commands. Can also be enabled daemon-wide via `[approvals] ghost_commands = true` in `config.toml`; the two sources are OR-ed together. |
 
 ### Step 4 — Enable the webhook and configure Alertmanager
 

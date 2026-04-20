@@ -26,6 +26,8 @@ pub struct Config {
     pub daemon: DaemonConfig,
     #[serde(default)]
     pub digest: DigestConfig,
+    #[serde(default)]
+    pub approvals: ApprovalsConfig,
 }
 
 impl Default for Config {
@@ -40,6 +42,7 @@ impl Default for Config {
             ghost: GhostDaemonConfig::default(),
             daemon: DaemonConfig::default(),
             digest: DigestConfig::default(),
+            approvals: ApprovalsConfig::default(),
         }
     }
 }
@@ -60,6 +63,53 @@ pub struct DigestConfig {
     /// and are willing to pay for one additional small-model call per digest.
     #[serde(default)]
     pub narrative_enabled: bool,
+}
+
+/// Default approval state for each action class at the start of every chat session.
+///
+/// All defaults preserve current behaviour — only `commands` starts as `true` because
+/// non-sudo commands are bounded by OS permissions and require no additional trust grant.
+/// Set any field to `true` to skip the per-call approval prompt for that class from the
+/// moment a new session opens.  Individual approvals can always be revoked at runtime
+/// with `/approvals revoke [class]`; `revoke` always gates everything regardless of
+/// these defaults.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ApprovalsConfig {
+    /// Non-sudo terminal commands auto-approve at session start.
+    /// Default: `true` — non-sudo commands run as the daemon user and are bounded
+    /// by OS file permissions, the same trust model used by ghost shells.
+    #[serde(default = "default_true")]
+    pub commands: bool,
+    /// Sudo terminal commands auto-approve at session start.  Default: `false`.
+    #[serde(default)]
+    pub sudo: bool,
+    /// All `write_script` calls auto-approve at session start.  Default: `false`.
+    #[serde(default)]
+    pub scripts: bool,
+    /// All `write_runbook` calls auto-approve at session start.  Default: `false`.
+    #[serde(default)]
+    pub runbooks: bool,
+    /// All `edit_file` calls auto-approve at session start.  Default: `false`.
+    #[serde(default)]
+    pub file_edits: bool,
+    /// Ghost shells: allow non-sudo commands without requiring the script to be
+    /// listed in `auto_approve_scripts`.  Can also be set per-runbook via the
+    /// `auto_approve_commands: true` frontmatter field.  Default: `false`.
+    #[serde(default)]
+    pub ghost_commands: bool,
+}
+
+impl Default for ApprovalsConfig {
+    fn default() -> Self {
+        Self {
+            commands: true,
+            sudo: false,
+            scripts: false,
+            runbooks: false,
+            file_edits: false,
+            ghost_commands: false,
+        }
+    }
 }
 
 /// Daemon startup and session management configuration.
@@ -870,5 +920,62 @@ mod tests {
     fn load_unknown_prompt_returns_minimal() {
         let def = load_named_prompt("__nonexistent_prompt_xyz__");
         assert!(!def.system.is_empty());
+    }
+
+    // ── ApprovalsConfig ──────────────────────────────────────────────────────
+
+    #[test]
+    fn default_approvals_match_current_behavior() {
+        let cfg = ApprovalsConfig::default();
+        assert!(cfg.commands, "non-sudo commands must default to auto-approved");
+        assert!(!cfg.sudo);
+        assert!(!cfg.scripts);
+        assert!(!cfg.runbooks);
+        assert!(!cfg.file_edits);
+        assert!(!cfg.ghost_commands);
+    }
+
+    #[test]
+    fn approvals_config_parses_all_fields() {
+        let toml = r#"
+            [approvals]
+            commands      = true
+            sudo          = true
+            scripts       = true
+            runbooks      = true
+            file_edits    = true
+            ghost_commands = true
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(cfg.approvals.commands);
+        assert!(cfg.approvals.sudo);
+        assert!(cfg.approvals.scripts);
+        assert!(cfg.approvals.runbooks);
+        assert!(cfg.approvals.file_edits);
+        assert!(cfg.approvals.ghost_commands);
+    }
+
+    #[test]
+    fn missing_approvals_section_uses_defaults() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.approvals.commands);
+        assert!(!cfg.approvals.sudo);
+        assert!(!cfg.approvals.scripts);
+        assert!(!cfg.approvals.runbooks);
+        assert!(!cfg.approvals.file_edits);
+        assert!(!cfg.approvals.ghost_commands);
+    }
+
+    #[test]
+    fn partial_approvals_section_fills_remaining_defaults() {
+        let toml = r#"
+            [approvals]
+            sudo = true
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(cfg.approvals.commands, "commands must still default to true");
+        assert!(cfg.approvals.sudo);
+        assert!(!cfg.approvals.scripts);
+        assert!(!cfg.approvals.ghost_commands);
     }
 }

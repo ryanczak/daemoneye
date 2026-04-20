@@ -16,6 +16,15 @@ pub struct GhostPolicy {
     /// Optional SSH destination for remote execution (e.g. `user@host`).
     /// When set, `wrap_remote()` wraps every approved command in `ssh <target> <cmd>`.
     pub ssh_target: Option<String>,
+    /// When `true` the ghost shell system prompt explicitly states that non-sudo
+    /// commands may be run freely.  Does not change the OS-permission boundary
+    /// (non-sudo commands are always allowed regardless of this flag), but makes
+    /// the permission explicit so the AI does not withhold investigation commands.
+    /// Set per-runbook via `auto_approve_commands: true` in frontmatter, or
+    /// daemon-wide via `[approvals] ghost_commands = true` in `config.toml`.
+    /// Carried here for completeness; the system prompt reads from `GhostConfig` directly.
+    #[allow(dead_code)]
+    pub auto_approve_commands: bool,
 }
 
 impl GhostPolicy {
@@ -25,6 +34,7 @@ impl GhostPolicy {
             auto_approve_scripts: config.auto_approve_scripts.clone(),
             run_with_sudo: config.run_with_sudo,
             ssh_target: config.ssh_target.clone(),
+            auto_approve_commands: config.auto_approve_commands,
         }
     }
 
@@ -149,6 +159,7 @@ mod tests {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
             run_with_sudo: false,
             ssh_target: None,
+            auto_approve_commands: false,
         }
     }
 
@@ -157,6 +168,7 @@ mod tests {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
             run_with_sudo: true,
             ssh_target: None,
+            auto_approve_commands: false,
         }
     }
 
@@ -165,6 +177,7 @@ mod tests {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
             run_with_sudo: false,
             ssh_target: Some(target.to_string()),
+            auto_approve_commands: false,
         }
     }
 
@@ -173,6 +186,7 @@ mod tests {
             auto_approve_scripts: scripts.iter().map(|s| s.to_string()).collect(),
             run_with_sudo: true,
             ssh_target: Some(target.to_string()),
+            auto_approve_commands: false,
         }
     }
 
@@ -473,5 +487,34 @@ mod tests {
         let resolved = p.resolve_command("sudo fix.sh");
         let wrapped = p.wrap_remote(&resolved);
         assert_eq!(wrapped, "ssh user@zap 'sudo ~/.daemoneye/scripts/fix.sh'");
+    }
+
+    // ── auto_approve_commands ────────────────────────────────────────────────
+
+    #[test]
+    fn auto_approve_commands_does_not_affect_non_sudo_already_allowed() {
+        // Non-sudo commands are always allowed regardless of the flag.
+        let p_off = policy(&[]);
+        let p_on = GhostPolicy { auto_approve_commands: true, ..policy(&[]) };
+        assert!(p_off.is_safe("df -h"));
+        assert!(p_on.is_safe("df -h"));
+    }
+
+    #[test]
+    fn auto_approve_commands_does_not_grant_sudo() {
+        // The flag must never allow arbitrary sudo commands.
+        let p = GhostPolicy { auto_approve_commands: true, ..policy(&[]) };
+        assert!(!p.is_safe("sudo apt install vim"));
+        assert!(!p.is_safe("sudo rm -rf /tmp"));
+    }
+
+    #[test]
+    fn from_config_copies_auto_approve_commands() {
+        let gc = crate::ipc::GhostConfig {
+            auto_approve_commands: true,
+            ..Default::default()
+        };
+        let policy = GhostPolicy::from_config(&gc);
+        assert!(policy.auto_approve_commands);
     }
 }

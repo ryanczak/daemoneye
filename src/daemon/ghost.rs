@@ -68,6 +68,8 @@ impl GhostManager {
         runbook: &Runbook,
         alert_msg: &str,
         bg_prefix: &'static str,
+        // Seed from config.approvals.ghost_commands — OR-ed with per-runbook frontmatter.
+        ghost_commands_default: bool,
     ) -> Result<String> {
         let alert_name = &runbook.name;
 
@@ -105,6 +107,10 @@ impl GhostManager {
         crate::daemon::session::append_session_message(&session_id, &user_msg);
         messages.push(user_msg);
 
+        let mut ghost_config = runbook.ghost_config.clone();
+        // Merge daemon-wide default: if either source enables the flag, the ghost gets it.
+        ghost_config.auto_approve_commands |= ghost_commands_default;
+
         let entry = SessionEntry {
             messages,
             last_accessed: Instant::now(),
@@ -117,7 +123,7 @@ impl GhostManager {
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: true,
-            ghost_config: Some(runbook.ghost_config.clone()),
+            ghost_config: Some(ghost_config),
             ghost_bg_prefix: bg_prefix,
             started_at: chrono::Utc::now(),
             turn_count: 0,
@@ -182,7 +188,7 @@ pub async fn trigger_ghost_turn(
     let sys_context = get_or_init_sys_context();
 
     let daemon_ceiling = config.ghost.max_ghost_turns;
-    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target) = {
+    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target, auto_approve_commands) = {
         let store = sessions.lock().unwrap_or_log();
         store
             .get(session_id)
@@ -198,9 +204,9 @@ pub async fn trigger_ghost_turn(
                 } else {
                     daemon_ceiling
                 };
-                (scripts, gc.run_with_sudo, turns, gc.ssh_target.clone())
+                (scripts, gc.run_with_sudo, turns, gc.ssh_target.clone(), gc.auto_approve_commands)
             })
-            .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None))
+            .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))
     };
     let remote_line = if let Some(ref target) = ssh_target {
         format!(
@@ -218,7 +224,7 @@ pub async fn trigger_ghost_turn(
          ## Ghost Shell Execution Context\n\
          Daemon Host: {}\n\
          Tmux Session: {}\n\
-         {}Command Policy: non-sudo commands run freely (OS permissions are the boundary). \
+         {}Command Policy: non-sudo commands run freely (OS permissions are the boundary){}. \
          {}\n\
          Pre-approved Sudo Scripts: {}{}\n\
          Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
@@ -228,6 +234,11 @@ pub async fn trigger_ghost_turn(
         daemon_hostname(),
         tmux_session,
         remote_line,
+        if auto_approve_commands {
+            " — explicitly approved for investigation commands"
+        } else {
+            ""
+        },
         if run_with_sudo {
             "Sudo commands are freely allowed (run_with_sudo is enabled for this runbook)."
                 .to_string()
@@ -730,7 +741,7 @@ pub async fn trigger_ghost_turn(
         {
             log::warn!(
                 "Ghost Shell {}: all {} tool call(s) denied by ghost policy on turn {} — \
-                 runbook may need auto_approve_scripts or auto_approve_read_only: true",
+                 runbook may need auto_approve_scripts (for sudo) or auto_approve_commands: true (for non-sudo investigation commands)",
                 session_id,
                 tool_results.len(),
                 turn,

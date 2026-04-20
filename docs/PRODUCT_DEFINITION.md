@@ -52,6 +52,7 @@ Once you've seen the AI handle a class of operations reliably, grant session-lev
 - Session approvals reset on `/clear`, `/prompt`, `/refresh`, and Ctrl+C — they never persist beyond the current interaction.
 - The status bar shows active approvals at all times using compact count-based segments (e.g. `⚡approvals: all · scripts: 2 · files: 1 · Ctrl+C revokes`) so there is never any ambiguity about what the AI can do.
 - Cumulative approval and denial counts for script writes, runbook writes, and file edits are tracked by the daemon and surfaced in `daemoneye status`, giving long-running sessions an audit trail.
+- **Configurable defaults**: Add an `[approvals]` section to `config.toml` to seed approval state at the start of every session. When a class is pre-approved in config, the `[A]pprove for session` prompt is suppressed — that option is already in effect. This is the appropriate mechanism for operators who have established trust with a class of AI action and do not want to approve it manually on every chat.
 
 ### Level 3: Scheduled Operations
 
@@ -69,6 +70,7 @@ Ghost Shells are the highest trust level, and they are the most tightly controll
 
 - **Opt-in per runbook**: Only runbooks with `enabled: true` can trigger a Ghost Shell. No runbook, no autonomy.
 - **Script whitelisting**: Sudo commands are restricted to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Both gates must pass. Everything else is denied.
+- **Investigation commands**: Set `auto_approve_commands: true` in a runbook's frontmatter (or `[approvals] ghost_commands = true` in `config.toml`) to tell the ghost shell explicitly that it may run non-sudo investigation commands freely. The permission boundary is unchanged — non-sudo is always allowed by OS permissions — but the flag makes this explicit in the ghost's system prompt so the model does not withhold useful read-only investigation commands.
 - **Turn budget**: A hard ceiling on AI turns (default 20, configurable per-runbook and per-daemon) prevents runaway agents. The ghost is forcibly stopped when the limit is reached.
 - **Concurrency cap**: A daemon-wide limit (default 3) prevents ghost shell storms during cascading failures.
 - **Full audit trail**: Every command, approval, result, and lifecycle event is logged to `events.jsonl`. Ghost session transcripts are preserved for post-incident review.

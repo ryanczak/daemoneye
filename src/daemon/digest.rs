@@ -409,7 +409,10 @@ pub async fn build_narrative_summary(
     match chat_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
-            log::warn!("digest narrative: backend error ({}), skipping narrative", e);
+            log::warn!(
+                "digest narrative: backend error ({}), skipping narrative",
+                e
+            );
             return None;
         }
         Err(_) => {
@@ -625,9 +628,7 @@ pub fn planned_tail_start(messages: &[Message]) -> Option<usize> {
 pub fn compact_with_digest(messages: Vec<Message>, digest: &str) -> Vec<Message> {
     let Some(tail_start) = planned_tail_start(&messages) else {
         if messages.len() > TAIL_KEEP + 2 {
-            log::warn!(
-                "compact_with_digest: no clean turn boundary found — skipping compaction"
-            );
+            log::warn!("compact_with_digest: no clean turn boundary found — skipping compaction");
         }
         return messages;
     };
