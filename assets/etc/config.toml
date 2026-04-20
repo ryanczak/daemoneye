@@ -21,6 +21,14 @@ model    = "claude-sonnet-4-6"
 # [models.gpt]
 # provider = "openai"
 # model    = "gpt-4o"
+#
+# --- Optional: a cheap model for background narrative summarization ---
+# Only used when [digest].narrative_enabled = true (see below).  Falls back
+# to [models.default] if omitted.  Pick a cheap/fast model — Haiku 4.5,
+# gpt-4o-mini, gemini-2.5-flash.
+# [models.digest]
+# provider = "anthropic"
+# model    = "claude-haiku-4-5-20251001"
 
 [ai]
 prompt = "sre"
@@ -52,3 +60,13 @@ prompt = "sre"
 # [daemon]
 # tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux
 #                              # (default is "daemoneye"; override to use a different name)
+
+# [digest]
+# Session-compaction settings.  The structured digest (event tallies and
+# artifact scans) always runs when token pressure crosses the digest
+# threshold; the narrative step is opt-in because it costs one extra API
+# call per compaction.
+# narrative_enabled = false    # set to true to prepend an AI-generated
+#                              # natural-language summary of the compacted
+#                              # turns to each digest.  Uses [models.digest]
+#                              # if defined, otherwise [models.default].

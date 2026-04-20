@@ -842,6 +842,7 @@ pub(super) fn watch_pane(
             content,
             tool_calls: None,
             tool_results: None,
+            turn: None,
         };
 
         if let Ok(mut store) = sessions_clone.lock()

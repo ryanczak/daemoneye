@@ -24,6 +24,8 @@ pub struct Config {
     pub ghost: GhostDaemonConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+    #[serde(default)]
+    pub digest: DigestConfig,
 }
 
 impl Default for Config {
@@ -37,8 +39,27 @@ impl Default for Config {
             webhook: WebhookConfig::default(),
             ghost: GhostDaemonConfig::default(),
             daemon: DaemonConfig::default(),
+            digest: DigestConfig::default(),
         }
     }
+}
+
+/// Session-compaction digest configuration.
+///
+/// The structured digest (event tallies + artifact scans) always runs when
+/// token pressure crosses the digest threshold.  The optional *narrative*
+/// step calls a cheap AI model to turn the about-to-be-dropped turns into a
+/// short natural-language summary; it is off by default because it costs an
+/// extra API call per compaction.
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+pub struct DigestConfig {
+    /// When true, each digest pass calls the `[models.digest]` entry (falling
+    /// back to `[models.default]`) to generate a narrative summary of the
+    /// compacted turns; the narrative is prepended to the structured tally.
+    /// Default: false.  Enable when you want richer post-compaction context
+    /// and are willing to pay for one additional small-model call per digest.
+    #[serde(default)]
+    pub narrative_enabled: bool,
 }
 
 /// Daemon startup and session management configuration.

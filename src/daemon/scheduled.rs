@@ -301,6 +301,7 @@ pub async fn run_scheduled_job(
             content: format!("Command output:\n```\n{}\n```", output),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         }];
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
         let api_err = client.chat(&system, msgs, ai_tx, false).await.is_err();

@@ -838,42 +838,112 @@ pub async fn handle_client(
         None
     };
 
-    // Compact history: when the message count reaches the digest threshold,
-    // build a structured digest from events.jsonl + filesystem and replace
-    // the oldest messages with it.  Below the threshold, fall back to the
-    // simple tail-trim that drops old messages with a placeholder.
+    // Read last prompt token count up front — it drives the compaction decision
+    // below and is also used later for the [BUDGET] line.
+    let last_prompt_tokens = session_id
+        .as_ref()
+        .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
+        .unwrap_or(0);
+
+    // Token-pressure-driven compaction.
+    //
+    // ELISION_PCT (50%) — elide oversized tool_results in old messages; cheap,
+    //   preserves turn structure.
+    // DIGEST_PCT  (60%) — build a structured digest and drop old messages.
+    // Safety net — if we hit MAX_HISTORY regardless of token info, still digest.
+    //
+    // All paths require `messages.len() >= DIGEST_THRESHOLD` so a token-heavy
+    // first turn (huge system context + memory) doesn't trigger compaction
+    // before any real history exists.
+    const ELISION_PCT: u32 = 50;
+    const DIGEST_PCT: u32 = 60;
+    let context_window = config
+        .resolve_model(session_active_model.as_deref())
+        .context_window();
+    let token_pct = if context_window > 0 {
+        (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
+    } else {
+        0
+    };
     let pre_trim_len = messages.len();
+    let at_safety_cap = messages.len() >= crate::daemon::session::MAX_HISTORY;
     use crate::daemon::digest::DIGEST_THRESHOLD;
-    if messages.len() >= DIGEST_THRESHOLD {
+    let above_floor = messages.len() >= DIGEST_THRESHOLD;
+    let should_digest = above_floor && (token_pct >= DIGEST_PCT || at_safety_cap);
+    let should_elide_only = !should_digest && above_floor && token_pct >= ELISION_PCT;
+
+    if should_digest {
+        // Elide first — it's cheap and gives the digest pass smaller tool
+        // outputs to reason about.
+        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages);
         let started_at = session_id
             .as_ref()
             .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.started_at));
         if let Some(since) = started_at {
+            // Hybrid digest (task #4): when enabled in config, ask a cheap
+            // model to turn the about-to-be-dropped turns into a short
+            // narrative before we replace them with the structured tally.
+            // Uses the `digest` model entry if configured, otherwise falls
+            // back to `default`.  Best-effort — if the call fails or times
+            // out, the structured digest still fires.  Disabled by default
+            // because it costs one extra API call per compaction pass.
+            let narrative = if config.digest.narrative_enabled
+                && let Some(tail_start) = crate::daemon::digest::planned_tail_start(&messages)
+                && tail_start > 1
+            {
+                let slice = &messages[1..tail_start];
+                let model_entry = config.resolve_model(Some("digest"));
+                crate::daemon::digest::build_narrative_summary(slice, model_entry).await
+            } else {
+                None
+            };
+            let has_narrative = narrative.is_some();
             let digest = crate::daemon::digest::build_session_digest(
                 session_id.as_deref().unwrap_or("-"),
                 since,
                 messages.len(),
+                narrative.as_deref(),
             );
             messages = crate::daemon::digest::compact_with_digest(messages, &digest);
+            log::info!(
+                "Compaction (digest): tokens {}% — elided {} chars, narrative={}, compacted {} → {} messages",
+                token_pct,
+                elided,
+                if has_narrative { "yes" } else { "no" },
+                pre_trim_len,
+                messages.len()
+            );
         } else {
             messages = trim_history(messages);
+            log::info!(
+                "Compaction (trim): tokens {}% — elided {} chars, no started_at, trimmed {} → {} messages",
+                token_pct,
+                elided,
+                pre_trim_len,
+                messages.len()
+            );
         }
-    } else {
+    } else if should_elide_only {
+        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages);
+        if elided > 0 {
+            log::info!(
+                "Compaction (elide only): tokens {}% — elided {} chars from old tool results",
+                token_pct,
+                elided
+            );
+        }
+    } else if messages.len() > crate::daemon::session::MAX_HISTORY {
+        // Final MAX_HISTORY safety — should be unreachable given the digest path
+        // above also fires at the cap, but keep it as a guard.
         messages = trim_history(messages);
     }
     // If the message vec shrank the on-disk file must be fully rewritten to
     // remove the stale entries.  Otherwise we can append-only at the end of
     // each turn.
-    let needs_compaction = messages.len() < pre_trim_len;
+    let needs_compaction = messages.len() < pre_trim_len || should_elide_only;
     let post_trim_len = messages.len();
 
     let is_first_turn = messages.is_empty();
-
-    // Read last prompt token count for context-budget injection and client display.
-    let last_prompt_tokens = session_id
-        .as_ref()
-        .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
-        .unwrap_or(0);
 
     // Read the current turn count and increment it for this turn.  Never reset
     // by compaction — this gives the client a stable, ever-increasing indicator.
@@ -948,7 +1018,8 @@ pub async fn handle_client(
                 .map(|e| e.last_snapshot_activity)
         })
         .unwrap_or(0);
-    let inject_snapshot = is_first_turn || (pane_activity > 0 && pane_activity > last_snapshot_activity);
+    let inject_snapshot =
+        is_first_turn || (pane_activity > 0 && pane_activity > last_snapshot_activity);
 
     // Record the activity timestamp so the next turn can detect further changes.
     if inject_snapshot
@@ -1013,28 +1084,26 @@ pub async fn handle_client(
 
         // Ghost sessions: resolve the effective turn cap (runbook value clamped
         // to daemon ceiling; 0 = use the ceiling).  Returns None for regular chat.
-        let ghost_turn_limit: Option<usize> = session_id
-            .as_ref()
-            .and_then(|id| {
-                let store = sessions.lock().ok()?;
-                let entry = store.get(id)?;
-                if !entry.is_ghost {
-                    return None;
-                }
-                let ceiling = config.ghost.max_ghost_turns;
-                let limit = entry
-                    .ghost_config
-                    .as_ref()
-                    .map(|gc| {
-                        if gc.max_ghost_turns > 0 {
-                            gc.max_ghost_turns.min(ceiling)
-                        } else {
-                            ceiling
-                        }
-                    })
-                    .unwrap_or(ceiling);
-                Some(limit)
-            });
+        let ghost_turn_limit: Option<usize> = session_id.as_ref().and_then(|id| {
+            let store = sessions.lock().ok()?;
+            let entry = store.get(id)?;
+            if !entry.is_ghost {
+                return None;
+            }
+            let ceiling = config.ghost.max_ghost_turns;
+            let limit = entry
+                .ghost_config
+                .as_ref()
+                .map(|gc| {
+                    if gc.max_ghost_turns > 0 {
+                        gc.max_ghost_turns.min(ceiling)
+                    } else {
+                        ceiling
+                    }
+                })
+                .unwrap_or(ceiling);
+            Some(limit)
+        });
         let turn_pct = ghost_turn_limit
             .filter(|l| *l > 0)
             .map(|l| (this_turn_count as f64 / l as f64 * 100.0) as u32)
@@ -1097,6 +1166,7 @@ pub async fn handle_client(
         content: prompt,
         tool_calls: None,
         tool_results: None,
+        turn: Some(this_turn_count),
     });
 
     send_response_split(
@@ -1560,6 +1630,7 @@ pub async fn handle_client(
                                 content: full_response.clone(),
                                 tool_calls: None,
                                 tool_results: None,
+                                turn: Some(this_turn_count),
                             });
                         }
 
@@ -1631,6 +1702,7 @@ pub async fn handle_client(
                         content: full_response.clone(),
                         tool_calls: Some(pending_calls.iter().map(|c| c.to_tool_call()).collect()),
                         tool_results: None,
+                        turn: Some(this_turn_count),
                     });
 
                     // Per-turn tool-call loop guard.
@@ -1805,6 +1877,7 @@ pub async fn handle_client(
                             content: user_msg,
                             tool_calls: None,
                             tool_results: None,
+                            turn: Some(this_turn_count),
                         });
                         break; // restart outer loop — AI will see the user message next
                     }
@@ -1837,6 +1910,7 @@ pub async fn handle_client(
                         content: String::new(),
                         tool_calls: None,
                         tool_results: Some(history_results),
+                        turn: Some(this_turn_count),
                     });
                     break; // break inner loop; outer loop makes the next AI call
                 }
@@ -1856,6 +1930,7 @@ mod tests {
             content: content.to_string(),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         }
     }
 

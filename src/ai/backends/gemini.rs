@@ -282,6 +282,7 @@ mod tests {
             content: String::new(),
             tool_calls: None,
             tool_results: Some(vec![tr]),
+            turn: None,
         };
         let gemini = GeminiClient::new("key".to_string(), "gemini-2.0-flash".to_string());
         let out = gemini.convert_messages(vec![msg]);

@@ -448,6 +448,7 @@ async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
         content: format!("[Webhook Alert]\n{}", formatted),
         tool_calls: None,
         tool_results: None,
+        turn: None,
     };
     inject_into_sessions(&state.sessions, &alert_msg);
 
@@ -506,6 +507,7 @@ pub(crate) fn inject_ghost_event(sessions: &SessionStore, content: &str) {
         content: content.to_string(),
         tool_calls: None,
         tool_results: None,
+        turn: None,
     };
     inject_into_sessions(sessions, &msg);
     // One-liner for the tmux display-message overlay (strip newlines).
@@ -627,6 +629,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         content: format!("Incoming alert:\n{}", formatted_msg),
         tool_calls: None,
         tool_results: None,
+        turn: None,
     }];
 
     let model_entry = state.config.resolve_model(None);
@@ -783,6 +786,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             content: format!("[Webhook Alert]\n{}", analysis),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         };
         inject_into_sessions(&state.sessions, &analysis_msg);
         let first_line = analysis.lines().next().unwrap_or(&analysis).to_string();

@@ -256,6 +256,7 @@ mod tests {
             content: content.to_string(),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         }
     }
     fn assistant_msg(content: &str) -> Message {
@@ -264,6 +265,7 @@ mod tests {
             content: content.to_string(),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         }
     }
     fn client() -> AnthropicClient {
@@ -293,6 +295,7 @@ mod tests {
             content: "running ls".to_string(),
             tool_calls: Some(vec![tc]),
             tool_results: None,
+            turn: None,
         };
         let out = client().convert_messages(vec![msg]);
         assert_eq!(out.len(), 1);
@@ -317,6 +320,7 @@ mod tests {
             content: String::new(),
             tool_calls: Some(vec![tc]),
             tool_results: None,
+            turn: None,
         };
         let out = client().convert_messages(vec![msg]);
         let content = out[0]["content"].as_array().expect("content array");
@@ -338,6 +342,7 @@ mod tests {
             content: String::new(),
             tool_calls: None,
             tool_results: Some(vec![tr]),
+            turn: None,
         };
         let out = client().convert_messages(vec![msg]);
         assert_eq!(out.len(), 1);

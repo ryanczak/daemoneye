@@ -196,6 +196,7 @@ fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJobInfo<'_>)
         content: format!("[Background Task Completed]\n{}", history_content),
         tool_calls: None,
         tool_results: None,
+        turn: None,
     };
     append_session_message(session_id, &completion_msg);
     entry.messages.push(completion_msg);

@@ -98,6 +98,7 @@ impl GhostManager {
             ),
             tool_calls: None,
             tool_results: None,
+            turn: Some(1),
         };
         // Write initial message to session file immediately so the file exists
         // even if the ghost shell fails before completing its first turn.
@@ -313,6 +314,7 @@ pub async fn trigger_ghost_turn(
                 ),
                 tool_calls: None,
                 tool_results: None,
+                turn: Some(turn + 1),
             };
             {
                 let mut store = sessions.lock().unwrap_or_log();
@@ -748,6 +750,7 @@ pub async fn trigger_ghost_turn(
             } else {
                 Some(tool_results)
             },
+            turn: Some(turn),
         };
 
         append_session_message(session_id, &assistant_msg);

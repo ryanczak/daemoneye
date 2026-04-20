@@ -160,14 +160,35 @@ pub fn append_session_message(id: &str, msg: &Message) {
     }
 }
 
+/// Find the first index `>= start` that points at a "clean turn boundary":
+/// a user message whose `tool_results` field is empty.  A user message with
+/// `tool_results` is a response to an assistant tool call — splitting the
+/// history there would leave an orphan tool_result whose corresponding
+/// tool_call has been trimmed, which most backends reject.
+///
+/// Returns `None` if no clean boundary exists in `messages[start..]`.
+pub fn next_clean_turn_start(messages: &[Message], start: usize) -> Option<usize> {
+    let mut idx = start;
+    while idx < messages.len() {
+        let m = &messages[idx];
+        if m.role == "user" && m.tool_results.as_ref().is_none_or(|v| v.is_empty()) {
+            return Some(idx);
+        }
+        idx += 1;
+    }
+    None
+}
+
 /// Trim a message history Vec to at most `MAX_HISTORY` entries.
 ///
 /// Layout after trim: `[first_message] [placeholder] [tail…]`
 /// - `first_message` is the initial user turn (contains injected system context).
 /// - `placeholder` is a synthetic assistant message noting the truncation so the
 ///   AI understands it is not seeing the full history.
-/// - `tail` is the most-recent slice, always starting at an even index (user turn)
-///   to keep the strict `user → assistant → user → …` alternation valid.
+/// - `tail` starts at a clean turn boundary (user message without tool_results)
+///   to preserve tool_call ↔ tool_result pairing and `user → assistant → …`
+///   alternation.  If no clean boundary exists within the target window, the
+///   history is returned unchanged rather than risk an orphan tool_result.
 ///
 /// Returns `messages` unchanged when `messages.len() <= MAX_HISTORY`.
 pub fn trim_history(messages: Vec<Message>) -> Vec<Message> {
@@ -177,11 +198,12 @@ pub fn trim_history(messages: Vec<Message>) -> Vec<Message> {
     // raw_tail_start ensures result length ≤ MAX_HISTORY:
     //   1 (first) + 1 (placeholder) + (N - tail_start) ≤ MAX_HISTORY
     let raw_tail_start = messages.len() - MAX_HISTORY + 2;
-    // Round up to even so the tail begins on a user message.
-    let tail_start = if raw_tail_start.is_multiple_of(2) {
-        raw_tail_start
-    } else {
-        raw_tail_start + 1
+    let Some(tail_start) = next_clean_turn_start(&messages, raw_tail_start) else {
+        log::warn!(
+            "trim_history: no clean turn boundary found after index {} — returning untrimmed",
+            raw_tail_start
+        );
+        return messages;
     };
     let dropped = tail_start - 1;
     let first = messages[0].clone();
@@ -194,6 +216,7 @@ pub fn trim_history(messages: Vec<Message>) -> Vec<Message> {
         ),
         tool_calls: None,
         tool_results: None,
+        turn: None,
     };
     let mut trimmed = Vec::with_capacity(MAX_HISTORY);
     trimmed.push(first);
@@ -231,6 +254,7 @@ mod tests {
             content: content.to_string(),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         }
     }
 

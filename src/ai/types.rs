@@ -24,6 +24,13 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_results: Option<Vec<ToolResult>>,
+    /// Turn number this message belongs to.  Set when the message is pushed
+    /// onto the session history so compaction and `/pin` can identify the
+    /// turn boundary even after the message vec has been reindexed.
+    /// Legacy messages loaded from pre-upgrade session files have `None` and
+    /// cannot be pinned, but remain valid for playback.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub turn: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -650,6 +657,7 @@ mod tests {
             content: content.to_string(),
             tool_calls: None,
             tool_results: None,
+            turn: None,
         }
     }
 
