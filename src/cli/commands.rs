@@ -1410,15 +1410,42 @@ async fn run_chat_inner_raw(
         if query == "/limits" {
             match send_query_limits(&session_id).await {
                 Ok((limits, turn_count, tool_calls_this_session, history_len)) => {
-                    let fmt_u32 = |v: u32| if v == 0 { "unlimited".to_string() } else { v.to_string() };
-                    let fmt_us = |v: usize| if v == 0 { "unlimited".to_string() } else { v.to_string() };
+                    let fmt_u32 = |v: u32| {
+                        if v == 0 {
+                            "unlimited".to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    };
+                    let fmt_us = |v: usize| {
+                        if v == 0 {
+                            "unlimited".to_string()
+                        } else {
+                            v.to_string()
+                        }
+                    };
                     println!();
                     println!("  \x1b[1mLimits\x1b[0m");
-                    println!("  per_tool_batch             {}", fmt_u32(limits.per_tool_batch));
-                    println!("  total_tool_calls_per_turn  {}", fmt_u32(limits.total_tool_calls_per_turn));
-                    println!("  max_tool_calls_per_session {}", fmt_us(limits.max_tool_calls_per_session));
-                    println!("  tool_result_chars          {}", fmt_us(limits.tool_result_chars));
-                    println!("  max_history                {}", fmt_us(limits.max_history));
+                    println!(
+                        "  per_tool_batch             {}",
+                        fmt_u32(limits.per_tool_batch)
+                    );
+                    println!(
+                        "  total_tool_calls_per_turn  {}",
+                        fmt_u32(limits.total_tool_calls_per_turn)
+                    );
+                    println!(
+                        "  max_tool_calls_per_session {}",
+                        fmt_us(limits.max_tool_calls_per_session)
+                    );
+                    println!(
+                        "  tool_result_chars          {}",
+                        fmt_us(limits.tool_result_chars)
+                    );
+                    println!(
+                        "  max_history                {}",
+                        fmt_us(limits.max_history)
+                    );
                     println!("  max_turns                  {}", fmt_us(limits.max_turns));
                     if !limits.per_tool_overrides.is_empty() {
                         println!("  per_tool overrides:");

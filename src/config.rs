@@ -275,7 +275,11 @@ impl LimitsConfig {
     /// Returns `None` if uncapped.  Callers must check whether the tool is
     /// approval-gated before consulting this — approval-gated tools are always exempt.
     pub fn per_tool_cap(&self, tool_name: &str) -> Option<u32> {
-        let raw = self.per_tool.get(tool_name).copied().unwrap_or(self.per_tool_batch);
+        let raw = self
+            .per_tool
+            .get(tool_name)
+            .copied()
+            .unwrap_or(self.per_tool_batch);
         Self::cap_u32(raw)
     }
 
@@ -1132,12 +1136,27 @@ mod tests {
     #[test]
     fn default_limits_match_current_hardcoded_constants() {
         let limits = LimitsConfig::default();
-        assert_eq!(limits.per_tool_batch, 100, "must match MAX_SAME_TOOL_BATCH in server.rs");
-        assert_eq!(limits.tool_result_chars, 16_000, "must match MAX_TOOL_RESULT_CHARS in server.rs");
-        assert_eq!(limits.max_history, 80, "must match MAX_HISTORY in session.rs");
-        assert_eq!(limits.total_tool_calls_per_turn, 0, "new field defaults to uncapped");
+        assert_eq!(
+            limits.per_tool_batch, 100,
+            "must match MAX_SAME_TOOL_BATCH in server.rs"
+        );
+        assert_eq!(
+            limits.tool_result_chars, 16_000,
+            "must match MAX_TOOL_RESULT_CHARS in server.rs"
+        );
+        assert_eq!(
+            limits.max_history, 80,
+            "must match MAX_HISTORY in session.rs"
+        );
+        assert_eq!(
+            limits.total_tool_calls_per_turn, 0,
+            "new field defaults to uncapped"
+        );
         assert_eq!(limits.max_turns, 0, "new field defaults to uncapped");
-        assert_eq!(limits.max_tool_calls_per_session, 0, "new field defaults to uncapped");
+        assert_eq!(
+            limits.max_tool_calls_per_session, 0,
+            "new field defaults to uncapped"
+        );
         assert!(limits.per_tool.is_empty());
     }
 
@@ -1248,9 +1267,13 @@ mod tests {
         // Verify the condition that triggers the warning: an approval-gated tool
         // appearing in per_tool. The warning is observable in daemon.log at runtime.
         let mut limits = LimitsConfig::default();
-        limits.per_tool.insert("run_terminal_command".to_string(), 5);
-        assert!(limits.per_tool.contains_key("run_terminal_command"),
-            "precondition: entry must be present to trigger warning path");
+        limits
+            .per_tool
+            .insert("run_terminal_command".to_string(), 5);
+        assert!(
+            limits.per_tool.contains_key("run_terminal_command"),
+            "precondition: entry must be present to trigger warning path"
+        );
         let digest = DigestConfig::default();
         limits.validate(&digest); // must not panic
     }
@@ -1261,7 +1284,10 @@ mod tests {
         // and digest.narrative_enabled = false (the footgun combo).
         let mut limits = LimitsConfig::default();
         limits.max_history = 0;
-        let digest = DigestConfig { narrative_enabled: false, ..DigestConfig::default() };
+        let digest = DigestConfig {
+            narrative_enabled: false,
+            ..DigestConfig::default()
+        };
         limits.validate(&digest); // must not panic
     }
 
@@ -1271,7 +1297,10 @@ mod tests {
         // with max_history = 0, because the narrative step provides compaction.
         let mut limits = LimitsConfig::default();
         limits.max_history = 0;
-        let digest = DigestConfig { narrative_enabled: true, ..DigestConfig::default() };
+        let digest = DigestConfig {
+            narrative_enabled: true,
+            ..DigestConfig::default()
+        };
         limits.validate(&digest); // must not panic
     }
 
@@ -1286,15 +1315,30 @@ mod tests {
             model    = "claude-sonnet-4-6"
         "#;
         let cfg: Config = toml::from_str(old_config).unwrap();
-        assert_eq!(cfg.limits.per_tool_batch, 100,
-            "must match legacy MAX_SAME_TOOL_BATCH = 100");
-        assert_eq!(cfg.limits.tool_result_chars, 16_000,
-            "must match legacy MAX_TOOL_RESULT_CHARS = 16_000");
-        assert_eq!(cfg.limits.max_history, 80,
-            "must match legacy MAX_HISTORY = 80");
-        assert_eq!(cfg.limits.total_tool_calls_per_turn, 0, "new — default uncapped");
+        assert_eq!(
+            cfg.limits.per_tool_batch, 100,
+            "must match legacy MAX_SAME_TOOL_BATCH = 100"
+        );
+        assert_eq!(
+            cfg.limits.tool_result_chars, 16_000,
+            "must match legacy MAX_TOOL_RESULT_CHARS = 16_000"
+        );
+        assert_eq!(
+            cfg.limits.max_history, 80,
+            "must match legacy MAX_HISTORY = 80"
+        );
+        assert_eq!(
+            cfg.limits.total_tool_calls_per_turn, 0,
+            "new — default uncapped"
+        );
         assert_eq!(cfg.limits.max_turns, 0, "new — default uncapped");
-        assert_eq!(cfg.limits.max_tool_calls_per_session, 0, "new — default uncapped");
-        assert!(cfg.limits.per_tool.is_empty(), "new — no overrides by default");
+        assert_eq!(
+            cfg.limits.max_tool_calls_per_session, 0,
+            "new — default uncapped"
+        );
+        assert!(
+            cfg.limits.per_tool.is_empty(),
+            "new — no overrides by default"
+        );
     }
 }

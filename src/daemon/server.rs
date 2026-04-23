@@ -526,8 +526,12 @@ pub async fn handle_client(
                     file_edits_approved: crate::daemon::stats::get_file_edits_approved(),
                     file_edits_denied: crate::daemon::stats::get_file_edits_denied(),
                     limits: {
-                        let mut overrides: Vec<(String, u32)> =
-                            config.limits.per_tool.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                        let mut overrides: Vec<(String, u32)> = config
+                            .limits
+                            .per_tool
+                            .iter()
+                            .map(|(k, v)| (k.clone(), *v))
+                            .collect();
                         overrides.sort_by(|a, b| a.0.cmp(&b.0));
                         crate::ipc::LimitsSummary {
                             per_tool_batch: config.limits.per_tool_batch,
@@ -545,16 +549,24 @@ pub async fn handle_client(
             return Ok(());
         }
         Request::QueryLimits { session_id: sid } => {
-            let (turn_count, tool_calls_this_session, history_len) =
-                if let Ok(store) = sessions.lock()
-                    && let Some(entry) = store.get(&sid)
-                {
-                    (entry.turn_count, entry.tool_calls_this_session, entry.messages.len())
-                } else {
-                    (0, 0, 0)
-                };
-            let mut overrides: Vec<(String, u32)> =
-                config.limits.per_tool.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            let (turn_count, tool_calls_this_session, history_len) = if let Ok(store) =
+                sessions.lock()
+                && let Some(entry) = store.get(&sid)
+            {
+                (
+                    entry.turn_count,
+                    entry.tool_calls_this_session,
+                    entry.messages.len(),
+                )
+            } else {
+                (0, 0, 0)
+            };
+            let mut overrides: Vec<(String, u32)> = config
+                .limits
+                .per_tool
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
             overrides.sort_by(|a, b| a.0.cmp(&b.0));
             send_response_split(
                 &mut tx,
@@ -767,7 +779,12 @@ pub async fn handle_client(
         .or_else(|| {
             session_id
                 .as_ref()
-                .map(|id| read_session_file(id, crate::config::LimitsConfig::cap_usize(config.limits.max_history)))
+                .map(|id| {
+                    read_session_file(
+                        id,
+                        crate::config::LimitsConfig::cap_usize(config.limits.max_history),
+                    )
+                })
                 .filter(|v| !v.is_empty())
         })
         .unwrap_or_default();
@@ -1025,20 +1042,20 @@ pub async fn handle_client(
         .as_ref()
         .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.is_ghost))
         .unwrap_or(false);
-    if !is_ghost_session {
-        if let Some(turn_limit) = crate::config::LimitsConfig::cap_usize(config.limits.max_turns) {
-            if this_turn_count > turn_limit {
-                send_response_split(
-                    &mut tx,
-                    Response::Error(format!(
-                        "Session turn limit ({turn_limit}) reached. \
-                         Start a new session to continue."
-                    )),
-                )
-                .await?;
-                return Ok(());
-            }
-        }
+    if !is_ghost_session
+        && let Some(turn_limit) =
+            crate::config::LimitsConfig::cap_usize(config.limits.max_turns)
+        && this_turn_count > turn_limit
+    {
+        send_response_split(
+            &mut tx,
+            Response::Error(format!(
+                "Session turn limit ({turn_limit}) reached. \
+                 Start a new session to continue."
+            )),
+        )
+        .await?;
+        return Ok(());
     }
 
     let safe_query = mask_sensitive(&initial_query);
@@ -1856,24 +1873,23 @@ pub async fn handle_client(
                             // Per-turn total cap across all non-approval-gated tools.
                             if let Some(total_limit) = crate::config::LimitsConfig::cap_u32(
                                 config.limits.total_tool_calls_per_turn,
-                            ) {
-                                if total_turn_call_count > total_limit {
-                                    log::warn!(
-                                        "Per-turn total tool cap ({total_limit}) reached; \
-                                         blocking `{tool_name}`"
-                                    );
-                                    tool_results.push(ToolResult {
-                                        tool_call_id: call_id,
-                                        tool_name: tool_name.to_string(),
-                                        content: format!(
-                                            "Error: the per-turn total tool call limit \
-                                             ({total_limit}) has been reached. This call was \
-                                             not executed. Summarise what you have gathered \
-                                             so far and stop calling tools this turn."
-                                        ),
-                                    });
-                                    continue;
-                                }
+                            ) && total_turn_call_count > total_limit
+                            {
+                                log::warn!(
+                                    "Per-turn total tool cap ({total_limit}) reached; \
+                                     blocking `{tool_name}`"
+                                );
+                                tool_results.push(ToolResult {
+                                    tool_call_id: call_id,
+                                    tool_name: tool_name.to_string(),
+                                    content: format!(
+                                        "Error: the per-turn total tool call limit \
+                                         ({total_limit}) has been reached. This call was \
+                                         not executed. Summarise what you have gathered \
+                                         so far and stop calling tools this turn."
+                                    ),
+                                });
+                                continue;
                             }
 
                             // Per-tool batch cap (same tool repeated within one turn).
@@ -1945,13 +1961,12 @@ pub async fn handle_client(
                                     content,
                                 });
                                 // Bump per-session counter for non-approval-gated tools.
-                                if !APPROVAL_GATED.contains(&tool_name) {
-                                    if let Some(id) = &session_id
-                                        && let Ok(mut store) = sessions.lock()
-                                        && let Some(entry) = store.get_mut(id)
-                                    {
-                                        entry.tool_calls_this_session += 1;
-                                    }
+                                if !APPROVAL_GATED.contains(&tool_name)
+                                    && let Some(id) = &session_id
+                                    && let Ok(mut store) = sessions.lock()
+                                    && let Some(entry) = store.get_mut(id)
+                                {
+                                    entry.tool_calls_this_session += 1;
                                 }
                             }
                             crate::daemon::executor::ToolCallOutcome::SpawnGhostSession {
