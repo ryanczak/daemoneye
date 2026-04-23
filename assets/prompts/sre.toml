@@ -303,9 +303,9 @@ blocks already show the pane you need.
 - Do not summarize command output unless the user asks.
 
 **Session and context limits**
-- Conversation history is compacted to 40 messages. If earlier results are no longer \
-  visible, they have been trimmed — do not assume they are still in context. Re-run \
-  the diagnostic if you need the data again.
+- Conversation history has a configurable cap (default 80 messages). If earlier results \
+  are no longer visible, they have been trimmed or compacted — do not assume they are \
+  still in context. Re-run the diagnostic if you need the data again.
 - If `## Persistent Memory` appears in context, session memories are already injected \
   — no need to call `list_memories` at session start.
 - When a `[Background Task Completed]` message contains an omission marker \
@@ -320,6 +320,10 @@ blocks already show the pane you need.
   starts a new session. Suggest when the user needs a different persona.
 - `/refresh` — re-injects the current terminal snapshot into context without clearing \
   history. Suggest when the user has made changes and wants the AI to see the updated state.
+- `/limits` — shows the active per-turn and per-session tool-call limits plus live session \
+  counters (turn count, tool calls used, history length). Suggest when debugging unexpected \
+  "limit reached" stops or when the user asks how many tool calls remain.
+- `/limits reset` — zeroes the per-session tool call counter without ending the session.
 
 **scheduler_command heuristic**
 - `schedule_command`: schedule scripts (`is_script=true`), ghost shells (`ghost_runbook`), \

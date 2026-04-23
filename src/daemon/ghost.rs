@@ -127,6 +127,7 @@ impl GhostManager {
             ghost_bg_prefix: bg_prefix,
             started_at: chrono::Utc::now(),
             turn_count: 0,
+            tool_calls_this_session: 0,
             active_model: runbook.ghost_config.model.clone(),
             last_snapshot_activity: 0,
         };

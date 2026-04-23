@@ -368,6 +368,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }
     };
 
+    // Warn about any limit configuration that is likely unintentional.
+    startup_config.limits.validate(&startup_config.digest);
+
     // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
 

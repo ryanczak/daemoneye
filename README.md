@@ -380,6 +380,18 @@ prompt = "sre"
 # [ghost]
 # max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
 
+# [limits]
+# per_tool_batch            = 100    # max consecutive calls of one non-approval tool per turn (0 = unlimited)
+# total_tool_calls_per_turn = 0      # max total non-approval tool calls per turn (0 = unlimited)
+# tool_result_chars         = 16000  # max chars fed back to the AI per tool result (0 = unlimited)
+# max_history               = 80     # max messages kept in session history (0 = unlimited)
+# max_turns                 = 0      # max AI turns per chat session (0 = unlimited; ghosts use max_ghost_turns)
+# max_tool_calls_per_session = 0     # cumulative non-approval tool calls per session (0 = unlimited)
+#
+# [limits.per_tool]
+# read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
+# search_repository = 50
+
 # [daemon]
 # tmux_session = "daemoneye"   # session the daemon creates/owns at startup
 # auto_create_session = true   # create the session if it doesn't exist (default: true)
@@ -491,6 +503,29 @@ Daemon-wide hard limits for autonomous Ghost Shells. These are ceilings — indi
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost shell. A runbook's `max_ghost_turns` is clamped to this value. Set lower in production to constrain blast radius. |
+
+### `[limits]` section
+
+Controls how many tool calls the AI can make per turn and per session, and how much output is fed back. All values default to the legacy hardcoded constants so existing configs are unaffected. Set any value to `0` to remove that limit entirely.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `per_tool_batch` | integer | `100` | Maximum consecutive calls of a single non-approval tool within one AI turn (e.g. how many times the AI may call `read_file` in a row). Approval-gated tools (`run_terminal_command`, `edit_file`, etc.) are always exempt — the user's approval is the throttle. |
+| `total_tool_calls_per_turn` | integer | `0` | Hard cap on all non-approval tool calls within one turn, across all tools combined. `0` = unlimited. |
+| `tool_result_chars` | integer | `16000` | Maximum characters of output fed back to the AI per tool result. Longer results are truncated. `0` = unlimited. |
+| `max_history` | integer | `80` | Maximum messages kept in session history. When the cap is hit the daemon runs a digest-and-compact pass. `0` = unlimited (consider enabling `digest.narrative_enabled` to prevent unbounded growth). |
+| `max_turns` | integer | `0` | Maximum AI turns per interactive chat session. Ghost shells use `ghost.max_ghost_turns` instead. `0` = unlimited. |
+| `max_tool_calls_per_session` | integer | `0` | Cumulative cap on non-approval tool calls across the entire session. `0` = unlimited. Reset with `/limits reset` in chat. |
+
+Per-tool overrides via `[limits.per_tool]` let you raise or lower `per_tool_batch` for specific tools:
+
+```toml
+[limits.per_tool]
+read_file         = 200   # allow more read_file calls than the global batch cap
+search_repository = 25    # tighten search calls
+```
+
+Use `/limits` in the chat pane to inspect the active values and live session counters. Use `/limits reset` to zero the per-session tool counter without ending the session.
 
 ### `[daemon]` section
 

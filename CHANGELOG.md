@@ -2,6 +2,23 @@
 
 All notable changes to DaemonEye are documented here.
 
+## [Unreleased]
+
+### Added
+- **Configurable tool-call limits** — all previously hardcoded limits are now tunable via `[limits]` in `~/.daemoneye/etc/config.toml`. Defaults are identical to the old constants so no config changes are required for existing users.
+  - `per_tool_batch` (default `100`) — max consecutive calls of one non-approval tool per AI turn
+  - `total_tool_calls_per_turn` (default `0` = unlimited) — hard cap across all non-approval tools per turn
+  - `tool_result_chars` (default `16000`) — max chars of output fed to the AI per tool result
+  - `max_history` (default `80`) — message-history ceiling before digest compaction fires
+  - `max_turns` (default `0` = unlimited) — max AI turns per interactive chat session
+  - `max_tool_calls_per_session` (default `0` = unlimited) — cumulative non-approval tool calls per session
+  - `[limits.per_tool]` — per-tool overrides of `per_tool_batch`
+  - Setting any value to `0` removes that limit entirely
+- **`/limits` slash command** — shows active limits and live session counters (turn count, session tool calls used, history length) without leaving the chat pane
+- **`/limits reset`** — zeroes the per-session tool call counter without ending the session
+- **`[LIMITS]` in `daemoneye status`** — limits summary now appears alongside uptime, session, and model info
+- **Config validation** at daemon startup warns when an approval-gated tool appears in `[limits.per_tool]` (the entry has no effect) or when `max_history = 0` and `digest.narrative_enabled = false` (potential unbounded context growth)
+
 ## [0.9.1]
 
 ### Added

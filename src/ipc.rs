@@ -67,6 +67,21 @@ pub struct GhostConfig {
     pub auto_approve_commands: bool,
 }
 
+/// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.
+/// All values mirror `config.limits.*`; 0 means unlimited.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct LimitsSummary {
+    pub per_tool_batch: u32,
+    pub total_tool_calls_per_turn: u32,
+    pub tool_result_chars: usize,
+    pub max_history: usize,
+    pub max_turns: usize,
+    pub max_tool_calls_per_session: usize,
+    /// Per-tool overrides sorted by tool name.  Each entry is `(tool_name, cap)`; 0 = uncapped.
+    #[serde(default)]
+    pub per_tool_overrides: Vec<(String, u32)>,
+}
+
 /// Summary of a runbook for the `RunbookList` response.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct RunbookListItem {
@@ -244,6 +259,16 @@ pub enum Request {
     /// List targetable panes known to the daemon for the given session.
     /// The daemon responds with `Response::PaneList`.
     ListPanesForSession {
+        session_id: String,
+    },
+    /// Query the effective limits config and this session's live counters.
+    /// The daemon responds with `Response::LimitsInfo`.
+    QueryLimits {
+        session_id: String,
+    },
+    /// Reset the per-session cumulative tool-call counter to zero for the given session.
+    /// The daemon responds with `Response::Ok`.
+    ResetSessionToolCount {
         session_id: String,
     },
 }
@@ -476,6 +501,20 @@ pub enum Response {
         file_edits_approved: usize,
         #[serde(default)]
         file_edits_denied: usize,
+        /// Effective limit configuration (from `config.limits`).
+        #[serde(default)]
+        limits: LimitsSummary,
+    },
+    /// Effective limits config + live session counters (response to `QueryLimits`).
+    LimitsInfo {
+        /// Effective limits from `config.limits`.
+        limits: LimitsSummary,
+        /// Number of turns completed so far in this session.
+        turn_count: usize,
+        /// Cumulative non-approval-gated tool calls executed in this session.
+        tool_calls_this_session: usize,
+        /// Current number of messages in this session's history.
+        history_len: usize,
     },
 }
 
@@ -1160,6 +1199,7 @@ mod tests {
             runbooks_denied: 0,
             file_edits_approved: 0,
             file_edits_denied: 0,
+            limits: LimitsSummary::default(),
         };
         match roundtrip_resp(&resp) {
             Response::DaemonStatus {

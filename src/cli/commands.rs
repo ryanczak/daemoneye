@@ -586,7 +586,8 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::ModelList { .. }
             | Response::PaneChanged { .. }
             | Response::PaneList { .. }
-            | Response::DaemonStatus { .. } => {}
+            | Response::DaemonStatus { .. }
+            | Response::LimitsInfo { .. } => {}
         }
     }
 
@@ -806,6 +807,12 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
                 "resync context",
                 "/approvals [revoke]",
                 "list or revoke approvals",
+            ),
+            (
+                "/limits",
+                "show active limits",
+                "/limits reset",
+                "reset session tool counter",
             ),
         ];
         let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
@@ -1399,6 +1406,47 @@ async fn run_chat_inner_raw(
             approval.file_edits_all = false;
             approval.file_edits.clear();
             do_revoke!(" file approvals reset ");
+        }
+        if query == "/limits" {
+            match send_query_limits(&session_id).await {
+                Ok((limits, turn_count, tool_calls_this_session, history_len)) => {
+                    let fmt_u32 = |v: u32| if v == 0 { "unlimited".to_string() } else { v.to_string() };
+                    let fmt_us = |v: usize| if v == 0 { "unlimited".to_string() } else { v.to_string() };
+                    println!();
+                    println!("  \x1b[1mLimits\x1b[0m");
+                    println!("  per_tool_batch             {}", fmt_u32(limits.per_tool_batch));
+                    println!("  total_tool_calls_per_turn  {}", fmt_u32(limits.total_tool_calls_per_turn));
+                    println!("  max_tool_calls_per_session {}", fmt_us(limits.max_tool_calls_per_session));
+                    println!("  tool_result_chars          {}", fmt_us(limits.tool_result_chars));
+                    println!("  max_history                {}", fmt_us(limits.max_history));
+                    println!("  max_turns                  {}", fmt_us(limits.max_turns));
+                    if !limits.per_tool_overrides.is_empty() {
+                        println!("  per_tool overrides:");
+                        for (name, cap) in &limits.per_tool_overrides {
+                            println!("    {}  {}", name, fmt_u32(*cap));
+                        }
+                    }
+                    println!();
+                    println!("  \x1b[1mSession counters\x1b[0m");
+                    println!("  turn count       {}", turn_count);
+                    println!("  session tools    {}", tool_calls_this_session);
+                    println!("  history length   {}", history_len);
+                    println!();
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /limits failed: {}", e),
+            }
+            continue;
+        }
+        if query == "/limits reset" {
+            match send_reset_session_tool_count(&session_id).await {
+                Ok(()) => {
+                    let label = " session tool call counter reset ";
+                    let dashes = chat_width.min(72).saturating_sub(label.len() + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /limits reset failed: {}", e),
+            }
+            continue;
         }
         {
             let cw = chat_width; // copy for Request::Ask
@@ -2746,6 +2794,7 @@ async fn ask_with_session(
                 // These are handled synchronously by the /pane slash command
                 // path and should not arrive during a streaming AI turn.
             }
+            Response::LimitsInfo { .. } => {}
         }
     }
 
@@ -2887,6 +2936,56 @@ async fn send_refresh() -> Result<()> {
     let mut line = String::new();
     rx.read_line(&mut line).await?;
     Ok(())
+}
+
+/// Fetch effective limits config and live session counters from the daemon.
+/// Returns `(limits, turn_count, tool_calls_this_session, history_len)`.
+async fn send_query_limits(
+    session_id: &str,
+) -> Result<(crate::ipc::LimitsSummary, usize, usize, usize)> {
+    use tokio::io::AsyncWriteExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    let req = crate::ipc::Request::QueryLimits {
+        session_id: session_id.to_string(),
+    };
+    let mut data = serde_json::to_vec(&req)?;
+    data.push(b'\n');
+    tx.write_all(&data).await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::LimitsInfo {
+            limits,
+            turn_count,
+            tool_calls_this_session,
+            history_len,
+        } => Ok((limits, turn_count, tool_calls_this_session, history_len)),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+/// Ask the daemon to reset the per-session tool call counter for this session.
+async fn send_reset_session_tool_count(session_id: &str) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    let req = crate::ipc::Request::ResetSessionToolCount {
+        session_id: session_id.to_string(),
+    };
+    let mut data = serde_json::to_vec(&req)?;
+    data.push(b'\n');
+    tx.write_all(&data).await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::Ok => Ok(()),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
 }
 
 pub async fn connect() -> Result<UnixStream> {

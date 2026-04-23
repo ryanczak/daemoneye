@@ -69,6 +69,7 @@ pub async fn run_status() -> Result<()> {
                     runbooks_denied,
                     file_edits_approved,
                     file_edits_denied,
+                    limits,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -236,6 +237,26 @@ pub async fn run_status() -> Result<()> {
                     mem_cats.sort_by_key(|k| k.0.clone());
                     for (cat, count) in mem_cats {
                         right_items.push((format!("  - {}:", cat), count.to_string()));
+                    }
+
+                    right_items.push(("─".to_string(), "".to_string()));
+                    right_items.push(("§".to_string(), "Limits".to_string()));
+                    let fmt_cap_u32 = |v: u32| if v == 0 { "unlimited".to_string() } else { v.to_string() };
+                    let fmt_cap_usize = |v: usize| if v == 0 { "unlimited".to_string() } else { v.to_string() };
+                    right_items.push(("Per-tool batch:".to_string(), fmt_cap_u32(limits.per_tool_batch)));
+                    right_items.push(("Total/turn:".to_string(), fmt_cap_u32(limits.total_tool_calls_per_turn)));
+                    right_items.push(("Result chars:".to_string(), fmt_cap_usize(limits.tool_result_chars)));
+                    right_items.push(("Max history:".to_string(), fmt_cap_usize(limits.max_history)));
+                    right_items.push(("Max turns:".to_string(), fmt_cap_usize(limits.max_turns)));
+                    right_items.push(("Session tools:".to_string(), fmt_cap_usize(limits.max_tool_calls_per_session)));
+                    if !limits.per_tool_overrides.is_empty() {
+                        let overrides_str = limits
+                            .per_tool_overrides
+                            .iter()
+                            .map(|(tool, cap)| format!("{}={}", tool, fmt_cap_u32(*cap)))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        right_items.push(("".to_string(), format!("  overrides: {}", overrides_str)));
                     }
 
                     // Use a special marker to indicate this separator needs a top joint (┬)

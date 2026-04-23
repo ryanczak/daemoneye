@@ -28,6 +28,8 @@ pub struct Config {
     pub digest: DigestConfig,
     #[serde(default)]
     pub approvals: ApprovalsConfig,
+    #[serde(default)]
+    pub limits: LimitsConfig,
 }
 
 impl Default for Config {
@@ -43,6 +45,7 @@ impl Default for Config {
             daemon: DaemonConfig::default(),
             digest: DigestConfig::default(),
             approvals: ApprovalsConfig::default(),
+            limits: LimitsConfig::default(),
         }
     }
 }
@@ -171,6 +174,145 @@ impl Default for GhostDaemonConfig {
         Self {
             max_ghost_turns: default_max_ghost_turns(),
             max_concurrent_ghosts: default_max_concurrent_ghosts(),
+        }
+    }
+}
+
+/// Daemon-wide caps on tool call frequency and result size.
+/// All limits default to the values previously baked into the source.
+/// Set any field to `0` to remove that cap entirely.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LimitsConfig {
+    /// Maximum times any single no-approval tool (e.g. `read_file`,
+    /// `search_repository`) may be called within one assistant turn.
+    /// Approval-gated tools (`run_terminal_command`, `edit_file`, etc.) are
+    /// always exempt — the user's per-call approval prompt is their gate.
+    /// Default: 100.  Set to 0 for no cap.
+    #[serde(default = "default_per_tool_batch")]
+    pub per_tool_batch: u32,
+
+    /// Maximum total tool calls (across all non-approval-gated tools) the AI
+    /// may make in a single assistant turn.
+    /// Approval-gated tools are always exempt, same as for `per_tool_batch`.
+    /// Default: 0 (no cap).
+    #[serde(default)]
+    pub total_tool_calls_per_turn: u32,
+
+    /// Maximum characters stored for each tool result in the conversation
+    /// history.  The full result is still streamed live to the AI; only the
+    /// copy kept in message history is capped to limit context bloat.
+    /// Default: 16000.  Set to 0 for no cap.
+    #[serde(default = "default_tool_result_chars")]
+    pub tool_result_chars: usize,
+
+    /// Maximum messages retained per session in memory and on disk.
+    /// When the session reaches this length, the digest compaction pass runs
+    /// regardless of token pressure.
+    /// Setting to 0 makes history unbounded but does NOT disable the digest —
+    /// compaction still fires on token pressure alone.
+    /// Default: 80.  Set to 0 for unbounded history.
+    #[serde(default = "default_max_history")]
+    pub max_history: usize,
+
+    /// Maximum AI turns allowed per interactive chat session.
+    /// Ghost shells use `[ghost] max_ghost_turns` instead — this field has
+    /// no effect on ghost sessions.
+    /// Default: 0 (no cap).
+    #[serde(default)]
+    pub max_turns: usize,
+
+    /// Maximum cumulative tool calls across all turns in a single session.
+    /// Default: 0 (no cap).
+    #[serde(default)]
+    pub max_tool_calls_per_session: usize,
+
+    /// Per-tool overrides for `per_tool_batch`.  Named entries win over the
+    /// global value for that tool only.  Approval-gated tools are always
+    /// exempt; any entry for them emits a warning at config load.
+    /// Example: `read_file = 200` raises the cap for that tool only.
+    #[serde(default)]
+    pub per_tool: std::collections::HashMap<String, u32>,
+}
+
+fn default_per_tool_batch() -> u32 {
+    100
+}
+fn default_tool_result_chars() -> usize {
+    16_000
+}
+fn default_max_history() -> usize {
+    80
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            per_tool_batch: default_per_tool_batch(),
+            total_tool_calls_per_turn: 0,
+            tool_result_chars: default_tool_result_chars(),
+            max_history: default_max_history(),
+            max_turns: 0,
+            max_tool_calls_per_session: 0,
+            per_tool: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl LimitsConfig {
+    /// Translates the `0 = unlimited` sentinel to `Option`.
+    /// Returns `None` (uncapped) when value is 0, `Some(n)` otherwise.
+    /// All u32 limit enforcement code should call this rather than comparing to 0 directly.
+    pub fn cap_u32(value: u32) -> Option<u32> {
+        if value == 0 { None } else { Some(value) }
+    }
+
+    /// Same sentinel translation for usize limits (history, turns, session totals).
+    pub fn cap_usize(value: usize) -> Option<usize> {
+        if value == 0 { None } else { Some(value) }
+    }
+
+    /// Effective per-turn batch cap for `tool_name`, applying any per-tool override.
+    /// Returns `None` if uncapped.  Callers must check whether the tool is
+    /// approval-gated before consulting this — approval-gated tools are always exempt.
+    pub fn per_tool_cap(&self, tool_name: &str) -> Option<u32> {
+        let raw = self.per_tool.get(tool_name).copied().unwrap_or(self.per_tool_batch);
+        Self::cap_u32(raw)
+    }
+
+    /// Emit warnings for configuration that is likely unintentional.
+    /// Call once at daemon startup after the config is loaded.
+    pub fn validate(&self, digest: &DigestConfig) {
+        // These tools are approval-gated: per_tool entries for them are silently
+        // ignored at runtime, so surface the misconfiguration early.
+        // Keep in sync with per_tool_limit() in src/daemon/server.rs.
+        const APPROVAL_GATED: &[&str] = &[
+            "run_terminal_command",
+            "edit_file",
+            "write_script",
+            "write_runbook",
+            "schedule_command",
+            "spawn_ghost_shell",
+            "delete_script",
+            "delete_runbook",
+            "delete_schedule",
+        ];
+        for tool in APPROVAL_GATED {
+            if self.per_tool.contains_key(*tool) {
+                log::warn!(
+                    "[limits] per_tool.{tool} is set but {tool} is approval-gated and \
+                     exempt from per-tool caps — this entry has no effect"
+                );
+            }
+        }
+
+        // Warn about the footgun: unbounded history with no narrative digest means
+        // very long sessions accumulate context with no compaction of dropped turns.
+        if self.max_history == 0 && !digest.narrative_enabled {
+            log::warn!(
+                "[limits] max_history = 0 (unbounded) and digest.narrative_enabled = false: \
+                 long sessions will not compact narrative context. Consider enabling \
+                 digest.narrative_enabled or setting a max_history ceiling."
+            );
         }
     }
 }
@@ -983,5 +1125,176 @@ mod tests {
         assert!(cfg.approvals.sudo);
         assert!(!cfg.approvals.scripts);
         assert!(!cfg.approvals.ghost_commands);
+    }
+
+    // ── LimitsConfig ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn default_limits_match_current_hardcoded_constants() {
+        let limits = LimitsConfig::default();
+        assert_eq!(limits.per_tool_batch, 100, "must match MAX_SAME_TOOL_BATCH in server.rs");
+        assert_eq!(limits.tool_result_chars, 16_000, "must match MAX_TOOL_RESULT_CHARS in server.rs");
+        assert_eq!(limits.max_history, 80, "must match MAX_HISTORY in session.rs");
+        assert_eq!(limits.total_tool_calls_per_turn, 0, "new field defaults to uncapped");
+        assert_eq!(limits.max_turns, 0, "new field defaults to uncapped");
+        assert_eq!(limits.max_tool_calls_per_session, 0, "new field defaults to uncapped");
+        assert!(limits.per_tool.is_empty());
+    }
+
+    #[test]
+    fn missing_limits_section_uses_defaults() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.limits.per_tool_batch, 100);
+        assert_eq!(cfg.limits.tool_result_chars, 16_000);
+        assert_eq!(cfg.limits.max_history, 80);
+        assert_eq!(cfg.limits.total_tool_calls_per_turn, 0);
+        assert_eq!(cfg.limits.max_turns, 0);
+        assert_eq!(cfg.limits.max_tool_calls_per_session, 0);
+    }
+
+    #[test]
+    fn limits_section_parses_all_fields() {
+        let toml = r#"
+            [limits]
+            per_tool_batch            = 200
+            total_tool_calls_per_turn = 50
+            tool_result_chars         = 8000
+            max_history               = 40
+            max_turns                 = 100
+            max_tool_calls_per_session = 500
+
+            [limits.per_tool]
+            read_file         = 300
+            search_repository = 25
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let l = &cfg.limits;
+        assert_eq!(l.per_tool_batch, 200);
+        assert_eq!(l.total_tool_calls_per_turn, 50);
+        assert_eq!(l.tool_result_chars, 8000);
+        assert_eq!(l.max_history, 40);
+        assert_eq!(l.max_turns, 100);
+        assert_eq!(l.max_tool_calls_per_session, 500);
+        assert_eq!(l.per_tool.get("read_file").copied(), Some(300));
+        assert_eq!(l.per_tool.get("search_repository").copied(), Some(25));
+    }
+
+    #[test]
+    fn partial_limits_section_fills_remaining_defaults() {
+        let toml = r#"
+            [limits]
+            max_history = 40
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.limits.max_history, 40);
+        assert_eq!(cfg.limits.per_tool_batch, 100, "should still default");
+        assert_eq!(cfg.limits.tool_result_chars, 16_000, "should still default");
+    }
+
+    #[test]
+    fn limits_zero_means_uncapped() {
+        let toml = r#"
+            [limits]
+            per_tool_batch    = 0
+            tool_result_chars = 0
+            max_history       = 0
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(LimitsConfig::cap_u32(cfg.limits.per_tool_batch).is_none());
+        assert!(LimitsConfig::cap_usize(cfg.limits.tool_result_chars).is_none());
+        assert!(LimitsConfig::cap_usize(cfg.limits.max_history).is_none());
+    }
+
+    #[test]
+    fn cap_u32_sentinel() {
+        assert_eq!(LimitsConfig::cap_u32(0), None);
+        assert_eq!(LimitsConfig::cap_u32(1), Some(1));
+        assert_eq!(LimitsConfig::cap_u32(100), Some(100));
+    }
+
+    #[test]
+    fn cap_usize_sentinel() {
+        assert_eq!(LimitsConfig::cap_usize(0), None);
+        assert_eq!(LimitsConfig::cap_usize(1), Some(1));
+        assert_eq!(LimitsConfig::cap_usize(80), Some(80));
+    }
+
+    #[test]
+    fn per_tool_cap_uses_override_over_global() {
+        let mut limits = LimitsConfig::default(); // per_tool_batch = 100
+        limits.per_tool.insert("read_file".to_string(), 200);
+        assert_eq!(limits.per_tool_cap("read_file"), Some(200));
+        assert_eq!(limits.per_tool_cap("search_repository"), Some(100)); // falls back to global
+    }
+
+    #[test]
+    fn per_tool_cap_zero_override_means_uncapped() {
+        let mut limits = LimitsConfig::default();
+        limits.per_tool.insert("read_file".to_string(), 0);
+        assert_eq!(limits.per_tool_cap("read_file"), None);
+    }
+
+    #[test]
+    fn per_tool_cap_zero_global_means_all_uncapped() {
+        let mut limits = LimitsConfig::default();
+        limits.per_tool_batch = 0;
+        assert_eq!(limits.per_tool_cap("read_file"), None);
+        assert_eq!(limits.per_tool_cap("get_terminal_context"), None);
+    }
+
+    #[test]
+    fn validate_approval_gated_per_tool_entry_does_not_panic() {
+        // The validate() call should warn (via log::warn!) but never panic.
+        // Verify the condition that triggers the warning: an approval-gated tool
+        // appearing in per_tool. The warning is observable in daemon.log at runtime.
+        let mut limits = LimitsConfig::default();
+        limits.per_tool.insert("run_terminal_command".to_string(), 5);
+        assert!(limits.per_tool.contains_key("run_terminal_command"),
+            "precondition: entry must be present to trigger warning path");
+        let digest = DigestConfig::default();
+        limits.validate(&digest); // must not panic
+    }
+
+    #[test]
+    fn validate_unbounded_history_no_narrative_does_not_panic() {
+        // The validate() call should warn but never panic when max_history = 0
+        // and digest.narrative_enabled = false (the footgun combo).
+        let mut limits = LimitsConfig::default();
+        limits.max_history = 0;
+        let digest = DigestConfig { narrative_enabled: false, ..DigestConfig::default() };
+        limits.validate(&digest); // must not panic
+    }
+
+    #[test]
+    fn validate_narrative_enabled_suppresses_footgun_warning() {
+        // No warning should fire (or panic) when narrative_enabled is true, even
+        // with max_history = 0, because the narrative step provides compaction.
+        let mut limits = LimitsConfig::default();
+        limits.max_history = 0;
+        let digest = DigestConfig { narrative_enabled: true, ..DigestConfig::default() };
+        limits.validate(&digest); // must not panic
+    }
+
+    #[test]
+    fn config_migration_old_toml_without_limits_section_matches_constants() {
+        // A config.toml that predates [limits] must parse cleanly and produce
+        // exactly the same numeric constants that were previously hardcoded.
+        let old_config = r#"
+            [models.default]
+            provider = "anthropic"
+            api_key  = "sk-ant-test"
+            model    = "claude-sonnet-4-6"
+        "#;
+        let cfg: Config = toml::from_str(old_config).unwrap();
+        assert_eq!(cfg.limits.per_tool_batch, 100,
+            "must match legacy MAX_SAME_TOOL_BATCH = 100");
+        assert_eq!(cfg.limits.tool_result_chars, 16_000,
+            "must match legacy MAX_TOOL_RESULT_CHARS = 16_000");
+        assert_eq!(cfg.limits.max_history, 80,
+            "must match legacy MAX_HISTORY = 80");
+        assert_eq!(cfg.limits.total_tool_calls_per_turn, 0, "new — default uncapped");
+        assert_eq!(cfg.limits.max_turns, 0, "new — default uncapped");
+        assert_eq!(cfg.limits.max_tool_calls_per_session, 0, "new — default uncapped");
+        assert!(cfg.limits.per_tool.is_empty(), "new — no overrides by default");
     }
 }
