@@ -57,6 +57,21 @@ prompt = "sre"
 # dedup_window_secs = 300
 # bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
 
+# [limits]
+# per_tool_batch            = 100    # max consecutive calls of one non-approval tool per turn (0 = unlimited)
+# total_tool_calls_per_turn = 0      # max total non-approval tool calls per turn (0 = unlimited)
+# tool_result_chars         = 16000  # max chars fed back to the AI per tool result (0 = unlimited)
+# max_history               = 80     # max messages kept in session history (0 = unlimited)
+# max_turns                 = 0      # max AI turns per chat session (0 = unlimited; ghosts use max_ghost_turns)
+# max_tool_calls_per_session = 0     # cumulative non-approval tool calls per session (0 = unlimited)
+
+# [limits.per_tool]
+# read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
+# search_repository = 50
+
+# [ghost]
+# max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
+
 # [daemon]
 # tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux
 #                              # (default is "daemoneye"; override to use a different name)
