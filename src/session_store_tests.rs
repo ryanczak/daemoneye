@@ -159,8 +159,7 @@ fn collision_allowed_with_force() {
 fn update_in_place_allowed() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("mywork", None, "v1", &msgs, 1, "default", &[], false)
-            .expect("first save");
+        save_session("mywork", None, "v1", &msgs, 1, "default", &[], false).expect("first save");
         // Same session name as current_saved_name — should succeed without force.
         save_session(
             "mywork",
@@ -259,8 +258,7 @@ fn artifacts_round_trip() {
                 at_turn: 7,
             },
         ];
-        save_session("art-test", None, "", &msgs, 8, "default", &artifacts, false)
-            .expect("save");
+        save_session("art-test", None, "", &msgs, 8, "default", &artifacts, false).expect("save");
         let meta = load_session_meta("art-test").expect("meta");
         assert_eq!(meta.artifacts_created.len(), 2);
         assert_eq!(meta.artifacts_created[0].name, "nginx-root-cause");

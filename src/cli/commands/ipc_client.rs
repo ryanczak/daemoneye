@@ -29,9 +29,7 @@ pub(super) fn new_session_id() -> String {
 
 /// List all configured model names and the session's current active model.
 /// Returns a list of `(key_name, model_id)` pairs and the active key name.
-pub(super) async fn send_list_models(
-    session_id: &str,
-) -> Result<(Vec<(String, String)>, String)> {
+pub(super) async fn send_list_models(session_id: &str) -> Result<(Vec<(String, String)>, String)> {
     let stream = connect().await?;
     let (rx, mut tx) = stream.into_split();
     send_request(
@@ -76,10 +74,7 @@ pub(super) async fn send_set_model(session_id: &str, model: &str) -> Result<Stri
 
 /// Pin the foreground target pane for the given session.
 /// Returns `(pane_id, description)` on success.
-pub(super) async fn send_set_pane(
-    session_id: &str,
-    pane_id: &str,
-) -> Result<(String, String)> {
+pub(super) async fn send_set_pane(session_id: &str, pane_id: &str) -> Result<(String, String)> {
     let stream = connect().await?;
     let (rx, mut tx) = stream.into_split();
     send_request(

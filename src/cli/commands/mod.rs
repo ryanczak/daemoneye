@@ -29,19 +29,13 @@ use ipc_client::{
 use pane::resolve_target_pane;
 use stream::{AskTmuxCtx, QueryArgs, StreamCtx, StreamResizeDims, TokenCtx, ask_with_session};
 
-
 /// Render the two-column slash-command reference, centered to `chat_width`.
 /// Shown on `/help` during chat and whenever the caller wants the full command list.
 fn render_slash_command_help(chat_width: usize) {
     // (left_cmd, left_desc, right_cmd, right_desc)
     let rows: &[(&str, &str, &str, &str)] = &[
         ("/help", "show this list", "/exit", "quit"),
-        (
-            "/clear",
-            "reset session",
-            "/refresh",
-            "resync context",
-        ),
+        ("/clear", "reset session", "/refresh", "resync context"),
         (
             "/model [name]",
             "list or switch model",
@@ -1191,4 +1185,3 @@ async fn run_chat_inner_raw(
     println!("\n\x1b[2mGoodbye.\x1b[0m");
     Ok(())
 }
-

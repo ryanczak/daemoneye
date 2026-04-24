@@ -655,9 +655,7 @@ pub(super) async fn prompt_runbook_delete(
     );
     if !active_jobs.is_empty() {
         println!();
-        println!(
-            "  \x1b[33mWarning:\x1b[0m the following scheduled jobs reference this runbook:"
-        );
+        println!("  \x1b[33mWarning:\x1b[0m the following scheduled jobs reference this runbook:");
         for job in active_jobs {
             println!("    \x1b[2m- {}\x1b[0m", job);
         }

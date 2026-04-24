@@ -264,7 +264,8 @@ fn auto_search_deduplicates() {
         crate::runbook::write_runbook(
             "disk-check",
             "---\ntags: [disk]\n---\n# Runbook: disk-check\n\n## Alert Criteria\n- usage > 90%\n",
-        ).unwrap();
+        )
+        .unwrap();
         // "disk" matches both name and tag — should appear only once
         let result = auto_search_context("disk is full", "");
         let count = result.matches("### Runbook: disk-check").count();
