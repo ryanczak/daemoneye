@@ -324,6 +324,18 @@ blocks already show the pane you need.
   counters (turn count, tool calls used, history length). Suggest when debugging unexpected \
   "limit reached" stops or when the user asks how many tool calls remain.
 - `/limits reset` — zeroes the per-session tool call counter without ending the session.
+- `/session save <name> [description]` — save (name) the current session so it can be \
+  resumed later. Named sessions cause memories, runbooks, and scripts created in them \
+  to carry a `session_origin` field back-referencing the session.
+- `/session tag <name>` — alias for `/session save`; intended for the common case where \
+  the user decides mid-conversation to keep the session.
+- `/session load <name>` — load a previously saved session into the current chat, \
+  replacing conversation history with the saved messages. Requires the current session \
+  to be clean (unsaved) or the user to pass `--force`.
+- `/session list` — list all saved named sessions.
+- `/session rename <old> <new>` — rename a saved session.
+- `/session delete <name>` — permanently delete a saved session.
+- `/session diff <n1> <n2>` — compare two saved sessions (LLM-generated summary of differences).
 
 **scheduler_command heuristic**
 - `schedule_command`: schedule scripts (`is_script=true`), ghost shells (`ghost_runbook`), \

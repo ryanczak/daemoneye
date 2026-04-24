@@ -12,6 +12,7 @@ mod runbook;
 mod scheduler;
 mod scripts;
 mod search;
+mod session_store;
 mod sys_context;
 mod tmux;
 pub(crate) mod util;
@@ -116,6 +117,34 @@ enum Commands {
     InstallSudoers {
         /// Name of the script in ~/.daemoneye/scripts/ (e.g. check-disk.sh)
         script_name: String,
+    },
+    /// Manage named sessions
+    Session {
+        #[command(subcommand)]
+        cmd: SessionCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCommands {
+    /// Import an orphaned ephemeral session log into the named session store.
+    ///
+    /// Reads `~/.daemoneye/var/log/sessions/<id>.jsonl` and saves it as a
+    /// named session so it can be loaded with `/session load <name>`.
+    ///
+    /// Example: daemoneye session import abc123def456 --name postgres-incident
+    Import {
+        /// Ephemeral session ID (the hex string visible in var/log/sessions/)
+        id: String,
+        /// Name to give the imported session
+        #[arg(long, short = 'n')]
+        name: String,
+        /// Optional description
+        #[arg(long, short = 'd')]
+        desc: Option<String>,
+        /// Overwrite an existing saved session with the same name
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -362,7 +391,53 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::InstallSudoers { script_name } => {
             scripts::install_sudoers(&script_name)?;
         }
+        Commands::Session { cmd } => match cmd {
+            SessionCommands::Import {
+                id,
+                name,
+                desc,
+                force,
+            } => {
+                run_session_import(&id, &name, desc.as_deref(), force)?;
+            }
+        },
     }
 
+    Ok(())
+}
+
+fn run_session_import(id: &str, name: &str, desc: Option<&str>, force: bool) -> anyhow::Result<()> {
+    let path = daemon::session::session_file(id);
+    if !path.exists() {
+        anyhow::bail!(
+            "session log not found: {}\n  \
+             Check available sessions with: ls ~/.daemoneye/var/log/sessions/",
+            path.display()
+        );
+    }
+    let text = std::fs::read_to_string(&path)?;
+    let messages: Vec<ai::Message> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let turn_count = messages.iter().filter(|m| m.role == "user").count();
+    session_store::save_session(
+        name,
+        None,
+        desc.unwrap_or(""),
+        &messages,
+        turn_count,
+        "default",
+        &[],
+        force,
+    )?;
+    println!(
+        "Imported {} message(s) ({} turns) from session '{}' → saved as '{}'",
+        messages.len(),
+        turn_count,
+        id,
+        name
+    );
     Ok(())
 }

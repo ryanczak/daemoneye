@@ -86,6 +86,12 @@ prompt = "sre"
 #                              # turns to each digest.  Uses [models.digest]
 #                              # if defined, otherwise [models.default].
 
+# [sessions]
+# Named session persistence settings.
+# auto_name_enabled = true         # propose a name after N turns (default: true)
+# auto_name_turn_threshold = 10    # turns before auto-name suggestion fires (default: 10)
+# load_recent_turns = 10           # messages loaded when resuming (0 = all; default: 10)
+
 # [approvals]
 # Controls which action classes auto-approve at the start of every chat
 # session.  All defaults preserve the original behaviour — only `commands`

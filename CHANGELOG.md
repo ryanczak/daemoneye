@@ -5,6 +5,18 @@ All notable changes to DaemonEye are documented here.
 ## [Unreleased]
 
 ### Added
+- **Named session persistence** — conversation history can now be saved, loaded, and resumed across daemon restarts
+  - `/session save [name]` — saves current conversation to `~/.daemoneye/var/sessions/<name>/`
+  - `/session tag [name]` — alias for `/session save`
+  - `/session load <name>` — resumes a saved session (replaces current history)
+  - `/session list` — lists all saved sessions with turn counts and descriptions
+  - `/session rename <old> <new>` — renames a saved session
+  - `/session delete <name>` — removes a saved session
+  - `/session diff [name]` — shows a summary of what changed since last save
+  - `daemoneye session import <id> --name <name>` — imports an orphaned ephemeral session log (no daemon required)
+  - **Auto-naming**: after `auto_name_turn_threshold` turns (default 10) the AI suggests a short name for the session
+  - **`session_origin` tagging**: runbooks, scripts, and memories created during a named session are tagged with `session_origin: "<name>"` in their frontmatter; retroactively backfilled on first save for artifacts created before the session was named
+  - New `[sessions]` `config.toml` section: `auto_name_enabled`, `auto_name_turn_threshold`, `load_recent_turns`
 - **Configurable tool-call limits** — all previously hardcoded limits are now tunable via `[limits]` in `~/.daemoneye/etc/config.toml`. Defaults are identical to the old constants so no config changes are required for existing users.
   - `per_tool_batch` (default `100`) — max consecutive calls of one non-approval tool per AI turn
   - `total_tool_calls_per_turn` (default `0` = unlimited) — hard cap across all non-approval tools per turn

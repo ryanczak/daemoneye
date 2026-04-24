@@ -90,6 +90,20 @@ pub struct RunbookListItem {
     pub ghost_config: GhostConfig,
 }
 
+/// Summary of a saved named session for `/session list`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SessionSummary {
+    pub name: String,
+    pub description: String,
+    /// RFC 3339 — when the session was first saved.
+    pub created_at: String,
+    /// RFC 3339 — when the session was last saved or resumed.
+    pub last_updated: String,
+    pub turn_count: usize,
+    pub message_count: usize,
+    pub artifact_count: usize,
+}
+
 /// Messages sent from the CLI client to the daemon.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -270,6 +284,46 @@ pub enum Request {
     /// The daemon responds with `Response::Ok`.
     ResetSessionToolCount {
         session_id: String,
+    },
+    /// Save the current session under `name`.
+    /// Returns `Response::SessionSaved` on success, `Response::Error` on failure.
+    /// Set `force = true` to overwrite an existing session with the same name.
+    SaveSession {
+        session_id: String,
+        name: String,
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        force: bool,
+    },
+    /// Load a previously saved session into the current session slot.
+    /// Returns `Response::SessionLoaded` on success, `Response::Error` on failure.
+    /// Fails if the current session has unread changes (`dirty = true`) unless `force = true`.
+    LoadSession {
+        session_id: String,
+        name: String,
+        #[serde(default)]
+        force: bool,
+    },
+    /// List all saved sessions.
+    /// Returns `Response::SavedSessionList`.
+    ListSavedSessions,
+    /// Delete a named saved session from disk.
+    /// Returns `Response::Ok` on success, `Response::Error` if the name is not found.
+    DeleteSavedSession {
+        name: String,
+    },
+    /// Rename a saved session.
+    /// Returns `Response::Ok` on success, `Response::Error` on failure.
+    RenameSavedSession {
+        old_name: String,
+        new_name: String,
+    },
+    /// Compare two named sessions and return an AI-generated diff summary.
+    /// Returns `Response::SessionDiff` on success, `Response::Error` on failure.
+    DiffSessions {
+        name1: String,
+        name2: String,
     },
 }
 
@@ -505,6 +559,21 @@ pub enum Response {
         #[serde(default)]
         limits: LimitsSummary,
     },
+    /// Confirmation that a session was saved (response to `SaveSession`).
+    SessionSaved { name: String },
+    /// Confirmation that a session was loaded (response to `LoadSession`).
+    /// `banner` is shown to the user as a styled announcement; it also describes
+    /// the stale-reference warning the AI should heed.
+    SessionLoaded {
+        name: String,
+        message_count: usize,
+        turn_count: usize,
+        banner: String,
+    },
+    /// All saved sessions (response to `ListSavedSessions`).
+    SavedSessionList { sessions: Vec<SessionSummary> },
+    /// AI-generated diff summary between two named sessions (response to `DiffSessions`).
+    SessionDiff { summary: String },
     /// Effective limits config + live session counters (response to `QueryLimits`).
     LimitsInfo {
         /// Effective limits from `config.limits`.

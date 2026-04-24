@@ -587,7 +587,11 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::PaneChanged { .. }
             | Response::PaneList { .. }
             | Response::DaemonStatus { .. }
-            | Response::LimitsInfo { .. } => {}
+            | Response::LimitsInfo { .. }
+            | Response::SessionSaved { .. }
+            | Response::SessionLoaded { .. }
+            | Response::SavedSessionList { .. }
+            | Response::SessionDiff { .. } => {}
         }
     }
 
@@ -814,6 +818,25 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
                 "/limits reset",
                 "reset session tool counter",
             ),
+            (
+                "/session save <name>",
+                "save session",
+                "/session load <name>",
+                "resume session",
+            ),
+            (
+                "/session list",
+                "list saved sessions",
+                "/session delete <name>",
+                "delete saved session",
+            ),
+            (
+                "/session rename <old> <new>",
+                "rename session",
+                "/session diff <n1> <n2>",
+                "compare two sessions",
+            ),
+            ("/session tag <name>", "alias for /session save", "", ""),
         ];
         let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
         let ld_w = rows.iter().map(|(_, d, _, _)| d.len()).max().unwrap_or(0);
@@ -1475,6 +1498,177 @@ async fn run_chat_inner_raw(
             }
             continue;
         }
+
+        // ── /session commands ─────────────────────────────────────────────────
+        if query == "/session list" || query == "/session" {
+            match send_list_saved_sessions().await {
+                Ok(sessions_list) if sessions_list.is_empty() => {
+                    println!(
+                        "\x1b[90mNo saved sessions. Use \x1b[0m\x1b[96m/session save <name>\x1b[0m\x1b[90m to save this session.\x1b[0m"
+                    );
+                }
+                Ok(sessions_list) => {
+                    println!();
+                    let name_w = sessions_list
+                        .iter()
+                        .map(|s| s.name.len())
+                        .max()
+                        .unwrap_or(4)
+                        .max(4);
+                    println!(
+                        "  \x1b[2m{:<name_w$}  {:<26}  turns  msgs  artifacts  description\x1b[0m",
+                        "name",
+                        "last updated",
+                        name_w = name_w
+                    );
+                    for s in &sessions_list {
+                        let last = s
+                            .last_updated
+                            .get(..16)
+                            .unwrap_or(&s.last_updated)
+                            .replace('T', " ");
+                        let desc = if s.description.len() > 40 {
+                            format!("{}…", &s.description[..39])
+                        } else {
+                            s.description.clone()
+                        };
+                        println!(
+                            "  \x1b[96m{:<name_w$}\x1b[0m  {:<26}  {:<5}  {:<4}  {:<9}  \x1b[2m{}\x1b[0m",
+                            s.name,
+                            last,
+                            s.turn_count,
+                            s.message_count,
+                            s.artifact_count,
+                            desc,
+                            name_w = name_w
+                        );
+                    }
+                    println!();
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /session list failed: {}", e),
+            }
+            continue;
+        }
+
+        // /session save <name> [description...]
+        if let Some(rest) = query.strip_prefix("/session save ").map(str::trim) {
+            let (name, description) = rest
+                .split_once(' ')
+                .map(|(n, d)| (n.trim(), d.trim()))
+                .unwrap_or((rest, ""));
+            let name = name.to_string();
+            let description = description.to_string();
+            let force = name.ends_with(" --force") || description.ends_with("--force");
+            let name = name.trim_end_matches(" --force").to_string();
+            match send_save_session(&session_id, &name, &description, force).await {
+                Ok(confirmed) => {
+                    let label = format!(" session saved as '{}' ", confirmed);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /session save failed: {}", e),
+            }
+            continue;
+        }
+
+        // /session load <name>
+        if let Some(name) = query.strip_prefix("/session load ").map(str::trim) {
+            let force = name.ends_with(" --force");
+            let name = name.trim_end_matches(" --force").trim().to_string();
+            match send_load_session(&session_id, &name, force).await {
+                Ok((loaded_name, banner)) => {
+                    let label = format!(" resumed '{}' ", loaded_name);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                    if !banner.is_empty() {
+                        for line in banner.lines() {
+                            println!("  \x1b[33m{}\x1b[0m", line);
+                        }
+                        println!();
+                    }
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /session load failed: {}", e),
+            }
+            continue;
+        }
+
+        // /session delete <name>
+        if let Some(name) = query.strip_prefix("/session delete ").map(str::trim) {
+            let name = name.to_string();
+            match send_delete_saved_session(&name).await {
+                Ok(()) => {
+                    let label = format!(" session '{}' deleted ", name);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /session delete failed: {}", e),
+            }
+            continue;
+        }
+
+        // /session rename <old> <new>
+        if let Some(rest) = query.strip_prefix("/session rename ").map(str::trim) {
+            match rest.split_once(' ') {
+                Some((old, new)) => {
+                    let old = old.trim().to_string();
+                    let new = new.trim().to_string();
+                    match send_rename_session(&old, &new).await {
+                        Ok(()) => {
+                            let label = format!(" session '{}' renamed to '{}' ", old, new);
+                            let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                            println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                        }
+                        Err(e) => println!("\x1b[31m✗\x1b[0m  /session rename failed: {}", e),
+                    }
+                }
+                None => println!("Usage: /session rename <old-name> <new-name>"),
+            }
+            continue;
+        }
+
+        // /session diff <name1> <name2>
+        if let Some(rest) = query.strip_prefix("/session diff ").map(str::trim) {
+            match rest.split_once(' ') {
+                Some((n1, n2)) => {
+                    let n1 = n1.trim().to_string();
+                    let n2 = n2.trim().to_string();
+                    println!("\x1b[2mComparing '{}' and '{}'…\x1b[0m", n1, n2);
+                    match send_diff_sessions(&n1, &n2).await {
+                        Ok(summary) => {
+                            println!();
+                            for line in summary.lines() {
+                                println!("  {}", line);
+                            }
+                            println!();
+                        }
+                        Err(e) => println!("\x1b[31m✗\x1b[0m  /session diff failed: {}", e),
+                    }
+                }
+                None => println!("Usage: /session diff <name1> <name2>"),
+            }
+            continue;
+        }
+
+        // /session tag <name> [description...] — alias for /session save
+        if let Some(rest) = query.strip_prefix("/session tag ").map(str::trim) {
+            let (name, description) = rest
+                .split_once(' ')
+                .map(|(n, d)| (n.trim(), d.trim()))
+                .unwrap_or((rest, ""));
+            let description = description.to_string();
+            let force = name.ends_with(" --force") || description.ends_with("--force");
+            let name = name.trim_end_matches(" --force").to_string();
+            match send_save_session(&session_id, &name, &description, force).await {
+                Ok(confirmed) => {
+                    let label = format!(" session tagged as '{}' ", confirmed);
+                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
+                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
+                }
+                Err(e) => println!("\x1b[31m✗\x1b[0m  /session tag failed: {}", e),
+            }
+            continue;
+        }
+
         {
             let cw = chat_width; // copy for Request::Ask
             let resize = StreamResizeDims {
@@ -2821,7 +3015,11 @@ async fn ask_with_session(
                 // These are handled synchronously by the /pane slash command
                 // path and should not arrive during a streaming AI turn.
             }
-            Response::LimitsInfo { .. } => {}
+            Response::LimitsInfo { .. }
+            | Response::SessionSaved { .. }
+            | Response::SessionLoaded { .. }
+            | Response::SavedSessionList { .. }
+            | Response::SessionDiff { .. } => {}
         }
     }
 
@@ -2995,6 +3193,144 @@ async fn send_query_limits(
 }
 
 /// Ask the daemon to reset the per-session tool call counter for this session.
+async fn send_save_session(
+    session_id: &str,
+    name: &str,
+    description: &str,
+    force: bool,
+) -> Result<String> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::SaveSession {
+            session_id: session_id.to_string(),
+            name: name.to_string(),
+            description: description.to_string(),
+            force,
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::SessionSaved { name } => Ok(name),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+async fn send_load_session(session_id: &str, name: &str, force: bool) -> Result<(String, String)> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::LoadSession {
+            session_id: session_id.to_string(),
+            name: name.to_string(),
+            force,
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::SessionLoaded { name, banner, .. } => Ok((name, banner)),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+async fn send_list_saved_sessions() -> Result<Vec<crate::ipc::SessionSummary>> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(&mut tx, Request::ListSavedSessions).await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::SavedSessionList { sessions } => Ok(sessions),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+async fn send_delete_saved_session(name: &str) -> Result<()> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::DeleteSavedSession {
+            name: name.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::Ok => Ok(()),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+async fn send_diff_sessions(name1: &str, name2: &str) -> Result<String> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::DiffSessions {
+            name1: name1.to_string(),
+            name2: name2.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::SessionDiff { summary } => Ok(summary),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
+async fn send_rename_session(old_name: &str, new_name: &str) -> Result<()> {
+    use crate::ipc::{Request, Response};
+    use tokio::io::AsyncBufReadExt;
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    send_request(
+        &mut tx,
+        Request::RenameSavedSession {
+            old_name: old_name.to_string(),
+            new_name: new_name.to_string(),
+        },
+    )
+    .await?;
+    let mut rx = tokio::io::BufReader::new(rx);
+    let mut line = String::new();
+    rx.read_line(&mut line).await?;
+    match serde_json::from_str::<Response>(line.trim())? {
+        Response::Ok => Ok(()),
+        Response::Error(e) => anyhow::bail!("{}", e),
+        _ => anyhow::bail!("unexpected response from daemon"),
+    }
+}
+
 async fn send_reset_session_tool_count(session_id: &str) -> Result<()> {
     use tokio::io::AsyncWriteExt;
     let stream = connect().await?;

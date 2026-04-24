@@ -312,6 +312,54 @@ pub fn parse_yaml_frontmatter(src: &str) -> (Header, usize) {
     }
 }
 
+/// Inject `session_origin: "<name>"` into YAML `---` frontmatter.
+///
+/// If the content already has a frontmatter block, inserts the field before
+/// the closing `---`.  If there is no frontmatter, prepends a minimal block.
+/// Returns the content unchanged if `session_origin` is already present.
+pub fn inject_yaml_session_origin(content: &str, name: &str) -> String {
+    if content.starts_with("---\n") {
+        let after_open = &content[4..];
+        if let Some(rel) = after_open.find("\n---\n") {
+            let fm_body = &after_open[..rel];
+            if fm_body.contains("session_origin:") {
+                return content.to_string();
+            }
+            let rest = &after_open[rel..]; // starts with "\n---\n"
+            return format!("---\n{}\nsession_origin: \"{}\"{}", fm_body, name, rest);
+        }
+    }
+    // No valid frontmatter — prepend a minimal block.
+    format!("---\nsession_origin: \"{}\"\n---\n{}", name, content)
+}
+
+/// Inject `session_origin: "<name>"` into a comment-block (script) header.
+///
+/// Uses `parse_comment_header` / `render_comment_header`.  Any shebang on the
+/// first line is preserved.  If the script has no existing daemoneye header, a
+/// minimal one is added.  Returns content unchanged if already stamped.
+pub fn inject_comment_session_origin(content: &str, name: &str) -> String {
+    let (mut hdr, body_start) = parse_comment_header(content);
+    if hdr.extras.contains_key("session_origin") {
+        return content.to_string();
+    }
+    hdr.extras
+        .insert("session_origin".to_string(), name.to_string());
+
+    let shebang_end = if content.starts_with("#!") {
+        content.find('\n').map(|i| i + 1).unwrap_or(content.len())
+    } else {
+        0
+    };
+    let shebang = &content[..shebang_end];
+    let body = if body_start > 0 {
+        &content[body_start..]
+    } else {
+        &content[shebang_end..]
+    };
+    format!("{}{}{}", shebang, render_comment_header(&hdr, "#"), body)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -518,6 +566,77 @@ mod tests {
         assert_eq!(
             h.extras.get("max_ghost_turns").map(String::as_str),
             Some("10")
+        );
+    }
+
+    // --- inject_yaml_session_origin ---
+
+    #[test]
+    fn inject_yaml_adds_field_before_closing_delimiter() {
+        let src = "---\ntags: [disk]\nsummary: \"test\"\n---\nbody\n";
+        let out = inject_yaml_session_origin(src, "my-session");
+        assert!(out.contains("session_origin: \"my-session\""), "got: {out}");
+        assert!(out.starts_with("---\n"), "should still start with ---");
+        assert!(
+            out.contains("---\nbody\n"),
+            "body should be preserved: {out}"
+        );
+    }
+
+    #[test]
+    fn inject_yaml_no_frontmatter_prepends_block() {
+        let src = "# Runbook: foo\n\nbody\n";
+        let out = inject_yaml_session_origin(src, "postgres-incident");
+        assert!(out.starts_with("---\nsession_origin: \"postgres-incident\"\n---\n"));
+        assert!(out.ends_with("# Runbook: foo\n\nbody\n"));
+    }
+
+    #[test]
+    fn inject_yaml_idempotent() {
+        let src = "---\ntags: [disk]\nsession_origin: \"existing\"\n---\nbody\n";
+        let out = inject_yaml_session_origin(src, "new-session");
+        assert_eq!(
+            out, src,
+            "should not modify content with existing session_origin"
+        );
+    }
+
+    // --- inject_comment_session_origin ---
+
+    #[test]
+    fn inject_comment_adds_field_to_existing_header() {
+        let src = "#!/usr/bin/env bash\n\
+                   # --- daemoneye ---\n\
+                   # tags: [disk]\n\
+                   # --- /daemoneye ---\n\
+                   echo done\n";
+        let out = inject_comment_session_origin(src, "my-session");
+        assert!(out.contains("# session_origin: my-session"), "got: {out}");
+        assert!(out.starts_with("#!/usr/bin/env bash\n"));
+        assert!(out.ends_with("echo done\n"));
+    }
+
+    #[test]
+    fn inject_comment_adds_header_when_none() {
+        let src = "#!/usr/bin/env bash\necho hello\n";
+        let out = inject_comment_session_origin(src, "my-session");
+        assert!(out.starts_with("#!/usr/bin/env bash\n"));
+        assert!(out.contains("# --- daemoneye ---"));
+        assert!(out.contains("# session_origin: my-session"));
+        assert!(out.contains("echo hello\n"));
+    }
+
+    #[test]
+    fn inject_comment_idempotent() {
+        let src = "#!/usr/bin/env bash\n\
+                   # --- daemoneye ---\n\
+                   # session_origin: existing\n\
+                   # --- /daemoneye ---\n\
+                   echo done\n";
+        let out = inject_comment_session_origin(src, "new-session");
+        assert_eq!(
+            out, src,
+            "should not modify content with existing session_origin"
         );
     }
 }

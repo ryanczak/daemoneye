@@ -247,6 +247,7 @@ The tree is created by `Config::ensure_dirs()`, which is called at the top of `m
 - **Memory Module** (`memory.rs`): Provides persistent key-value storage under `~/.daemoneye/memory/` in three categories: `session/` (loaded into every AI turn as a `## Persistent Memory` block, capped at 32 KB), `knowledge/` (loaded on-demand by runbooks or `read_memory` tool), and `incidents/` (historical records, searchable only). CRUD operations — `add_memory`, `update_memory`, `delete_memory`, `read_memory`, `list_memories` — are exposed as AI tools without approval gates. `load_session_memory_block()` applies the sensitive-data masking filter and is called by `server.rs` on the first turn of every conversation. Memory entries support structured YAML frontmatter: `tags` (for retrieval matching), `summary` (one-line description shown in `list_memories` output and used for auto-search matching), `relates_to` (cross-references to other memory keys, runbooks, or scripts), `created`/`updated` (ISO timestamps managed automatically), and `expires` (optional TTL for time-bounded facts). `build_frontmatter()` serializes these fields consistently. `update_memory()` performs partial updates — merging only the provided fields and preserving all others — automatically setting the `updated` timestamp.
 - **Manifest Module** (`manifest.rs`): Knowledge manifest builder and contextual auto-search. Three public functions: `build_knowledge_manifest()` — compact 1 KB text index of all stored runbooks, scripts, knowledge memories, and incidents, shown as `## Available Knowledge` on the first AI turn; `auto_search_context(query, pane)` — auto-loads up to 3 matching entries into `## Auto-loaded Knowledge` on the first turn, matching on names, tags, and summary words (≥4 chars), then following `relates_to` links from matched knowledge memories to pull in related entries without a direct keyword hit; `related_knowledge_hints(output)` — scans tool output and returns a `[Related knowledge: …]` hint line matching on runbook/memory names, tags, and summary words.
 - **Search Module** (`search.rs`): Keyword search across all knowledge-base directories. `search_repository(query, kind, context_lines)` searches `runbooks/`, `scripts/`, `memory/{session,knowledge,incidents}/`, and the last 10,000 lines of `events.jsonl` depending on `kind` (`"runbooks"` \| `"scripts"` \| `"memory"` \| `"events"` \| `"all"`). Matches are case-insensitive; filenames are matched in addition to content. Results are capped at 50 and formatted with line numbers and surrounding context. Exposed as the `search_repository` AI tool.
+- **Named Session Store** (`session_store.rs`, `header.rs`): Durable named conversation snapshots stored under `~/.daemoneye/var/sessions/<name>/` as `meta.toml` + `messages.jsonl`. An `index.json` file in `var/sessions/` tracks all saved sessions for fast listing. `SessionEntry` carries `saved_name: Option<String>`, `dirty: bool` (set on every message write-back, cleared on save/load), and `artifacts_created: Vec<ArtifactRef>` (accumulated as the AI creates runbooks, scripts, and memories during the session). On first save of a previously-unnamed session `backfill_session_origin()` walks `artifacts_created` and stamps a `session_origin: "<name>"` field into each artifact's frontmatter — YAML frontmatter for memories and runbooks, comment-block header for scripts — so artifacts are traceable back to the session that created them. Both injection helpers in `header.rs` are idempotent. Ghost sessions are excluded from `artifacts_created` tracking via an `is_ghost` guard. `daemoneye session import <id> --name <name>` is a standalone CLI subcommand (no daemon required) that reads an orphaned `var/log/sessions/<id>.jsonl` log and saves it as a named session.
 
 ### 2.4 Knowledge System
 
@@ -300,7 +301,47 @@ AI tools: `add_memory`, `update_memory` (partial field update — preserves unsp
 
 **Session memory injection**: On the first turn of every conversation `server.rs` calls `load_session_memory_block()` and injects its output between the `## Execution Context` and `## Terminal Session` blocks. When no session memories exist the block is empty and the prompt format is unchanged.
 
-### 2.5 Daemon Lifecycle
+### 2.5 Named Session Store
+
+The session store (`src/session_store.rs`) provides durable, named snapshots of conversation history so sessions can be resumed across daemon restarts and shared by name.
+
+**Storage layout** (`~/.daemoneye/var/sessions/`):
+```
+var/sessions/
+  index.json               ← lightweight index of all saved sessions
+  postgres-incident/
+    meta.toml              ← name, description, turn_count, prompt, model, tags
+    messages.jsonl         ← full message history (one JSON object per line)
+```
+
+`save_session(name, …)` writes `meta.toml` and `messages.jsonl` atomically (tmp → `sync_all` → rename) then updates `index.json`. `load_session(name)` reads both files and returns `(SavedSessionMeta, Vec<Message>)`. `list_sessions()` reads only `index.json` for fast enumeration. `delete_session` and `rename_session` operate on the directory and update the index.
+
+**`SessionEntry` integration** (`daemon/server.rs`):
+- `saved_name: Option<String>` — `None` for unnamed ephemeral sessions; set on `/session save` or auto-name.
+- `dirty: bool` — set to `true` on every message write-back; cleared to `false` after save or load.
+- `artifacts_created: Vec<ArtifactRef>` — records `{ kind, name, at_turn }` for every runbook, script, or memory the AI creates during the session.
+
+**`session_origin` stamping** (`header.rs`, `session_store.rs`): When an artifact is created inside a named session, `executor/knowledge.rs` calls `inject_yaml_session_origin` (memories, runbooks) or `inject_comment_session_origin` (scripts) to add `session_origin: "<name>"` to the artifact's frontmatter or comment header. Both helpers are idempotent (no-op if the field already exists). On first-time save of a previously-unnamed session, `backfill_session_origin(artifacts, name)` walks `artifacts_created` retroactively and stamps each artifact that is missing the field. Script backfill preserves the 0700 permission by setting it on the temp file before rename.
+
+**Auto-naming** (`daemon/server.rs`): When `[sessions] auto_name_enabled = true` (default) and the session crosses `auto_name_turn_threshold` (default 10) turns without a saved name, the daemon calls `suggest_session_name()` (a cheap `use_tools=false` model call) to generate a short kebab-case name, then sends a `SystemMsg` suggestion to the user in the chat pane.
+
+**IPC protocol** (`src/ipc.rs`):
+- `Request::{SaveSession, LoadSession, ListSavedSessions, DeleteSavedSession, RenameSavedSession, DiffSessions}`
+- `Response::{SessionSaved, SessionLoaded, SavedSessionList, SessionDiff}`
+
+**CLI slash commands**: `/session save [name]`, `/session tag [name]` (alias for save), `/session load <name>`, `/session list`, `/session delete <name>`, `/session rename <old> <new>`, `/session diff [name]`.
+
+**Import subcommand**: `daemoneye session import <id> --name <name> [--desc "…"] [--force]` reads `~/.daemoneye/var/log/sessions/<id>.jsonl` without a running daemon and saves it as a named session using `session_store::save_session()`. Useful for retroactively naming sessions from previous incidents.
+
+**Config** (`[sessions]` in `config.toml`):
+```toml
+[sessions]
+auto_name_enabled = true
+auto_name_turn_threshold = 10  # suggest a name after this many turns
+load_recent_turns = 10         # turns loaded when resuming a saved session
+```
+
+### 2.6 Daemon Lifecycle
 
 - **Startup**: `main()` is a plain synchronous function. For `daemoneye daemon` (without `--console`), `libc::fork()` is called *before* the tokio runtime starts — the parent prints the child PID and exits; the child calls `libc::setsid()` and redirects stdin from `/dev/null`, then builds the tokio runtime. Inside the runtime: validates the API key (empty key is rejected with a fatal error; non-empty keys are also checked for the expected provider prefix — Anthropic keys should start with `sk-ant-`, OpenAI keys with `sk-` — and a `log::warn!` is emitted on mismatch so proxy setups and custom key formats still work), calls `init_masking()` with any user-defined `extra_patterns` to compile the masking pattern set (compile failures for both built-in and user-supplied patterns are logged via `log::warn!`), resolves the **initial session** — a tmux session is always required; there is no degraded "no session" mode. Session resolution uses a two-step priority: (1) if the daemon is launched inside tmux (`$TMUX` is set), `detect_session()` is called (`tmux display-message -p '#S'`) and the current session is adopted (logs `INFO "Launched inside tmux — adopting session '…'."`); `managed_session` is set to `None` so the daemon does not own or recreate this session; (2) if launched outside tmux, the configured name is used — CLI `--session NAME` override, then `[daemon] tmux_session` (default `"daemoneye"`) — and `session_exists()` checks whether it already exists: if yes, adopt it (logs `INFO "Managed tmux session '…' already exists — adopting."`); if no, run `tmux new-session -d -s <name>` (logs `INFO "Created managed tmux session '…'."`); a creation failure is a fatal startup error (`anyhow::bail!`). The resolved `managed_session: Arc<Option<String>>` (`Some` when the daemon owns the session, `None` when it adopted an existing one) is threaded into every `handle_client` invocation. When a `NotifySessionClosed` event arrives for the managed session name, the daemon recreates it automatically with `tmux new-session -d -s <name>` and repopulates `bg_session` and the cache so scheduled jobs and ghost shells resume without a restart. The new session fires the `after-new-session` global hook, which calls `install_session_hooks()` automatically. Starts the cache poller and session cleanup tasks, loads the schedule store from `~/.daemoneye/var/run/schedules.json` (if the primary path fails, an `ERROR` is logged and a transient in-memory store backed by a PID-unique temp file is used — scheduled jobs work for the session but won't persist across restarts), checks for an already-running daemon (ping probe), then removes any stale socket file at `~/.daemoneye/var/run/daemoneye.sock` using `symlink_metadata()` (so a symlink at that path removes the symlink rather than its target) and binds the Unix socket. If `[webhook] enabled = true` in `config.toml`, the webhook HTTP server is spawned as an additional tokio task. All mutex lock sites use `.unwrap_or_log()` (the `UnpoisonExt` trait from `src/util.rs`) to recover from a poisoned lock rather than panicking; recovery is logged at ERROR level so lock-poison events are visible in diagnostics. If `ensure_dirs()` fails at startup, the daemon exits immediately with a non-zero status rather than continuing with broken I/O paths. **Systemd note**: `daemoneye daemon --console` (no fork) is required for `Type=simple` services; the generated service file uses this flag so systemd tracks the correct PID. When running as a systemd service the daemon starts outside tmux, so it creates the `"daemoneye"` session (or the configured name) automatically — ghost shells, scheduled jobs, and webhook-triggered automation are available immediately with no interactive client connection required. `daemoneye chat` invoked outside of tmux will auto-attach to this session (opens a new `chat` window and exec-replaces itself with `tmux attach-session`).
 - **Logging**: stdout and stderr are redirected to `~/.daemoneye/var/log/daemon.log` (or `--log-file FILE`) via `dup2` at startup. All diagnostic output goes through `env_logger` (keyed by `DAEMONEYE_LOG`; default `info`) so every line carries a UTC timestamp and level prefix. Startup errors that would prevent correct operation — hook install failures, schedule store load failures, tmux command failures when `$TMUX` is set, masking pattern compile errors — are logged at ERROR or WARN before the daemon enters the accept loop, ensuring they are always visible in `daemon.log`. Use `--console` to keep output on the terminal. View live with `daemoneye logs`.
@@ -309,7 +350,7 @@ AI tools: `add_memory`, `update_memory` (partial field update — preserves unsp
 - **Status**: `daemoneye status` sends a `Request::Status` IPC request. The daemon responds with `Response::DaemonStatus` containing: uptime in seconds (from `DAEMON_START: OnceLock<Instant>` recorded at startup), PID, number of active conversation sessions, provider/model, socket path, schedule count, and AI backend circuit breaker state. The CLI renders this as a human-readable two-column table (F1). The left column **Commands** section shows foreground and background command approval/denial counts alongside success/failure counts. The left column **Tooling** section shows, for each of Runbooks, Scripts, and File edits, the number of write approvals and denials since daemon start — drawn from six atomic counters (`SCRIPTS_APPROVED/DENIED`, `RUNBOOKS_APPROVED/DENIED`, `FILE_EDITS_APPROVED/DENIED` in `daemon/stats.rs`) incremented at each approval gate in `executor/knowledge.rs` and `executor/file_ops.rs`. The right column includes a **Redactions** section listing per-type counts since daemon start, sorted by count descending; all built-in types are always shown even at zero, with `"User Defined:"` showing the aggregate count from any user-configured `[masking] extra_patterns`.
 - **Shutdown**: `daemoneye stop` sends a `Shutdown` IPC request — the daemon responds `Ok`, removes the socket file, and exits. SIGTERM and SIGINT are also handled gracefully via `tokio::signal::unix`. On signal, the shutdown sequence: (1) removes the socket so new clients fail fast; (2) uninstalls all four global tmux hooks (`pane-died`, `after-new-session`, `client-attached`, `client-detached`) via `set-hook -gu` so stale hooks do not fire against the dead daemon; (3) calls `cleanup_bg_windows()` on every active session (kills background windows, stops pipe-pane logs); (4) logs `"Daemon stopped cleanly."` (F2).
 
-### 2.6 Scheduler and Watchdog
+### 2.7 Scheduler and Watchdog
 
 The scheduler runs as a background tokio task that polls `ScheduleStore::take_due()` every second. When a job fires, `run_scheduled_job()` is spawned:
 
@@ -320,7 +361,7 @@ The scheduler runs as a background tokio task that polls `ScheduleStore::take_du
 5. **Rescheduling**: `Every` jobs have their `next_run` advanced by `interval_secs` and transition back to `Pending`; `Once` jobs remain `Succeeded`/`Failed`.
 6. **Notification hook**: `fire_notification()` runs the user-configured `[notifications] on_alert` shell command (from `config.toml`) with `$DAEMONEYE_JOB` and `$DAEMONEYE_MSG` environment variables.
 
-### 2.7 Scripts Directory
+### 2.8 Scripts Directory
 
 `~/.daemoneye/scripts/` holds executable scripts managed by the daemon. Key properties:
 
@@ -332,7 +373,7 @@ The scheduler runs as a background tokio task that polls `ScheduleStore::take_du
 - Scripts can be referenced by scheduled jobs (`ActionOn::Script(name)`) and are resolved to their full path at job execution time.
 - Script names are validated to reject path traversal (no `/`, `\0`, `.`, or `..`).
 
-### 2.8 Webhook Ingestion
+### 2.9 Webhook Ingestion
 
 The webhook server (`webhook.rs`) is an optional axum HTTP server spawned as a daemon-side tokio task when `[webhook] enabled = true` in `config.toml`. It is disabled by default.
 

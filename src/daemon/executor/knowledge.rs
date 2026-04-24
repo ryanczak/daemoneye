@@ -14,6 +14,36 @@ use std::sync::Arc;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
+// Artifact context — passed to write operations for origin-stamping + tracking
+// ---------------------------------------------------------------------------
+
+pub(super) struct ArtifactCtx<'a> {
+    pub session_id: Option<&'a str>,
+    pub sessions: &'a SessionStore,
+    pub saved_name: Option<&'a str>,
+    pub turn_count: usize,
+    pub is_ghost: bool,
+}
+
+fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
+    if ctx.is_ghost {
+        return;
+    }
+    let Some(sid) = ctx.session_id else { return };
+    if let Ok(mut store) = ctx.sessions.lock() {
+        if let Some(entry) = store.get_mut(sid) {
+            entry
+                .artifacts_created
+                .push(crate::session_store::ArtifactRef {
+                    kind: kind.to_string(),
+                    name: name.to_string(),
+                    at_turn: ctx.turn_count,
+                });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Scripts
 // ---------------------------------------------------------------------------
 
@@ -21,7 +51,7 @@ pub(super) async fn write_script<W, R>(
     id: &str,
     script_name: &str,
     content: &str,
-    is_ghost: bool,
+    artifact_ctx: &ArtifactCtx<'_>,
     tx: &mut W,
     rx: &mut R,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -29,7 +59,7 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    if is_ghost {
+    if artifact_ctx.is_ghost {
         return Ok(ToolCallOutcome::Result(
             "Error: cannot write scripts in a Ghost Shell (requires user approval).".to_string(),
         ));
@@ -61,11 +91,18 @@ where
 
     if approved {
         crate::daemon::stats::inc_scripts_approved();
-        match scripts::write_script(script_name, content) {
-            Ok(()) => Ok(ToolCallOutcome::Result(format!(
-                "Script '{}' written successfully",
-                script_name
-            ))),
+        let stamped = match artifact_ctx.saved_name {
+            Some(origin) => crate::header::inject_comment_session_origin(content, origin),
+            None => content.to_string(),
+        };
+        match scripts::write_script(script_name, &stamped) {
+            Ok(()) => {
+                track_artifact(artifact_ctx, "script", script_name);
+                Ok(ToolCallOutcome::Result(format!(
+                    "Script '{}' written successfully",
+                    script_name
+                )))
+            }
             Err(e) => Ok(ToolCallOutcome::Result(format!(
                 "Failed to write script: {}",
                 e
@@ -178,8 +215,7 @@ pub(super) async fn write_runbook<W, R>(
     id: &str,
     name: &str,
     content: &str,
-    is_ghost: bool,
-    session_id: Option<&str>,
+    artifact_ctx: &ArtifactCtx<'_>,
     tx: &mut W,
     rx: &mut R,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -187,7 +223,7 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    if is_ghost {
+    if artifact_ctx.is_ghost {
         return Ok(ToolCallOutcome::Result(
             "Error: cannot write runbooks in a Ghost Shell (requires user approval).".to_string(),
         ));
@@ -219,13 +255,18 @@ where
 
     if approved {
         crate::daemon::stats::inc_runbooks_approved();
-        match crate::runbook::write_runbook(name, content) {
+        let stamped = match artifact_ctx.saved_name {
+            Some(origin) => crate::header::inject_yaml_session_origin(content, origin),
+            None => content.to_string(),
+        };
+        match crate::runbook::write_runbook(name, &stamped) {
             Ok(()) => {
                 log::info!("Runbook '{}' written", name);
                 log_event(
                     "runbook_write",
-                    serde_json::json!({ "session": session_id.unwrap_or("-"), "runbook": name }),
+                    serde_json::json!({ "session": artifact_ctx.session_id.unwrap_or("-"), "runbook": name }),
                 );
+                track_artifact(artifact_ctx, "runbook", name);
                 Ok(ToolCallOutcome::Result(format!(
                     "Runbook '{}' written to ~/.daemoneye/runbooks/{}.md",
                     name, name
@@ -359,7 +400,7 @@ pub(super) fn add_memory(
     key: &str,
     value: &str,
     category: &str,
-    session_id: Option<&str>,
+    artifact_ctx: &ArtifactCtx<'_>,
 ) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
         return format!(
@@ -370,12 +411,17 @@ pub(super) fn add_memory(
     if value.trim().is_empty() {
         return "Error: memory value cannot be empty.".to_string();
     }
-    match crate::memory::add_memory(key, value, cat) {
+    let stamped = match artifact_ctx.saved_name {
+        Some(origin) => crate::header::inject_yaml_session_origin(value, origin),
+        None => value.to_string(),
+    };
+    match crate::memory::add_memory(key, &stamped, cat) {
         Ok(()) => {
             log_event(
                 "memory_write",
-                serde_json::json!({ "session": session_id, "op": "add", "category": category, "key": key }),
+                serde_json::json!({ "session": artifact_ctx.session_id, "op": "add", "category": category, "key": key }),
             );
+            track_artifact(artifact_ctx, "memory", key);
             format!("Memory '{}' stored in {}", key, category)
         }
         Err(e) => format!("Error storing memory: {}", e),

@@ -121,6 +121,19 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
     let is_ghost = ghost_policy.is_some();
+    // ── Artifact context for session_origin stamping + tracking ───────────────
+    let saved_name: Option<String> =
+        session_id.and_then(|sid| sessions.lock().ok()?.get(sid)?.saved_name.clone());
+    let turn_count: usize = session_id
+        .and_then(|sid| sessions.lock().ok()?.get(sid).map(|e| e.turn_count))
+        .unwrap_or(0);
+    let artifact_ctx = knowledge::ArtifactCtx {
+        session_id,
+        sessions,
+        saved_name: saved_name.as_deref(),
+        turn_count,
+        is_ghost,
+    };
     // ──────────────────────────────────────────────────────────────────────────
 
     match call {
@@ -214,7 +227,7 @@ where
             script_name,
             content,
             ..
-        } => knowledge::write_script(id, script_name, content, is_ghost, tx, rx).await,
+        } => knowledge::write_script(id, script_name, content, &artifact_ctx, tx, rx).await,
 
         PendingCall::ListScripts { .. } => knowledge::list_scripts(tx).await,
 
@@ -293,7 +306,7 @@ where
 
         PendingCall::WriteRunbook {
             id, name, content, ..
-        } => knowledge::write_runbook(id, name, content, is_ghost, session_id, tx, rx).await,
+        } => knowledge::write_runbook(id, name, content, &artifact_ctx, tx, rx).await,
 
         PendingCall::DeleteRunbook { id, name, .. } => {
             knowledge::delete_runbook(id, name, is_ghost, session_id, schedule_store, tx, rx).await
@@ -311,7 +324,10 @@ where
             category,
             ..
         } => Ok(ToolCallOutcome::Result(knowledge::add_memory(
-            key, value, category, session_id,
+            key,
+            value,
+            category,
+            &artifact_ctx,
         ))),
 
         PendingCall::UpdateMemory {

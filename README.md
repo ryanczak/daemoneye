@@ -339,6 +339,7 @@ daemoneye chat
 | `daemoneye schedule list` | List scheduled jobs and their status |
 | `daemoneye schedule cancel <id>` | Cancel a scheduled job |
 | `daemoneye schedule windows` | List leftover tmux windows from failed scheduled jobs (`de-*`) |
+| `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
 
 ---
 
@@ -537,6 +538,30 @@ Controls daemon startup and session ownership. Use this when running DaemonEye a
 | `auto_create_session` | bool | `true` | Create the session with `tmux new-session -d` if it does not already exist. Only applies when `tmux_session` is set. If the session is killed, the daemon recreates it automatically. |
 
 When `tmux_session` is set, `daemoneye chat` invoked **outside** of tmux will open a new chat window inside the managed session and exec-attach to it, dropping the user straight into the right place.
+
+### `[sessions]` section
+
+Controls named session persistence — saving and resuming conversation history across daemon restarts.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `auto_name_enabled` | bool | `true` | After `auto_name_turn_threshold` turns, prompt the user with an AI-suggested session name in the chat pane. |
+| `auto_name_turn_threshold` | integer | `10` | Number of user turns before an auto-name suggestion is offered. |
+| `load_recent_turns` | integer | `10` | Number of most-recent turns loaded when resuming a saved session with `/session load`. |
+
+**In-chat session commands** (type these in the chat pane):
+
+| Command | Description |
+|---|---|
+| `/session save [name]` | Save the current conversation under `name` (prompts if omitted) |
+| `/session tag [name]` | Alias for `/session save` |
+| `/session load <name>` | Resume a previously saved session (replaces current history) |
+| `/session list` | List all saved sessions with turn counts and descriptions |
+| `/session rename <old> <new>` | Rename a saved session |
+| `/session delete <name>` | Delete a saved session |
+| `/session diff [name]` | Show a summary of what changed since the session was last saved |
+
+Artifacts (runbooks, scripts, memories) created during a named session are tagged with `session_origin: "<name>"` in their frontmatter, so you can trace which session produced them. On first save, any artifacts created before the session was named are retroactively tagged.
 
 ---
 

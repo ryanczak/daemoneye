@@ -71,6 +71,18 @@ pub struct SessionEntry {
     /// this value the daemon automatically injects a fresh snapshot without requiring
     /// a `get_terminal_context` tool call.
     pub last_snapshot_activity: u64,
+    /// Name of the saved session this entry is associated with.
+    /// `None` for ephemeral sessions that have not been saved.
+    pub saved_name: Option<String>,
+    /// True if messages have been added since the last save or load.
+    /// Guards `/session load` against discarding unsaved work.
+    pub dirty: bool,
+    /// Artifacts (memories, runbooks, scripts) created during this session.
+    /// Used for retroactive `session_origin` frontmatter backfill on save (Phase 3).
+    pub artifacts_created: Vec<crate::session_store::ArtifactRef>,
+    /// True after the auto-name suggestion has been sent once this session.
+    /// Prevents repeated suggestions if the user ignores the first one.
+    pub auto_name_suggested: bool,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -435,6 +447,37 @@ mod tests {
         assert_eq!(loaded[1].role, "assistant");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn auto_name_suggested_starts_false() {
+        // auto_name_suggested must default to false so the first suggestion fires.
+        let entry = SessionEntry {
+            messages: vec![],
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+        };
+        assert!(!entry.auto_name_suggested);
+        assert!(entry.saved_name.is_none());
     }
 }
 

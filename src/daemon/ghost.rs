@@ -130,6 +130,10 @@ impl GhostManager {
             tool_calls_this_session: 0,
             active_model: runbook.ghost_config.model.clone(),
             last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: Vec::new(),
+            auto_name_suggested: false,
         };
 
         {

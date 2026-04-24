@@ -30,6 +30,8 @@ pub struct Config {
     pub approvals: ApprovalsConfig,
     #[serde(default)]
     pub limits: LimitsConfig,
+    #[serde(default)]
+    pub sessions: SessionsConfig,
 }
 
 impl Default for Config {
@@ -46,6 +48,41 @@ impl Default for Config {
             digest: DigestConfig::default(),
             approvals: ApprovalsConfig::default(),
             limits: LimitsConfig::default(),
+            sessions: SessionsConfig::default(),
+        }
+    }
+}
+
+/// Named session persistence configuration (`[sessions]` in config.toml).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct SessionsConfig {
+    /// Automatically propose a session name after this many turns.
+    /// Set to 0 to disable auto-naming.  Default: 10.
+    #[serde(default = "default_auto_name_turn_threshold")]
+    pub auto_name_turn_threshold: usize,
+    /// Enable the auto-naming suggestion.  Default: true.
+    #[serde(default = "default_true")]
+    pub auto_name_enabled: bool,
+    /// Number of most-recent messages loaded when resuming a saved session.
+    /// Set to 0 to load the complete history (may exceed context window).  Default: 10.
+    #[serde(default = "default_load_recent_turns")]
+    pub load_recent_turns: usize,
+}
+
+fn default_auto_name_turn_threshold() -> usize {
+    10
+}
+
+fn default_load_recent_turns() -> usize {
+    10
+}
+
+impl Default for SessionsConfig {
+    fn default() -> Self {
+        Self {
+            auto_name_turn_threshold: default_auto_name_turn_threshold(),
+            auto_name_enabled: true,
+            load_recent_turns: default_load_recent_turns(),
         }
     }
 }

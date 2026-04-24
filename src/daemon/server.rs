@@ -150,6 +150,185 @@ pub(crate) fn build_catchup_brief(
 /// Message history is stored both in the in-memory `sessions` map (fast lookup
 /// within the same daemon run) and in `~/.daemoneye/sessions/<id>.jsonl` (survives
 /// restarts). History is trimmed to `MAX_HISTORY` messages before each save.
+
+// ── Auto-naming helpers ───────────────────────────────────────────────────────
+
+const AUTONAME_SYSTEM_PROMPT: &str = "\
+You are a session naming assistant. Given a conversation snippet, output exactly two lines:\n\
+Line 1: a short kebab-case slug (1–4 words, lowercase letters and hyphens only, no punctuation).\n\
+Line 2: a one-sentence description (under 80 characters).\n\
+Output nothing else. No labels, no explanations.";
+
+const AUTONAME_TIMEOUT_SECS: u64 = 20;
+
+/// Call the digest model to suggest a `(name, description)` pair for an unnamed session.
+/// Returns `None` on timeout, API error, or if the response cannot be parsed into a valid name.
+async fn suggest_session_name(
+    messages: &[crate::ai::Message],
+    config: &crate::config::Config,
+) -> Option<(String, String)> {
+    // Build a compact transcript: at most the last 20 user/assistant exchanges.
+    let transcript: String = messages
+        .iter()
+        .rev()
+        .take(20)
+        .rev()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .map(|m| {
+            format!(
+                "[{}] {}",
+                m.role,
+                m.content.chars().take(400).collect::<String>()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let user_msg = crate::ai::Message {
+        role: "user".to_string(),
+        content: format!("Conversation:\n\n{transcript}"),
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    };
+
+    let model_entry =
+        config.resolve_model(config.models.contains_key("digest").then_some("digest"));
+    let client = crate::ai::make_client(
+        &model_entry.provider,
+        model_entry.resolve_api_key(),
+        model_entry.model.clone(),
+        model_entry.effective_base_url(),
+    );
+
+    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
+    let chat_fut = client.chat(AUTONAME_SYSTEM_PROMPT, vec![user_msg], ev_tx, false);
+    let timeout = std::time::Duration::from_secs(AUTONAME_TIMEOUT_SECS);
+
+    match tokio::time::timeout(timeout, chat_fut).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            log::debug!("auto-name: LLM error: {}", e);
+            return None;
+        }
+        Err(_) => {
+            log::debug!("auto-name: timed out after {}s", AUTONAME_TIMEOUT_SECS);
+            return None;
+        }
+    }
+
+    let mut text = String::new();
+    while let Some(ev) = ev_rx.recv().await {
+        if let crate::ai::AiEvent::Token(t) = ev {
+            text.push_str(&t);
+        }
+    }
+
+    let mut lines = text.trim().lines();
+    let raw_name = lines.next().unwrap_or("").trim().to_string();
+    let description = lines.next().unwrap_or("").trim().to_string();
+
+    // Validate: must pass session name rules.
+    if crate::session_store::validate_session_name(&raw_name).is_err() {
+        log::debug!("auto-name: suggested name '{}' failed validation", raw_name);
+        return None;
+    }
+
+    Some((raw_name, description))
+}
+
+/// Build a diff summary between two saved sessions using one cheap LLM call.
+/// Returns `None` on timeout or API error.
+async fn diff_sessions_summary(
+    meta1: &crate::session_store::SavedSessionMeta,
+    meta2: &crate::session_store::SavedSessionMeta,
+    config: &crate::config::Config,
+) -> Option<String> {
+    let format_meta = |m: &crate::session_store::SavedSessionMeta| {
+        let artifacts = if m.artifacts_created.is_empty() {
+            "  (none)".to_string()
+        } else {
+            m.artifacts_created
+                .iter()
+                .map(|a| format!("  - {} '{}' (turn {})", a.kind, a.name, a.at_turn))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        format!(
+            "Name: {}\nDescription: {}\nTurns: {}\nLast active: {}\nArtifacts created:\n{}",
+            m.name,
+            if m.description.is_empty() {
+                "(none)"
+            } else {
+                &m.description
+            },
+            m.turn_count,
+            m.last_resumed_at.get(..10).unwrap_or(&m.last_resumed_at),
+            artifacts,
+        )
+    };
+
+    let prompt = format!(
+        "Compare these two DaemonEye chat sessions and describe the key differences \
+         in 150 words or fewer. Focus on: what each session worked on, different \
+         artifacts produced, different approaches or conclusions reached.\n\n\
+         Session 1 \"{}\":\n{}\n\n\
+         Session 2 \"{}\":\n{}",
+        meta1.name,
+        format_meta(meta1),
+        meta2.name,
+        format_meta(meta2),
+    );
+
+    let user_msg = crate::ai::Message {
+        role: "user".to_string(),
+        content: prompt,
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    };
+
+    let model_entry =
+        config.resolve_model(config.models.contains_key("digest").then_some("digest"));
+    let client = crate::ai::make_client(
+        &model_entry.provider,
+        model_entry.resolve_api_key(),
+        model_entry.model.clone(),
+        model_entry.effective_base_url(),
+    );
+
+    let system = "You are a concise technical writer. Summarize session differences clearly.";
+    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
+    let chat_fut = client.chat(system, vec![user_msg], ev_tx, false);
+    let timeout = std::time::Duration::from_secs(30);
+
+    match tokio::time::timeout(timeout, chat_fut).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            log::warn!("session diff: LLM error: {}", e);
+            return None;
+        }
+        Err(_) => {
+            log::warn!("session diff: timed out");
+            return None;
+        }
+    }
+
+    let mut text = String::new();
+    while let Some(ev) = ev_rx.recv().await {
+        if let crate::ai::AiEvent::Token(t) = ev {
+            text.push_str(&t);
+        }
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 pub async fn handle_client(
     stream: UnixStream,
     cache: Arc<SessionCache>,
@@ -598,6 +777,255 @@ pub async fn handle_client(
             send_response_split(&mut tx, Response::Ok).await?;
             return Ok(());
         }
+
+        // ── Named session CRUD ────────────────────────────────────────────────
+        Request::SaveSession {
+            session_id: sid,
+            name,
+            description,
+            force,
+        } => {
+            let (msgs, turn_count, current_saved, model_name, artifacts) = if let Ok(store) =
+                sessions.lock()
+                && let Some(entry) = store.get(&sid)
+            {
+                (
+                    entry.messages.clone(),
+                    entry.turn_count,
+                    entry.saved_name.clone(),
+                    entry
+                        .active_model
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string()),
+                    entry.artifacts_created.clone(),
+                )
+            } else {
+                (Vec::new(), 0, None, "default".to_string(), Vec::new())
+            };
+
+            match crate::session_store::save_session(
+                &name,
+                current_saved.as_deref(),
+                &description,
+                &msgs,
+                turn_count,
+                &model_name,
+                &artifacts,
+                force,
+            ) {
+                Ok(()) => {
+                    // Retroactive backfill: stamp session_origin on artifacts created
+                    // before the session was named (first save of an unnamed session).
+                    if current_saved.is_none() && !artifacts.is_empty() {
+                        let errs = crate::session_store::backfill_session_origin(&artifacts, &name);
+                        if !errs.is_empty() {
+                            log::warn!(
+                                "Session {}: backfill_session_origin failed for: {}",
+                                sid,
+                                errs.join(", ")
+                            );
+                        }
+                    }
+                    if let Ok(mut store) = sessions.lock()
+                        && let Some(entry) = store.get_mut(&sid)
+                    {
+                        entry.saved_name = Some(name.clone());
+                        entry.dirty = false;
+                    }
+                    log::info!("Session {}: saved as '{}'", sid, name);
+                    send_response_split(&mut tx, Response::SessionSaved { name }).await?;
+                }
+                Err(e) => {
+                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
+                }
+            }
+            return Ok(());
+        }
+
+        Request::LoadSession {
+            session_id: sid,
+            name,
+            force,
+        } => {
+            // Dirty guard: refuse if the current session has unsaved work.
+            let is_dirty = if let Ok(store) = sessions.lock()
+                && let Some(entry) = store.get(&sid)
+            {
+                entry.dirty
+            } else {
+                false
+            };
+            if is_dirty && !force {
+                send_response_split(
+                    &mut tx,
+                    Response::Error(format!(
+                        "session has unsaved changes; run `/session save <name>` first, \
+                         or use `/session load {} --force` to discard them",
+                        name
+                    )),
+                )
+                .await?;
+                return Ok(());
+            }
+
+            if !crate::session_store::session_exists(&name) {
+                send_response_split(
+                    &mut tx,
+                    Response::Error(format!("no saved session named '{}'", name)),
+                )
+                .await?;
+                return Ok(());
+            }
+
+            let load_count = config.sessions.load_recent_turns;
+            match (
+                crate::session_store::load_session_meta(&name),
+                crate::session_store::load_session_messages(&name, load_count),
+            ) {
+                (Ok(meta), Ok(loaded_msgs)) => {
+                    let banner =
+                        crate::session_store::build_resumed_banner(&meta, loaded_msgs.len());
+                    let loaded_count = loaded_msgs.len();
+                    let turn_count = meta.turn_count;
+
+                    if let Ok(mut store) = sessions.lock()
+                        && let Some(entry) = store.get_mut(&sid)
+                    {
+                        entry.messages = loaded_msgs;
+                        entry.saved_name = Some(name.clone());
+                        entry.dirty = false;
+                    }
+                    log::info!(
+                        "Session {}: loaded '{}' ({} messages)",
+                        sid,
+                        name,
+                        loaded_count
+                    );
+                    send_response_split(
+                        &mut tx,
+                        Response::SessionLoaded {
+                            name,
+                            message_count: loaded_count,
+                            turn_count,
+                            banner,
+                        },
+                    )
+                    .await?;
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
+                }
+            }
+            return Ok(());
+        }
+
+        Request::ListSavedSessions => {
+            use crate::session_store::{list_sessions, load_session_meta};
+            let sessions_list: Vec<crate::ipc::SessionSummary> = list_sessions()
+                .into_iter()
+                .map(|(name, idx)| {
+                    let (description, turn_count, message_count, artifact_count) =
+                        load_session_meta(&name)
+                            .map(|m| {
+                                (
+                                    m.description,
+                                    m.turn_count,
+                                    m.message_count,
+                                    m.artifacts_created.len(),
+                                )
+                            })
+                            .unwrap_or_default();
+                    crate::ipc::SessionSummary {
+                        name,
+                        description,
+                        created_at: idx.created_at,
+                        last_updated: idx.last_updated,
+                        turn_count,
+                        message_count,
+                        artifact_count,
+                    }
+                })
+                .collect();
+            send_response_split(
+                &mut tx,
+                Response::SavedSessionList {
+                    sessions: sessions_list,
+                },
+            )
+            .await?;
+            return Ok(());
+        }
+
+        Request::DeleteSavedSession { name } => {
+            match crate::session_store::delete_session(&name) {
+                Ok(()) => {
+                    log::info!("Saved session '{}' deleted", name);
+                    send_response_split(&mut tx, Response::Ok).await?;
+                }
+                Err(e) => {
+                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
+                }
+            }
+            return Ok(());
+        }
+
+        Request::RenameSavedSession { old_name, new_name } => {
+            match crate::session_store::rename_session(&old_name, &new_name) {
+                Ok(()) => {
+                    // Update saved_name for any active sessions with the old name.
+                    if let Ok(mut store) = sessions.lock() {
+                        for entry in store.values_mut() {
+                            if entry.saved_name.as_deref() == Some(old_name.as_str()) {
+                                entry.saved_name = Some(new_name.clone());
+                            }
+                        }
+                    }
+                    log::info!("Saved session '{}' renamed to '{}'", old_name, new_name);
+                    send_response_split(&mut tx, Response::Ok).await?;
+                }
+                Err(e) => {
+                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
+                }
+            }
+            return Ok(());
+        }
+
+        Request::DiffSessions { name1, name2 } => {
+            let meta1 = crate::session_store::load_session_meta(&name1);
+            let meta2 = crate::session_store::load_session_meta(&name2);
+            match (meta1, meta2) {
+                (Ok(m1), Ok(m2)) => match diff_sessions_summary(&m1, &m2, &config).await {
+                    Some(summary) => {
+                        send_response_split(&mut tx, Response::SessionDiff { summary }).await?;
+                    }
+                    None => {
+                        send_response_split(
+                            &mut tx,
+                            Response::Error(
+                                "diff failed: LLM call timed out or returned empty".to_string(),
+                            ),
+                        )
+                        .await?;
+                    }
+                },
+                (Err(e), _) => {
+                    send_response_split(
+                        &mut tx,
+                        Response::Error(format!("could not load session '{}': {}", name1, e)),
+                    )
+                    .await?;
+                }
+                (_, Err(e)) => {
+                    send_response_split(
+                        &mut tx,
+                        Response::Error(format!("could not load session '{}': {}", name2, e)),
+                    )
+                    .await?;
+                }
+            }
+            return Ok(());
+        }
+
         Request::NotifyActivity {
             pane_id,
             hook_index: _,
@@ -815,6 +1243,10 @@ pub async fn handle_client(
                     tool_calls_this_session: 0,
                     active_model: None,
                     last_snapshot_activity: 0,
+                    saved_name: None,
+                    dirty: false,
+                    artifacts_created: Vec::new(),
+                    auto_name_suggested: false,
                 });
                 entry.chat_pane = chat_pane.clone();
                 entry.tmux_session = session_name.clone();
@@ -1043,8 +1475,7 @@ pub async fn handle_client(
         .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.is_ghost))
         .unwrap_or(false);
     if !is_ghost_session
-        && let Some(turn_limit) =
-            crate::config::LimitsConfig::cap_usize(config.limits.max_turns)
+        && let Some(turn_limit) = crate::config::LimitsConfig::cap_usize(config.limits.max_turns)
         && this_turn_count > turn_limit
     {
         send_response_split(
@@ -1752,6 +2183,7 @@ pub async fn handle_client(
                                 entry.messages = messages.clone();
                                 entry.last_accessed = Instant::now();
                                 entry.last_prompt_tokens = usage.prompt_tokens;
+                                entry.dirty = true;
                                 if chat_pane.is_some() {
                                     entry.chat_pane = chat_pane.clone();
                                 }
@@ -1764,6 +2196,46 @@ pub async fn handle_client(
                                 }
                             }
                         }
+                        // Auto-name suggestion: fires once when the turn count hits
+                        // the configured threshold on an unnamed interactive session.
+                        if !is_ghost_session
+                            && config.sessions.auto_name_enabled
+                            && config.sessions.auto_name_turn_threshold > 0
+                        {
+                            let should_suggest = if let Ok(mut store) = sessions.lock()
+                                && let Some(ref id) = session_id
+                                && let Some(entry) = store.get_mut(id)
+                                && entry.saved_name.is_none()
+                                && !entry.auto_name_suggested
+                                && entry.turn_count == config.sessions.auto_name_turn_threshold
+                            {
+                                entry.auto_name_suggested = true;
+                                true
+                            } else {
+                                false
+                            };
+                            if should_suggest {
+                                if let Some((name, desc)) =
+                                    suggest_session_name(&messages, &config).await
+                                {
+                                    let hint = if desc.is_empty() {
+                                        format!(
+                                            "💡 Save this session as '{}'? \
+                                             Run `/session save {}`",
+                                            name, name
+                                        )
+                                    } else {
+                                        format!(
+                                            "💡 Save this session as '{}'? \
+                                             Run `/session save {} {}`",
+                                            name, name, desc
+                                        )
+                                    };
+                                    send_response_split(&mut tx, Response::SystemMsg(hint)).await?;
+                                }
+                            }
+                        }
+
                         send_response_split(
                             &mut tx,
                             Response::UsageUpdate {
