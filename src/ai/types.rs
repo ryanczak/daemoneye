@@ -441,6 +441,82 @@ impl PendingCall {
         }
     }
 
+    /// Returns true for silent tools that have no approval prompt or list-panel
+    /// response — the executor should emit `ToolStarted`/`ToolFinished` for these.
+    pub fn should_emit_tool_feedback(&self) -> bool {
+        matches!(
+            self,
+            PendingCall::CancelSchedule { .. }
+                | PendingCall::DeleteSchedule { .. }
+                | PendingCall::ReadScript { .. }
+                | PendingCall::WatchPane { .. }
+                | PendingCall::ReadFile { .. }
+                | PendingCall::ReadRunbook { .. }
+                | PendingCall::AddMemory { .. }
+                | PendingCall::UpdateMemory { .. }
+                | PendingCall::DeleteMemory { .. }
+                | PendingCall::ReadMemory { .. }
+                | PendingCall::ListMemories { .. }
+                | PendingCall::SearchRepository { .. }
+                | PendingCall::GetTerminalContext { .. }
+                | PendingCall::ListPanes { .. }
+                | PendingCall::CloseBackgroundWindow { .. }
+                | PendingCall::SpawnGhost { .. }
+        )
+    }
+
+    /// Returns a short human-readable argument summary for the `ToolStarted` event.
+    pub fn summary(&self) -> String {
+        match self {
+            PendingCall::CancelSchedule { job_id, .. }
+            | PendingCall::DeleteSchedule { job_id, .. } => job_id.clone(),
+            PendingCall::ReadScript { script_name, .. }
+            | PendingCall::DeleteScript { script_name, .. } => script_name.clone(),
+            PendingCall::WatchPane { pane_id, timeout_secs, pattern, .. } => {
+                if let Some(pat) = pattern {
+                    format!("{pane_id} pattern=\"{pat}\"")
+                } else {
+                    format!("{pane_id} {timeout_secs}s")
+                }
+            }
+            PendingCall::ReadFile { path, offset, limit, pattern, .. } => {
+                let mut s = path.clone();
+                match (offset, limit) {
+                    (Some(o), Some(l)) if *o > 0 || *l > 0 => {
+                        s.push_str(&format!(" lines={}-{}", o, o + l));
+                    }
+                    (Some(o), None) if *o > 0 => {
+                        s.push_str(&format!(" offset={o}"));
+                    }
+                    _ => {}
+                }
+                if let Some(pat) = pattern {
+                    s.push_str(&format!(" grep=\"{pat}\""));
+                }
+                s
+            }
+            PendingCall::ReadRunbook { name, .. } => name.clone(),
+            PendingCall::AddMemory { key, category, .. }
+            | PendingCall::UpdateMemory { key, category, .. }
+            | PendingCall::DeleteMemory { key, category, .. }
+            | PendingCall::ReadMemory { key, category, .. } => {
+                format!("{category}/{key}")
+            }
+            PendingCall::ListMemories { category, .. } => {
+                category.as_deref().unwrap_or("all").to_string()
+            }
+            PendingCall::SearchRepository { query, .. } => {
+                let q = if query.len() > 40 { &query[..40] } else { query.as_str() };
+                format!("\"{q}\"")
+            }
+            PendingCall::GetTerminalContext { .. } => String::new(),
+            PendingCall::ListPanes { .. } => String::new(),
+            PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
+            PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
+            _ => String::new(),
+        }
+    }
+
     /// Returns the canonical tool name for this call, used for per-turn rate limiting.
     pub fn tool_name(&self) -> &'static str {
         match self {
@@ -692,5 +768,285 @@ mod tests {
         let back: ToolCall = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "tc_99");
         assert_eq!(back.name, "run_terminal_command");
+    }
+
+    // ── should_emit_tool_feedback ────────────────────────────────────────
+
+    fn mk_read_file(path: &str) -> PendingCall {
+        PendingCall::ReadFile {
+            id: "x".to_string(),
+            thought_signature: None,
+            path: path.to_string(),
+            offset: None,
+            limit: None,
+            pattern: None,
+            target_pane: None,
+        }
+    }
+
+    fn mk_foreground(cmd: &str) -> PendingCall {
+        PendingCall::Foreground {
+            id: "x".to_string(),
+            thought_signature: None,
+            cmd: cmd.to_string(),
+            target: None,
+        }
+    }
+
+    #[test]
+    fn should_emit_tool_feedback_silent_tools_true() {
+        // All 16 silent tools should return true.
+        let cases: &[PendingCall] = &[
+            PendingCall::CancelSchedule {
+                id: "x".to_string(),
+                thought_signature: None,
+                job_id: "j1".to_string(),
+            },
+            PendingCall::DeleteSchedule {
+                id: "x".to_string(),
+                thought_signature: None,
+                job_id: "j2".to_string(),
+            },
+            PendingCall::ReadScript {
+                id: "x".to_string(),
+                thought_signature: None,
+                script_name: "s.sh".to_string(),
+            },
+            PendingCall::WatchPane {
+                id: "x".to_string(),
+                thought_signature: None,
+                pane_id: "%1".to_string(),
+                timeout_secs: 30,
+                pattern: None,
+            },
+            mk_read_file("/etc/hosts"),
+            PendingCall::ReadRunbook {
+                id: "x".to_string(),
+                thought_signature: None,
+                name: "rb".to_string(),
+            },
+            PendingCall::AddMemory {
+                id: "x".to_string(),
+                thought_signature: None,
+                key: "k".to_string(),
+                value: "v".to_string(),
+                category: "knowledge".to_string(),
+            },
+            PendingCall::DeleteMemory {
+                id: "x".to_string(),
+                thought_signature: None,
+                key: "k".to_string(),
+                category: "knowledge".to_string(),
+            },
+            PendingCall::ReadMemory {
+                id: "x".to_string(),
+                thought_signature: None,
+                key: "k".to_string(),
+                category: "knowledge".to_string(),
+            },
+            PendingCall::ListMemories {
+                id: "x".to_string(),
+                thought_signature: None,
+                category: None,
+            },
+            PendingCall::SearchRepository {
+                id: "x".to_string(),
+                thought_signature: None,
+                query: "alert".to_string(),
+                kind: "all".to_string(),
+            },
+            PendingCall::GetTerminalContext {
+                id: "x".to_string(),
+                thought_signature: None,
+            },
+            PendingCall::ListPanes {
+                id: "x".to_string(),
+                thought_signature: None,
+            },
+            PendingCall::CloseBackgroundWindow {
+                id: "x".to_string(),
+                thought_signature: None,
+                pane_id: "%5".to_string(),
+            },
+            PendingCall::SpawnGhost {
+                id: "x".to_string(),
+                thought_signature: None,
+                runbook: "disk-alert".to_string(),
+                message: "investigate".to_string(),
+            },
+        ];
+        for call in cases {
+            assert!(
+                call.should_emit_tool_feedback(),
+                "{} should emit tool feedback",
+                call.tool_name()
+            );
+        }
+    }
+
+    #[test]
+    fn should_emit_tool_feedback_approval_gated_tools_false() {
+        // Approval-gated tools must NOT emit ToolStarted/ToolFinished — they have
+        // their own richer ToolCallPrompt UI.
+        let cases: &[PendingCall] = &[
+            mk_foreground("ls -la"),
+            PendingCall::Background {
+                id: "x".to_string(),
+                thought_signature: None,
+                cmd: "cargo build".to_string(),
+                _credential: None,
+                retry_pane: None,
+            },
+            PendingCall::WriteScript {
+                id: "x".to_string(),
+                thought_signature: None,
+                script_name: "check.sh".to_string(),
+                content: "#!/bin/bash".to_string(),
+            },
+            PendingCall::EditFile {
+                id: "x".to_string(),
+                thought_signature: None,
+                path: "/tmp/f".to_string(),
+                operation: "edit".to_string(),
+                old_string: None,
+                new_string: None,
+                content: None,
+                dest_path: None,
+                target_pane: None,
+            },
+        ];
+        for call in cases {
+            assert!(
+                !call.should_emit_tool_feedback(),
+                "{} should NOT emit tool feedback",
+                call.tool_name()
+            );
+        }
+    }
+
+    // ── summary() ────────────────────────────────────────────────────────
+
+    #[test]
+    fn summary_read_file_path_only() {
+        assert_eq!(mk_read_file("/var/log/syslog").summary(), "/var/log/syslog");
+    }
+
+    #[test]
+    fn summary_read_file_with_offset_and_limit() {
+        let call = PendingCall::ReadFile {
+            id: "x".to_string(),
+            thought_signature: None,
+            path: "/var/log/syslog".to_string(),
+            offset: Some(100),
+            limit: Some(50),
+            pattern: None,
+            target_pane: None,
+        };
+        assert_eq!(call.summary(), "/var/log/syslog lines=100-150");
+    }
+
+    #[test]
+    fn summary_read_file_with_grep() {
+        let call = PendingCall::ReadFile {
+            id: "x".to_string(),
+            thought_signature: None,
+            path: "/etc/hosts".to_string(),
+            offset: None,
+            limit: None,
+            pattern: Some("nameserver".to_string()),
+            target_pane: None,
+        };
+        assert_eq!(call.summary(), "/etc/hosts grep=\"nameserver\"");
+    }
+
+    #[test]
+    fn summary_watch_pane_with_pattern() {
+        let call = PendingCall::WatchPane {
+            id: "x".to_string(),
+            thought_signature: None,
+            pane_id: "%3".to_string(),
+            timeout_secs: 60,
+            pattern: Some("DONE".to_string()),
+        };
+        assert_eq!(call.summary(), "%3 pattern=\"DONE\"");
+    }
+
+    #[test]
+    fn summary_watch_pane_no_pattern() {
+        let call = PendingCall::WatchPane {
+            id: "x".to_string(),
+            thought_signature: None,
+            pane_id: "%3".to_string(),
+            timeout_secs: 30,
+            pattern: None,
+        };
+        assert_eq!(call.summary(), "%3 30s");
+    }
+
+    #[test]
+    fn summary_search_repository_truncated() {
+        let long_query = "a".repeat(60);
+        let call = PendingCall::SearchRepository {
+            id: "x".to_string(),
+            thought_signature: None,
+            query: long_query,
+            kind: "all".to_string(),
+        };
+        let s = call.summary();
+        // Should be truncated to 40 chars of query inside quotes.
+        assert!(s.starts_with('"'));
+        assert!(s.ends_with('"'));
+        assert_eq!(s.len(), 42); // 40 chars + 2 quotes
+    }
+
+    #[test]
+    fn summary_memory_key_category() {
+        let call = PendingCall::ReadMemory {
+            id: "x".to_string(),
+            thought_signature: None,
+            key: "api-key".to_string(),
+            category: "knowledge".to_string(),
+        };
+        assert_eq!(call.summary(), "knowledge/api-key");
+    }
+
+    #[test]
+    fn summary_list_memories_all() {
+        let call = PendingCall::ListMemories {
+            id: "x".to_string(),
+            thought_signature: None,
+            category: None,
+        };
+        assert_eq!(call.summary(), "all");
+    }
+
+    #[test]
+    fn summary_list_memories_category() {
+        let call = PendingCall::ListMemories {
+            id: "x".to_string(),
+            thought_signature: None,
+            category: Some("incident".to_string()),
+        };
+        assert_eq!(call.summary(), "incident");
+    }
+
+    #[test]
+    fn summary_spawn_ghost() {
+        let call = PendingCall::SpawnGhost {
+            id: "x".to_string(),
+            thought_signature: None,
+            runbook: "disk-alert".to_string(),
+            message: "check disk usage".to_string(),
+        };
+        assert_eq!(call.summary(), "disk-alert");
+    }
+
+    #[test]
+    fn summary_get_terminal_context_empty() {
+        let call = PendingCall::GetTerminalContext {
+            id: "x".to_string(),
+            thought_signature: None,
+        };
+        assert!(call.summary().is_empty());
     }
 }

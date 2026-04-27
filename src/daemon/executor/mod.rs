@@ -12,7 +12,7 @@ use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
 use crate::util::UnpoisonExt;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Session identifiers threaded through the tool-call dispatch chain.
 #[derive(Clone, Copy)]
@@ -136,7 +136,24 @@ where
     };
     // ──────────────────────────────────────────────────────────────────────────
 
-    match call {
+    // Emit ToolStarted for silent tools so the client can show a history entry
+    // and animate an elapsed timer.  Approval-gated and panel tools are excluded
+    // because they have their own richer UI (ToolCallPrompt, EditFilePrompt, …).
+    let emit_feedback = call.should_emit_tool_feedback();
+    if emit_feedback {
+        let _ = send_response_split(
+            tx,
+            Response::ToolStarted {
+                id: call.id().to_string(),
+                tool: call.tool_name().to_string(),
+                summary: call.summary(),
+            },
+        )
+        .await;
+    }
+    let tool_start = Instant::now();
+
+    let outcome = match call {
         PendingCall::Foreground {
             id, cmd, target, ..
         } => {
@@ -398,6 +415,40 @@ where
         PendingCall::SpawnGhost {
             runbook, message, ..
         } => knowledge::spawn_ghost(runbook, message, sessions).await,
+    }?;
+
+    if emit_feedback {
+        let (ok, detail) = tool_outcome_detail(&outcome);
+        let _ = send_response_split(
+            tx,
+            Response::ToolFinished {
+                id: call.id().to_string(),
+                ok,
+                elapsed_ms: tool_start.elapsed().as_millis() as u64,
+                detail,
+            },
+        )
+        .await;
+    }
+
+    Ok(outcome)
+}
+
+/// Extract a human-readable result summary from a tool outcome.
+fn tool_outcome_detail(outcome: &ToolCallOutcome) -> (bool, Option<String>) {
+    match outcome {
+        ToolCallOutcome::UserMessage(_) => (false, Some("redirected".into())),
+        ToolCallOutcome::SpawnGhostSession { .. } => (true, Some("ghost spawned".into())),
+        ToolCallOutcome::Result(s) => {
+            let ok = !s.starts_with("Error:") && !s.starts_with("error:");
+            let n = s.lines().count();
+            let detail = if n > 1 {
+                Some(format!("{n} lines"))
+            } else {
+                None
+            };
+            (ok, detail)
+        }
     }
 }
 

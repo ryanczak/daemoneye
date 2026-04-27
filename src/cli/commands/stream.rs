@@ -11,6 +11,7 @@ use crate::cli::input::*;
 use crate::cli::render::*;
 use crate::config::Config;
 use crate::ipc::{Request, Response};
+use std::time::Instant;
 
 use super::approval::SessionApproval;
 use super::ipc_client::{connect, recv, send_request};
@@ -27,6 +28,17 @@ pub(super) struct StreamResizeDims<'a> {
     /// True when the input frame (borders + status bar) is currently drawn.
     /// When false, only dimensions are updated; caller redraws after streaming.
     pub(super) has_frame: bool,
+    /// Session-cumulative count of silent tool calls; shown in the status bar.
+    pub(super) tools_total: u32,
+}
+
+/// Tracks an in-flight silent tool call so the client can animate an elapsed
+/// timer and emit a `⎿` completion line when the tool finishes.
+struct PendingTool {
+    id: String,
+    tool: String,
+    summary: String,
+    started_at: Instant,
 }
 
 /// Called from the SIGWINCH arms inside `ask_with_session`.
@@ -71,6 +83,7 @@ fn apply_stream_resize(
             prompt_tokens,
             context_window,
             daemon_up: d.daemon_up,
+            tools_total: d.tools_total,
         },
     );
 }
@@ -195,6 +208,11 @@ pub(super) async fn ask_with_session(
         % VERBS.len();
     let mut spin = verb_offset * TICKS_PER_VERB;
     let mut response_started = false;
+    // In-flight silent tool calls: pushed on ToolStarted, popped on ToolFinished.
+    let mut pending_tools: Vec<PendingTool> = Vec::new();
+    // Session-cumulative count of silent tool calls for the status bar counter.
+    // Seed from resize dim so the count survives across ask_with_session turns.
+    let mut tools_total: u32 = resize.as_ref().map(|d| d.tools_total).unwrap_or(0);
     // prompt_tokens is passed in from the outer loop so the value from the
     // previous turn is visible when print_user_query renders the query box.
 
@@ -234,15 +252,33 @@ pub(super) async fn ask_with_session(
                     result = tokio::time::timeout(Duration::from_millis(80), recv(&mut rx)) => {
                         match result {
                             Err(_timeout) => {
-                                let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
-                                const MAX_DOTS: usize = 10;
-                                let period = (MAX_DOTS - 1) * 2; // 18
-                                let pos = (spin % TICKS_PER_VERB) % period;
-                                let dot_count = if pos < MAX_DOTS { pos + 1 } else { period - pos + 1 };
-                                let trail = "\x1b[31m".to_string() + &".".repeat(dot_count - 1) + "\x1b[0m";
-                                let cursor = "\x1b[33m.\x1b[0m";
-                                let dots = format!("{}{}", trail, cursor);
-                                print!("\r{} \x1b[33m{}\x1b[0m{}\x1b[K", SPINNER[spin % SPINNER.len()], verb, dots);
+                                if let Some(pt) = pending_tools.last() {
+                                    // Show tool-specific elapsed timer instead of generic verb.
+                                    let ms = pt.started_at.elapsed().as_millis();
+                                    let secs = ms as f64 / 1000.0;
+                                    let args = if pt.summary.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!("({})", pt.summary)
+                                    };
+                                    print!(
+                                        "\r  {} \x1b[2m\x1b[36m{}{}\x1b[0m \x1b[2m{:.1}s\x1b[0m\x1b[K",
+                                        SPINNER[spin % SPINNER.len()],
+                                        pt.tool,
+                                        args,
+                                        secs
+                                    );
+                                } else {
+                                    let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
+                                    const MAX_DOTS: usize = 10;
+                                    let period = (MAX_DOTS - 1) * 2; // 18
+                                    let pos = (spin % TICKS_PER_VERB) % period;
+                                    let dot_count = if pos < MAX_DOTS { pos + 1 } else { period - pos + 1 };
+                                    let trail = "\x1b[31m".to_string() + &".".repeat(dot_count - 1) + "\x1b[0m";
+                                    let cursor = "\x1b[33m.\x1b[0m";
+                                    let dots = format!("{}{}", trail, cursor);
+                                    print!("\r{} \x1b[33m{}\x1b[0m{}\x1b[K", SPINNER[spin % SPINNER.len()], verb, dots);
+                                }
                                 std::io::stdout().flush()?;
                                 spin = spin.wrapping_add(1);
                             }
@@ -291,6 +327,10 @@ pub(super) async fn ask_with_session(
         match msg {
             Response::KeepAlive => continue,
             Response::Ok => {
+                // Clear any live spinner / tool-timer line before the final newline.
+                if !response_started {
+                    print!("\r\x1b[K");
+                }
                 md.flush();
                 print!("\x1b[0m"); // reset prose tint
                 println!();
@@ -367,9 +407,45 @@ pub(super) async fn ask_with_session(
                 md.flush();
                 println!("\x1b[33m⚙\x1b[0m  \x1b[33m{}\x1b[0m", msg);
                 md.reset();
+                // If a silent tool is still running, re-engage the elapsed-timer
+                // spinner so the user can see the tool is still in flight.
+                if !pending_tools.is_empty() {
+                    response_started = false;
+                }
+            }
+            Response::ToolStarted { id, tool, summary } => {
+                if !response_started {
+                    print!("\r\x1b[K"); // erase spinner line
+                }
+                md.flush();
+                print_tool_started(&tool, &summary);
+                pending_tools.push(PendingTool {
+                    id,
+                    tool,
+                    summary,
+                    started_at: Instant::now(),
+                });
+                tools_total += 1;
+                if let Some(ref mut d) = resize {
+                    d.tools_total = tools_total;
+                }
+                response_started = false; // re-engage spinner to animate elapsed timer
+            }
+            Response::ToolFinished { id, ok, elapsed_ms, detail } => {
+                if let Some(idx) = pending_tools.iter().position(|p| p.id == id) {
+                    pending_tools.remove(idx);
+                }
+                if !response_started {
+                    print!("\r\x1b[K"); // erase spinner line
+                }
+                print_tool_finished(ok, elapsed_ms, detail.as_deref());
+                response_started = false; // re-engage spinner until next AI emission
             }
             Response::ToolResult(output) => {
-                md.flush();
+                // A pending_tools entry may exist if this is the ToolResult for a
+                // tool that also sent ToolStarted before its approval panel.
+                // Drop it without printing a ⎿ line — the panel below is the result.
+                // (Currently no tool does this, but guard defensively.)
                 const MAX_RESULT_LINES: usize = 10;
                 let all_lines: Vec<&str> = output.lines().collect();
                 let total = all_lines.len();
@@ -737,6 +813,7 @@ pub(super) async fn ask_with_session(
             | Response::SessionLoaded { .. }
             | Response::SavedSessionList { .. }
             | Response::SessionDiff { .. } => {}
+            // ToolStarted / ToolFinished are handled above; unreachable here.
         }
     }
 

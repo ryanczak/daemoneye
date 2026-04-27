@@ -756,3 +756,91 @@ fn invalid_json_returns_error() {
     let result: Result<Request, _> = serde_json::from_str("not json at all");
     assert!(result.is_err());
 }
+
+// ── ToolStarted / ToolFinished round-trips ───────────────────────────────
+
+#[test]
+fn response_tool_started_roundtrip() {
+    let resp = Response::ToolStarted {
+        id: "ts_1".to_string(),
+        tool: "read_file".to_string(),
+        summary: "/etc/hosts grep=\"nameserver\"".to_string(),
+    };
+    match roundtrip_resp(&resp) {
+        Response::ToolStarted { id, tool, summary } => {
+            assert_eq!(id, "ts_1");
+            assert_eq!(tool, "read_file");
+            assert_eq!(summary, "/etc/hosts grep=\"nameserver\"");
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn response_tool_started_empty_summary_roundtrip() {
+    let resp = Response::ToolStarted {
+        id: "ts_2".to_string(),
+        tool: "get_terminal_context".to_string(),
+        summary: String::new(),
+    };
+    match roundtrip_resp(&resp) {
+        Response::ToolStarted { summary, .. } => assert!(summary.is_empty()),
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn response_tool_finished_roundtrip() {
+    let resp = Response::ToolFinished {
+        id: "tf_1".to_string(),
+        ok: true,
+        elapsed_ms: 432,
+        detail: Some("42 lines".to_string()),
+    };
+    match roundtrip_resp(&resp) {
+        Response::ToolFinished {
+            id,
+            ok,
+            elapsed_ms,
+            detail,
+        } => {
+            assert_eq!(id, "tf_1");
+            assert!(ok);
+            assert_eq!(elapsed_ms, 432);
+            assert_eq!(detail.as_deref(), Some("42 lines"));
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn response_tool_finished_failed_no_detail_roundtrip() {
+    let resp = Response::ToolFinished {
+        id: "tf_2".to_string(),
+        ok: false,
+        elapsed_ms: 12,
+        detail: None,
+    };
+    match roundtrip_resp(&resp) {
+        Response::ToolFinished { ok, detail, .. } => {
+            assert!(!ok);
+            assert!(detail.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn response_tool_finished_backward_compat_no_detail_field() {
+    // Old daemons that omit the `detail` field should deserialize with detail=None.
+    let json = r#"{"ToolFinished":{"id":"tf_3","ok":true,"elapsed_ms":100}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+    match parsed {
+        Response::ToolFinished { id, ok, detail, .. } => {
+            assert_eq!(id, "tf_3");
+            assert!(ok);
+            assert!(detail.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+}

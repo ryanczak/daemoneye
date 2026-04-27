@@ -53,7 +53,7 @@ fn erase_spinner(response_started: &mut bool) {
 /// `draw_status_bar` uses DEC save/restore cursor (`\x1b7`/`\x1b8`) so it is
 /// safe to call mid-stream without disturbing the scroll region.  No-ops when
 /// the frame has not been drawn yet (`has_frame = false`) or `resize` is `None`.
-fn refresh_status_bar(
+pub(super) fn refresh_status_bar(
     resize: &Option<StreamResizeDims<'_>>,
     session_id: Option<&str>,
     approval: &SessionApproval,
@@ -75,6 +75,7 @@ fn refresh_status_bar(
             prompt_tokens,
             context_window,
             daemon_up: d.daemon_up,
+            tools_total: d.tools_total,
         },
     );
 }

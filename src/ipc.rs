@@ -376,6 +376,24 @@ pub enum Response {
     /// The output captured after an approved tool call completes.
     /// Sent to the client so it can display a dimmed result block.
     ToolResult(String),
+    /// Emitted before the daemon executes a silent tool call (one without an
+    /// approval prompt or panel response). Allows the client to display a
+    /// one-line history entry and animate an elapsed timer while the tool runs.
+    ToolStarted {
+        id: String,
+        tool: String,
+        /// Human-readable argument summary, e.g. `"path=src/foo.rs lines=10-50"`.
+        summary: String,
+    },
+    /// Emitted after a silent tool call returns (when no panel response will
+    /// follow). The client replaces the spinner line with a final `⎿` result line.
+    ToolFinished {
+        id: String,
+        ok: bool,
+        elapsed_ms: u64,
+        #[serde(default)]
+        detail: Option<String>,
+    },
     /// Daemon cannot determine the target pane and needs the user to choose.
     /// Client displays the list and returns a `Request::PaneSelectResponse`.
     PaneSelectPrompt { id: String, panes: Vec<PaneInfo> },

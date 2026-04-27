@@ -327,6 +327,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             prompt_tokens: 0,
             context_window: ctx_pre,
             daemon_up: false,
+            tools_total: 0,
         },
     );
 
@@ -432,6 +433,7 @@ async fn run_chat_inner_raw(
             start: start_time,
             model: model.clone(),
             daemon_up: false,
+            tools_total: 0,
             has_frame: false,
         };
         match ask_with_session(
@@ -486,6 +488,7 @@ async fn run_chat_inner_raw(
             prompt_tokens,
             context_window,
             daemon_up,
+            tools_total: 0,
         },
     );
 
@@ -506,6 +509,7 @@ async fn run_chat_inner_raw(
                 prompt_tokens,
                 context_window,
                 daemon_up,
+                tools_total: 0,
             },
             &mut last_ctrl_c,
         )
@@ -558,6 +562,7 @@ async fn run_chat_inner_raw(
                     prompt_tokens,
                     context_window,
                     daemon_up,
+                    tools_total: 0,
                 },
             );
             continue;
@@ -589,6 +594,7 @@ async fn run_chat_inner_raw(
                         prompt_tokens,
                         context_window,
                         daemon_up,
+                        tools_total: 0,
                     },
                 );
             }
@@ -639,6 +645,7 @@ async fn run_chat_inner_raw(
                             prompt_tokens,
                             context_window,
                             daemon_up,
+                            tools_total: 0,
                         },
                     );
                 }
@@ -699,6 +706,7 @@ async fn run_chat_inner_raw(
                             prompt_tokens,
                             context_window,
                             daemon_up,
+                            tools_total: 0,
                         },
                     );
                     // Emit a system message into the AI context so it knows the target changed.
@@ -730,6 +738,7 @@ async fn run_chat_inner_raw(
                             prompt_tokens,
                             context_window,
                             daemon_up,
+                            tools_total: 0,
                         },
                     );
                 }
@@ -841,6 +850,7 @@ async fn run_chat_inner_raw(
                         prompt_tokens,
                         context_window,
                         daemon_up,
+                        tools_total: 0,
                     },
                 );
                 continue;
@@ -1126,6 +1136,7 @@ async fn run_chat_inner_raw(
                 start: start_time,
                 model: model.clone(),
                 daemon_up,
+                tools_total: 0,
                 has_frame: true,
             };
             match ask_with_session(
@@ -1177,6 +1188,7 @@ async fn run_chat_inner_raw(
                 prompt_tokens,
                 context_window,
                 daemon_up,
+                tools_total: 0,
             },
         );
     }

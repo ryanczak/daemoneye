@@ -57,6 +57,35 @@ fn local_user_host() -> String {
     }
 }
 
+/// Print a one-line `▸ tool(summary)` entry when a silent tool call starts.
+/// The caller should set `response_started = false` afterward so the Phase-1
+/// spinner takes over to animate the elapsed time while the tool runs.
+pub fn print_tool_started(tool: &str, summary: &str) {
+    use std::io::Write;
+    let args = if summary.is_empty() {
+        String::new()
+    } else {
+        format!("({})", summary)
+    };
+    println!("  \x1b[2m\x1b[36m▸\x1b[0m \x1b[2m{tool}{args}\x1b[0m");
+    std::io::stdout().flush().ok();
+}
+
+/// Print a one-line `⎿ detail · elapsed` result entry when a silent tool call finishes.
+/// Should be called after clearing the spinner line with `\r\x1b[K`.
+pub fn print_tool_finished(ok: bool, elapsed_ms: u64, detail: Option<&str>) {
+    use std::io::Write;
+    let mark = if ok {
+        "\x1b[32m⎿\x1b[0m"
+    } else {
+        "\x1b[31m⎿\x1b[0m"
+    };
+    let secs = elapsed_ms as f64 / 1000.0;
+    let status = detail.unwrap_or(if ok { "ok" } else { "failed" });
+    println!("    {mark} \x1b[2m{status} · {secs:.1}s\x1b[0m");
+    std::io::stdout().flush().ok();
+}
+
 /// Render a user query as a bordered box in the chat history scroll region.
 ///
 /// The box uses the same bold-cyan `╭╮╰╯` style as the input frame and the
@@ -309,7 +338,7 @@ pub fn draw_input_frame_n(
     std::io::stdout().flush().ok();
 }
 
-/// The 6 status-bar fields passed as a single reference to every rendering function.
+/// The status-bar fields passed as a single reference to every rendering function.
 pub struct StatusBarState<'a> {
     pub session_id: &'a str,
     pub approval_hint: &'a str,
@@ -317,6 +346,8 @@ pub struct StatusBarState<'a> {
     pub prompt_tokens: u32,
     pub context_window: u32,
     pub daemon_up: bool,
+    /// Session-cumulative count of silent tool calls (incremented on ToolStarted).
+    pub tools_total: u32,
 }
 
 /// Render (or refresh) the status bar in the bottom row.
@@ -346,6 +377,12 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
         String::new()
     } else {
         format!("· {} ", sb.model)
+    };
+
+    let tools_str = if sb.tools_total > 0 {
+        format!("· tools: {} ", sb.tools_total)
+    } else {
+        String::new()
     };
 
     let token_str = if sb.prompt_tokens > 0 && sb.context_window > 0 {
@@ -397,7 +434,8 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
     // produced (i.e. the full hint overflows base alone but the terminal is wide
     // enough to show something useful).
     let mut candidates: Vec<Box<dyn Fn() -> String>> = vec![
-        Box::new(|| format!("{}{}{}{}", base, model_str, token_str, hint_str)),
+        Box::new(|| format!("{}{}{}{}{}", base, model_str, tools_str, token_str, hint_str)),
+        Box::new(|| format!("{}{}{}{}", base, model_str, tools_str, hint_str)),
         Box::new(|| format!("{}{}{}", base, model_str, hint_str)),
         Box::new(|| format!("{}{}", base, hint_str)),
     ];
