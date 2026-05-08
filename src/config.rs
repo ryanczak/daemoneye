@@ -916,7 +916,7 @@ pub fn load_named_prompt(name: &str) -> PromptDef {
 }
 
 // ---------------------------------------------------------------------------
-// Built-in SRE prompt (also written to ~/.daemoneye/prompts/sre.toml on startup)
+// Built-in SRE prompt (also written to ~/.daemoneye/etc/prompts/sre.toml on startup)
 // ---------------------------------------------------------------------------
 
 const SRE_PROMPT_TOML: &str = include_str!("../assets/prompts/sre.toml");
