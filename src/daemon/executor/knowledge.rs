@@ -30,16 +30,15 @@ fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
         return;
     }
     let Some(sid) = ctx.session_id else { return };
-    if let Ok(mut store) = ctx.sessions.lock() {
-        if let Some(entry) = store.get_mut(sid) {
-            entry
-                .artifacts_created
-                .push(crate::session_store::ArtifactRef {
-                    kind: kind.to_string(),
-                    name: name.to_string(),
-                    at_turn: ctx.turn_count,
-                });
-        }
+    let Ok(mut store) = ctx.sessions.lock() else { return };
+    if let Some(entry) = store.get_mut(sid) {
+        entry
+            .artifacts_created
+            .push(crate::session_store::ArtifactRef {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                at_turn: ctx.turn_count,
+            });
     }
 }
 

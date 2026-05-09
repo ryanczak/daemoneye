@@ -4,7 +4,6 @@ mod config;
 mod daemon;
 mod header;
 mod ipc;
-mod log;
 mod manifest;
 mod memory;
 mod pane_prefs;

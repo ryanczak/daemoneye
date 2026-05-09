@@ -1,4 +1,3 @@
-use crate::log_event;
 use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -291,7 +290,7 @@ impl ScheduleStore {
             jobs.push(job);
         }
         self.save()?;
-        log_event!(
+        log::info!(
             "Added scheduled job '{}' [{}] (ID: {})",
             name,
             kind,
@@ -316,7 +315,7 @@ impl ScheduleStore {
         }
         if found {
             self.save()?;
-            log_event!(
+            log::info!(
                 "Permanently deleted scheduled job '{}' (ID: {})",
                 name,
                 &id[..8]
@@ -342,7 +341,7 @@ impl ScheduleStore {
         }
         if found {
             self.save()?;
-            log_event!("Cancelled scheduled job '{}' (ID: {})", name, &id[..8]);
+            log::info!("Cancelled scheduled job '{}' (ID: {})", name, &id[..8]);
         }
         Ok(found)
     }
@@ -418,7 +417,7 @@ impl ScheduleStore {
                 new_status_str = job.status.describe();
             }
         }
-        log_event!(
+        log::info!(
             "Job '{}' (ID: {}) finished. Status: {}",
             job_name,
             &id[..8.min(id.len())],

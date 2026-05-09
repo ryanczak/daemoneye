@@ -325,12 +325,10 @@ fn format_messages_for_narrative(messages: &[Message]) -> String {
                     }
                 }
             }
-            "user" => {
-                if !m.content.is_empty() {
-                    out.push_str("USER: ");
-                    out.push_str(&m.content);
-                    out.push('\n');
-                }
+            "user" if !m.content.is_empty() => {
+                out.push_str("USER: ");
+                out.push_str(&m.content);
+                out.push('\n');
             }
             "assistant" => {
                 if !m.content.is_empty() {

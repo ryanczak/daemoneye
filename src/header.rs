@@ -318,16 +318,15 @@ pub fn parse_yaml_frontmatter(src: &str) -> (Header, usize) {
 /// the closing `---`.  If there is no frontmatter, prepends a minimal block.
 /// Returns the content unchanged if `session_origin` is already present.
 pub fn inject_yaml_session_origin(content: &str, name: &str) -> String {
-    if content.starts_with("---\n") {
-        let after_open = &content[4..];
-        if let Some(rel) = after_open.find("\n---\n") {
-            let fm_body = &after_open[..rel];
-            if fm_body.contains("session_origin:") {
-                return content.to_string();
-            }
-            let rest = &after_open[rel..]; // starts with "\n---\n"
-            return format!("---\n{}\nsession_origin: \"{}\"{}", fm_body, name, rest);
+    if let Some(after_open) = content.strip_prefix("---\n")
+        && let Some(rel) = after_open.find("\n---\n")
+    {
+        let fm_body = &after_open[..rel];
+        if fm_body.contains("session_origin:") {
+            return content.to_string();
         }
+        let rest = &after_open[rel..]; // starts with "\n---\n"
+        return format!("---\n{}\nsession_origin: \"{}\"{}", fm_body, name, rest);
     }
     // No valid frontmatter — prepend a minimal block.
     format!("---\nsession_origin: \"{}\"\n---\n{}", name, content)

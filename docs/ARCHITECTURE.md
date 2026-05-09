@@ -106,6 +106,7 @@ graph TD
 | `bin/` | Symlinks and wrappers for executables |
 | `lib/` | Shared SDK modules (de_sdk, Python helpers) |
 | `var/run/daemoneye.sock` | Unix domain socket — IPC between CLI and daemon |
+| `var/sessions/` | Named session persistence (`<name>/meta.toml`, `<name>/messages.jsonl`, `index.json`) |
 | `var/run/schedules.json` | Scheduled job store (atomic writes) |
 | `var/run/pane_prefs.json` | Persisted pane-selection preferences (per session) |
 | `var/log/events.jsonl` | Structured event log (every tool call, lifecycle event) |

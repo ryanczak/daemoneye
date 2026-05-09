@@ -308,25 +308,24 @@ where
                             } else {
                                 false
                             };
-                            if should_suggest {
-                                if let Some((name, desc)) =
+                            if should_suggest
+                                && let Some((name, desc)) =
                                     auto_name::suggest_session_name(&messages, config).await
-                                {
-                                    let hint = if desc.is_empty() {
-                                        format!(
-                                            "💡 Save this session as '{}'? \
-                                             Run `/session save {}`",
-                                            name, name
-                                        )
-                                    } else {
-                                        format!(
-                                            "💡 Save this session as '{}'? \
-                                             Run `/session save {} {}`",
-                                            name, name, desc
-                                        )
-                                    };
-                                    send_response_split(tx, Response::SystemMsg(hint)).await?;
-                                }
+                            {
+                                let hint = if desc.is_empty() {
+                                    format!(
+                                        "💡 Save this session as '{}'? \
+                                         Run `/session save {}`",
+                                        name, name
+                                    )
+                                } else {
+                                    format!(
+                                        "💡 Save this session as '{}'? \
+                                         Run `/session save {} {}`",
+                                        name, name, desc
+                                    )
+                                };
+                                send_response_split(tx, Response::SystemMsg(hint)).await?;
                             }
                         }
 

@@ -482,7 +482,7 @@ pub fn sanitize_cmd_for_window(cmd: &str, max_len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::Message;
+    
 
     #[test]
     fn normalize_basic() {
@@ -618,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn non_interactive_ssh_tunnel_N() {
+    fn non_interactive_ssh_tunnel_n() {
         assert!(!is_interactive_command(
             "ssh -N -L 8080:localhost:80 user@host"
         ));
