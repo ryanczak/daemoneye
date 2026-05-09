@@ -25,11 +25,14 @@ pub fn daemon_uptime_secs() -> u64 {
         .unwrap_or(0)
 }
 
+pub mod auto_name;
 pub mod background;
 pub mod digest;
 pub mod executor;
 pub mod ghost;
+pub mod hook;
 pub mod policy;
+pub mod prompt;
 pub mod scheduled;
 pub mod server;
 pub mod session;

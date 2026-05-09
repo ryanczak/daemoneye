@@ -873,7 +873,7 @@ pub async fn send_response(stream: &mut UnixStream, response: Response) -> anyho
 
 pub async fn send_response_split<W>(tx: &mut W, response: Response) -> anyhow::Result<()>
 where
-    W: tokio::io::AsyncWriteExt + Unpin,
+    W: tokio::io::AsyncWriteExt + Unpin + ?Sized,
 {
     let mut data = serde_json::to_vec(&response)?;
     data.push(b'\n');

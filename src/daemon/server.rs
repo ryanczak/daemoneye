@@ -4,15 +4,15 @@ use crate::config::default_socket_path;
 use crate::config::{Config, load_named_prompt};
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
+use crate::daemon::prompt::{PromptCtx, build_first_turn_prompt, build_subsequent_turn_prompt};
 use crate::ipc::{Request, Response};
 use crate::scheduler::ScheduleStore;
-use crate::sys_context::get_or_init_sys_context;
 use crate::tmux::cache::SessionCache;
 use anyhow::Result;
 use libc;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite};
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 
@@ -25,42 +25,8 @@ use tokio::net::UnixStream;
 /// format `%<digits>` (e.g. `%0`, `%23`).  Rejects anything else so that
 /// crafted hook payloads cannot inject escape sequences or unexpected strings
 /// into the cache or broadcast channels.
-fn is_valid_pane_id(id: &str) -> bool {
+pub(crate) fn is_valid_pane_id(id: &str) -> bool {
     id.starts_with('%') && id.len() > 1 && id[1..].bytes().all(|b| b.is_ascii_digit())
-}
-
-/// Prepend a `[FOREGROUND TARGET]` line to the session context block.
-///
-/// This pins the model to a specific pane ID for foreground execution so it
-/// never has to infer the target from topology.  If `target_pane` is `None`
-/// or the pane is not in the cache, returns the context unchanged.
-fn prepend_foreground_target(
-    ctx: &str,
-    target_pane: Option<&str>,
-    cache: &crate::tmux::cache::SessionCache,
-) -> String {
-    let Some(pane_id) = target_pane else {
-        return ctx.to_string();
-    };
-    let (cmd, window) = {
-        let panes = cache.panes.read().unwrap_or_log();
-        if let Some(p) = panes.get(pane_id) {
-            (p.current_cmd.clone(), p.window_name.clone())
-        } else {
-            (String::new(), String::new())
-        }
-    };
-    let detail = if !cmd.is_empty() && !window.is_empty() {
-        format!(" ({}, '{}')", cmd, window)
-    } else if !cmd.is_empty() {
-        format!(" ({})", cmd)
-    } else {
-        String::new()
-    };
-    format!(
-        "[FOREGROUND TARGET] {}{} — for run_terminal_command(background=false), always pass target_pane=\"{}\"\n{}",
-        pane_id, detail, pane_id, ctx
-    )
 }
 
 /// Build the N15 catch-up brief from messages injected while the client was away.
@@ -151,183 +117,6 @@ pub(crate) fn build_catchup_brief(
 /// within the same daemon run) and in `~/.daemoneye/sessions/<id>.jsonl` (survives
 /// restarts). History is trimmed to `MAX_HISTORY` messages before each save.
 
-// ── Auto-naming helpers ───────────────────────────────────────────────────────
-
-const AUTONAME_SYSTEM_PROMPT: &str = "\
-You are a session naming assistant. Given a conversation snippet, output exactly two lines:\n\
-Line 1: a short kebab-case slug (1–4 words, lowercase letters and hyphens only, no punctuation).\n\
-Line 2: a one-sentence description (under 80 characters).\n\
-Output nothing else. No labels, no explanations.";
-
-const AUTONAME_TIMEOUT_SECS: u64 = 20;
-
-/// Call the digest model to suggest a `(name, description)` pair for an unnamed session.
-/// Returns `None` on timeout, API error, or if the response cannot be parsed into a valid name.
-async fn suggest_session_name(
-    messages: &[crate::ai::Message],
-    config: &crate::config::Config,
-) -> Option<(String, String)> {
-    // Build a compact transcript: at most the last 20 user/assistant exchanges.
-    let transcript: String = messages
-        .iter()
-        .rev()
-        .take(20)
-        .rev()
-        .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| {
-            format!(
-                "[{}] {}",
-                m.role,
-                m.content.chars().take(400).collect::<String>()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let user_msg = crate::ai::Message {
-        role: "user".to_string(),
-        content: format!("Conversation:\n\n{transcript}"),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    };
-
-    let model_entry =
-        config.resolve_model(config.models.contains_key("digest").then_some("digest"));
-    let client = crate::ai::make_client(
-        &model_entry.provider,
-        model_entry.resolve_api_key(),
-        model_entry.model.clone(),
-        model_entry.effective_base_url(),
-    );
-
-    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
-    let chat_fut = client.chat(AUTONAME_SYSTEM_PROMPT, vec![user_msg], ev_tx, false);
-    let timeout = std::time::Duration::from_secs(AUTONAME_TIMEOUT_SECS);
-
-    match tokio::time::timeout(timeout, chat_fut).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            log::debug!("auto-name: LLM error: {}", e);
-            return None;
-        }
-        Err(_) => {
-            log::debug!("auto-name: timed out after {}s", AUTONAME_TIMEOUT_SECS);
-            return None;
-        }
-    }
-
-    let mut text = String::new();
-    while let Some(ev) = ev_rx.recv().await {
-        if let crate::ai::AiEvent::Token(t) = ev {
-            text.push_str(&t);
-        }
-    }
-
-    let mut lines = text.trim().lines();
-    let raw_name = lines.next().unwrap_or("").trim().to_string();
-    let description = lines.next().unwrap_or("").trim().to_string();
-
-    // Validate: must pass session name rules.
-    if crate::session_store::validate_session_name(&raw_name).is_err() {
-        log::debug!("auto-name: suggested name '{}' failed validation", raw_name);
-        return None;
-    }
-
-    Some((raw_name, description))
-}
-
-/// Build a diff summary between two saved sessions using one cheap LLM call.
-/// Returns `None` on timeout or API error.
-async fn diff_sessions_summary(
-    meta1: &crate::session_store::SavedSessionMeta,
-    meta2: &crate::session_store::SavedSessionMeta,
-    config: &crate::config::Config,
-) -> Option<String> {
-    let format_meta = |m: &crate::session_store::SavedSessionMeta| {
-        let artifacts = if m.artifacts_created.is_empty() {
-            "  (none)".to_string()
-        } else {
-            m.artifacts_created
-                .iter()
-                .map(|a| format!("  - {} '{}' (turn {})", a.kind, a.name, a.at_turn))
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        format!(
-            "Name: {}\nDescription: {}\nTurns: {}\nLast active: {}\nArtifacts created:\n{}",
-            m.name,
-            if m.description.is_empty() {
-                "(none)"
-            } else {
-                &m.description
-            },
-            m.turn_count,
-            m.last_resumed_at.get(..10).unwrap_or(&m.last_resumed_at),
-            artifacts,
-        )
-    };
-
-    let prompt = format!(
-        "Compare these two DaemonEye chat sessions and describe the key differences \
-         in 150 words or fewer. Focus on: what each session worked on, different \
-         artifacts produced, different approaches or conclusions reached.\n\n\
-         Session 1 \"{}\":\n{}\n\n\
-         Session 2 \"{}\":\n{}",
-        meta1.name,
-        format_meta(meta1),
-        meta2.name,
-        format_meta(meta2),
-    );
-
-    let user_msg = crate::ai::Message {
-        role: "user".to_string(),
-        content: prompt,
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    };
-
-    let model_entry =
-        config.resolve_model(config.models.contains_key("digest").then_some("digest"));
-    let client = crate::ai::make_client(
-        &model_entry.provider,
-        model_entry.resolve_api_key(),
-        model_entry.model.clone(),
-        model_entry.effective_base_url(),
-    );
-
-    let system = "You are a concise technical writer. Summarize session differences clearly.";
-    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
-    let chat_fut = client.chat(system, vec![user_msg], ev_tx, false);
-    let timeout = std::time::Duration::from_secs(30);
-
-    match tokio::time::timeout(timeout, chat_fut).await {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            log::warn!("session diff: LLM error: {}", e);
-            return None;
-        }
-        Err(_) => {
-            log::warn!("session diff: timed out");
-            return None;
-        }
-    }
-
-    let mut text = String::new();
-    while let Some(ev) = ev_rx.recv().await {
-        if let crate::ai::AiEvent::Token(t) = ev {
-            text.push_str(&t);
-        }
-    }
-
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
 
 pub async fn handle_client(
     stream: UnixStream,
@@ -383,29 +172,100 @@ pub async fn handle_client(
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);
 
-    let (
-        initial_query,
-        client_pane,
-        session_id,
-        chat_pane,
-        prompt_override,
-        chat_width,
-        client_tmux_session,
-        client_target_pane,
-    ) = match request {
+    match request {
         Request::Ping => {
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
+            handle_ping(&mut tx).await?;
         }
         Request::Shutdown => {
-            send_response_split(&mut tx, Response::Ok).await?;
-            // Send SIGTERM to ourselves so the main loop's signal handler runs
-            // the full graceful shutdown sequence (hook uninstall, session cleanup,
-            // socket removal) rather than exiting here and bypassing it.
-            unsafe {
-                libc::kill(libc::getpid(), libc::SIGTERM);
-            }
+            handle_shutdown(&mut tx).await?;
             return Ok(());
+        }
+        Request::Refresh => {
+            handle_refresh(&mut tx).await?;
+        }
+        Request::SetModel { session_id, model: model_name } => {
+            handle_set_model(&mut tx, &sessions, &config, session_id, model_name).await?;
+        }
+        Request::ListModels { session_id } => {
+            handle_list_models(&mut tx, &sessions, &config, session_id).await?;
+        }
+        Request::SetPane { session_id, pane_id } => {
+            handle_set_pane(&mut tx, &sessions, &cache, session_id, pane_id).await?;
+        }
+        Request::ListPanesForSession { session_id } => {
+            handle_list_panes(&mut tx, &sessions, &cache, session_id).await?;
+        }
+        Request::Status => {
+            handle_status(&mut tx, &sessions, &schedule_store, &config).await?;
+        }
+        Request::QueryLimits { session_id: sid } => {
+            handle_query_limits(&mut tx, &sessions, &config, sid).await?;
+        }
+        Request::ResetSessionToolCount { session_id: sid } => {
+            handle_reset_tool_count(&mut tx, &sessions, sid).await?;
+        }
+        Request::SaveSession { session_id: sid, name, description, force } => {
+            handle_save_session(&mut tx, &sessions, sid, name, description, force).await?;
+        }
+        Request::LoadSession { session_id: sid, name, force } => {
+            handle_load_session(&mut tx, &sessions, &config, sid, name, force).await?;
+        }
+        Request::ListSavedSessions => {
+            handle_list_saved_sessions(&mut tx).await?;
+        }
+        Request::DeleteSavedSession { name } => {
+            handle_delete_saved_session(&mut tx, name).await?;
+        }
+        Request::RenameSavedSession { old_name, new_name } => {
+            handle_rename_saved_session(&mut tx, &sessions, old_name, new_name).await?;
+        }
+        Request::DiffSessions { name1, name2 } => {
+            handle_diff_sessions(&mut tx, &sessions, &config, name1, name2).await?;
+        }
+        Request::NotifyActivity { pane_id, .. } => {
+            crate::daemon::hook::handle_notify_activity(&mut tx, &pane_id).await?;
+        }
+        Request::NotifyComplete { pane_id, exit_code, .. } => {
+            crate::daemon::hook::handle_notify_complete(&mut tx, &pane_id, exit_code).await?;
+        }
+        Request::NotifyFocus { pane_id, .. } => {
+            crate::daemon::hook::handle_notify_focus(&cache, &mut tx, &pane_id).await?;
+        }
+        Request::NotifyWindowChanged { .. } => {
+            crate::daemon::hook::handle_notify_window_changed(&cache, &mut tx).await?;
+        }
+        Request::NotifySessionClosed { session_name } => {
+            crate::daemon::hook::handle_notify_session_closed(
+                Arc::clone(&sessions),
+                Arc::clone(&cache),
+                Arc::clone(&managed_session),
+                Arc::clone(&bg_session),
+                &mut tx,
+                session_name,
+            )
+            .await?;
+        }
+        Request::NotifySessionCreated { session_name } => {
+            crate::daemon::hook::handle_notify_session_created(&mut tx, session_name).await?;
+        }
+        Request::NotifyClientDetached { session_name } => {
+            crate::daemon::hook::handle_notify_client_detached(
+                Arc::clone(&sessions),
+                &mut tx,
+                session_name,
+            )
+            .await?;
+        }
+        Request::NotifyClientAttached { session_name } => {
+            crate::daemon::hook::handle_notify_client_attached(
+                Arc::clone(&sessions),
+                &mut tx,
+                session_name,
+            )
+            .await?;
+        }
+        Request::NotifyResize { width, height, .. } => {
+            crate::daemon::hook::handle_notify_resize(&cache, &mut tx, width, height).await?;
         }
         Request::Ask {
             query,
@@ -417,776 +277,751 @@ pub async fn handle_client(
             tmux_session,
             target_pane,
             model: _ask_model,
-        } => (
-            query,
-            tmux_pane,
-            session_id,
-            chat_pane,
-            prompt,
-            chat_width,
-            tmux_session,
-            target_pane,
-        ),
-        Request::Refresh => {
-            crate::sys_context::refresh_sys_context();
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        Request::SetModel {
-            session_id,
-            model: model_name,
         } => {
-            let available = config.available_models();
-            if available.contains(&model_name.as_str()) {
-                if let Ok(mut store) = sessions.lock()
-                    && let Some(entry) = store.get_mut(&session_id)
-                {
-                    entry.active_model = Some(model_name.clone());
-                }
-                send_response_split(&mut tx, Response::ModelChanged { model: model_name }).await?;
-            } else {
-                let list = available.join(", ");
-                send_response_split(
-                    &mut tx,
-                    Response::Error(format!(
-                        "Unknown model '{model_name}'. Configured models: {list}"
-                    )),
-                )
-                .await?;
-            }
+            handle_ask(
+                query, tmux_pane, session_id, chat_pane, prompt,
+                chat_width, tmux_session, target_pane,
+                &mut tx, &mut rx, cache, &sessions, schedule_store,
+                bg_session, &config,
+            )
+            .await?;
             return Ok(());
         }
-        Request::ListModels { session_id } => {
-            let models: Vec<(String, String)> = config
+        _ => {}
+    }
+
+    Ok(())
+}
+
+// ── Quick-return request handlers ─────────────────────────────────────────────
+
+async fn handle_ping<W>(tx: &mut W) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    send_response_split(tx, Response::Ok).await?;
+    Ok(())
+}
+
+async fn handle_shutdown<W>(tx: &mut W) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    send_response_split(tx, Response::Ok).await?;
+    unsafe {
+        libc::kill(libc::getpid(), libc::SIGTERM);
+    }
+    Ok(())
+}
+
+async fn handle_refresh<W>(tx: &mut W) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    crate::sys_context::refresh_sys_context();
+    send_response_split(tx, Response::Ok).await?;
+    Ok(())
+}
+
+// ── Model management handlers ────────────────────────────────────────────────
+
+async fn handle_set_model<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    config: &Config,
+    session_id: String,
+    model_name: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let available = config.available_models();
+    if available.contains(&model_name.as_str()) {
+        if let Ok(mut store) = sessions.lock()
+            && let Some(entry) = store.get_mut(&session_id)
+        {
+            entry.active_model = Some(model_name.clone());
+        }
+        send_response_split(tx, Response::ModelChanged { model: model_name }).await?;
+    } else {
+        let list = available.join(", ");
+        send_response_split(
+            tx,
+            Response::Error(format!(
+                "Unknown model '{model_name}'. Configured models: {list}"
+            )),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn handle_list_models<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    config: &Config,
+    session_id: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let models: Vec<(String, String)> = config
+        .available_models()
+        .into_iter()
+        .map(|key| {
+            let model_id = config.resolve_model(Some(key)).model.clone();
+            (key.to_string(), model_id)
+        })
+        .collect();
+    let active = if let Ok(store) = sessions.lock()
+        && let Some(entry) = store.get(&session_id)
+        && let Some(ref m) = entry.active_model
+    {
+        m.clone()
+    } else {
+        "default".to_string()
+    };
+    send_response_split(tx, Response::ModelList { models, active }).await?;
+    Ok(())
+}
+
+// ── Pane management handlers ─────────────────────────────────────────────────
+
+async fn handle_set_pane<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    cache: &SessionCache,
+    session_id: String,
+    pane_id: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    if !is_valid_pane_id(&pane_id) {
+        send_response_split(
+            tx,
+            Response::Error(format!(
+                "Invalid pane ID '{}'. Use the format %N (e.g. %3).",
+                pane_id
+            )),
+        )
+        .await?;
+        return Ok(());
+    }
+    if let Ok(mut store) = sessions.lock()
+        && let Some(entry) = store.get_mut(&session_id)
+    {
+        entry.default_target_pane = Some(pane_id.clone());
+        crate::pane_prefs::save(&entry.tmux_session, &pane_id);
+    }
+    let (cmd, window) = {
+        let panes = cache.panes.read().unwrap_or_log();
+        panes
+            .get(&pane_id)
+            .map(|p| (p.current_cmd.clone(), p.window_name.clone()))
+            .unwrap_or_default()
+    };
+    let description = if !cmd.is_empty() && !window.is_empty() {
+        format!("{} ({})", pane_id, cmd)
+    } else {
+        pane_id.clone()
+    };
+    send_response_split(
+        tx,
+        Response::PaneChanged {
+            pane_id,
+            description,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_list_panes<W>(tx: &mut W, sessions: &SessionStore, cache: &SessionCache, session_id: String) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let current_target = if let Ok(store) = sessions.lock() {
+        store
+            .get(&session_id)
+            .and_then(|e| e.default_target_pane.clone())
+    } else {
+        None
+    };
+    let chat_pane_id: Option<String> = if let Ok(store) = sessions.lock() {
+        store.get(&session_id).and_then(|e| e.chat_pane.clone())
+    } else {
+        None
+    };
+    let panes_snapshot = {
+        let panes = cache.panes.read().unwrap_or_log();
+        let mut entries: Vec<_> = panes
+            .iter()
+            .filter(|(id, _)| chat_pane_id.as_deref() != Some(id.as_str()))
+            .filter(|(_, s)| {
+                !s.window_name.starts_with("de-bg-")
+                    && !s.window_name.starts_with("de-sj-")
+                    && !s.window_name.starts_with("de-gs-bg-")
+                    && !s.window_name.starts_with("de-gs-sj-")
+                    && !s.window_name.starts_with("de-gs-ir-")
+            })
+            .filter(|(id, _)| crate::tmux::pane_exists(id))
+            .map(|(id, s)| {
+                let is_target = current_target.as_deref() == Some(id.as_str());
+                (
+                    id.clone(),
+                    s.current_cmd.clone(),
+                    s.window_name.clone(),
+                    s.pane_index,
+                    is_target,
+                )
+            })
+            .collect();
+        entries.sort_by_key(|(_, _, win, idx, _)| (win.clone(), *idx));
+        entries
+    };
+    send_response_split(
+        tx,
+        Response::PaneList {
+            panes: panes_snapshot,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+// ── Status / limits handlers ─────────────────────────────────────────────────
+
+async fn handle_status<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    schedule_store: &ScheduleStore,
+    config: &Config,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let uptime_secs = crate::daemon::daemon_uptime_secs();
+    let pid = std::process::id();
+    let mut active_sessions = 0;
+    let mut active_prompt_tokens = 0;
+    let mut total_turns = 0;
+    let mut status_active_model: Option<String> = None;
+    if let Ok(sess_map) = sessions.lock() {
+        active_sessions = sess_map.len();
+        active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
+        total_turns = sess_map.values().map(|s| s.turn_count).sum();
+        status_active_model = sess_map
+            .values()
+            .filter(|s| !s.is_ghost)
+            .max_by_key(|s| s.last_accessed)
+            .and_then(|s| s.active_model.clone());
+    }
+    let schedule_count = schedule_store.list().len();
+
+    let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
+    let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
+    let commands_fg_approved = crate::daemon::stats::get_commands_fg_approved();
+    let commands_fg_denied = crate::daemon::stats::get_commands_fg_denied();
+    let commands_bg_succeeded = crate::daemon::stats::get_commands_bg_succeeded();
+    let commands_bg_failed = crate::daemon::stats::get_commands_bg_failed();
+    let commands_bg_approved = crate::daemon::stats::get_commands_bg_approved();
+    let commands_bg_denied = crate::daemon::stats::get_commands_bg_denied();
+    let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
+    let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
+    let ghosts_launched = crate::daemon::stats::get_ghosts_launched();
+    let ghosts_active = crate::daemon::stats::get_ghosts_active();
+    let ghosts_completed = crate::daemon::stats::get_ghosts_completed();
+    let ghosts_failed = crate::daemon::stats::get_ghosts_failed();
+    let webhooks_received = crate::daemon::stats::get_webhooks_received();
+    let webhooks_rejected = crate::daemon::stats::get_webhooks_rejected();
+    let webhook_url = format!(
+        "http://{}:{}/webhook",
+        config.webhook.bind_addr, config.webhook.port
+    );
+    let recent_commands = crate::daemon::stats::get_recent_commands();
+
+    let runbook_count = crate::runbook::list_runbooks()
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let runbooks_created = crate::daemon::stats::get_runbooks_created();
+    let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
+    let runbooks_deleted = crate::daemon::stats::get_runbooks_deleted();
+    let script_count = crate::scripts::list_scripts().map(|v| v.len()).unwrap_or(0);
+    let scripts_created = crate::daemon::stats::get_scripts_created();
+    let scripts_executed = crate::daemon::stats::get_scripts_executed();
+    let scripts_deleted = crate::daemon::stats::get_scripts_deleted();
+    let memories_created = crate::daemon::stats::get_memories_created();
+    let memories_recalled = crate::daemon::stats::get_memories_recalled();
+    let memories_deleted = crate::daemon::stats::get_memories_deleted();
+    let schedules_created = crate::daemon::stats::get_schedules_created();
+    let schedules_executed = crate::daemon::stats::get_schedules_executed();
+    let schedules_deleted = crate::daemon::stats::get_schedules_deleted();
+    let mut memory_breakdown = std::collections::HashMap::new();
+    if let Ok(memories) = crate::memory::list_memories(None) {
+        for (cat, _) in memories {
+            *memory_breakdown.entry(cat).or_insert(0) += 1;
+        }
+    }
+
+    let active_entry = config.resolve_model(status_active_model.as_deref());
+    let context_window_tokens = active_entry.context_window();
+    let compactions = crate::daemon::stats::get_compactions();
+    let compaction_ratio = crate::daemon::stats::get_compaction_ratio();
+
+    send_response_split(
+        tx,
+        Response::DaemonStatus {
+            uptime_secs,
+            pid,
+            active_sessions,
+            total_turns,
+            provider: active_entry.provider.clone(),
+            model: active_entry.model.clone(),
+            available_models: config
                 .available_models()
                 .into_iter()
-                .map(|key| {
-                    let model_id = config.resolve_model(Some(key)).model.clone();
-                    (key.to_string(), model_id)
-                })
-                .collect();
-            let active = if let Ok(store) = sessions.lock()
-                && let Some(entry) = store.get(&session_id)
-                && let Some(ref m) = entry.active_model
-            {
-                m.clone()
-            } else {
-                "default".to_string()
-            };
-            send_response_split(&mut tx, Response::ModelList { models, active }).await?;
-            return Ok(());
-        }
-        Request::SetPane {
-            session_id,
-            pane_id,
-        } => {
-            // Validate it looks like a tmux pane ID.
-            if !is_valid_pane_id(&pane_id) {
-                send_response_split(
-                    &mut tx,
-                    Response::Error(format!(
-                        "Invalid pane ID '{}'. Use the format %N (e.g. %3).",
-                        pane_id
-                    )),
-                )
-                .await?;
-                return Ok(());
+                .map(|s| s.to_string())
+                .collect(),
+            socket_path: default_socket_path().display().to_string(),
+            schedule_count,
+            commands_fg_succeeded,
+            commands_fg_failed,
+            commands_fg_approved,
+            commands_fg_denied,
+            commands_bg_succeeded,
+            commands_bg_failed,
+            commands_bg_approved,
+            commands_bg_denied,
+            commands_sched_succeeded,
+            commands_sched_failed,
+            ghosts_launched,
+            ghosts_active,
+            ghosts_completed,
+            ghosts_failed,
+            webhooks_received,
+            webhooks_rejected,
+            webhook_url,
+            runbook_count,
+            runbooks_created,
+            runbooks_executed,
+            runbooks_deleted,
+            script_count,
+            scripts_created,
+            scripts_executed,
+            scripts_deleted,
+            memories_created,
+            memories_recalled,
+            memories_deleted,
+            schedules_created,
+            schedules_executed,
+            schedules_deleted,
+            active_prompt_tokens,
+            context_window_tokens,
+            recent_commands,
+            memory_breakdown,
+            redaction_counts: crate::ai::filter::get_redaction_counts(),
+            compactions,
+            compaction_ratio,
+            scripts_approved: crate::daemon::stats::get_scripts_approved(),
+            scripts_denied: crate::daemon::stats::get_scripts_denied(),
+            runbooks_approved: crate::daemon::stats::get_runbooks_approved(),
+            runbooks_denied: crate::daemon::stats::get_runbooks_denied(),
+            file_edits_approved: crate::daemon::stats::get_file_edits_approved(),
+            file_edits_denied: crate::daemon::stats::get_file_edits_denied(),
+            limits: {
+                let mut overrides: Vec<(String, u32)> = config
+                    .limits
+                    .per_tool
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect();
+                overrides.sort_by(|a, b| a.0.cmp(&b.0));
+                crate::ipc::LimitsSummary {
+                    per_tool_batch: config.limits.per_tool_batch,
+                    total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
+                    tool_result_chars: config.limits.tool_result_chars,
+                    max_history: config.limits.max_history,
+                    max_turns: config.limits.max_turns,
+                    max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
+                    per_tool_overrides: overrides,
+                }
+            },
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_query_limits<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    config: &Config,
+    session_id: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let (turn_count, tool_calls_this_session, history_len) = if let Ok(store) =
+        sessions.lock()
+        && let Some(entry) = store.get(&session_id)
+    {
+        (
+            entry.turn_count,
+            entry.tool_calls_this_session,
+            entry.messages.len(),
+        )
+    } else {
+        (0, 0, 0)
+    };
+    let mut overrides: Vec<(String, u32)> = config
+        .limits
+        .per_tool
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    overrides.sort_by(|a, b| a.0.cmp(&b.0));
+    send_response_split(
+        tx,
+        Response::LimitsInfo {
+            limits: crate::ipc::LimitsSummary {
+                per_tool_batch: config.limits.per_tool_batch,
+                total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
+                tool_result_chars: config.limits.tool_result_chars,
+                max_history: config.limits.max_history,
+                max_turns: config.limits.max_turns,
+                max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
+                per_tool_overrides: overrides,
+            },
+            turn_count,
+            tool_calls_this_session,
+            history_len,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_reset_tool_count<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    session_id: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    if let Ok(mut store) = sessions.lock()
+        && let Some(entry) = store.get_mut(&session_id)
+    {
+        entry.tool_calls_this_session = 0;
+        log::info!("Session {}: per-session tool call counter reset", session_id);
+    }
+    send_response_split(tx, Response::Ok).await?;
+    Ok(())
+}
+
+// ── Named session CRUD handlers ──────────────────────────────────────────────
+
+async fn handle_save_session<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    session_id: String,
+    name: String,
+    description: String,
+    force: bool,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let (msgs, turn_count, current_saved, model_name, artifacts) = if let Ok(store) =
+        sessions.lock()
+        && let Some(entry) = store.get(&session_id)
+    {
+        (
+            entry.messages.clone(),
+            entry.turn_count,
+            entry.saved_name.clone(),
+            entry
+                .active_model
+                .clone()
+                .unwrap_or_else(|| "default".to_string()),
+            entry.artifacts_created.clone(),
+        )
+    } else {
+        (Vec::new(), 0, None, "default".to_string(), Vec::new())
+    };
+
+    match crate::session_store::save_session(
+        &name,
+        current_saved.as_deref(),
+        &description,
+        &msgs,
+        turn_count,
+        &model_name,
+        &artifacts,
+        force,
+    ) {
+        Ok(()) => {
+            if current_saved.is_none() && !artifacts.is_empty() {
+                let errs = crate::session_store::backfill_session_origin(&artifacts, &name);
+                if !errs.is_empty() {
+                    log::warn!(
+                        "Session {}: backfill_session_origin failed for: {}",
+                        session_id,
+                        errs.join(", ")
+                    );
+                }
             }
-            // Update the session entry.
             if let Ok(mut store) = sessions.lock()
                 && let Some(entry) = store.get_mut(&session_id)
             {
-                entry.default_target_pane = Some(pane_id.clone());
-                // Persist so the preference survives daemon restarts.
-                crate::pane_prefs::save(&entry.tmux_session, &pane_id);
+                entry.saved_name = Some(name.clone());
+                entry.dirty = false;
             }
-            // Build a human-readable description from the cache.
-            let (cmd, window) = {
-                let panes = cache.panes.read().unwrap_or_log();
-                panes
-                    .get(&pane_id)
-                    .map(|p| (p.current_cmd.clone(), p.window_name.clone()))
-                    .unwrap_or_default()
-            };
-            let description = if !cmd.is_empty() && !window.is_empty() {
-                format!("{} ({})", pane_id, cmd)
-            } else {
-                pane_id.clone()
-            };
-            send_response_split(
-                &mut tx,
-                Response::PaneChanged {
-                    pane_id,
-                    description,
-                },
-            )
-            .await?;
-            return Ok(());
+            log::info!("Session {}: saved as '{}'", session_id, name);
+            send_response_split(tx, Response::SessionSaved { name }).await?;
         }
-        Request::ListPanesForSession { session_id } => {
-            let current_target = if let Ok(store) = sessions.lock() {
-                store
-                    .get(&session_id)
-                    .and_then(|e| e.default_target_pane.clone())
-            } else {
-                None
-            };
-            let chat_pane_id: Option<String> = if let Ok(store) = sessions.lock() {
-                store.get(&session_id).and_then(|e| e.chat_pane.clone())
-            } else {
-                None
-            };
-            let panes_snapshot = {
-                let panes = cache.panes.read().unwrap_or_log();
-                let mut entries: Vec<_> = panes
-                    .iter()
-                    .filter(|(id, _)| chat_pane_id.as_deref() != Some(id.as_str()))
-                    .filter(|(_, s)| {
-                        !s.window_name.starts_with("de-bg-")
-                            && !s.window_name.starts_with("de-sj-")
-                            && !s.window_name.starts_with("de-gs-bg-")
-                            && !s.window_name.starts_with("de-gs-sj-")
-                            && !s.window_name.starts_with("de-gs-ir-")
-                    })
-                    .filter(|(id, _)| crate::tmux::pane_exists(id))
-                    .map(|(id, s)| {
-                        let is_target = current_target.as_deref() == Some(id.as_str());
-                        (
-                            id.clone(),
-                            s.current_cmd.clone(),
-                            s.window_name.clone(),
-                            s.pane_index,
-                            is_target,
-                        )
-                    })
-                    .collect();
-                entries.sort_by_key(|(_, _, win, idx, _)| (win.clone(), *idx));
-                entries
-            };
-            send_response_split(
-                &mut tx,
-                Response::PaneList {
-                    panes: panes_snapshot,
-                },
-            )
-            .await?;
-            return Ok(());
+        Err(e) => {
+            send_response_split(tx, Response::Error(e.to_string())).await?;
         }
-        // F1: return a live status snapshot to `daemoneye status`.
-        Request::Status => {
-            let uptime_secs = crate::daemon::daemon_uptime_secs();
-            let pid = std::process::id();
-            let mut active_sessions = 0;
-            let mut active_prompt_tokens = 0;
-            let mut total_turns = 0;
-            // Model name from the most recently accessed non-ghost session, if any.
-            let mut status_active_model: Option<String> = None;
-            if let Ok(sess_map) = sessions.lock() {
-                active_sessions = sess_map.len();
-                active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
-                total_turns = sess_map.values().map(|s| s.turn_count).sum();
-                status_active_model = sess_map
-                    .values()
-                    .filter(|s| !s.is_ghost)
-                    .max_by_key(|s| s.last_accessed)
-                    .and_then(|s| s.active_model.clone());
-            }
-            let schedule_count = schedule_store.list().len();
+    }
+    Ok(())
+}
 
-            let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
-            let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
-            let commands_fg_approved = crate::daemon::stats::get_commands_fg_approved();
-            let commands_fg_denied = crate::daemon::stats::get_commands_fg_denied();
-            let commands_bg_succeeded = crate::daemon::stats::get_commands_bg_succeeded();
-            let commands_bg_failed = crate::daemon::stats::get_commands_bg_failed();
-            let commands_bg_approved = crate::daemon::stats::get_commands_bg_approved();
-            let commands_bg_denied = crate::daemon::stats::get_commands_bg_denied();
-            let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
-            let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
-            let ghosts_launched = crate::daemon::stats::get_ghosts_launched();
-            let ghosts_active = crate::daemon::stats::get_ghosts_active();
-            let ghosts_completed = crate::daemon::stats::get_ghosts_completed();
-            let ghosts_failed = crate::daemon::stats::get_ghosts_failed();
-            let webhooks_received = crate::daemon::stats::get_webhooks_received();
-
-            let webhooks_rejected = crate::daemon::stats::get_webhooks_rejected();
-            let webhook_url = format!(
-                "http://{}:{}/webhook",
-                config.webhook.bind_addr, config.webhook.port
-            );
-            let recent_commands = crate::daemon::stats::get_recent_commands();
-
-            let runbook_count = crate::runbook::list_runbooks()
-                .map(|v| v.len())
-                .unwrap_or(0);
-            let runbooks_created = crate::daemon::stats::get_runbooks_created();
-            let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
-            let runbooks_deleted = crate::daemon::stats::get_runbooks_deleted();
-            let script_count = crate::scripts::list_scripts().map(|v| v.len()).unwrap_or(0);
-            let scripts_created = crate::daemon::stats::get_scripts_created();
-            let scripts_executed = crate::daemon::stats::get_scripts_executed();
-            let scripts_deleted = crate::daemon::stats::get_scripts_deleted();
-            let memories_created = crate::daemon::stats::get_memories_created();
-            let memories_recalled = crate::daemon::stats::get_memories_recalled();
-            let memories_deleted = crate::daemon::stats::get_memories_deleted();
-            let schedules_created = crate::daemon::stats::get_schedules_created();
-            let schedules_executed = crate::daemon::stats::get_schedules_executed();
-            let schedules_deleted = crate::daemon::stats::get_schedules_deleted();
-            let mut memory_breakdown = std::collections::HashMap::new();
-            if let Ok(memories) = crate::memory::list_memories(None) {
-                for (cat, _) in memories {
-                    *memory_breakdown.entry(cat).or_insert(0) += 1;
-                }
-            }
-
-            let active_entry = config.resolve_model(status_active_model.as_deref());
-            let context_window_tokens = active_entry.context_window();
-            let compactions = crate::daemon::stats::get_compactions();
-            let compaction_ratio = crate::daemon::stats::get_compaction_ratio();
-
-            send_response_split(
-                &mut tx,
-                Response::DaemonStatus {
-                    uptime_secs,
-                    pid,
-                    active_sessions,
-                    total_turns,
-                    provider: active_entry.provider.clone(),
-                    model: active_entry.model.clone(),
-                    available_models: config
-                        .available_models()
-                        .into_iter()
-                        .map(|s| s.to_string())
-                        .collect(),
-                    socket_path: default_socket_path().display().to_string(),
-                    schedule_count,
-                    commands_fg_succeeded,
-                    commands_fg_failed,
-                    commands_fg_approved,
-                    commands_fg_denied,
-                    commands_bg_succeeded,
-                    commands_bg_failed,
-                    commands_bg_approved,
-                    commands_bg_denied,
-                    commands_sched_succeeded,
-                    commands_sched_failed,
-                    ghosts_launched,
-                    ghosts_active,
-                    ghosts_completed,
-                    ghosts_failed,
-                    webhooks_received,
-                    webhooks_rejected,
-                    webhook_url,
-                    runbook_count,
-                    runbooks_created,
-                    runbooks_executed,
-                    runbooks_deleted,
-                    script_count,
-                    scripts_created,
-                    scripts_executed,
-                    scripts_deleted,
-                    memories_created,
-                    memories_recalled,
-                    memories_deleted,
-                    schedules_created,
-                    schedules_executed,
-                    schedules_deleted,
-                    active_prompt_tokens,
-                    context_window_tokens,
-                    recent_commands,
-                    memory_breakdown,
-                    redaction_counts: crate::ai::filter::get_redaction_counts(),
-                    compactions,
-                    compaction_ratio,
-                    scripts_approved: crate::daemon::stats::get_scripts_approved(),
-                    scripts_denied: crate::daemon::stats::get_scripts_denied(),
-                    runbooks_approved: crate::daemon::stats::get_runbooks_approved(),
-                    runbooks_denied: crate::daemon::stats::get_runbooks_denied(),
-                    file_edits_approved: crate::daemon::stats::get_file_edits_approved(),
-                    file_edits_denied: crate::daemon::stats::get_file_edits_denied(),
-                    limits: {
-                        let mut overrides: Vec<(String, u32)> = config
-                            .limits
-                            .per_tool
-                            .iter()
-                            .map(|(k, v)| (k.clone(), *v))
-                            .collect();
-                        overrides.sort_by(|a, b| a.0.cmp(&b.0));
-                        crate::ipc::LimitsSummary {
-                            per_tool_batch: config.limits.per_tool_batch,
-                            total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
-                            tool_result_chars: config.limits.tool_result_chars,
-                            max_history: config.limits.max_history,
-                            max_turns: config.limits.max_turns,
-                            max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
-                            per_tool_overrides: overrides,
-                        }
-                    },
-                },
-            )
-            .await?;
-            return Ok(());
-        }
-        Request::QueryLimits { session_id: sid } => {
-            let (turn_count, tool_calls_this_session, history_len) = if let Ok(store) =
-                sessions.lock()
-                && let Some(entry) = store.get(&sid)
-            {
-                (
-                    entry.turn_count,
-                    entry.tool_calls_this_session,
-                    entry.messages.len(),
-                )
-            } else {
-                (0, 0, 0)
-            };
-            let mut overrides: Vec<(String, u32)> = config
-                .limits
-                .per_tool
-                .iter()
-                .map(|(k, v)| (k.clone(), *v))
-                .collect();
-            overrides.sort_by(|a, b| a.0.cmp(&b.0));
-            send_response_split(
-                &mut tx,
-                Response::LimitsInfo {
-                    limits: crate::ipc::LimitsSummary {
-                        per_tool_batch: config.limits.per_tool_batch,
-                        total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
-                        tool_result_chars: config.limits.tool_result_chars,
-                        max_history: config.limits.max_history,
-                        max_turns: config.limits.max_turns,
-                        max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
-                        per_tool_overrides: overrides,
-                    },
-                    turn_count,
-                    tool_calls_this_session,
-                    history_len,
-                },
-            )
-            .await?;
-            return Ok(());
-        }
-        Request::ResetSessionToolCount { session_id: sid } => {
-            if let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(&sid)
-            {
-                entry.tool_calls_this_session = 0;
-                log::info!("Session {}: per-session tool call counter reset", sid);
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-
-        // ── Named session CRUD ────────────────────────────────────────────────
-        Request::SaveSession {
-            session_id: sid,
-            name,
-            description,
-            force,
-        } => {
-            let (msgs, turn_count, current_saved, model_name, artifacts) = if let Ok(store) =
-                sessions.lock()
-                && let Some(entry) = store.get(&sid)
-            {
-                (
-                    entry.messages.clone(),
-                    entry.turn_count,
-                    entry.saved_name.clone(),
-                    entry
-                        .active_model
-                        .clone()
-                        .unwrap_or_else(|| "default".to_string()),
-                    entry.artifacts_created.clone(),
-                )
-            } else {
-                (Vec::new(), 0, None, "default".to_string(), Vec::new())
-            };
-
-            match crate::session_store::save_session(
-                &name,
-                current_saved.as_deref(),
-                &description,
-                &msgs,
-                turn_count,
-                &model_name,
-                &artifacts,
-                force,
-            ) {
-                Ok(()) => {
-                    // Retroactive backfill: stamp session_origin on artifacts created
-                    // before the session was named (first save of an unnamed session).
-                    if current_saved.is_none() && !artifacts.is_empty() {
-                        let errs = crate::session_store::backfill_session_origin(&artifacts, &name);
-                        if !errs.is_empty() {
-                            log::warn!(
-                                "Session {}: backfill_session_origin failed for: {}",
-                                sid,
-                                errs.join(", ")
-                            );
-                        }
-                    }
-                    if let Ok(mut store) = sessions.lock()
-                        && let Some(entry) = store.get_mut(&sid)
-                    {
-                        entry.saved_name = Some(name.clone());
-                        entry.dirty = false;
-                    }
-                    log::info!("Session {}: saved as '{}'", sid, name);
-                    send_response_split(&mut tx, Response::SessionSaved { name }).await?;
-                }
-                Err(e) => {
-                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
-                }
-            }
-            return Ok(());
-        }
-
-        Request::LoadSession {
-            session_id: sid,
-            name,
-            force,
-        } => {
-            // Dirty guard: refuse if the current session has unsaved work.
-            let is_dirty = if let Ok(store) = sessions.lock()
-                && let Some(entry) = store.get(&sid)
-            {
-                entry.dirty
-            } else {
-                false
-            };
-            if is_dirty && !force {
-                send_response_split(
-                    &mut tx,
-                    Response::Error(format!(
-                        "session has unsaved changes; run `/session save <name>` first, \
-                         or use `/session load {} --force` to discard them",
-                        name
-                    )),
-                )
-                .await?;
-                return Ok(());
-            }
-
-            if !crate::session_store::session_exists(&name) {
-                send_response_split(
-                    &mut tx,
-                    Response::Error(format!("no saved session named '{}'", name)),
-                )
-                .await?;
-                return Ok(());
-            }
-
-            let load_count = config.sessions.load_recent_turns;
-            match (
-                crate::session_store::load_session_meta(&name),
-                crate::session_store::load_session_messages(&name, load_count),
-            ) {
-                (Ok(meta), Ok(loaded_msgs)) => {
-                    let banner =
-                        crate::session_store::build_resumed_banner(&meta, loaded_msgs.len());
-                    let loaded_count = loaded_msgs.len();
-                    let turn_count = meta.turn_count;
-
-                    if let Ok(mut store) = sessions.lock()
-                        && let Some(entry) = store.get_mut(&sid)
-                    {
-                        entry.messages = loaded_msgs;
-                        entry.saved_name = Some(name.clone());
-                        entry.dirty = false;
-                    }
-                    log::info!(
-                        "Session {}: loaded '{}' ({} messages)",
-                        sid,
-                        name,
-                        loaded_count
-                    );
-                    send_response_split(
-                        &mut tx,
-                        Response::SessionLoaded {
-                            name,
-                            message_count: loaded_count,
-                            turn_count,
-                            banner,
-                        },
-                    )
-                    .await?;
-                }
-                (Err(e), _) | (_, Err(e)) => {
-                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
-                }
-            }
-            return Ok(());
-        }
-
-        Request::ListSavedSessions => {
-            use crate::session_store::{list_sessions, load_session_meta};
-            let sessions_list: Vec<crate::ipc::SessionSummary> = list_sessions()
-                .into_iter()
-                .map(|(name, idx)| {
-                    let (description, turn_count, message_count, artifact_count) =
-                        load_session_meta(&name)
-                            .map(|m| {
-                                (
-                                    m.description,
-                                    m.turn_count,
-                                    m.message_count,
-                                    m.artifacts_created.len(),
-                                )
-                            })
-                            .unwrap_or_default();
-                    crate::ipc::SessionSummary {
-                        name,
-                        description,
-                        created_at: idx.created_at,
-                        last_updated: idx.last_updated,
-                        turn_count,
-                        message_count,
-                        artifact_count,
-                    }
-                })
-                .collect();
-            send_response_split(
-                &mut tx,
-                Response::SavedSessionList {
-                    sessions: sessions_list,
-                },
-            )
-            .await?;
-            return Ok(());
-        }
-
-        Request::DeleteSavedSession { name } => {
-            match crate::session_store::delete_session(&name) {
-                Ok(()) => {
-                    log::info!("Saved session '{}' deleted", name);
-                    send_response_split(&mut tx, Response::Ok).await?;
-                }
-                Err(e) => {
-                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
-                }
-            }
-            return Ok(());
-        }
-
-        Request::RenameSavedSession { old_name, new_name } => {
-            match crate::session_store::rename_session(&old_name, &new_name) {
-                Ok(()) => {
-                    // Update saved_name for any active sessions with the old name.
-                    if let Ok(mut store) = sessions.lock() {
-                        for entry in store.values_mut() {
-                            if entry.saved_name.as_deref() == Some(old_name.as_str()) {
-                                entry.saved_name = Some(new_name.clone());
-                            }
-                        }
-                    }
-                    log::info!("Saved session '{}' renamed to '{}'", old_name, new_name);
-                    send_response_split(&mut tx, Response::Ok).await?;
-                }
-                Err(e) => {
-                    send_response_split(&mut tx, Response::Error(e.to_string())).await?;
-                }
-            }
-            return Ok(());
-        }
-
-        Request::DiffSessions { name1, name2 } => {
-            let meta1 = crate::session_store::load_session_meta(&name1);
-            let meta2 = crate::session_store::load_session_meta(&name2);
-            match (meta1, meta2) {
-                (Ok(m1), Ok(m2)) => match diff_sessions_summary(&m1, &m2, &config).await {
-                    Some(summary) => {
-                        send_response_split(&mut tx, Response::SessionDiff { summary }).await?;
-                    }
-                    None => {
-                        send_response_split(
-                            &mut tx,
-                            Response::Error(
-                                "diff failed: LLM call timed out or returned empty".to_string(),
-                            ),
-                        )
-                        .await?;
-                    }
-                },
-                (Err(e), _) => {
-                    send_response_split(
-                        &mut tx,
-                        Response::Error(format!("could not load session '{}': {}", name1, e)),
-                    )
-                    .await?;
-                }
-                (_, Err(e)) => {
-                    send_response_split(
-                        &mut tx,
-                        Response::Error(format!("could not load session '{}': {}", name2, e)),
-                    )
-                    .await?;
-                }
-            }
-            return Ok(());
-        }
-
-        Request::NotifyActivity {
-            pane_id,
-            hook_index: _,
-            session_name: _,
-        } => {
-            if is_valid_pane_id(&pane_id) {
-                if let Some(tx) = BG_DONE_TX.get() {
-                    let _ = tx.send(pane_id.clone());
-                }
-            } else {
-                log::warn!("NotifyActivity: rejected invalid pane_id {:?}", pane_id);
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        Request::NotifyComplete {
-            pane_id,
-            exit_code,
-            session_name: _,
-        } => {
-            if is_valid_pane_id(&pane_id) {
-                if let Ok(mut map) = crate::daemon::background::BG_COMMAND_MAP
-                    .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-                    .lock()
-                    && let Some(cmd_id) = map.remove(&pane_id)
-                {
-                    crate::daemon::stats::finish_command(cmd_id, exit_code);
-                }
-                // Fix C: use get_or_init so the channel always exists, even if
-                // NotifyComplete arrives before any completion monitor has subscribed.
-                let tx = crate::daemon::session::COMPLETE_TX.get_or_init(|| {
-                    let (tx, _) = tokio::sync::broadcast::channel(32);
-                    tx
-                });
-                let _ = tx.send((pane_id, exit_code));
-            } else {
-                log::warn!("NotifyComplete: rejected invalid pane_id {:?}", pane_id);
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // N1: pane-focus-in hook — update active pane instantly, no 2 s poll lag.
-        Request::NotifyFocus {
-            pane_id,
-            session_name: _,
-        } => {
-            if is_valid_pane_id(&pane_id) {
-                cache.set_active_pane(&pane_id);
-            } else {
-                log::warn!("NotifyFocus: rejected invalid pane_id {:?}", pane_id);
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // N2: session-window-changed hook — refresh window topology immediately.
-        Request::NotifyWindowChanged { session_name: _ } => {
-            cache.refresh_windows();
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // A6: session-closed hook — clean up daemon state when a tmux session is destroyed.
-        Request::NotifySessionClosed { session_name } => {
-            if let Ok(mut store) = sessions.lock() {
-                store.retain(|_, entry| {
-                    if entry.tmux_session == session_name {
-                        entry.cleanup_bg_windows();
-                        log::info!(
-                            "Cleaned up session '{}' on tmux session-closed.",
-                            session_name
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                });
-            }
-            // If this was the daemon-managed session, recreate it so ghost shells
-            // and the scheduler can resume without a daemon restart.
-            // Per-session hooks are installed automatically via the NotifySessionCreated
-            // path once tmux fires the after-new-session global hook.
-            if managed_session.as_deref() == Some(session_name.as_str()) {
-                match std::process::Command::new("tmux")
-                    .args(["new-session", "-d", "-s", &session_name])
-                    .output()
-                {
-                    Ok(o) if o.status.success() => {
-                        log::info!(
-                            "Recreated managed tmux session '{}' after close.",
-                            session_name
-                        );
-                        *bg_session.lock().unwrap_or_log() = session_name.clone();
-                        cache.set_session(&session_name);
-                    }
-                    Ok(o) => {
-                        let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                        log::warn!(
-                            "Failed to recreate managed session '{}': {}",
-                            session_name,
-                            stderr
-                        );
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "tmux new-session for managed session '{}' failed: {}",
-                            session_name,
-                            e
-                        );
-                    }
-                }
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // N14: after-new-session hook — auto-install per-session hooks for new sessions.
-        Request::NotifySessionCreated { session_name } => {
-            let hook_exe = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "daemoneye".to_string());
-            crate::daemon::install_session_hooks(&session_name, &hook_exe);
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // N15: client-detached hook — record detach time on all sessions for this tmux session.
-        Request::NotifyClientDetached { session_name } => {
-            let now = Instant::now();
-            if let Ok(mut store) = sessions.lock() {
-                for entry in store.values_mut() {
-                    if entry.tmux_session == session_name {
-                        entry.last_detach = Some(now);
-                        entry.messages_at_detach = entry.messages.len();
-                    }
-                }
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // N15: client-attached hook — clear pending detach state so no catch-up brief fires.
-        Request::NotifyClientAttached { session_name } => {
-            if let Ok(mut store) = sessions.lock() {
-                for entry in store.values_mut() {
-                    if entry.tmux_session == session_name {
-                        entry.last_detach = None;
-                    }
-                }
-            }
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        // N8: client-resized hook — update cached viewport dimensions immediately.
-        Request::NotifyResize {
-            width,
-            height,
-            session_name: _,
-        } => {
-            cache.set_client_size(width, height);
-            send_response_split(&mut tx, Response::Ok).await?;
-            return Ok(());
-        }
-        _ => return Ok(()),
+async fn handle_load_session<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    config: &Config,
+    session_id: String,
+    name: String,
+    force: bool,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let is_dirty = if let Ok(store) = sessions.lock()
+        && let Some(entry) = store.get(&session_id)
+    {
+        entry.dirty
+    } else {
+        false
     };
+    if is_dirty && !force {
+        send_response_split(
+            tx,
+            Response::Error(format!(
+                "session has unsaved changes; run `/session save <name>` first, \
+                 or use `/session load {} --force` to discard them",
+                name
+            )),
+        )
+        .await?;
+        return Ok(());
+    }
 
+    if !crate::session_store::session_exists(&name) {
+        send_response_split(
+            tx,
+            Response::Error(format!("no saved session named '{}'", name)),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let load_count = config.sessions.load_recent_turns;
+    match (
+        crate::session_store::load_session_meta(&name),
+        crate::session_store::load_session_messages(&name, load_count),
+    ) {
+        (Ok(meta), Ok(loaded_msgs)) => {
+            let banner =
+                crate::session_store::build_resumed_banner(&meta, loaded_msgs.len());
+            let loaded_count = loaded_msgs.len();
+            let turn_count = meta.turn_count;
+
+            if let Ok(mut store) = sessions.lock()
+                && let Some(entry) = store.get_mut(&session_id)
+            {
+                entry.messages = loaded_msgs;
+                entry.saved_name = Some(name.clone());
+                entry.dirty = false;
+            }
+            log::info!(
+                "Session {}: loaded '{}' ({} messages)",
+                session_id,
+                name,
+                loaded_count
+            );
+            send_response_split(
+                tx,
+                Response::SessionLoaded {
+                    name,
+                    message_count: loaded_count,
+                    turn_count,
+                    banner,
+                },
+            )
+            .await?;
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            send_response_split(tx, Response::Error(e.to_string())).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_list_saved_sessions<W>(tx: &mut W) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    use crate::session_store::{list_sessions, load_session_meta};
+    let sessions_list: Vec<crate::ipc::SessionSummary> = list_sessions()
+        .into_iter()
+        .map(|(name, idx)| {
+            let (description, turn_count, message_count, artifact_count) =
+                load_session_meta(&name)
+                    .map(|m| {
+                        (
+                            m.description,
+                            m.turn_count,
+                            m.message_count,
+                            m.artifacts_created.len(),
+                        )
+                    })
+                    .unwrap_or_default();
+            crate::ipc::SessionSummary {
+                name,
+                description,
+                created_at: idx.created_at,
+                last_updated: idx.last_updated,
+                turn_count,
+                message_count,
+                artifact_count,
+            }
+        })
+        .collect();
+    send_response_split(
+        tx,
+        Response::SavedSessionList {
+            sessions: sessions_list,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+async fn handle_delete_saved_session<W>(tx: &mut W, name: String) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    match crate::session_store::delete_session(&name) {
+        Ok(()) => {
+            log::info!("Saved session '{}' deleted", name);
+            send_response_split(tx, Response::Ok).await?;
+        }
+        Err(e) => {
+            send_response_split(tx, Response::Error(e.to_string())).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_rename_saved_session<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    old_name: String,
+    new_name: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    match crate::session_store::rename_session(&old_name, &new_name) {
+        Ok(()) => {
+            if let Ok(mut store) = sessions.lock() {
+                for entry in store.values_mut() {
+                    if entry.saved_name.as_deref() == Some(old_name.as_str()) {
+                        entry.saved_name = Some(new_name.clone());
+                    }
+                }
+            }
+            log::info!("Saved session '{}' renamed to '{}'", old_name, new_name);
+            send_response_split(tx, Response::Ok).await?;
+        }
+        Err(e) => {
+            send_response_split(tx, Response::Error(e.to_string())).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_diff_sessions<W>(
+    tx: &mut W,
+    _sessions: &SessionStore,
+    config: &Config,
+    name1: String,
+    name2: String,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    let meta1 = crate::session_store::load_session_meta(&name1);
+    let meta2 = crate::session_store::load_session_meta(&name2);
+    match (meta1, meta2) {
+        (Ok(m1), Ok(m2)) => match crate::daemon::auto_name::diff_sessions_summary(&m1, &m2, config).await {
+            Some(summary) => {
+                send_response_split(tx, Response::SessionDiff { summary }).await?;
+            }
+            None => {
+                send_response_split(
+                    tx,
+                    Response::Error(
+                        "diff failed: LLM call timed out or returned empty".to_string(),
+                    ),
+                )
+                .await?;
+            }
+        },
+        (Err(e), _) => {
+            send_response_split(
+                tx,
+                Response::Error(format!("could not load session '{}': {}", name1, e)),
+            )
+            .await?;
+        }
+        (_, Err(e)) => {
+            send_response_split(
+                tx,
+                Response::Error(format!("could not load session '{}': {}", name2, e)),
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+// ── Ask handler ──────────────────────────────────────────────────────────────
+
+async fn handle_ask<W, R>(
+    initial_query: String,
+    client_pane: Option<String>,
+    session_id: Option<String>,
+    chat_pane: Option<String>,
+    prompt_override: Option<String>,
+    chat_width: Option<usize>,
+    client_tmux_session: Option<String>,
+    client_target_pane: Option<String>,
+    tx: &mut W,
+    rx: &mut R,
+    cache: Arc<SessionCache>,
+    sessions: &SessionStore,
+    schedule_store: Arc<ScheduleStore>,
+    bg_session: Arc<std::sync::Mutex<String>>,
+    config: &Config,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+    R: AsyncBufRead + Unpin,
+{
     // Derive the tmux session name: prefer what the client told us, fall back
     // to whatever the daemon adopted at startup.
     let session_name: String = client_tmux_session
@@ -1479,7 +1314,7 @@ pub async fn handle_client(
         && this_turn_count > turn_limit
     {
         send_response_split(
-            &mut tx,
+            tx,
             Response::Error(format!(
                 "Session turn limit ({turn_limit}) reached. \
                  Start a new session to continue."
@@ -1490,28 +1325,6 @@ pub async fn handle_client(
     }
 
     let safe_query = mask_sensitive(&initial_query);
-
-    // Current time — injected on every turn so the AI always has ground truth
-    // for scheduling and time-relative reasoning.
-    let current_time_line = {
-        use chrono::Local;
-        let now_local = Local::now();
-        let now_utc = now_local.to_utc();
-        let tz_name = now_local.format("%Z").to_string();
-        format!(
-            "[Current time: {} UTC ({}: {})]\n",
-            now_utc.format("%Y-%m-%d %H:%M:%S"),
-            tz_name,
-            now_local.format("%Y-%m-%d %H:%M:%S"),
-        )
-    };
-
-    // First turn: include full host context + terminal snapshot.
-    // Subsequent turns: budget note + query only, unless the foreground pane has
-    // had new activity since the last snapshot — in which case a fresh snapshot is
-    // auto-injected so the AI sees current output without needing get_terminal_context.
-    // C1: per-turn pane map — always generated, available in all branches.
-    let pane_map = cache.pane_map_summary(chat_pane.as_deref());
 
     // Read the default foreground target pane for this session so we can inject
     // an explicit [FOREGROUND TARGET] line into the context block.  This tells the
@@ -1559,131 +1372,49 @@ pub async fn handle_client(
         entry.last_snapshot_activity = pane_activity;
     }
 
+    // Ghost sessions: resolve the effective turn cap (runbook value clamped
+    // to daemon ceiling; 0 = use the ceiling).  Returns None for regular chat.
+    let ghost_turn_limit: Option<usize> = session_id.as_ref().and_then(|id| {
+        let store = sessions.lock().ok()?;
+        let entry = store.get(id)?;
+        if !entry.is_ghost {
+            return None;
+        }
+        let ceiling = config.ghost.max_ghost_turns;
+        let limit = entry
+            .ghost_config
+            .as_ref()
+            .map(|gc| {
+                if gc.max_ghost_turns > 0 {
+                    gc.max_ghost_turns.min(ceiling)
+                } else {
+                    ceiling
+                }
+            })
+            .unwrap_or(ceiling);
+        Some(limit)
+    });
+
+    // Build the prompt using the prompt module.
+    let prompt_ctx = PromptCtx {
+        client_pane: client_pane.as_deref(),
+        chat_pane: chat_pane.as_deref(),
+        default_target_pane: default_target_pane.as_deref(),
+        cache: &cache,
+        config: &config,
+        chat_width,
+        safe_query: &safe_query,
+        last_prompt_tokens,
+        history_count: messages.len(),
+        this_turn_count,
+        ghost_turn_limit,
+        inject_snapshot,
+    };
+
     let prompt = if is_first_turn {
-        let session_summary =
-            cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
-        let session_summary =
-            prepend_foreground_target(&session_summary, default_target_pane.as_deref(), &cache);
-        let sys_ctx = get_or_init_sys_context().format_for_ai();
-        let daemon_host = daemon_hostname();
-        let environment = &config.context.environment;
-        let pane_location = client_pane
-            .as_deref()
-            .and_then(get_pane_remote_host)
-            .map(|h| format!("REMOTE — {}", h))
-            .unwrap_or_else(|| format!("LOCAL — same host as daemon ({})", daemon_host));
-        let width_hint = chat_width
-            .map(|w| format!("\n- Chat display width: {w} columns (write prose as continuous paragraphs; the terminal word-wraps automatically — do not insert hard line breaks within paragraphs)"))
-            .unwrap_or_default();
-        let memory_block = crate::memory::load_session_memory_block();
-        let manifest_block = crate::manifest::build_knowledge_manifest();
-        let auto_search_block = crate::manifest::auto_search_context(&safe_query, &session_summary);
-        format!(
-            "## Host Context\n```\n{sys_ctx}\n```\n\n\
-             ## Execution Context\n\
-             - Environment: {environment}\n\
-             - Daemon host: {daemon_host}\n\
-             - User's terminal pane: {pane_location}\
-             {width_hint}\n\
-             - background=true  → runs on DAEMON HOST ({daemon_host})\n\
-             - background=false → runs in USER'S PANE ({pane_location})\n\n\
-             {memory_block}\
-             {manifest_block}\
-             {auto_search_block}\
-             ## Terminal Session\n```\n{session_summary}\n```\n\n\
-             {pane_map}{current_time_line}User: {safe_query}"
-        )
+        build_first_turn_prompt(&prompt_ctx)
     } else {
-        // Inject a unified [BUDGET] line covering every dimension the AI could be
-        // constrained by this turn: turn count (ghost sessions only), message
-        // history position, and prompt-token pressure.  Attached chat sessions
-        // have no hard turn cap — the turn slot is omitted for them.
-        let context_window = config
-            .resolve_model(session_active_model.as_deref())
-            .context_window();
-        let token_pct = if context_window > 0 {
-            (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
-        } else {
-            0
-        };
-        let history_count = messages.len() + 1; // + the user turn about to be pushed
-        let history_cap_budget = crate::config::LimitsConfig::cap_usize(config.limits.max_history);
-        let history_pct = history_cap_budget
-            .map(|cap| (history_count as f64 / cap as f64 * 100.0) as u32)
-            .unwrap_or(0);
-
-        // Ghost sessions: resolve the effective turn cap (runbook value clamped
-        // to daemon ceiling; 0 = use the ceiling).  Returns None for regular chat.
-        let ghost_turn_limit: Option<usize> = session_id.as_ref().and_then(|id| {
-            let store = sessions.lock().ok()?;
-            let entry = store.get(id)?;
-            if !entry.is_ghost {
-                return None;
-            }
-            let ceiling = config.ghost.max_ghost_turns;
-            let limit = entry
-                .ghost_config
-                .as_ref()
-                .map(|gc| {
-                    if gc.max_ghost_turns > 0 {
-                        gc.max_ghost_turns.min(ceiling)
-                    } else {
-                        ceiling
-                    }
-                })
-                .unwrap_or(ceiling);
-            Some(limit)
-        });
-        let turn_pct = ghost_turn_limit
-            .filter(|l| *l > 0)
-            .map(|l| (this_turn_count as f64 / l as f64 * 100.0) as u32)
-            .unwrap_or(0);
-
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(limit) = ghost_turn_limit {
-            parts.push(format!("turn {}/{}", this_turn_count, limit));
-        }
-        match history_cap_budget {
-            Some(cap) => parts.push(format!("history {}/{}", history_count, cap)),
-            None => parts.push(format!("history {} (no cap)", history_count)),
-        };
-        if context_window > 0 && last_prompt_tokens > 0 {
-            parts.push(format!(
-                "prompt {}k/{}k ({}%)",
-                last_prompt_tokens / 1000,
-                context_window / 1000,
-                token_pct
-            ));
-        }
-
-        let max_pct = turn_pct.max(history_pct).max(token_pct);
-        let warning = if max_pct >= 75 {
-            " — NEAR LIMIT. Summarize progress, persist critical state to memory, and wrap up."
-        } else if max_pct >= 50 {
-            " — approaching budget; prefer concise responses and avoid redundant tool calls."
-        } else {
-            ""
-        };
-        let budget_note = format!("[BUDGET] {}{}\n\n", parts.join(" · "), warning);
-        let fg_target_line = default_target_pane
-            .as_deref()
-            .map(|tp| format!("[FOREGROUND TARGET] {} — target_pane=\"{}\" for run_terminal_command(background=false)\n", tp, tp))
-            .unwrap_or_default();
-
-        if inject_snapshot {
-            // Pane had new activity since the last snapshot — auto-inject a fresh one.
-            let session_summary =
-                cache.get_labeled_context(client_pane.as_deref(), chat_pane.as_deref());
-            let session_summary =
-                prepend_foreground_target(&session_summary, default_target_pane.as_deref(), &cache);
-            format!(
-                "{budget_note}{fg_target_line}{pane_map}{current_time_line}\
-                 [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
-                 ```\n{session_summary}\n```\n\nUser: {safe_query}"
-            )
-        } else {
-            format!("{budget_note}{fg_target_line}{pane_map}{current_time_line}User: {safe_query}")
-        }
+        build_subsequent_turn_prompt(&prompt_ctx)
     };
 
     let prompt_name = prompt_override.as_deref().unwrap_or(&config.ai.prompt);
@@ -1699,7 +1430,7 @@ pub async fn handle_client(
     });
 
     send_response_split(
-        &mut tx,
+        tx,
         Response::SessionInfo {
             message_count: history_count,
             turn_count: this_turn_count,
@@ -1729,7 +1460,7 @@ pub async fn handle_client(
         );
         crate::daemon::stats::record_compaction(pre_trim_len, post_trim_len);
         send_response_split(
-            &mut tx,
+            tx,
             Response::SystemMsg(format!(
                 "↩ Session history compacted ({} messages → {}) — full context preserved in digest",
                 pre_trim_len, post_trim_len
@@ -1741,15 +1472,50 @@ pub async fn handle_client(
     // N15: send catch-up brief as a SystemMsg immediately after SessionInfo so
     // it appears before any streaming tokens from the AI.
     if let Some(ref brief) = catchup_brief {
-        send_response_split(&mut tx, Response::SystemMsg(brief.clone())).await?;
+        send_response_split(tx, Response::SystemMsg(brief.clone())).await?;
     }
 
     // Pane drift: notify the model when the foreground target changed since
     // the last turn so it doesn't keep using the stale pane ID.
     if let Some(ref msg) = pane_drift_msg {
-        send_response_split(&mut tx, Response::SystemMsg(msg.clone())).await?;
+        send_response_split(tx, Response::SystemMsg(msg.clone())).await?;
     }
 
+    // ── Conversation loop ─────────────────────────────────────────────────────
+    run_conversation_loop(
+        tx, rx,
+        session_id, &session_name, chat_pane,
+        messages, sys_prompt, session_active_model, is_ghost_session,
+        this_turn_count, post_trim_len, needs_compaction,
+        config, cache, Arc::clone(sessions), schedule_store,
+    )
+    .await
+}
+
+// ── Conversation loop ────────────────────────────────────────────────────────
+
+async fn run_conversation_loop<W, R>(
+    tx: &mut W,
+    rx: &mut R,
+    session_id: Option<String>,
+    session_name: &str,
+    chat_pane: Option<String>,
+    mut messages: Vec<Message>,
+    sys_prompt: String,
+    session_active_model: Option<String>,
+    is_ghost_session: bool,
+    this_turn_count: usize,
+    post_trim_len: usize,
+    needs_compaction: bool,
+    config: &Config,
+    cache: Arc<SessionCache>,
+    sessions: SessionStore,
+    schedule_store: Arc<ScheduleStore>,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+    R: AsyncBufRead + Unpin,
+{
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
@@ -1784,14 +1550,14 @@ pub async fn handle_client(
                 Err(_timeout) => {
                     // No token in 30 s — send a keep-alive so the client doesn't
                     // hit its per-token deadline (slow local LLMs can stall longer).
-                    send_response_split(&mut tx, Response::KeepAlive).await?;
+                    send_response_split(tx, Response::KeepAlive).await?;
                     continue;
                 }
             };
             match event {
                 AiEvent::Token(t) => {
                     full_response.push_str(&t);
-                    send_response_split(&mut tx, Response::Token(t)).await?;
+                    send_response_split(tx, Response::Token(t)).await?;
                 }
                 AiEvent::ToolCall(id, cmd, bg, target, retry, thought_signature) => {
                     if bg {
@@ -1836,318 +1602,104 @@ pub async fn handle_client(
                         thought_signature,
                     });
                 }
-                AiEvent::ListSchedules {
-                    id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ListSchedules {
-                        id,
-                        thought_signature,
-                    });
+                AiEvent::ListSchedules { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListSchedules { id, thought_signature });
                 }
-                AiEvent::CancelSchedule {
-                    id,
-                    job_id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::CancelSchedule {
-                        id,
-                        job_id,
-                        thought_signature,
-                    });
+                AiEvent::CancelSchedule { id, job_id, thought_signature } => {
+                    pending_calls.push(PendingCall::CancelSchedule { id, job_id, thought_signature });
                 }
-                AiEvent::DeleteSchedule {
-                    id,
-                    job_id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::DeleteSchedule {
-                        id,
-                        job_id,
-                        thought_signature,
-                    });
+                AiEvent::DeleteSchedule { id, job_id, thought_signature } => {
+                    pending_calls.push(PendingCall::DeleteSchedule { id, job_id, thought_signature });
                 }
-                AiEvent::WriteScript {
-                    id,
-                    script_name,
-                    content,
-                    thought_signature,
-                } => {
+                AiEvent::WriteScript { id, script_name, content, thought_signature } => {
                     pending_calls.push(PendingCall::WriteScript {
-                        id,
-                        script_name,
-                        content,
-                        thought_signature,
+                        id, script_name, content, thought_signature,
                     });
                 }
-                AiEvent::ListScripts {
-                    id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ListScripts {
-                        id,
-                        thought_signature,
-                    });
+                AiEvent::ListScripts { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListScripts { id, thought_signature });
                 }
-                AiEvent::ReadScript {
-                    id,
-                    script_name,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ReadScript {
-                        id,
-                        script_name,
-                        thought_signature,
-                    });
+                AiEvent::ReadScript { id, script_name, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadScript { id, script_name, thought_signature });
                 }
-                AiEvent::DeleteScript {
-                    id,
-                    script_name,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::DeleteScript {
-                        id,
-                        script_name,
-                        thought_signature,
-                    });
+                AiEvent::DeleteScript { id, script_name, thought_signature } => {
+                    pending_calls.push(PendingCall::DeleteScript { id, script_name, thought_signature });
                 }
-                AiEvent::WatchPane {
-                    id,
-                    pane_id,
-                    timeout_secs,
-                    pattern,
-                    thought_signature,
-                } => {
+                AiEvent::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature } => {
                     pending_calls.push(PendingCall::WatchPane {
-                        id,
-                        pane_id,
-                        timeout_secs,
-                        pattern,
-                        thought_signature,
+                        id, pane_id, timeout_secs, pattern, thought_signature,
                     });
                 }
-                AiEvent::ReadFile {
-                    id,
-                    path,
-                    offset,
-                    limit,
-                    pattern,
-                    target_pane,
-                    thought_signature,
-                } => {
+                AiEvent::ReadFile { id, path, offset, limit, pattern, target_pane, thought_signature } => {
                     pending_calls.push(PendingCall::ReadFile {
-                        id,
-                        thought_signature,
-                        path,
-                        offset,
-                        limit,
-                        pattern,
-                        target_pane,
+                        id, thought_signature, path, offset, limit, pattern, target_pane,
                     });
                 }
-                AiEvent::EditFile {
-                    id,
-                    path,
-                    operation,
-                    old_string,
-                    new_string,
-                    content,
-                    dest_path,
-                    target_pane,
-                    thought_signature,
-                } => {
+                AiEvent::EditFile { id, path, operation, old_string, new_string, content, dest_path, target_pane, thought_signature } => {
                     pending_calls.push(PendingCall::EditFile {
-                        id,
-                        thought_signature,
-                        path,
-                        operation,
-                        old_string,
-                        new_string,
-                        content,
-                        dest_path,
-                        target_pane,
+                        id, thought_signature, path, operation, old_string, new_string, content, dest_path, target_pane,
                     });
                 }
-                AiEvent::WriteRunbook {
-                    id,
-                    name,
-                    content,
-                    thought_signature,
-                } => {
+                AiEvent::WriteRunbook { id, name, content, thought_signature } => {
                     pending_calls.push(PendingCall::WriteRunbook {
-                        id,
-                        thought_signature,
-                        name,
-                        content,
+                        id, thought_signature, name, content,
                     });
                 }
-                AiEvent::DeleteRunbook {
-                    id,
-                    name,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::DeleteRunbook {
-                        id,
-                        thought_signature,
-                        name,
-                    });
+                AiEvent::DeleteRunbook { id, name, thought_signature } => {
+                    pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
                 }
-                AiEvent::ReadRunbook {
-                    id,
-                    name,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ReadRunbook {
-                        id,
-                        thought_signature,
-                        name,
-                    });
+                AiEvent::ReadRunbook { id, name, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
                 }
-                AiEvent::ListRunbooks {
-                    id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ListRunbooks {
-                        id,
-                        thought_signature,
-                    });
+                AiEvent::ListRunbooks { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
                 }
-                AiEvent::AddMemory {
-                    id,
-                    key,
-                    value,
-                    category,
-                    thought_signature,
-                } => {
+                AiEvent::AddMemory { id, key, value, category, thought_signature } => {
                     pending_calls.push(PendingCall::AddMemory {
-                        id,
-                        thought_signature,
-                        key,
-                        value,
-                        category,
+                        id, thought_signature, key, value, category,
                     });
                 }
-                AiEvent::UpdateMemory {
-                    id,
-                    key,
-                    category,
-                    body,
-                    append,
-                    tags,
-                    summary,
-                    relates_to,
-                    expires,
-                    thought_signature,
-                } => {
+                AiEvent::UpdateMemory { id, key, category, body, append, tags, summary, relates_to, expires, thought_signature } => {
                     pending_calls.push(PendingCall::UpdateMemory {
-                        id,
-                        thought_signature,
-                        key,
-                        category,
-                        body,
-                        append,
-                        tags,
-                        summary,
-                        relates_to,
-                        expires,
+                        id, thought_signature, key, category, body, append, tags, summary, relates_to, expires,
                     });
                 }
-                AiEvent::DeleteMemory {
-                    id,
-                    key,
-                    category,
-                    thought_signature,
-                } => {
+                AiEvent::DeleteMemory { id, key, category, thought_signature } => {
                     pending_calls.push(PendingCall::DeleteMemory {
-                        id,
-                        thought_signature,
-                        key,
-                        category,
+                        id, thought_signature, key, category,
                     });
                 }
-                AiEvent::ReadMemory {
-                    id,
-                    key,
-                    category,
-                    thought_signature,
-                } => {
+                AiEvent::ReadMemory { id, key, category, thought_signature } => {
                     pending_calls.push(PendingCall::ReadMemory {
-                        id,
-                        thought_signature,
-                        key,
-                        category,
+                        id, thought_signature, key, category,
                     });
                 }
-                AiEvent::ListMemories {
-                    id,
-                    category,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ListMemories {
-                        id,
-                        thought_signature,
-                        category,
-                    });
+                AiEvent::ListMemories { id, category, thought_signature } => {
+                    pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
                 }
-                AiEvent::SearchRepository {
-                    id,
-                    query,
-                    kind,
-                    thought_signature,
-                } => {
+                AiEvent::SearchRepository { id, query, kind, thought_signature } => {
                     pending_calls.push(PendingCall::SearchRepository {
-                        id,
-                        thought_signature,
-                        query,
-                        kind,
+                        id, thought_signature, query, kind,
                     });
                 }
-                AiEvent::GetTerminalContext {
-                    id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::GetTerminalContext {
-                        id,
-                        thought_signature,
-                    });
+                AiEvent::GetTerminalContext { id, thought_signature } => {
+                    pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
                 }
-                AiEvent::ListPanes {
-                    id,
-                    thought_signature,
-                } => {
-                    pending_calls.push(PendingCall::ListPanes {
-                        id,
-                        thought_signature,
-                    });
+                AiEvent::ListPanes { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListPanes { id, thought_signature });
                 }
-                AiEvent::CloseBackgroundWindow {
-                    id,
-                    pane_id,
-                    thought_signature,
-                } => {
+                AiEvent::CloseBackgroundWindow { id, pane_id, thought_signature } => {
                     pending_calls.push(PendingCall::CloseBackgroundWindow {
-                        id,
-                        thought_signature,
-                        pane_id,
+                        id, thought_signature, pane_id,
                     });
                 }
-
-                AiEvent::SpawnGhost {
-                    id,
-                    runbook,
-                    message,
-                    thought_signature,
-                } => {
+                AiEvent::SpawnGhost { id, runbook, message, thought_signature } => {
                     pending_calls.push(PendingCall::SpawnGhost {
-                        id,
-                        thought_signature,
-                        runbook,
-                        message,
+                        id, thought_signature, runbook, message,
                     });
                 }
-
                 AiEvent::Error(e) => {
-                    send_response_split(&mut tx, Response::Error(e)).await?;
+                    send_response_split(tx, Response::Error(e)).await?;
                     return Ok(());
                 }
                 AiEvent::Done(usage) => {
@@ -2174,8 +1726,6 @@ pub async fn handle_client(
                         );
 
                         // Persist the conversation for the next turn.
-                        // In-memory: fast lookup within the same daemon run.
-                        // On-disk: survives daemon restarts.
                         if let Some(ref id) = session_id {
                             if let Ok(mut store) = sessions.lock()
                                 && let Some(entry) = store.get_mut(id)
@@ -2216,7 +1766,7 @@ pub async fn handle_client(
                             };
                             if should_suggest {
                                 if let Some((name, desc)) =
-                                    suggest_session_name(&messages, &config).await
+                                    crate::daemon::auto_name::suggest_session_name(&messages, config).await
                                 {
                                     let hint = if desc.is_empty() {
                                         format!(
@@ -2231,19 +1781,19 @@ pub async fn handle_client(
                                             name, name, desc
                                         )
                                     };
-                                    send_response_split(&mut tx, Response::SystemMsg(hint)).await?;
+                                    send_response_split(tx, Response::SystemMsg(hint)).await?;
                                 }
                             }
                         }
 
                         send_response_split(
-                            &mut tx,
+                            tx,
                             Response::UsageUpdate {
                                 prompt_tokens: usage.prompt_tokens,
                             },
                         )
                         .await?;
-                        send_response_split(&mut tx, Response::Ok).await?;
+                        send_response_split(tx, Response::Ok).await?;
                         return Ok(());
                     }
 
@@ -2276,8 +1826,8 @@ pub async fn handle_client(
                     });
 
                     // Per-turn tool-call loop guard.
-                    // Approval-gated tools (run_terminal_command, edit_file, write_script, etc.)
-                    // are always exempt — the user's per-call approval prompt is the gate.
+                    // Approval-gated tools are always exempt — the user's per-call
+                    // approval prompt is the gate.
                     // Keep in sync with LimitsConfig::validate()'s APPROVAL_GATED list in config.rs.
                     const APPROVAL_GATED: &[&str] = &[
                         "run_terminal_command",
@@ -2299,13 +1849,9 @@ pub async fn handle_client(
                     let mut user_message_redirect: Option<String> = None;
                     for call in pending_calls.iter() {
                         let call_id = call.id().to_string();
-
-                        // Per-tool and per-turn total caps: only applied to no-approval batch tools.
-                        // tool_budget_hint carries a one-line suffix appended to the result
-                        // when the running count is close to the cap, so the AI sees the
-                        // approach and can slow down before the hard block triggers.
                         let tool_name = call.tool_name();
                         let mut tool_budget_hint: Option<String> = None;
+
                         if !APPROVAL_GATED.contains(&tool_name) {
                             total_turn_call_count += 1;
 
@@ -2394,15 +1940,16 @@ pub async fn handle_client(
                             }
                         }
 
+                        let sessions_for_exec = sessions.clone();
                         let outcome = match crate::daemon::executor::execute_tool_call(
                             call,
-                            &mut tx,
-                            &mut rx,
+                            tx,
+                            rx,
                             crate::daemon::executor::SessionCtx {
                                 session_id: session_id.as_deref(),
-                                session_name: &session_name,
+                                session_name,
                                 chat_pane: chat_pane.as_deref(),
-                                sessions: &sessions,
+                                sessions: &sessions_for_exec,
                             },
                             &cache,
                             &schedule_store,
@@ -2415,10 +1962,6 @@ pub async fn handle_client(
 
                         match outcome {
                             crate::daemon::executor::ToolCallOutcome::UserMessage(text) => {
-                                // User typed a corrective message at the approval prompt.
-                                // Abort the tool chain: pop the assistant message we just pushed
-                                // (it referenced tool calls that will never complete), then inject
-                                // the user's text as a plain user turn so the AI can course-correct.
                                 user_message_redirect = Some(text);
                                 break;
                             }
@@ -2446,9 +1989,7 @@ pub async fn handle_client(
                                 runbook_name: ghost_rb,
                                 tool_result,
                             } => {
-                                // Spawn the ghost turn loop in a background task from this
-                                // Send-safe context, then return the tool result to the AI.
-                                let ghost_sessions = Arc::clone(&sessions);
+                                let ghost_sessions = sessions.clone();
                                 let ghost_cache = Arc::clone(&cache);
                                 let ghost_store = Arc::clone(&schedule_store);
                                 let ghost_config = config.clone();
@@ -2518,15 +2059,11 @@ pub async fn handle_client(
                     }
 
                     // Truncate tool results before storing in history.
-                    // The full output was already delivered to the AI as the live result;
-                    // only the history copy needs to be capped to prevent context bloat.
-                    // Limit comes from config.limits.tool_result_chars (0 = no cap).
                     let result_char_cap =
                         crate::config::LimitsConfig::cap_usize(config.limits.tool_result_chars);
                     let history_results: Vec<ToolResult> = tool_results.into_iter().map(|r| {
                         match result_char_cap {
                             Some(cap) if r.content.len() > cap => {
-                                // Snap to a valid UTF-8 char boundary.
                                 let mut end = cap;
                                 while !r.content.is_char_boundary(end) { end -= 1; }
                                 ToolResult {
