@@ -1035,7 +1035,7 @@ where
     let mut messages: Vec<Message> = session_id
         .as_ref()
         .and_then(|id| {
-            let mem = sessions.lock().unwrap();
+            let mem = sessions.lock().unwrap_or_log();
             mem.get(id).map(|e| e.messages.clone())
         })
         .or_else(|| {

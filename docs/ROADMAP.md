@@ -66,7 +66,7 @@ than bolted on.
 | ~~C1~~ | ~~**CI lint job is broken on a fresh toolchain.**~~ | **Fixed** | — |
 | ~~C2~~ | ~~**12 `cargo test --no-run` warnings.**~~ | **Fixed** | — |
 | ~~C3~~ | ~~**Two competing logging facades.**~~ | **Fixed** | — |
-| C4 | **125+ `unwrap()` calls outside test code.** Most are in lazy regex init or tests embedded in `#[cfg(test)]` blocks, but the count makes audit hard. | Low–Medium | grep `\.unwrap\(\)` |
+| ~~C4~~ | ~~**125+ `unwrap()` calls outside test code.**~~ | **Fixed** | — |
 | C5 | **Files trending past 1000 lines.** `server.rs` (1634), `config.rs` (1381), `background.rs` (1369), `render.rs` (1245), `webhook.rs` (1207), `cli/commands/mod.rs` (1199). Each has natural seams (e.g. `config.rs` has ~60 inline test cases). | Low | Largest files |
 | ~~C6~~ | ~~**No `tests/` integration suite.**~~ | **Fixed** | `tests/integration.rs` |
 | C7 | **Stringly-typed tool dispatch.** `dispatch_tool_event` parses JSON arg names; a typo in a backend's tool definition surfaces as a runtime error rather than a compile-time miss. | Low | `src/ai/tools.rs` |
@@ -76,7 +76,7 @@ than bolted on.
 small fixes whose absence undermines confidence in the rest of the
 project. The CI green badge should mean something.~~
 
-**Phase A complete (2026-05-09):** C1 (7 clippy fixes), C2 (12 warnings cleared), C3/R10 (logging consolidated to `log` crate), C6 (10 integration tests covering IPC round-trips, schedule/session/event persistence, config parsing). CI green on fresh toolchain.
+**Phase A complete (2026-05-09):** C1 (7 clippy fixes), C2 (12 warnings cleared), C3/R10 (logging consolidated to `log` crate), C4 (1 `lock().unwrap()` in production replaced with `unwrap_or_log()`), C6 (10 integration tests covering IPC round-trips, schedule/session/event persistence, config parsing). CI green on fresh toolchain.
 
 ---
 
