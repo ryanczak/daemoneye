@@ -846,12 +846,18 @@ src/
 ├── config.rs        # ~/.daemoneye/etc/config.toml parsing; GhostDaemonConfig; prompt loading; directory helpers
 ├── daemon/          # Background process: IPC server, session memory, background execution
 │   ├── mod.rs       # Daemon entry point; supervise() task supervisor; hook installation
-│   ├── server.rs    # IPC connection loop; AI prompt assembly; trigger_ghost_turn()
+│   ├── server.rs    # IPC dispatch + `handle_ask` orchestrator + utility helpers
+│   ├── hook.rs      # 9 IPC hook notification handlers (NotifyActivity, NotifyComplete, etc.)
+│   ├── auto_name.rs # Session auto-naming + diff summary
+│   ├── prompt.rs    # Prompt assembly via `PromptCtx` (first-turn and subsequent-turn)
+│   ├── stream.rs    # AI event streaming loop; tool execution; response persistence
 │   ├── executor.rs  # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
 │   ├── background.rs # run_background_in_window(); notify_job_completion(); GC lifecycle
-│   ├── digest.rs    # Session digest: structured compaction of conversation history at 30 messages
+│   ├── digest.rs    # Session digest: structured compaction of conversation history
 │   ├── ghost.rs     # GhostManager::start_session() — allocates de-incident-* tmux window
 │   ├── policy.rs    # GhostPolicy — OS-delegation trust model: non-sudo always allowed; sudo requires auto_approve_scripts + install-sudoers
+│   ├── session.rs   # SessionStore, SessionEntry, session_exists()
+│   ├── scheduled.rs # Scheduled job execution
 │   └── stats.rs     # Atomic ghost shell counters (launched / completed / failed / active)
 ├── cli/             # IPC client: chat interface, terminal rendering, subcommands
 ├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus

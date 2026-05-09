@@ -37,6 +37,7 @@ pub mod scheduled;
 pub mod server;
 pub mod session;
 pub mod stats;
+pub mod stream;
 pub mod utils;
 
 /// Shared prefix for all daemon-managed tmux windows.  Used by the CLI to

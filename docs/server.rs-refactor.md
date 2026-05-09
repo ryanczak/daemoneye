@@ -33,7 +33,7 @@ lines of tests.
   mutex recovery.
 - **Keep tests with their code** — the 14 test functions stay adjacent
   to the functions they test.
-- **Each phase is independently `cargo test`-verifiable** — 582 tests
+- **Each phase is independently `cargo test`-verifiable** — 586 tests
   must pass after every phase.
 
 ---
@@ -268,7 +268,7 @@ async fn handle_diff_sessions(tx, sessions, config, name1, name2) -> Result<()>
 
 ### Phase 2.2: `src/daemon/stream.rs` — AI Event Streaming Loop
 
-**Status:** [ ] Not started
+**Status:** [x] Done
 
 **What moves here:** The inner `loop { ... }` from lines 1753–2556 —
 the AI event streaming, token forwarding, tool call collection, budget
@@ -355,7 +355,7 @@ does need session store access for persistence and for the
 
 ## Phase 3: Module Registration & Cleanup
 
-**Status:** [ ] Not started
+**Status:** [x] Done
 
 ### 3.1 Update `src/daemon/mod.rs`
 
@@ -388,9 +388,9 @@ use crate::daemon::stream;
 
 ### 3.3 Verify
 
-- `cargo build` — clean compilation
-- `cargo test` — 582 tests pass
-- `cargo build --release` — clean release build
+- `cargo build` — clean compilation ✓
+- `cargo test` — 586 tests pass ✓
+- `cargo build --release` — clean release build ✓
 
 ---
 
@@ -416,6 +416,21 @@ use crate::daemon::stream;
    and shared mutable state via `messages` vec.
 
 6. **Phase 3** — module registration, import updates, final verification.
+
+## Results
+
+All 6 phases complete. The decomposition extracted 4 new modules from `server.rs`,
+reducing it from 2,698 to 1,634 lines (601 lines net removed).
+
+| File | Lines | Responsibility |
+|---|---|---|
+| `server.rs` | 1,634 | IPC dispatch + `handle_ask` orchestrator |
+| `hook.rs` | (new) | 9 IPC hook notification handlers |
+| `auto_name.rs` | (new) | Session auto-naming + diff summary |
+| `prompt.rs` | (new) | Prompt assembly via `PromptCtx` |
+| `stream.rs` | 692 | AI event streaming loop + tool execution |
+
+Verification: `cargo build` clean, `cargo test` 586 pass, `cargo build --release` clean.
 
 ## Notes
 
