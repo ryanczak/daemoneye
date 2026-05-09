@@ -1,4 +1,5 @@
 # DaemonEye: AI Powered Operator 
+#
 
 DaemonEye is a lightweight background daemon that integrates an AI-powered systems, software, and security expert directly into your tmux session. Instead of a passive chatbot, DaemonEye acts as a context-aware peer that understands your full terminal state—including scrollback buffer, environment variables, running programs and command history. By leveraging Ghost Shell sub-agents, Webhook alert ingestion, and access to scripts and runbooks, it can autonomously troubleshoot failures and remediate incidents in the background. With its secure sudo integration, DaemonEye handles the repetitive lifting of infrastructure management and emergency response, allowing you to focus on your work without distraction.
 
