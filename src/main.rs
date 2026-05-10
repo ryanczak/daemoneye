@@ -1,29 +1,6 @@
-mod ai;
-mod cli;
-mod config;
-mod daemon;
-mod header;
-mod ipc;
-mod manifest;
-mod memory;
-mod pane_prefs;
-mod runbook;
-mod scheduler;
-mod scripts;
-mod search;
-mod session_store;
-mod sys_context;
-mod tmux;
-pub(crate) mod util;
-mod webhook;
-
+use daemoneye::{ai, cli, config, daemon, scripts, session_store};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
-
-/// Single global lock used by tests that mutate the HOME environment variable.
-/// All test modules that call `env::set_var("HOME", ...)` must hold this lock.
-#[cfg(test)]
-pub(crate) static TEST_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
