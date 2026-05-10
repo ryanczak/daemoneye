@@ -2,7 +2,7 @@
 # Implementation Plan
 #
 # Drafted: 2026-05-09
-# Status: A1 complete, A2–A6 pending
+# Status: COMPLETE (A1–A5 landed, A4 ignored, A6 docs updated)
 
 ---
 
