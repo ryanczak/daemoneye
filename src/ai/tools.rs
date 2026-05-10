@@ -1,4 +1,5 @@
 use crate::ai::types::AiEvent;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
@@ -769,6 +770,499 @@ pub fn get_gemini_tool_definition() -> Value {
 // Tool event dispatcher (shared by all three provider backends)
 // ---------------------------------------------------------------------------
 
+/// Trait for typed tool-argument deserialization + AiEvent construction.
+/// Every tool in `TOOLS` must have a corresponding impl — the
+/// `dispatch_roundtrip` test verifies coverage at compile time.
+pub trait ToolArgs: Sized {
+    fn from_value(value: Value) -> Option<Self>;
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent;
+}
+
+// ── Typed arg structs ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RunTerminalCommandArgs {
+    command: String,
+    #[serde(default)]
+    background: bool,
+    target_pane: Option<String>,
+    retry_in_pane: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ScheduleCommandArgs {
+    #[serde(default = "default_unnamed")]
+    name: String,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    is_script: bool,
+    run_at: Option<String>,
+    interval: Option<String>,
+    runbook: Option<String>,
+    ghost_runbook: Option<String>,
+    cron: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CancelDeleteScheduleArgs {
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct CloseBgWindowArgs {
+    pane_id: String,
+}
+
+#[derive(Deserialize)]
+struct WriteScriptArgs {
+    script_name: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ReadScriptArgs {
+    script_name: String,
+}
+
+#[derive(Deserialize)]
+struct DeleteScriptArgs {
+    script_name: String,
+}
+
+#[derive(Deserialize)]
+struct WatchPaneArgs {
+    pane_id: String,
+    #[serde(default = "default_300")]
+    timeout_secs: u64,
+    pattern: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReadFileArgs {
+    path: String,
+    offset: Option<u64>,
+    limit: Option<u64>,
+    pattern: Option<String>,
+    target_pane: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct EditFileArgs {
+    path: String,
+    #[serde(default = "default_edit")]
+    operation: String,
+    old_string: Option<String>,
+    new_string: Option<String>,
+    content: Option<String>,
+    dest_path: Option<String>,
+    target_pane: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WriteRunbookArgs {
+    name: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ReadRunbookArgs {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct AddMemoryArgs {
+    key: String,
+    value: String,
+    #[serde(default = "default_knowledge")]
+    category: String,
+}
+
+#[derive(Deserialize)]
+struct UpdateMemoryArgs {
+    key: String,
+    #[serde(default = "default_knowledge")]
+    category: String,
+    body: Option<String>,
+    #[serde(default)]
+    append: bool,
+    tags: Option<serde_json::Value>,
+    summary: Option<String>,
+    relates_to: Option<serde_json::Value>,
+    expires: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DeleteMemoryArgs {
+    key: String,
+    #[serde(default = "default_knowledge")]
+    category: String,
+}
+
+#[derive(Deserialize)]
+struct ReadMemoryArgs {
+    key: String,
+    #[serde(default = "default_knowledge")]
+    category: String,
+}
+
+#[derive(Deserialize)]
+struct ListMemoriesArgs {
+    category: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SearchRepositoryArgs {
+    query: String,
+    #[serde(default = "default_all")]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct SpawnGhostArgs {
+    runbook: String,
+    message: String,
+}
+
+// ── Default helpers ────────────────────────────────────────────────────────
+
+fn default_unnamed() -> String {
+    "unnamed".to_string()
+}
+
+fn default_300() -> u64 {
+    300
+}
+
+fn default_edit() -> String {
+    "edit".to_string()
+}
+
+fn default_knowledge() -> String {
+    "knowledge".to_string()
+}
+
+fn default_all() -> String {
+    "all".to_string()
+}
+
+// ── ToolArgs impls ────────────────────────────────────────────────────────
+
+impl ToolArgs for RunTerminalCommandArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ToolCall(
+            id.to_string(),
+            self.command,
+            self.background,
+            self.target_pane,
+            self.retry_in_pane,
+            ts,
+        )
+    }
+}
+
+impl ToolArgs for ScheduleCommandArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ScheduleCommand {
+            id: id.to_string(),
+            name: self.name,
+            command: self.command,
+            is_script: self.is_script,
+            run_at: self.run_at,
+            interval: self.interval,
+            runbook: self.runbook,
+            ghost_runbook: self.ghost_runbook,
+            cron: self.cron,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for CancelDeleteScheduleArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, _id: &str, _ts: Option<String>) -> AiEvent {
+        // Never called directly — cancel/delete schedule use schedule_id_event()
+        panic!("use schedule_id_event instead")
+    }
+}
+
+impl ToolArgs for CloseBgWindowArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::CloseBackgroundWindow {
+            id: id.to_string(),
+            pane_id: self.pane_id,
+            thought_signature: ts,
+        }
+    }
+}
+
+/// Build CancelSchedule or DeleteSchedule from the shared arg shape.
+fn schedule_id_event<T>(args: Value, ts: Option<String>, mk: T) -> Option<AiEvent>
+where
+    T: FnOnce(String, Option<String>) -> AiEvent,
+{
+    CancelDeleteScheduleArgs::from_value(args).map(|a| mk(a.id, ts))
+}
+
+impl ToolArgs for WriteScriptArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::WriteScript {
+            id: id.to_string(),
+            script_name: self.script_name,
+            content: self.content,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadScriptArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadScript {
+            id: id.to_string(),
+            script_name: self.script_name,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for DeleteScriptArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::DeleteScript {
+            id: id.to_string(),
+            script_name: self.script_name,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for WatchPaneArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::WatchPane {
+            id: id.to_string(),
+            pane_id: self.pane_id,
+            timeout_secs: self.timeout_secs,
+            pattern: self.pattern,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadFileArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadFile {
+            id: id.to_string(),
+            path: self.path,
+            offset: self.offset,
+            limit: self.limit,
+            pattern: self.pattern,
+            target_pane: self.target_pane,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for EditFileArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::EditFile {
+            id: id.to_string(),
+            path: self.path,
+            operation: self.operation,
+            old_string: self.old_string,
+            new_string: self.new_string,
+            content: self.content,
+            dest_path: self.dest_path,
+            target_pane: self.target_pane,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for WriteRunbookArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::WriteRunbook {
+            id: id.to_string(),
+            name: self.name,
+            content: self.content,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadRunbookArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadRunbook {
+            id: id.to_string(),
+            name: self.name,
+            thought_signature: ts,
+        }
+    }
+}
+
+/// Shared helper for read/delete runbook — same arg shape, different event.
+fn runbook_name_event<T>(args: Value, ts: Option<String>, mk: T) -> Option<AiEvent>
+where
+    T: FnOnce(String, Option<String>) -> AiEvent,
+{
+    ReadRunbookArgs::from_value(args).map(|a| mk(a.name, ts))
+}
+
+impl ToolArgs for AddMemoryArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::AddMemory {
+            id: id.to_string(),
+            key: self.key,
+            value: self.value,
+            category: self.category,
+            thought_signature: ts,
+        }
+    }
+}
+
+/// Helpers for the dual-format tags/relates_to fields (JSON string or array).
+fn extract_string_vec(v: &Value) -> Option<Vec<String>> {
+    v.as_str()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .or_else(|| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+        })
+}
+
+impl ToolArgs for UpdateMemoryArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::UpdateMemory {
+            id: id.to_string(),
+            key: self.key,
+            category: self.category,
+            body: self.body,
+            append: self.append,
+            tags: self.tags.as_ref().and_then(extract_string_vec),
+            summary: self.summary,
+            relates_to: self.relates_to.as_ref().and_then(extract_string_vec),
+            expires: self.expires,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for DeleteMemoryArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::DeleteMemory {
+            id: id.to_string(),
+            key: self.key,
+            category: self.category,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadMemoryArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadMemory {
+            id: id.to_string(),
+            key: self.key,
+            category: self.category,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ListMemoriesArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ListMemories {
+            id: id.to_string(),
+            category: self.category,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for SearchRepositoryArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::SearchRepository {
+            id: id.to_string(),
+            query: self.query,
+            kind: self.kind,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for SpawnGhostArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::SpawnGhost {
+            id: id.to_string(),
+            runbook: self.runbook,
+            message: self.message,
+            thought_signature: ts,
+        }
+    }
+}
+
+/// Dispatch arm helper — deserialises `args` into `T` and constructs the event.
+fn dispatch<T: ToolArgs>(id: &str, args: Value, ts: Option<String>) -> Option<AiEvent> {
+    T::from_value(args).map(|a| a.to_event(id, ts))
+}
+
 /// Given a tool call ID, name, and parsed arguments, produce the corresponding
 /// [`AiEvent`].  Returns `None` for unrecognised tool names.
 pub fn dispatch_tool_event(
@@ -777,176 +1271,20 @@ pub fn dispatch_tool_event(
     args: &Value,
     ts: Option<String>,
 ) -> Option<AiEvent> {
+    let args = args.clone();
     match name {
-        "run_terminal_command" => {
-            let cmd = args["command"].as_str()?;
-            let bg = args["background"].as_bool().unwrap_or(false);
-            let target = args["target_pane"].as_str().map(|s| s.to_string());
-            let retry = args["retry_in_pane"].as_str().map(|s| s.to_string());
-            Some(AiEvent::ToolCall(
-                id.to_string(),
-                cmd.to_string(),
-                bg,
-                target,
-                retry,
-                ts,
-            ))
-        }
-        "schedule_command" => Some(AiEvent::ScheduleCommand {
-            id: id.to_string(),
-            name: args["name"].as_str().unwrap_or("unnamed").to_string(),
-            command: args["command"].as_str().unwrap_or("").to_string(),
-            is_script: args["is_script"].as_bool().unwrap_or(false),
-            run_at: args["run_at"].as_str().map(|s| s.to_string()),
-            interval: args["interval"].as_str().map(|s| s.to_string()),
-            runbook: args["runbook"].as_str().map(|s| s.to_string()),
-            ghost_runbook: args["ghost_runbook"].as_str().map(|s| s.to_string()),
-            cron: args["cron"].as_str().map(|s| s.to_string()),
-            thought_signature: ts,
-        }),
+        "run_terminal_command" => dispatch::<RunTerminalCommandArgs>(id, args, ts),
+        "schedule_command" => dispatch::<ScheduleCommandArgs>(id, args, ts),
         "list_schedules" => Some(AiEvent::ListSchedules {
             id: id.to_string(),
-            thought_signature: ts,
-        }),
-        "cancel_schedule" => Some(AiEvent::CancelSchedule {
-            id: id.to_string(),
-            job_id: args["id"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts.clone(),
-        }),
-        "delete_schedule" => Some(AiEvent::DeleteSchedule {
-            id: id.to_string(),
-            job_id: args["id"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
-        }),
-        "write_script" => Some(AiEvent::WriteScript {
-            id: id.to_string(),
-            script_name: args["script_name"].as_str().unwrap_or("").to_string(),
-            content: args["content"].as_str().unwrap_or("").to_string(),
             thought_signature: ts,
         }),
         "list_scripts" => Some(AiEvent::ListScripts {
             id: id.to_string(),
             thought_signature: ts,
         }),
-        "read_script" => Some(AiEvent::ReadScript {
-            id: id.to_string(),
-            script_name: args["script_name"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
-        }),
-        "delete_script" => Some(AiEvent::DeleteScript {
-            id: id.to_string(),
-            script_name: args["script_name"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
-        }),
-        "watch_pane" => Some(AiEvent::WatchPane {
-            id: id.to_string(),
-            pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
-            timeout_secs: args["timeout_secs"].as_u64().unwrap_or(300),
-            pattern: args["pattern"].as_str().map(|s| s.to_string()),
-            thought_signature: ts,
-        }),
-        "read_file" => Some(AiEvent::ReadFile {
-            id: id.to_string(),
-            path: args["path"].as_str().unwrap_or("").to_string(),
-            offset: args["offset"].as_u64(),
-            limit: args["limit"].as_u64(),
-            pattern: args["pattern"].as_str().map(|s| s.to_string()),
-            target_pane: args["target_pane"].as_str().map(|s| s.to_string()),
-            thought_signature: ts,
-        }),
-        "edit_file" => Some(AiEvent::EditFile {
-            id: id.to_string(),
-            path: args["path"].as_str().unwrap_or("").to_string(),
-            operation: args["operation"].as_str().unwrap_or("edit").to_string(),
-            old_string: args["old_string"].as_str().map(|s| s.to_string()),
-            new_string: args["new_string"].as_str().map(|s| s.to_string()),
-            content: args["content"].as_str().map(|s| s.to_string()),
-            dest_path: args["dest_path"].as_str().map(|s| s.to_string()),
-            target_pane: args["target_pane"].as_str().map(|s| s.to_string()),
-            thought_signature: ts,
-        }),
-        "write_runbook" => Some(AiEvent::WriteRunbook {
-            id: id.to_string(),
-            name: args["name"].as_str().unwrap_or("").to_string(),
-            content: args["content"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
-        }),
-        "delete_runbook" => Some(AiEvent::DeleteRunbook {
-            id: id.to_string(),
-            name: args["name"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
-        }),
-        "read_runbook" => Some(AiEvent::ReadRunbook {
-            id: id.to_string(),
-            name: args["name"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
-        }),
         "list_runbooks" => Some(AiEvent::ListRunbooks {
             id: id.to_string(),
-            thought_signature: ts,
-        }),
-        "add_memory" => Some(AiEvent::AddMemory {
-            id: id.to_string(),
-            key: args["key"].as_str().unwrap_or("").to_string(),
-            value: args["value"].as_str().unwrap_or("").to_string(),
-            category: args["category"].as_str().unwrap_or("knowledge").to_string(),
-            thought_signature: ts,
-        }),
-        "update_memory" => {
-            let tags: Option<Vec<String>> = args["tags"]
-                .as_str()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .or_else(|| {
-                    args["tags"].as_array().map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    })
-                });
-            let relates_to: Option<Vec<String>> = args["relates_to"]
-                .as_str()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .or_else(|| {
-                    args["relates_to"].as_array().map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect()
-                    })
-                });
-            Some(AiEvent::UpdateMemory {
-                id: id.to_string(),
-                key: args["key"].as_str().unwrap_or("").to_string(),
-                category: args["category"].as_str().unwrap_or("knowledge").to_string(),
-                body: args["body"].as_str().map(|s| s.to_string()),
-                append: args["append"].as_bool().unwrap_or(false),
-                tags,
-                summary: args["summary"].as_str().map(|s| s.to_string()),
-                relates_to,
-                expires: args["expires"].as_str().map(|s| s.to_string()),
-                thought_signature: ts,
-            })
-        }
-        "delete_memory" => Some(AiEvent::DeleteMemory {
-            id: id.to_string(),
-            key: args["key"].as_str().unwrap_or("").to_string(),
-            category: args["category"].as_str().unwrap_or("knowledge").to_string(),
-            thought_signature: ts,
-        }),
-        "read_memory" => Some(AiEvent::ReadMemory {
-            id: id.to_string(),
-            key: args["key"].as_str().unwrap_or("").to_string(),
-            category: args["category"].as_str().unwrap_or("knowledge").to_string(),
-            thought_signature: ts,
-        }),
-        "list_memories" => Some(AiEvent::ListMemories {
-            id: id.to_string(),
-            category: args["category"].as_str().map(|s| s.to_string()),
-            thought_signature: ts,
-        }),
-        "search_repository" => Some(AiEvent::SearchRepository {
-            id: id.to_string(),
-            query: args["query"].as_str().unwrap_or("").to_string(),
-            kind: args["kind"].as_str().unwrap_or("all").to_string(),
             thought_signature: ts,
         }),
         "get_terminal_context" => Some(AiEvent::GetTerminalContext {
@@ -957,17 +1295,37 @@ pub fn dispatch_tool_event(
             id: id.to_string(),
             thought_signature: ts,
         }),
-        "close_background_window" => Some(AiEvent::CloseBackgroundWindow {
+        "cancel_schedule" => schedule_id_event(args, ts.clone(), |jid, t| AiEvent::CancelSchedule {
             id: id.to_string(),
-            pane_id: args["pane_id"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
+            job_id: jid,
+            thought_signature: t,
         }),
-        "spawn_ghost_shell" => Some(AiEvent::SpawnGhost {
+        "delete_schedule" => schedule_id_event(args, ts, |jid, t| AiEvent::DeleteSchedule {
             id: id.to_string(),
-            runbook: args["runbook"].as_str().unwrap_or("").to_string(),
-            message: args["message"].as_str().unwrap_or("").to_string(),
-            thought_signature: ts,
+            job_id: jid,
+            thought_signature: t,
         }),
+        "write_script" => dispatch::<WriteScriptArgs>(id, args, ts),
+        "read_script" => dispatch::<ReadScriptArgs>(id, args, ts),
+        "delete_script" => dispatch::<DeleteScriptArgs>(id, args, ts),
+        "watch_pane" => dispatch::<WatchPaneArgs>(id, args, ts),
+        "read_file" => dispatch::<ReadFileArgs>(id, args, ts),
+        "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
+        "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
+        "delete_runbook" => runbook_name_event(args, ts, |nm, t| AiEvent::DeleteRunbook {
+            id: id.to_string(),
+            name: nm,
+            thought_signature: t,
+        }),
+        "read_runbook" => dispatch::<ReadRunbookArgs>(id, args, ts),
+        "add_memory" => dispatch::<AddMemoryArgs>(id, args, ts),
+        "update_memory" => dispatch::<UpdateMemoryArgs>(id, args, ts),
+        "delete_memory" => dispatch::<DeleteMemoryArgs>(id, args, ts),
+        "read_memory" => dispatch::<ReadMemoryArgs>(id, args, ts),
+        "list_memories" => dispatch::<ListMemoriesArgs>(id, args, ts),
+        "search_repository" => dispatch::<SearchRepositoryArgs>(id, args, ts),
+        "close_background_window" => dispatch::<CloseBgWindowArgs>(id, args, ts),
+        "spawn_ghost_shell" => dispatch::<SpawnGhostArgs>(id, args, ts),
         _ => None,
     }
 }
@@ -1066,5 +1424,56 @@ mod tests {
             ls["parameters"].get("required").is_none(),
             "list_schedules must not have a 'required' key"
         );
+    }
+
+    /// Every tool in TOOLS must have a dispatch arm that accepts conformant args.
+    /// This catches the case where a tool is added to TOOLS but forgotten in
+    /// dispatch_tool_event, or where a required param name diverges between the
+    /// ToolDef schema and the typed arg struct.
+    #[test]
+    fn dispatch_roundtrip_all_tools() {
+        fn minimal_args(name: &str) -> Value {
+            match name {
+                "run_terminal_command" => json!({"command": "echo hi"}),
+                "schedule_command" => json!({"name": "job"}),
+                "list_schedules" => json!({}),
+                "cancel_schedule" => json!({"id": "00000000-0000-0000-0000-000000000000"}),
+                "delete_schedule" => json!({"id": "00000000-0000-0000-0000-000000000000"}),
+                "write_script" => json!({"script_name": "s.sh", "content": "#!/bin/sh"}),
+                "list_scripts" => json!({}),
+                "read_script" => json!({"script_name": "s.sh"}),
+                "delete_script" => json!({"script_name": "s.sh"}),
+                "watch_pane" => json!({"pane_id": "%1"}),
+                "read_file" => json!({"path": "/tmp/f"}),
+                "edit_file" => json!({"path": "/tmp/f"}),
+                "write_runbook" => json!({"name": "rb", "content": "# RB"}),
+                "delete_runbook" => json!({"name": "rb"}),
+                "read_runbook" => json!({"name": "rb"}),
+                "list_runbooks" => json!({}),
+                "add_memory" => json!({"key": "k", "value": "v", "category": "knowledge"}),
+                "update_memory" => json!({"key": "k", "category": "knowledge"}),
+                "delete_memory" => json!({"key": "k", "category": "knowledge"}),
+                "read_memory" => json!({"key": "k", "category": "knowledge"}),
+                "list_memories" => json!({}),
+                "search_repository" => json!({"query": "x", "kind": "all"}),
+                "get_terminal_context" => json!({}),
+                "list_panes" => json!({}),
+                "close_background_window" => json!({"pane_id": "%1"}),
+                "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
+                _ => json!({}),
+            }
+        }
+
+        for tool in TOOLS {
+            let args = minimal_args(tool.name);
+            let ev = dispatch_tool_event("tc_1", tool.name, &args, None);
+            assert!(
+                ev.is_some(),
+                "dispatch_tool_event returned None for tool '{}'. \
+                 Either the dispatch arm is missing or the arg struct's required fields \
+                 don't match the ToolDef schema.",
+                tool.name
+            );
+        }
     }
 }

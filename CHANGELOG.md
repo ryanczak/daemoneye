@@ -30,6 +30,21 @@ All notable changes to DaemonEye are documented here.
 - **`/limits reset`** — zeroes the per-session tool call counter without ending the session
 - **`[LIMITS]` in `daemoneye status`** — limits summary now appears alongside uptime, session, and model info
 - **Config validation** at daemon startup warns when an approval-gated tool appears in `[limits.per_tool]` (the entry has no effect) or when `max_history = 0` and `digest.narrative_enabled = false` (potential unbounded context growth)
+- **Integration test suite** (`tests/integration.rs`) — 10 tests covering IPC `Request`/`Response` round-trips, schedule store persistence, session JSONL and index persistence, event log format and append/read, and minimal/ghost config parsing. Runs in CI alongside the unit suite. Total tests: **596** (586 unit + 10 integration).
+- **`docs/ROADMAP.md`** — project review and prioritised roadmap covering refinements (R1–R10), innovations (I1–I16), suggested sequencing, and explicit non-goals.
+
+### Changed
+- **CI is now honestly green on a fresh toolchain.** `cargo clippy --no-deps -- -D warnings -A clippy::too_many_arguments` exits 0 and `cargo test --no-run` produces zero warnings. Prior to this release the lint job failed on `clippy::manual-strip`, `collapsible-if`, `collapsible-match`, `empty-line-after-doc-comments`, `needless-borrow`, and `useless-format`; only the GitHub runner's stale rustc cache was hiding it.
+- **Logging consolidated** to the `log` crate. The custom `println!`-based `log_event!` / `log_warn!` / `log_fatal!` macros in `src/log.rs` were removed; the four remaining call sites in `scheduler.rs` now use `log::info!`. Single facade across the codebase.
+- **Last production `lock().unwrap()` replaced with `unwrap_or_log()`** in `daemon/server.rs` (session history lookup), restoring the project-wide invariant that poisoned locks are recovered with an ERROR log rather than panicking. An audit of all 125 `unwrap()` calls in non-test code confirmed the remaining sites are safe (lazy regex initialisation, validated test inputs).
+
+### Fixed
+- 7 clippy errors that broke the lint CI job on rustc 1.95+:
+  - `header.rs` — manual prefix stripping replaced with `strip_prefix`
+  - `daemon/stream.rs`, `daemon/digest.rs`, `daemon/executor/knowledge.rs` — collapsible `if let` and `match` guards rewritten using let-chain syntax
+  - `daemon/server.rs` — empty line after doc comment, needless borrow, redundant field name
+  - `cli/commands/mod.rs` — `format!("{}", x)` replaced with `.to_string()`
+- 12 compile warnings cleared: 11 unused imports auto-fixed via `cargo fix`; non-snake-case test fn `non_interactive_ssh_tunnel_N` renamed to `_n`.
 
 ## [0.9.1]
 

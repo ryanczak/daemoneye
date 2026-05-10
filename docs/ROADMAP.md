@@ -68,15 +68,15 @@ than bolted on.
 | ~~C3~~ | ~~**Two competing logging facades.**~~ | **Fixed** | — |
 | ~~C4~~ | ~~**125+ `unwrap()` calls outside test code.**~~ | **Fixed** | — |
 | C5 | **Files trending past 1000 lines.** `server.rs` (1634), `config.rs` (1381), `background.rs` (1369), `render.rs` (1245), `webhook.rs` (1207), `cli/commands/mod.rs` (1199). Each has natural seams (e.g. `config.rs` has ~60 inline test cases). | Low | Largest files |
-| ~~C6~~ | ~~**No `tests/` integration suite.**~~ | **Fixed** | `tests/integration.rs` |
-| C7 | **Stringly-typed tool dispatch.** `dispatch_tool_event` parses JSON arg names; a typo in a backend's tool definition surfaces as a runtime error rather than a compile-time miss. | Low | `src/ai/tools.rs` |
+| C6 | **`tests/integration.rs` exists but is shallow** — covers serde round-trips and on-disk format only. The IPC `Request`/`Response` types are re-declared locally rather than imported from the crate, so production drift goes undetected; schedule and session tests hand-write JSON instead of calling `ScheduleStore` / `session_store`; no end-to-end Ask → ToolCall → Result loop. See Phase A.5 below. | Medium | `tests/integration.rs` |
+| ~~C7~~ | ~~**Stringly-typed tool dispatch.**~~ `dispatch_tool_event` parses JSON arg names; a typo in a backend's tool definition surfaces as a runtime error rather than a compile-time miss.~~ | **Fixed** | `src/ai/tools.rs` |
 | C8 | **`anyhow` everywhere; no `thiserror` at module boundaries.** Recovery decisions cannot be made by callers — every error is opaque. | Low | repo-wide |
 
 ~~**Recommendation:** treat C1–C3 as a brief hygiene sprint; they are
 small fixes whose absence undermines confidence in the rest of the
 project. The CI green badge should mean something.~~
 
-**Phase A complete (2026-05-09):** C1 (7 clippy fixes), C2 (12 warnings cleared), C3/R10 (logging consolidated to `log` crate), C4 (1 `lock().unwrap()` in production replaced with `unwrap_or_log()`), C6 (10 integration tests covering IPC round-trips, schedule/session/event persistence, config parsing). CI green on fresh toolchain.
+**Phase A complete (2026-05-09):** C1 (7 clippy fixes), C2 (12 warnings cleared), C3/R10 (logging consolidated to `log` crate), C4 (1 `lock().unwrap()` in production replaced with `unwrap_or_log()`), C7 (stringly-typed tool dispatch replaced with typed `Deserialize` structs + `ToolArgs` trait; `dispatch_roundtrip_all_tools` test verifies coverage). CI green on fresh toolchain. C6 partially addressed — see Phase A.5.
 
 ---
 
@@ -264,6 +264,25 @@ Ordered by ratio of (impact × fit) to effort.
     Approval → Result` loop.~~
 
 All four items landed 2026-05-09. 596 tests pass (586 unit + 10 integration), clippy clean, zero warnings.
+
+### Phase A.5 — Finish the integration test story (1–2 days)
+
+The `tests/integration.rs` suite that landed in Phase A is real and useful, but it tops out at serde round-trips and on-disk format checks. Three structural issues prevent it from catching real regressions:
+
+- **Production types are re-declared locally** in `tests/integration.rs:30-118` rather than imported from the crate. If `ipc.rs` adds a field or renames a variant, the test will continue to pass against its stale local copy. This is the opposite of what a contract test should do.
+- **Persistence tests hand-roll JSON** instead of calling `ScheduleStore::save()` / `session_store::save_session()`. A refactor of the on-disk format would not break these tests.
+- **No daemon-loop test exists.** The original C6 concern was the chat tool-loop and the webhook → ghost-spawn pipeline. Neither path is exercised end-to-end.
+
+These items should land before any Phase B feature work — they are the assertion harness everything later depends on.
+
+A1. **Convert `daemoneye` to a library + binary.** Add `src/lib.rs` with at minimum `pub use ipc; pub use scheduler; pub use session_store; pub use config;`. The binary stays a thin shim. This unblocks every test below and is also a precondition for plugin work in Phase E (R3 / I8).
+A2. **Replace local IPC enums with `daemoneye::ipc::*`.** Round-trip tests now catch schema drift automatically. Delete the duplicated `Request` / `Response` definitions from `tests/integration.rs`.
+A3. **Persistence tests via real APIs.** Schedule and session tests should call `ScheduleStore::save_atomic()` and `session_store::save_session()` instead of writing JSON by hand, then assert against the loaded result. Same for event-log entries — go through `daemon::utils::log_event()` rather than synthesising lines.
+A4. **One real loop test.** Spawn a daemon process bound to a tempdir socket. Verify `Request::Ping` → `Response::Ok`, then `Request::Status` → `Response::DaemonStatus` shape. ~50 lines, but it covers an entire category of regressions (socket setup, IPC framing, lifecycle) that A1–A3 cannot.
+A5. **One webhook → audit-log test.** POST a synthetic Alertmanager payload to an in-process axum router (no socket bind required, axum is testable as a `Service`), assert that `events.jsonl` contains a `webhook_alert` entry with the expected fingerprint and that masking ran. This is the highest-value integration test we can write cheaply because it exercises the dedup map, masking filter, and event logger in a single path.
+A6. **Mark C6 fully closed only after A1–A5 land.** The current row in §2.2 should stay `Medium` severity until then.
+
+**Exit criteria:** zero local re-declarations of production types in `tests/`; integration suite imports `daemoneye::*`; at least one daemon-process test and one webhook-pipeline test in CI; total test count ≥ 600.
 
 ### Phase B — Quick product wins (weeks)
 5. **R1** — Anthropic prompt caching on system prompt + manifest.
