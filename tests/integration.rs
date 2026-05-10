@@ -7,7 +7,6 @@
 
 use daemoneye::ipc::{Request, Response};
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
@@ -101,158 +100,173 @@ fn ipc_session_info_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
-// Schedule persistence
+// Schedule persistence via ScheduleStore
 // ---------------------------------------------------------------------------
 
-/// Verify that the schedule store can be written and reloaded.
+/// Verify that ScheduleStore::add() persists atomically and
+/// ScheduleStore::load_or_create() reloads the jobs with correct fields.
+/// Exercises the production save/load path.
 #[test]
 fn schedule_store_persistence() {
+    use daemoneye::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
+
     let home = temp_daemoneye_home();
     let schedule_path = home.join("var").join("schedules.json");
-
-    // Write a minimal schedule file.
-    let schedule_data = serde_json::json!({
-        "jobs": [
-            {
-                "id": "test-job-1",
-                "name": "disk check",
-                "kind": "Every 5m",
-                "action": "script: check-disk.sh",
-                "status": "active",
-                "last_run": null,
-                "next_run": "2026-05-10T00:00:00Z"
-            }
-        ]
-    });
-
     fs::create_dir_all(schedule_path.parent().unwrap()).unwrap();
-    fs::write(&schedule_path, serde_json::to_string_pretty(&schedule_data).unwrap()).unwrap();
 
-    // Reload and verify.
-    let loaded: serde_json::Value = serde_json::from_str(&fs::read_to_string(&schedule_path).unwrap()).unwrap();
-    let jobs = loaded["jobs"].as_array().expect("jobs array");
+    let store = ScheduleStore::load_or_create(schedule_path.clone()).unwrap();
+    let job = ScheduledJob::new(
+        "disk check".into(),
+        ScheduleKind::Every {
+            interval_secs: 300,
+            next_run: chrono::Utc::now(),
+        },
+        ActionOn::Script("check-disk.sh".into()),
+        None,
+    );
+    store.add(job).unwrap();
+
+    // Reload from disk and assert the persisted fields.
+    let store2 = ScheduleStore::load_or_create(schedule_path).unwrap();
+    let jobs = store2.list();
     assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0]["name"], "disk check");
-    assert_eq!(jobs[0]["status"], "active");
+    assert_eq!(jobs[0].name, "disk check");
+    assert!(jobs[0].id.len() >= 8);
 }
 
 // ---------------------------------------------------------------------------
-// Session persistence
+// Session persistence via session_store
 // ---------------------------------------------------------------------------
 
-/// Verify that a session JSONL file can be written and read back.
+/// Verify that save_session() writes meta.toml + messages.jsonl and that
+/// load_session_messages() reads them back correctly.
 #[test]
 fn session_jsonl_round_trip() {
-    let home = temp_daemoneye_home();
-    let session_dir = home.join("var").join("sessions");
-    let session_path = session_dir.join("test-session.jsonl");
+    use daemoneye::ai::Message;
+    use daemoneye::session_store::{load_session_messages, save_session};
 
-    fs::create_dir_all(&session_dir).unwrap();
+    let home = temp_daemoneye_home();
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    daemoneye::config::Config::ensure_dirs().unwrap();
 
     let messages = vec![
-        serde_json::json!({"role": "user", "content": "hello"}),
-        serde_json::json!({"role": "assistant", "content": "hi there"}),
-        serde_json::json!({"role": "user", "content": "bye"}),
+        Message {
+            role: "user".into(),
+            content: "hello".into(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        },
+        Message {
+            role: "assistant".into(),
+            content: "hi there".into(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        },
+        Message {
+            role: "user".into(),
+            content: "bye".into(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        },
     ];
+    save_session("integ-test-sess", None, "integration test", &messages, 2, "default", &[], false).unwrap();
 
-    let mut f = fs::File::create(&session_path).unwrap();
-    for msg in &messages {
-        writeln!(f, "{}", serde_json::to_string(msg).unwrap()).unwrap();
-    }
-
-    // Read back.
-    let lines: Vec<String> = fs::read_to_string(&session_path)
-        .unwrap()
-        .lines()
-        .map(|l| l.to_string())
-        .collect();
-
-    assert_eq!(lines.len(), 3);
-    let first: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
-    assert_eq!(first["role"], "user");
-    assert_eq!(first["content"], "hello");
+    let loaded = load_session_messages("integ-test-sess", 0).unwrap();
+    assert_eq!(loaded.len(), 3);
+    assert_eq!(loaded[0].role, "user");
+    assert_eq!(loaded[0].content, "hello");
+    assert_eq!(loaded[2].content, "bye");
 }
 
-/// Verify that the session index file survives a write/read cycle.
+/// Verify that save_session() creates an index entry visible to list_sessions().
 #[test]
 fn session_index_persistence() {
+    use daemoneye::ai::Message;
+    use daemoneye::session_store::{list_sessions, save_session};
+
     let home = temp_daemoneye_home();
-    let index_path = home.join("var").join("sessions").join("index.json");
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    daemoneye::config::Config::ensure_dirs().unwrap();
 
-    fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    let messages = vec![Message {
+        role: "user".into(),
+        content: "hello".into(),
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    }];
+    save_session("integ-index-test", None, "index test", &messages, 1, "default", &[], false).unwrap();
 
-    let index = serde_json::json!({
-        "sessions": {
-            "deploy-fix": {
-                "path": "deploy-fix.jsonl",
-                "turn_count": 12,
-                "message_count": 24,
-                "created_at": "2026-05-09T10:00:00Z",
-                "last_updated": "2026-05-09T10:30:00Z"
-            }
-        }
-    });
-
-    fs::write(&index_path, serde_json::to_string_pretty(&index).unwrap()).unwrap();
-
-    let loaded: serde_json::Value = serde_json::from_str(&fs::read_to_string(&index_path).unwrap()).unwrap();
-    assert_eq!(loaded["sessions"]["deploy-fix"]["turn_count"], 12);
-    assert_eq!(loaded["sessions"]["deploy-fix"]["message_count"], 24);
+    let sessions = list_sessions();
+    assert!(sessions.iter().any(|(name, _)| name == "integ-index-test"));
 }
 
 // ---------------------------------------------------------------------------
-// Event log format
+// Event log via log_event
 // ---------------------------------------------------------------------------
 
-/// Verify that an event log entry is valid JSON and has the expected fields.
+/// Verify that log_event() writes a valid JSONL entry with ts, event, and
+/// caller-provided fields.
 #[test]
 fn event_log_entry_format() {
-    let event = serde_json::json!({
-        "timestamp": "2026-05-09T10:00:00Z",
-        "type": "webhook_alert",
+    use daemoneye::daemon::utils::log_event;
+
+    let home = temp_daemoneye_home();
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    daemoneye::config::Config::ensure_dirs().unwrap();
+
+    let fields = serde_json::json!({
         "alert_name": "HighCPU",
-        "status": "firing",
-        "severity": "critical",
-        "source": "alertmanager"
+        "severity": "critical"
     });
+    log_event("webhook_alert", fields);
 
-    // Verify it serializes to a single line.
-    let line = serde_json::to_string(&event).unwrap();
-    assert!(!line.contains('\n'), "event log entries must be single-line");
-
-    // Verify it deserializes back with expected fields.
-    let back: serde_json::Value = serde_json::from_str(&line).unwrap();
-    assert_eq!(back["type"], "webhook_alert");
-    assert_eq!(back["alert_name"], "HighCPU");
-}
-
-/// Verify that multiple event log entries can be appended and read sequentially.
-#[test]
-fn event_log_append_read() {
-    let tmp = std::env::temp_dir().join(format!("de-events-{}", uuid::Uuid::new_v4()));
-    let path = tmp.join("events.jsonl");
-    fs::create_dir_all(&tmp).unwrap();
-
-    let events = vec![
-        serde_json::json!({"type": "webhook_alert", "alert_name": "HighCPU"}),
-        serde_json::json!({"type": "ghost_started", "session_id": "gs-1"}),
-        serde_json::json!({"type": "ghost_completed", "session_id": "gs-1"}),
-    ];
-
-    let mut f = fs::File::create(&path).unwrap();
-    for evt in &events {
-        writeln!(f, "{}", serde_json::to_string(evt).unwrap()).unwrap();
-    }
-
+    let path = daemoneye::config::events_path();
     let content = fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
-    assert_eq!(lines.len(), 3);
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(last["event"], "webhook_alert");
+    assert_eq!(last["alert_name"], "HighCPU");
+    assert!(last["ts"].is_string());
+}
 
-    let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-    assert_eq!(first["type"], "webhook_alert");
+/// Verify that multiple log_event() calls append correctly and are readable
+/// in order.
+#[test]
+fn event_log_append_read() {
+    use daemoneye::daemon::utils::log_event;
 
-    let last: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
-    assert_eq!(last["type"], "ghost_completed");
+    let home = temp_daemoneye_home();
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    daemoneye::config::Config::ensure_dirs().unwrap();
+
+    log_event("webhook_alert", serde_json::json!({ "alert_name": "HighCPU" }));
+    log_event("ghost_started", serde_json::json!({ "session_id": "gs-1" }));
+    log_event("ghost_completed", serde_json::json!({ "session_id": "gs-1" }));
+
+    let path = daemoneye::config::events_path();
+    let content = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+
+    // Filter to just our entries (file may have pre-existing entries from other tests).
+    let ours: Vec<serde_json::Value> = lines
+        .iter()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| {
+            matches!(v["event"].as_str(),
+                Some("webhook_alert") | Some("ghost_started") | Some("ghost_completed"))
+        })
+        .collect();
+    assert_eq!(ours.len(), 3);
+    assert_eq!(ours[0]["event"], "webhook_alert");
+    assert_eq!(ours[2]["event"], "ghost_completed");
 }
 
 // ---------------------------------------------------------------------------

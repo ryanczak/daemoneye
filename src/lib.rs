@@ -24,5 +24,7 @@ pub(crate) mod util;
 
 /// Single global lock used by tests that mutate the HOME environment variable.
 /// All test modules that call `env::set_var("HOME", ...)` must hold this lock.
-#[cfg(test)]
+///
+/// This is unconditionally `pub` so integration tests (which are a separate
+/// crate and do not get `#[cfg(test)]` items from the library) can access it.
 pub static TEST_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
