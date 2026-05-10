@@ -117,8 +117,6 @@ pub(crate) fn build_catchup_brief(
 /// Message history is stored both in the in-memory `sessions` map (fast lookup
 /// within the same daemon run) and in `~/.daemoneye/sessions/<id>.jsonl` (survives
 /// restarts). History is trimmed to `MAX_HISTORY` messages before each save.
-
-
 pub async fn handle_client(
     stream: UnixStream,
     cache: Arc<SessionCache>,
@@ -1002,6 +1000,8 @@ where
 
 // ── Ask handler ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
+// Central dispatcher; single caller; struct refactor would obscure data flow.
 async fn handle_ask<W, R>(
     initial_query: String,
     client_pane: Option<String>,
@@ -1037,7 +1037,7 @@ where
     let mut messages: Vec<Message> = session_id
         .as_ref()
         .and_then(|id| {
-            let mem = sessions.lock().unwrap();
+            let mem = sessions.lock().unwrap_or_log();
             mem.get(id).map(|e| e.messages.clone())
         })
         .or_else(|| {
@@ -1402,7 +1402,7 @@ where
         chat_pane: chat_pane.as_deref(),
         default_target_pane: default_target_pane.as_deref(),
         cache: &cache,
-        config: &config,
+        config,
         chat_width,
         safe_query: &safe_query,
         last_prompt_tokens,

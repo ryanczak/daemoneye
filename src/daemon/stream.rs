@@ -38,6 +38,8 @@ const APPROVAL_GATED: &[&str] = &[
 /// - Tool execution (foreground, background, ghost spawn)
 /// - Response persistence (in-memory and on-disk)
 /// - Auto-name suggestion for unnamed sessions
+#[allow(clippy::too_many_arguments)]
+// Core loop entry; single caller from handle_ask; stable signature.
 pub async fn run_conversation_loop<W, R>(
     tx: &mut W,
     rx: &mut R,
@@ -308,25 +310,24 @@ where
                             } else {
                                 false
                             };
-                            if should_suggest {
-                                if let Some((name, desc)) =
+                            if should_suggest
+                                && let Some((name, desc)) =
                                     auto_name::suggest_session_name(&messages, config).await
-                                {
-                                    let hint = if desc.is_empty() {
-                                        format!(
-                                            "💡 Save this session as '{}'? \
-                                             Run `/session save {}`",
-                                            name, name
-                                        )
-                                    } else {
-                                        format!(
-                                            "💡 Save this session as '{}'? \
-                                             Run `/session save {} {}`",
-                                            name, name, desc
-                                        )
-                                    };
-                                    send_response_split(tx, Response::SystemMsg(hint)).await?;
-                                }
+                            {
+                                let hint = if desc.is_empty() {
+                                    format!(
+                                        "💡 Save this session as '{}'? \
+                                         Run `/session save {}`",
+                                        name, name
+                                    )
+                                } else {
+                                    format!(
+                                        "💡 Save this session as '{}'? \
+                                         Run `/session save {} {}`",
+                                        name, name, desc
+                                    )
+                                };
+                                send_response_split(tx, Response::SystemMsg(hint)).await?;
                             }
                         }
 

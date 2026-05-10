@@ -30,27 +30,6 @@ pub fn check_ghost_capacity(config: &crate::config::Config) -> bool {
     crate::daemon::stats::get_ghosts_active() < max
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn capacity_zero_disables_cap() {
-        let mut config = crate::config::Config::default();
-        config.ghost.max_concurrent_ghosts = 0;
-        // Even with many active ghosts, should always allow.
-        assert!(check_ghost_capacity(&config));
-    }
-
-    #[test]
-    fn capacity_allows_when_under_limit() {
-        let mut config = crate::config::Config::default();
-        config.ghost.max_concurrent_ghosts = 100; // very high ceiling
-        // Active count starts at 0, so we're well under the limit.
-        assert!(check_ghost_capacity(&config));
-    }
-}
-
 /// Orchestrates the lifecycle of an autonomous Ghost Shell.
 pub struct GhostManager;
 
@@ -799,4 +778,25 @@ pub async fn trigger_ghost_turn(
     );
     crate::daemon::stats::inc_ghosts_completed();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capacity_zero_disables_cap() {
+        let mut config = crate::config::Config::default();
+        config.ghost.max_concurrent_ghosts = 0;
+        // Even with many active ghosts, should always allow.
+        assert!(check_ghost_capacity(&config));
+    }
+
+    #[test]
+    fn capacity_allows_when_under_limit() {
+        let mut config = crate::config::Config::default();
+        config.ghost.max_concurrent_ghosts = 100; // very high ceiling
+        // Active count starts at 0, so we're well under the limit.
+        assert!(check_ghost_capacity(&config));
+    }
 }

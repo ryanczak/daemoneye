@@ -87,6 +87,7 @@ impl AsyncStdin {
 // ── Interactive line editor ───────────────────────────────────────────────────
 
 /// A single editable line: a character buffer and a cursor position.
+#[derive(Default)]
 pub struct InputLine {
     buf: Vec<char>,
     cursor: usize, // character index, 0 ..= buf.len()
@@ -94,10 +95,7 @@ pub struct InputLine {
 
 impl InputLine {
     pub fn new() -> Self {
-        Self {
-            buf: Vec::new(),
-            cursor: 0,
-        }
+        Self::default()
     }
 
     fn from_str(s: &str) -> Self {
@@ -157,14 +155,20 @@ pub struct InputState {
     saved: String, // current line stashed while browsing history
 }
 
-impl InputState {
-    pub fn new() -> Self {
+impl Default for InputState {
+    fn default() -> Self {
         Self {
             current: InputLine::new(),
             history: Vec::new(),
             history_idx: None,
             saved: String::new(),
         }
+    }
+}
+
+impl InputState {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Commit a query to history and reset the current line to empty.

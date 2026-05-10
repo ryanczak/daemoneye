@@ -325,12 +325,10 @@ fn format_messages_for_narrative(messages: &[Message]) -> String {
                     }
                 }
             }
-            "user" => {
-                if !m.content.is_empty() {
-                    out.push_str("USER: ");
-                    out.push_str(&m.content);
-                    out.push('\n');
-                }
+            "user" if !m.content.is_empty() => {
+                out.push_str("USER: ");
+                out.push_str(&m.content);
+                out.push('\n');
             }
             "assistant" => {
                 if !m.content.is_empty() {
@@ -825,11 +823,11 @@ mod tests {
                 for r in results {
                     let mut found = false;
                     for prev in result[..i].iter().rev() {
-                        if let Some(calls) = &prev.tool_calls {
-                            if calls.iter().any(|c| c.id == r.tool_call_id) {
-                                found = true;
-                                break;
-                            }
+                        if let Some(calls) = &prev.tool_calls
+                            && calls.iter().any(|c| c.id == r.tool_call_id)
+                        {
+                            found = true;
+                            break;
                         }
                     }
                     assert!(
@@ -938,8 +936,10 @@ mod tests {
     #[test]
     fn digest_threshold_value() {
         // Sanity check: threshold is between TAIL_KEEP and MAX_HISTORY.
-        assert!(DIGEST_THRESHOLD > TAIL_KEEP + 2);
-        assert!(DIGEST_THRESHOLD < crate::daemon::session::MAX_HISTORY);
+        const {
+            assert!(DIGEST_THRESHOLD > TAIL_KEEP + 2);
+            assert!(DIGEST_THRESHOLD < crate::daemon::session::MAX_HISTORY);
+        }
     }
 
     #[test]

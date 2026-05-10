@@ -170,6 +170,8 @@ fn save_index(index: &HashMap<String, IndexEntry>) -> Result<()> {
 ///
 /// If `name` is already in the index AND `current_saved_name != Some(name)`, returns an error
 /// unless `force` is true.  Use `force` only when the user explicitly passes `--force`.
+#[allow(clippy::too_many_arguments)]
+// Public API boundary; multiple callers; stable signature.
 pub fn save_session(
     name: &str,
     current_saved_name: Option<&str>,

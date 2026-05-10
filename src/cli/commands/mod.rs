@@ -295,9 +295,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
     // Compact splash hint — full command list is available via /help.
     {
         let hint_plain = "/help  — list commands      /exit  — quit";
-        let hint = format!(
-            "\x1b[96m/help\x1b[0m  \x1b[2m— list commands\x1b[0m      \x1b[96m/exit\x1b[0m  \x1b[2m— quit\x1b[0m"
-        );
+        let hint = "\x1b[96m/help\x1b[0m  \x1b[2m— list commands\x1b[0m      \x1b[96m/exit\x1b[0m  \x1b[2m— quit\x1b[0m".to_string();
         let pad = " ".repeat((chat_width.saturating_sub(hint_plain.chars().count())) / 2);
         println!();
         println!("{pad}{hint}");

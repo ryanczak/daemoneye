@@ -262,9 +262,36 @@ pub fn read_session_file(id: &str, max_history: Option<usize>) -> Vec<Message> {
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
-    match max_history {
+match max_history {
         Some(cap) if msgs.len() > cap => msgs[msgs.len() - cap..].to_vec(),
         _ => msgs,
+    }
+}
+
+impl SessionEntry {
+    pub fn last_accessed(&self) -> std::time::Instant {
+        self.last_accessed
+    }
+
+    /// Kill all background windows that are still open for this session.
+    /// Called when the session is evicted from the store.
+    pub fn cleanup_bg_windows(&self) {
+        for win in &self.bg_windows {
+            if let Err(e) = crate::tmux::kill_job_window(&win.tmux_session, &win.window_name) {
+                log::warn!(
+                    "GC bg window {} on session eviction: {}",
+                    win.window_name,
+                    e
+                );
+            }
+        }
+        // R1: stop pipe-pane and remove the log file if one was started for this session.
+        // An empty string is the "failed / skipped" sentinel — nothing to clean up.
+        if let Some(ref pane_id) = self.pipe_source_pane
+            && !pane_id.is_empty()
+        {
+            crate::tmux::stop_pipe_pane(pane_id);
+        }
     }
 }
 
@@ -478,32 +505,5 @@ mod tests {
         };
         assert!(!entry.auto_name_suggested);
         assert!(entry.saved_name.is_none());
-    }
-}
-
-impl SessionEntry {
-    pub fn last_accessed(&self) -> std::time::Instant {
-        self.last_accessed
-    }
-
-    /// Kill all background windows that are still open for this session.
-    /// Called when the session is evicted from the store.
-    pub fn cleanup_bg_windows(&self) {
-        for win in &self.bg_windows {
-            if let Err(e) = crate::tmux::kill_job_window(&win.tmux_session, &win.window_name) {
-                log::warn!(
-                    "GC bg window {} on session eviction: {}",
-                    win.window_name,
-                    e
-                );
-            }
-        }
-        // R1: stop pipe-pane and remove the log file if one was started for this session.
-        // An empty string is the "failed / skipped" sentinel — nothing to clean up.
-        if let Some(ref pane_id) = self.pipe_source_pane
-            && !pane_id.is_empty()
-        {
-            crate::tmux::stop_pipe_pane(pane_id);
-        }
     }
 }
