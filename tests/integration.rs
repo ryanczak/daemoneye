@@ -5,7 +5,7 @@
 //! event log, IPC messages) survive serialization round-trips and are
 //! consistent across the boundary between daemon and CLI.
 
-use serde::{Deserialize, Serialize};
+use daemoneye::ipc::{Request, Response};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -25,99 +25,8 @@ fn temp_daemoneye_home() -> PathBuf {
 // IPC protocol round-trip
 // ---------------------------------------------------------------------------
 
-/// Re-export the IPC types so the integration test crate can serialize/deserialize
-/// without depending on internal module layout.
-#[derive(Debug, Serialize, Deserialize)]
-enum Request {
-    Ping,
-    Ask {
-        query: String,
-        tmux_pane: Option<String>,
-        session_id: Option<String>,
-        chat_pane: Option<String>,
-        prompt: Option<String>,
-        chat_width: Option<usize>,
-        tmux_session: Option<String>,
-        target_pane: Option<String>,
-        model: Option<String>,
-    },
-    ToolCallResponse {
-        id: String,
-        approved: bool,
-        user_message: Option<String>,
-    },
-    Status,
-    Shutdown,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-enum Response {
-    Ok,
-    Error(String),
-    SessionInfo {
-        message_count: usize,
-        turn_count: usize,
-    },
-    Token(String),
-    DaemonStatus {
-        uptime_secs: u64,
-        pid: u32,
-        active_sessions: usize,
-        total_turns: usize,
-        provider: String,
-        model: String,
-        available_models: Vec<String>,
-        socket_path: String,
-        schedule_count: usize,
-        commands_fg_succeeded: usize,
-        commands_fg_failed: usize,
-        commands_fg_approved: usize,
-        commands_fg_denied: usize,
-        commands_bg_succeeded: usize,
-        commands_bg_failed: usize,
-        commands_bg_approved: usize,
-        commands_bg_denied: usize,
-        commands_sched_succeeded: usize,
-        commands_sched_failed: usize,
-        ghosts_launched: usize,
-        ghosts_active: usize,
-        ghosts_completed: usize,
-        ghosts_failed: usize,
-        webhooks_received: usize,
-        webhooks_rejected: usize,
-        webhook_url: String,
-        runbook_count: usize,
-        runbooks_created: usize,
-        runbooks_executed: usize,
-        runbooks_deleted: usize,
-        script_count: usize,
-        scripts_created: usize,
-        scripts_executed: usize,
-        scripts_deleted: usize,
-        memories_created: usize,
-        memories_recalled: usize,
-        memories_deleted: usize,
-        schedules_created: usize,
-        schedules_executed: usize,
-        schedules_deleted: usize,
-        active_prompt_tokens: u32,
-        context_window_tokens: u32,
-        recent_commands: Vec<serde_json::Value>,
-        memory_breakdown: std::collections::HashMap<String, usize>,
-        redaction_counts: std::collections::HashMap<String, usize>,
-        compactions: usize,
-        compaction_ratio: f64,
-        scripts_approved: usize,
-        scripts_denied: usize,
-        runbooks_approved: usize,
-        runbooks_denied: usize,
-        file_edits_approved: usize,
-        file_edits_denied: usize,
-        limits: serde_json::Value,
-    },
-}
-
-/// Verify that an Ask request survives JSON serialization/deserialization.
+/// Verify that an Ask request survives JSON serialization/deserialization
+/// using the production `Request` type from `daemoneye::ipc`.
 #[test]
 fn ipc_ask_round_trip() {
     let req = Request::Ask {
@@ -149,7 +58,7 @@ fn ipc_ask_round_trip() {
     }
 }
 
-/// Verify that a ToolCallResponse survives round-trip.
+/// Verify that a ToolCallResponse survives round-trip using the production `Request` type.
 #[test]
 fn ipc_tool_call_response_round_trip() {
     let req = Request::ToolCallResponse {
@@ -171,7 +80,7 @@ fn ipc_tool_call_response_round_trip() {
     }
 }
 
-/// Verify that a SessionInfo response survives round-trip.
+/// Verify that a SessionInfo response survives round-trip using the production `Response` type.
 #[test]
 fn ipc_session_info_round_trip() {
     let resp = Response::SessionInfo {
