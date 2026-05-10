@@ -514,11 +514,16 @@ Independent of A.5, `cargo clippy --all-targets` reports:
 These are not new in A.5 but the ROADMAP §C1 "Fixed" claim implied a clean
 clippy run that does not exist with `--all-targets`.
 
-**F4. ROADMAP test count is off by one.**
-ROADMAP §1 reports "598 passing + 1 ignored (587 unit + 11 integration + 1 ignored)".
-Actual `cargo test` output: **587 unit + 11 integration + 1 ignored = 599 passing
-+ 1 ignored = 600 total**. ROADMAP §A.5 exit-criteria text already says
-"599 passing + 1 ignored" — §1 metrics table is the stale copy.
+**F4. ~~ROADMAP test count is off by one.~~ RETRACTED 2026-05-10.**
+~~ROADMAP §1 reports "598 passing + 1 ignored (587 unit + 11 integration + 1 ignored)".~~
+~~Actual `cargo test` output: **587 unit + 11 integration + 1 ignored = 599 passing~~
+~~+ 1 ignored = 600 total**. ROADMAP §A.5 exit-criteria text already says~~
+~~"599 passing + 1 ignored" — §1 metrics table is the stale copy.~~
+
+**Retraction:** arithmetic error in the original audit. 587 unit + 11
+integration = **598 passing**, plus 1 ignored = 599 total tests. ROADMAP §1
+("598 passing + 1 ignored") was correct all along. A.7.6 correctly noted
+"Already correct" and was a no-op.
 
 ### What was *not* a problem
 
