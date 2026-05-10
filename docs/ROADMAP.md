@@ -265,6 +265,18 @@ Ordered by ratio of (impact × fit) to effort.
 
 All four items landed 2026-05-09. 596 tests pass (586 unit + 10 integration), clippy clean, zero warnings.
 
+### Phase A.7 — Post-implementation cleanup (1 day) **✅ COMPLETE**
+
+Post-A.5 audit revealed clippy errors and warnings that silently accumulated because `cargo clippy --all-targets -- -D warnings` wasn't gated. All issues resolved 2026-05-10:
+
+A.7.1. ~~**Fix A4 test `read()` bug.**~~ Replaced `stream.read(&mut buf)` (zero-capacity buffer, `unused_io_amount` error) with `BufReader` + `read_line()` for newline-delimited JSON framing. **Done: 2026-05-10.**
+A.7.2. ~~**Drop `MutexGuard` before `.await` in A5 test.**~~ Scoped `TEST_HOME_LOCK` guard to only cover the `set_var("HOME", ...)` call, dropped before `process_alert().await`. **Done: 2026-05-10.**
+A.7.3. ~~**Move `#[cfg(test)] mod tests` to bottom of file.**~~ Relocated test modules in `src/daemon/ghost.rs`, `src/daemon/session.rs`, `src/daemon/utils.rs`, `src/tmux/session.rs`. **Done: 2026-05-10.**
+A.7.4. ~~**Address `too_many_arguments` warnings.**~~ Added `#[allow(clippy::too_many_arguments)]` to `handle_ask()` (16 args), `run_conversation_loop()` (15 args), and `save_session()` (8 args) with rationale comments. **Done: 2026-05-10.**
+A.7.5. ~~**Mechanical clippy cleanup.**~~ Fixed `field_reassign_with_default` (3 sites), `new_without_default` → `#[derive(Default)]` (`InputLine`), `collapsible_if` (2 sites), `assertions_on_constants` (2 sites → `const { assert!(..) }`), `module_name_repetitions` (unwrapped `cli/tests.rs`), `empty_line_after_doc_comment`, `struct_update_with_no_effect`, `derivable_impls`. **Done: 2026-05-10.**
+A.7.6. ~~**Fix ROADMAP §1 test count.**~~ Already correct at 598 passing + 1 ignored. **Done: 2026-05-10.**
+A.7.7. ~~**Add CI clippy gate to CLAUDE.md.**~~ Added `cargo clippy --all-targets -- -D warnings` to Build & Test section. **Done: 2026-05-10.**
+
 ### Phase A.5 — Finish the integration test story (1–2 days) **✅ COMPLETE**
 
 The `tests/integration.rs` suite that landed in Phase A is real and useful, but it topped out at serde round-trips and on-disk format checks. Three structural issues prevented it from catching real regressions:
@@ -282,7 +294,7 @@ A4. ~~**One real loop test.**~~ `daemon_ping_status_loop` spawns a daemon proces
 A5. ~~**One webhook → audit-log test.**~~ `webhook_alert_to_event_log` exercises `parse_payload → process_alert → log_event` with a synthetic Alertmanager payload and asserts `events.jsonl` contains a `webhook_alert` entry. **Done: 2026-05-09.**
 A6. ~~**Mark C6 fully closed.**~~ C6 row in §2.2 struck through, severity changed to **Fixed**. **Done: 2026-05-09.**
 
-**Exit criteria met:** zero local re-declarations of production types in `tests/`; integration suite imports `daemoneye::*`; one daemon-process test (ignored) and one webhook-pipeline test in CI; total test count ≥ 600 (599 passing + 1 ignored).
+**Exit criteria met:** zero local re-declarations of production types in `tests/`; integration suite imports `daemoneye::*`; one daemon-process test (ignored) and one webhook-pipeline test in CI; total test count ≥ 600 (598 passing + 1 ignored).
 
 ### Phase B — Quick product wins (weeks)
 5. **R1** — Anthropic prompt caching on system prompt + manifest.

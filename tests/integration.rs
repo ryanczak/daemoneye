@@ -27,10 +27,10 @@ fn find_daemoneye_binary() -> PathBuf {
         .ok()
         .and_then(|p| p.parent().map(PathBuf::from))
         .map(|p| p.join("daemoneye"));
-    if let Some(ref p) = from_exe {
-        if p.exists() {
-            return p.clone();
-        }
+    if let Some(ref p) = from_exe
+        && p.exists()
+    {
+        return p.clone();
     }
     // 2. Installed binary in ~/.daemoneye/bin/.
     let installed = std::env::var("HOME")
@@ -337,7 +337,7 @@ auto_approve_commands = true
 "#;
 
     let cfg: toml::Value = toml::from_str(toml_str).expect("parse ghost config");
-    assert_eq!(cfg["ghost"]["enabled"].as_bool().unwrap(), true);
+    assert!(cfg["ghost"]["enabled"].as_bool().unwrap());
     assert_eq!(cfg["ghost"]["max_concurrent_ghosts"].as_integer().unwrap(), 3);
     let scripts: Vec<&str> = cfg["ghost"]["auto_approve_scripts"]
         .as_array()
@@ -425,24 +425,25 @@ model = "test"
         waited += 1;
     }
 
-    // Connect and send Ping.
-    let mut stream = tokio::net::UnixStream::connect(&socket)
+    // Connect, split into reader/writer halves, wrap reader in BufReader
+    // for newline-delimited JSON framing.
+    let stream = tokio::net::UnixStream::connect(&socket)
         .await
         .expect("connect to socket");
-
-    let ping = serde_json::to_string(&Request::Ping).unwrap();
+    let (rd, mut wr) = stream.into_split();
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let mut rd = BufReader::new(rd);
     use tokio::io::AsyncWriteExt;
-    stream
-        .write_all(format!("{}\n", ping).as_bytes())
+
+    // Send Ping.
+    let ping = serde_json::to_string(&Request::Ping).unwrap();
+    wr.write_all(format!("{}\n", ping).as_bytes())
         .await
         .unwrap();
 
-    let mut buf = Vec::new();
-    use tokio::io::AsyncReadExt;
-    stream.read(&mut buf).await.unwrap();
-    let resp: Response =
-        serde_json::from_str(std::str::from_utf8(&buf).unwrap().trim())
-            .unwrap();
+    let mut line = String::new();
+    rd.read_line(&mut line).await.unwrap();
+    let resp: Response = serde_json::from_str(line.trim()).unwrap();
     assert!(
         matches!(resp, Response::Ok),
         "expected Response::Ok for Ping, got {:?}",
@@ -450,18 +451,14 @@ model = "test"
     );
 
     // Send Status.
-    buf.clear();
     let status_req = serde_json::to_string(&Request::Status).unwrap();
-    stream
-        .write_all(format!("{}\n", status_req).as_bytes())
+    wr.write_all(format!("{}\n", status_req).as_bytes())
         .await
         .unwrap();
 
-    stream.read(&mut buf).await.unwrap();
-
-    let resp: Response =
-        serde_json::from_str(std::str::from_utf8(&buf).unwrap().trim())
-            .unwrap();
+    line.clear();
+    rd.read_line(&mut line).await.unwrap();
+    let resp: Response = serde_json::from_str(line.trim()).unwrap();
     match resp {
         Response::DaemonStatus { uptime_secs, pid, .. } => {
             assert!(pid > 0);
@@ -494,8 +491,10 @@ async fn webhook_alert_to_event_log() {
 
     // Isolate HOME so events_path resolves to a temp directory.
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-    unsafe { std::env::set_var("HOME", tmp.path().to_str().unwrap()); }
+    {
+        let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path().to_str().unwrap()); }
+    }
     daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
 
     // Parse a synthetic Alertmanager payload.

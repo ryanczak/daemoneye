@@ -1000,6 +1000,8 @@ where
 
 // ── Ask handler ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
+// Central dispatcher; single caller; struct refactor would obscure data flow.
 async fn handle_ask<W, R>(
     initial_query: String,
     client_pane: Option<String>,

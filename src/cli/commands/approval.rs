@@ -249,8 +249,10 @@ mod tests {
 
     #[test]
     fn hint_shows_scripts_all_when_flag_set() {
-        let mut a = SessionApproval::default();
-        a.scripts_all = true;
+        let a = SessionApproval {
+            scripts_all: true,
+            ..SessionApproval::default()
+        };
         let h = a.hint();
         assert!(
             h.contains("scripts: all"),

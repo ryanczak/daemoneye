@@ -272,11 +272,75 @@ pub fn client_dimensions(session_name: &str) -> (u16, u16) {
         _ => return (0, 0),
     };
     let s = String::from_utf8_lossy(&out.stdout);
-    let s = s.trim();
+let s = s.trim();
     let mut parts = s.splitn(2, '\t');
     let w = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     let h = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     (w, h)
+}
+
+/// Default name for the headless tmux session used to host ghost incidents.
+pub const INCIDENT_SESSION_NAME: &str = "daemoneye-incidents";
+
+/// Ensure a tmux session exists to host an incident window.
+///
+/// Returns the name of an existing active session if available,
+/// otherwise creates a new detached session named `daemoneye-incidents`
+/// and returns that name.
+pub fn ensure_incident_session() -> Result<String> {
+    let sessions = list_sessions();
+
+    // 1. Try to find the most recently active attached session.
+    if let Some(s) = sessions
+        .iter()
+        .filter(|s| s.attached)
+        .max_by_key(|s| s.last_activity)
+    {
+        return Ok(s.name.clone());
+    }
+
+    // 2. Try to find any existing session (even detached).
+    if let Some(s) = sessions.iter().max_by_key(|s| s.last_activity) {
+        return Ok(s.name.clone());
+    }
+
+    // 3. Fallback: create a new detached session.
+    log::info!(
+        "No active tmux sessions found. Creating detached session: {}",
+        INCIDENT_SESSION_NAME
+    );
+    let out = Command::new("tmux")
+        .args(["new-session", "-d", "-s", INCIDENT_SESSION_NAME])
+        .output()?;
+
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        anyhow::bail!("Failed to create incident session: {}", err);
+    }
+
+    Ok(INCIDENT_SESSION_NAME.to_string())
+}
+
+/// Return `true` if a tmux session with this name currently exists.
+pub fn session_exists(name: &str) -> bool {
+    Command::new("tmux")
+        .args(["has-session", "-t", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// List all pane IDs in a tmux session (across all windows).
+pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
+    let out = Command::new("tmux")
+        .args(["list-panes", "-s", "-t", session, "-F", "#{pane_id}"])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    Ok(stdout
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
 }
 
 #[cfg(test)]
@@ -422,68 +486,4 @@ mod tests {
         assert!(!out.contains("bell!"), "unexpected bell: {out}");
         assert!(!out.contains("activity"), "unexpected activity: {out}");
     }
-}
-
-/// Default name for the headless tmux session used to host ghost incidents.
-pub const INCIDENT_SESSION_NAME: &str = "daemoneye-incidents";
-
-/// Ensure a tmux session exists to host an incident window.
-///
-/// Returns the name of an existing active session if available,
-/// otherwise creates a new detached session named `daemoneye-incidents`
-/// and returns that name.
-pub fn ensure_incident_session() -> Result<String> {
-    let sessions = list_sessions();
-
-    // 1. Try to find the most recently active attached session.
-    if let Some(s) = sessions
-        .iter()
-        .filter(|s| s.attached)
-        .max_by_key(|s| s.last_activity)
-    {
-        return Ok(s.name.clone());
-    }
-
-    // 2. Try to find any existing session (even detached).
-    if let Some(s) = sessions.iter().max_by_key(|s| s.last_activity) {
-        return Ok(s.name.clone());
-    }
-
-    // 3. Fallback: create a new detached session.
-    log::info!(
-        "No active tmux sessions found. Creating detached session: {}",
-        INCIDENT_SESSION_NAME
-    );
-    let out = Command::new("tmux")
-        .args(["new-session", "-d", "-s", INCIDENT_SESSION_NAME])
-        .output()?;
-
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        anyhow::bail!("Failed to create incident session: {}", err);
-    }
-
-    Ok(INCIDENT_SESSION_NAME.to_string())
-}
-
-/// Return `true` if a tmux session with this name currently exists.
-pub fn session_exists(name: &str) -> bool {
-    Command::new("tmux")
-        .args(["has-session", "-t", name])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// List all pane IDs in a tmux session (across all windows).
-pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
-    let out = Command::new("tmux")
-        .args(["list-panes", "-s", "-t", session, "-F", "#{pane_id}"])
-        .output()?;
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    Ok(stdout
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect())
 }

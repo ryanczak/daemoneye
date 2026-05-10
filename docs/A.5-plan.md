@@ -2,7 +2,8 @@
 # Implementation Plan
 #
 # Drafted: 2026-05-09
-# Status: COMPLETE (A1–A5 landed, A4 ignored, A6 docs updated)
+# Status: A1–A7 complete (A.7 cleanup landed 2026-05-10)
+#         C5 (large files) and C8 (thiserror) deferred — see end of doc
 
 ---
 
@@ -464,3 +465,185 @@ Exit criteria of ≥ 600 is met. If desired, we can add 1-2 more tests:
 | `src/webhook.rs` | **Modify** — `pub` on `process_alert`, `parse_payload` |
 | `tests/integration.rs` | **Rewrite** — delete local types, use real APIs, add 2 new tests |
 | `docs/ROADMAP.md` | **Modify** — mark C6 closed, update test count |
+
+---
+
+## Post-Implementation Audit (2026-05-10)
+
+A re-read of A1–A6 against the actual tree turned up four issues the original
+plan did not anticipate. They do not invalidate the structural fix to C6 —
+production drift will now break compilation as intended — but they do mean
+the "CI green, clippy clean" claim in ROADMAP §C1 is no longer accurate
+post-A.5.
+
+### Findings
+
+**F1. Two real clippy errors in the A4 test.**
+`tests/integration.rs:442` and `:460` call `stream.read(&mut buf).await.unwrap()`
+where `buf` is `Vec::new()`. `read()` into a zero-capacity buffer returns
+`Ok(0)` immediately, so as written the test would deserialize an empty byte
+slice. The test is `#[ignore]`'d, which masks the bug from CI test runs but
+not from `cargo clippy --all-targets -- -D warnings` (which now fails). If A4
+is ever un-ignored it cannot pass.
+
+**F2. `MutexGuard` held across `.await` in A5 test.**
+`tests/integration.rs:497` and `:542` hold `daemoneye::TEST_HOME_LOCK.lock().unwrap()`
+across `process_alert(...).await`. Clippy flags this; in practice it is
+unlikely to deadlock because the test is single-threaded and there is only
+one consumer of the lock per test, but the lint should be honoured: drop the
+guard before the `.await`, or reach for `tokio::sync::Mutex` if cross-await
+hold is genuinely required.
+
+**F3. Pre-existing clippy lints in `src/`.**
+Independent of A.5, `cargo clippy --all-targets` reports:
+- 4 × `items after a test module` — items added below `mod tests { ... }` in
+  `src/daemon/ghost.rs:34`, `src/daemon/session.rs:272`, `src/daemon/utils.rs:483`,
+  `src/tmux/session.rs:283`. Mechanical fix: move the `#[cfg(test)] mod tests`
+  block to the bottom of each file.
+- 3 × `too many arguments` — `src/daemon/server.rs:1003`, `src/daemon/stream.rs:41`,
+  `src/session_store.rs:173`. Sometimes worth a struct-of-args refactor;
+  sometimes worth `#[allow(clippy::too_many_arguments)]` with a comment.
+- 5 × `field assignment outside of initializer for an instance created with Default::default()` —
+  cosmetic, mechanical fix.
+- 3 × `Default impl missing` (`MarkdownRenderer`, `InputState`, `InputLine`) —
+  cosmetic, mechanical fix.
+- 2 × `assertion has a constant value`, 2 × collapsible-if, 1 × literal-bool
+  assert, 1 × empty-line-after-doc-comment, 1 × module-same-name — all
+  mechanical.
+
+These are not new in A.5 but the ROADMAP §C1 "Fixed" claim implied a clean
+clippy run that does not exist with `--all-targets`.
+
+**F4. ROADMAP test count is off by one.**
+ROADMAP §1 reports "598 passing + 1 ignored (587 unit + 11 integration + 1 ignored)".
+Actual `cargo test` output: **587 unit + 11 integration + 1 ignored = 599 passing
++ 1 ignored = 600 total**. ROADMAP §A.5 exit-criteria text already says
+"599 passing + 1 ignored" — §1 metrics table is the stale copy.
+
+### What was *not* a problem
+
+- **Production `unwrap()` calls.** A grep that excludes inline `mod tests { ... }`
+  blocks finds **6** production `unwrap()` calls, all defensible (post-validation
+  guarantees, statically-checked regex compilation). The earlier "124" number
+  conflated test-only unwraps in non-`_tests.rs` files with production code.
+  C4 is genuinely closed.
+- **Library/binary split.** `src/lib.rs` and `src/main.rs` are clean. Visibility
+  audit from §A1 was accurate; no over-exposure.
+- **Integration test contract.** `daemoneye::ipc::{Request, Response}` is now
+  the only source of truth — verified at `tests/integration.rs:8`. C6 is
+  structurally closed.
+
+---
+
+## Phase A.7 — Post-implementation Cleanup
+
+Small, mechanical follow-ups. Each item lists the file(s), the fix, and the
+acceptance check. Estimated total effort: half a day.
+
+### A.7.1 Fix A4 test `read()` bug and un-ignore if feasible
+
+**Files:** `tests/integration.rs:442, 460`
+**Change:** Replace `let mut buf = Vec::new(); stream.read(&mut buf).await.unwrap();`
+with a framed read that respects the newline-delimited JSON wire format. The
+daemon writes each `Response` followed by `\n`; use `tokio::io::BufReader` +
+`read_line()`:
+```rust
+use tokio::io::{AsyncBufReadExt, BufReader};
+
+let (rd, mut wr) = stream.into_split();
+let mut rd = BufReader::new(rd);
+let mut line = String::new();
+
+wr.write_all(format!("{}\n", ping).as_bytes()).await.unwrap();
+line.clear();
+rd.read_line(&mut line).await.unwrap();
+let resp: Response = serde_json::from_str(line.trim()).unwrap();
+```
+**Decision point:** if the daemon binary can be located reliably without
+tmux running, drop `#[ignore]`. If tmux is required, keep `#[ignore]` but
+document the requirement in a comment so the test is run-able locally.
+**Accept:** `cargo clippy --all-targets -- -D warnings` no longer reports
+`read amount is not handled` in the integration test crate.
+
+### A.7.2 Drop std `MutexGuard` before `.await` in A5 test
+
+**Files:** `tests/integration.rs:497, 542`
+**Change:** Acquire `TEST_HOME_LOCK`, set `HOME`, then drop the guard before
+calling `process_alert(...).await`. Two options:
+1. Scope the guard: `{ let _l = …lock().unwrap(); std::env::set_var(…); }` —
+   the env var stays set; the lock is released.
+2. Bind to `_` so it drops immediately: `let _ = …lock().unwrap();` (works
+   here because we only need the lock long enough to mutate `HOME`).
+**Accept:** `cargo clippy --all-targets` no longer reports `this MutexGuard
+is held across an await point` in `tests/integration.rs`.
+
+### A.7.3 Move `#[cfg(test)] mod tests` to bottom of file
+
+**Files:** `src/daemon/ghost.rs`, `src/daemon/session.rs`, `src/daemon/utils.rs`,
+`src/tmux/session.rs`
+**Change:** Move the `mod tests { ... }` block (and any leading `#[cfg(test)]
+use …` lines that belong with it) to the end of the file. No semantic change.
+**Accept:** zero `items after a test module` warnings.
+
+### A.7.4 Address `too_many_arguments` warnings
+
+**Files:** `src/daemon/server.rs:1003`, `src/daemon/stream.rs:41`,
+`src/session_store.rs:173`
+**Change:** For each, choose between (a) `#[allow(clippy::too_many_arguments)]`
+with a one-line comment explaining why a struct refactor is overkill, or
+(b) introducing a small args struct. Default to (a) unless the function is
+called from > 3 places — refactoring a single-call-site function for clippy
+appeasement is not worth it.
+**Accept:** zero `too many arguments` warnings.
+
+### A.7.5 Mechanical clippy cleanup
+
+**Change:** Run `cargo clippy --all-targets --fix --allow-dirty` and review
+the diff before committing. Manually fix anything `--fix` does not handle:
+- `MarkdownRenderer`/`InputState`/`InputLine` `Default` impls
+- field-assignment-after-Default cases (collapse into struct-init form)
+- collapsible-if, constant-assertion, literal-bool-assert, empty-line-after-doc
+**Accept:** `cargo clippy --all-targets -- -D warnings` exits zero.
+
+### A.7.6 Fix ROADMAP §1 test count
+
+**Files:** `docs/ROADMAP.md` §1 metrics table
+**Change:** "598 passing + 1 ignored (587 unit + 11 integration + 1 ignored)"
+→ "599 passing + 1 ignored (587 unit + 12 integration including 1 ignored)".
+Also update §C5 "586 unit + 11 integration" if it appears there.
+**Accept:** numbers in §1, §A, and §A.5 all match `cargo test` output.
+
+### A.7.7 Add a CI gate that catches this class of regression
+
+**Optional but recommended.** Add a CI step (or a pre-push hook) that runs
+`cargo clippy --all-targets -- -D warnings`. A.5 silently regressed clippy
+because nothing in CI denies warnings on the test crates.
+**Accept:** if the gate is added, document it in CLAUDE.md "Build & Test"
+so future contributors see the contract.
+
+---
+
+## Deferred
+
+### C5 — files trending past 1000 lines
+Six files are > 1000 lines (`server.rs` 1632, `ai/tools.rs` 1479, `config.rs`
+1381, `daemon/background.rs` 1369, `daemon/executor/file_ops.rs` 1328,
+`cli/render.rs` 1245). Some have natural seams (config.rs has ~60 inline test
+cases that could move to a `_tests.rs` sibling); others may be irreducible.
+
+**Plan:** treat as an end-of-project sweep — audit each file, identify the
+natural seams or document why none exist, then split or `#[allow]` per file
+with explicit rationale. Not a hygiene-sprint candidate; the work is
+file-specific and benefits from being done in one focused pass once the
+feature roadmap is settled.
+
+### C8 — `anyhow` everywhere; no `thiserror` at module boundaries
+Confirmed via grep: zero `thiserror::Error` impls in `src/`. Recovery
+decisions cannot be made by callers — every error is opaque.
+
+**Plan:** scope a separate proposal that picks 2–3 module boundaries where
+typed errors actually unlock recovery (likely candidates: `webhook` —
+distinguish parse vs dedup vs IO; `ai` — distinguish provider error class;
+`scheduler` — distinguish cron-parse vs persistence). Cosmetic conversion
+across the whole tree is not worth it. Revisit after Phase B feature work
+exposes which seams matter.

@@ -38,6 +38,8 @@ const APPROVAL_GATED: &[&str] = &[
 /// - Tool execution (foreground, background, ghost spawn)
 /// - Response persistence (in-memory and on-disk)
 /// - Auto-name suggestion for unnamed sessions
+#[allow(clippy::too_many_arguments)]
+// Core loop entry; single caller from handle_ask; stable signature.
 pub async fn run_conversation_loop<W, R>(
     tx: &mut W,
     rx: &mut R,

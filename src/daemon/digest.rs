@@ -823,11 +823,11 @@ mod tests {
                 for r in results {
                     let mut found = false;
                     for prev in result[..i].iter().rev() {
-                        if let Some(calls) = &prev.tool_calls {
-                            if calls.iter().any(|c| c.id == r.tool_call_id) {
-                                found = true;
-                                break;
-                            }
+                        if let Some(calls) = &prev.tool_calls
+                            && calls.iter().any(|c| c.id == r.tool_call_id)
+                        {
+                            found = true;
+                            break;
                         }
                     }
                     assert!(
@@ -936,8 +936,10 @@ mod tests {
     #[test]
     fn digest_threshold_value() {
         // Sanity check: threshold is between TAIL_KEEP and MAX_HISTORY.
-        assert!(DIGEST_THRESHOLD > TAIL_KEEP + 2);
-        assert!(DIGEST_THRESHOLD < crate::daemon::session::MAX_HISTORY);
+        const {
+            assert!(DIGEST_THRESHOLD > TAIL_KEEP + 2);
+            assert!(DIGEST_THRESHOLD < crate::daemon::session::MAX_HISTORY);
+        }
     }
 
     #[test]

@@ -491,9 +491,15 @@ mod tests {
 
     #[test]
     fn render_extras() {
-        let mut h = Header::default();
-        h.tags = vec!["nginx".into()];
-        h.extras.insert("run_with_sudo".into(), "true".into());
+        let h = Header {
+            tags: vec!["nginx".into()],
+            extras: {
+                let mut m = std::collections::BTreeMap::new();
+                m.insert("run_with_sudo".into(), "true".into());
+                m
+            },
+            ..Default::default()
+        };
         let out = render_comment_header(&h, "#");
         assert!(out.contains("# run_with_sudo: true"), "got: {out}");
     }

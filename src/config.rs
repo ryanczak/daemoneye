@@ -1292,8 +1292,10 @@ mod tests {
 
     #[test]
     fn per_tool_cap_zero_global_means_all_uncapped() {
-        let mut limits = LimitsConfig::default();
-        limits.per_tool_batch = 0;
+        let limits = LimitsConfig {
+            per_tool_batch: 0,
+            ..LimitsConfig::default()
+        };
         assert_eq!(limits.per_tool_cap("read_file"), None);
         assert_eq!(limits.per_tool_cap("get_terminal_context"), None);
     }
@@ -1319,11 +1321,12 @@ mod tests {
     fn validate_unbounded_history_no_narrative_does_not_panic() {
         // The validate() call should warn but never panic when max_history = 0
         // and digest.narrative_enabled = false (the footgun combo).
-        let mut limits = LimitsConfig::default();
-        limits.max_history = 0;
+        let limits = LimitsConfig {
+            max_history: 0,
+            ..LimitsConfig::default()
+        };
         let digest = DigestConfig {
             narrative_enabled: false,
-            ..DigestConfig::default()
         };
         limits.validate(&digest); // must not panic
     }
@@ -1332,11 +1335,12 @@ mod tests {
     fn validate_narrative_enabled_suppresses_footgun_warning() {
         // No warning should fire (or panic) when narrative_enabled is true, even
         // with max_history = 0, because the narrative step provides compaction.
-        let mut limits = LimitsConfig::default();
-        limits.max_history = 0;
+        let limits = LimitsConfig {
+            max_history: 0,
+            ..LimitsConfig::default()
+        };
         let digest = DigestConfig {
             narrative_enabled: true,
-            ..DigestConfig::default()
         };
         limits.validate(&digest); // must not panic
     }

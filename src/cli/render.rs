@@ -1054,8 +1054,8 @@ pub struct MarkdownRenderer {
     wrap: WrapWriter,
 }
 
-impl MarkdownRenderer {
-    pub fn new() -> Self {
+impl Default for MarkdownRenderer {
+    fn default() -> Self {
         let mut wrap = WrapWriter::new();
         wrap.tint = true; // soft-white tint for AI prose
         Self {
@@ -1064,6 +1064,12 @@ impl MarkdownRenderer {
             code_lang: None,
             wrap,
         }
+    }
+}
+
+impl MarkdownRenderer {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Feed a streaming token into the renderer.
