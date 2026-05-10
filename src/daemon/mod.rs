@@ -1,7 +1,7 @@
 use crate::config::{Config, default_socket_path};
 use crate::ipc::{Request, Response};
 use crate::scheduler::ScheduleStore;
-use crate::tmux::cache::SessionCache;
+pub use crate::tmux::cache::SessionCache;
 pub use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -62,7 +62,9 @@ pub const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
 
 pub use scheduled::run_scheduled_job;
 pub use server::*;
+
 pub use session::*;
+
 pub use utils::*;
 
 /// Supervise a long-lived daemon task, restarting it with exponential backoff

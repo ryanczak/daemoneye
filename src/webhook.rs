@@ -359,7 +359,7 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
+pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
     crate::daemon::stats::record_webhook();
     let cfg = &state.config.webhook;
 
