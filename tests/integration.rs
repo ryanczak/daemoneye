@@ -630,6 +630,7 @@ fn g1_spawn_ghost_shell_with_agent_merge() {
         auto_approve_read_only: true,
         auto_approve_scripts: vec!["scan.sh".to_string()],
         read_namespaces: Vec::new(),
+        tools: None,
     };
     let mut gc = GhostConfig::default();
     apply_agent_to_ghost_config(&agent, &mut gc);
@@ -679,5 +680,146 @@ fn g1_spawn_ghost_shell_with_agent_merge() {
             .count(),
         1,
         "no script duplicates"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G3 — Tool Policy Enforcement
+// ---------------------------------------------------------------------------
+
+/// Verify that an agent with a `deny` tool policy propagates it into the
+/// merged `GhostConfig` and that the `permits()` method correctly blocks
+/// denied tools while allowing others.
+#[test]
+fn g3_tool_policy_deny_merged_and_enforced() {
+    use daemoneye::agents::{AgentConfig, ToolPolicy, apply_agent_to_ghost_config};
+    use daemoneye::ipc::GhostConfig;
+
+    let agent = AgentConfig {
+        name: "restricted-agent".to_string(),
+        description: "Agent with deny list".to_string(),
+        prompt: String::new(),
+        model: None,
+        memory_namespace: "restricted-agent".to_string(),
+        max_turns: None,
+        auto_approve_read_only: false,
+        auto_approve_scripts: Vec::new(),
+        read_namespaces: Vec::new(),
+        tools: Some(ToolPolicy {
+            allow: None,
+            deny: Some(vec!["edit_file".to_string(), "delete_script".to_string()]),
+        }),
+    };
+
+    let mut gc = GhostConfig::default();
+    apply_agent_to_ghost_config(&agent, &mut gc);
+
+    // Tool policy must be present in the merged config.
+    let policy = gc.tool_policy.as_ref().expect("tool_policy should be set");
+
+    // Denied tools must be blocked.
+    assert!(!policy.permits("edit_file"), "edit_file should be denied");
+    assert!(
+        !policy.permits("delete_script"),
+        "delete_script should be denied"
+    );
+
+    // Other tools must be permitted.
+    assert!(policy.permits("read_file"), "read_file should be permitted");
+    assert!(
+        policy.permits("search_repository"),
+        "search_repository should be permitted"
+    );
+    assert!(
+        policy.permits("run_terminal_command"),
+        "run_terminal_command should be permitted"
+    );
+}
+
+/// Verify that an agent with an `allow` tool policy only permits listed tools.
+#[test]
+fn g3_tool_policy_allow_merged_and_enforced() {
+    use daemoneye::agents::{AgentConfig, ToolPolicy, apply_agent_to_ghost_config};
+    use daemoneye::ipc::GhostConfig;
+
+    let agent = AgentConfig {
+        name: "allow-only-agent".to_string(),
+        description: "Agent with allow list".to_string(),
+        prompt: String::new(),
+        model: None,
+        memory_namespace: "allow-only-agent".to_string(),
+        max_turns: None,
+        auto_approve_read_only: false,
+        auto_approve_scripts: Vec::new(),
+        read_namespaces: Vec::new(),
+        tools: Some(ToolPolicy {
+            allow: Some(vec![
+                "read_file".to_string(),
+                "search_repository".to_string(),
+            ]),
+            deny: None,
+        }),
+    };
+
+    let mut gc = GhostConfig::default();
+    apply_agent_to_ghost_config(&agent, &mut gc);
+
+    let policy = gc.tool_policy.as_ref().expect("tool_policy should be set");
+
+    // Allowed tools must be permitted.
+    assert!(policy.permits("read_file"), "read_file should be permitted");
+    assert!(
+        policy.permits("search_repository"),
+        "search_repository should be permitted"
+    );
+
+    // Unlisted tools must be denied.
+    assert!(!policy.permits("edit_file"), "edit_file should be denied");
+    assert!(
+        !policy.permits("run_terminal_command"),
+        "run_terminal_command should be denied"
+    );
+}
+
+/// Verify that runbook tool_policy takes precedence over agent tool_policy.
+#[test]
+fn g3_tool_policy_runbook_precedence_over_agent() {
+    use daemoneye::agents::{AgentConfig, ToolPolicy, apply_agent_to_ghost_config};
+    use daemoneye::ipc::GhostConfig;
+
+    let agent = AgentConfig {
+        name: "agent-with-policy".to_string(),
+        description: String::new(),
+        prompt: String::new(),
+        model: None,
+        memory_namespace: "agent-with-policy".to_string(),
+        max_turns: None,
+        auto_approve_read_only: false,
+        auto_approve_scripts: Vec::new(),
+        read_namespaces: Vec::new(),
+        tools: Some(ToolPolicy {
+            allow: Some(vec!["read_file".to_string()]),
+            deny: None,
+        }),
+    };
+
+    // Runbook sets its own tool policy.
+    let mut gc = GhostConfig {
+        tool_policy: Some(ToolPolicy {
+            allow: Some(vec![
+                "read_file".to_string(),
+                "search_repository".to_string(),
+            ]),
+            deny: None,
+        }),
+        ..Default::default()
+    };
+    apply_agent_to_ghost_config(&agent, &mut gc);
+
+    // Runbook policy must be preserved (not overwritten by agent).
+    let policy = gc.tool_policy.as_ref().expect("tool_policy should be set");
+    assert!(
+        policy.permits("search_repository"),
+        "runbook policy should allow search_repository"
     );
 }

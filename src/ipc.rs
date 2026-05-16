@@ -70,6 +70,10 @@ pub struct GhostConfig {
     /// to `spawn_ghost_shell`. Used for logging and audit purposes.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Agent-level tool access policy merged from `AgentConfig.tools`.
+    /// Enforced in `execute_tool_call()` before the runbook `GhostPolicy` check.
+    #[serde(default)]
+    pub tool_policy: Option<crate::agents::ToolPolicy>,
 }
 
 /// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.

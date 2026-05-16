@@ -122,22 +122,27 @@ where
         chat_pane,
         sessions,
     } = ctx;
-    // ── Pre-fetch Ghost Policy ───────────────────────────────────────────────
-    let ghost_policy: Option<GhostPolicy> = if let Some(sid) = session_id {
-        if let Ok(store) = sessions.lock() {
-            store.get(sid).and_then(|e| {
-                if e.is_ghost {
-                    e.ghost_config.as_ref().map(GhostPolicy::from_config)
-                } else {
-                    None
-                }
-            })
+    // ── Pre-fetch Ghost Policy and Tool Policy ───────────────────────────────
+    let ghost_and_tool: Option<(GhostPolicy, Option<crate::agents::ToolPolicy>)> =
+        if let Some(sid) = session_id {
+            if let Ok(store) = sessions.lock() {
+                store.get(sid).and_then(|e| {
+                    if e.is_ghost {
+                        e.ghost_config
+                            .as_ref()
+                            .map(|gc| (GhostPolicy::from_config(gc), gc.tool_policy.clone()))
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
-    };
+        };
+    let ghost_policy: Option<GhostPolicy> = ghost_and_tool.as_ref().map(|(gp, _)| gp.clone());
+    let tool_policy: Option<crate::agents::ToolPolicy> = ghost_and_tool.and_then(|(_, tp)| tp);
     // Defensive guard: a ghost shell entry must always have a ghost_config.
     let is_ghost_shell: bool = if let Some(sid) = session_id {
         if let Ok(store) = sessions.lock() {
@@ -155,6 +160,24 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
     let is_ghost = ghost_policy.is_some();
+
+    // ── Tool Policy Enforcement (agent-level) ────────────────────────────────
+    if let Some(policy) = &tool_policy
+        && !policy.permits(call.tool_name())
+    {
+        let msg = format!(
+            "Tool '{}' is not permitted for this agent.",
+            call.tool_name()
+        );
+        log::info!(
+            "Tool policy denied '{}' in session {:?}: {}",
+            call.tool_name(),
+            session_id,
+            msg
+        );
+        send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+        return Ok(ToolCallOutcome::Result(msg));
+    }
 
     // ── Build namespace list for memory operations ───────────────────────────
     let memory_namespaces_owned = build_memory_namespaces(session_id, sessions, is_ghost_shell);

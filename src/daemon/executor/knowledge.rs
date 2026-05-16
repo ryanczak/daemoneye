@@ -1078,6 +1078,7 @@ where
         auto_approve_read_only,
         auto_approve_scripts: auto_approve_scripts.to_vec(),
         read_namespaces: Vec::new(),
+        tools: None,
     })
     .unwrap_or_default();
 
@@ -1116,6 +1117,7 @@ where
             auto_approve_read_only,
             auto_approve_scripts: auto_approve_scripts.to_vec(),
             read_namespaces: Vec::new(),
+            tools: None,
         };
         match crate::agents::save_agent(&config) {
             Ok(()) => {

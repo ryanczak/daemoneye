@@ -105,6 +105,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             model,
             auto_approve_commands,
             agent,
+            tool_policy: None,
         };
 
         (tags, memories, ghost_config, body)

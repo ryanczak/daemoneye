@@ -2,6 +2,9 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod policy;
+pub use policy::ToolPolicy;
+
 /// Configuration for a named agent executor identity.
 ///
 /// Agents are stored at `~/.daemoneye/agents/<name>/config.toml`.
@@ -42,6 +45,10 @@ pub struct AgentConfig {
     /// namespace and "global"). Used for cross-agent knowledge sharing.
     #[serde(default)]
     pub read_namespaces: Vec<String>,
+    /// Tool access policy. If `None`, all tools are permitted.
+    /// `allow` and `deny` lists are mutually exclusive.
+    #[serde(default)]
+    pub tools: Option<ToolPolicy>,
 }
 
 /// Lightweight info returned by `list_agents()`.
@@ -204,6 +211,10 @@ pub fn apply_agent_to_ghost_config(
             ghost_config.auto_approve_scripts.push(s.clone());
         }
     }
+    // tool_policy: applied only when the runbook left it unset
+    if ghost_config.tool_policy.is_none() {
+        ghost_config.tool_policy = agent.tools.clone();
+    }
     ghost_config.agent = Some(agent.name.clone());
 }
 
@@ -332,6 +343,7 @@ mod tests {
             auto_approve_read_only: true,
             auto_approve_scripts: vec!["check.sh".to_string()],
             read_namespaces: Vec::new(),
+            tools: None,
         }
     }
 
@@ -466,6 +478,7 @@ prompt = ""
             auto_approve_read_only: true,
             auto_approve_scripts: vec!["check.sh".to_string()],
             read_namespaces: Vec::new(),
+            tools: None,
         };
         let mut gc = GhostConfig::default();
         apply_agent_to_ghost_config(&agent, &mut gc);
@@ -489,6 +502,7 @@ prompt = ""
             auto_approve_read_only: true,
             auto_approve_scripts: vec!["agent-script.sh".to_string()],
             read_namespaces: Vec::new(),
+            tools: None,
         };
         // Runbook has already set these fields explicitly.
         let mut gc = GhostConfig {
@@ -529,6 +543,7 @@ prompt = ""
             auto_approve_read_only: false,
             auto_approve_scripts: vec!["shared.sh".to_string()],
             read_namespaces: Vec::new(),
+            tools: None,
         };
         let mut gc = GhostConfig {
             auto_approve_scripts: vec!["shared.sh".to_string()],

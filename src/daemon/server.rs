@@ -1438,6 +1438,17 @@ where
         is_ghost_session,
     );
     let memory_namespaces: Vec<&str> = memory_namespaces_owned.iter().map(|s| s.as_str()).collect();
+    let tool_policy_owned: Option<crate::agents::ToolPolicy> = session_id.as_ref().and_then(|id| {
+        let store = sessions.lock().ok()?;
+        let entry = store.get(id)?;
+        if !entry.is_ghost {
+            return None;
+        }
+        entry
+            .ghost_config
+            .as_ref()
+            .and_then(|gc| gc.tool_policy.clone())
+    });
     let prompt_ctx = PromptCtx {
         client_pane: client_pane.as_deref(),
         chat_pane: chat_pane.as_deref(),
@@ -1452,6 +1463,7 @@ where
         ghost_turn_limit,
         inject_snapshot,
         memory_namespaces: &memory_namespaces,
+        tool_policy: tool_policy_owned.as_ref(),
     };
 
     let prompt = if is_first_turn {

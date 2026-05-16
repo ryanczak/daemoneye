@@ -19,6 +19,8 @@ pub struct PromptCtx<'a> {
     pub inject_snapshot: bool,
     /// Memory namespaces for this session (e.g. `["agent-name", "global"]`).
     pub memory_namespaces: &'a [&'a str],
+    /// Agent-level tool policy, if this session has one.
+    pub tool_policy: Option<&'a crate::agents::ToolPolicy>,
 }
 
 /// Prepend a `[FOREGROUND TARGET]` line to the session context block.
@@ -90,6 +92,11 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
     let memory_block = crate::memory::load_session_memory_block(ctx.memory_namespaces);
     let manifest_block = crate::manifest::build_knowledge_manifest();
     let auto_search_block = crate::manifest::auto_search_context(ctx.safe_query, &session_summary);
+    let tool_restriction_block = ctx
+        .tool_policy
+        .and_then(crate::agents::policy::format_tool_restriction_block)
+        .map(|s| format!("{}\n\n", s))
+        .unwrap_or_default();
     let current_time_line = format_current_time_line();
     let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
 
@@ -102,6 +109,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
          {width_hint}\n\
          - background=true  → runs on DAEMON HOST ({daemon_host})\n\
          - background=false → runs in USER'S PANE ({pane_location})\n\n\
+         {tool_restriction_block}\
          {memory_block}\
          {manifest_block}\
          {auto_search_block}\
@@ -186,6 +194,12 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
     )
     .unwrap_or_default();
 
+    let tool_restriction_block = ctx
+        .tool_policy
+        .and_then(crate::agents::policy::format_tool_restriction_block)
+        .map(|s| format!("{}\n\n", s))
+        .unwrap_or_default();
+
     if ctx.inject_snapshot {
         let session_summary = ctx
             .cache
@@ -193,14 +207,14 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         let session_summary =
             prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
         format!(
-            "{budget_note}{fg_target_line}{dynamic_memory}{pane_map}{current_time_line}\
+            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
              ```\n{session_summary}\n```\n\nUser: {}",
             ctx.safe_query
         )
     } else {
         format!(
-            "{budget_note}{fg_target_line}{dynamic_memory}{pane_map}{current_time_line}User: {}",
+            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{pane_map}{current_time_line}User: {}",
             ctx.safe_query
         )
     }
