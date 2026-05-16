@@ -1432,6 +1432,12 @@ where
     });
 
     // Build the prompt using the prompt module.
+    let memory_namespaces_owned = crate::daemon::executor::build_memory_namespaces(
+        session_id.as_deref(),
+        sessions,
+        is_ghost_session,
+    );
+    let memory_namespaces: Vec<&str> = memory_namespaces_owned.iter().map(|s| s.as_str()).collect();
     let prompt_ctx = PromptCtx {
         client_pane: client_pane.as_deref(),
         chat_pane: chat_pane.as_deref(),
@@ -1445,6 +1451,7 @@ where
         this_turn_count,
         ghost_turn_limit,
         inject_snapshot,
+        memory_namespaces: &memory_namespaces,
     };
 
     let prompt = if is_first_turn {

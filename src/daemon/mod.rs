@@ -31,6 +31,7 @@ pub mod digest;
 pub mod executor;
 pub mod ghost;
 pub mod hook;
+pub mod memory_prompt;
 pub mod policy;
 pub mod prompt;
 pub mod scheduled;

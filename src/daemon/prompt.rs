@@ -17,6 +17,8 @@ pub struct PromptCtx<'a> {
     pub this_turn_count: usize,
     pub ghost_turn_limit: Option<usize>,
     pub inject_snapshot: bool,
+    /// Memory namespaces for this session (e.g. `["agent-name", "global"]`).
+    pub memory_namespaces: &'a [&'a str],
 }
 
 /// Prepend a `[FOREGROUND TARGET]` line to the session context block.
@@ -85,7 +87,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
     let width_hint = ctx.chat_width
         .map(|w| format!("\n- Chat display width: {w} columns (write prose as continuous paragraphs; the terminal word-wraps automatically — do not insert hard line breaks within paragraphs)"))
         .unwrap_or_default();
-    let memory_block = crate::memory::load_session_memory_block(&["global"]);
+    let memory_block = crate::memory::load_session_memory_block(ctx.memory_namespaces);
     let manifest_block = crate::manifest::build_knowledge_manifest();
     let auto_search_block = crate::manifest::auto_search_context(ctx.safe_query, &session_summary);
     let current_time_line = format_current_time_line();
@@ -163,6 +165,27 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
     let current_time_line = format_current_time_line();
     let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
 
+    // Build session tags for dynamic memory retrieval.
+    let recent_keywords: Vec<String> = ctx
+        .safe_query
+        .split_whitespace()
+        .take(5)
+        .map(|s| s.to_lowercase())
+        .collect();
+    let session_tags =
+        crate::memory::tags::infer_session_tags(ctx.client_pane, ctx.cache, &recent_keywords);
+
+    // Dynamic turn-relevant memory block (namespace-aware).
+    let dynamic_memory = crate::daemon::memory_prompt::assemble_turn_relevant_memory(
+        &session_tags,
+        ctx.safe_query,
+        ctx.config,
+        None, // session_id not available in PromptCtx; memory functions use namespaces directly
+        ctx.this_turn_count,
+        ctx.memory_namespaces,
+    )
+    .unwrap_or_default();
+
     if ctx.inject_snapshot {
         let session_summary = ctx
             .cache
@@ -170,14 +193,14 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         let session_summary =
             prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
         format!(
-            "{budget_note}{fg_target_line}{pane_map}{current_time_line}\
+            "{budget_note}{fg_target_line}{dynamic_memory}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
              ```\n{session_summary}\n```\n\nUser: {}",
             ctx.safe_query
         )
     } else {
         format!(
-            "{budget_note}{fg_target_line}{pane_map}{current_time_line}User: {}",
+            "{budget_note}{fg_target_line}{dynamic_memory}{pane_map}{current_time_line}User: {}",
             ctx.safe_query
         )
     }

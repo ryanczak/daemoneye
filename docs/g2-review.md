@@ -1,114 +1,78 @@
 # G2 Memory Namespacing — Code Review
 
-*Reviewed 2026-05-15 against `multi-agent` branch. 610 unit tests + 12 integration tests pass. Clippy clean.*
+*Reviewed 2026-05-15 against `multi-agent` branch after bug-fix pass. 610 unit + 12 integration (1 ignored) tests pass. Clippy clean.*
 
 ---
 
 ## Summary
 
-The core namespace architecture is correct and well-executed. `memory_dir_for_namespace()` routes reads and writes correctly. The CRUD API (`add_memory`, `read_memory`, `delete_memory`, `list_memories`, `list_memories_with_tags`) is consistently namespace-aware. Namespace context threading through `ArtifactCtx` and the `executor/mod.rs` build block is clean. `migrate_namespace()` is called at daemon startup and is idempotent. The 11 namespace-specific unit tests in `memory_tests.rs` cover the required cases from the plan.
-
-Three defects require fixes before G3 starts. Two are high-severity correctness bugs that silently produce wrong behavior for agent-namespaced ghost shells.
+Bug 1 and Bug 3 from the initial review are correctly fixed. Bug 2 is not fixed — the changes were made to a file that is not compiled. One new defect was introduced in `search.rs` (low severity). The integration test gap remains.
 
 ---
 
-## Defects
+## Bug Fix Assessment
 
-### 1. `load_session_memory_block` reads only from global, ignoring the namespaces it was given — HIGH
+### Bug 1 — `load_session_memory_block` reads wrong directory: **FIXED** ✓
 
-**File:** `src/memory.rs:537–549`
-
-The function accepts `namespaces: &[&str]` and correctly *scans* those directories to build an entry list. But when it reads the actual file content to build the block, it unconditionally reads from the global directory:
-
-```rust
-// Line 539 — hardcoded "global" despite accepting namespaces parameter
-let path = memory_dir_for_namespace("global", &MemoryCategory::Session).join(format!("{}.md", key));
-```
-
-An agent ghost shell that writes session memories to its own namespace will have those keys collected in the scan, but the read path at line 539 looks in the wrong directory and silently produces nothing. The comment on line 538 ("prefer global for session") is incorrect rationale — session memories are per-session context, not global facts, and an agent's session memories are explicitly *not* in global.
-
-**Fix:** carry the namespace alongside the key through the scan loop so the read uses the correct path.
-
-```rust
-// Collect (key, namespace, mtime) tuples
-let mut entries: Vec<(String, String, std::time::SystemTime)> = Vec::new();
-for ns in namespaces {
-    let dir = memory_dir_for_namespace(ns, &MemoryCategory::Session);
-    // ... scan loop produces (stem, ns.to_string(), mtime) entries
-}
-// In the read loop:
-let path = memory_dir_for_namespace(&ns, &MemoryCategory::Session).join(format!("{}.md", key));
-```
+`memory.rs:499–544`. The scan loop now collects `(key, namespace, mtime)` tuples and the read loop uses `memory_dir_for_namespace(ns, ...)` with the per-entry namespace. Correct.
 
 ---
 
-### 2. `ftsearch_memories` and `assemble_turn_relevant_memory` hardcode `&["global"]` — HIGH
+### Bug 2 — Tiered memory prompt hardcodes `&["global"]`: **NOT FIXED**
 
-**Files:** `src/daemon/memory_prompt.rs:206`, `src/daemon/memory_prompt.rs:345`
+`src/daemon/memory_prompt.rs` is not declared as a module anywhere in the codebase. The Rust compiler never sees it.
 
-Two separate places hard-code the namespace scope:
-
-```rust
-// Line 206 — assemble_turn_relevant_memory
-let all_memories = list_memories_with_tags(None, &["global"]).unwrap_or_default();
-
-// Line 345 — ftsearch_memories
-let all_memories = list_memories_with_tags(None, &["global"]).unwrap_or_default();
+```
+$ grep -rn "memory_prompt" src/
+(no output)
 ```
 
-Both functions are the heart of the tiered memory prompt — the dynamic turn-relevant block that surfaces contextually relevant memories per AI turn. For an agent ghost shell, these calls need to search the agent's namespace in addition to global. As implemented, an agent that has built up domain knowledge in its own namespace will never see that knowledge injected into its prompts via the tiered system, even though all the routing infrastructure exists.
+`daemon/mod.rs` declares: `auto_name`, `background`, `digest`, `executor`, `ghost`, `hook`, `policy`, `prompt`, `scheduled`, `server`, `session`, `stats`, `stream`, `utils` — `memory_prompt` is absent. The file compiles in isolation (confirmed by test) but is excluded from the binary.
 
-Both functions are currently called without namespace context because they don't accept it as a parameter. The calling chain needs to be extended: the ghost shell's `ArtifactCtx.namespaces` (or a derived slice) should flow into these functions.
+The namespace parameter was added to `assemble_turn_relevant_memory`, `ftsearch_memories`, `find_by_tag_overlap`, and `expand_relates_to`. These changes are real but they have zero runtime effect. The hardcoded `&["global"]` issue is still present in the compiled binary — it's just in a different call to `list_memories_with_tags` inside the same dead file.
 
-**Fix:** add a `namespaces: &[&str]` parameter to `assemble_turn_relevant_memory` and `ftsearch_memories`, threading the value from the executor context. Default to `&["global"]` at all existing non-agent call sites.
+**Required fix:** Add `pub mod memory_prompt;` to `src/daemon/memory_prompt.rs`'s declaration in `daemon/mod.rs`. After that, the namespace parameter threading in the file should work correctly, but the callers of `assemble_ambient_memory` and `assemble_turn_relevant_memory` also need to supply a namespace slice. Currently there are no callers of these functions outside `memory_prompt.rs` — either those call sites don't exist yet (G5 is only partially wired in) or they were lost. This needs to be investigated before the fix can be validated.
 
 ---
 
-### 3. `search_repository` does not search agent memory namespaces — MEDIUM
+### Bug 3 — `search_repository` ignores agent namespaces: **FIXED** ✓
 
-**File:** `src/daemon/executor/knowledge.rs:589`
+`search.rs:28–69`. `search_repository_with_namespaces` correctly builds memory directory paths from the namespace list, matching `memory_dir_for_namespace` routing (`global` → `~/.daemoneye/memory/<cat>/`, agent → `~/.daemoneye/agents/<ns>/memory/<cat>/`). The executor at `knowledge.rs:604` passes `artifact_ctx.namespaces`, and `executor/mod.rs:410` wires it through. The original `search_repository` wrapper defaults to `&["global"]` for backward compatibility. Correct.
+
+---
+
+## New Defect Introduced
+
+### search.rs: global memory directories added unconditionally — LOW
+
+`search.rs:54,57,60`: the condition `|| *ns == "global"` causes all three global memory category directories to be pushed even when they don't exist:
 
 ```rust
-pub(super) fn search_repository(query: &str, kind: &str) -> String {
-    let results = crate::search::search_repository(query, kind, 2);
-    crate::search::format_results(&results)
+if mem_base.join("session").exists() || *ns == "global" {
+    dirs.push((mem_base.join("session"), "memory/session".to_string()));
 }
 ```
 
-`crate::search::search_repository` only searches the global memory directory. The plan (G2.3 exit criterion, design doc §Memory Namespacing) explicitly states: "search_repository — includes agent namespace in the search scope."
+For agent namespaces, the `exists()` check correctly avoids pushing empty dirs. For global, all three are always pushed. This is harmless in practice since subsequent `read_dir` calls fail gracefully when the directory is absent, but it makes the search slightly less efficient on fresh installs with no memories and is inconsistent with how agent paths are handled.
 
-The `search_repository` executor function receives no namespace context. The `ArtifactCtx` is available at the call site but is not passed through. This means an agent that stores knowledge in its own namespace cannot find it via `search_repository` — only via `read_memory` / `list_memories` by exact key.
-
-**Fix:** pass `artifact_ctx.namespaces` to `search_repository` executor function, and extend `crate::search::search_repository` (or add a `search_repository_in_namespaces` variant) to scan the provided namespace directories for memory results.
+The correct pattern is either: check existence for all namespaces, or remove the check entirely (let `read_dir` handle missing dirs). Not blocking, but should be made consistent.
 
 ---
 
-## Missing Exit Criterion
+## Gap 4 — Integration test: **UNCHANGED**
 
-### 4. `g2_namespace_isolation` integration test not in `tests/integration.rs` — LOW
-
-The plan (G2 exit criteria) specifies: `integration::agent_memory_namespace_isolation`. The namespace tests were implemented in `memory_tests.rs` as unit tests, not in the integration test file. The unit tests are equivalent in coverage and more thorough, but the plan commitment was for a named integration test.
-
-This is a documentation gap rather than a correctness problem. Either add an `g2_namespace_isolation` test to `tests/integration.rs` that exercises the cross-module path (executor → memory → file), or update the plan's exit criteria to reflect that this is covered by unit tests.
+`g2_namespace_isolation` integration test still not in `tests/integration.rs`. Unit coverage in `memory_tests.rs` is comprehensive (8 namespace-specific tests). Acceptable as-is if the plan exit criteria is updated to reflect this.
 
 ---
 
-## What Is Done Well
+## What Still Needs to Happen for G2 to Be Closed
 
-- **`memory_dir_for_namespace` routing is correct.** Global goes to `~/.daemoneye/memory/<cat>/`; agent namespaces go to `~/.daemoneye/agents/<ns>/memory/<cat>/`. The path structure matches what `agents::agent_dir()` expects.
-- **Namespace context threading in executor is clean.** The `memory_namespaces_owned` build block in `executor/mod.rs:125–145` is correct: agent namespace first, `read_namespaces` extras, then global appended if absent. Interactive sessions unconditionally get `&["global"]`.
-- **`read_memory` executor correctly multi-searches.** `knowledge.rs:519–525` loops namespaces in order and returns the first hit, which is the right precedence (agent before global).
-- **Migration is safe and correctly placed.** `migrate_namespace()` is idempotent, only touches files with frontmatter, skips files that already have the field, and runs at daemon startup before any memory operations.
-- **All plan-specified unit tests are present and correct.** `write_agent_reads_agent`, `write_agent_invisible_to_global`, `fallback_to_global`, `fts5_namespace_filter` (covered by `list_memories_scopes_to_namespaces`), `migrate_namespace_adds_missing`, `migrate_namespace_skips_already_migrated`, `delete_memory_deletes_from_correct_path` — all present in `memory_tests.rs` and passing.
-- **`build_frontmatter_omits_global_namespace` is a good design call.** Writing `namespace: global` to every global memory file would add noise to human-readable files. Omitting it (with parse defaulting to `"global"`) is cleaner.
-
----
-
-## Fix Priority
-
-| # | Severity | Must fix before G3? |
+| # | Item | Action |
 |---|---|---|
-| 1 | High | Yes — agent session memories silently vanish from context blocks |
-| 2 | High | Yes — tiered memory prompt is namespace-blind for agent ghost shells |
-| 3 | Medium | Yes — search_repository was explicitly listed in the G2 exit criteria |
-| 4 | Low | No — unit tests provide equivalent coverage |
+| 1 | ~~`load_session_memory_block` reads wrong directory~~ | Fixed ✓ |
+| 2 | `memory_prompt.rs` not compiled — Bug 2 unfixed | Add `pub mod memory_prompt;` to `daemon/mod.rs`; verify callers pass namespace slice |
+| 3 | ~~`search_repository` ignores agent namespaces~~ | Fixed ✓ |
+| 4 | `search.rs` unconditional global dir push | Minor cleanup, not blocking |
+| 5 | Integration test gap | Update plan exit criteria or add test |
+
+G2 cannot be considered closed until item 2 is resolved. The other items are minor.

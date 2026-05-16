@@ -51,13 +51,13 @@ pub fn search_repository_with_namespaces(
                 } else {
                     base.join("agents").join(ns).join("memory")
                 };
-                if mem_base.join("session").exists() || *ns == "global" {
+                if mem_base.join("session").exists() {
                     dirs.push((mem_base.join("session"), "memory/session".to_string()));
                 }
-                if mem_base.join("knowledge").exists() || *ns == "global" {
+                if mem_base.join("knowledge").exists() {
                     dirs.push((mem_base.join("knowledge"), "memory/knowledge".to_string()));
                 }
-                if mem_base.join("incidents").exists() || *ns == "global" {
+                if mem_base.join("incidents").exists() {
                     dirs.push((mem_base.join("incidents"), "memory/incidents".to_string()));
                 }
             }

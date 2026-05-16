@@ -104,7 +104,11 @@ pub fn infer_tags_from_cwd(cwd: &str) -> Vec<String> {
     let components: Vec<&str> = cwd.split('/').filter(|s| !s.is_empty()).collect();
 
     // Check last 2 path components against rules
-    let start_idx = if components.len() <= 2 { 0 } else { components.len() - 2 };
+    let start_idx = if components.len() <= 2 {
+        0
+    } else {
+        components.len() - 2
+    };
     for comp in components.iter().skip(start_idx) {
         if let Some(tag_list) = rules.get(*comp) {
             for t in tag_list {
@@ -206,7 +210,11 @@ pub fn infer_session_tags(
         let sc = crate::sys_context::get_or_init_sys_context();
         // Extract OS family from uname output
         if !sc.os_info.is_empty() {
-            let os_word = sc.os_info.split_whitespace().last().map(|s| s.to_lowercase());
+            let os_word = sc
+                .os_info
+                .split_whitespace()
+                .last()
+                .map(|s| s.to_lowercase());
             if let Some(w) = os_word {
                 if w.contains("linux") {
                     tags.push("linux".to_string());

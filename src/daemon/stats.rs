@@ -295,6 +295,51 @@ pub fn get_memories_deleted() -> usize {
     MEMORIES_DELETED.load(Ordering::Relaxed)
 }
 
+// G5: tiered memory prompt stats
+static STABLE_BLOCK_REBUILDS: AtomicUsize = AtomicUsize::new(0);
+static DYNAMIC_BLOCK_EMPTY_TURNS: AtomicUsize = AtomicUsize::new(0);
+static MEMORIES_IN_STABLE_BLOCK: AtomicUsize = AtomicUsize::new(0);
+static MEMORIES_IN_DYNAMIC_BLOCK_AVG: AtomicUsize = AtomicUsize::new(0);
+static MEMORIES_PINNED: AtomicUsize = AtomicUsize::new(0);
+static MEMORIES_UNPINNED: AtomicUsize = AtomicUsize::new(0);
+
+pub fn inc_stable_block_rebuilds() {
+    STABLE_BLOCK_REBUILDS.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_stable_block_rebuilds() -> usize {
+    STABLE_BLOCK_REBUILDS.load(Ordering::Relaxed)
+}
+pub fn set_memories_in_stable_block(count: usize) {
+    MEMORIES_IN_STABLE_BLOCK.store(count, Ordering::Relaxed);
+}
+pub fn get_memories_in_stable_block() -> usize {
+    MEMORIES_IN_STABLE_BLOCK.load(Ordering::Relaxed)
+}
+pub fn inc_dynamic_block_empty_turns() {
+    DYNAMIC_BLOCK_EMPTY_TURNS.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_dynamic_block_empty_turns() -> usize {
+    DYNAMIC_BLOCK_EMPTY_TURNS.load(Ordering::Relaxed)
+}
+pub fn set_memories_in_dynamic_block_avg(count: usize) {
+    MEMORIES_IN_DYNAMIC_BLOCK_AVG.store(count, Ordering::Relaxed);
+}
+pub fn get_memories_in_dynamic_block_avg() -> usize {
+    MEMORIES_IN_DYNAMIC_BLOCK_AVG.load(Ordering::Relaxed)
+}
+pub fn inc_memories_pinned() {
+    MEMORIES_PINNED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_memories_pinned() -> usize {
+    MEMORIES_PINNED.load(Ordering::Relaxed)
+}
+pub fn inc_memories_unpinned() {
+    MEMORIES_UNPINNED.fetch_add(1, Ordering::Relaxed);
+}
+pub fn get_memories_unpinned() -> usize {
+    MEMORIES_UNPINNED.load(Ordering::Relaxed)
+}
+
 pub fn inc_schedules_created() {
     SCHEDULES_CREATED.fetch_add(1, Ordering::Relaxed);
 }

@@ -1,6 +1,10 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
+pub mod index;
+pub mod review;
+pub mod tags;
+
 #[derive(Clone, Copy)]
 pub enum MemoryCategory {
     Session,
@@ -39,6 +43,7 @@ impl MemoryCategory {
 }
 
 /// Memory entry with optional metadata parsed from frontmatter.
+#[derive(Clone)]
 pub struct MemoryInfo {
     pub key: String,
     pub category: String,
@@ -49,6 +54,7 @@ pub struct MemoryInfo {
     pub created: Option<String>,
     pub updated: Option<String>,
     pub expires: Option<String>,
+    pub pinned: Option<bool>,
 }
 
 impl MemoryInfo {
@@ -467,6 +473,7 @@ pub fn list_memories_with_tags(
                         created: fm.created,
                         updated: fm.updated,
                         expires: fm.expires,
+                        pinned: None,
                     }
                 } else {
                     MemoryInfo {
@@ -479,6 +486,7 @@ pub fn list_memories_with_tags(
                         created: None,
                         updated: None,
                         expires: None,
+                        pinned: None,
                     }
                 };
                 if !info.is_expired() {

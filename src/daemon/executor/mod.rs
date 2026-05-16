@@ -67,6 +67,40 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 const USER_PROMPT_TIMEOUT: Duration = Duration::from_secs(120);
 
 // ---------------------------------------------------------------------------
+// Namespace resolution (shared by executor and prompt builder)
+// ---------------------------------------------------------------------------
+
+/// Build the memory namespace list for a session.
+/// Ghost shells get agent namespace + read_namespaces + global fallback.
+/// Regular sessions get only `&["global"]`.
+pub fn build_memory_namespaces(
+    session_id: Option<&str>,
+    sessions: &SessionStore,
+    is_ghost: bool,
+) -> Vec<String> {
+    if !is_ghost {
+        return vec!["global".to_string()];
+    }
+    let mut namespaces: Vec<String> = Vec::new();
+    if let Some(sid) = session_id
+        && let Ok(store) = sessions.lock()
+        && let Some(entry) = store.get(sid)
+        && let Some(ref gc) = entry.ghost_config
+        && let Some(ref agent_name) = gc.agent
+        && let Ok(agent) = crate::agents::load_agent(agent_name)
+    {
+        namespaces.push(agent.memory_namespace.clone());
+        for extra in &agent.read_namespaces {
+            namespaces.push(extra.clone());
+        }
+    }
+    if !namespaces.iter().any(|s| s == "global") {
+        namespaces.push("global".to_string());
+    }
+    namespaces
+}
+
+// ---------------------------------------------------------------------------
 // Main tool dispatcher
 // ---------------------------------------------------------------------------
 
@@ -123,27 +157,8 @@ where
     let is_ghost = ghost_policy.is_some();
 
     // ── Build namespace list for memory operations ───────────────────────────
-    let mut memory_namespaces_owned: Vec<String> = Vec::new();
-    let memory_namespaces: Vec<&str> = if is_ghost_shell {
-        if let Some(sid) = session_id
-            && let Ok(store) = sessions.lock()
-            && let Some(entry) = store.get(sid)
-            && let Some(ref gc) = entry.ghost_config
-            && let Some(ref agent_name) = gc.agent
-            && let Ok(agent) = crate::agents::load_agent(agent_name)
-        {
-            memory_namespaces_owned.push(agent.memory_namespace.clone());
-            for extra in &agent.read_namespaces {
-                memory_namespaces_owned.push(extra.clone());
-            }
-        }
-        if !memory_namespaces_owned.iter().any(|s| s == "global") {
-            memory_namespaces_owned.push("global".to_string());
-        }
-        memory_namespaces_owned.iter().map(|s| s.as_str()).collect()
-    } else {
-        vec!["global"]
-    };
+    let memory_namespaces_owned = build_memory_namespaces(session_id, sessions, is_ghost_shell);
+    let memory_namespaces: Vec<&str> = memory_namespaces_owned.iter().map(|s| s.as_str()).collect();
     // ── Artifact context for session_origin stamping + tracking ───────────────
     let saved_name: Option<String> =
         session_id.and_then(|sid| sessions.lock().ok()?.get(sid)?.saved_name.clone());

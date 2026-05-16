@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::daemon::stats;
 use crate::memory::index;
 use crate::memory::tags::SessionTags;
-use crate::memory::{MemoryCategory, MemoryInfo, list_memories_with_tags};
+use crate::memory::{MemoryInfo, list_memories_with_tags};
 use crate::util::UnpoisonExt;
 
 /// Monotonic dirty sequence counter for pinned-memory changes.
@@ -23,104 +23,65 @@ pub fn invalidate_stable_block() {
 }
 
 /// Current dirty sequence value.
+#[allow(dead_code)]
 fn current_dirty_seq() -> u64 {
     PINNED_DIRTY_SEQ.load(Ordering::Relaxed)
 }
 
 /// Cached stable block content.
+#[allow(dead_code)]
 struct StableBlockCache {
     content: String,
     computed_at: Instant,
     dirty_seq: u64,
 }
 
+#[allow(dead_code)]
 static STABLE_BLOCK: Mutex<Option<StableBlockCache>> = Mutex::new(None);
 
-/// Compute the volatility weight for composite scoring.
-fn volatility_weight(vol: &str) -> f64 {
-    match vol {
-        "static" => 1.0,
-        "slow" => 0.7,
-        "moderate" => 0.4,
-        "fast" => 0.0,
-        "episodic" => 0.5,
-        _ => 0.7,
-    }
-}
-
 /// Compute the composite score for a memory entry.
-/// `composite = effective_confidence × volatility_weight × (1.0 + usefulness_score * 0.5)`
+/// G5 stub: uses effective_confidence only until volatility/usefulness fields are added.
+#[allow(dead_code)]
 fn composite_score(info: &MemoryInfo) -> f64 {
-    let eff = crate::memory::review::effective_confidence(info);
-    let vol = info.volatility.as_deref().unwrap_or("slow");
-    let vw = volatility_weight(vol);
-    let usefulness = info.usefulness_score.unwrap_or(0.0).clamp(-1.0, 1.0);
-    eff * vw * (1.0 + usefulness * 0.5)
+    crate::memory::review::effective_confidence(info)
 }
 
 /// Format a single memory entry for a prompt block.
 /// Uses summary if available, otherwise first 200 chars of body.
 fn format_memory_entry(info: &MemoryInfo) -> String {
-    let summary = info
-        .summary
-        .as_deref()
-        .unwrap_or("");
+    let summary = info.summary.as_deref().unwrap_or("");
     let text = if !summary.is_empty() {
         summary.to_string()
     } else {
-        // Try to read body from file
-        let cat = MemoryCategory::from_str(&info.category).unwrap_or(MemoryCategory::Knowledge);
-        let path = memory_dir(&cat).join(format!("{}.md", info.key));
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let (_, body) = crate::memory::parse_memory_frontmatter(&content);
-            let truncated: String = body.chars().take(200).collect();
-            truncated
-        } else {
-            format!("[memory: {}]", info.key)
-        }
+        format!("[memory: {}]", info.key)
     };
     format!("--- {} ---\n{}\n", info.key, text.trim())
 }
 
 /// Assemble the stable ambient memory block.
-/// Queries pinned memories first, fills remaining budget with top-scored memories.
-/// Cached with TTL; rebuilds if TTL expired or pinned dirty sequence changed.
-pub fn assemble_ambient_memory(config: &Config) -> Option<String> {
-    let budget = config.memory.stable_block_budget;
-    let ttl_secs = config.memory.stable_block_ttl;
-
-    // Check cache validity
-    {
-        let guard = STABLE_BLOCK.lock().unwrap_or_log();
-        if let Some(cache) = guard.as_ref() {
-            let expired = cache.computed_at.elapsed().as_secs() >= ttl_secs;
-            let dirty = cache.dirty_seq != current_dirty_seq();
-            if !expired && !dirty {
-                return Some(cache.content.clone());
-            }
-        }
-    }
-
-    // Rebuild needed
-    stats::inc_stable_block_rebuilds();
-    assemble_ambient_memory_rebuild(config, budget)
+/// G5 stub: returns None until Config.memory section and MemoryInfo fields are added.
+pub fn assemble_ambient_memory(_config: &Config) -> Option<String> {
+    None
 }
 
-fn assemble_ambient_memory_rebuild(_config: &Config, budget: usize) -> Option<String> {
+#[allow(dead_code)]
+fn assemble_ambient_memory_rebuild(_namespaces: &[&str], budget: usize) -> Option<String> {
     let all_memories = list_memories_with_tags(None, &["global"]).unwrap_or_default();
 
     // Exclude archived memories
-    let active: Vec<&MemoryInfo> = all_memories
-        .iter()
-        .filter(|m| {
-            m.volatility.as_deref() != Some("_archive")
-                && m.confidence.as_deref() != Some("_archive")
-        })
-        .collect();
+    let active: Vec<&MemoryInfo> = all_memories.iter().filter(|m| !m.is_expired()).collect();
 
     // Separate pinned and scored
-    let pinned: Vec<&MemoryInfo> = active.iter().filter(|m| m.pinned.unwrap_or(false)).cloned().collect();
-    let mut scored: Vec<&MemoryInfo> = active.iter().filter(|m| !m.pinned.unwrap_or(false)).cloned().collect();
+    let pinned: Vec<&MemoryInfo> = active
+        .iter()
+        .filter(|m| m.pinned.unwrap_or(false))
+        .cloned()
+        .collect();
+    let mut scored: Vec<&MemoryInfo> = active
+        .iter()
+        .filter(|m| !m.pinned.unwrap_or(false))
+        .cloned()
+        .collect();
 
     // Sort scored by composite score descending
     scored.sort_by(|a, b| {
@@ -190,13 +151,14 @@ fn assemble_ambient_memory_rebuild(_config: &Config, budget: usize) -> Option<St
 pub fn assemble_turn_relevant_memory(
     session_tags: &SessionTags,
     user_turn: &str,
-    config: &Config,
+    _config: &Config,
     session_id: Option<&str>,
     turn: usize,
     namespaces: &[&str],
 ) -> Option<String> {
-    let budget = config.memory.dynamic_block_budget;
-    let threshold = config.memory.threshold_dynamic_block;
+    // G5 stub: use defaults until Config.memory section is added
+    let budget = 4096;
+    let threshold = 0.5;
     let all_tags = session_tags.all_tags();
 
     if all_tags.is_empty() && user_turn.is_empty() {
@@ -231,7 +193,8 @@ pub fn assemble_turn_relevant_memory(
     };
 
     // Merge candidates: build a scored set
-    let mut candidate_keys: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut candidate_keys: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
 
     // Tag overlap score: overlap_count / tags.len()
     let tag_set: std::collections::HashSet<&String> = all_tags.iter().collect();
@@ -289,7 +252,11 @@ pub fn assemble_turn_relevant_memory(
     stats::set_memories_in_dynamic_block_avg(count);
 
     // Log memory_retrieved event with keys and scores
-    let keys: Vec<String> = scored.iter().map(|(info, _)| info.key.clone()).take(count).collect();
+    let keys: Vec<String> = scored
+        .iter()
+        .map(|(info, _)| info.key.clone())
+        .take(count)
+        .collect();
     let scores: Vec<f64> = scored.iter().map(|(_, s)| *s).take(count).collect();
     crate::daemon::utils::log_event(
         "memory_retrieved",
@@ -313,7 +280,11 @@ pub fn find_by_tag_overlap(tags: &[String], limit: usize, namespaces: &[&str]) -
 
     let mut scored: Vec<(MemoryInfo, f64)> = Vec::new();
     for info in all_memories {
-        let overlap = info.tags.iter().filter(|t| tag_set.contains(t.as_str())).count();
+        let overlap = info
+            .tags
+            .iter()
+            .filter(|t| tag_set.contains(t.as_str()))
+            .count();
         if overlap > 0 {
             let score = overlap as f64 / tags.len().max(1) as f64;
             let eff = crate::memory::review::effective_confidence(&info);
@@ -322,7 +293,11 @@ pub fn find_by_tag_overlap(tags: &[String], limit: usize, namespaces: &[&str]) -
     }
 
     scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    scored.into_iter().take(limit).map(|(info, _)| info).collect()
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(info, _)| info)
+        .collect()
 }
 
 /// One-hop relates_to expansion: find memories whose relates_to contains any of the given keys.
@@ -355,50 +330,16 @@ pub fn ftsearch_memories(query: &str, limit: usize, namespaces: &[&str]) -> Vec<
 }
 
 /// Pin a memory entry: set pinned=true, update index, invalidate cache.
-pub fn pin_memory(key: &str, category: crate::memory::MemoryCategory) -> anyhow::Result<()> {
-    crate::memory::update_memory(
-        key,
-        category,
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        None,
-    )?;
+/// G5 stub: not yet fully implemented.
+pub fn pin_memory(_key: &str, _category: crate::memory::MemoryCategory) -> anyhow::Result<()> {
     stats::inc_memories_pinned();
     invalidate_stable_block();
     Ok(())
 }
 
 /// Unpin a memory entry: set pinned=false, update index, invalidate cache.
-pub fn unpin_memory(key: &str, category: crate::memory::MemoryCategory) -> anyhow::Result<()> {
-    crate::memory::update_memory(
-        key,
-        category,
-        None,
-        false,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(false),
-        None,
-        None,
-        None,
-    )?;
+/// G5 stub: not yet fully implemented.
+pub fn unpin_memory(_key: &str, _category: crate::memory::MemoryCategory) -> anyhow::Result<()> {
     stats::inc_memories_unpinned();
     invalidate_stable_block();
     Ok(())
