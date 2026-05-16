@@ -635,7 +635,8 @@ pub static TOOLS: &[ToolDef] = &[
                       to delegate an investigation or remediation task while continuing to \
                       assist the user. The ghost's policy (approved scripts, sudo access, \
                       SSH target, turn budget) is governed entirely by the runbook frontmatter. \
-                      Returns the ghost session ID.",
+                      Optionally specify an `agent` to use a named agent profile for model, \
+                      prompt, and memory namespace. Returns the ghost session ID.",
         params: &[
             ParamDef {
                 name: "runbook",
@@ -651,7 +652,98 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "Human-readable description of the problem or task to hand off \
                               to the ghost. This becomes the ghost's initial user turn.",
             },
+            ParamDef {
+                name: "agent",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Name of a named agent to use as the executor identity. \
+                              Inherits prompt, model, and memory namespace from the agent config. \
+                              Omit to use the default ghost shell identity.",
+            },
         ],
+    },
+    ToolDef {
+        name: "create_agent",
+        description: "Create or update a named agent config in ~/.daemoneye/agents/<name>/config.toml. \
+                      An agent defines *who* executes a ghost shell — the role, model, memory namespace, \
+                      and trust boundaries — separate from *what* the runbook asks it to do. \
+                      User approval required before the config is written.",
+        params: &[
+            ParamDef {
+                name: "name",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Unique slug for the agent (lowercase letters, digits, hyphens; 1-48 chars, no leading/trailing dash).",
+            },
+            ParamDef {
+                name: "description",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Short human-readable description shown in listings.",
+            },
+            ParamDef {
+                name: "prompt",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Role-defining system prompt addition layered on top of the default SRE prompt when this agent runs.",
+            },
+            ParamDef {
+                name: "model",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Model key from [models.*] in config.toml. Omit to use daemon default.",
+            },
+            ParamDef {
+                name: "memory_namespace",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Memory namespace for this agent's scoped memories. Defaults to the agent name if empty.",
+            },
+            ParamDef {
+                name: "max_turns",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Per-invocation turn budget. Omit to use daemon default.",
+            },
+            ParamDef {
+                name: "auto_approve_read_only",
+                ty: ParamTy::Bool,
+                required: false,
+                description: "Allow the agent to run non-sudo commands without listing them in auto_approve_scripts. Default false.",
+            },
+            ParamDef {
+                name: "auto_approve_scripts",
+                ty: ParamTy::Str,
+                required: false,
+                description: "JSON array of script names in ~/.daemoneye/scripts/ pre-approved for sudo execution. e.g. [\"check.sh\"].",
+            },
+        ],
+    },
+    ToolDef {
+        name: "read_agent",
+        description: "Read the full config of a named agent from ~/.daemoneye/agents/<name>/config.toml.",
+        params: &[ParamDef {
+            name: "name",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Name of the agent to read.",
+        }],
+    },
+    ToolDef {
+        name: "list_agents",
+        description: "List all named agents in ~/.daemoneye/agents/ with their descriptions and models.",
+        params: &[],
+    },
+    ToolDef {
+        name: "delete_agent",
+        description: "Delete a named agent from ~/.daemoneye/agents/<name>/. User approval required. \
+                      Will warn if any runbooks reference this agent.",
+        params: &[ParamDef {
+            name: "name",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Name of the agent to delete.",
+        }],
     },
 ];
 
@@ -922,6 +1014,29 @@ struct SearchRepositoryArgs {
 struct SpawnGhostArgs {
     runbook: String,
     message: String,
+    agent: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CreateAgentArgs {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    prompt: String,
+    model: Option<String>,
+    #[serde(default)]
+    memory_namespace: String,
+    max_turns: Option<u32>,
+    #[serde(default)]
+    auto_approve_read_only: bool,
+    #[serde(default)]
+    auto_approve_scripts: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ReadAgentArgs {
+    name: String,
 }
 
 // ── Default helpers ────────────────────────────────────────────────────────
@@ -1253,6 +1368,40 @@ impl ToolArgs for SpawnGhostArgs {
             id: id.to_string(),
             runbook: self.runbook,
             message: self.message,
+            agent: self.agent,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for CreateAgentArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::CreateAgent {
+            id: id.to_string(),
+            name: self.name,
+            description: self.description,
+            prompt: self.prompt,
+            model: self.model,
+            memory_namespace: self.memory_namespace,
+            max_turns: self.max_turns,
+            auto_approve_read_only: self.auto_approve_read_only,
+            auto_approve_scripts: self.auto_approve_scripts,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for ReadAgentArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::ReadAgent {
+            id: id.to_string(),
+            name: self.name,
             thought_signature: ts,
         }
     }
@@ -1326,6 +1475,17 @@ pub fn dispatch_tool_event(
         "search_repository" => dispatch::<SearchRepositoryArgs>(id, args, ts),
         "close_background_window" => dispatch::<CloseBgWindowArgs>(id, args, ts),
         "spawn_ghost_shell" => dispatch::<SpawnGhostArgs>(id, args, ts),
+        "create_agent" => dispatch::<CreateAgentArgs>(id, args, ts),
+        "read_agent" => dispatch::<ReadAgentArgs>(id, args, ts),
+        "list_agents" => Some(AiEvent::ListAgents {
+            id: id.to_string(),
+            thought_signature: ts,
+        }),
+        "delete_agent" => runbook_name_event(args, ts, |nm, t| AiEvent::DeleteAgent {
+            id: id.to_string(),
+            name: nm,
+            thought_signature: t,
+        }),
         _ => None,
     }
 }
@@ -1460,6 +1620,10 @@ mod tests {
                 "list_panes" => json!({}),
                 "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
+                "create_agent" => json!({"name": "analyst", "description": "test", "prompt": "You are a test."}),
+                "read_agent" => json!({"name": "analyst"}),
+                "list_agents" => json!({}),
+                "delete_agent" => json!({"name": "analyst"}),
                 _ => json!({}),
             }
         }

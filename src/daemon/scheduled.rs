@@ -74,9 +74,11 @@ pub async fn run_scheduled_job(
                 store.mark_done(&job.id, false, Some(msg));
             }
             Ok(rb) => {
-                match GhostManager::start_session(
+                let merged_config = crate::agents::merge_runbook_ghost_config(&rb);
+                match GhostManager::start_session_with_config(
                     sessions.clone(),
                     &rb,
+                    &merged_config,
                     &alert_msg,
                     crate::daemon::GS_SCHED_WINDOW_PREFIX,
                     config.approvals.ghost_commands,

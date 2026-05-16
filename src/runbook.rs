@@ -94,6 +94,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
         let ssh_target = parse_string_field(frontmatter, "ssh_target");
         let model = parse_string_field(frontmatter, "model");
         let auto_approve_commands = parse_bool_field(frontmatter, "auto_approve_commands");
+        let agent = parse_string_field(frontmatter, "agent");
 
         let ghost_config = GhostConfig {
             enabled,
@@ -103,6 +104,7 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             ssh_target,
             model,
             auto_approve_commands,
+            agent,
         };
 
         (tags, memories, ghost_config, body)

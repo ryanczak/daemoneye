@@ -65,6 +65,11 @@ pub struct GhostConfig {
     /// daemon-wide via `[approvals] ghost_commands = true` in `config.toml`.
     #[serde(default)]
     pub auto_approve_commands: bool,
+    /// Name of the agent this ghost shell was spawned from.
+    /// Set when a runbook specifies `agent: <name>` or the AI passes an agent
+    /// to `spawn_ghost_shell`. Used for logging and audit purposes.
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 /// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.

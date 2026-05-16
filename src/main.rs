@@ -1,4 +1,4 @@
-use daemoneye::{ai, cli, config, daemon, scripts, session_store};
+use daemoneye::{agents, ai, cli, config, daemon, scripts, session_store};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -99,6 +99,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: SessionCommands,
     },
+    /// Manage named agents
+    Agent {
+        #[command(subcommand)]
+        cmd: AgentCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -121,6 +126,25 @@ enum SessionCommands {
         /// Overwrite an existing saved session with the same name
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentCommands {
+    /// List all named agents
+    List,
+    /// Show full config for a named agent
+    Show { name: String },
+    /// Create a new agent (opens $EDITOR with a starter config)
+    Create { name: String },
+    /// Delete a named agent
+    Delete { name: String },
+    /// Show or clear an agent's briefing
+    Briefing {
+        name: String,
+        /// Clear the briefing file
+        #[arg(long)]
+        clear: bool,
     },
 }
 
@@ -377,6 +401,23 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 run_session_import(&id, &name, desc.as_deref(), force)?;
             }
         },
+        Commands::Agent { cmd } => match cmd {
+            AgentCommands::List => {
+                run_agent_list()?;
+            }
+            AgentCommands::Show { name } => {
+                run_agent_show(&name)?;
+            }
+            AgentCommands::Create { name } => {
+                run_agent_create(&name)?;
+            }
+            AgentCommands::Delete { name } => {
+                run_agent_delete(&name)?;
+            }
+            AgentCommands::Briefing { name, clear } => {
+                run_agent_briefing(&name, clear)?;
+            }
+        },
     }
 
     Ok(())
@@ -415,5 +456,146 @@ fn run_session_import(id: &str, name: &str, desc: Option<&str>, force: bool) -> 
         id,
         name
     );
+    Ok(())
+}
+
+fn run_agent_list() -> anyhow::Result<()> {
+    let agents = agents::list_agents()?;
+    if agents.is_empty() {
+        println!("No agents defined. Use `daemoneye agent create <name>` to create one.");
+        return Ok(());
+    }
+    let name_w = agents.iter().map(|a| a.name.len()).max().unwrap_or(4).max(4);
+    let model_w = agents
+        .iter()
+        .map(|a| a.model.as_deref().unwrap_or("(default)").len())
+        .max()
+        .unwrap_or(8)
+        .max(8);
+    println!(
+        "  \x1b[2m{:<name_w$}  {:<model_w$}  description\x1b[0m",
+        "name",
+        "model",
+        name_w = name_w,
+        model_w = model_w
+    );
+    for a in &agents {
+        let model = a.model.as_deref().unwrap_or("(default)");
+        println!(
+            "  \x1b[96m{:<name_w$}\x1b[0m  {:<model_w$}  \x1b[2m{}\x1b[0m",
+            a.name,
+            model,
+            a.description,
+            name_w = name_w,
+            model_w = model_w
+        );
+    }
+    Ok(())
+}
+
+fn run_agent_show(name: &str) -> anyhow::Result<()> {
+    let cfg = agents::load_agent(name)?;
+    println!("\x1b[1mAgent: {}\x1b[0m", cfg.name);
+    println!("  description:          {}", cfg.description);
+    println!("  model:                {}", cfg.model.as_deref().unwrap_or("(default)"));
+    println!("  memory_namespace:     {}", cfg.memory_namespace);
+    println!("  max_turns:            {}", cfg.max_turns.map_or("(default)".to_string(), |v| v.to_string()));
+    println!("  auto_approve_read_only: {}", cfg.auto_approve_read_only);
+    if !cfg.auto_approve_scripts.is_empty() {
+        println!("  auto_approve_scripts:");
+        for s in &cfg.auto_approve_scripts {
+            println!("    - {}", s);
+        }
+    }
+    if !cfg.prompt.is_empty() {
+        println!("\n  prompt:");
+        for line in cfg.prompt.lines() {
+            println!("    {}", line);
+        }
+    }
+    Ok(())
+}
+
+fn run_agent_create(name: &str) -> anyhow::Result<()> {
+    agents::validate_agent_name(name)?;
+    let dir = agents::agent_dir(name);
+    if dir.exists() {
+        anyhow::bail!("Agent '{}' already exists. Use `daemoneye agent show {}` to view it.", name, name);
+    }
+    let starter = format!(
+        r#"# Agent config: {name}
+# Edit this file and save to apply changes.
+
+name = "{name}"
+description = ""
+prompt = ""
+# model = "haiku"
+# memory_namespace = "{name}"
+# max_turns = 10
+# auto_approve_read_only = false
+# auto_approve_scripts = []
+"#
+    );
+    agents::ensure_agents_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let path = agents::config_path(name);
+    std::fs::write(&path, &starter)?;
+    println!("Created starter config for agent '{}'.", name);
+    println!("Edit the file at: {}", path.display());
+
+    // Try to open $EDITOR
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let status = std::process::Command::new(&editor).arg(&path).status();
+    match status {
+        Ok(s) if s.success() => {
+            // Validate the edited config
+            match agents::load_agent(name) {
+                Ok(_) => println!("Agent '{}' saved successfully.", name),
+                Err(e) => eprintln!("Warning: config may be invalid: {}", e),
+            }
+        }
+        Ok(s) => eprintln!("Editor exited with status: {}", s),
+        Err(e) => eprintln!("Failed to launch editor ({}): {}", editor, e),
+    }
+    Ok(())
+}
+
+fn run_agent_delete(name: &str) -> anyhow::Result<()> {
+    let dir = agents::agent_dir(name);
+    if !dir.exists() {
+        anyhow::bail!("Agent '{}' does not exist.", name);
+    }
+    print!("Delete agent '{}'? [y/N] ", name);
+    use std::io::Write;
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    if input.trim().to_lowercase() == "y" {
+        agents::delete_agent(name)?;
+        println!("Agent '{}' deleted.", name);
+    } else {
+        println!("Cancelled.");
+    }
+    Ok(())
+}
+
+fn run_agent_briefing(name: &str, clear: bool) -> anyhow::Result<()> {
+    let briefing_path = agents::agent_dir(name).join("briefing.md");
+    if clear {
+        if briefing_path.exists() {
+            std::fs::remove_file(&briefing_path)?;
+            println!("Briefing for agent '{}' cleared.", name);
+        } else {
+            println!("No briefing found for agent '{}'.", name);
+        }
+        return Ok(());
+    }
+    if briefing_path.exists() {
+        let content = std::fs::read_to_string(&briefing_path)?;
+        println!("\x1b[1mBriefing for {}\x1b[0m\n", name);
+        println!("{}", content);
+    } else {
+        println!("No briefing found for agent '{}'.", name);
+    }
     Ok(())
 }

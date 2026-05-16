@@ -50,6 +50,30 @@ impl GhostManager {
         // Seed from config.approvals.ghost_commands — OR-ed with per-runbook frontmatter.
         ghost_commands_default: bool,
     ) -> Result<String> {
+        Self::start_session_with_config(
+            sessions,
+            runbook,
+            &runbook.ghost_config,
+            alert_msg,
+            bg_prefix,
+            ghost_commands_default,
+        )
+        .await
+    }
+
+    /// Start a new Ghost Shell with a pre-merged `GhostConfig`.
+    ///
+    /// Used when an agent config or runbook `agent:` field overrides the
+    /// runbook's own ghost config. The `ghost_config` parameter is the
+    /// fully merged config (runbook + agent, with runbook winning conflicts).
+    pub async fn start_session_with_config(
+        sessions: SessionStore,
+        runbook: &Runbook,
+        ghost_config: &crate::ipc::GhostConfig,
+        alert_msg: &str,
+        bg_prefix: &'static str,
+        ghost_commands_default: bool,
+    ) -> Result<String> {
         let alert_name = &runbook.name;
 
         // 1. Ensure host tmux session exists (active or detached)
@@ -86,9 +110,9 @@ impl GhostManager {
         crate::daemon::session::append_session_message(&session_id, &user_msg);
         messages.push(user_msg);
 
-        let mut ghost_config = runbook.ghost_config.clone();
+        let mut gc = ghost_config.clone();
         // Merge daemon-wide default: if either source enables the flag, the ghost gets it.
-        ghost_config.auto_approve_commands |= ghost_commands_default;
+        gc.auto_approve_commands |= ghost_commands_default;
 
         let entry = SessionEntry {
             messages,
@@ -102,12 +126,12 @@ impl GhostManager {
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: true,
-            ghost_config: Some(ghost_config),
+            ghost_config: Some(gc),
             ghost_bg_prefix: bg_prefix,
             started_at: chrono::Utc::now(),
             turn_count: 0,
             tool_calls_this_session: 0,
-            active_model: runbook.ghost_config.model.clone(),
+            active_model: ghost_config.model.clone(),
             last_snapshot_activity: 0,
             saved_name: None,
             dirty: false,
@@ -603,6 +627,7 @@ pub async fn trigger_ghost_turn(
                         id,
                         runbook,
                         message,
+                        agent,
                         thought_signature,
                     } => {
                         pending_calls.push(PendingCall::SpawnGhost {
@@ -610,6 +635,7 @@ pub async fn trigger_ghost_turn(
                             thought_signature,
                             runbook,
                             message,
+                            agent,
                         });
                     }
                     AiEvent::Done(_) => break,

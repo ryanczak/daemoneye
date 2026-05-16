@@ -552,3 +552,54 @@ async fn webhook_alert_to_event_log() {
     assert_eq!(last["severity"], "critical");
     assert!(last["ts"].is_string());
 }
+
+// ── G1 Named Agents ──────────────────────────────────────────────────────────
+
+/// Verify that `merge_runbook_ghost_config` propagates all agent fields into the
+/// ghost config and that runbook values take precedence over agent defaults.
+#[test]
+fn g1_spawn_ghost_shell_with_agent_merge() {
+    use daemoneye::agents::{AgentConfig, apply_agent_to_ghost_config};
+    use daemoneye::ipc::GhostConfig;
+
+    // --- Case 1: empty GhostConfig gets all agent defaults applied ---
+    let agent = AgentConfig {
+        name: "analyst".to_string(),
+        description: "Test analyst".to_string(),
+        prompt: "You are an analyst.".to_string(),
+        model: Some("haiku".to_string()),
+        memory_namespace: "analyst".to_string(),
+        max_turns: Some(8),
+        auto_approve_read_only: true,
+        auto_approve_scripts: vec!["scan.sh".to_string()],
+    };
+    let mut gc = GhostConfig::default();
+    apply_agent_to_ghost_config(&agent, &mut gc);
+
+    assert_eq!(gc.model, Some("haiku".to_string()), "model from agent");
+    assert_eq!(gc.max_ghost_turns, 8, "max_ghost_turns from agent");
+    assert!(gc.auto_approve_commands, "auto_approve_commands from agent.auto_approve_read_only");
+    assert!(gc.auto_approve_scripts.contains(&"scan.sh".to_string()), "script from agent");
+    assert_eq!(gc.agent, Some("analyst".to_string()), "agent name stamped for audit");
+
+    // --- Case 2: runbook values win over agent defaults ---
+    let mut gc2 = GhostConfig {
+        model: Some("opus".to_string()),
+        max_ghost_turns: 20,
+        auto_approve_scripts: vec!["runbook-script.sh".to_string()],
+        ..Default::default()
+    };
+    apply_agent_to_ghost_config(&agent, &mut gc2);
+
+    assert_eq!(gc2.model, Some("opus".to_string()), "runbook model preserved");
+    assert_eq!(gc2.max_ghost_turns, 20, "runbook max_ghost_turns preserved");
+    // Scripts are unioned, not replaced.
+    assert!(gc2.auto_approve_scripts.contains(&"runbook-script.sh".to_string()));
+    assert!(gc2.auto_approve_scripts.contains(&"scan.sh".to_string()));
+    // No duplicates even if same script appears in both.
+    assert_eq!(
+        gc2.auto_approve_scripts.iter().filter(|s| *s == "scan.sh").count(),
+        1,
+        "no script duplicates"
+    );
+}

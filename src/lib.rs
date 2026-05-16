@@ -2,6 +2,7 @@
 //!
 //! Core types and modules for the daemon, CLI, and integration tests.
 
+pub mod agents;
 pub mod ai;
 pub mod cli;
 pub mod config;

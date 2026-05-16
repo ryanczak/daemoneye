@@ -239,10 +239,24 @@ where
                         id, thought_signature, pane_id,
                     });
                 }
-                AiEvent::SpawnGhost { id, runbook, message, thought_signature } => {
+                AiEvent::SpawnGhost { id, runbook, message, agent, thought_signature } => {
                     pending_calls.push(PendingCall::SpawnGhost {
-                        id, thought_signature, runbook, message,
+                        id, thought_signature, runbook, message, agent,
                     });
+                }
+                AiEvent::CreateAgent { id, name, description, prompt, model, memory_namespace, max_turns, auto_approve_read_only, auto_approve_scripts, thought_signature } => {
+                    pending_calls.push(PendingCall::CreateAgent {
+                        id, thought_signature, name, description, prompt, model, memory_namespace, max_turns, auto_approve_read_only, auto_approve_scripts,
+                    });
+                }
+                AiEvent::ReadAgent { id, name, thought_signature } => {
+                    pending_calls.push(PendingCall::ReadAgent { id, thought_signature, name });
+                }
+                AiEvent::ListAgents { id, thought_signature } => {
+                    pending_calls.push(PendingCall::ListAgents { id, thought_signature });
+                }
+                AiEvent::DeleteAgent { id, name, thought_signature } => {
+                    pending_calls.push(PendingCall::DeleteAgent { id, thought_signature, name });
                 }
                 AiEvent::Error(e) => {
                     send_response_split(tx, Response::Error(e)).await?;

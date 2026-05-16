@@ -719,9 +719,11 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                 let schedule_store_clone = state.schedule_store.clone();
 
                 tokio::spawn(async move {
-                    match GhostManager::start_session(
+                    let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
+                    match GhostManager::start_session_with_config(
                         sessions.clone(),
                         &rb_clone,
+                        &merged_config,
                         &alert_msg,
                         crate::daemon::GS_BG_WINDOW_PREFIX,
                         config_clone.approvals.ghost_commands,

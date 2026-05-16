@@ -213,6 +213,38 @@ pub enum PendingCall {
         runbook: String,
         /// Human-readable description of the problem to investigate.
         message: String,
+        /// Optional named agent to use as the executor identity.
+        agent: Option<String>,
+    },
+    /// Create or update a named agent config.
+    CreateAgent {
+        id: String,
+        thought_signature: Option<String>,
+        name: String,
+        description: String,
+        prompt: String,
+        model: Option<String>,
+        memory_namespace: String,
+        max_turns: Option<u32>,
+        auto_approve_read_only: bool,
+        auto_approve_scripts: Vec<String>,
+    },
+    /// Read a named agent config.
+    ReadAgent {
+        id: String,
+        thought_signature: Option<String>,
+        name: String,
+    },
+    /// List all named agents.
+    ListAgents {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    /// Delete a named agent.
+    DeleteAgent {
+        id: String,
+        thought_signature: Option<String>,
+        name: String,
     },
 }
 
@@ -400,11 +432,40 @@ impl PendingCall {
                 name: "close_background_window".to_string(),
                 arguments: serde_json::json!({"pane_id": pane_id}).to_string(),
             },
-            PendingCall::SpawnGhost { id, thought_signature, runbook, message } => ToolCall {
+            PendingCall::SpawnGhost { id, thought_signature, runbook, message, agent } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "spawn_ghost_shell".to_string(),
-                arguments: serde_json::json!({"runbook": runbook, "message": message}).to_string(),
+                arguments: serde_json::json!({"runbook": runbook, "message": message, "agent": agent}).to_string(),
+            },
+            PendingCall::CreateAgent { id, thought_signature, name, description, prompt, model, memory_namespace, max_turns, auto_approve_read_only, auto_approve_scripts } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "create_agent".to_string(),
+                arguments: serde_json::json!({
+                    "name": name, "description": description, "prompt": prompt,
+                    "model": model, "memory_namespace": memory_namespace,
+                    "max_turns": max_turns, "auto_approve_read_only": auto_approve_read_only,
+                    "auto_approve_scripts": auto_approve_scripts
+                }).to_string(),
+            },
+            PendingCall::ReadAgent { id, thought_signature, name } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "read_agent".to_string(),
+                arguments: serde_json::json!({"name": name}).to_string(),
+            },
+            PendingCall::ListAgents { id, thought_signature } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "list_agents".to_string(),
+                arguments: "{}".to_string(),
+            },
+            PendingCall::DeleteAgent { id, thought_signature, name } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "delete_agent".to_string(),
+                arguments: serde_json::json!({"name": name}).to_string(),
             },
         }
     }
@@ -438,6 +499,10 @@ impl PendingCall {
             PendingCall::ListPanes { id, .. } => id,
             PendingCall::CloseBackgroundWindow { id, .. } => id,
             PendingCall::SpawnGhost { id, .. } => id,
+            PendingCall::CreateAgent { id, .. } => id,
+            PendingCall::ReadAgent { id, .. } => id,
+            PendingCall::ListAgents { id, .. } => id,
+            PendingCall::DeleteAgent { id, .. } => id,
         }
     }
 
@@ -462,6 +527,8 @@ impl PendingCall {
                 | PendingCall::ListPanes { .. }
                 | PendingCall::CloseBackgroundWindow { .. }
                 | PendingCall::SpawnGhost { .. }
+                | PendingCall::ReadAgent { .. }
+                | PendingCall::ListAgents { .. }
         )
     }
 
@@ -513,6 +580,10 @@ impl PendingCall {
             PendingCall::ListPanes { .. } => String::new(),
             PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
+            PendingCall::CreateAgent { name, .. } => name.clone(),
+            PendingCall::ReadAgent { name, .. } => name.clone(),
+            PendingCall::ListAgents { .. } => String::new(),
+            PendingCall::DeleteAgent { name, .. } => name.clone(),
             _ => String::new(),
         }
     }
@@ -548,6 +619,10 @@ impl PendingCall {
             PendingCall::ListPanes { .. } => "list_panes",
             PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
             PendingCall::SpawnGhost { .. } => "spawn_ghost_shell",
+            PendingCall::CreateAgent { .. } => "create_agent",
+            PendingCall::ReadAgent { .. } => "read_agent",
+            PendingCall::ListAgents { .. } => "list_agents",
+            PendingCall::DeleteAgent { .. } => "delete_agent",
         }
     }
 }
@@ -717,6 +792,37 @@ pub enum AiEvent {
         id: String,
         runbook: String,
         message: String,
+        agent: Option<String>,
+        thought_signature: Option<String>,
+    },
+    /// Create or update a named agent config.
+    CreateAgent {
+        id: String,
+        name: String,
+        description: String,
+        prompt: String,
+        model: Option<String>,
+        memory_namespace: String,
+        max_turns: Option<u32>,
+        auto_approve_read_only: bool,
+        auto_approve_scripts: Vec<String>,
+        thought_signature: Option<String>,
+    },
+    /// Read a named agent config.
+    ReadAgent {
+        id: String,
+        name: String,
+        thought_signature: Option<String>,
+    },
+    /// List all named agents.
+    ListAgents {
+        id: String,
+        thought_signature: Option<String>,
+    },
+    /// Delete a named agent.
+    DeleteAgent {
+        id: String,
+        name: String,
         thought_signature: Option<String>,
     },
     Done(AiUsage),
@@ -873,6 +979,7 @@ mod tests {
                 thought_signature: None,
                 runbook: "disk-alert".to_string(),
                 message: "investigate".to_string(),
+                agent: None,
             },
         ];
         for call in cases {
@@ -1037,6 +1144,7 @@ mod tests {
             thought_signature: None,
             runbook: "disk-alert".to_string(),
             message: "check disk usage".to_string(),
+            agent: None,
         };
         assert_eq!(call.summary(), "disk-alert");
     }
