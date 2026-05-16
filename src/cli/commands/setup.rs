@@ -74,6 +74,7 @@ pub fn run_setup(
         "ghost-shell-guide",
         "scheduling-guide",
         "scripts-and-sudoers",
+        "agent-runtime-layout",
     ];
     let seeded_session = ["pane-referencing-convention", "unicode-decoration-pref"];
     if overwrite_memory {

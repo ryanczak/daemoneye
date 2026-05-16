@@ -810,6 +810,7 @@ impl Config {
         seed_knowledge_memory("ghost-shell-guide", GHOST_SHELL_GUIDE_MEMORY)?;
         seed_knowledge_memory("scheduling-guide", SCHEDULING_GUIDE_MEMORY)?;
         seed_knowledge_memory("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY)?;
+        seed_knowledge_memory("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY)?;
 
         // Seed built-in session memories if they don't already exist.
         seed_session_memory(
@@ -956,6 +957,8 @@ const SCHEDULING_GUIDE_MEMORY: &str =
     include_str!("../assets/memory/knowledge/scheduling-guide.md");
 const SCRIPTS_AND_SUDOERS_MEMORY: &str =
     include_str!("../assets/memory/knowledge/scripts-and-sudoers.md");
+const AGENT_RUNTIME_LAYOUT_MEMORY: &str =
+    include_str!("../assets/memory/knowledge/agent-runtime-layout.md");
 
 // ---------------------------------------------------------------------------
 // Seeded session memories (written to ~/.daemoneye/memory/session/ on first run)
