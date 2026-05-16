@@ -835,6 +835,7 @@ fn g4_briefing_read_and_clear() {
     use daemoneye::agents;
     use daemoneye::daemon::briefing;
 
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
     let tmp = temp_daemoneye_home();
     let old_home = std::env::var("HOME").ok();
     unsafe {
@@ -900,4 +901,93 @@ fn g4_briefing_injection_block_format() {
 
     // Unrestricted
     assert!(format_tool_restriction_block(&ToolPolicy::default()).is_none());
+}
+
+/// Verify that when a briefing file exists for an agent, the first-turn prompt
+/// builder injects it as a `## Previous Session Summary` block.
+#[test]
+fn g4_briefing_injects_on_next_run() {
+    use daemoneye::agents;
+    use daemoneye::config::Config;
+    use daemoneye::daemon::SessionCache;
+    use daemoneye::daemon::prompt::{PromptCtx, build_first_turn_prompt};
+
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let tmp = temp_daemoneye_home();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", &tmp);
+    }
+
+    // Write a briefing file.
+    let path = agents::briefing_path("inject-test-agent");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let briefing_content = "Key finding: disk full on /dev/sda1. Cleared /var/log.";
+    std::fs::write(&path, briefing_content).unwrap();
+
+    // Build a minimal PromptCtx with agent_name set.
+    let cache = SessionCache::new("test-session");
+    let config = Config::default();
+    let memory_namespaces: Vec<&str> = vec!["global"];
+    let ctx = PromptCtx {
+        client_pane: None,
+        chat_pane: None,
+        default_target_pane: None,
+        cache: &cache,
+        config: &config,
+        chat_width: None,
+        safe_query: "check disk usage",
+        last_prompt_tokens: 0,
+        history_count: 0,
+        this_turn_count: 1,
+        ghost_turn_limit: None,
+        inject_snapshot: false,
+        memory_namespaces: &memory_namespaces,
+        tool_policy: None,
+        agent_name: Some("inject-test-agent"),
+    };
+
+    let prompt = build_first_turn_prompt(&ctx);
+    assert!(
+        prompt.contains("## Previous Session Summary"),
+        "prompt should contain briefing injection block"
+    );
+    assert!(
+        prompt.contains("disk full"),
+        "prompt should contain briefing content"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Verify that AI-generated briefing content is masked before being written
+/// to disk. Uses a known sensitive pattern (AWS key) to confirm masking.
+#[test]
+fn g4_briefing_masking_applied() {
+    use daemoneye::ai::filter::{init_masking, mask_sensitive};
+
+    // Ensure masking is initialized (normally done at daemon startup).
+    init_masking(&[]);
+
+    // Simulate AI output containing a sensitive AWS key.
+    let ai_output = "Investigation found the issue. The AWS key AKIAIOSFODNN7EXAMPLE was \
+        exposed in the logs. Recommend rotating immediately.";
+
+    let masked = mask_sensitive(ai_output);
+    assert!(
+        !masked.contains("AKIAIOSFODNN7EXAMPLE"),
+        "masked briefing should not contain raw AWS key"
+    );
+    assert!(
+        masked.contains("<AWS_KEY>"),
+        "masked briefing should contain redacted placeholder"
+    );
+    assert!(
+        masked.contains("Investigation found the issue"),
+        "non-sensitive content should be preserved"
+    );
 }

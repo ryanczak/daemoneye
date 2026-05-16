@@ -1165,6 +1165,11 @@ pub(super) fn read_agent(name: &str) -> String {
             if !cfg.prompt.is_empty() {
                 out.push_str(&format!("\n  prompt:\n{}\n", cfg.prompt));
             }
+            if let Some(briefing) = crate::daemon::briefing::read_briefing(name) {
+                out.push_str("\n## Briefing (from previous run)\n");
+                out.push_str(&briefing);
+                out.push('\n');
+            }
             out
         }
         Err(e) => format!("Error reading agent '{}': {}", name, e),

@@ -310,13 +310,6 @@ pub async fn trigger_ghost_turn(
                 turn,
                 max_ghost_turns
             );
-            crate::daemon::utils::log_event(
-                "ghost_error",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "error": format!("max turns ({}) reached", max_ghost_turns),
-                }),
-            );
             break;
         }
         if turn >= max_ghost_turns {
