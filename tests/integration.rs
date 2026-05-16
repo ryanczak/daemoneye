@@ -403,6 +403,46 @@ auto_approve_commands = true
     assert_eq!(scripts, vec!["check-disk.sh"]);
 }
 
+/// Verify that a config with custom pricing fields round-trips through
+/// TOML serialization and deserialization correctly.
+#[test]
+fn config_pricing_round_trip() {
+    use daemoneye::config::PricingSource;
+
+    let toml_str = r#"
+[models.default]
+provider = "anthropic"
+model    = "claude-sonnet-4-6"
+input_cost_per_mtok    = 5.0
+output_cost_per_mtok   = 25.0
+cache_read_cost_per_mtok  = 0.50
+cache_write_cost_per_mtok = 6.25
+"#;
+
+    let cfg: daemoneye::config::Config =
+        toml::from_str(toml_str).expect("parse config with pricing");
+    let entry = cfg.resolve_model(None);
+    assert_eq!(entry.input_cost_per_mtok, Some(5.0));
+    assert_eq!(entry.output_cost_per_mtok, Some(25.0));
+    assert_eq!(entry.cache_read_cost_per_mtok, Some(0.50));
+    assert_eq!(entry.cache_write_cost_per_mtok, Some(6.25));
+
+    // Verify pricing resolution uses UserConfig source when fields are set.
+    let pricing = entry.pricing().expect("pricing must resolve");
+    assert_eq!(pricing.input_per_mtok, 5.0);
+    assert_eq!(pricing.output_per_mtok, 25.0);
+    assert_eq!(pricing.cache_read_per_mtok, 0.50);
+    assert_eq!(pricing.cache_write_per_mtok, 6.25);
+    assert_eq!(pricing.source, PricingSource::UserConfig);
+
+    // Verify round-trip through serde.
+    let serialized = toml::to_string(&cfg).expect("serialize config");
+    let back: daemoneye::config::Config =
+        toml::from_str(&serialized).expect("re-parse serialized config");
+    let entry2 = back.resolve_model(None);
+    assert_eq!(entry2.input_cost_per_mtok, Some(5.0));
+}
+
 // ---------------------------------------------------------------------------
 // A4 — Daemon process lifecycle
 // ---------------------------------------------------------------------------

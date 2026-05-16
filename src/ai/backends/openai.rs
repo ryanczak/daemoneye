@@ -5,8 +5,30 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ai::tools::{dispatch_tool_event, get_openai_tool_definition};
-use crate::ai::types::{AiEvent, Message};
+use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, send_with_retry};
+
+/// Parse the `usage` object from an OpenAI SSE event into a `TokenBreakdown`.
+/// Reads `prompt_tokens`, `completion_tokens`, and `prompt_tokens_details.cached_tokens`;
+/// subtracts cached_tokens from the total prompt to yield uncached `input_tokens`.
+pub(crate) fn parse_openai_usage(u: &serde_json::Map<String, Value>) -> TokenBreakdown {
+    let total_prompt = u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let output_tokens = u
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let cache_read = u
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    TokenBreakdown {
+        input_tokens: total_prompt.saturating_sub(cache_read),
+        output_tokens,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: 0,
+    }
+}
 
 /// OpenAI-compatible API backend (GPT family, or any OpenAI-compatible endpoint).
 /// Supports Ollama, LM Studio, vLLM, and any other OpenAI-API-compatible server
@@ -113,7 +135,7 @@ impl AiClient for OpenAiClient {
         let mut tool_name = String::new();
         let mut tool_args = String::new();
         let mut leftover = String::new();
-        let mut usage = crate::ai::types::AiUsage::default();
+        let mut usage = TokenBreakdown::default();
 
         /// Maximum size of the SSE leftover buffer (1 MiB). A misbehaving
         /// proxy that sends data without newlines would otherwise grow it
@@ -180,12 +202,7 @@ impl AiClient for OpenAiClient {
                             }
                         }
                         if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
-                            usage.prompt_tokens =
-                                u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-                            usage.completion_tokens =
-                                u.get("completion_tokens")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0) as u32;
+                            usage = parse_openai_usage(u);
                         }
                     }
                 }
@@ -202,5 +219,49 @@ impl AiClient for OpenAiClient {
 
         let _ = tx.send(AiEvent::Done(usage));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_openai_usage;
+
+    #[test]
+    fn openai_parses_cached_tokens_from_details() {
+        let usage_obj = serde_json::json!({
+            "prompt_tokens": 2000,
+            "completion_tokens": 500,
+            "prompt_tokens_details": {
+                "cached_tokens": 800
+            }
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let usage = parse_openai_usage(&usage_obj);
+
+        assert_eq!(usage.input_tokens, 1200); // 2000 - 800
+        assert_eq!(usage.cache_read_tokens, 800);
+        assert_eq!(usage.cache_write_tokens, 0);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.total(), 2500);
+    }
+
+    #[test]
+    fn openai_parses_zero_cache_when_details_absent() {
+        let usage_obj = serde_json::json!({
+            "prompt_tokens": 1000,
+            "completion_tokens": 300
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let usage = parse_openai_usage(&usage_obj);
+
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
     }
 }

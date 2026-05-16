@@ -6,8 +6,41 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ai::tools::{dispatch_tool_event, get_tool_definition};
-use crate::ai::types::{AiEvent, Message};
+use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, send_with_retry};
+
+/// Parse the `message_start.message.usage` object from an Anthropic SSE event
+/// into a `TokenBreakdown`.  Extracts `input_tokens`, `cache_creation_input_tokens`,
+/// and `cache_read_input_tokens`; subtracts the cache fields from the total to
+/// yield the uncached `input_tokens`.
+pub(crate) fn parse_anthropic_start_usage(u: &serde_json::Map<String, Value>) -> TokenBreakdown {
+    let total_input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let cache_write = u
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let cache_read = u
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    TokenBreakdown {
+        input_tokens: total_input
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write),
+        cache_read_tokens: cache_read,
+        cache_write_tokens: cache_write,
+        output_tokens: 0,
+    }
+}
+
+/// Apply the `message_delta.usage` object to an existing `TokenBreakdown`,
+/// setting `output_tokens`.
+pub(crate) fn apply_anthropic_output_tokens(
+    usage: &mut TokenBreakdown,
+    u: &serde_json::Map<String, Value>,
+) {
+    usage.output_tokens = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+}
 
 /// Anthropic API backend (Claude family).
 pub struct AnthropicClient {
@@ -133,7 +166,7 @@ impl AiClient for AnthropicClient {
         // block; passed to the next tool call dispatched in this response.
         let mut pending_thought_sig: Option<String> = None;
         let mut leftover = String::new();
-        let mut usage = crate::ai::types::AiUsage::default();
+        let mut usage = TokenBreakdown::default();
 
         'outer: while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
@@ -216,15 +249,12 @@ impl AiClient for AnthropicClient {
                             }
                         } else if msg_type == "message_start" {
                             if let Some(u) = v["message"]["usage"].as_object() {
-                                usage.prompt_tokens =
-                                    u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0)
-                                        as u32;
+                                usage = parse_anthropic_start_usage(u);
                             }
                         } else if msg_type == "message_delta"
                             && let Some(u) = v["usage"].as_object()
                         {
-                            usage.completion_tokens =
-                                u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                            apply_anthropic_output_tokens(&mut usage, u);
                         }
                     }
                 }
@@ -351,6 +381,52 @@ mod tests {
         assert_eq!(content[0]["type"], "tool_result");
         assert_eq!(content[0]["tool_use_id"], "tc_1");
         assert_eq!(content[0]["content"], "output here");
+    }
+
+    // ── TokenBreakdown parsing from Anthropic SSE events ────────────────
+
+    #[test]
+    fn anthropic_parses_cache_creation_and_read_tokens() {
+        let message_start_usage = serde_json::json!({
+            "input_tokens": 1500,
+            "cache_creation_input_tokens": 200,
+            "cache_read_input_tokens": 800
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let message_delta_usage = serde_json::json!({
+            "output_tokens": 400
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let mut usage = parse_anthropic_start_usage(&message_start_usage);
+        apply_anthropic_output_tokens(&mut usage, &message_delta_usage);
+
+        assert_eq!(usage.input_tokens, 500); // 1500 - 800 - 200
+        assert_eq!(usage.cache_read_tokens, 800);
+        assert_eq!(usage.cache_write_tokens, 200);
+        assert_eq!(usage.output_tokens, 400);
+        assert_eq!(usage.total(), 1900);
+    }
+
+    #[test]
+    fn anthropic_parses_zero_cache_when_not_present() {
+        let message_start_usage = serde_json::json!({
+            "input_tokens": 1000
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let usage = parse_anthropic_start_usage(&message_start_usage);
+
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
     }
 }
 

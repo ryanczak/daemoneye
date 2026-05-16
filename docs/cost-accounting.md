@@ -40,7 +40,7 @@ A phase is done only when **all** of the following are true:
 - **Errors**: `anyhow::Result<T>` at module boundaries; typed errors only where
   callers must branch on the failure. Always add context with `.with_context(|| …)`
   when surfacing an I/O error.
-- **Logging**: `tracing::{info, warn, error}` only — no `eprintln!` outside of
+- **Logging**: `log::{info, warn, error}` only — no `eprintln!` outside of
   CLI entry points. Cost events use `log_event()` from `daemon/utils.rs`.
 - **Naming**: cost fields use `_usd` suffix when the unit is dollars
   (`total_cost_usd`, `input_cost_usd`). Token counts use `_tokens` suffix.

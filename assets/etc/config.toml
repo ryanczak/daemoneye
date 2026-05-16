@@ -7,6 +7,23 @@ provider = "anthropic"
 api_key  = ""
 model    = "claude-sonnet-4-6"
 
+# --- Optional: per-model pricing overrides ---
+# Built-in defaults are embedded for known models (Anthropic, OpenAI, Gemini).
+# Local providers (ollama, lmstudio) always default to $0.
+# For unknown models you can set rates manually (per 1M tokens, in USD):
+#
+# [models.default]
+# provider = "anthropic"
+# model    = "claude-sonnet-4-6"
+# input_cost_per_mtok    = 3.00   # $ per 1M input tokens
+# output_cost_per_mtok   = 15.00  # $ per 1M output tokens
+# cache_read_cost_per_mtok  = 0.30   # $ per 1M cache-read tokens
+# cache_write_cost_per_mtok = 3.75   # $ per 1M cache-write tokens
+#
+# Setting any one rate triggers UserConfig mode; unset rates fall back to
+# built-in defaults for that model.  Setting all four to 0.0 disables cost
+# accounting for that model.
+
 # --- Models used by the built-in example agents ---
 # Uncomment and fill in your API keys to activate the Architect, Researcher,
 # and Sysadmin agents that are seeded into ~/.daemoneye/agents/ on first run.

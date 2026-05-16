@@ -551,8 +551,10 @@ where
                             serde_json::json!({
                                 "session": session_id.as_deref().unwrap_or("-"),
                                 "model": config.resolve_model(session_active_model.as_deref()).model,
-                                "prompt_tokens": usage.prompt_tokens,
-                                "completion_tokens": usage.completion_tokens,
+                                "prompt_tokens": usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens,
+                                "completion_tokens": usage.output_tokens,
+                                "cache_read_tokens": usage.cache_read_tokens,
+                                "cache_write_tokens": usage.cache_write_tokens,
                             }),
                         );
 
@@ -563,7 +565,9 @@ where
                             {
                                 entry.messages = messages.clone();
                                 entry.last_accessed = Instant::now();
-                                entry.last_prompt_tokens = usage.prompt_tokens;
+                                entry.last_prompt_tokens = usage.input_tokens
+                                    + usage.cache_read_tokens
+                                    + usage.cache_write_tokens;
                                 entry.dirty = true;
                                 if chat_pane.is_some() {
                                     entry.chat_pane = chat_pane.clone();
@@ -619,7 +623,9 @@ where
                         send_response_split(
                             tx,
                             Response::UsageUpdate {
-                                prompt_tokens: usage.prompt_tokens,
+                                prompt_tokens: usage.input_tokens
+                                    + usage.cache_read_tokens
+                                    + usage.cache_write_tokens,
                             },
                         )
                         .await?;
@@ -632,8 +638,10 @@ where
                         serde_json::json!({
                             "session": session_id.as_deref().unwrap_or("-"),
                             "model": config.resolve_model(None).model,
-                            "prompt_tokens": usage.prompt_tokens,
-                            "completion_tokens": usage.completion_tokens,
+                            "prompt_tokens": usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens,
+                            "completion_tokens": usage.output_tokens,
+                            "cache_read_tokens": usage.cache_read_tokens,
+                            "cache_write_tokens": usage.cache_write_tokens,
                         }),
                     );
 
@@ -643,7 +651,8 @@ where
                         && let Ok(mut store) = sessions.lock()
                         && let Some(entry) = store.get_mut(id)
                     {
-                        entry.last_prompt_tokens = usage.prompt_tokens;
+                        entry.last_prompt_tokens =
+                            usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
                     }
 
                     // Push one assistant message listing all tool calls.

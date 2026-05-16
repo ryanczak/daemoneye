@@ -119,9 +119,21 @@ pub fn run_setup(
 
     // Show seeded agent status.
     let seeded_agents = [
-        ("architect", "opus", "Anthropic Opus — design reviews and planning"),
-        ("researcher", "gemini-pro", "Gemini Pro — deep investigation and research"),
-        ("sysadmin", "lmstudio", "LM Studio (Qwen3-27B) — local infrastructure tasks"),
+        (
+            "architect",
+            "opus",
+            "Anthropic Opus — design reviews and planning",
+        ),
+        (
+            "researcher",
+            "gemini-pro",
+            "Gemini Pro — deep investigation and research",
+        ),
+        (
+            "sysadmin",
+            "lmstudio",
+            "LM Studio (Qwen3-27B) — local infrastructure tasks",
+        ),
     ];
     println!("Seeded agents (written once, preserved on upgrade):");
     for (name, model_key, description) in &seeded_agents {
@@ -138,7 +150,10 @@ pub fn run_setup(
     }
     println!();
     println!("  To activate the example agents, uncomment the matching [models.*] stanzas");
-    println!("  in {}/etc/config.toml and fill in your API keys.", dir.display());
+    println!(
+        "  in {}/etc/config.toml and fill in your API keys.",
+        dir.display()
+    );
     println!();
 
     // Copy the running binary into ~/.daemoneye/bin/daemoneye.

@@ -5,8 +5,32 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition};
-use crate::ai::types::{AiEvent, Message};
+use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, next_tool_id, send_with_retry};
+
+/// Parse the `usageMetadata` object from a Gemini SSE event into a `TokenBreakdown`.
+/// Reads `promptTokenCount`, `candidatesTokenCount`, and `cachedContentTokenCount`;
+/// subtracts cached tokens from the total prompt to yield uncached `input_tokens`.
+pub(crate) fn parse_gemini_usage(u: &serde_json::Map<String, Value>) -> TokenBreakdown {
+    let total_prompt = u
+        .get("promptTokenCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let output_tokens = u
+        .get("candidatesTokenCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let cache_read = u
+        .get("cachedContentTokenCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    TokenBreakdown {
+        input_tokens: total_prompt.saturating_sub(cache_read),
+        output_tokens,
+        cache_read_tokens: cache_read,
+        cache_write_tokens: 0,
+    }
+}
 
 /// Returns `(command, background)` if parsing succeeds, `None` otherwise.
 ///
@@ -171,7 +195,7 @@ impl AiClient for GeminiClient {
 
         let mut stream = response.bytes_stream();
         let mut leftover = String::new();
-        let mut usage = crate::ai::types::AiUsage::default();
+        let mut usage = TokenBreakdown::default();
 
         while let Some(chunk) = stream.next().await {
             let bytes = chunk?;
@@ -247,14 +271,7 @@ impl AiClient for GeminiClient {
                         }
                     }
                     if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
-                        usage.prompt_tokens = u
-                            .get("promptTokenCount")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32;
-                        usage.completion_tokens = u
-                            .get("candidatesTokenCount")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as u32;
+                        usage = parse_gemini_usage(u);
                     }
                 }
             }
@@ -360,5 +377,44 @@ mod tests {
         let msg = r#"run_terminal_command(command = "df -h", background = true)"#;
         let result = parse_malformed_gemini_call(msg);
         assert_eq!(result, Some(("df -h".to_string(), true)));
+    }
+
+    // ── TokenBreakdown parsing from Gemini usageMetadata ────────────────
+
+    #[test]
+    fn gemini_parses_cached_content_token_count() {
+        let usage_obj = serde_json::json!({
+            "promptTokenCount": 2000,
+            "candidatesTokenCount": 500,
+            "cachedContentTokenCount": 1200
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let usage = parse_gemini_usage(&usage_obj);
+
+        assert_eq!(usage.input_tokens, 800); // 2000 - 1200
+        assert_eq!(usage.cache_read_tokens, 1200);
+        assert_eq!(usage.cache_write_tokens, 0);
+        assert_eq!(usage.output_tokens, 500);
+        assert_eq!(usage.total(), 2500);
+    }
+
+    #[test]
+    fn gemini_parses_zero_cache_when_field_absent() {
+        let usage_obj = serde_json::json!({
+            "promptTokenCount": 1000,
+            "candidatesTokenCount": 300
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let usage = parse_gemini_usage(&usage_obj);
+
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
     }
 }
