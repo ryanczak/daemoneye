@@ -72,7 +72,6 @@ fn render_slash_command_help(chat_width: usize) {
             "/session diff <n1> <n2>",
             "compare two sessions",
         ),
-        ("/session tag <name>", "alias for /session save", "", ""),
     ];
     let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
     let ld_w = rows.iter().map(|(_, d, _, _)| d.len()).max().unwrap_or(0);
@@ -1102,26 +1101,6 @@ async fn run_chat_inner_raw(
                     }
                 }
                 None => println!("Usage: /session diff <name1> <name2>"),
-            }
-            continue;
-        }
-
-        // /session tag <name> [description...] — alias for /session save
-        if let Some(rest) = query.strip_prefix("/session tag ").map(str::trim) {
-            let (name, description) = rest
-                .split_once(' ')
-                .map(|(n, d)| (n.trim(), d.trim()))
-                .unwrap_or((rest, ""));
-            let description = description.to_string();
-            let force = name.ends_with(" --force") || description.ends_with("--force");
-            let name = name.trim_end_matches(" --force").to_string();
-            match send_save_session(&session_id, &name, &description, force).await {
-                Ok(confirmed) => {
-                    let label = format!(" session tagged as '{}' ", confirmed);
-                    let dashes = chat_width.min(72).saturating_sub(visual_len(&label) + 1);
-                    println!("\x1b[2m─{}{}\x1b[0m", label, "─".repeat(dashes));
-                }
-                Err(e) => println!("\x1b[31m✗\x1b[0m  /session tag failed: {}", e),
             }
             continue;
         }

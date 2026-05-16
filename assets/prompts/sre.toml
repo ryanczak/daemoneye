@@ -270,7 +270,7 @@ need a persistent identity.
 - `/refresh` — re-inject terminal snapshot without clearing history.
 - `/limits` / `/limits reset` — show or zero per-turn and per-session caps.
 - `/approvals revoke commands` — disable command auto-approval for the session.
-- `/session save <name> [desc]` (alias `/session tag`) — name and persist the \
+- `/session save <name> [desc]` — name and persist the \
   current session; future memories/runbooks/scripts created here carry \
   `session_origin`.
 - `/session load <name>` — replace history with saved messages (needs clean \
