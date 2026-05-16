@@ -61,6 +61,10 @@ pub fn run_setup(
         "  {}/memory/                ← persistent AI memory",
         dir.display()
     );
+    println!(
+        "  {}/agents/               ← named agent configs",
+        dir.display()
+    );
     println!();
     let memory_dir = dir.join("memory");
     let seeded_knowledge = [
@@ -110,6 +114,30 @@ pub fn run_setup(
             );
         }
     }
+    println!();
+
+    // Show seeded agent status.
+    let seeded_agents = [
+        ("architect", "opus", "Anthropic Opus — design reviews and planning"),
+        ("researcher", "gemini-pro", "Gemini Pro — deep investigation and research"),
+        ("sysadmin", "lmstudio", "LM Studio (Qwen3-27B) — local infrastructure tasks"),
+    ];
+    println!("Seeded agents (written once, preserved on upgrade):");
+    for (name, model_key, description) in &seeded_agents {
+        let exists = crate::agents::config_path(name).exists();
+        println!(
+            "  agents/{}  {}  [model: {}]",
+            name,
+            if exists { "✓" } else { "(missing)" },
+            model_key,
+        );
+        if !exists {
+            println!("    {}", description);
+        }
+    }
+    println!();
+    println!("  To activate the example agents, uncomment the matching [models.*] stanzas");
+    println!("  in {}/etc/config.toml and fill in your API keys.", dir.display());
     println!();
 
     // Copy the running binary into ~/.daemoneye/bin/daemoneye.

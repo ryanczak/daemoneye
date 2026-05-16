@@ -152,6 +152,7 @@ where
     let GhostCtx {
         policy: ghost_policy,
         is_ghost: _,
+        ..
     } = ghost_ctx;
 
     // C3a: pane ID format guard — reject anything that doesn't look like %N.
@@ -787,6 +788,7 @@ where
     let GhostCtx {
         policy: ghost_policy,
         is_ghost,
+        ..
     } = ghost_ctx;
     // N11: retry path — reuse an existing background pane via respawn-pane.
     if let Some(pane_id) = retry_pane {

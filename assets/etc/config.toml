@@ -7,11 +7,28 @@ provider = "anthropic"
 api_key  = ""
 model    = "claude-sonnet-4-6"
 
-# --- Additional model examples ---
+# --- Models used by the built-in example agents ---
+# Uncomment and fill in your API keys to activate the Architect, Researcher,
+# and Sysadmin agents that are seeded into ~/.daemoneye/agents/ on first run.
+
+# Used by the "architect" agent.
 # [models.opus]
 # provider = "anthropic"
-# model    = "claude-opus-4-6"
-#
+# model    = "claude-opus-4-7"
+
+# Used by the "researcher" agent.
+# [models.gemini-pro]
+# provider = "gemini"
+# model    = "gemini-2.5-pro"
+
+# Used by the "sysadmin" agent.  Point `model` at whatever you have loaded in
+# LM Studio; the base_url defaults to http://localhost:1234/v1.
+# [models.lmstudio]
+# provider = "lmstudio"
+# model    = "qwen3-27b"
+# context_window_tokens = 32768
+
+# --- Additional model examples ---
 # [models.local]
 # provider  = "ollama"
 # model     = "llama3.2"

@@ -106,6 +106,8 @@ fn parse_frontmatter(raw: &str) -> (Vec<String>, Vec<String>, GhostConfig, Strin
             auto_approve_commands,
             agent,
             tool_policy: None,
+            spawn_depth: 0,
+            parent_job_id: None,
         };
 
         (tags, memories, ghost_config, body)

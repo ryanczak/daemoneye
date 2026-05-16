@@ -1,6 +1,31 @@
 use crate::tmux::cache::SessionCache;
 use crate::util::UnpoisonExt;
 
+/// Build an `## Available Agents` block for the system prompt.
+///
+/// Lists all registered agents with their description and model.
+/// Returns an empty string if no agents are registered.
+pub fn format_available_agents() -> String {
+    let agents = match crate::agents::list_agents() {
+        Ok(a) => a,
+        Err(_) => return String::new(),
+    };
+    if agents.is_empty() {
+        return String::new();
+    }
+    let mut lines = Vec::new();
+    lines.push("## Available Agents".to_string());
+    for info in &agents {
+        let model_str = info.model.as_deref().unwrap_or("(default model)");
+        lines.push(format!(
+            "- **{}**: {} (model: {})",
+            info.name, info.description, model_str
+        ));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 /// Context passed to prompt builder functions.
 /// Follows the `SessionCtx<'a>` pattern — borrow-only, no clones.
 pub struct PromptCtx<'a> {

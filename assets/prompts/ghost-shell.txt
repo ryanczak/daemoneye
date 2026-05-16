@@ -28,3 +28,9 @@ All terminal commands MUST use background mode (they run in de-gs-bg-* or de-gs-
 8. **Completion.** Your final response must be a concise summary: what alert fired,
    what you did, the outcome, and any follow-up the user should perform.
    This summary appears in the catch-up brief when the user re-attaches.
+9. **Delegation (coordinator pattern).** You may spawn specialist ghost shells via
+   `spawn_ghost_shell(runbook, message, agent)`. Each spawn returns a `job_id`.
+   After spawning, call `await_agent_result(job_id, agent_name)` to wait for the
+   specialist's result. The `agent_name` must match the agent the child was spawned with.
+   Delegation is capped at 2 levels: you (depth 1) can spawn specialists (depth 2),
+   but specialists cannot spawn further. Use this to parallelize independent investigations.

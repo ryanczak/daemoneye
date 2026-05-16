@@ -818,6 +818,11 @@ impl Config {
         )?;
         seed_session_memory("unicode-decoration-pref", UNICODE_DECORATION_PREF_MEMORY)?;
 
+        // Seed example named agents if they don't already exist.
+        seed_agent("architect", AGENT_ARCHITECT)?;
+        seed_agent("researcher", AGENT_RESEARCHER)?;
+        seed_agent("sysadmin", AGENT_SYSADMIN)?;
+
         Ok(())
     }
 }
@@ -840,6 +845,22 @@ fn seed_memory_inner(subdir: &str, key: &str, content: &str, force: bool) -> Res
     if force || !path.exists() {
         std::fs::write(&path, content)
             .with_context(|| format!("seeding {} memory '{}'", subdir, key))?;
+    }
+    Ok(())
+}
+
+/// Write a named agent config only if it does not already exist.
+///
+/// The agent directory is created if absent. An existing config is never overwritten
+/// so user edits are preserved across upgrades.
+pub fn seed_agent(name: &str, content: &str) -> Result<()> {
+    let dir = crate::agents::agent_dir(name);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating agent dir for '{}'", name))?;
+    let path = dir.join("config.toml");
+    if !path.exists() {
+        std::fs::write(&path, content)
+            .with_context(|| format!("seeding agent config '{}'", name))?;
     }
     Ok(())
 }
@@ -944,6 +965,14 @@ const PANE_REFERENCING_CONVENTION_MEMORY: &str =
     include_str!("../assets/memory/session/pane-referencing-convention.md");
 const UNICODE_DECORATION_PREF_MEMORY: &str =
     include_str!("../assets/memory/session/unicode-decoration-pref.md");
+
+// ---------------------------------------------------------------------------
+// Seeded named agents (written to ~/.daemoneye/agents/<name>/config.toml on first run)
+// ---------------------------------------------------------------------------
+
+const AGENT_ARCHITECT: &str = include_str!("../assets/agents/architect/config.toml");
+const AGENT_RESEARCHER: &str = include_str!("../assets/agents/researcher/config.toml");
+const AGENT_SYSADMIN: &str = include_str!("../assets/agents/sysadmin/config.toml");
 
 #[cfg(test)]
 mod tests {

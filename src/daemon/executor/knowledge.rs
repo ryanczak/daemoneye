@@ -962,6 +962,8 @@ pub(super) async fn spawn_ghost(
     message: &str,
     agent_name: Option<&str>,
     sessions: &SessionStore,
+    spawn_depth: u8,
+    parent_job_id: Option<&str>,
 ) -> anyhow::Result<ToolCallOutcome> {
     use crate::daemon::ghost::{GhostManager, check_ghost_capacity};
     use crate::webhook::inject_ghost_event;
@@ -987,16 +989,16 @@ pub(super) async fn spawn_ghost(
 
     // Build merged ghost config: start from runbook defaults, then apply the
     // agent specified by the AI tool (overrides runbook's own agent: field).
-    let ghost_config = if let Some(name) = agent_name {
-        // AI explicitly named an agent — set it on the config before merging
-        // so merge_runbook_ghost_config picks it up.
+    let mut ghost_config = if let Some(name) = agent_name {
         let mut base = rb.ghost_config.clone();
         base.agent = Some(name.to_string());
         crate::agents::merge_runbook_ghost_config_from(&rb, base)
     } else {
-        // Use the runbook's own agent: frontmatter field (if any).
         crate::agents::merge_runbook_ghost_config(&rb)
     };
+
+    ghost_config.spawn_depth = spawn_depth + 1;
+    ghost_config.parent_job_id = parent_job_id.map(|s| s.to_string());
 
     let rb_name = rb.name.clone();
     match GhostManager::start_session_with_config(
@@ -1014,22 +1016,33 @@ pub(super) async fn spawn_ghost(
             e
         ))),
         Ok(sid) => {
+            let job_id = sid.clone();
+            let task_message = message.to_string();
+            if let Ok(mut store) = sessions.lock()
+                && let Some(entry) = store.get_mut(&sid)
+            {
+                entry.ghost_task_message = Some(task_message);
+            }
             inject_ghost_event(
                 sessions,
                 &format!(
-                    "[Ghost Shell Started] AI-requested ghost shell started for runbook: {}",
-                    rb_name
+                    "[Ghost Shell Started] AI-requested ghost shell started for runbook: {} (job_id: {})",
+                    rb_name, job_id
                 ),
             );
             let tool_result = format!(
-                "Ghost shell started (session: {}). It will run autonomously in the background \
-                 and inject [Ghost Shell Completed] or [Ghost Shell Failed] events when done.",
-                sid
+                "Ghost shell started (session: {}, job_id: {}, agent: {}). It will run autonomously in the background \
+                 and inject [Ghost Shell Completed] or [Ghost Shell Failed] events when done. \
+                 Use the job_id and agent name with await_agent_result(job_id, agent_name) to wait for the result.",
+                sid,
+                job_id,
+                agent_name.unwrap_or("(default)")
             );
             Ok(ToolCallOutcome::SpawnGhostSession {
                 session_id: sid,
                 runbook_name: rb_name,
                 tool_result,
+                job_id,
             })
         }
     }
@@ -1257,5 +1270,52 @@ where
         Ok(ToolCallOutcome::Result(
             "Agent deletion denied by user".to_string(),
         ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Await agent result (G5 — Agent-to-Agent Delegation)
+// ---------------------------------------------------------------------------
+
+pub(super) async fn await_agent_result(
+    job_id: &str,
+    agent_name: &str,
+    timeout_secs: u64,
+    _namespaces: &[&str],
+) -> anyhow::Result<ToolCallOutcome> {
+    const MAX_TIMEOUT_SECS: u64 = 3600;
+    let capped_secs = timeout_secs.min(MAX_TIMEOUT_SECS);
+    let deadline = tokio::time::Duration::from_secs(capped_secs);
+    let poll_interval = tokio::time::Duration::from_secs(2);
+
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            match crate::agents::mailbox::read_mailbox(agent_name, job_id) {
+                Ok(Some(entry)) => {
+                    if entry.status != crate::agents::mailbox::MailboxStatus::Pending {
+                        return Ok(entry);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(format!("Error reading mailbox: {}", e));
+                }
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(entry)) => Ok(ToolCallOutcome::Result(
+            serde_json::to_string_pretty(&entry).unwrap_or_else(|_| {
+                format!("job_id: {}, status: {:?}", entry.job_id, entry.status)
+            }),
+        )),
+        Ok(Err(e)) => Ok(ToolCallOutcome::Result(format!("Error: {}", e))),
+        Err(_) => Ok(ToolCallOutcome::Result(format!(
+            "Error: await_agent_result timed out after {} seconds for job_id: {}",
+            capped_secs, job_id
+        ))),
     }
 }

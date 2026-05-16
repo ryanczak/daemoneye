@@ -636,7 +636,8 @@ pub static TOOLS: &[ToolDef] = &[
                       assist the user. The ghost's policy (approved scripts, sudo access, \
                       SSH target, turn budget) is governed entirely by the runbook frontmatter. \
                       Optionally specify an `agent` to use a named agent profile for model, \
-                      prompt, and memory namespace. Returns the ghost session ID.",
+                      prompt, and memory namespace. Returns the ghost session ID, job_id, \
+                      and agent name — use these with await_agent_result to collect the result.",
         params: &[
             ParamDef {
                 name: "runbook",
@@ -744,6 +745,35 @@ pub static TOOLS: &[ToolDef] = &[
             required: true,
             description: "Name of the agent to delete.",
         }],
+    },
+    ToolDef {
+        name: "await_agent_result",
+        description: "Wait for a spawned agent ghost shell to complete and return its result. \
+                      Polls the specified agent's mailbox for a `job_id` returned by `spawn_ghost_shell`. \
+                      Blocks until the result is available or the timeout expires. \
+                      Use this after spawning specialist agents to collect their findings. \
+                      The `agent_name` must match the agent that the child ghost shell was spawned with.",
+        params: &[
+            ParamDef {
+                name: "job_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Job ID of the spawned ghost shell (returned by spawn_ghost_shell).",
+            },
+            ParamDef {
+                name: "agent_name",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Name of the agent that the child ghost shell was spawned with. \
+                              The child writes its result to this agent's mailbox directory.",
+            },
+            ParamDef {
+                name: "timeout_secs",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Maximum seconds to wait before timing out. Default 300, capped at 3600.",
+            },
+        ],
     },
 ];
 
@@ -1037,6 +1067,14 @@ struct CreateAgentArgs {
 #[derive(Deserialize)]
 struct ReadAgentArgs {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct AwaitAgentResultArgs {
+    job_id: String,
+    agent_name: String,
+    #[serde(default = "default_300")]
+    timeout_secs: u64,
 }
 
 // ── Default helpers ────────────────────────────────────────────────────────
@@ -1407,6 +1445,21 @@ impl ToolArgs for ReadAgentArgs {
     }
 }
 
+impl ToolArgs for AwaitAgentResultArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::AwaitAgentResult {
+            id: id.to_string(),
+            job_id: self.job_id,
+            agent_name: self.agent_name,
+            timeout_secs: self.timeout_secs,
+            thought_signature: ts,
+        }
+    }
+}
+
 /// Dispatch arm helper — deserialises `args` into `T` and constructs the event.
 fn dispatch<T: ToolArgs>(id: &str, args: Value, ts: Option<String>) -> Option<AiEvent> {
     T::from_value(args).map(|a| a.to_event(id, ts))
@@ -1488,6 +1541,7 @@ pub fn dispatch_tool_event(
             name: nm,
             thought_signature: t,
         }),
+        "await_agent_result" => dispatch::<AwaitAgentResultArgs>(id, args, ts),
         _ => None,
     }
 }
@@ -1628,6 +1682,7 @@ mod tests {
                 "read_agent" => json!({"name": "analyst"}),
                 "list_agents" => json!({}),
                 "delete_agent" => json!({"name": "analyst"}),
+                "await_agent_result" => json!({"job_id": "ghost-abc-123", "agent_name": "analyst"}),
                 _ => json!({}),
             }
         }

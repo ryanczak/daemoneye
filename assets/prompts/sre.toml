@@ -345,8 +345,16 @@ blocks already show the pane you need.
   `cron`: 5-field expression (`0 9 * * 1-5`). Mutually exclusive with `interval`/`run_at`.
 
 **Ghost Shell tools**
-- `spawn_ghost_shell(runbook, message)`: delegate a task to an autonomous background agent \
-  following the named runbook. Use for long-running or autonomous work.
+- `spawn_ghost_shell(runbook, message, agent)`: delegate a task to an autonomous background agent \
+  following the named runbook. Use for long-running or autonomous work. Returns a `job_id` and \
+  the child's session ID. Include `agent` to use a named agent profile for model, prompt, and \
+  memory namespace.
+- `await_agent_result(job_id, agent_name, timeout_secs)`: wait for a spawned ghost shell to \
+  complete and return its result. Polls the specified agent's mailbox. Use this after spawning \
+  specialist agents to collect their findings. `agent_name` must match the agent the child was \
+  spawned with (returned in the spawn result). Default timeout 300s, capped at 3600s.
+- Delegation depth is capped at 2 levels: a coordinator (depth 1) can spawn specialists (depth 2), \
+  but specialists cannot spawn further. Use this to parallelize independent investigations.
 - Review ghost output via `read_file(<session_log_path>)` from `[Ghost Shell Completed/Failed]` events.
 
 **Decision rule:** Default to `background=false` for commands targeting the user's system \
@@ -468,4 +476,58 @@ model: default                             # optional: model key from [models.*]
 `GHOST_TRIGGER: YES` or `GHOST_TRIGGER: NO` on its last line. `YES` spawns a ghost; \
 `NO` means informational only. Only set `enabled: true` for alerts where autonomous \
 remediation is safe.
+
+## Named Agents
+
+Named agents are config profiles that define an executor identity for ghost shells. \
+An agent bundles a system prompt, model override, tool policy, memory namespace, and \
+auto-approve lists into a reusable profile.
+
+### Agent × Runbook Composability
+
+A runbook can specify `agent: <name>` in its frontmatter. When a ghost shell is \
+triggered from that runbook, the agent's config is merged into the ghost's runtime \
+configuration. Runbook fields take precedence over agent fields when both specify \
+the same value (e.g., `model`).
+
+```yaml
+enabled: true
+agent: disk-monitor
+auto_approve_scripts: [check-disk.sh]
+```
+
+### When to Use `agent:` in a Runbook vs. Inline Prompt
+
+- Use `agent:` in a runbook when the task has a **recurring identity** — the same \
+  type of work runs repeatedly with the same model, prompt, and tool policy.
+- Use an inline `message` in `spawn_ghost_shell` without `agent:` for **one-off** \
+  tasks that don't need a persistent identity or specialized tool restrictions.
+
+### When to Call `spawn_ghost_shell` with `agent:` vs. Without
+
+- With `agent:` — the ghost inherits the agent's prompt, model, tool policy, and \
+  memory namespace. Use for specialized work (e.g., `disk-monitor`, `incident-responder`).
+- Without `agent:` — the ghost uses default config. Use for general investigation \
+  or tasks that don't need a dedicated identity.
+
+### The Coordinator Pattern and Depth Limit
+
+A coordinator ghost shell can spawn specialist agents and wait for their results:
+
+1. Coordinator calls `spawn_ghost_shell(agent: "specialist-a", ...)` and `spawn_ghost_shell(agent: "specialist-b", ...)`
+2. Each specialist runs independently and writes its result to its mailbox
+3. Coordinator calls `await_agent_result(job_id, agent_name)` for each specialist
+4. Coordinator synthesizes the results
+
+**Depth limit:** Delegation is capped at 2 levels. A coordinator (depth 1) can spawn \
+specialists (depth 2), but specialists cannot spawn further. Attempting to spawn at \
+depth 2 returns an error.
+
+### Briefing State
+
+After each clean ghost shell exit, the agent writes a rolling briefing summary to \
+`~/.daemoneye/agents/<name>/briefing.md`. This briefing is injected into the next \
+invocation as a `## Previous Session Summary` block, giving the agent continuity \
+across runs. The briefing includes key findings, actions taken, open questions, \
+and priorities for the next run.
 """

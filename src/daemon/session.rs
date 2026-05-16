@@ -83,6 +83,9 @@ pub struct SessionEntry {
     /// True after the auto-name suggestion has been sent once this session.
     /// Prevents repeated suggestions if the user ignores the first one.
     pub auto_name_suggested: bool,
+    /// Task description passed to `spawn_ghost_shell` when this ghost was spawned.
+    /// Used in mailbox results so the coordinator sees what the child was asked to do.
+    pub ghost_task_message: Option<String>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -502,6 +505,7 @@ mod tests {
             dirty: false,
             artifacts_created: vec![],
             auto_name_suggested: false,
+            ghost_task_message: None,
         };
         assert!(!entry.auto_name_suggested);
         assert!(entry.saved_name.is_none());

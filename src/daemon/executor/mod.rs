@@ -54,6 +54,8 @@ pub enum ToolCallOutcome {
         runbook_name: String,
         /// Message to return to the AI as the tool result.
         tool_result: String,
+        /// Job ID of the spawned ghost (same as session_id).
+        job_id: String,
     },
 }
 
@@ -160,6 +162,22 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
     let is_ghost = ghost_policy.is_some();
+
+    // ── Delegation depth tracking ────────────────────────────────────────────
+    let (spawn_depth, effective_parent_job_id): (u8, Option<String>) = if let Some(sid) = session_id
+    {
+        if let Ok(store) = sessions.lock() {
+            store
+                .get(sid)
+                .and_then(|e| e.ghost_config.as_ref())
+                .map(|gc| (gc.spawn_depth, Some(sid.to_string())))
+                .unwrap_or((0, None))
+        } else {
+            (0, None)
+        }
+    } else {
+        (0, None)
+    };
 
     // ── Tool Policy Enforcement (agent-level) ────────────────────────────────
     if let Some(policy) = &tool_policy
@@ -480,7 +498,23 @@ where
             message,
             agent,
             ..
-        } => knowledge::spawn_ghost(runbook, message, agent.as_deref(), sessions).await,
+        } => {
+            if spawn_depth >= 2 {
+                return Ok(ToolCallOutcome::Result(
+                    "Delegation depth limit reached (max: coordinator + 1 level of specialists)."
+                        .to_string(),
+                ));
+            }
+            knowledge::spawn_ghost(
+                runbook,
+                message,
+                agent.as_deref(),
+                sessions,
+                spawn_depth,
+                effective_parent_job_id.as_deref(),
+            )
+            .await
+        }
 
         PendingCall::CreateAgent {
             id,
@@ -519,6 +553,16 @@ where
 
         PendingCall::DeleteAgent { id, name, .. } => {
             knowledge::delete_agent(id, name, is_ghost, session_id, tx, rx).await
+        }
+
+        PendingCall::AwaitAgentResult {
+            job_id,
+            agent_name,
+            timeout_secs,
+            ..
+        } => {
+            knowledge::await_agent_result(job_id, agent_name, *timeout_secs, &memory_namespaces)
+                .await
         }
     }?;
 

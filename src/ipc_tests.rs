@@ -678,6 +678,7 @@ fn response_daemon_status_roundtrip() {
         file_edits_approved: 0,
         file_edits_denied: 0,
         limits: LimitsSummary::default(),
+        active_agents: vec![("disk-monitor".to_string(), "checking disk".to_string())],
     };
     match roundtrip_resp(&resp) {
         Response::DaemonStatus {

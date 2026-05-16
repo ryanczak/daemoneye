@@ -74,6 +74,12 @@ pub struct GhostConfig {
     /// Enforced in `execute_tool_call()` before the runbook `GhostPolicy` check.
     #[serde(default)]
     pub tool_policy: Option<crate::agents::ToolPolicy>,
+    /// Delegation depth: 0 = top-level coordinator, 1 = specialist, 2+ = blocked.
+    #[serde(default)]
+    pub spawn_depth: u8,
+    /// Job ID of the parent ghost that spawned this one (if any).
+    #[serde(default)]
+    pub parent_job_id: Option<String>,
 }
 
 /// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.
@@ -585,6 +591,11 @@ pub enum Response {
         /// Effective limit configuration (from `config.limits`).
         #[serde(default)]
         limits: LimitsSummary,
+        /// Active agent sessions: `(agent_name, task_or_unknown)`. The second element is
+        /// the first 40 chars of the task message passed to `spawn_ghost_shell`, or
+        /// `"unknown"` if none was recorded.
+        #[serde(default)]
+        active_agents: Vec<(String, String)>,
     },
     /// Confirmation that a session was saved (response to `SaveSession`).
     SessionSaved { name: String },

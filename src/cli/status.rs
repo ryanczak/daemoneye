@@ -70,6 +70,7 @@ pub async fn run_status() -> Result<()> {
                     file_edits_approved,
                     file_edits_denied,
                     limits,
+                    active_agents,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -344,6 +345,30 @@ pub async fn run_status() -> Result<()> {
                                     reset = reset
                                 ),
                             ));
+                        }
+                    }
+
+                    // Agents section — shown after ghost metrics if any agents are defined or active.
+                    let agents_defined = crate::agents::list_agents().unwrap_or_default();
+                    if !agents_defined.is_empty() || !active_agents.is_empty() {
+                        right_items.push(("─".to_string(), "".to_string()));
+                        right_items.push(("§".to_string(), format!("{section_header:<23}{deep_yellow}│{reset}{blood_red} Agents{reset}", section_header = "", deep_yellow = deep_yellow, reset = reset, blood_red = blood_red)));
+                        let active_set: std::collections::HashSet<&str> = active_agents
+                            .iter()
+                            .map(|(name, _)| name.as_str())
+                            .collect();
+                        for info in &agents_defined {
+                            let status = if active_set.contains(info.name.as_str()) {
+                                let job = active_agents
+                                    .iter()
+                                    .find(|(n, _)| n == &info.name)
+                                    .map(|(_, j)| j.as_str())
+                                    .unwrap_or("running");
+                                format!("{deep_yellow}active{reset} ({job})")
+                            } else {
+                                "idle".to_string()
+                            };
+                            right_items.push((format!("  {}:", info.name), status));
                         }
                     }
 

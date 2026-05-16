@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub mod mailbox;
 pub mod policy;
 pub use policy::ToolPolicy;
 

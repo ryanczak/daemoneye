@@ -246,6 +246,14 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         name: String,
     },
+    /// Wait for a spawned agent ghost shell to complete and return its result.
+    AwaitAgentResult {
+        id: String,
+        thought_signature: Option<String>,
+        job_id: String,
+        agent_name: String,
+        timeout_secs: u64,
+    },
 }
 
 impl PendingCall {
@@ -467,6 +475,12 @@ impl PendingCall {
                 name: "delete_agent".to_string(),
                 arguments: serde_json::json!({"name": name}).to_string(),
             },
+            PendingCall::AwaitAgentResult { id, thought_signature, job_id, agent_name, timeout_secs } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "await_agent_result".to_string(),
+                arguments: serde_json::json!({"job_id": job_id, "agent_name": agent_name, "timeout_secs": timeout_secs}).to_string(),
+            },
         }
     }
 
@@ -503,6 +517,7 @@ impl PendingCall {
             PendingCall::ReadAgent { id, .. } => id,
             PendingCall::ListAgents { id, .. } => id,
             PendingCall::DeleteAgent { id, .. } => id,
+            PendingCall::AwaitAgentResult { id, .. } => id,
         }
     }
 
@@ -529,6 +544,7 @@ impl PendingCall {
                 | PendingCall::SpawnGhost { .. }
                 | PendingCall::ReadAgent { .. }
                 | PendingCall::ListAgents { .. }
+                | PendingCall::AwaitAgentResult { .. }
         )
     }
 
@@ -599,6 +615,7 @@ impl PendingCall {
             PendingCall::ReadAgent { name, .. } => name.clone(),
             PendingCall::ListAgents { .. } => String::new(),
             PendingCall::DeleteAgent { name, .. } => name.clone(),
+            PendingCall::AwaitAgentResult { job_id, .. } => job_id.clone(),
             _ => String::new(),
         }
     }
@@ -638,6 +655,7 @@ impl PendingCall {
             PendingCall::ReadAgent { .. } => "read_agent",
             PendingCall::ListAgents { .. } => "list_agents",
             PendingCall::DeleteAgent { .. } => "delete_agent",
+            PendingCall::AwaitAgentResult { .. } => "await_agent_result",
         }
     }
 }
@@ -838,6 +856,14 @@ pub enum AiEvent {
     DeleteAgent {
         id: String,
         name: String,
+        thought_signature: Option<String>,
+    },
+    /// Wait for a spawned agent ghost shell to complete and return its result.
+    AwaitAgentResult {
+        id: String,
+        job_id: String,
+        agent_name: String,
+        timeout_secs: u64,
         thought_signature: Option<String>,
     },
     Done(AiUsage),

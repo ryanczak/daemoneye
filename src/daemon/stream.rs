@@ -514,6 +514,21 @@ where
                         name,
                     });
                 }
+                AiEvent::AwaitAgentResult {
+                    id,
+                    job_id,
+                    agent_name,
+                    timeout_secs,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::AwaitAgentResult {
+                        id,
+                        thought_signature,
+                        job_id,
+                        agent_name,
+                        timeout_secs,
+                    });
+                }
                 AiEvent::Error(e) => {
                     send_response_split(tx, Response::Error(e)).await?;
                     return Ok(());
@@ -789,6 +804,7 @@ where
                                 session_id: ghost_sid,
                                 runbook_name: ghost_rb,
                                 tool_result,
+                                job_id: _,
                             } => {
                                 let ghost_sessions = sessions.clone();
                                 let ghost_cache = Arc::clone(&cache);

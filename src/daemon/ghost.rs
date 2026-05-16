@@ -18,6 +18,108 @@ use crate::tmux::ensure_incident_session;
 /// Static ghost shell operating rules, appended to the ghost system prompt.
 const GHOST_SHELL_RULES: &str = include_str!("../../assets/prompts/ghost-shell.txt");
 
+/// Write a mailbox entry when a ghost shell exits (clean or error).
+/// Best-effort: failures are logged but do not affect the caller.
+async fn write_mailbox_on_exit(
+    session_id: &str,
+    sessions: &SessionStore,
+    error: Option<&anyhow::Error>,
+) {
+    let (agent_name, ghost_config) = {
+        let store = sessions.lock().unwrap_or_log();
+        let Some(entry) = store.get(session_id) else {
+            return;
+        };
+        let gc = entry.ghost_config.clone();
+        let agent = gc.as_ref().and_then(|g| g.agent.clone());
+        (agent, gc)
+    };
+    let Some(agent_name) = agent_name else {
+        return;
+    };
+
+    let last_content = {
+        let store = sessions.lock().unwrap_or_log();
+        store
+            .get(session_id)
+            .and_then(|e| e.messages.last())
+            .filter(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+            .unwrap_or_default()
+    };
+
+    let (status, err_text, result_text) = if let Some(e) = error {
+        (
+            crate::agents::mailbox::MailboxStatus::Failed,
+            Some(e.to_string()),
+            if last_content.is_empty() {
+                None
+            } else {
+                Some(last_content)
+            },
+        )
+    } else {
+        (
+            crate::agents::mailbox::MailboxStatus::Complete,
+            None,
+            if last_content.is_empty() {
+                None
+            } else {
+                Some(last_content)
+            },
+        )
+    };
+
+    let completed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let spawn_depth = ghost_config.as_ref().map(|g| g.spawn_depth).unwrap_or(0);
+    let parent_job_id = ghost_config.as_ref().and_then(|g| g.parent_job_id.clone());
+
+    let task_desc = {
+        let store = sessions.lock().unwrap_or_log();
+        store
+            .get(session_id)
+            .and_then(|e| e.ghost_task_message.clone())
+            .unwrap_or_else(|| match &parent_job_id {
+                Some(pid) => format!(
+                    "ghost shell for session {} (depth {}, parent: {})",
+                    session_id, spawn_depth, pid
+                ),
+                None => format!(
+                    "ghost shell for session {} (depth {})",
+                    session_id, spawn_depth
+                ),
+            })
+    };
+
+    let mailbox_entry = crate::agents::mailbox::MailboxResult {
+        job_id: session_id.to_string(),
+        agent: agent_name.clone(),
+        task: task_desc,
+        status,
+        result: result_text,
+        error: err_text,
+        completed_at: Some(completed_at),
+    };
+
+    if let Err(e) = crate::agents::mailbox::write_mailbox(&agent_name, &mailbox_entry) {
+        log::warn!(
+            "Failed to write mailbox result for agent '{}': {}",
+            agent_name,
+            e
+        );
+    } else {
+        log::info!(
+            "Mailbox result written for agent '{}' (job_id: {})",
+            agent_name,
+            session_id
+        );
+    }
+}
+
 /// Return `true` if another ghost shell may be started without exceeding the
 /// configured concurrency limit.
 ///
@@ -137,6 +239,7 @@ impl GhostManager {
             dirty: false,
             artifacts_created: Vec::new(),
             auto_name_suggested: false,
+            ghost_task_message: None,
         };
 
         {
@@ -160,6 +263,8 @@ impl GhostManager {
                 "alert_name": alert_name,
                 "tmux_session": tmux_session,
                 "trigger": bg_prefix,
+                "spawn_depth": ghost_config.spawn_depth,
+                "parent_job_id": ghost_config.parent_job_id,
             }),
         );
 
@@ -171,6 +276,18 @@ impl GhostManager {
 /// This simulates a user's `Ask` request but without an attached terminal.
 /// Results and tool outcomes are persisted to the session file.
 pub async fn trigger_ghost_turn(
+    session_id: &str,
+    sessions: &SessionStore,
+    config: &Config,
+    cache: &Arc<SessionCache>,
+    schedule_store: &Arc<ScheduleStore>,
+) -> Result<()> {
+    let result = do_ghost_turn(session_id, sessions, config, cache, schedule_store).await;
+    write_mailbox_on_exit(session_id, sessions, result.as_ref().err()).await;
+    result
+}
+
+async fn do_ghost_turn(
     session_id: &str,
     sessions: &SessionStore,
     config: &Config,
@@ -233,6 +350,7 @@ pub async fn trigger_ghost_turn(
     } else {
         String::new()
     };
+    let agents_block = crate::daemon::prompt::format_available_agents();
     let system = format!(
         "{}\n\n\
          ## Ghost Shell Execution Context\n\
@@ -243,6 +361,7 @@ pub async fn trigger_ghost_turn(
          Pre-approved Sudo Scripts: {}{}\n\
          Turn Budget: {} (hard limit — shell will be stopped when reached)\n\n\
          {}\n\n\
+         {}\
          {}",
         system_base,
         daemon_hostname(),
@@ -268,6 +387,7 @@ pub async fn trigger_ghost_turn(
         max_ghost_turns,
         sys_context.format_for_ai(),
         GHOST_SHELL_RULES,
+        agents_block,
     );
 
     if !tmux::session_exists(&tmux_session) {
@@ -631,6 +751,21 @@ pub async fn trigger_ghost_turn(
                             agent,
                         });
                     }
+                    AiEvent::AwaitAgentResult {
+                        id,
+                        job_id,
+                        agent_name,
+                        timeout_secs,
+                        thought_signature,
+                    } => {
+                        pending_calls.push(PendingCall::AwaitAgentResult {
+                            id,
+                            thought_signature,
+                            job_id,
+                            agent_name,
+                            timeout_secs,
+                        });
+                    }
                     AiEvent::Done(_) => break,
                     AiEvent::Error(e) => {
                         crate::daemon::utils::log_event(
@@ -710,6 +845,7 @@ pub async fn trigger_ghost_turn(
                     session_id: ghost_sid,
                     runbook_name: _,
                     tool_result,
+                    job_id: _,
                 } => {
                     let sessions2 = sessions.clone();
                     let cache2 = Arc::clone(cache);
@@ -788,11 +924,17 @@ pub async fn trigger_ghost_turn(
     }
 
     log::info!("Ghost Shell {}: completed in {} turn(s)", session_id, turn);
+    let (spawn_depth, parent_job_id) = ghost_config
+        .as_ref()
+        .map(|gc| (gc.spawn_depth, gc.parent_job_id.clone()))
+        .unwrap_or((0, None));
     crate::daemon::utils::log_event(
         "ghost_complete",
         serde_json::json!({
             "session_id": session_id,
             "turns_used": turn,
+            "spawn_depth": spawn_depth,
+            "parent_job_id": parent_job_id,
         }),
     );
     crate::daemon::stats::inc_ghosts_completed();

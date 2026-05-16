@@ -679,6 +679,27 @@ where
                     per_tool_overrides: overrides,
                 }
             },
+            active_agents: {
+                let mut agents: Vec<(String, String)> = Vec::new();
+                if let Ok(sess_map) = sessions.lock() {
+                    for entry in sess_map.values() {
+                        if let Some(ref gc) = entry.ghost_config
+                            && let Some(ref agent_name) = gc.agent
+                        {
+                            let job_id = entry
+                                .ghost_task_message
+                                .as_deref()
+                                .unwrap_or("unknown")
+                                .chars()
+                                .take(40)
+                                .collect();
+                            agents.push((agent_name.clone(), job_id));
+                        }
+                    }
+                }
+                agents.sort_by(|a, b| a.0.cmp(&b.0));
+                agents
+            },
         },
     )
     .await?;
@@ -1118,6 +1139,7 @@ where
                     dirty: false,
                     artifacts_created: Vec::new(),
                     auto_name_suggested: false,
+                    ghost_task_message: None,
                 });
                 entry.chat_pane = chat_pane.clone();
                 entry.tmux_session = session_name.clone();
