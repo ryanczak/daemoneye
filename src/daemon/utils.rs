@@ -516,7 +516,6 @@ pub fn fire_notification(job_name: &str, msg: &str, config: &crate::config::Conf
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[test]
     fn normalize_basic() {

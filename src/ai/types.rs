@@ -539,14 +539,25 @@ impl PendingCall {
             | PendingCall::DeleteSchedule { job_id, .. } => job_id.clone(),
             PendingCall::ReadScript { script_name, .. }
             | PendingCall::DeleteScript { script_name, .. } => script_name.clone(),
-            PendingCall::WatchPane { pane_id, timeout_secs, pattern, .. } => {
+            PendingCall::WatchPane {
+                pane_id,
+                timeout_secs,
+                pattern,
+                ..
+            } => {
                 if let Some(pat) = pattern {
                     format!("{pane_id} pattern=\"{pat}\"")
                 } else {
                     format!("{pane_id} {timeout_secs}s")
                 }
             }
-            PendingCall::ReadFile { path, offset, limit, pattern, .. } => {
+            PendingCall::ReadFile {
+                path,
+                offset,
+                limit,
+                pattern,
+                ..
+            } => {
                 let mut s = path.clone();
                 match (offset, limit) {
                     (Some(o), Some(l)) if *o > 0 || *l > 0 => {
@@ -573,7 +584,11 @@ impl PendingCall {
                 category.as_deref().unwrap_or("all").to_string()
             }
             PendingCall::SearchRepository { query, .. } => {
-                let q = if query.len() > 40 { &query[..40] } else { query.as_str() };
+                let q = if query.len() > 40 {
+                    &query[..40]
+                } else {
+                    query.as_str()
+                };
                 format!("\"{q}\"")
             }
             PendingCall::GetTerminalContext { .. } => String::new(),

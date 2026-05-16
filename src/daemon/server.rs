@@ -1,11 +1,11 @@
-use crate::ai::filter::mask_sensitive;
 use crate::ai::Message;
+use crate::ai::filter::mask_sensitive;
 use crate::config::default_socket_path;
 use crate::config::{Config, load_named_prompt};
-use crate::daemon::session::*;
-use crate::daemon::utils::*;
 use crate::daemon::prompt::{PromptCtx, build_first_turn_prompt, build_subsequent_turn_prompt};
+use crate::daemon::session::*;
 use crate::daemon::stream;
+use crate::daemon::utils::*;
 use crate::ipc::{Request, Response};
 use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
@@ -13,8 +13,8 @@ use anyhow::Result;
 use libc;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite};
 use tokio::io::BufReader;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite};
 use tokio::net::UnixStream;
 
 /// Build the N15 catch-up brief from messages injected while the client was away.
@@ -182,13 +182,19 @@ pub async fn handle_client(
         Request::Refresh => {
             handle_refresh(&mut tx).await?;
         }
-        Request::SetModel { session_id, model: model_name } => {
+        Request::SetModel {
+            session_id,
+            model: model_name,
+        } => {
             handle_set_model(&mut tx, &sessions, &config, session_id, model_name).await?;
         }
         Request::ListModels { session_id } => {
             handle_list_models(&mut tx, &sessions, &config, session_id).await?;
         }
-        Request::SetPane { session_id, pane_id } => {
+        Request::SetPane {
+            session_id,
+            pane_id,
+        } => {
             handle_set_pane(&mut tx, &sessions, &cache, session_id, pane_id).await?;
         }
         Request::ListPanesForSession { session_id } => {
@@ -203,10 +209,19 @@ pub async fn handle_client(
         Request::ResetSessionToolCount { session_id: sid } => {
             handle_reset_tool_count(&mut tx, &sessions, sid).await?;
         }
-        Request::SaveSession { session_id: sid, name, description, force } => {
+        Request::SaveSession {
+            session_id: sid,
+            name,
+            description,
+            force,
+        } => {
             handle_save_session(&mut tx, &sessions, sid, name, description, force).await?;
         }
-        Request::LoadSession { session_id: sid, name, force } => {
+        Request::LoadSession {
+            session_id: sid,
+            name,
+            force,
+        } => {
             handle_load_session(&mut tx, &sessions, &config, sid, name, force).await?;
         }
         Request::ListSavedSessions => {
@@ -224,7 +239,9 @@ pub async fn handle_client(
         Request::NotifyActivity { pane_id, .. } => {
             crate::daemon::hook::handle_notify_activity(&mut tx, &pane_id).await?;
         }
-        Request::NotifyComplete { pane_id, exit_code, .. } => {
+        Request::NotifyComplete {
+            pane_id, exit_code, ..
+        } => {
             crate::daemon::hook::handle_notify_complete(&mut tx, &pane_id, exit_code).await?;
         }
         Request::NotifyFocus { pane_id, .. } => {
@@ -278,10 +295,21 @@ pub async fn handle_client(
             model: _ask_model,
         } => {
             handle_ask(
-                query, tmux_pane, session_id, chat_pane, prompt,
-                chat_width, tmux_session, target_pane,
-                &mut tx, &mut rx, cache, &sessions, schedule_store,
-                bg_session, &config,
+                query,
+                tmux_pane,
+                session_id,
+                chat_pane,
+                prompt,
+                chat_width,
+                tmux_session,
+                target_pane,
+                &mut tx,
+                &mut rx,
+                cache,
+                &sessions,
+                schedule_store,
+                bg_session,
+                &config,
             )
             .await?;
             return Ok(());
@@ -436,7 +464,12 @@ where
     Ok(())
 }
 
-async fn handle_list_panes<W>(tx: &mut W, sessions: &SessionStore, cache: &SessionCache, session_id: String) -> Result<()>
+async fn handle_list_panes<W>(
+    tx: &mut W,
+    sessions: &SessionStore,
+    cache: &SessionCache,
+    session_id: String,
+) -> Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
@@ -557,8 +590,8 @@ where
     let schedules_executed = crate::daemon::stats::get_schedules_executed();
     let schedules_deleted = crate::daemon::stats::get_schedules_deleted();
     let mut memory_breakdown = std::collections::HashMap::new();
-    if let Ok(memories) = crate::memory::list_memories(None) {
-        for (cat, _) in memories {
+    if let Ok(memories) = crate::memory::list_memories(None, &["global"]) {
+        for (_, cat, _) in memories {
             *memory_breakdown.entry(cat).or_insert(0) += 1;
         }
     }
@@ -661,8 +694,7 @@ async fn handle_query_limits<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let (turn_count, tool_calls_this_session, history_len) = if let Ok(store) =
-        sessions.lock()
+    let (turn_count, tool_calls_this_session, history_len) = if let Ok(store) = sessions.lock()
         && let Some(entry) = store.get(&session_id)
     {
         (
@@ -713,7 +745,10 @@ where
         && let Some(entry) = store.get_mut(&session_id)
     {
         entry.tool_calls_this_session = 0;
-        log::info!("Session {}: per-session tool call counter reset", session_id);
+        log::info!(
+            "Session {}: per-session tool call counter reset",
+            session_id
+        );
     }
     send_response_split(tx, Response::Ok).await?;
     Ok(())
@@ -833,8 +868,7 @@ where
         crate::session_store::load_session_messages(&name, load_count),
     ) {
         (Ok(meta), Ok(loaded_msgs)) => {
-            let banner =
-                crate::session_store::build_resumed_banner(&meta, loaded_msgs.len());
+            let banner = crate::session_store::build_resumed_banner(&meta, loaded_msgs.len());
             let loaded_count = loaded_msgs.len();
             let turn_count = meta.turn_count;
 
@@ -877,17 +911,16 @@ where
     let sessions_list: Vec<crate::ipc::SessionSummary> = list_sessions()
         .into_iter()
         .map(|(name, idx)| {
-            let (description, turn_count, message_count, artifact_count) =
-                load_session_meta(&name)
-                    .map(|m| {
-                        (
-                            m.description,
-                            m.turn_count,
-                            m.message_count,
-                            m.artifacts_created.len(),
-                        )
-                    })
-                    .unwrap_or_default();
+            let (description, turn_count, message_count, artifact_count) = load_session_meta(&name)
+                .map(|m| {
+                    (
+                        m.description,
+                        m.turn_count,
+                        m.message_count,
+                        m.artifacts_created.len(),
+                    )
+                })
+                .unwrap_or_default();
             crate::ipc::SessionSummary {
                 name,
                 description,
@@ -966,20 +999,22 @@ where
     let meta1 = crate::session_store::load_session_meta(&name1);
     let meta2 = crate::session_store::load_session_meta(&name2);
     match (meta1, meta2) {
-        (Ok(m1), Ok(m2)) => match crate::daemon::auto_name::diff_sessions_summary(&m1, &m2, config).await {
-            Some(summary) => {
-                send_response_split(tx, Response::SessionDiff { summary }).await?;
+        (Ok(m1), Ok(m2)) => {
+            match crate::daemon::auto_name::diff_sessions_summary(&m1, &m2, config).await {
+                Some(summary) => {
+                    send_response_split(tx, Response::SessionDiff { summary }).await?;
+                }
+                None => {
+                    send_response_split(
+                        tx,
+                        Response::Error(
+                            "diff failed: LLM call timed out or returned empty".to_string(),
+                        ),
+                    )
+                    .await?;
+                }
             }
-            None => {
-                send_response_split(
-                    tx,
-                    Response::Error(
-                        "diff failed: LLM call timed out or returned empty".to_string(),
-                    ),
-                )
-                .await?;
-            }
-        },
+        }
         (Err(e), _) => {
             send_response_split(
                 tx,
@@ -1484,11 +1519,22 @@ where
 
     // ── Conversation loop ─────────────────────────────────────────────────────
     stream::run_conversation_loop(
-        tx, rx,
-        session_id, &session_name, chat_pane,
-        messages, sys_prompt, session_active_model, is_ghost_session,
-        this_turn_count, post_trim_len, needs_compaction,
-        config, cache, Arc::clone(sessions), schedule_store,
+        tx,
+        rx,
+        session_id,
+        &session_name,
+        chat_pane,
+        messages,
+        sys_prompt,
+        session_active_model,
+        is_ghost_session,
+        this_turn_count,
+        post_trim_len,
+        needs_compaction,
+        config,
+        cache,
+        Arc::clone(sessions),
+        schedule_store,
     )
     .await
 }

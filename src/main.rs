@@ -1,5 +1,5 @@
-use daemoneye::{agents, ai, cli, config, daemon, scripts, session_store};
 use clap::{Parser, Subcommand};
+use daemoneye::{agents, ai, cli, config, daemon, scripts, session_store};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -465,7 +465,12 @@ fn run_agent_list() -> anyhow::Result<()> {
         println!("No agents defined. Use `daemoneye agent create <name>` to create one.");
         return Ok(());
     }
-    let name_w = agents.iter().map(|a| a.name.len()).max().unwrap_or(4).max(4);
+    let name_w = agents
+        .iter()
+        .map(|a| a.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
     let model_w = agents
         .iter()
         .map(|a| a.model.as_deref().unwrap_or("(default)").len())
@@ -497,9 +502,16 @@ fn run_agent_show(name: &str) -> anyhow::Result<()> {
     let cfg = agents::load_agent(name)?;
     println!("\x1b[1mAgent: {}\x1b[0m", cfg.name);
     println!("  description:          {}", cfg.description);
-    println!("  model:                {}", cfg.model.as_deref().unwrap_or("(default)"));
+    println!(
+        "  model:                {}",
+        cfg.model.as_deref().unwrap_or("(default)")
+    );
     println!("  memory_namespace:     {}", cfg.memory_namespace);
-    println!("  max_turns:            {}", cfg.max_turns.map_or("(default)".to_string(), |v| v.to_string()));
+    println!(
+        "  max_turns:            {}",
+        cfg.max_turns
+            .map_or("(default)".to_string(), |v| v.to_string())
+    );
     println!("  auto_approve_read_only: {}", cfg.auto_approve_read_only);
     if !cfg.auto_approve_scripts.is_empty() {
         println!("  auto_approve_scripts:");
@@ -520,7 +532,11 @@ fn run_agent_create(name: &str) -> anyhow::Result<()> {
     agents::validate_agent_name(name)?;
     let dir = agents::agent_dir(name);
     if dir.exists() {
-        anyhow::bail!("Agent '{}' already exists. Use `daemoneye agent show {}` to view it.", name, name);
+        anyhow::bail!(
+            "Agent '{}' already exists. Use `daemoneye agent show {}` to view it.",
+            name,
+            name
+        );
     }
     let starter = format!(
         r#"# Agent config: {name}

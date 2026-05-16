@@ -69,21 +69,23 @@ pub fn format_current_time_line() -> String {
 
 /// Build the first-turn prompt: full host context + terminal snapshot + query.
 pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
-    let session_summary =
-        ctx.cache.get_labeled_context(ctx.client_pane, ctx.chat_pane);
+    let session_summary = ctx
+        .cache
+        .get_labeled_context(ctx.client_pane, ctx.chat_pane);
     let session_summary =
         prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
     let sys_ctx = crate::sys_context::get_or_init_sys_context().format_for_ai();
     let daemon_host = crate::daemon::daemon_hostname();
     let environment = &ctx.config.context.environment;
-    let pane_location = ctx.client_pane
+    let pane_location = ctx
+        .client_pane
         .and_then(crate::daemon::get_pane_remote_host)
         .map(|h| format!("REMOTE — {}", h))
         .unwrap_or_else(|| format!("LOCAL — same host as daemon ({})", daemon_host));
     let width_hint = ctx.chat_width
         .map(|w| format!("\n- Chat display width: {w} columns (write prose as continuous paragraphs; the terminal word-wraps automatically — do not insert hard line breaks within paragraphs)"))
         .unwrap_or_default();
-    let memory_block = crate::memory::load_session_memory_block();
+    let memory_block = crate::memory::load_session_memory_block(&["global"]);
     let manifest_block = crate::manifest::build_knowledge_manifest();
     let auto_search_block = crate::manifest::auto_search_context(ctx.safe_query, &session_summary);
     let current_time_line = format_current_time_line();
@@ -109,9 +111,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
 
 /// Build the subsequent-turn prompt: budget note + optional snapshot + query.
 pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
-    let context_window = ctx.config
-        .resolve_model(None)
-        .context_window();
+    let context_window = ctx.config.resolve_model(None).context_window();
     let token_pct = if context_window > 0 {
         (ctx.last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
     } else {
@@ -164,8 +164,9 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
     let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
 
     if ctx.inject_snapshot {
-        let session_summary =
-            ctx.cache.get_labeled_context(ctx.client_pane, ctx.chat_pane);
+        let session_summary = ctx
+            .cache
+            .get_labeled_context(ctx.client_pane, ctx.chat_pane);
         let session_summary =
             prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
         format!(

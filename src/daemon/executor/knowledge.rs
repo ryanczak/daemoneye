@@ -23,6 +23,7 @@ pub(super) struct ArtifactCtx<'a> {
     pub saved_name: Option<&'a str>,
     pub turn_count: usize,
     pub is_ghost: bool,
+    pub namespaces: &'a [&'a str],
 }
 
 fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
@@ -30,7 +31,9 @@ fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
         return;
     }
     let Some(sid) = ctx.session_id else { return };
-    let Ok(mut store) = ctx.sessions.lock() else { return };
+    let Ok(mut store) = ctx.sessions.lock() else {
+        return;
+    };
     if let Some(entry) = store.get_mut(sid) {
         entry
             .artifacts_created
@@ -414,14 +417,15 @@ pub(super) fn add_memory(
         Some(origin) => crate::header::inject_yaml_session_origin(value, origin),
         None => value.to_string(),
     };
-    match crate::memory::add_memory(key, &stamped, cat) {
+    let namespace = artifact_ctx.namespaces.first().copied().unwrap_or("global");
+    match crate::memory::add_memory(key, &stamped, cat, namespace) {
         Ok(()) => {
             log_event(
                 "memory_write",
                 serde_json::json!({ "session": artifact_ctx.session_id, "op": "add", "category": category, "key": key }),
             );
             track_artifact(artifact_ctx, "memory", key);
-            format!("Memory '{}' stored in {}", key, category)
+            format!("Memory '{}' stored in {} ({})", key, category, namespace)
         }
         Err(e) => format!("Error storing memory: {}", e),
     }
@@ -438,6 +442,7 @@ pub(super) fn update_memory(
     relates_to: Option<&[String]>,
     expires: Option<&str>,
     session_id: Option<&str>,
+    namespaces: &[&str],
 ) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
         return format!(
@@ -445,7 +450,10 @@ pub(super) fn update_memory(
             category
         );
     };
-    match crate::memory::update_memory(key, cat, body, append, tags, summary, relates_to, expires) {
+    let namespace = namespaces.first().copied().unwrap_or("global");
+    match crate::memory::update_memory(
+        key, cat, body, append, tags, summary, relates_to, expires, namespace,
+    ) {
         Ok(()) => {
             log_event(
                 "memory_write",
@@ -485,40 +493,53 @@ pub(super) fn update_memory(
     }
 }
 
-pub(super) fn delete_memory(key: &str, category: &str, session_id: Option<&str>) -> String {
+pub(super) fn delete_memory(
+    key: &str,
+    category: &str,
+    session_id: Option<&str>,
+    namespaces: &[&str],
+) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
         return format!(
             "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
             category
         );
     };
-    match crate::memory::delete_memory(key, cat) {
+    let namespace = namespaces.first().copied().unwrap_or("global");
+    match crate::memory::delete_memory(key, cat, namespace) {
         Ok(()) => {
             log_event(
                 "memory_write",
                 serde_json::json!({ "session": session_id, "op": "delete", "category": category, "key": key }),
             );
-            format!("Memory '{}' deleted from {}", key, category)
+            format!("Memory '{}' deleted from {} ({})", key, category, namespace)
         }
         Err(e) => format!("Error deleting memory: {}", e),
     }
 }
 
-pub(super) fn read_memory(key: &str, category: &str) -> String {
+pub(super) fn read_memory(key: &str, category: &str, namespaces: &[&str]) -> String {
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
         return format!(
             "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
             category
         );
     };
-    match crate::memory::read_memory(key, cat) {
-        Ok(content) => mask_sensitive(&content),
-        Err(e) => format!("Error reading memory '{}': {}", key, e),
+    for ns in namespaces {
+        if let Ok(content) = crate::memory::read_memory(key, cat, ns) {
+            crate::daemon::stats::inc_memories_recalled();
+            return mask_sensitive(&content);
+        }
     }
+    format!(
+        "Error reading memory '{}': not found in namespaces: {:?}",
+        key, namespaces
+    )
 }
 
 pub(super) async fn list_memories<W>(
     category: Option<&str>,
+    namespaces: &[&str],
     _tx: &mut W,
 ) -> anyhow::Result<ToolCallOutcome>
 where
@@ -536,7 +557,7 @@ where
             }
         },
     };
-    let infos = crate::memory::list_memories_with_tags(cat).unwrap_or_default();
+    let infos = crate::memory::list_memories_with_tags(cat, namespaces).unwrap_or_default();
     let count = infos.len();
     if count == 0 {
         Ok(ToolCallOutcome::Result(
@@ -546,12 +567,13 @@ where
         let lines: Vec<String> = infos
             .iter()
             .map(|info| {
-                // Build: [category] key — summary (updated YYYY-MM-DD)
                 let mut line = match &info.summary {
-                    Some(s) => format!("[{}] {} — {}", info.category, info.key, s),
-                    None => format!("[{}] {}", info.category, info.key),
+                    Some(s) => format!(
+                        "[{}] [{}] {} — {}",
+                        info.namespace, info.category, info.key, s
+                    ),
+                    None => format!("[{}] [{}] {}", info.namespace, info.category, info.key),
                 };
-                // Append the date portion of updated (or created as fallback) when present.
                 let ts_opt = info.updated.as_ref().or(info.created.as_ref());
                 let label = if info.updated.is_some() {
                     "updated"
@@ -579,8 +601,8 @@ where
 // Search / context
 // ---------------------------------------------------------------------------
 
-pub(super) fn search_repository(query: &str, kind: &str) -> String {
-    let results = crate::search::search_repository(query, kind, 2);
+pub(super) fn search_repository(query: &str, kind: &str, namespaces: &[&str]) -> String {
+    let results = crate::search::search_repository_with_namespaces(query, kind, 2, namespaces);
     crate::search::format_results(&results)
 }
 
@@ -1042,9 +1064,9 @@ where
         ));
     }
     let existing = crate::agents::load_agent(name).ok();
-    let existing_content = existing.as_ref().map(|c| {
-        toml::to_string_pretty(c).unwrap_or_default()
-    });
+    let existing_content = existing
+        .as_ref()
+        .map(|c| toml::to_string_pretty(c).unwrap_or_default());
 
     let config_str = toml::to_string_pretty(&crate::agents::AgentConfig {
         name: name.to_string(),
@@ -1055,7 +1077,9 @@ where
         max_turns,
         auto_approve_read_only,
         auto_approve_scripts: auto_approve_scripts.to_vec(),
-    }).unwrap_or_default();
+        read_namespaces: Vec::new(),
+    })
+    .unwrap_or_default();
 
     send_response_split(
         tx,
@@ -1091,6 +1115,7 @@ where
             max_turns,
             auto_approve_read_only,
             auto_approve_scripts: auto_approve_scripts.to_vec(),
+            read_namespaces: Vec::new(),
         };
         match crate::agents::save_agent(&config) {
             Ok(()) => {
@@ -1117,12 +1142,18 @@ pub(super) fn read_agent(name: &str) -> String {
         Ok(cfg) => {
             let mut out = format!("Agent: {}\n", cfg.name);
             out.push_str(&format!("  description: {}\n", cfg.description));
-            out.push_str(&format!("  model: {}\n", cfg.model.as_deref().unwrap_or("(default)")));
+            out.push_str(&format!(
+                "  model: {}\n",
+                cfg.model.as_deref().unwrap_or("(default)")
+            ));
             out.push_str(&format!("  memory_namespace: {}\n", cfg.memory_namespace));
             if let Some(t) = cfg.max_turns {
                 out.push_str(&format!("  max_turns: {}\n", t));
             }
-            out.push_str(&format!("  auto_approve_read_only: {}\n", cfg.auto_approve_read_only));
+            out.push_str(&format!(
+                "  auto_approve_read_only: {}\n",
+                cfg.auto_approve_read_only
+            ));
             if !cfg.auto_approve_scripts.is_empty() {
                 out.push_str("  auto_approve_scripts:\n");
                 for s in &cfg.auto_approve_scripts {
@@ -1152,7 +1183,10 @@ where
         let mut out = format!("{} agent(s):\n", count);
         for a in &agents {
             let model = a.model.as_deref().unwrap_or("(default)");
-            out.push_str(&format!("  {} (model: {}) — {}\n", a.name, model, a.description));
+            out.push_str(&format!(
+                "  {} (model: {}) — {}\n",
+                a.name, model, a.description
+            ));
         }
         Ok(ToolCallOutcome::Result(out))
     }
@@ -1205,10 +1239,7 @@ where
                     "agent_delete",
                     serde_json::json!({ "session": session_id.unwrap_or("-"), "agent": name }),
                 );
-                Ok(ToolCallOutcome::Result(format!(
-                    "Agent '{}' deleted",
-                    name
-                )))
+                Ok(ToolCallOutcome::Result(format!("Agent '{}' deleted", name)))
             }
             Err(e) => Ok(ToolCallOutcome::Result(format!(
                 "Failed to delete agent '{}': {}",

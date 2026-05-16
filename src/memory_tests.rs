@@ -51,9 +51,10 @@ fn add_and_read_memory() {
             "user_prefs",
             "Prefers verbose output",
             MemoryCategory::Session,
+            "global",
         )
         .unwrap();
-        let val = read_memory("user_prefs", MemoryCategory::Session).unwrap();
+        let val = read_memory("user_prefs", MemoryCategory::Session, "global").unwrap();
         assert_eq!(val, "Prefers verbose output");
     });
 }
@@ -62,9 +63,9 @@ fn add_and_read_memory() {
 fn add_memory_upsert() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("key1", "first", MemoryCategory::Knowledge).unwrap();
-        add_memory("key1", "second", MemoryCategory::Knowledge).unwrap();
-        let val = read_memory("key1", MemoryCategory::Knowledge).unwrap();
+        add_memory("key1", "first", MemoryCategory::Knowledge, "global").unwrap();
+        add_memory("key1", "second", MemoryCategory::Knowledge, "global").unwrap();
+        let val = read_memory("key1", MemoryCategory::Knowledge, "global").unwrap();
         assert_eq!(val, "second");
     });
 }
@@ -73,9 +74,15 @@ fn add_memory_upsert() {
 fn delete_memory_removes_file() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("to_delete", "some content", MemoryCategory::Session).unwrap();
-        delete_memory("to_delete", MemoryCategory::Session).unwrap();
-        assert!(read_memory("to_delete", MemoryCategory::Session).is_err());
+        add_memory(
+            "to_delete",
+            "some content",
+            MemoryCategory::Session,
+            "global",
+        )
+        .unwrap();
+        delete_memory("to_delete", MemoryCategory::Session, "global").unwrap();
+        assert!(read_memory("to_delete", MemoryCategory::Session, "global").is_err());
     });
 }
 
@@ -83,11 +90,11 @@ fn delete_memory_removes_file() {
 fn list_memories_returns_all_categories() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("sess_key", "s", MemoryCategory::Session).unwrap();
-        add_memory("know_key", "k", MemoryCategory::Knowledge).unwrap();
-        add_memory("inc_key", "i", MemoryCategory::Incident).unwrap();
-        let all = list_memories(None).unwrap();
-        let cats: Vec<_> = all.iter().map(|(c, _)| c.as_str()).collect();
+        add_memory("sess_key", "s", MemoryCategory::Session, "global").unwrap();
+        add_memory("know_key", "k", MemoryCategory::Knowledge, "global").unwrap();
+        add_memory("inc_key", "i", MemoryCategory::Incident, "global").unwrap();
+        let all = list_memories(None, &["global"]).unwrap();
+        let cats: Vec<_> = all.iter().map(|(_, c, _)| c.as_str()).collect();
         assert!(cats.contains(&"session"));
         assert!(cats.contains(&"knowledge"));
         assert!(cats.contains(&"incident"));
@@ -102,9 +109,10 @@ fn memory_frontmatter_tags_parsed() {
             "tagged-key",
             "---\ntags: [postgres, production]\n---\nActual content",
             MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
-        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         let info = infos
             .iter()
             .find(|m| m.key == "tagged-key")
@@ -126,8 +134,14 @@ fn memory_frontmatter_tags_parsed() {
 fn memory_without_frontmatter_has_no_tags() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("plain-key", "Just plain content", MemoryCategory::Knowledge).unwrap();
-        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+        add_memory(
+            "plain-key",
+            "Just plain content",
+            MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         let info = infos
             .iter()
             .find(|m| m.key == "plain-key")
@@ -140,9 +154,15 @@ fn memory_without_frontmatter_has_no_tags() {
 fn list_memories_with_tags_returns_all() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("k1", "v1", MemoryCategory::Knowledge).unwrap();
-        add_memory("k2", "---\ntags: [foo]\n---\nv2", MemoryCategory::Knowledge).unwrap();
-        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+        add_memory("k1", "v1", MemoryCategory::Knowledge, "global").unwrap();
+        add_memory(
+            "k2",
+            "---\ntags: [foo]\n---\nv2",
+            MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         assert_eq!(infos.len(), 2);
         let k2 = infos.iter().find(|m| m.key == "k2").unwrap();
         assert_eq!(k2.tags, vec!["foo"]);
@@ -157,9 +177,10 @@ fn memory_frontmatter_summary_parsed() {
             "meta-key",
             "---\ntags: [foo]\nsummary: \"A useful description\"\nrelates_to: [other-key, runbook-x]\ncreated: \"2026-01-01T00:00:00Z\"\nupdated: \"2026-03-31T12:00:00Z\"\nexpires: \"2026-12-31\"\n---\nBody content",
             MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
-        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         let info = infos
             .iter()
             .find(|m| m.key == "meta-key")
@@ -176,8 +197,8 @@ fn memory_frontmatter_summary_parsed() {
 fn memory_without_frontmatter_has_empty_metadata() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("bare", "Just content", MemoryCategory::Knowledge).unwrap();
-        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+        add_memory("bare", "Just content", MemoryCategory::Knowledge, "global").unwrap();
+        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         let info = infos
             .iter()
             .find(|m| m.key == "bare")
@@ -193,6 +214,7 @@ fn build_frontmatter_roundtrip() {
     let tags = vec!["postgres".to_string(), "database".to_string()];
     let relates_to = vec!["runbook-x".to_string()];
     let fm = build_frontmatter(
+        "global",
         &tags,
         Some("Primary DB hosts"),
         &relates_to,
@@ -223,7 +245,7 @@ fn build_frontmatter_roundtrip() {
 
 #[test]
 fn build_frontmatter_empty_returns_empty_string() {
-    let fm = build_frontmatter(&[], None, &[], None, None, None);
+    let fm = build_frontmatter("global", &[], None, &[], None, None, None);
     assert!(fm.is_empty());
 }
 
@@ -241,9 +263,10 @@ fn update_memory_creates_new_entry() {
             Some("A summary"),
             None,
             None,
+            "global",
         )
         .unwrap();
-        let raw = read_memory("new-key", MemoryCategory::Knowledge).unwrap();
+        let raw = read_memory("new-key", MemoryCategory::Knowledge, "global").unwrap();
         assert!(raw.contains("initial body"));
         assert!(raw.contains("foo"));
         assert!(raw.contains("A summary"));
@@ -261,6 +284,7 @@ fn update_memory_partial_update_preserves_other_fields() {
             "existing",
             "---\ntags: [alpha, beta]\nsummary: \"original summary\"\nrelates_to: [\"other\"]\n---\nOriginal body",
             MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
         // Update only summary.
@@ -273,9 +297,10 @@ fn update_memory_partial_update_preserves_other_fields() {
             Some("new summary"),
             None,
             None,
+            "global",
         )
         .unwrap();
-        let raw = read_memory("existing", MemoryCategory::Knowledge).unwrap();
+        let raw = read_memory("existing", MemoryCategory::Knowledge, "global").unwrap();
         // Tags and relates_to preserved.
         assert!(raw.contains("alpha"), "tags should be preserved: {raw}");
         assert!(
@@ -299,7 +324,13 @@ fn update_memory_partial_update_preserves_other_fields() {
 fn update_memory_append_mode() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("append-key", "First line", MemoryCategory::Session).unwrap();
+        add_memory(
+            "append-key",
+            "First line",
+            MemoryCategory::Session,
+            "global",
+        )
+        .unwrap();
         update_memory(
             "append-key",
             MemoryCategory::Session,
@@ -309,9 +340,10 @@ fn update_memory_append_mode() {
             None,
             None,
             None,
+            "global",
         )
         .unwrap();
-        let raw = read_memory("append-key", MemoryCategory::Session).unwrap();
+        let raw = read_memory("append-key", MemoryCategory::Session, "global").unwrap();
         assert!(raw.contains("First line"), "original body missing: {raw}");
         assert!(raw.contains("Second line"), "appended body missing: {raw}");
     });
@@ -321,7 +353,7 @@ fn update_memory_append_mode() {
 fn update_memory_replace_body() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        add_memory("replace-key", "Old body", MemoryCategory::Session).unwrap();
+        add_memory("replace-key", "Old body", MemoryCategory::Session, "global").unwrap();
         update_memory(
             "replace-key",
             MemoryCategory::Session,
@@ -331,9 +363,10 @@ fn update_memory_replace_body() {
             None,
             None,
             None,
+            "global",
         )
         .unwrap();
-        let raw = read_memory("replace-key", MemoryCategory::Session).unwrap();
+        let raw = read_memory("replace-key", MemoryCategory::Session, "global").unwrap();
         assert!(!raw.contains("Old body"), "old body should be gone: {raw}");
         assert!(raw.contains("New body"), "new body missing: {raw}");
     });
@@ -352,9 +385,10 @@ fn update_memory_sets_updated_timestamp() {
             None,
             None,
             None,
+            "global",
         )
         .unwrap();
-        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap();
+        let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         let info = infos
             .iter()
             .find(|m| m.key == "ts-key")
@@ -375,10 +409,11 @@ fn session_memory_block_respects_cap() {
                 &format!("entry_{:02}", i),
                 &content,
                 MemoryCategory::Session,
+                "global",
             )
             .unwrap();
         }
-        let block = load_session_memory_block();
+        let block = load_session_memory_block(&["global"]);
         assert!(
             block.len() <= 32_768 + 200,
             "block should be capped near 32 KB"
@@ -388,5 +423,188 @@ fn session_memory_block_respects_cap() {
             block.contains("entry_"),
             "should name at least one omitted key"
         );
+    });
+}
+
+// ── Namespace tests ──────────────────────────────────────────────────────────
+
+#[test]
+fn frontmatter_defaults_to_global() {
+    let raw = "---\ntags: [foo]\n---\nBody";
+    let (fm, body) = parse_memory_frontmatter(raw);
+    assert_eq!(fm.namespace, "global");
+    assert_eq!(body, "Body");
+}
+
+#[test]
+fn frontmatter_parses_namespace() {
+    let raw = "---\nnamespace: \"postgres-dba\"\ntags: [db]\n---\nBody";
+    let (fm, body) = parse_memory_frontmatter(raw);
+    assert_eq!(fm.namespace, "postgres-dba");
+    assert_eq!(body, "Body");
+}
+
+#[test]
+fn build_frontmatter_includes_non_global_namespace() {
+    let fm = build_frontmatter("postgres-dba", &[], None, &[], None, None, None);
+    assert!(fm.contains("namespace: \"postgres-dba\""));
+}
+
+#[test]
+fn build_frontmatter_omits_global_namespace() {
+    let fm = build_frontmatter("global", &[], None, &[], None, None, None);
+    assert!(fm.is_empty());
+}
+
+#[test]
+fn write_agent_reads_agent() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory(
+            "agent-key",
+            "agent value",
+            MemoryCategory::Knowledge,
+            "analyst",
+        )
+        .unwrap();
+        let val = read_memory("agent-key", MemoryCategory::Knowledge, "analyst").unwrap();
+        assert_eq!(val, "agent value");
+    });
+}
+
+#[test]
+fn write_agent_invisible_to_global() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory("secret", "agent-only", MemoryCategory::Knowledge, "analyst").unwrap();
+        // Reading from global should fail.
+        assert!(read_memory("secret", MemoryCategory::Knowledge, "global").is_err());
+    });
+}
+
+#[test]
+fn fallback_to_global() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory(
+            "shared",
+            "global value",
+            MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+        // Agent writes to its own namespace.
+        add_memory(
+            "agent-only",
+            "agent value",
+            MemoryCategory::Knowledge,
+            "analyst",
+        )
+        .unwrap();
+        // List with agent+global namespaces should find both.
+        let infos =
+            list_memories_with_tags(Some(MemoryCategory::Knowledge), &["analyst", "global"])
+                .unwrap();
+        let shared = infos
+            .iter()
+            .find(|m| m.key == "shared")
+            .expect("shared not found");
+        assert_eq!(shared.namespace, "global");
+        let agent_only = infos
+            .iter()
+            .find(|m| m.key == "agent-only")
+            .expect("agent-only not found");
+        assert_eq!(agent_only.namespace, "analyst");
+    });
+}
+
+#[test]
+fn migrate_namespace_adds_missing() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        // Write a memory file without namespace.
+        let dir = memory_dir_for_namespace("global", &MemoryCategory::Knowledge);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old-memory.md");
+        std::fs::write(&path, "---\ntags: [old]\n---\nOld content").unwrap();
+
+        migrate_namespace().unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("namespace: global"));
+    });
+}
+
+#[test]
+fn migrate_namespace_skips_already_migrated() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        let dir = memory_dir_for_namespace("global", &MemoryCategory::Knowledge);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("migrated.md");
+        std::fs::write(&path, "---\nnamespace: global\ntags: [x]\n---\nBody").unwrap();
+
+        migrate_namespace().unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        // Should not have double namespace.
+        let count = raw.matches("namespace:").count();
+        assert_eq!(count, 1);
+    });
+}
+
+#[test]
+fn list_memories_scopes_to_namespaces() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory("g1", "global", MemoryCategory::Knowledge, "global").unwrap();
+        add_memory("a1", "agent", MemoryCategory::Knowledge, "analyst").unwrap();
+
+        // Global-only listing.
+        let global_only = list_memories(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
+        let keys: Vec<_> = global_only.iter().map(|(_, _, k)| k.as_str()).collect();
+        assert_eq!(keys, vec!["g1"]);
+
+        // Agent-only listing.
+        let agent_only = list_memories(Some(MemoryCategory::Knowledge), &["analyst"]).unwrap();
+        let keys: Vec<_> = agent_only.iter().map(|(_, _, k)| k.as_str()).collect();
+        assert_eq!(keys, vec!["a1"]);
+
+        // Combined listing.
+        let combined =
+            list_memories(Some(MemoryCategory::Knowledge), &["analyst", "global"]).unwrap();
+        let keys: Vec<_> = combined.iter().map(|(_, _, k)| k.as_str()).collect();
+        assert!(keys.contains(&"g1"));
+        assert!(keys.contains(&"a1"));
+    });
+}
+
+#[test]
+fn delete_memory_deletes_from_correct_path() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory(
+            "to-del",
+            "agent value",
+            MemoryCategory::Knowledge,
+            "analyst",
+        )
+        .unwrap();
+        add_memory(
+            "to-del",
+            "global value",
+            MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+
+        // Delete from agent namespace only.
+        delete_memory("to-del", MemoryCategory::Knowledge, "analyst").unwrap();
+
+        // Agent version gone.
+        assert!(read_memory("to-del", MemoryCategory::Knowledge, "analyst").is_err());
+        // Global version still present.
+        let val = read_memory("to-del", MemoryCategory::Knowledge, "global").unwrap();
+        assert_eq!(val, "global value");
     });
 }

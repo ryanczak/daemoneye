@@ -29,8 +29,10 @@ fn load_all_entries() -> AllEntries {
             .into_iter()
             .map(|(s, t)| (s.name, t))
             .collect(),
-        knowledge: list_memories_with_tags(Some(MemoryCategory::Knowledge)).unwrap_or_default(),
-        incidents: list_memories_with_tags(Some(MemoryCategory::Incident)).unwrap_or_default(),
+        knowledge: list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"])
+            .unwrap_or_default(),
+        incidents: list_memories_with_tags(Some(MemoryCategory::Incident), &["global"])
+            .unwrap_or_default(),
     }
 }
 
@@ -354,7 +356,7 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
                 Ok(rb) => rb.content,
                 Err(_) => continue,
             },
-            "knowledge" => match read_memory(key, MemoryCategory::Knowledge) {
+            "knowledge" => match read_memory(key, MemoryCategory::Knowledge, "global") {
                 Ok(v) => v,
                 Err(_) => continue,
             },

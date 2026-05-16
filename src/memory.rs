@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
+#[derive(Clone, Copy)]
 pub enum MemoryCategory {
     Session,
     Knowledge,
@@ -41,6 +42,7 @@ impl MemoryCategory {
 pub struct MemoryInfo {
     pub key: String,
     pub category: String,
+    pub namespace: String,
     pub tags: Vec<String>,
     pub summary: Option<String>,
     pub relates_to: Vec<String>,
@@ -63,6 +65,7 @@ impl MemoryInfo {
 
 /// Parsed frontmatter fields from a memory file.
 struct ParsedFrontmatter {
+    namespace: String,
     tags: Vec<String>,
     summary: Option<String>,
     relates_to: Vec<String>,
@@ -76,6 +79,7 @@ struct ParsedFrontmatter {
 /// fields are empty/None.
 fn parse_memory_frontmatter(raw: &str) -> (ParsedFrontmatter, String) {
     let empty = ParsedFrontmatter {
+        namespace: "global".to_string(),
         tags: Vec::new(),
         summary: None,
         relates_to: Vec::new(),
@@ -100,6 +104,7 @@ fn parse_memory_frontmatter(raw: &str) -> (ParsedFrontmatter, String) {
 }
 
 fn parse_frontmatter_fields(frontmatter: &str) -> ParsedFrontmatter {
+    let mut namespace = String::new();
     let mut tags = Vec::new();
     let mut summary = None;
     let mut relates_to = Vec::new();
@@ -109,7 +114,15 @@ fn parse_frontmatter_fields(frontmatter: &str) -> ParsedFrontmatter {
 
     for line in frontmatter.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("tags:") {
+        if trimmed.starts_with("namespace:") {
+            namespace = trimmed
+                .strip_prefix("namespace:")
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_string();
+        } else if trimmed.starts_with("tags:") {
             tags = parse_bracket_list(trimmed.strip_prefix("tags:").unwrap_or("").trim());
         } else if trimmed.starts_with("relates_to:") {
             relates_to =
@@ -129,7 +142,12 @@ fn parse_frontmatter_fields(frontmatter: &str) -> ParsedFrontmatter {
         }
     }
 
+    if namespace.is_empty() {
+        namespace = "global".to_string();
+    }
+
     ParsedFrontmatter {
+        namespace,
         tags,
         summary,
         relates_to,
@@ -154,6 +172,7 @@ fn parse_bracket_list(s: &str) -> Vec<String> {
 /// Serialize frontmatter fields back to a `---\n...\n---\n` block.
 /// Only includes fields that have values. Omits the block entirely if all are empty/None.
 pub fn build_frontmatter(
+    namespace: &str,
     tags: &[String],
     summary: Option<&str>,
     relates_to: &[String],
@@ -162,6 +181,9 @@ pub fn build_frontmatter(
     expires: Option<&str>,
 ) -> String {
     let mut lines: Vec<String> = Vec::new();
+    if !namespace.is_empty() && namespace != "global" {
+        lines.push(format!("namespace: \"{}\"", namespace));
+    }
     if !tags.is_empty() {
         let items = tags
             .iter()
@@ -205,15 +227,22 @@ pub fn build_frontmatter(
     }
 }
 
-fn memory_dir(category: &MemoryCategory) -> PathBuf {
-    crate::config::config_dir()
-        .join("memory")
-        .join(category.dir_name())
-}
-
-fn ensure_memory_dir(category: &MemoryCategory) -> Result<()> {
-    let dir = memory_dir(category);
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating memory dir {}", dir.display()))
+/// Resolve the filesystem directory for a memory namespace and category.
+///
+/// `"global"` → `~/.daemoneye/memory/<category>/`
+/// Any other namespace → `~/.daemoneye/agents/<namespace>/memory/<category>/`
+pub fn memory_dir_for_namespace(namespace: &str, category: &MemoryCategory) -> PathBuf {
+    if namespace == "global" {
+        crate::config::config_dir()
+            .join("memory")
+            .join(category.dir_name())
+    } else {
+        crate::config::config_dir()
+            .join("agents")
+            .join(namespace)
+            .join("memory")
+            .join(category.dir_name())
+    }
 }
 
 fn validate_memory_key(key: &str) -> Result<()> {
@@ -230,6 +259,7 @@ fn validate_memory_key(key: &str) -> Result<()> {
 /// Only provided (Some) fields are changed; omitted fields are preserved.
 /// If the entry does not exist, a new one is created.
 /// `updated` timestamp is always set to the current UTC time.
+/// `namespace` controls which namespace directory to write to.
 #[allow(clippy::too_many_arguments)]
 pub fn update_memory(
     key: &str,
@@ -240,10 +270,13 @@ pub fn update_memory(
     summary: Option<&str>,
     relates_to: Option<&[String]>,
     expires: Option<&str>,
+    namespace: &str,
 ) -> Result<()> {
     validate_memory_key(key)?;
-    ensure_memory_dir(&category)?;
-    let path = memory_dir(&category).join(format!("{}.md", key));
+    let dir = memory_dir_for_namespace(namespace, &category);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating memory dir {}", dir.display()))?;
+    let path = dir.join(format!("{}.md", key));
 
     // Read existing content (if any).
     let (mut fm, mut existing_body) = if path.exists() {
@@ -253,6 +286,7 @@ pub fn update_memory(
     } else {
         (
             ParsedFrontmatter {
+                namespace: namespace.to_string(),
                 tags: Vec::new(),
                 summary: None,
                 relates_to: Vec::new(),
@@ -298,6 +332,7 @@ pub fn update_memory(
     }
 
     let frontmatter = build_frontmatter(
+        &fm.namespace,
         &fm.tags,
         fm.summary.as_deref(),
         &fm.relates_to,
@@ -312,17 +347,19 @@ pub fn update_memory(
     Ok(())
 }
 
-pub fn add_memory(key: &str, value: &str, category: MemoryCategory) -> Result<()> {
+pub fn add_memory(key: &str, value: &str, category: MemoryCategory, namespace: &str) -> Result<()> {
     validate_memory_key(key)?;
-    ensure_memory_dir(&category)?;
-    let path = memory_dir(&category).join(format!("{}.md", key));
+    let dir = memory_dir_for_namespace(namespace, &category);
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating memory dir {}", dir.display()))?;
+    let path = dir.join(format!("{}.md", key));
     std::fs::write(&path, value).with_context(|| format!("writing memory key '{}'", key))?;
     crate::daemon::stats::inc_memories_created();
     Ok(())
 }
 
-pub fn delete_memory(key: &str, category: MemoryCategory) -> Result<()> {
-    let path = memory_dir(&category).join(format!("{}.md", key));
+pub fn delete_memory(key: &str, category: MemoryCategory, namespace: &str) -> Result<()> {
+    let path = memory_dir_for_namespace(namespace, &category).join(format!("{}.md", key));
     if path.exists() {
         std::fs::remove_file(&path)?;
         crate::daemon::stats::inc_memories_deleted();
@@ -330,15 +367,18 @@ pub fn delete_memory(key: &str, category: MemoryCategory) -> Result<()> {
     Ok(())
 }
 
-pub fn read_memory(key: &str, category: MemoryCategory) -> Result<String> {
-    let path = memory_dir(&category).join(format!("{}.md", key));
+pub fn read_memory(key: &str, category: MemoryCategory, namespace: &str) -> Result<String> {
+    let path = memory_dir_for_namespace(namespace, &category).join(format!("{}.md", key));
     let val = std::fs::read_to_string(&path)
         .with_context(|| format!("reading memory key '{}' from {}", key, path.display()))?;
     crate::daemon::stats::inc_memories_recalled();
     Ok(val)
 }
 
-pub fn list_memories(category: Option<MemoryCategory>) -> Result<Vec<(String, String)>> {
+pub fn list_memories(
+    category: Option<MemoryCategory>,
+    namespaces: &[&str],
+) -> Result<Vec<(String, String, String)>> {
     let categories: Vec<MemoryCategory> = match category {
         Some(c) => vec![c],
         None => vec![
@@ -348,24 +388,26 @@ pub fn list_memories(category: Option<MemoryCategory>) -> Result<Vec<(String, St
         ],
     };
     let mut results = Vec::new();
-    for cat in &categories {
-        let dir = memory_dir(cat);
-        if !dir.exists() {
-            continue;
-        }
-        let mut entries: Vec<String> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let path = e.path();
-                if !path.is_file() {
-                    return None;
-                }
-                path.file_stem().map(|s| s.to_string_lossy().to_string())
-            })
-            .collect();
-        entries.sort();
-        for name in entries {
-            results.push((cat.canonical_name().to_string(), name));
+    for ns in namespaces {
+        for cat in &categories {
+            let dir = memory_dir_for_namespace(ns, cat);
+            if !dir.exists() {
+                continue;
+            }
+            let mut entries: Vec<String> = std::fs::read_dir(&dir)?
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let path = e.path();
+                    if !path.is_file() {
+                        return None;
+                    }
+                    path.file_stem().map(|s| s.to_string_lossy().to_string())
+                })
+                .collect();
+            entries.sort();
+            for name in entries {
+                results.push((ns.to_string(), cat.canonical_name().to_string(), name));
+            }
         }
     }
     Ok(results)
@@ -373,7 +415,11 @@ pub fn list_memories(category: Option<MemoryCategory>) -> Result<Vec<(String, St
 
 /// List memories with optional tags parsed from frontmatter.
 /// Session memories are included when `category` is None or Some(Session).
-pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<MemoryInfo>> {
+/// `namespaces` controls which namespaces are scanned (e.g. `&["agent-name", "global"]`).
+pub fn list_memories_with_tags(
+    category: Option<MemoryCategory>,
+    namespaces: &[&str],
+) -> Result<Vec<MemoryInfo>> {
     let categories: Vec<MemoryCategory> = match category {
         Some(c) => vec![c],
         None => vec![
@@ -383,50 +429,61 @@ pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<M
         ],
     };
     let mut results = Vec::new();
-    for cat in &categories {
-        let dir = memory_dir(cat);
-        if !dir.exists() {
-            continue;
-        }
-        let mut entries: Vec<String> = std::fs::read_dir(&dir)?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let path = e.path();
-                if !path.is_file() {
-                    return None;
+    for ns in namespaces {
+        for cat in &categories {
+            let dir = memory_dir_for_namespace(ns, cat);
+            if !dir.exists() {
+                continue;
+            }
+            let mut entries: Vec<String> = std::fs::read_dir(&dir)?
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let path = e.path();
+                    if !path.is_file() {
+                        return None;
+                    }
+                    path.file_stem().map(|s| s.to_string_lossy().to_string())
+                })
+                .collect();
+            entries.sort();
+            for name in entries {
+                let path = dir.join(format!("{}.md", name));
+                let info = if let Ok(raw) = std::fs::read_to_string(&path) {
+                    let (fm, _) = parse_memory_frontmatter(&raw);
+                    // If frontmatter namespace is "global" but we're reading from a non-global directory,
+                    // use the directory namespace instead.
+                    let ns = if fm.namespace == "global" && *ns != "global" {
+                        ns.to_string()
+                    } else {
+                        fm.namespace
+                    };
+                    MemoryInfo {
+                        key: name,
+                        category: cat.canonical_name().to_string(),
+                        namespace: ns,
+                        tags: fm.tags,
+                        summary: fm.summary,
+                        relates_to: fm.relates_to,
+                        created: fm.created,
+                        updated: fm.updated,
+                        expires: fm.expires,
+                    }
+                } else {
+                    MemoryInfo {
+                        key: name,
+                        category: cat.canonical_name().to_string(),
+                        namespace: ns.to_string(),
+                        tags: Vec::new(),
+                        summary: None,
+                        relates_to: Vec::new(),
+                        created: None,
+                        updated: None,
+                        expires: None,
+                    }
+                };
+                if !info.is_expired() {
+                    results.push(info);
                 }
-                path.file_stem().map(|s| s.to_string_lossy().to_string())
-            })
-            .collect();
-        entries.sort();
-        for name in entries {
-            let path = dir.join(format!("{}.md", name));
-            let info = if let Ok(raw) = std::fs::read_to_string(&path) {
-                let (fm, _) = parse_memory_frontmatter(&raw);
-                MemoryInfo {
-                    key: name,
-                    category: cat.canonical_name().to_string(),
-                    tags: fm.tags,
-                    summary: fm.summary,
-                    relates_to: fm.relates_to,
-                    created: fm.created,
-                    updated: fm.updated,
-                    expires: fm.expires,
-                }
-            } else {
-                MemoryInfo {
-                    key: name,
-                    category: cat.canonical_name().to_string(),
-                    tags: Vec::new(),
-                    summary: None,
-                    relates_to: Vec::new(),
-                    created: None,
-                    updated: None,
-                    expires: None,
-                }
-            };
-            if !info.is_expired() {
-                results.push(info);
             }
         }
     }
@@ -436,46 +493,55 @@ pub fn list_memories_with_tags(category: Option<MemoryCategory>) -> Result<Vec<M
 /// Load all files from memory/session/ into a formatted context block.
 /// Applies the masking filter. Caps at SESSION_MEMORY_CAP bytes.
 /// Returns empty string if no session memories exist.
-pub fn load_session_memory_block() -> String {
+/// `namespaces` controls which namespaces are scanned.
+pub fn load_session_memory_block(namespaces: &[&str]) -> String {
     const SESSION_MEMORY_CAP: usize = 32_768;
-    let dir = memory_dir(&MemoryCategory::Session);
-    if !dir.exists() {
-        return String::new();
-    }
-    // Collect entries with their modification times so we can load the most
-    // recently updated ones first. When the cap is reached, older entries are
-    // dropped — entries you've actively written/updated are more likely to be
-    // relevant than ones that haven't been touched in a long time.
-    let mut entries: Vec<(String, std::time::SystemTime)> = match std::fs::read_dir(&dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let path = e.path();
-                if !path.is_file() {
-                    return None;
+    // Collect (key, namespace, mtime) tuples across all namespaces.
+    let mut entries: Vec<(String, String, std::time::SystemTime)> = Vec::new();
+    for ns in namespaces {
+        let dir = memory_dir_for_namespace(ns, &MemoryCategory::Session);
+        if !dir.exists() {
+            continue;
+        }
+        match std::fs::read_dir(&dir) {
+            Ok(rd) => {
+                for e in rd.filter_map(|e| e.ok()) {
+                    let path = e.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let mtime = match e.metadata().ok().and_then(|m| m.modified().ok()) {
+                        Some(m) => m,
+                        None => continue,
+                    };
+                    let stem = match path.file_stem() {
+                        Some(s) => s.to_string_lossy().to_string(),
+                        None => continue,
+                    };
+                    if stem.is_empty() {
+                        continue;
+                    }
+                    entries.push((stem, ns.to_string(), mtime));
                 }
-                let mtime = e.metadata().ok()?.modified().ok()?;
-                let stem = path.file_stem()?.to_string_lossy().to_string();
-                Some((stem, mtime))
-            })
-            .collect(),
-        Err(_) => return String::new(),
-    };
-    // Newest first; ties broken alphabetically.
-    entries.sort_by(|(a_key, a_mtime), (b_key, b_mtime)| {
-        b_mtime.cmp(a_mtime).then_with(|| a_key.cmp(b_key))
-    });
-    let entries: Vec<String> = entries.into_iter().map(|(k, _)| k).collect();
+            }
+            Err(_) => continue,
+        }
+    }
     if entries.is_empty() {
         return String::new();
     }
+    // Newest first; ties broken alphabetically.
+    entries.sort_by(|(a_key, _, a_mtime), (b_key, _, b_mtime)| {
+        b_mtime.cmp(a_mtime).then_with(|| a_key.cmp(b_key))
+    });
 
     let mut parts = Vec::new();
     let mut total = 0usize;
     let mut omitted_keys: Vec<String> = Vec::new();
 
-    for key in &entries {
-        let path = dir.join(format!("{}.md", key));
+    for (key, ns, _) in &entries {
+        let path =
+            memory_dir_for_namespace(ns, &MemoryCategory::Session).join(format!("{}.md", key));
         if let Ok(content) = std::fs::read_to_string(&path) {
             let masked = crate::ai::filter::mask_sensitive(&content);
             let chunk = format!("--- {} ---\n{}\n\n", key, masked.trim());
@@ -507,6 +573,48 @@ pub fn load_session_memory_block() -> String {
     }
 
     format!("## Persistent Memory\n```\n{}\n```\n\n", body)
+}
+
+/// Idempotent migration: adds `namespace: global` to existing memory files
+/// in the global directories that are missing the field.
+/// Safe to run at every daemon startup.
+pub fn migrate_namespace() -> Result<()> {
+    let categories = [
+        MemoryCategory::Session,
+        MemoryCategory::Knowledge,
+        MemoryCategory::Incident,
+    ];
+    for cat in &categories {
+        let dir = memory_dir_for_namespace("global", cat);
+        if !dir.exists() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let raw = match std::fs::read_to_string(&path) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            // Only touch files that start with frontmatter and lack namespace.
+            if !raw.starts_with("---\n") {
+                continue;
+            }
+            if raw.contains("namespace:") {
+                continue;
+            }
+            // Insert `namespace: global` as the first field after the opening `---\n`.
+            let migrated = format!("---\nnamespace: global\n{}", &raw[4..]);
+            std::fs::write(&path, &migrated)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

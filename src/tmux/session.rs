@@ -272,7 +272,7 @@ pub fn client_dimensions(session_name: &str) -> (u16, u16) {
         _ => return (0, 0),
     };
     let s = String::from_utf8_lossy(&out.stdout);
-let s = s.trim();
+    let s = s.trim();
     let mut parts = s.splitn(2, '\t');
     let w = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     let h = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);

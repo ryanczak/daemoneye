@@ -262,7 +262,7 @@ pub fn read_session_file(id: &str, max_history: Option<usize>) -> Vec<Message> {
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
-match max_history {
+    match max_history {
         Some(cap) if msgs.len() > cap => msgs[msgs.len() - cap..].to_vec(),
         _ => msgs,
     }

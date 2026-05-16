@@ -263,7 +263,7 @@ pub fn watchdog_system_prompt(runbook: &Runbook) -> String {
         let mut parts = vec!["## Runbook Memory Context".to_string()];
         for key in &runbook.memories {
             if let Ok(val) =
-                crate::memory::read_memory(key, crate::memory::MemoryCategory::Knowledge)
+                crate::memory::read_memory(key, crate::memory::MemoryCategory::Knowledge, "global")
             {
                 parts.push(format!("### {}\n{}", key, val));
             }

@@ -82,7 +82,16 @@ fn ipc_ask_round_trip() {
     let back: Request = serde_json::from_str(&json).expect("deserialize Ask");
 
     match back {
-        Request::Ask { query, tmux_pane, session_id, chat_pane, chat_width, tmux_session, target_pane, .. } => {
+        Request::Ask {
+            query,
+            tmux_pane,
+            session_id,
+            chat_pane,
+            chat_width,
+            tmux_session,
+            target_pane,
+            ..
+        } => {
             assert_eq!(query, "check disk usage");
             assert_eq!(tmux_pane.as_deref(), Some("%3"));
             assert_eq!(session_id.as_deref(), Some("abc123"));
@@ -108,7 +117,11 @@ fn ipc_tool_call_response_round_trip() {
     let back: Request = serde_json::from_str(&json).expect("deserialize");
 
     match back {
-        Request::ToolCallResponse { id, approved, user_message } => {
+        Request::ToolCallResponse {
+            id,
+            approved,
+            user_message,
+        } => {
             assert_eq!(id, "tool-1");
             assert!(approved);
             assert!(user_message.is_none());
@@ -129,7 +142,10 @@ fn ipc_session_info_round_trip() {
     let back: Response = serde_json::from_str(&json).expect("deserialize");
 
     match back {
-        Response::SessionInfo { message_count, turn_count } => {
+        Response::SessionInfo {
+            message_count,
+            turn_count,
+        } => {
             assert_eq!(message_count, 10);
             assert_eq!(turn_count, 5);
         }
@@ -146,7 +162,7 @@ fn ipc_session_info_round_trip() {
 /// Exercises the production save/load path.
 #[test]
 fn schedule_store_persistence() {
-    use daemoneye::scheduler::{ActionOn, ScheduleKind, ScheduledJob, ScheduleStore};
+    use daemoneye::scheduler::{ActionOn, ScheduleKind, ScheduleStore, ScheduledJob};
 
     let home = temp_daemoneye_home();
     let schedule_path = home.join("var").join("schedules.json");
@@ -185,7 +201,9 @@ fn session_jsonl_round_trip() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().unwrap();
 
     let messages = vec![
@@ -211,7 +229,17 @@ fn session_jsonl_round_trip() {
             turn: None,
         },
     ];
-    save_session("integ-test-sess", None, "integration test", &messages, 2, "default", &[], false).unwrap();
+    save_session(
+        "integ-test-sess",
+        None,
+        "integration test",
+        &messages,
+        2,
+        "default",
+        &[],
+        false,
+    )
+    .unwrap();
 
     let loaded = load_session_messages("integ-test-sess", 0).unwrap();
     assert_eq!(loaded.len(), 3);
@@ -228,7 +256,9 @@ fn session_index_persistence() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().unwrap();
 
     let messages = vec![Message {
@@ -238,7 +268,17 @@ fn session_index_persistence() {
         tool_results: None,
         turn: None,
     }];
-    save_session("integ-index-test", None, "index test", &messages, 1, "default", &[], false).unwrap();
+    save_session(
+        "integ-index-test",
+        None,
+        "index test",
+        &messages,
+        1,
+        "default",
+        &[],
+        false,
+    )
+    .unwrap();
 
     let sessions = list_sessions();
     assert!(sessions.iter().any(|(name, _)| name == "integ-index-test"));
@@ -256,7 +296,9 @@ fn event_log_entry_format() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().unwrap();
 
     let fields = serde_json::json!({
@@ -282,12 +324,20 @@ fn event_log_append_read() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-    unsafe { std::env::set_var("HOME", home.to_str().unwrap()); }
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().unwrap();
 
-    log_event("webhook_alert", serde_json::json!({ "alert_name": "HighCPU" }));
+    log_event(
+        "webhook_alert",
+        serde_json::json!({ "alert_name": "HighCPU" }),
+    );
     log_event("ghost_started", serde_json::json!({ "session_id": "gs-1" }));
-    log_event("ghost_completed", serde_json::json!({ "session_id": "gs-1" }));
+    log_event(
+        "ghost_completed",
+        serde_json::json!({ "session_id": "gs-1" }),
+    );
 
     let path = daemoneye::config::events_path();
     let content = fs::read_to_string(&path).unwrap();
@@ -298,8 +348,10 @@ fn event_log_append_read() {
         .iter()
         .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .filter(|v| {
-            matches!(v["event"].as_str(),
-                Some("webhook_alert") | Some("ghost_started") | Some("ghost_completed"))
+            matches!(
+                v["event"].as_str(),
+                Some("webhook_alert") | Some("ghost_started") | Some("ghost_completed")
+            )
         })
         .collect();
     assert_eq!(ours.len(), 3);
@@ -338,7 +390,10 @@ auto_approve_commands = true
 
     let cfg: toml::Value = toml::from_str(toml_str).expect("parse ghost config");
     assert!(cfg["ghost"]["enabled"].as_bool().unwrap());
-    assert_eq!(cfg["ghost"]["max_concurrent_ghosts"].as_integer().unwrap(), 3);
+    assert_eq!(
+        cfg["ghost"]["max_concurrent_ghosts"].as_integer().unwrap(),
+        3
+    );
     let scripts: Vec<&str> = cfg["ghost"]["auto_approve_scripts"]
         .as_array()
         .unwrap()
@@ -460,7 +515,9 @@ model = "test"
     rd.read_line(&mut line).await.unwrap();
     let resp: Response = serde_json::from_str(line.trim()).unwrap();
     match resp {
-        Response::DaemonStatus { uptime_secs, pid, .. } => {
+        Response::DaemonStatus {
+            uptime_secs, pid, ..
+        } => {
             assert!(pid > 0);
             let _ = uptime_secs; // present and non-negative by type (u64)
         }
@@ -484,7 +541,7 @@ model = "test"
 /// needing to bind a TCP port or start the full daemon.
 #[tokio::test(flavor = "current_thread")]
 async fn webhook_alert_to_event_log() {
-    use daemoneye::webhook::{parse_payload, process_alert, WebhookState};
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
 
     // Initialise masking filter (safe — OnceLock, idempotent).
     daemoneye::ai::filter::init_masking(&[]);
@@ -493,7 +550,9 @@ async fn webhook_alert_to_event_log() {
     let tmp = tempfile::tempdir().expect("create tempdir");
     {
         let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-        unsafe { std::env::set_var("HOME", tmp.path().to_str().unwrap()); }
+        unsafe {
+            std::env::set_var("HOME", tmp.path().to_str().unwrap());
+        }
     }
     daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
 
@@ -526,8 +585,7 @@ async fn webhook_alert_to_event_log() {
     let config = daemoneye::config::Config::default();
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
-    let schedule_store =
-        std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions,
@@ -545,8 +603,7 @@ async fn webhook_alert_to_event_log() {
     let content = fs::read_to_string(&path).expect("read events.jsonl");
     let lines: Vec<&str> = content.lines().collect();
     let last: serde_json::Value =
-        serde_json::from_str(lines.last().expect("at least one line"))
-            .expect("parse last line");
+        serde_json::from_str(lines.last().expect("at least one line")).expect("parse last line");
     assert_eq!(last["event"], "webhook_alert");
     assert_eq!(last["alert_name"], "HighCPU");
     assert_eq!(last["severity"], "critical");
@@ -572,15 +629,26 @@ fn g1_spawn_ghost_shell_with_agent_merge() {
         max_turns: Some(8),
         auto_approve_read_only: true,
         auto_approve_scripts: vec!["scan.sh".to_string()],
+        read_namespaces: Vec::new(),
     };
     let mut gc = GhostConfig::default();
     apply_agent_to_ghost_config(&agent, &mut gc);
 
     assert_eq!(gc.model, Some("haiku".to_string()), "model from agent");
     assert_eq!(gc.max_ghost_turns, 8, "max_ghost_turns from agent");
-    assert!(gc.auto_approve_commands, "auto_approve_commands from agent.auto_approve_read_only");
-    assert!(gc.auto_approve_scripts.contains(&"scan.sh".to_string()), "script from agent");
-    assert_eq!(gc.agent, Some("analyst".to_string()), "agent name stamped for audit");
+    assert!(
+        gc.auto_approve_commands,
+        "auto_approve_commands from agent.auto_approve_read_only"
+    );
+    assert!(
+        gc.auto_approve_scripts.contains(&"scan.sh".to_string()),
+        "script from agent"
+    );
+    assert_eq!(
+        gc.agent,
+        Some("analyst".to_string()),
+        "agent name stamped for audit"
+    );
 
     // --- Case 2: runbook values win over agent defaults ---
     let mut gc2 = GhostConfig {
@@ -591,14 +659,24 @@ fn g1_spawn_ghost_shell_with_agent_merge() {
     };
     apply_agent_to_ghost_config(&agent, &mut gc2);
 
-    assert_eq!(gc2.model, Some("opus".to_string()), "runbook model preserved");
+    assert_eq!(
+        gc2.model,
+        Some("opus".to_string()),
+        "runbook model preserved"
+    );
     assert_eq!(gc2.max_ghost_turns, 20, "runbook max_ghost_turns preserved");
     // Scripts are unioned, not replaced.
-    assert!(gc2.auto_approve_scripts.contains(&"runbook-script.sh".to_string()));
+    assert!(
+        gc2.auto_approve_scripts
+            .contains(&"runbook-script.sh".to_string())
+    );
     assert!(gc2.auto_approve_scripts.contains(&"scan.sh".to_string()));
     // No duplicates even if same script appears in both.
     assert_eq!(
-        gc2.auto_approve_scripts.iter().filter(|s| *s == "scan.sh").count(),
+        gc2.auto_approve_scripts
+            .iter()
+            .filter(|s| *s == "scan.sh")
+            .count(),
         1,
         "no script duplicates"
     );

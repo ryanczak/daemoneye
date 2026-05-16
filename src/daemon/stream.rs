@@ -2,7 +2,7 @@ use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::Config;
 use crate::daemon::auto_name;
 use crate::daemon::executor::{self, SessionCtx};
-use crate::daemon::session::{append_session_message, write_session_file, SessionStore};
+use crate::daemon::session::{SessionStore, append_session_message, write_session_file};
 use crate::daemon::utils::{log_event, send_response_split};
 use crate::ipc::Response;
 use crate::scheduler::ScheduleStore;
@@ -148,115 +148,371 @@ where
                         thought_signature,
                     });
                 }
-                AiEvent::ListSchedules { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListSchedules { id, thought_signature });
+                AiEvent::ListSchedules {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListSchedules {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::CancelSchedule { id, job_id, thought_signature } => {
-                    pending_calls.push(PendingCall::CancelSchedule { id, job_id, thought_signature });
+                AiEvent::CancelSchedule {
+                    id,
+                    job_id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::CancelSchedule {
+                        id,
+                        job_id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::DeleteSchedule { id, job_id, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteSchedule { id, job_id, thought_signature });
+                AiEvent::DeleteSchedule {
+                    id,
+                    job_id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteSchedule {
+                        id,
+                        job_id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::WriteScript { id, script_name, content, thought_signature } => {
+                AiEvent::WriteScript {
+                    id,
+                    script_name,
+                    content,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::WriteScript {
-                        id, script_name, content, thought_signature,
+                        id,
+                        script_name,
+                        content,
+                        thought_signature,
                     });
                 }
-                AiEvent::ListScripts { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListScripts { id, thought_signature });
+                AiEvent::ListScripts {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListScripts {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ReadScript { id, script_name, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadScript { id, script_name, thought_signature });
+                AiEvent::ReadScript {
+                    id,
+                    script_name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadScript {
+                        id,
+                        script_name,
+                        thought_signature,
+                    });
                 }
-                AiEvent::DeleteScript { id, script_name, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteScript { id, script_name, thought_signature });
+                AiEvent::DeleteScript {
+                    id,
+                    script_name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteScript {
+                        id,
+                        script_name,
+                        thought_signature,
+                    });
                 }
-                AiEvent::WatchPane { id, pane_id, timeout_secs, pattern, thought_signature } => {
+                AiEvent::WatchPane {
+                    id,
+                    pane_id,
+                    timeout_secs,
+                    pattern,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::WatchPane {
-                        id, pane_id, timeout_secs, pattern, thought_signature,
+                        id,
+                        pane_id,
+                        timeout_secs,
+                        pattern,
+                        thought_signature,
                     });
                 }
-                AiEvent::ReadFile { id, path, offset, limit, pattern, target_pane, thought_signature } => {
+                AiEvent::ReadFile {
+                    id,
+                    path,
+                    offset,
+                    limit,
+                    pattern,
+                    target_pane,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::ReadFile {
-                        id, thought_signature, path, offset, limit, pattern, target_pane,
+                        id,
+                        thought_signature,
+                        path,
+                        offset,
+                        limit,
+                        pattern,
+                        target_pane,
                     });
                 }
-                AiEvent::EditFile { id, path, operation, old_string, new_string, content, dest_path, target_pane, thought_signature } => {
+                AiEvent::EditFile {
+                    id,
+                    path,
+                    operation,
+                    old_string,
+                    new_string,
+                    content,
+                    dest_path,
+                    target_pane,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::EditFile {
-                        id, thought_signature, path, operation, old_string, new_string, content, dest_path, target_pane,
+                        id,
+                        thought_signature,
+                        path,
+                        operation,
+                        old_string,
+                        new_string,
+                        content,
+                        dest_path,
+                        target_pane,
                     });
                 }
-                AiEvent::WriteRunbook { id, name, content, thought_signature } => {
+                AiEvent::WriteRunbook {
+                    id,
+                    name,
+                    content,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::WriteRunbook {
-                        id, thought_signature, name, content,
+                        id,
+                        thought_signature,
+                        name,
+                        content,
                     });
                 }
-                AiEvent::DeleteRunbook { id, name, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteRunbook { id, thought_signature, name });
+                AiEvent::DeleteRunbook {
+                    id,
+                    name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                    });
                 }
-                AiEvent::ReadRunbook { id, name, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadRunbook { id, thought_signature, name });
+                AiEvent::ReadRunbook {
+                    id,
+                    name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadRunbook {
+                        id,
+                        thought_signature,
+                        name,
+                    });
                 }
-                AiEvent::ListRunbooks { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListRunbooks { id, thought_signature });
+                AiEvent::ListRunbooks {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListRunbooks {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::AddMemory { id, key, value, category, thought_signature } => {
+                AiEvent::AddMemory {
+                    id,
+                    key,
+                    value,
+                    category,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::AddMemory {
-                        id, thought_signature, key, value, category,
+                        id,
+                        thought_signature,
+                        key,
+                        value,
+                        category,
                     });
                 }
-                AiEvent::UpdateMemory { id, key, category, body, append, tags, summary, relates_to, expires, thought_signature } => {
+                AiEvent::UpdateMemory {
+                    id,
+                    key,
+                    category,
+                    body,
+                    append,
+                    tags,
+                    summary,
+                    relates_to,
+                    expires,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::UpdateMemory {
-                        id, thought_signature, key, category, body, append, tags, summary, relates_to, expires,
+                        id,
+                        thought_signature,
+                        key,
+                        category,
+                        body,
+                        append,
+                        tags,
+                        summary,
+                        relates_to,
+                        expires,
                     });
                 }
-                AiEvent::DeleteMemory { id, key, category, thought_signature } => {
+                AiEvent::DeleteMemory {
+                    id,
+                    key,
+                    category,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::DeleteMemory {
-                        id, thought_signature, key, category,
+                        id,
+                        thought_signature,
+                        key,
+                        category,
                     });
                 }
-                AiEvent::ReadMemory { id, key, category, thought_signature } => {
+                AiEvent::ReadMemory {
+                    id,
+                    key,
+                    category,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::ReadMemory {
-                        id, thought_signature, key, category,
+                        id,
+                        thought_signature,
+                        key,
+                        category,
                     });
                 }
-                AiEvent::ListMemories { id, category, thought_signature } => {
-                    pending_calls.push(PendingCall::ListMemories { id, thought_signature, category });
+                AiEvent::ListMemories {
+                    id,
+                    category,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListMemories {
+                        id,
+                        thought_signature,
+                        category,
+                    });
                 }
-                AiEvent::SearchRepository { id, query, kind, thought_signature } => {
+                AiEvent::SearchRepository {
+                    id,
+                    query,
+                    kind,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::SearchRepository {
-                        id, thought_signature, query, kind,
+                        id,
+                        thought_signature,
+                        query,
+                        kind,
                     });
                 }
-                AiEvent::GetTerminalContext { id, thought_signature } => {
-                    pending_calls.push(PendingCall::GetTerminalContext { id, thought_signature });
+                AiEvent::GetTerminalContext {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::GetTerminalContext {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::ListPanes { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListPanes { id, thought_signature });
+                AiEvent::ListPanes {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListPanes {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::CloseBackgroundWindow { id, pane_id, thought_signature } => {
+                AiEvent::CloseBackgroundWindow {
+                    id,
+                    pane_id,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::CloseBackgroundWindow {
-                        id, thought_signature, pane_id,
+                        id,
+                        thought_signature,
+                        pane_id,
                     });
                 }
-                AiEvent::SpawnGhost { id, runbook, message, agent, thought_signature } => {
+                AiEvent::SpawnGhost {
+                    id,
+                    runbook,
+                    message,
+                    agent,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::SpawnGhost {
-                        id, thought_signature, runbook, message, agent,
+                        id,
+                        thought_signature,
+                        runbook,
+                        message,
+                        agent,
                     });
                 }
-                AiEvent::CreateAgent { id, name, description, prompt, model, memory_namespace, max_turns, auto_approve_read_only, auto_approve_scripts, thought_signature } => {
+                AiEvent::CreateAgent {
+                    id,
+                    name,
+                    description,
+                    prompt,
+                    model,
+                    memory_namespace,
+                    max_turns,
+                    auto_approve_read_only,
+                    auto_approve_scripts,
+                    thought_signature,
+                } => {
                     pending_calls.push(PendingCall::CreateAgent {
-                        id, thought_signature, name, description, prompt, model, memory_namespace, max_turns, auto_approve_read_only, auto_approve_scripts,
+                        id,
+                        thought_signature,
+                        name,
+                        description,
+                        prompt,
+                        model,
+                        memory_namespace,
+                        max_turns,
+                        auto_approve_read_only,
+                        auto_approve_scripts,
                     });
                 }
-                AiEvent::ReadAgent { id, name, thought_signature } => {
-                    pending_calls.push(PendingCall::ReadAgent { id, thought_signature, name });
+                AiEvent::ReadAgent {
+                    id,
+                    name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadAgent {
+                        id,
+                        thought_signature,
+                        name,
+                    });
                 }
-                AiEvent::ListAgents { id, thought_signature } => {
-                    pending_calls.push(PendingCall::ListAgents { id, thought_signature });
+                AiEvent::ListAgents {
+                    id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ListAgents {
+                        id,
+                        thought_signature,
+                    });
                 }
-                AiEvent::DeleteAgent { id, name, thought_signature } => {
-                    pending_calls.push(PendingCall::DeleteAgent { id, thought_signature, name });
+                AiEvent::DeleteAgent {
+                    id,
+                    name,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::DeleteAgent {
+                        id,
+                        thought_signature,
+                        name,
+                    });
                 }
                 AiEvent::Error(e) => {
                     send_response_split(tx, Response::Error(e)).await?;
@@ -387,8 +643,7 @@ where
                     // Per-turn tool-call loop guard.
                     // Approval-gated tools are always exempt — the user's per-call
                     // approval prompt is the gate.
-                    let mut tool_call_counts: HashMap<&str, u32> =
-                        HashMap::new();
+                    let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
                     let mut total_turn_call_count: u32 = 0;
 
                     let mut tool_results = Vec::new();
@@ -631,25 +886,23 @@ fn truncate_tool_results(
 ) -> Vec<ToolResult> {
     tool_results
         .into_iter()
-        .map(|r| {
-            match char_cap {
-                Some(cap) if r.content.len() > cap => {
-                    let mut end = cap;
-                    while !r.content.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    ToolResult {
-                        tool_call_id: r.tool_call_id,
-                        tool_name: r.tool_name,
-                        content: format!(
-                            "{}\n[truncated — {} chars total; full output archived in pane log]",
-                            &r.content[..end],
-                            r.content.len()
-                        ),
-                    }
+        .map(|r| match char_cap {
+            Some(cap) if r.content.len() > cap => {
+                let mut end = cap;
+                while !r.content.is_char_boundary(end) {
+                    end -= 1;
                 }
-                _ => r,
+                ToolResult {
+                    tool_call_id: r.tool_call_id,
+                    tool_name: r.tool_name,
+                    content: format!(
+                        "{}\n[truncated — {} chars total; full output archived in pane log]",
+                        &r.content[..end],
+                        r.content.len()
+                    ),
+                }
             }
+            _ => r,
         })
         .collect()
 }

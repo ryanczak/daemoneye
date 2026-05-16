@@ -121,6 +121,29 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
     let is_ghost = ghost_policy.is_some();
+
+    // ── Build namespace list for memory operations ───────────────────────────
+    let mut memory_namespaces_owned: Vec<String> = Vec::new();
+    let memory_namespaces: Vec<&str> = if is_ghost_shell {
+        if let Some(sid) = session_id
+            && let Ok(store) = sessions.lock()
+            && let Some(entry) = store.get(sid)
+            && let Some(ref gc) = entry.ghost_config
+            && let Some(ref agent_name) = gc.agent
+            && let Ok(agent) = crate::agents::load_agent(agent_name)
+        {
+            memory_namespaces_owned.push(agent.memory_namespace.clone());
+            for extra in &agent.read_namespaces {
+                memory_namespaces_owned.push(extra.clone());
+            }
+        }
+        if !memory_namespaces_owned.iter().any(|s| s == "global") {
+            memory_namespaces_owned.push("global".to_string());
+        }
+        memory_namespaces_owned.iter().map(|s| s.as_str()).collect()
+    } else {
+        vec!["global"]
+    };
     // ── Artifact context for session_origin stamping + tracking ───────────────
     let saved_name: Option<String> =
         session_id.and_then(|sid| sessions.lock().ok()?.get(sid)?.saved_name.clone());
@@ -133,6 +156,7 @@ where
         saved_name: saved_name.as_deref(),
         turn_count,
         is_ghost,
+        namespaces: &memory_namespaces,
     };
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -367,22 +391,23 @@ where
             relates_to.as_deref(),
             expires.as_deref(),
             session_id,
+            &memory_namespaces,
         ))),
 
         PendingCall::DeleteMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::delete_memory(key, category, session_id),
+            knowledge::delete_memory(key, category, session_id, &memory_namespaces),
         )),
 
         PendingCall::ReadMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::read_memory(key, category),
+            knowledge::read_memory(key, category, &memory_namespaces),
         )),
 
         PendingCall::ListMemories { category, .. } => {
-            knowledge::list_memories(category.as_deref(), tx).await
+            knowledge::list_memories(category.as_deref(), &memory_namespaces, tx).await
         }
 
         PendingCall::SearchRepository { query, kind, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::search_repository(query, kind),
+            knowledge::search_repository(query, kind, artifact_ctx.namespaces),
         )),
 
         PendingCall::GetTerminalContext { .. } => {
@@ -413,16 +438,40 @@ where
         ))),
 
         PendingCall::SpawnGhost {
-            runbook, message, agent, ..
+            runbook,
+            message,
+            agent,
+            ..
         } => knowledge::spawn_ghost(runbook, message, agent.as_deref(), sessions).await,
 
         PendingCall::CreateAgent {
-            id, name, description, prompt, model, memory_namespace, max_turns,
-            auto_approve_read_only, auto_approve_scripts, ..
-        } => knowledge::create_agent(
-            id, name, description, prompt, model.as_deref(), memory_namespace,
-            *max_turns, *auto_approve_read_only, auto_approve_scripts, &artifact_ctx, tx, rx,
-        ).await,
+            id,
+            name,
+            description,
+            prompt,
+            model,
+            memory_namespace,
+            max_turns,
+            auto_approve_read_only,
+            auto_approve_scripts,
+            ..
+        } => {
+            knowledge::create_agent(
+                id,
+                name,
+                description,
+                prompt,
+                model.as_deref(),
+                memory_namespace,
+                *max_turns,
+                *auto_approve_read_only,
+                auto_approve_scripts,
+                &artifact_ctx,
+                tx,
+                rx,
+            )
+            .await
+        }
 
         PendingCall::ReadAgent { name, .. } => {
             Ok(ToolCallOutcome::Result(knowledge::read_agent(name)))

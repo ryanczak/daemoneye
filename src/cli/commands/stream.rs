@@ -431,7 +431,12 @@ pub(super) async fn ask_with_session(
                 }
                 response_started = false; // re-engage spinner to animate elapsed timer
             }
-            Response::ToolFinished { id, ok, elapsed_ms, detail } => {
+            Response::ToolFinished {
+                id,
+                ok,
+                elapsed_ms,
+                detail,
+            } => {
                 if let Some(idx) = pending_tools.iter().position(|p| p.id == id) {
                     pending_tools.remove(idx);
                 }
@@ -812,8 +817,7 @@ pub(super) async fn ask_with_session(
             | Response::SessionSaved { .. }
             | Response::SessionLoaded { .. }
             | Response::SavedSessionList { .. }
-            | Response::SessionDiff { .. } => {}
-            // ToolStarted / ToolFinished are handled above; unreachable here.
+            | Response::SessionDiff { .. } => {} // ToolStarted / ToolFinished are handled above; unreachable here.
         }
     }
 

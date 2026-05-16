@@ -17,7 +17,20 @@ const EVENTS_TAIL_LINES: usize = 10_000;
 ///
 /// `kind`: `"runbooks"` | `"scripts"` | `"memory"` | `"events"` | `"all"`
 /// `context_lines`: lines of surrounding context to include with each match.
+#[allow(dead_code)]
 pub fn search_repository(query: &str, kind: &str, context_lines: usize) -> Vec<SearchResult> {
+    search_repository_with_namespaces(query, kind, context_lines, &["global"])
+}
+
+/// Search across knowledge-base directories with namespace-aware memory paths.
+///
+/// `namespaces`: list of namespaces to search for memory entries (e.g. `["analyst", "global"]`).
+pub fn search_repository_with_namespaces(
+    query: &str,
+    kind: &str,
+    context_lines: usize,
+    namespaces: &[&str],
+) -> Vec<SearchResult> {
     let query_lower = query.to_lowercase();
     let base = crate::config::config_dir();
 
@@ -30,35 +43,29 @@ pub fn search_repository(query: &str, kind: &str, context_lines: usize) -> Vec<S
         "scripts" => {
             dirs.push((base.join("scripts"), "script".to_string()));
         }
-        "memory" => {
-            dirs.push((
-                base.join("memory").join("session"),
-                "memory/session".to_string(),
-            ));
-            dirs.push((
-                base.join("memory").join("knowledge"),
-                "memory/knowledge".to_string(),
-            ));
-            dirs.push((
-                base.join("memory").join("incidents"),
-                "memory/incidents".to_string(),
-            ));
-        }
-        "all" => {
-            dirs.push((base.join("runbooks"), "runbook".to_string()));
-            dirs.push((base.join("scripts"), "script".to_string()));
-            dirs.push((
-                base.join("memory").join("session"),
-                "memory/session".to_string(),
-            ));
-            dirs.push((
-                base.join("memory").join("knowledge"),
-                "memory/knowledge".to_string(),
-            ));
-            dirs.push((
-                base.join("memory").join("incidents"),
-                "memory/incidents".to_string(),
-            ));
+        "memory" | "all" => {
+            // Add memory directories for each namespace
+            for ns in namespaces {
+                let mem_base = if *ns == "global" {
+                    base.join("memory")
+                } else {
+                    base.join("agents").join(ns).join("memory")
+                };
+                if mem_base.join("session").exists() || *ns == "global" {
+                    dirs.push((mem_base.join("session"), "memory/session".to_string()));
+                }
+                if mem_base.join("knowledge").exists() || *ns == "global" {
+                    dirs.push((mem_base.join("knowledge"), "memory/knowledge".to_string()));
+                }
+                if mem_base.join("incidents").exists() || *ns == "global" {
+                    dirs.push((mem_base.join("incidents"), "memory/incidents".to_string()));
+                }
+            }
+            // For "all", also include runbooks and scripts
+            if kind == "all" {
+                dirs.push((base.join("runbooks"), "runbook".to_string()));
+                dirs.push((base.join("scripts"), "script".to_string()));
+            }
         }
         _ => {
             dirs.push((base.join("runbooks"), "runbook".to_string()));

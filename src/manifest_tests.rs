@@ -83,12 +83,14 @@ fn manifest_knowledge_and_incidents() {
             "prod-db-hosts",
             "db1, db2",
             crate::memory::MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
         crate::memory::add_memory(
             "2026-02-incident",
             "db failover",
             crate::memory::MemoryCategory::Incident,
+            "global",
         )
         .unwrap();
         let m = build_knowledge_manifest();
@@ -110,6 +112,7 @@ fn manifest_excludes_session_memories() {
             "my-session-pref",
             "dark mode",
             crate::memory::MemoryCategory::Session,
+            "global",
         )
         .unwrap();
         let m = build_knowledge_manifest();
@@ -132,6 +135,7 @@ fn manifest_caps_at_1kb() {
                 &format!("very-long-key-name-for-testing-{:02}", i),
                 "value",
                 crate::memory::MemoryCategory::Knowledge,
+                "global",
             )
             .unwrap();
         }
@@ -156,12 +160,14 @@ fn manifest_mixed_stores() {
             "monitoring-stack",
             "prometheus+grafana",
             crate::memory::MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
         crate::memory::add_memory(
             "2026-01-outage",
             "details",
             crate::memory::MemoryCategory::Incident,
+            "global",
         )
         .unwrap();
         let m = build_knowledge_manifest();
@@ -218,6 +224,7 @@ fn auto_search_matches_memory_key() {
             "prod-db-hosts",
             "db1.internal, db2.internal",
             crate::memory::MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
         let result = auto_search_context("connect to prod-db-hosts", "");
@@ -282,6 +289,7 @@ fn auto_search_max_three_items() {
                 &format!("key-{i}"),
                 &format!("content for key-{i}"),
                 crate::memory::MemoryCategory::Knowledge,
+                "global",
             )
             .unwrap();
         }
@@ -340,6 +348,7 @@ fn related_hints_caps_at_three() {
                 &format!("key-{i}"),
                 "v",
                 crate::memory::MemoryCategory::Knowledge,
+                "global",
             )
             .unwrap();
         }
@@ -388,6 +397,7 @@ fn manifest_shows_memory_tags() {
             "webhook-setup",
             "---\ntags: [webhook, alertmanager]\n---\nSetup instructions here",
             crate::memory::MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
         let m = build_knowledge_manifest();
@@ -421,6 +431,7 @@ fn auto_search_matches_memory_tags() {
             "postgres-config",
             "---\ntags: [postgres, database]\n---\nConnection string: ...",
             crate::memory::MemoryCategory::Knowledge,
+            "global",
         )
         .unwrap();
         let result = auto_search_context("postgres is down", "");

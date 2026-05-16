@@ -1444,11 +1444,13 @@ pub fn dispatch_tool_event(
             id: id.to_string(),
             thought_signature: ts,
         }),
-        "cancel_schedule" => schedule_id_event(args, ts.clone(), |jid, t| AiEvent::CancelSchedule {
-            id: id.to_string(),
-            job_id: jid,
-            thought_signature: t,
-        }),
+        "cancel_schedule" => {
+            schedule_id_event(args, ts.clone(), |jid, t| AiEvent::CancelSchedule {
+                id: id.to_string(),
+                job_id: jid,
+                thought_signature: t,
+            })
+        }
         "delete_schedule" => schedule_id_event(args, ts, |jid, t| AiEvent::DeleteSchedule {
             id: id.to_string(),
             job_id: jid,
@@ -1620,7 +1622,9 @@ mod tests {
                 "list_panes" => json!({}),
                 "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),
-                "create_agent" => json!({"name": "analyst", "description": "test", "prompt": "You are a test."}),
+                "create_agent" => {
+                    json!({"name": "analyst", "description": "test", "prompt": "You are a test."})
+                }
                 "read_agent" => json!({"name": "analyst"}),
                 "list_agents" => json!({}),
                 "delete_agent" => json!({"name": "analyst"}),

@@ -434,7 +434,12 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
     // produced (i.e. the full hint overflows base alone but the terminal is wide
     // enough to show something useful).
     let mut candidates: Vec<Box<dyn Fn() -> String>> = vec![
-        Box::new(|| format!("{}{}{}{}{}", base, model_str, tools_str, token_str, hint_str)),
+        Box::new(|| {
+            format!(
+                "{}{}{}{}{}",
+                base, model_str, tools_str, token_str, hint_str
+            )
+        }),
         Box::new(|| format!("{}{}{}{}", base, model_str, tools_str, hint_str)),
         Box::new(|| format!("{}{}{}", base, model_str, hint_str)),
         Box::new(|| format!("{}{}", base, hint_str)),
