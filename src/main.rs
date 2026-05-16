@@ -596,22 +596,23 @@ fn run_agent_delete(name: &str) -> anyhow::Result<()> {
 }
 
 fn run_agent_briefing(name: &str, clear: bool) -> anyhow::Result<()> {
-    let briefing_path = agents::agent_dir(name).join("briefing.md");
     if clear {
-        if briefing_path.exists() {
-            std::fs::remove_file(&briefing_path)?;
+        if daemon::briefing::read_briefing(name).is_some() {
+            daemon::briefing::clear_briefing(name);
             println!("Briefing for agent '{}' cleared.", name);
         } else {
             println!("No briefing found for agent '{}'.", name);
         }
         return Ok(());
     }
-    if briefing_path.exists() {
-        let content = std::fs::read_to_string(&briefing_path)?;
-        println!("\x1b[1mBriefing for {}\x1b[0m\n", name);
-        println!("{}", content);
-    } else {
-        println!("No briefing found for agent '{}'.", name);
+    match daemon::briefing::read_briefing(name) {
+        Some(content) => {
+            println!("\x1b[1mBriefing for {}\x1b[0m\n", name);
+            println!("{}", content);
+        }
+        None => {
+            println!("No briefing found for agent '{}'.", name);
+        }
     }
     Ok(())
 }

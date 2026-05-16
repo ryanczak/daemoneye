@@ -74,6 +74,14 @@ pub fn config_path(name: &str) -> PathBuf {
     agent_dir(name).join("config.toml")
 }
 
+/// Path to the briefing markdown file for a specific agent.
+///
+/// Briefings are written after each clean ghost shell exit and injected into
+/// the next invocation as prior context.
+pub fn briefing_path(name: &str) -> PathBuf {
+    agent_dir(name).join("briefing.md")
+}
+
 /// Validate an agent name slug.
 ///
 /// Rules: `[a-z0-9-]+`, 1–48 chars, no leading/trailing dash.

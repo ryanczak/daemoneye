@@ -177,7 +177,7 @@ pub async fn trigger_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
-    let (_messages, _ghost_config, tmux_session, _target_pane, ghost_active_model) = {
+    let (_messages, ghost_config, tmux_session, _target_pane, ghost_active_model) = {
         let store = sessions.lock().unwrap_or_log();
         let Some(entry) = store.get(session_id) else {
             anyhow::bail!("Ghost Shell '{}' not found", session_id);
@@ -803,6 +803,17 @@ pub async fn trigger_ghost_turn(
         }),
     );
     crate::daemon::stats::inc_ghosts_completed();
+
+    // Briefing generation: best-effort summary for the next invocation.
+    if let Some(ref gc) = ghost_config
+        && let Some(ref agent_name) = gc.agent
+    {
+        crate::daemon::briefing::generate_and_save_briefing(
+            agent_name, session_id, sessions, config,
+        )
+        .await;
+    }
+
     Ok(())
 }
 

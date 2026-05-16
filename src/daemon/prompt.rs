@@ -21,6 +21,8 @@ pub struct PromptCtx<'a> {
     pub memory_namespaces: &'a [&'a str],
     /// Agent-level tool policy, if this session has one.
     pub tool_policy: Option<&'a crate::agents::ToolPolicy>,
+    /// Agent name for briefing injection (ghost shells only).
+    pub agent_name: Option<&'a str>,
 }
 
 /// Prepend a `[FOREGROUND TARGET]` line to the session context block.
@@ -97,6 +99,11 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
         .and_then(crate::agents::policy::format_tool_restriction_block)
         .map(|s| format!("{}\n\n", s))
         .unwrap_or_default();
+    let briefing_block = ctx
+        .agent_name
+        .and_then(crate::daemon::briefing::read_briefing)
+        .map(|content| format!("## Previous Session Summary\n{}\n\n", content))
+        .unwrap_or_default();
     let current_time_line = format_current_time_line();
     let pane_map = ctx.cache.pane_map_summary(ctx.chat_pane);
 
@@ -110,6 +117,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
          - background=true  → runs on DAEMON HOST ({daemon_host})\n\
          - background=false → runs in USER'S PANE ({pane_location})\n\n\
          {tool_restriction_block}\
+         {briefing_block}\
          {memory_block}\
          {manifest_block}\
          {auto_search_block}\

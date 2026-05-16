@@ -823,3 +823,81 @@ fn g3_tool_policy_runbook_precedence_over_agent() {
         "runbook policy should allow search_repository"
     );
 }
+
+// ---------------------------------------------------------------------------
+// G4 — Persistent Briefing State
+// ---------------------------------------------------------------------------
+
+/// Verify that when a briefing file exists for an agent, the briefing helpers
+/// can read and clear it correctly.
+#[test]
+fn g4_briefing_read_and_clear() {
+    use daemoneye::agents;
+    use daemoneye::daemon::briefing;
+
+    let tmp = temp_daemoneye_home();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", &tmp);
+    }
+
+    // Write a briefing file manually.
+    let path = agents::briefing_path("test-agent");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        "Key findings: disk full on /dev/sda1\nActions: cleared logs",
+    )
+    .unwrap();
+
+    // Read it back.
+    let content = briefing::read_briefing("test-agent").expect("briefing should exist");
+    assert!(content.contains("disk full"));
+    assert!(content.contains("cleared logs"));
+
+    // Clear it.
+    briefing::clear_briefing("test-agent");
+    assert!(
+        briefing::read_briefing("test-agent").is_none(),
+        "briefing should be gone after clear"
+    );
+
+    // Clearing again is a no-op.
+    briefing::clear_briefing("test-agent");
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Verify that the `format_tool_restriction_block` function produces the
+/// correct output for both allow and deny modes (G3, but tested here alongside G4).
+#[test]
+fn g4_briefing_injection_block_format() {
+    use daemoneye::agents::ToolPolicy;
+    use daemoneye::agents::policy::format_tool_restriction_block;
+
+    // Allow mode
+    let allow_policy = ToolPolicy {
+        allow: Some(vec!["read_file".to_string()]),
+        deny: None,
+    };
+    let block = format_tool_restriction_block(&allow_policy).unwrap();
+    assert!(block.contains("## Tool Restrictions"));
+    assert!(block.contains("available: read_file"));
+
+    // Deny mode
+    let deny_policy = ToolPolicy {
+        allow: None,
+        deny: Some(vec!["edit_file".to_string()]),
+    };
+    let block = format_tool_restriction_block(&deny_policy).unwrap();
+    assert!(block.contains("## Tool Restrictions"));
+    assert!(block.contains("NOT available"));
+    assert!(block.contains("edit_file"));
+
+    // Unrestricted
+    assert!(format_tool_restriction_block(&ToolPolicy::default()).is_none());
+}
