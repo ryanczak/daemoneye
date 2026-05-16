@@ -23,16 +23,10 @@ pub fn print_tool_panel(title: &str, body: &[&str], dim_body: bool) {
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
     for line in body {
         for wrapped_line in wrap_line_hard(line, avail) {
-            let vis = visual_len(&wrapped_line);
-            let pad = " ".repeat(inner.saturating_sub(2 + vis));
             if dim_body {
-                println!(
-                    "\x1b[38;5;88m\x1b[1m│\x1b[0m  \x1b[2m{wrapped_line}\x1b[0m{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m"
-                );
+                println!("  \x1b[2m{wrapped_line}\x1b[0m");
             } else {
-                println!(
-                    "\x1b[38;5;88m\x1b[1m│\x1b[0m  {wrapped_line}{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m"
-                );
+                println!("  {wrapped_line}");
             }
         }
     }
@@ -115,9 +109,7 @@ pub fn print_user_query(query: &str, turn: usize, prompt_tokens: u32, context_wi
     let avail = inner.saturating_sub(2); // 2 for the "  " indent
     for raw_line in query.lines() {
         for wrapped in wrap_line_hard(raw_line, avail) {
-            let vis = visual_len(&wrapped);
-            let pad = " ".repeat(inner.saturating_sub(2 + vis));
-            println!("\x1b[38;5;88m\x1b[1m│\x1b[0m  {wrapped}{pad}\x1b[38;5;88m\x1b[1m│\x1b[0m");
+            println!("  {wrapped}");
         }
     }
 
