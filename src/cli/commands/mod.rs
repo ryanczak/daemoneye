@@ -8,6 +8,7 @@ use crate::config::Config;
 mod approval;
 mod approval_ui;
 mod ask;
+mod costs;
 mod ipc_client;
 mod lifecycle;
 mod pane;
@@ -15,6 +16,7 @@ mod setup;
 mod stream;
 
 pub use ask::run_ask;
+pub use costs::{GroupBy, run_costs};
 pub use ipc_client::{connect, recv, send_request};
 pub use lifecycle::{run_logs, run_ping, run_stop};
 pub use setup::run_setup;

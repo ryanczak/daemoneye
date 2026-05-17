@@ -86,6 +86,12 @@ pub struct SessionEntry {
     /// Task description passed to `spawn_ghost_shell` when this ghost was spawned.
     /// Used in mailbox results so the coordinator sees what the child was asked to do.
     pub ghost_task_message: Option<String>,
+    /// Cumulative cost of this session so far. Reset on /clear or new session.
+    pub cost_usd: f64,
+    /// Per-agent breakdown for this session (key = agent_name).
+    pub cost_by_agent: HashMap<String, f64>,
+    /// Whether any AI call in this session had Unknown pricing.
+    pub has_untracked_cost: bool,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -506,8 +512,147 @@ mod tests {
             artifacts_created: vec![],
             auto_name_suggested: false,
             ghost_task_message: None,
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
         };
         assert!(!entry.auto_name_suggested);
         assert!(entry.saved_name.is_none());
+    }
+
+    #[test]
+    fn session_entry_accumulates_cost_across_turns() {
+        let mut entry = SessionEntry {
+            messages: vec![],
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+        };
+
+        // Simulate three turns of cost accumulation.
+        entry.cost_usd += 0.10;
+        *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.10;
+        entry.cost_usd += 0.20;
+        *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.20;
+        entry.cost_usd += 0.05;
+        *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.05;
+
+        assert!((entry.cost_usd - 0.35).abs() < 1e-10);
+        assert!((entry.cost_by_agent["chat"] - 0.35).abs() < 1e-10);
+        assert!(!entry.has_untracked_cost);
+    }
+
+    #[test]
+    fn session_entry_per_agent_split() {
+        let mut entry = SessionEntry {
+            messages: vec![],
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+        };
+
+        // Simulate /agent switch mid-flow.
+        entry.cost_usd += 0.30;
+        *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.30;
+        entry.cost_usd += 0.15;
+        *entry
+            .cost_by_agent
+            .entry("architect".to_string())
+            .or_insert(0.0) += 0.15;
+
+        assert!((entry.cost_usd - 0.45).abs() < 1e-10);
+        assert!((entry.cost_by_agent["chat"] - 0.30).abs() < 1e-10);
+        assert!((entry.cost_by_agent["architect"] - 0.15).abs() < 1e-10);
+        assert_eq!(entry.cost_by_agent.len(), 2);
+    }
+
+    #[test]
+    fn unknown_pricing_sets_has_untracked_cost() {
+        let mut entry = SessionEntry {
+            messages: vec![],
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+        };
+
+        // Known pricing call.
+        entry.cost_usd += 0.10;
+        *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.10;
+        assert!(!entry.has_untracked_cost);
+
+        // Unknown pricing call — flag should flip.
+        entry.has_untracked_cost = true;
+        assert!(entry.has_untracked_cost);
+
+        // Subsequent known pricing calls don't reset the flag.
+        entry.cost_usd += 0.05;
+        *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.05;
+        assert!(entry.has_untracked_cost);
     }
 }

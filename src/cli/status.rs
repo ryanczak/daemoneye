@@ -71,6 +71,8 @@ pub async fn run_status() -> Result<()> {
                     file_edits_denied,
                     limits,
                     active_agents,
+                    daemon_session_costs: _,
+                    daemon_total_cost_today_usd: _,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;

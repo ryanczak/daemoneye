@@ -347,6 +347,7 @@ pub(super) async fn ask_with_session(
             Response::SessionInfo {
                 message_count: _,
                 turn_count,
+                ..
             } => {
                 // Print the user query as a bordered box with token budget in the bottom border.
                 // Skip for the greeting turn (display_query is empty).

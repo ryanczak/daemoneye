@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub use filter::mask_sensitive;
-pub use types::{AiEvent, Message, PendingCall, ToolResult};
+pub use types::{AiEvent, Message, PendingCall, TokenBreakdown, ToolResult};
 
 pub use backends::anthropic::AnthropicClient;
 pub use backends::gemini::GeminiClient;

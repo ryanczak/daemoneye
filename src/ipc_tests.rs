@@ -237,14 +237,38 @@ fn response_session_info_roundtrip() {
     let resp = Response::SessionInfo {
         message_count: 7,
         turn_count: 3,
+        session_cost_usd: 0.42,
+        has_untracked_cost: false,
     };
     match roundtrip_resp(&resp) {
         Response::SessionInfo {
             message_count,
             turn_count,
+            session_cost_usd,
+            has_untracked_cost,
         } => {
             assert_eq!(message_count, 7);
             assert_eq!(turn_count, 3);
+            assert!((session_cost_usd - 0.42).abs() < 1e-10);
+            assert!(!has_untracked_cost);
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn response_session_info_backward_compat_no_cost_fields() {
+    // Old daemons omit cost fields; defaults should be 0.0 and false.
+    let json = r#"{"SessionInfo":{"message_count":5,"turn_count":2}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+    match parsed {
+        Response::SessionInfo {
+            session_cost_usd,
+            has_untracked_cost,
+            ..
+        } => {
+            assert!((session_cost_usd - 0.0).abs() < 1e-10);
+            assert!(!has_untracked_cost);
         }
         _ => panic!("wrong variant"),
     }
@@ -679,6 +703,11 @@ fn response_daemon_status_roundtrip() {
         file_edits_denied: 0,
         limits: LimitsSummary::default(),
         active_agents: vec![("disk-monitor".to_string(), "checking disk".to_string())],
+        daemon_session_costs: vec![
+            ("sess-abc123".to_string(), 0.42),
+            ("sess-def456".to_string(), 0.18),
+        ],
+        daemon_total_cost_today_usd: 0.60,
     };
     match roundtrip_resp(&resp) {
         Response::DaemonStatus {
@@ -713,6 +742,8 @@ fn response_daemon_status_roundtrip() {
             recent_commands,
             memory_breakdown: mb,
             redaction_counts: rc,
+            daemon_session_costs,
+            daemon_total_cost_today_usd,
             ..
         } => {
             assert_eq!(uptime_secs, 3661);
@@ -747,6 +778,8 @@ fn response_daemon_status_roundtrip() {
             assert_eq!(mb.len(), 2);
             assert_eq!(rc.get("JWT").copied().unwrap_or(0), 3);
             assert_eq!(rc.get("Secret").copied().unwrap_or(0), 1);
+            assert_eq!(daemon_session_costs.len(), 2);
+            assert!((daemon_total_cost_today_usd - 0.60).abs() < 1e-10);
         }
         _ => panic!("wrong variant"),
     }

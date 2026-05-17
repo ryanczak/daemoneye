@@ -367,6 +367,12 @@ pub enum Response {
         /// Ever-increasing turn number for this session (never reset by compaction).
         #[serde(default)]
         turn_count: usize,
+        /// Cumulative cost of this session so far.
+        #[serde(default)]
+        session_cost_usd: f64,
+        /// Whether any AI call in this session had Unknown pricing.
+        #[serde(default)]
+        has_untracked_cost: bool,
     },
     /// A stream of tokens from the AI.
     Token(String),
@@ -596,6 +602,12 @@ pub enum Response {
         /// `"unknown"` if none was recorded.
         #[serde(default)]
         active_agents: Vec<(String, String)>,
+        /// Per-session cost totals: `(session_id, cost_usd)`.
+        #[serde(default)]
+        daemon_session_costs: Vec<(String, f64)>,
+        /// Aggregated daemon-wide cost for today from events.jsonl.
+        #[serde(default)]
+        daemon_total_cost_today_usd: f64,
     },
     /// Confirmation that a session was saved (response to `SaveSession`).
     SessionSaved { name: String },

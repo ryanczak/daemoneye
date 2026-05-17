@@ -104,6 +104,24 @@ enum Commands {
         #[command(subcommand)]
         cmd: AgentCommands,
     },
+    /// Show AI cost summary from events log
+    Costs {
+        /// Start date (YYYY-MM-DD, inclusive)
+        #[arg(long, value_name = "DATE")]
+        since: Option<String>,
+        /// End date (YYYY-MM-DD, inclusive)
+        #[arg(long, value_name = "DATE")]
+        until: Option<String>,
+        /// Group results by this dimension
+        #[arg(long, value_enum, default_value = "day")]
+        by: cli::GroupBy,
+        /// Filter to a specific agent name
+        #[arg(long, value_name = "NAME")]
+        agent: Option<String>,
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -418,6 +436,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 run_agent_briefing(&name, clear)?;
             }
         },
+        Commands::Costs {
+            since,
+            until,
+            by,
+            agent,
+            json,
+        } => {
+            cli::run_costs(since, until, by, agent, json)?;
+        }
     }
 
     Ok(())

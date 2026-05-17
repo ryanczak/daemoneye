@@ -136,6 +136,8 @@ fn ipc_session_info_round_trip() {
     let resp = Response::SessionInfo {
         message_count: 10,
         turn_count: 5,
+        session_cost_usd: 0.42,
+        has_untracked_cost: false,
     };
 
     let json = serde_json::to_string(&resp).expect("serialize");
@@ -145,9 +147,13 @@ fn ipc_session_info_round_trip() {
         Response::SessionInfo {
             message_count,
             turn_count,
+            session_cost_usd,
+            has_untracked_cost,
         } => {
             assert_eq!(message_count, 10);
             assert_eq!(turn_count, 5);
+            assert!((session_cost_usd - 0.42).abs() < 1e-10);
+            assert!(!has_untracked_cost);
         }
         _ => panic!("expected SessionInfo variant"),
     }
@@ -314,6 +320,66 @@ fn event_log_entry_format() {
     assert_eq!(last["event"], "webhook_alert");
     assert_eq!(last["alert_name"], "HighCPU");
     assert!(last["ts"].is_string());
+}
+
+/// Verify that a CostRecord round-trips through events.jsonl correctly.
+#[test]
+fn cost_record_serializes_to_events_jsonl_round_trip() {
+    use daemoneye::config::PricingSource;
+    use daemoneye::cost::{Cost, CostRecord};
+    use daemoneye::daemon::utils::log_event;
+
+    let home = temp_daemoneye_home();
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().unwrap();
+
+    let record = CostRecord {
+        timestamp: chrono::Utc::now(),
+        session_id: "sess-integ-001".to_string(),
+        agent_name: "architect".to_string(),
+        is_ghost: true,
+        parent_job_id: Some("ghost-parent-001".to_string()),
+        provider: "anthropic".to_string(),
+        model: "claude-sonnet-4-6".to_string(),
+        tokens: daemoneye::ai::TokenBreakdown {
+            input_tokens: 2000,
+            output_tokens: 800,
+            cache_read_tokens: 5000,
+            cache_write_tokens: 1000,
+        },
+        cost: Cost {
+            input_cost_usd: 0.006,
+            output_cost_usd: 0.012,
+            cache_read_cost_usd: 0.0015,
+            cache_write_cost_usd: 0.00375,
+            total_cost_usd: 0.02325,
+        },
+        pricing_source: PricingSource::BuiltinDefault,
+    };
+
+    log_event("ai_cost", serde_json::to_value(&record).unwrap());
+
+    let path = daemoneye::config::events_path();
+    let content = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    let last: serde_json::Value =
+        serde_json::from_str(lines.last().unwrap()).expect("parse last line");
+
+    assert_eq!(last["event"], "ai_cost");
+    assert_eq!(last["session_id"], "sess-integ-001");
+    assert_eq!(last["agent_name"], "architect");
+    assert_eq!(last["is_ghost"], true);
+    assert_eq!(last["parent_job_id"], "ghost-parent-001");
+    assert_eq!(last["provider"], "anthropic");
+    assert_eq!(last["model"], "claude-sonnet-4-6");
+    assert_eq!(last["tokens"]["input_tokens"], 2000);
+    assert_eq!(last["tokens"]["output_tokens"], 800);
+    assert_eq!(last["tokens"]["cache_read_tokens"], 5000);
+    assert_eq!(last["tokens"]["cache_write_tokens"], 1000);
+    assert_eq!(last["pricing_source"], "BuiltinDefault");
 }
 
 /// Verify that multiple log_event() calls append correctly and are readable

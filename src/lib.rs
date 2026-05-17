@@ -6,6 +6,7 @@ pub mod agents;
 pub mod ai;
 pub mod cli;
 pub mod config;
+pub mod cost;
 pub mod daemon;
 pub mod ipc;
 pub mod scheduler;

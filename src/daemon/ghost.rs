@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use tokio::io::BufReader;
 
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
-use crate::config::{Config, load_named_prompt};
+use crate::config::{Config, PricingSource, load_named_prompt};
+use crate::cost::{CostRecord, compute_cost};
 use crate::daemon::session::{SessionEntry, SessionStore, append_session_message};
 use crate::daemon::utils::daemon_hostname;
 use crate::runbook::Runbook;
@@ -240,6 +241,9 @@ impl GhostManager {
             artifacts_created: Vec::new(),
             auto_name_suggested: false,
             ghost_task_message: None,
+            cost_usd: 0.0,
+            cost_by_agent: std::collections::HashMap::new(),
+            has_untracked_cost: false,
         };
 
         {
@@ -766,7 +770,50 @@ async fn do_ghost_turn(
                             timeout_secs,
                         });
                     }
-                    AiEvent::Done(_) => break,
+                    AiEvent::Done(usage) => {
+                        let pricing = model_entry.pricing().unwrap_or(crate::config::Pricing {
+                            input_per_mtok: 0.0,
+                            output_per_mtok: 0.0,
+                            cache_read_per_mtok: 0.0,
+                            cache_write_per_mtok: 0.0,
+                            source: PricingSource::Unknown,
+                        });
+                        let cost = compute_cost(&usage, &pricing);
+                        let attribution =
+                            crate::cost::CostAttribution::from_ghost_config(ghost_config.as_ref());
+                        let record = CostRecord {
+                            timestamp: chrono::Utc::now(),
+                            session_id: session_id.to_string(),
+                            agent_name: attribution.agent_name,
+                            is_ghost: attribution.is_ghost,
+                            parent_job_id: attribution.parent_job_id,
+                            provider: model_entry.provider.clone(),
+                            model: model_entry.model.clone(),
+                            tokens: usage,
+                            cost,
+                            pricing_source: pricing.source,
+                        };
+                        crate::daemon::utils::log_event(
+                            "ai_cost",
+                            serde_json::to_value(&record)
+                                .expect("CostRecord serialization is infallible"),
+                        );
+
+                        // Accumulate cost on the session entry.
+                        if let Ok(mut store) = sessions.lock()
+                            && let Some(entry) = store.get_mut(session_id)
+                        {
+                            entry.cost_usd += record.cost.total_cost_usd;
+                            *entry
+                                .cost_by_agent
+                                .entry(record.agent_name.clone())
+                                .or_insert(0.0) += record.cost.total_cost_usd;
+                            if record.pricing_source == PricingSource::Unknown {
+                                entry.has_untracked_cost = true;
+                            }
+                        }
+                        break;
+                    }
                     AiEvent::Error(e) => {
                         crate::daemon::utils::log_event(
                             "ghost_error",

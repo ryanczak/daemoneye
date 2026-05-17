@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecentCommand {
@@ -408,4 +409,186 @@ pub fn get_compaction_ratio() -> f64 {
         return 0.0;
     }
     COMPACTION_MSGS_IN.load(Ordering::Relaxed) as f64 / out as f64
+}
+
+/// Cached result of today's daemon-wide cost aggregation.
+/// The tuple is `(cached_at, total_cost_usd, session_costs)`.
+type CostTodayCacheEntry = (Instant, f64, Vec<(String, f64)>);
+static COST_TODAY_CACHE: Mutex<Option<CostTodayCacheEntry>> = Mutex::new(None);
+
+/// Cost aggregation result for today.
+pub struct CostTodayResult {
+    /// Total cost across all sessions today.
+    pub total_cost_usd: f64,
+    /// Per-session cost breakdown: `(session_id, cost_usd)`.
+    pub session_costs: Vec<(String, f64)>,
+}
+
+/// Compute today's daemon-wide cost by scanning `events.jsonl` for `ai_cost` events.
+///
+/// Results are cached for 5 seconds to avoid re-scanning on every status call.
+/// Only events with a `timestamp` field falling on today's date (UTC) are included.
+pub fn compute_cost_today() -> CostTodayResult {
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+    // Check cache first.
+    if let Ok(guard) = COST_TODAY_CACHE.lock()
+        && let Some((cached_at, total, sessions)) = guard.as_ref()
+        && cached_at.elapsed() < CACHE_TTL
+    {
+        return CostTodayResult {
+            total_cost_usd: *total,
+            session_costs: sessions.clone(),
+        };
+    }
+
+    // Scan events.jsonl for today's ai_cost events.
+    let today_start = chrono::Utc::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc();
+    let today_end = today_start + chrono::Duration::days(1);
+
+    let mut total: f64 = 0.0;
+    let mut by_session: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+
+    let events_path = crate::config::events_path();
+    if let Ok(file) = std::fs::File::open(&events_path) {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(file);
+        for line in reader.lines() {
+            let Ok(line) = line else { continue };
+            let Ok(value): Result<serde_json::Value, _> = serde_json::from_str(&line) else {
+                continue;
+            };
+            // Only process ai_cost events.
+            if value.get("event").and_then(|v| v.as_str()) != Some("ai_cost") {
+                continue;
+            }
+            // Parse timestamp and check if it falls within today.
+            let Some(ts_str) = value.get("ts").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str) else {
+                continue;
+            };
+            let ts_utc = ts.with_timezone(&chrono::Utc);
+            if ts_utc < today_start || ts_utc >= today_end {
+                continue;
+            }
+            // Extract cost.
+            let cost = value
+                .get("cost")
+                .and_then(|c| c.get("total_cost_usd"))
+                .and_then(|c| c.as_f64())
+                .unwrap_or(0.0);
+            total += cost;
+            let session_id = value
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("-")
+                .to_string();
+            *by_session.entry(session_id).or_insert(0.0) += cost;
+        }
+    }
+
+    let mut session_costs: Vec<(String, f64)> = by_session.into_iter().collect();
+    session_costs.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Update cache.
+    if let Ok(mut guard) = COST_TODAY_CACHE.lock() {
+        *guard = Some((Instant::now(), total, session_costs.clone()));
+    }
+
+    CostTodayResult {
+        total_cost_usd: total,
+        session_costs,
+    }
+}
+
+/// Reset the cost-today cache. Intended for test use only.
+#[cfg(test)]
+pub fn reset_cost_today_cache() {
+    if let Ok(mut guard) = COST_TODAY_CACHE.lock() {
+        *guard = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_cost_today_returns_zero_on_missing_file() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let result = compute_cost_today();
+        assert!((result.total_cost_usd - 0.0).abs() < 1e-10);
+        assert!(result.session_costs.is_empty());
+    }
+
+    #[test]
+    fn compute_cost_today_caches_result() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let r1 = compute_cost_today();
+        let r2 = compute_cost_today();
+        assert!((r1.total_cost_usd - r2.total_cost_usd).abs() < 1e-10);
+    }
+
+    #[test]
+    fn daemon_total_cost_today_aggregates_events_jsonl() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let events_path = crate::config::events_path();
+        std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+        let today = chrono::Utc::now().to_rfc3339();
+        let line1 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","cost":{{"total_cost_usd":0.10}}}}"#
+        );
+        let line2 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","cost":{{"total_cost_usd":0.05}}}}"#
+        );
+        std::fs::write(&events_path, format!("{}\n{}\n", line1, line2)).unwrap();
+
+        let result = compute_cost_today();
+
+        assert!((result.total_cost_usd - 0.15).abs() < 1e-10);
+        assert_eq!(result.session_costs.len(), 1);
+        assert!((result.session_costs[0].1 - 0.15).abs() < 1e-10);
+    }
+
+    #[test]
+    fn daemon_total_cost_today_excludes_yesterday() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let events_path = crate::config::events_path();
+        std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+        let today = chrono::Utc::now().to_rfc3339();
+        let yesterday = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+        let old = format!(
+            r#"{{"event":"ai_cost","ts":"{yesterday}","session_id":"s1","cost":{{"total_cost_usd":5.00}}}}"#
+        );
+        let new = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","cost":{{"total_cost_usd":0.10}}}}"#
+        );
+        std::fs::write(&events_path, format!("{}\n{}\n", old, new)).unwrap();
+
+        let result = compute_cost_today();
+
+        assert!((result.total_cost_usd - 0.10).abs() < 1e-10);
+    }
 }

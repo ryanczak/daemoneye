@@ -2,6 +2,7 @@ use crate::ai::Message;
 use crate::ai::filter::mask_sensitive;
 use crate::config::default_socket_path;
 use crate::config::{Config, load_named_prompt};
+use crate::cost::CostAttribution;
 use crate::daemon::prompt::{PromptCtx, build_first_turn_prompt, build_subsequent_turn_prompt};
 use crate::daemon::session::*;
 use crate::daemon::stream;
@@ -601,6 +602,19 @@ where
     let compactions = crate::daemon::stats::get_compactions();
     let compaction_ratio = crate::daemon::stats::get_compaction_ratio();
 
+    // Compute today's cost aggregation (cached for 5s).
+    let cost_today = crate::daemon::stats::compute_cost_today();
+
+    // Collect per-session cost totals from active sessions.
+    let session_costs: Vec<(String, f64)> = if let Ok(sess_map) = sessions.lock() {
+        sess_map
+            .iter()
+            .map(|(id, entry)| (id.clone(), entry.cost_usd))
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     send_response_split(
         tx,
         Response::DaemonStatus {
@@ -700,6 +714,8 @@ where
                 agents.sort_by(|a, b| a.0.cmp(&b.0));
                 agents
             },
+            daemon_session_costs: session_costs,
+            daemon_total_cost_today_usd: cost_today.total_cost_usd,
         },
     )
     .await?;
@@ -1113,119 +1129,128 @@ where
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
     // Also capture any pending catch-up brief (N15) and pane-drift notice to
     // send after SessionInfo.
-    let (catchup_brief, pane_drift_msg): (Option<String>, Option<String>) =
-        if let Some(ref id) = session_id {
-            if let Ok(mut store) = sessions.lock() {
-                let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
-                    messages: Vec::new(),
-                    last_accessed: Instant::now(),
-                    chat_pane: chat_pane.clone(),
-                    default_target_pane: client_target_pane.clone(),
-                    bg_windows: Vec::new(),
-                    last_prompt_tokens: 0,
-                    tmux_session: session_name.clone(),
-                    last_detach: None,
-                    messages_at_detach: 0,
-                    pipe_source_pane: None,
-                    is_ghost: false,
-                    ghost_config: None,
-                    ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
-                    started_at: chrono::Utc::now(),
-                    turn_count: 0,
-                    tool_calls_this_session: 0,
-                    active_model: None,
-                    last_snapshot_activity: 0,
-                    saved_name: None,
-                    dirty: false,
-                    artifacts_created: Vec::new(),
-                    auto_name_suggested: false,
-                    ghost_task_message: None,
-                });
-                entry.chat_pane = chat_pane.clone();
-                entry.tmux_session = session_name.clone();
+    let (catchup_brief, pane_drift_msg, session_cost_usd, has_untracked_cost): (
+        Option<String>,
+        Option<String>,
+        f64,
+        bool,
+    ) = if let Some(ref id) = session_id {
+        if let Ok(mut store) = sessions.lock() {
+            let entry = store.entry(id.clone()).or_insert_with(|| SessionEntry {
+                messages: Vec::new(),
+                last_accessed: Instant::now(),
+                chat_pane: chat_pane.clone(),
+                default_target_pane: client_target_pane.clone(),
+                bg_windows: Vec::new(),
+                last_prompt_tokens: 0,
+                tmux_session: session_name.clone(),
+                last_detach: None,
+                messages_at_detach: 0,
+                pipe_source_pane: None,
+                is_ghost: false,
+                ghost_config: None,
+                ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+                started_at: chrono::Utc::now(),
+                turn_count: 0,
+                tool_calls_this_session: 0,
+                active_model: None,
+                last_snapshot_activity: 0,
+                saved_name: None,
+                dirty: false,
+                artifacts_created: Vec::new(),
+                auto_name_suggested: false,
+                ghost_task_message: None,
+                cost_usd: 0.0,
+                cost_by_agent: std::collections::HashMap::new(),
+                has_untracked_cost: false,
+            });
+            entry.chat_pane = chat_pane.clone();
+            entry.tmux_session = session_name.clone();
 
-                // Detect pane drift: the client resolved a different target pane than
-                // what was stored.  Announce the change to the model as a SystemMsg so
-                // it doesn't keep using the old pane ID.  Always adopt the new value —
-                // resolve_target_pane() on the client already respects pane_prefs.json,
-                // so if the user pinned a pane via /pane it will persist correctly.
-                let drift_msg = match (&entry.default_target_pane, &client_target_pane) {
-                    (Some(old), Some(new)) if old != new => {
-                        let old_clone = old.clone();
-                        entry.default_target_pane = Some(new.clone());
-                        Some(format!(
-                            "[Pane target changed] Foreground target is now {} (was {}). \
+            // Detect pane drift: the client resolved a different target pane than
+            // what was stored.  Announce the change to the model as a SystemMsg so
+            // it doesn't keep using the old pane ID.  Always adopt the new value —
+            // resolve_target_pane() on the client already respects pane_prefs.json,
+            // so if the user pinned a pane via /pane it will persist correctly.
+            let drift_msg = match (&entry.default_target_pane, &client_target_pane) {
+                (Some(old), Some(new)) if old != new => {
+                    let old_clone = old.clone();
+                    entry.default_target_pane = Some(new.clone());
+                    Some(format!(
+                        "[Pane target changed] Foreground target is now {} (was {}). \
                              Use target_pane=\"{}\" for run_terminal_command(background=false).",
-                            new, old_clone, new
-                        ))
-                    }
-                    (None, Some(new)) => {
-                        entry.default_target_pane = Some(new.clone());
-                        None // first assignment — no drift to announce
-                    }
-                    _ => None,
-                };
-
-                // R1: start pipe-pane for the source pane on the first Ask so we can
-                // capture full terminal output history (including content that has scrolled
-                // past the tmux scrollback buffer).  Best-effort — falls back to
-                // capture-pane silently if pipe-pane is unavailable.
-                //
-                // `pipe_source_pane = Some("")` is used as a "don't retry" sentinel:
-                // it means we attempted and failed (or deliberately skipped), so we
-                // fall back to capture-pane for all subsequent turns without retrying.
-                if entry.pipe_source_pane.is_none()
-                    && let Some(ref pane_id) = client_pane
-                {
-                    // Skip if client_pane == chat_pane: the chat pane runs the
-                    // daemoneye UI, not the user's work.  Piping it is useless and
-                    // can transiently fail immediately after split-window creates the
-                    // pane (pty not yet fully initialized) causing repeated log noise.
-                    let is_chat_pane = chat_pane.as_deref() == Some(pane_id.as_str());
-                    if is_chat_pane {
-                        log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
-                        entry.pipe_source_pane = Some(String::new()); // don't retry
-                    } else if crate::tmux::pane_exists(pane_id) {
-                        match crate::tmux::start_pipe_pane(pane_id) {
-                            Ok(_) => {
-                                entry.pipe_source_pane = Some(pane_id.clone());
-                            }
-                            Err(e) => {
-                                // Pane existed at check time but was gone by the time
-                                // pipe-pane ran (TOCTOU race) — don't retry this session.
-                                log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
-                                entry.pipe_source_pane = Some(String::new()); // don't retry
-                            }
-                        }
-                    } else {
-                        log::debug!(
-                            "R1: skipping pipe-pane for {} — pane no longer exists",
-                            pane_id
-                        );
-                        entry.pipe_source_pane = Some(String::new()); // don't retry
-                    }
+                        new, old_clone, new
+                    ))
                 }
+                (None, Some(new)) => {
+                    entry.default_target_pane = Some(new.clone());
+                    None // first assignment — no drift to announce
+                }
+                _ => None,
+            };
 
-                // N15: generate a catch-up brief if the client was detached and new
-                // messages arrived while no terminal was attached (background jobs,
-                // webhook alerts, watchdog results, etc.).
-                let brief = entry.last_detach.and_then(|detach_time| {
-                    let away_secs = detach_time.elapsed().as_secs();
-                    let new_msgs =
-                        &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
-                    build_catchup_brief(new_msgs, away_secs)
-                });
-
-                // Clear detach state regardless of whether we generated a brief.
-                entry.last_detach = None;
-
-                (brief, drift_msg)
-            } else {
-                (None, None)
+            // R1: start pipe-pane for the source pane on the first Ask so we can
+            // capture full terminal output history (including content that has scrolled
+            // past the tmux scrollback buffer).  Best-effort — falls back to
+            // capture-pane silently if pipe-pane is unavailable.
+            //
+            // `pipe_source_pane = Some("")` is used as a "don't retry" sentinel:
+            // it means we attempted and failed (or deliberately skipped), so we
+            // fall back to capture-pane for all subsequent turns without retrying.
+            if entry.pipe_source_pane.is_none()
+                && let Some(ref pane_id) = client_pane
+            {
+                // Skip if client_pane == chat_pane: the chat pane runs the
+                // daemoneye UI, not the user's work.  Piping it is useless and
+                // can transiently fail immediately after split-window creates the
+                // pane (pty not yet fully initialized) causing repeated log noise.
+                let is_chat_pane = chat_pane.as_deref() == Some(pane_id.as_str());
+                if is_chat_pane {
+                    log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
+                    entry.pipe_source_pane = Some(String::new()); // don't retry
+                } else if crate::tmux::pane_exists(pane_id) {
+                    match crate::tmux::start_pipe_pane(pane_id) {
+                        Ok(_) => {
+                            entry.pipe_source_pane = Some(pane_id.clone());
+                        }
+                        Err(e) => {
+                            // Pane existed at check time but was gone by the time
+                            // pipe-pane ran (TOCTOU race) — don't retry this session.
+                            log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                            entry.pipe_source_pane = Some(String::new()); // don't retry
+                        }
+                    }
+                } else {
+                    log::debug!(
+                        "R1: skipping pipe-pane for {} — pane no longer exists",
+                        pane_id
+                    );
+                    entry.pipe_source_pane = Some(String::new()); // don't retry
+                }
             }
+
+            // N15: generate a catch-up brief if the client was detached and new
+            // messages arrived while no terminal was attached (background jobs,
+            // webhook alerts, watchdog results, etc.).
+            let brief = entry.last_detach.and_then(|detach_time| {
+                let away_secs = detach_time.elapsed().as_secs();
+                let new_msgs =
+                    &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
+                build_catchup_brief(new_msgs, away_secs)
+            });
+
+            // Clear detach state regardless of whether we generated a brief.
+            entry.last_detach = None;
+
+            let cost_usd = entry.cost_usd;
+            let has_untracked = entry.has_untracked_cost;
+            (brief, drift_msg, cost_usd, has_untracked)
         } else {
-            (None, None)
-        };
+            (None, None, 0.0, false)
+        }
+    } else {
+        (None, None, 0.0, false)
+    };
 
     // Read the session's active model override once so it stays consistent for
     // the whole turn (including the budget line and every AI loop iteration).
@@ -1479,6 +1504,27 @@ where
         }
         entry.ghost_config.as_ref().and_then(|gc| gc.agent.clone())
     });
+    let (is_ghost_session, parent_job_id_owned): (bool, Option<String>) = session_id
+        .as_ref()
+        .and_then(|id| {
+            let store = sessions.lock().ok()?;
+            let entry = store.get(id)?;
+            Some((
+                entry.is_ghost,
+                entry
+                    .ghost_config
+                    .as_ref()
+                    .and_then(|gc| gc.parent_job_id.clone()),
+            ))
+        })
+        .unwrap_or((false, None));
+    let cost_attribution = CostAttribution {
+        agent_name: agent_name_owned
+            .clone()
+            .unwrap_or_else(|| "chat".to_string()),
+        is_ghost: is_ghost_session,
+        parent_job_id: parent_job_id_owned,
+    };
     let prompt_ctx = PromptCtx {
         client_pane: client_pane.as_deref(),
         chat_pane: chat_pane.as_deref(),
@@ -1520,6 +1566,8 @@ where
         Response::SessionInfo {
             message_count: history_count,
             turn_count: this_turn_count,
+            session_cost_usd,
+            has_untracked_cost,
         },
     )
     .await?;
@@ -1585,6 +1633,7 @@ where
         cache,
         Arc::clone(sessions),
         schedule_store,
+        cost_attribution,
     )
     .await
 }
