@@ -117,7 +117,7 @@ mod tests {
             output_per_mtok: output,
             cache_read_per_mtok: cache_read,
             cache_write_per_mtok: cache_write,
-            source: PricingSource::BuiltinDefault,
+            source: PricingSource::UserConfig,
         }
     }
 
@@ -277,7 +277,7 @@ mod tests {
                 cache_write_cost_usd: 0.0,
                 total_cost_usd: 0.0105,
             },
-            pricing_source: PricingSource::BuiltinDefault,
+            pricing_source: PricingSource::UserConfig,
         };
 
         let json = serde_json::to_string(&record).expect("serialize CostRecord");
@@ -288,6 +288,6 @@ mod tests {
         assert_eq!(back.model, "claude-sonnet-4-6");
         assert_eq!(back.tokens.input_tokens, 1000);
         assert!((back.cost.total_cost_usd - 0.0105).abs() < 1e-10);
-        assert_eq!(back.pricing_source, PricingSource::BuiltinDefault);
+        assert_eq!(back.pricing_source, PricingSource::UserConfig);
     }
 }

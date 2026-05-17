@@ -357,7 +357,7 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
             cache_write_cost_usd: 0.00375,
             total_cost_usd: 0.02325,
         },
-        pricing_source: PricingSource::BuiltinDefault,
+        pricing_source: PricingSource::UserConfig,
     };
 
     log_event("ai_cost", serde_json::to_value(&record).unwrap());
@@ -379,7 +379,7 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
     assert_eq!(last["tokens"]["output_tokens"], 800);
     assert_eq!(last["tokens"]["cache_read_tokens"], 5000);
     assert_eq!(last["tokens"]["cache_write_tokens"], 1000);
-    assert_eq!(last["pricing_source"], "BuiltinDefault");
+    assert_eq!(last["pricing_source"], "UserConfig");
 }
 
 /// Verify that multiple log_event() calls append correctly and are readable

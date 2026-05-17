@@ -1,111 +1,183 @@
-# The default model used for all interactive chat sessions.
-# Add additional [models.<name>] sections to define alternatives selectable
-# via the /model slash command.  Ghost shell runbooks may specify a model
-# by name in their frontmatter with `model: <name>`.
+# DaemonEye configuration — ~/.daemoneye/etc/config.toml
+#
+# At minimum, uncomment one [models.default] block and fill in your API key.
+# To use additional models (agent runbooks, /model command, digest), uncomment
+# more blocks and give each a unique key name.
+#
+# Pricing rates are USD per 1M tokens.  Keep them current — providers change
+# rates without notice.
+#   Anthropic  https://www.anthropic.com/pricing
+#   OpenAI     https://openai.com/api/pricing/
+#   Gemini     https://ai.google.dev/gemini-api/docs/pricing
+
+# ── Anthropic ────────────────────────────────────────────────────────────────
+
 [models.default]
 provider = "anthropic"
 api_key  = ""
 model    = "claude-sonnet-4-6"
+input_cost_per_mtok       = 3.00
+output_cost_per_mtok      = 15.00
+cache_read_cost_per_mtok  = 0.30
+cache_write_cost_per_mtok = 3.75
 
-# --- Optional: per-model pricing overrides ---
-# Built-in defaults are embedded for known models (listed below).
-# Local providers (ollama, lmstudio) always default to $0.
-# Set any rate to override the built-in; unset rates fall back to the built-in
-# default for that model.  Set all four to 0.0 to disable cost tracking.
-# All rates are USD per 1M tokens.
-#
-# Anthropic (cache_write is one-time write cost):
-#
-# claude-sonnet-4-6:  input=3.00  output=15.00  cache_read=0.30   cache_write=3.75
-# claude-opus-4-7:    input=15.00 output=75.00  cache_read=1.50   cache_write=18.75
-# claude-haiku-4-5-*: input=0.80  output=4.00   cache_read=0.08   cache_write=1.00
-#
-# OpenAI (no cache_write charge):
-#
-# gpt-4o:      input=2.50  output=10.00 cache_read=1.25  cache_write=0
-# gpt-4o-mini: input=0.15  output=0.60  cache_read=0.075 cache_write=0
-# o1:          input=15.00 output=60.00 cache_read=7.50  cache_write=0
-# o3-mini:     input=1.10  output=4.40  cache_read=0.55  cache_write=0
-#
-# Gemini (cache_write is $1/M tokens/hr storage — not trackable per-call, left 0):
-#
-# gemini-3.1-pro:        input=2.00  output=12.00 cache_read=0.50  cache_write=0
-# gemini-3.1-flash-lite: input=0.25  output=1.50  cache_read=0.025 cache_write=0
-# gemini-3-flash:        input=0.50  output=3.00  cache_read=0.125 cache_write=0
-# gemini-2.5-pro:        input=1.25  output=10.00 cache_read=0.125 cache_write=0
-# gemini-2.5-flash:      input=0.30  output=2.50  cache_read=0.03  cache_write=0
-# gemini-2.5-flash-lite: input=0.10  output=0.40  cache_read=0.01  cache_write=0
-#
-# Pro-tier Gemini models (3.1 Pro, 2.5 Pro) double their input/output rates
-# above 200k context.  DaemonEye always uses the lower tier shown above.
-#
-# Example override — swap rates for a new model not yet in the built-in table:
-#
-# [models.default]
-# provider = "anthropic"
-# model    = "claude-opus-5"
-# input_cost_per_mtok       = 20.00
-# output_cost_per_mtok      = 100.00
-# cache_read_cost_per_mtok  = 2.00
-# cache_write_cost_per_mtok = 25.00
-
-# --- Models used by the built-in example agents ---
-# Uncomment and fill in your API keys to activate the Architect, Researcher,
-# and Sysadmin agents that are seeded into ~/.daemoneye/agents/ on first run.
-
-# Used by the "architect" agent.
 # [models.opus]
 # provider = "anthropic"
+# api_key  = ""
 # model    = "claude-opus-4-7"
+# input_cost_per_mtok       = 15.00
+# output_cost_per_mtok      = 75.00
+# cache_read_cost_per_mtok  = 1.50
+# cache_write_cost_per_mtok = 18.75
 
-# Used by the "researcher" agent.
-# [models.gemini-pro]
+# [models.haiku]
+# provider = "anthropic"
+# api_key  = ""
+# model    = "claude-haiku-4-5-20251001"
+# input_cost_per_mtok       = 0.80
+# output_cost_per_mtok      = 4.00
+# cache_read_cost_per_mtok  = 0.08
+# cache_write_cost_per_mtok = 1.00
+
+# ── OpenAI ───────────────────────────────────────────────────────────────────
+
+# [models.gpt4o]
+# provider = "openai"
+# api_key  = ""
+# model    = "gpt-4o"
+# input_cost_per_mtok       = 2.50
+# output_cost_per_mtok      = 10.00
+# cache_read_cost_per_mtok  = 1.25
+# cache_write_cost_per_mtok = 0.0
+
+# [models.gpt4o-mini]
+# provider = "openai"
+# api_key  = ""
+# model    = "gpt-4o-mini"
+# input_cost_per_mtok       = 0.15
+# output_cost_per_mtok      = 0.60
+# cache_read_cost_per_mtok  = 0.075
+# cache_write_cost_per_mtok = 0.0
+
+# [models.o1]
+# provider = "openai"
+# api_key  = ""
+# model    = "o1"
+# input_cost_per_mtok       = 15.00
+# output_cost_per_mtok      = 60.00
+# cache_read_cost_per_mtok  = 7.50
+# cache_write_cost_per_mtok = 0.0
+
+# [models.o3-mini]
+# provider = "openai"
+# api_key  = ""
+# model    = "o3-mini"
+# input_cost_per_mtok       = 1.10
+# output_cost_per_mtok      = 4.40
+# cache_read_cost_per_mtok  = 0.55
+# cache_write_cost_per_mtok = 0.0
+
+# ── Google Gemini ─────────────────────────────────────────────────────────────
+# cache_write_cost_per_mtok = 0.0 for all Gemini models: Google charges
+# $1.00/M tokens/hr for context-cache storage (time-based, not per-call).
+#
+# Pro-tier models (3.1 Pro, 2.5 Pro) have tiered input pricing.
+# Rates shown are for ≤200k context; above 200k input and output rates double.
+
+# [models.gemini31-pro]
 # provider = "gemini"
+# api_key  = ""
+# model    = "gemini-3.1-pro"
+# input_cost_per_mtok       = 2.00
+# output_cost_per_mtok      = 12.00
+# cache_read_cost_per_mtok  = 0.50
+# cache_write_cost_per_mtok = 0.0
+
+# [models.gemini31-flash-lite]
+# provider = "gemini"
+# api_key  = ""
+# model    = "gemini-3.1-flash-lite"
+# input_cost_per_mtok       = 0.25
+# output_cost_per_mtok      = 1.50
+# cache_read_cost_per_mtok  = 0.025
+# cache_write_cost_per_mtok = 0.0
+
+# [models.gemini3-flash]
+# provider = "gemini"
+# api_key  = ""
+# model    = "gemini-3-flash"
+# input_cost_per_mtok       = 0.50
+# output_cost_per_mtok      = 3.00
+# cache_read_cost_per_mtok  = 0.125
+# cache_write_cost_per_mtok = 0.0
+
+# [models.gemini25-pro]
+# provider = "gemini"
+# api_key  = ""
 # model    = "gemini-2.5-pro"
+# input_cost_per_mtok       = 1.25
+# output_cost_per_mtok      = 10.00
+# cache_read_cost_per_mtok  = 0.125
+# cache_write_cost_per_mtok = 0.0
 
-# Used by the "sysadmin" agent.  Point `model` at whatever you have loaded in
-# LM Studio; the base_url defaults to http://localhost:1234/v1.
-# [models.lmstudio]
-# provider = "lmstudio"
-# model    = "qwen3-27b"
-# context_window_tokens = 32768
+# [models.gemini25-flash]
+# provider = "gemini"
+# api_key  = ""
+# model    = "gemini-2.5-flash"
+# input_cost_per_mtok       = 0.30
+# output_cost_per_mtok      = 2.50
+# cache_read_cost_per_mtok  = 0.03
+# cache_write_cost_per_mtok = 0.0
 
-# --- Additional model examples ---
+# [models.gemini25-flash-lite]
+# provider = "gemini"
+# api_key  = ""
+# model    = "gemini-2.5-flash-lite"
+# input_cost_per_mtok       = 0.10
+# output_cost_per_mtok      = 0.40
+# cache_read_cost_per_mtok  = 0.01
+# cache_write_cost_per_mtok = 0.0
+
+# ── Local (no API key required, always $0) ───────────────────────────────────
+
 # [models.local]
 # provider  = "ollama"
 # model     = "llama3.2"
 # base_url  = "http://localhost:11434/v1"
 # context_window_tokens = 8192
-#
-# [models.gpt]
-# provider = "openai"
-# model    = "gpt-4o"
-#
-# --- Optional: a cheap model for background narrative summarization ---
-# Only used when [digest].narrative_enabled = true (see below).  Falls back
-# to [models.default] if omitted.  Pick a cheap/fast model — Haiku 4.5,
-# gpt-4o-mini, gemini-2.5-flash.
-# [models.digest]
-# provider = "anthropic"
-# model    = "claude-haiku-4-5-20251001"
+
+# [models.lmstudio]
+# provider = "lmstudio"
+# model    = "qwen3-27b"
+# context_window_tokens = 32768
+
+# ── AI prompt ────────────────────────────────────────────────────────────────
 
 [ai]
 prompt = "sre"
+
+# ── Context ──────────────────────────────────────────────────────────────────
 
 # [context]
 # Declare the operating environment so the AI calibrates its advice accordingly.
 # Values: "personal" | "development" | "staging" | "production"
 # environment = "personal"
 
+# ── Masking ──────────────────────────────────────────────────────────────────
+
 # [masking]
 # Add org-specific patterns to redact before context is sent to the AI.
 # Built-in patterns (AWS keys, JWTs, DB URLs, private keys, etc.) always run.
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
 
+# ── Notifications ─────────────────────────────────────────────────────────────
+
 # [notifications]
 # Shell command to run when a watchdog alert fires.
 # Available env vars: $DAEMONEYE_JOB (job name), $DAEMONEYE_MSG (alert message).
 # on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+
+# ── Webhook ──────────────────────────────────────────────────────────────────
 
 # [webhook]
 # enabled = false
@@ -115,6 +187,8 @@ prompt = "sre"
 # severity_threshold = "warning"   # "info" | "warning" | "critical"
 # dedup_window_secs = 300
 # bind_addr = "127.0.0.1"          # "0.0.0.0" to accept from all interfaces
+
+# ── Limits ───────────────────────────────────────────────────────────────────
 
 # [limits]
 # per_tool_batch            = 100    # max consecutive calls of one non-approval tool per turn (0 = unlimited)
@@ -128,12 +202,18 @@ prompt = "sre"
 # read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
 # search_repository = 50
 
+# ── Ghost shells ─────────────────────────────────────────────────────────────
+
 # [ghost]
 # max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
+
+# ── Daemon ───────────────────────────────────────────────────────────────────
 
 # [daemon]
 # tmux_session = "daemoneye"   # session the daemon creates/adopts when launched outside tmux
 #                              # (default is "daemoneye"; override to use a different name)
+
+# ── Digest ───────────────────────────────────────────────────────────────────
 
 # [digest]
 # Session-compaction settings.  The structured digest (event tallies and
@@ -145,11 +225,15 @@ prompt = "sre"
 #                              # turns to each digest.  Uses [models.digest]
 #                              # if defined, otherwise [models.default].
 
+# ── Sessions ─────────────────────────────────────────────────────────────────
+
 # [sessions]
 # Named session persistence settings.
 # auto_name_enabled = true         # propose a name after N turns (default: true)
 # auto_name_turn_threshold = 10    # turns before auto-name suggestion fires (default: 10)
 # load_recent_turns = 10           # messages loaded when resuming (0 = all; default: 10)
+
+# ── Approvals ────────────────────────────────────────────────────────────────
 
 # [approvals]
 # Controls which action classes auto-approve at the start of every chat

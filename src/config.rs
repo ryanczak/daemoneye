@@ -611,48 +611,30 @@ impl ModelEntry {
     }
 
     /// Resolve pricing for this model entry.
-    ///
-    /// Returns a `Pricing` struct with rates filled from the user's config
-    /// where set, falling back to built-in defaults for known models.
-    /// If the model is unknown and not on a local provider, returns `None`.
+    /// Returns a `Pricing` struct with rates from the user's config, or `None`
+    /// if no cost fields are set (cost accounting will report `$0+` for the model).
+    /// Local providers always return zero pricing.
     pub fn pricing(&self) -> Option<Pricing> {
-        // Local providers always have zero pricing.
         if self.provider == "ollama" || self.provider == "lmstudio" {
             return Some(Pricing::zero());
         }
 
-        let builtin = default_pricing_for(&self.provider, &self.model);
-
-        // User has set at least one rate — merge with builtin defaults.
         let has_user = self.input_cost_per_mtok.is_some()
             || self.output_cost_per_mtok.is_some()
             || self.cache_read_cost_per_mtok.is_some()
             || self.cache_write_cost_per_mtok.is_some();
 
         if has_user {
-            let fallback = builtin.unwrap_or(Pricing {
-                input_per_mtok: 0.0,
-                output_per_mtok: 0.0,
-                cache_read_per_mtok: 0.0,
-                cache_write_per_mtok: 0.0,
-                source: PricingSource::Unknown,
-            });
             return Some(Pricing {
-                input_per_mtok: self.input_cost_per_mtok.unwrap_or(fallback.input_per_mtok),
-                output_per_mtok: self
-                    .output_cost_per_mtok
-                    .unwrap_or(fallback.output_per_mtok),
-                cache_read_per_mtok: self
-                    .cache_read_cost_per_mtok
-                    .unwrap_or(fallback.cache_read_per_mtok),
-                cache_write_per_mtok: self
-                    .cache_write_cost_per_mtok
-                    .unwrap_or(fallback.cache_write_per_mtok),
+                input_per_mtok: self.input_cost_per_mtok.unwrap_or(0.0),
+                output_per_mtok: self.output_cost_per_mtok.unwrap_or(0.0),
+                cache_read_per_mtok: self.cache_read_cost_per_mtok.unwrap_or(0.0),
+                cache_write_per_mtok: self.cache_write_cost_per_mtok.unwrap_or(0.0),
                 source: PricingSource::UserConfig,
             });
         }
 
-        builtin
+        None
     }
 }
 
@@ -664,9 +646,9 @@ impl ModelEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PricingSource {
     /// Rate came from the user's `config.toml` `[models.<name>]` section.
+    /// Alias covers records written before pricing moved to config-only.
+    #[serde(alias = "BuiltinDefault")]
     UserConfig,
-    /// Rate came from built-in defaults for a known model.
-    BuiltinDefault,
     /// Provider is local (ollama, lmstudio) — all rates are 0.0.
     Local,
     /// Model is not recognized and no user pricing was set.
@@ -701,161 +683,6 @@ impl Pricing {
             cache_write_per_mtok: 0.0,
             source: PricingSource::Local,
         }
-    }
-}
-
-/// Built-in pricing rates for known models.
-///
-/// Rates sourced from provider pricing pages as of 2026-05-16:
-/// - Anthropic: https://www.anthropic.com/pricing
-/// - OpenAI:   https://openai.com/api/pricing/
-/// - Gemini:   https://ai.google.dev/pricing
-///
-/// All rates are per 1M tokens in USD.
-fn default_pricing_for(provider: &str, model: &str) -> Option<Pricing> {
-    match provider {
-        "anthropic" => {
-            let p = match model {
-                // claude-sonnet-4-6 (2026-05-16): $3.00 input, $15.00 output,
-                // $0.30 cache read, $3.75 cache write
-                "claude-sonnet-4-6" => Pricing {
-                    input_per_mtok: 3.00,
-                    output_per_mtok: 15.00,
-                    cache_read_per_mtok: 0.30,
-                    cache_write_per_mtok: 3.75,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // claude-opus-4-7 (2026-05-16): $15.00 input, $75.00 output,
-                // $1.50 cache read, $18.75 cache write
-                "claude-opus-4-7" => Pricing {
-                    input_per_mtok: 15.00,
-                    output_per_mtok: 75.00,
-                    cache_read_per_mtok: 1.50,
-                    cache_write_per_mtok: 18.75,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // claude-haiku-4-5-* (2026-05-16): $0.80 input, $4.00 output,
-                // $0.08 cache read, $1.00 cache write
-                m if m.starts_with("claude-haiku-4-5") => Pricing {
-                    input_per_mtok: 0.80,
-                    output_per_mtok: 4.00,
-                    cache_read_per_mtok: 0.08,
-                    cache_write_per_mtok: 1.00,
-                    source: PricingSource::BuiltinDefault,
-                },
-                _ => return None,
-            };
-            Some(p)
-        }
-        "openai" => {
-            let p = match model {
-                // gpt-4o (2026-05-16): $2.50 input, $10.00 output,
-                // $1.25 cache read (50% of input), no cache write
-                "gpt-4o" => Pricing {
-                    input_per_mtok: 2.50,
-                    output_per_mtok: 10.00,
-                    cache_read_per_mtok: 1.25,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // gpt-4o-mini (2026-05-16): $0.15 input, $0.60 output,
-                // $0.075 cache read, no cache write
-                "gpt-4o-mini" => Pricing {
-                    input_per_mtok: 0.15,
-                    output_per_mtok: 0.60,
-                    cache_read_per_mtok: 0.075,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // o1 (2026-05-16): $15.00 input, $60.00 output,
-                // $7.50 cache read, no cache write
-                "o1" => Pricing {
-                    input_per_mtok: 15.00,
-                    output_per_mtok: 60.00,
-                    cache_read_per_mtok: 7.50,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // o3-mini (2026-05-16): $1.10 input, $4.40 output,
-                // $0.55 cache read, no cache write
-                "o3-mini" => Pricing {
-                    input_per_mtok: 1.10,
-                    output_per_mtok: 4.40,
-                    cache_read_per_mtok: 0.55,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                _ => return None,
-            };
-            Some(p)
-        }
-        "gemini" => {
-            let p = match model {
-                // gemini-2.5-pro: $1.25 input (≤200k ctx), $10.00 output,
-                // $0.125 cache read (implicit cache, 90% off).
-                // NOTE: tiered input pricing — ≤200k ctx = $1.25/M, >200k = $2.50/M.
-                // We always use the lower tier; context-aware selection is deferred.
-                // Cache write is $1.00/M tokens/hr (time-based storage, not per-token);
-                // cannot be tracked accurately per-call so left at 0.0.
-                "gemini-2.5-pro" => Pricing {
-                    input_per_mtok: 1.25,
-                    output_per_mtok: 10.00,
-                    cache_read_per_mtok: 0.125,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // gemini-2.5-flash: $0.30 input (≤200k ctx), $2.50 output,
-                // $0.03 cache read (90% off). Cache write same storage model as Pro.
-                "gemini-2.5-flash" => Pricing {
-                    input_per_mtok: 0.30,
-                    output_per_mtok: 2.50,
-                    cache_read_per_mtok: 0.03,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // gemini-2.5-flash-lite: $0.10 input, $0.40 output,
-                // $0.01 cache read (90% off).
-                "gemini-2.5-flash-lite" => Pricing {
-                    input_per_mtok: 0.10,
-                    output_per_mtok: 0.40,
-                    cache_read_per_mtok: 0.01,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // gemini-3.1-pro: $2.00 input (≤200k ctx), $12.00 output,
-                // $0.50 cache read (75% off).
-                // Tiered: >200k ctx doubles to $4.00/$18.00. Using lower tier.
-                "gemini-3.1-pro" => Pricing {
-                    input_per_mtok: 2.00,
-                    output_per_mtok: 12.00,
-                    cache_read_per_mtok: 0.50,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // gemini-3.1-flash-lite: $0.25 input, $1.50 output,
-                // $0.025 cache read (90% off).
-                "gemini-3.1-flash-lite" => Pricing {
-                    input_per_mtok: 0.25,
-                    output_per_mtok: 1.50,
-                    cache_read_per_mtok: 0.025,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                // gemini-3-flash: $0.50 input, $3.00 output,
-                // $0.125 cache read (75% off).
-                "gemini-3-flash" => Pricing {
-                    input_per_mtok: 0.50,
-                    output_per_mtok: 3.00,
-                    cache_read_per_mtok: 0.125,
-                    cache_write_per_mtok: 0.0,
-                    source: PricingSource::BuiltinDefault,
-                },
-                _ => return None,
-            };
-            Some(p)
-        }
-        "ollama" | "lmstudio" => Some(Pricing::zero()),
-        _ => None,
     }
 }
 
@@ -1724,28 +1551,27 @@ mod tests {
     }
 
     #[test]
-    fn model_entry_without_pricing_falls_back_to_builtin() {
+    fn model_entry_without_pricing_returns_none() {
+        // No cost fields in config → Unknown pricing; cost accounting reports $0+.
         let entry = ModelEntry {
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
             ..ModelEntry::default()
         };
-        let pricing = entry.pricing().expect("pricing must resolve");
-        assert_eq!(pricing.input_per_mtok, 3.00);
-        assert_eq!(pricing.output_per_mtok, 15.00);
-        assert_eq!(pricing.cache_read_per_mtok, 0.30);
-        assert_eq!(pricing.cache_write_per_mtok, 3.75);
-        assert_eq!(pricing.source, PricingSource::BuiltinDefault);
+        assert!(entry.pricing().is_none());
     }
 
     #[test]
-    fn model_entry_unknown_model_returns_none() {
-        let entry = ModelEntry {
-            provider: "anthropic".to_string(),
-            model: "claude-unknown-future-model".to_string(),
-            ..ModelEntry::default()
-        };
-        assert!(entry.pricing().is_none());
+    fn model_entry_no_cost_fields_returns_none() {
+        // Any model without cost fields in config returns None regardless of name.
+        for model in &["claude-unknown-future-model", "claude-sonnet-4-6", "gpt-4o"] {
+            let entry = ModelEntry {
+                provider: "anthropic".to_string(),
+                model: model.to_string(),
+                ..ModelEntry::default()
+            };
+            assert!(entry.pricing().is_none(), "expected None for {model}");
+        }
     }
 
     #[test]
@@ -1766,8 +1592,8 @@ mod tests {
     }
 
     #[test]
-    fn pricing_partial_override_merges_with_default() {
-        // User sets input rate only; other three come from defaults.
+    fn pricing_partial_override_unset_fields_are_zero() {
+        // User sets input rate only; unset fields default to 0.0.
         let entry = ModelEntry {
             provider: "anthropic".to_string(),
             model: "claude-sonnet-4-6".to_string(),
@@ -1775,10 +1601,10 @@ mod tests {
             ..ModelEntry::default()
         };
         let pricing = entry.pricing().expect("pricing must resolve");
-        assert_eq!(pricing.input_per_mtok, 4.0); // user override
-        assert_eq!(pricing.output_per_mtok, 15.00); // builtin
-        assert_eq!(pricing.cache_read_per_mtok, 0.30); // builtin
-        assert_eq!(pricing.cache_write_per_mtok, 3.75); // builtin
+        assert_eq!(pricing.input_per_mtok, 4.0); // user value
+        assert_eq!(pricing.output_per_mtok, 0.0); // unset → zero
+        assert_eq!(pricing.cache_read_per_mtok, 0.0); // unset → zero
+        assert_eq!(pricing.cache_write_per_mtok, 0.0); // unset → zero
         assert_eq!(pricing.source, PricingSource::UserConfig);
     }
 
