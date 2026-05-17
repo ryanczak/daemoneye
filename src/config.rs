@@ -791,24 +791,62 @@ fn default_pricing_for(provider: &str, model: &str) -> Option<Pricing> {
         }
         "gemini" => {
             let p = match model {
-                // gemini-2.5-pro (2026-05-16): $1.25 input (≤128k), $10.00 output,
-                // $0.31 cache read (implicit cache), no cache write.
-                // NOTE: Gemini 2.5 Pro has tiered input pricing: ≤128k ctx = $1.25/M,
-                // >128k ctx = $2.50/M. We always use the lower tier. Context-aware
-                // tier selection is deferred until per-call context tracking is added.
+                // gemini-2.5-pro: $1.25 input (≤200k ctx), $10.00 output,
+                // $0.125 cache read (implicit cache, 90% off).
+                // NOTE: tiered input pricing — ≤200k ctx = $1.25/M, >200k = $2.50/M.
+                // We always use the lower tier; context-aware selection is deferred.
+                // Cache write is $1.00/M tokens/hr (time-based storage, not per-token);
+                // cannot be tracked accurately per-call so left at 0.0.
                 "gemini-2.5-pro" => Pricing {
                     input_per_mtok: 1.25,
                     output_per_mtok: 10.00,
-                    cache_read_per_mtok: 0.31,
+                    cache_read_per_mtok: 0.125,
                     cache_write_per_mtok: 0.0,
                     source: PricingSource::BuiltinDefault,
                 },
-                // gemini-2.5-flash (2026-05-16): $0.15 input (≤128k), $0.60 output,
-                // $0.04 cache read, no cache write
+                // gemini-2.5-flash: $0.30 input (≤200k ctx), $2.50 output,
+                // $0.03 cache read (90% off). Cache write same storage model as Pro.
                 "gemini-2.5-flash" => Pricing {
-                    input_per_mtok: 0.15,
-                    output_per_mtok: 0.60,
-                    cache_read_per_mtok: 0.04,
+                    input_per_mtok: 0.30,
+                    output_per_mtok: 2.50,
+                    cache_read_per_mtok: 0.03,
+                    cache_write_per_mtok: 0.0,
+                    source: PricingSource::BuiltinDefault,
+                },
+                // gemini-2.5-flash-lite: $0.10 input, $0.40 output,
+                // $0.01 cache read (90% off).
+                "gemini-2.5-flash-lite" => Pricing {
+                    input_per_mtok: 0.10,
+                    output_per_mtok: 0.40,
+                    cache_read_per_mtok: 0.01,
+                    cache_write_per_mtok: 0.0,
+                    source: PricingSource::BuiltinDefault,
+                },
+                // gemini-3.1-pro: $2.00 input (≤200k ctx), $12.00 output,
+                // $0.50 cache read (75% off).
+                // Tiered: >200k ctx doubles to $4.00/$18.00. Using lower tier.
+                "gemini-3.1-pro" => Pricing {
+                    input_per_mtok: 2.00,
+                    output_per_mtok: 12.00,
+                    cache_read_per_mtok: 0.50,
+                    cache_write_per_mtok: 0.0,
+                    source: PricingSource::BuiltinDefault,
+                },
+                // gemini-3.1-flash-lite: $0.25 input, $1.50 output,
+                // $0.025 cache read (90% off).
+                "gemini-3.1-flash-lite" => Pricing {
+                    input_per_mtok: 0.25,
+                    output_per_mtok: 1.50,
+                    cache_read_per_mtok: 0.025,
+                    cache_write_per_mtok: 0.0,
+                    source: PricingSource::BuiltinDefault,
+                },
+                // gemini-3-flash: $0.50 input, $3.00 output,
+                // $0.125 cache read (75% off).
+                "gemini-3-flash" => Pricing {
+                    input_per_mtok: 0.50,
+                    output_per_mtok: 3.00,
+                    cache_read_per_mtok: 0.125,
                     cache_write_per_mtok: 0.0,
                     source: PricingSource::BuiltinDefault,
                 },

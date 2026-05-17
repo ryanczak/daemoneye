@@ -1,17 +1,73 @@
-# DaemonEye: AI Powered Operator 
-#
+# DaemonEye: AI Powered Operator
 
-DaemonEye is a lightweight background daemon that integrates an AI-powered systems, software, and security expert directly into your tmux session. Instead of a passive chatbot, DaemonEye acts as a context-aware peer that understands your full terminal state—including scrollback buffer, environment variables, running programs and command history. By leveraging Ghost Shell sub-agents, Webhook alert ingestion, and access to scripts and runbooks, it can autonomously troubleshoot failures and remediate incidents in the background. With its secure sudo integration, DaemonEye handles the repetitive lifting of infrastructure management and emergency response, allowing you to focus on your work without distraction.
+DaemonEye is a lightweight background daemon that integrates an AI-powered systems, software, and security expert directly into your tmux session. It understands your full terminal state — scrollback buffer, environment variables, running programs, command history, pane topology — and can act on it. Ghost Shells let it autonomously investigate and remediate incidents while you sleep. Named Agents give those ghost shells persistent identities: a specialist's system prompt, a dedicated model, a scoped memory pool, and a daemon-enforced tool policy that carries across every invocation. Webhooks wire it into Prometheus, Grafana, and any service that can POST JSON.
 
-I wrote DaemonEye after discovering OpenClaw and being completely blown away by its agency and power. So much so that I eventually turned it off because I was afraid of it running amok. I loved working with OpenClaw on the command line to manage my hosts and services but I wanted something that I did not have to worry about when I was not around. DaemonEye is the result. It limits command execution to what is allowed, while providing mechanisms to make complex tasks, even those that require root access, autonomous. 
-
-DaemonEye runbooks can be prescriptive, limitng the agent to a fixed script, or they can be open-ended, allowing the agent autonomy. Either way, runbooks can limit the number of turns an agent has to perform an action, preventing run-away agents and wasted tokens. Runbooks can specify which AI is used so you can use powerful AIs when you need them and cheap, local AIs, when the task is simple or sensitive. Speaking of sensitive, DaemonEye redacts sensitive information like API keys so your secrets are never shared with the AI. Webhooks make it easy to integrate DaemonEye with Prometheus, Grafana, and other services. Webhooks use runbooks to enable autonomous end-to-end incident response and other scripted action. Webhooks enable DaemonEye instances to interoperate in cool ways too.
-
-DaemonEye is not perfect, it will eat your important stuff if you are not careful. It is not as powerful as Claude Code or OpenClaw, but it does a pretty good job helping me manage my hosts and services so maybe it will be useful to you as well. 
+I wrote DaemonEye after discovering OpenClaw and being completely blown away by its agency and power — and then turning it off because I was afraid of it running amok. DaemonEye is the result of wanting that power with boundaries I trust. It limits command execution to what is explicitly allowed, provides mechanisms to make complex tasks autonomous (even those requiring root access), and tracks exactly what it spends on your behalf.
 
 ---
 
 ## ✨ Key Features
+
+### 👻 Autonomous Ghost Shells
+
+When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem in a dedicated `de-incident-*` tmux window without a human present. When you next attach, a catch-up brief tells you what happened.
+
+- **Unattended Remediation** — Runs pre-approved remediation scripts, monitors output, and escalates when something unexpected happens.
+- **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Two keys are required for every privilege escalation.
+- **Turn Budget** — A configurable hard ceiling on AI turns (default 20) ensures the agent cannot loop indefinitely. Individual runbooks may set a lower limit, but never a higher one.
+- **Catch-up Brief** — On re-attach, new completions, alerts, and watchdog results are summarised in a `[Catch-up]` message before the first AI token. AI spend during the detach window is included: `Cost during detach: $0.34 (architect $0.20 · ghost-anonymous $0.14)`.
+
+---
+
+### 🤖 Named Agents
+
+Named Agents give ghost shells a persistent executor identity. Where a runbook defines *what* to do, an agent defines *who does it* — the role, the model, the memory namespace, and the tool policy that carry across every separate invocation.
+
+**Define once, reuse everywhere.** An agent is a `~/.daemoneye/agents/<name>/config.toml` file. Any runbook references it with a single `agent:` frontmatter field. Update the agent once and every runbook that uses it benefits immediately.
+
+```toml
+# ~/.daemoneye/agents/security-auditor/config.toml
+name        = "security-auditor"
+description = "Reads IAM policies and audit logs; never writes to production"
+prompt      = "You are a cautious security auditor. Analyse before acting. Never modify production systems."
+model       = "opus"
+auto_approve_read_only = true
+
+[tools]
+allow = ["read_file", "read_memory", "list_memories", "search_repository", "run_terminal_command"]
+```
+
+**Persistent briefing state.** After each clean ghost exit, the daemon asks the model to summarise what it found, what it did, and what to watch for next time. This briefing is written to `~/.daemoneye/agents/<name>/briefing.md` (masked before write) and injected as context on the next invocation. A `postgres-dba` agent accumulates six months of port mappings, slow-query patterns, and incident history — and brings all of it to every new alert automatically.
+
+**Memory namespacing.** Each agent writes to and reads from its own scoped memory pool. Security findings don't bleed into the database agent's namespace. Global memories remain accessible to all agents; agent-scoped memories stay private. The main interactive session always reads from global only.
+
+**Daemon-enforced tool policy.** Specify an allowlist or denylist of AI tools — the daemon rejects out-of-scope tool calls at the IPC layer, before they execute. A read-only analyst genuinely cannot call `run_terminal_command` or `edit_file`, regardless of what the model is instructed to do.
+
+**Coordinator pattern.** A coordinator agent can spawn specialist sub-agents in parallel. Each specialist writes its result to a mailbox file; the coordinator synthesises all results and writes a consolidated report. Total elapsed time is the longest specialist, not their sum. Spawn depth is capped at 2 (coordinator + specialists) — the daemon enforces this; the model cannot override it.
+
+```
+security-coordinator  (depth 0)
+  ├── access-auditor  (depth 1)  — checks IAM policies
+  └── log-analyst     (depth 1)  — searches for anomalous patterns
+```
+
+**Composability rules** when a runbook specifies an agent:
+1. Agent system prompt takes precedence; the runbook task is injected as the first user turn.
+2. Runbook-level `model:` beats agent default.
+3. Tool policy is the intersection — deny wins; an agent cannot expand `GhostPolicy`.
+4. Memory queries search agent namespace → global namespace in that order.
+
+---
+
+### 📡 Webhook Alert Ingestion
+
+Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prometheus Alertmanager, Grafana, or any tool that can POST JSON.
+
+- **Deduplication** — Alerts are fingerprinted; duplicates within a configurable window are suppressed automatically.
+- **Sensitive-data masking** — Alert payloads pass through the same redaction filter as terminal context before entering the AI conversation.
+- **Watchdog Analysis** — Each incoming alert is automatically analysed against its matching runbook to determine whether autonomous remediation is warranted. Ghost shells are spawned only when the watchdog model emits `GHOST_TRIGGER: YES`.
+
+---
 
 ### 🛠️ Collaborative Execution & Safety
 
@@ -59,34 +115,39 @@ ghost_commands = false # explicitly tell ghost shells they may run investigation
 
 When a class flag is `true`, approval is pre-granted for the entire class at session start — the `[A]pprove for session` prompt is suppressed since it would be redundant. Ctrl+C or `/approvals revoke` resets all flags back to the config defaults.
 
-### 📡 Webhook Alert Ingestion
-
-Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prometheus Alertmanager, Grafana, or any tool that can POST JSON.
-
-- **Deduplication** — Alerts are fingerprinted; duplicates within a configurable window are suppressed automatically.
-- **Sensitive-data masking** — Alert payloads pass through the same redaction filter as terminal context before entering the AI conversation.
-- **Watchdog Analysis** — Each incoming alert is automatically analyzed against its matching runbook to determine whether autonomous remediation is warranted.
+---
 
 ### 📖 Runbooks & Knowledge
 
 - **Procedure Runbooks** — Store troubleshooting steps in `~/.daemoneye/runbooks/` as Markdown with YAML frontmatter. When an alert fires, DaemonEye finds the matching runbook and uses it to guide the investigation.
 - **Durable Memory** — Three-tier persistence for session context, knowledge facts, and incident records. Session memories are injected into every AI turn automatically; knowledge and incident memories are available on demand. Entries carry structured frontmatter — `tags` (with synonyms for broader matching), `summary` (one-liner surfaced in listings and contextual auto-search), `relates_to` (links to related memories, runbooks, or scripts), and `expires` (TTL for time-bounded facts). Use `update_memory` to update individual fields in place without a full rewrite. Contextual auto-search pre-loads matching knowledge into the first turn and follows `relates_to` links to pull in related entries automatically.
 - **Built-in Guides** — Six knowledge memory files are seeded on first run covering webhooks, runbook format, ghost shell usage, scheduling, scripts, and sudoers setup — the AI can reference them without any manual setup.
+- **Named Sessions** — Save and resume conversation history with `/session save <name>`. Artifacts (runbooks, scripts, memories) created during a named session are tagged with `session_origin` so you can trace which session produced them.
+
+---
 
 ### 🐕 Command Scheduler & Watchdog
 
 - **Flexible Scheduling** — Run commands or Ghost Shell tasks once at a specific time, on a repeating interval, or on a full cron expression.
 - **Watchdog Monitors** — Active monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
 - **Failure Isolation** — Each job runs in its own dedicated tmux window (`de-sj-*`), left open on failure for manual inspection and cleaned up automatically on success.
-- **Bell Recovery** — Every 2-second poll checks `#{window_flags}` for uncleared bells (`!`) and unseen activity (`#`) on all windows. Newly-discovered bells are logged to `events.jsonl` so notifications missed during a daemon restart are recovered automatically. Bell and activity state appears as `, bell!` / `, activity` annotations in the `[SESSION TOPOLOGY]` and `[OTHER SESSIONS]` context blocks.
+- **Bell Recovery** — Every 2-second poll checks `#{window_flags}` for uncleared bells (`!`) and unseen activity (`#`) on all windows. Newly-discovered bells are logged to `events.jsonl` so notifications missed during a daemon restart are recovered automatically.
 
-### 👻 Autonomous Ghost Shells
+---
 
-When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell that works the problem without a human present.
+### 💰 Cost Accounting
 
-- **Unattended Remediation** — Runs inside a dedicated `de-incident-*` tmux window, executing pre-approved remediation steps and reporting back via a catch-up brief when you next attach.
-- **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`.
-- **Turn Budget** — A configurable hard ceiling on AI turns (default 20) ensures the agent cannot loop indefinitely. Individual runbooks may set a lower limit, but never a higher one.
+DaemonEye tracks the dollar cost of every AI call — interactive sessions, ghost shells, named agents, scheduled jobs — and surfaces it where you need it.
+
+- **Status bar**: every chat turn shows a live session cost (`· $0.08`) next to the model name. A `+` suffix (`$0.08+`) means at least one call used a model with unknown pricing. Cost is omitted when zero.
+- **`daemoneye status`**: daemon-wide "Cost (today)" section shows total spend broken down by provider and by agent. Hidden when total is $0.
+- **`daemoneye costs`**: reads `events.jsonl` directly (no daemon required, works when the daemon is down). Supports `--since`, `--until`, `--by day|agent|provider|model|session`, `--agent <name>`, `--json` for integration with external tooling.
+- **Catch-up brief**: AI spend during a detach window is included alongside event summaries. If only local providers ran: `$0.00 (local providers only)`. If no AI calls occurred, the cost line is omitted entirely.
+- **Local models always $0.00** — `ollama` and `lmstudio` providers are priced at zero; costs are never guessed for unknown models (flagged with `+` instead).
+
+Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-mini), and Gemini (2.5 Pro, 2.5 Flash). Override or extend with per-model cost fields in `[models.<name>]` config blocks.
+
+---
 
 ### 🔒 Security & Privacy
 
@@ -96,6 +157,8 @@ Context is filtered before it ever leaves your machine.
 - **User-Defined Patterns** — Add org-specific regexes to `extra_patterns` in `config.toml` to extend the built-in set without replacing it. Per-category hit counts are shown in `daemoneye status` for a continuous audit view.
 - **Sudo Password Handling** — When a command requires `sudo`, the daemon first checks whether credentials are already cached (`sudo -n true`). If not, the chat interface prompts for your password with terminal echo disabled — for both foreground and background commands the password is always typed in the chat pane, eliminating the risk of keystrokes landing in the wrong terminal window. Up to 3 attempts are allowed; a wrong password is detected and re-prompted automatically. If all attempts fail, the AI receives a structured error with an `install-sudoers` suggestion. The password is never written to disk, stored in a log, or transmitted to the AI.
 - **`sudoers.d` Integration** — `daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the approved script — no wildcards, no `ALL`. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
+- **Agent configs cannot be written by AI tools** without user approval (same gate as `edit_file`). An agent cannot modify its own config or another agent's config.
+- **Ghost briefings are masked** before write — the masking filter runs before `briefing.md` is written to disk so a model cannot launder a secret through a briefing file.
 
 ---
 
@@ -196,7 +259,7 @@ daemoneye setup
 
 #### Directory layout
 
-`daemoneye setup` creates the following tree. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe. `~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, logs — lives in a single place:
+`daemoneye setup` creates the following tree. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe. `~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, agent profiles, logs — lives in a single place:
 
 ```
 ~/.daemoneye/
@@ -207,6 +270,11 @@ daemoneye setup
     prompts/
       sre.toml            ← built-in SRE system prompt (recreated only if missing)
   lib/                    ← place shared SDK modules or Python helpers here
+  agents/                 ← named agent profiles
+    <name>/
+      config.toml         ← AgentConfig: prompt, model, tool policy, memory namespace
+      briefing.md         ← rolling summary of last invocation (generated by daemon, masked)
+      mailbox/            ← agent-to-agent delegation results (<job_id>.json)
   memory/
     knowledge/
       ghost-shell-guide.md       ← guide to ghost shell usage (seeded once)
@@ -220,13 +288,16 @@ daemoneye setup
   var/
     log/
       daemon.log          ← daemon process log (tailed by `daemoneye logs`)
-      events.jsonl        ← structured event log (command history, AI turns, lifecycle)
+      events.jsonl        ← structured event log (command history, AI turns, costs, lifecycle)
       panes/              ← archived background-command output (one .log per job window)
       pipes/              ← pipe-pane capture logs (raw terminal output, runtime only)
     run/
       daemoneye.sock      ← Unix domain socket (created when the daemon starts)
       pane_prefs.json     ← per-session target-pane preferences
       schedules.json      ← scheduled job store
+    sessions/             ← named session store (<name>/meta.toml + messages.jsonl)
+    index/
+      memory.db           ← FTS5 full-text search index (memory, namespaced)
 ```
 
 #### systemd user service
@@ -328,12 +399,15 @@ daemoneye chat
 | `daemoneye daemon` | Start the background daemon |
 | `daemoneye daemon --console` | Start daemon with output on the console (troubleshooting) |
 | `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
-| `daemoneye daemon --session NAME` | Override the managed tmux session name from config (useful for testing or running multiple instances) |
+| `daemoneye daemon --session NAME` | Override the managed tmux session name from config |
 | `daemoneye stop` | Stop the daemon gracefully |
 | `daemoneye logs` | Tails the `daemon.log` file |
-| `daemoneye chat` | Start an interactive multi-turn chat session (auto-attaches to managed tmux session when outside tmux) |
+| `daemoneye chat` | Start an interactive multi-turn chat session |
 | `daemoneye chat --session NAME` | Open a chat window in a specific tmux session and attach to it |
 | `daemoneye ask <query>` | Send a single question to the AI |
+| `daemoneye costs` | Show AI spend from `events.jsonl` (no daemon required) |
+| `daemoneye costs --since DATE --until DATE --by agent` | Filter and group cost report |
+| `daemoneye status` | Show daemon status: uptime, sessions, ghost shells, cost today, circuit state |
 | `daemoneye setup` | Initialise `~/.daemoneye/`, install binary, write systemd service, print tmux config |
 | `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
 | `daemoneye setup --overwrite-memory` | Refresh built-in knowledge memory files from the current binary |
@@ -342,6 +416,7 @@ daemoneye chat
 | `daemoneye schedule list` | List scheduled jobs and their status |
 | `daemoneye schedule cancel <id>` | Cancel a scheduled job |
 | `daemoneye schedule windows` | List leftover tmux windows from failed scheduled jobs (`de-*`) |
+| `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
 | `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
 
 ---
@@ -383,6 +458,7 @@ prompt = "sre"
 
 # [ghost]
 # max_ghost_turns = 20   # hard ceiling; individual runbooks may set lower
+# max_concurrent_ghosts = 3  # 0 = unlimited
 
 # [limits]
 # per_tool_batch            = 100    # max consecutive calls of one non-approval tool per turn (0 = unlimited)
@@ -421,6 +497,10 @@ Each named model is a separate TOML table. `[models.default]` is required and us
 | `model` | string | `"claude-sonnet-4-6"` | Model name passed to the provider API. |
 | `base_url` | string | *(provider default)* | Override the API base URL. Useful for pointing at a remote Ollama host, LM Studio instance, or any OpenAI-compatible proxy. |
 | `context_window_tokens` | integer | *(model lookup)* | Override the context-window size in tokens. Set this for local models where the automatic lookup is inaccurate. |
+| `input_cost_per_mtok` | float | *(built-in default)* | Override input cost in USD per million tokens. |
+| `output_cost_per_mtok` | float | *(built-in default)* | Override output cost in USD per million tokens. |
+| `cache_read_cost_per_mtok` | float | *(built-in default)* | Override cache-read cost in USD per million tokens. |
+| `cache_write_cost_per_mtok` | float | *(built-in default)* | Override cache-write cost in USD per million tokens. |
 
 #### Valid `provider` values
 
@@ -506,7 +586,8 @@ Daemon-wide hard limits for autonomous Ghost Shells. These are ceilings — indi
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost shell. A runbook's `max_ghost_turns` is clamped to this value. Set lower in production to constrain blast radius. |
+| `max_ghost_turns` | integer | `20` | Hard upper limit on AI turns per ghost shell. A runbook's `max_ghost_turns` is clamped to this value. |
+| `max_concurrent_ghosts` | integer | `3` | Maximum ghost shells running simultaneously. Set to `0` to disable the cap. |
 
 ### `[limits]` section
 
@@ -514,10 +595,10 @@ Controls how many tool calls the AI can make per turn and per session, and how m
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `per_tool_batch` | integer | `100` | Maximum consecutive calls of a single non-approval tool within one AI turn (e.g. how many times the AI may call `read_file` in a row). Approval-gated tools (`run_terminal_command`, `edit_file`, etc.) are always exempt — the user's approval is the throttle. |
-| `total_tool_calls_per_turn` | integer | `0` | Hard cap on all non-approval tool calls within one turn, across all tools combined. `0` = unlimited. |
+| `per_tool_batch` | integer | `100` | Maximum consecutive calls of a single non-approval tool within one AI turn. Approval-gated tools are always exempt. |
+| `total_tool_calls_per_turn` | integer | `0` | Hard cap on all non-approval tool calls within one turn. `0` = unlimited. |
 | `tool_result_chars` | integer | `16000` | Maximum characters of output fed back to the AI per tool result. Longer results are truncated. `0` = unlimited. |
-| `max_history` | integer | `80` | Maximum messages kept in session history. When the cap is hit the daemon runs a digest-and-compact pass. `0` = unlimited (consider enabling `digest.narrative_enabled` to prevent unbounded growth). |
+| `max_history` | integer | `80` | Maximum messages kept in session history. When the cap is hit the daemon runs a digest-and-compact pass. `0` = unlimited. |
 | `max_turns` | integer | `0` | Maximum AI turns per interactive chat session. Ghost shells use `ghost.max_ghost_turns` instead. `0` = unlimited. |
 | `max_tool_calls_per_session` | integer | `0` | Cumulative cap on non-approval tool calls across the entire session. `0` = unlimited. Reset with `/limits reset` in chat. |
 
@@ -590,6 +671,8 @@ Watchdog AI analysis (reads runbook, emits GHOST_TRIGGER: YES|NO)
 GhostManager::start_session()
   • Allocates de-incident-<name>-<ts> tmux window
   • Loads ghost_config from runbook frontmatter
+  • Applies named agent profile if runbook specifies agent: <name>
+  • Injects prior briefing state as [Previous Session Summary] context
   • Injects [Ghost Shell Started] into all active chat sessions
         │
         ▼
@@ -597,10 +680,15 @@ Ghost AI turn loop (up to max_ghost_turns)
   • Reads runbook + alert context as system prompt
   • Issues run_terminal_command (background mode only)
   • Policy gate: non-sudo commands always allowed (OS permissions are the boundary);
-    sudo commands must be in auto_approve_scripts + have a NOPASSWD sudoers rule
+    sudo commands must be in auto_approve_scripts + have a NOPASSWD sudoers rule;
+    named agent tool policy enforced independently at IPC layer
   • resolve_command() rewrites bare/relative script names
     to ~/.daemoneye/scripts/<name> (+ sudo prefix if run_with_sudo: true)
   • watch_pane blocks until command exits before next turn
+        │
+        ▼
+On clean exit: generate_and_save_briefing() writes masked summary to
+  ~/.daemoneye/agents/<name>/briefing.md (if agent-scoped)
         │
         ▼
 [Ghost Shell Completed — session log: ~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl]
@@ -642,7 +730,10 @@ chmod 700 ~/.daemoneye/scripts/restart-nginx.sh
 If the script needs elevated privileges (e.g., `systemctl restart nginx`), create a sudoers drop-in so it can run without a password prompt. Ghost sessions run unattended — interactive `sudo` password prompts will cause the command to fail.
 
 ```bash
-# Create a sudoers drop-in — use visudo -f to validate syntax
+# Use daemoneye install-sudoers (recommended — pins the exact path automatically):
+daemoneye install-sudoers restart-nginx.sh
+
+# Or manually with visudo:
 sudo visudo -f /etc/sudoers.d/daemoneye-ghost
 ```
 
@@ -706,9 +797,11 @@ captures the error log for post-incident review.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Allow DaemonEye to spawn an autonomous Ghost Shell for this alert. |
+| `agent` | string | *(none)* | Named agent profile to use. The agent's prompt, model, tool policy, and memory namespace are applied at spawn time. |
 | `auto_approve_scripts` | list | `[]` | Script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution. Non-sudo commands run freely without listing them. Bare names, relative paths (`./name.sh`), and commands with arguments are all resolved to the absolute path. |
 | `run_with_sudo` | bool | `false` | Auto-prepend `sudo` when executing scripts listed in `auto_approve_scripts`. The ghost AI can then write `script.sh` instead of `sudo script.sh`. Does **not** grant permission to run arbitrary sudo commands — the `auto_approve_scripts` whitelist is always enforced. Each approved script still requires a NOPASSWD sudoers rule via `daemoneye install-sudoers`. |
 | `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
+| `model` | string | *(agent or default)* | Model key for this ghost shell. Beats the agent-level model if both are set. |
 | `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all commands are transparently wrapped in `ssh <target> <cmd>` before execution. Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host. The AI is instructed not to SSH manually — omit this field for local-only execution. |
 | `auto_approve_commands` | bool | `false` | Explicitly tell the ghost shell it may run non-sudo investigation commands freely. Non-sudo commands are always permitted by OS permissions regardless of this flag; setting it to `true` makes that explicit in the system prompt so the model does not withhold useful investigation commands. Can also be enabled daemon-wide via `[approvals] ghost_commands = true` in `config.toml`; the two sources are OR-ed together. |
 
@@ -791,7 +884,7 @@ daemoneye logs
 Check the event log for the full audit trail:
 
 ```bash
-grep "ghost\|webhook_analysis\|command_approval" ~/.daemoneye/var/log/events.jsonl | tail -30
+grep "ghost\|webhook_analysis\|command_approval\|ai_cost" ~/.daemoneye/var/log/events.jsonl | tail -30
 ```
 
 ### Monitoring active ghost shells
@@ -808,6 +901,11 @@ Ghost Shells
   Launched:  3
   Completed: 2
   Failed:    0
+
+Cost (today)
+  Total:     $0.47
+  By agent:  ghost-anonymous $0.28 · nginx-responder $0.19
+  By provider: anthropic $0.47
 ```
 
 List the incident windows currently open:
@@ -820,11 +918,13 @@ tmux list-windows | grep de-incident
 
 - **Non-sudo commands run as you.** The ghost runs as the same OS user as the daemon. Any command that doesn't require `sudo` runs within your existing file permissions — no additional policy needed.
 - **Sudo requires two explicit approvals.** To allow a sudo command: (1) list the script in `auto_approve_scripts`, and (2) run `daemoneye install-sudoers <script>` to create the NOPASSWD sudoers rule. Both must be present. Any other sudo command is automatically denied.
+- **Named agent tool policy is a second gate.** If a runbook specifies an agent, both `GhostPolicy` (sudo gating) and `ToolPolicy` (tool allowlist/denylist) must pass independently. An agent cannot expand the tool set beyond `GhostPolicy` allows.
 - **Scope sudoers entries tightly.** `daemoneye install-sudoers` pins the exact absolute path in `/etc/sudoers.d/`. Never manually add `ALL` as the command or allow path wildcards.
 - **Only list scripts you control.** `auto_approve_scripts` matches filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
 - **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost shell.
-- **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling. A ghost shell is forcibly stopped when the limit is reached regardless of what it is doing.
-- **All actions are logged.** Every command approval, execution, and result is recorded in `events.jsonl` for post-incident audit.
+- **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling.
+- **Coordinator depth capped at 2.** A coordinator ghost can spawn specialist sub-agents; specialists cannot spawn further agents. The daemon enforces this at the IPC layer.
+- **All actions are logged.** Every command approval, execution, result, and AI cost is recorded in `events.jsonl` for post-incident audit.
 
 ### Environment variables
 
@@ -841,57 +941,70 @@ tmux list-windows | grep de-incident
 
 ```
 src/
-├── main.rs          # CLI entry point — parses subcommands (daemon, stop, ping, logs, chat, ask, setup, scripts, sched)
-├── ipc.rs           # Request/Response enums — the full wire protocol; GhostConfig struct
-├── config.rs        # ~/.daemoneye/etc/config.toml parsing; GhostDaemonConfig; prompt loading; directory helpers
-├── daemon/          # Background process: IPC server, session memory, background execution
-│   ├── mod.rs       # Daemon entry point; supervise() task supervisor; hook installation
-│   ├── server.rs    # IPC dispatch + `handle_ask` orchestrator + utility helpers
-│   ├── hook.rs      # 9 IPC hook notification handlers (NotifyActivity, NotifyComplete, etc.)
-│   ├── auto_name.rs # Session auto-naming + diff summary
-│   ├── prompt.rs    # Prompt assembly via `PromptCtx` (first-turn and subsequent-turn)
-│   ├── stream.rs    # AI event streaming loop; tool execution; response persistence
-│   ├── executor.rs  # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
-│   ├── background.rs # run_background_in_window(); notify_job_completion(); GC lifecycle
-│   ├── digest.rs    # Session digest: structured compaction of conversation history
-│   ├── ghost.rs     # GhostManager::start_session() — allocates de-incident-* tmux window
-│   ├── policy.rs    # GhostPolicy — OS-delegation trust model: non-sudo always allowed; sudo requires auto_approve_scripts + install-sudoers
-│   ├── session.rs   # SessionStore, SessionEntry, session_exists()
-│   ├── scheduled.rs # Scheduled job execution
-│   └── stats.rs     # Atomic ghost shell counters (launched / completed / failed / active)
-├── cli/             # IPC client: chat interface, terminal rendering, subcommands
-├── scheduler.rs     # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn, JobStatus
-├── runbook.rs       # Runbook markdown loader (frontmatter parser, CRUD); watchdog AI system prompt builder
-├── webhook.rs       # HTTP alert ingestion (axum); parse_payload(); process_alert(); parse_ghost_trigger()
-├── memory.rs        # Persistent memory: session (auto-loaded), knowledge (on-demand), incidents (search-only)
-├── search.rs        # Keyword search across runbooks, scripts, memory, and events.jsonl
-├── scripts.rs       # Script management: list, write (chmod 700), read, delete, resolve
-├── sys_context.rs   # One-time host audit (OS, uptime, memory, processes, shell history)
+├── main.rs              # CLI entry point — parses subcommands
+├── ipc.rs               # Request/Response enums — the full wire protocol; GhostConfig struct
+├── config.rs            # ~/.daemoneye/etc/config.toml parsing; prompt loading; directory helpers
+├── cost.rs              # compute_cost(); CostAttribution; CostRecord; built-in pricing rates
+├── daemon/
+│   ├── mod.rs           # Daemon entry point; supervise() task supervisor; hook installation
+│   ├── server.rs        # IPC dispatch + handle_ask orchestrator; build_catchup_brief()
+│   ├── hook.rs          # 9 IPC hook notification handlers (NotifyActivity, NotifyComplete, etc.)
+│   ├── auto_name.rs     # Session auto-naming + diff summary
+│   ├── prompt.rs        # Prompt assembly via PromptCtx (first-turn and subsequent-turn)
+│   ├── stream.rs        # AI event streaming loop; tool execution; response persistence; ai_cost emission
+│   ├── executor/        # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
+│   ├── background.rs    # run_background_in_window(); notify_job_completion(); GC lifecycle
+│   ├── briefing.rs      # generate_and_save_briefing(); read_briefing(); clear_briefing()
+│   ├── digest.rs        # Session digest: structured compaction of conversation history
+│   ├── ghost.rs         # GhostManager::start_session(); check_ghost_capacity()
+│   ├── policy.rs        # GhostPolicy — non-sudo always allowed; sudo requires auto_approve_scripts + sudoers
+│   ├── memory_prompt.rs # Tiered memory prompt: stable ambient block + dynamic turn-relevant block
+│   ├── session.rs       # SessionStore, SessionEntry (cost fields, detach timestamps)
+│   ├── scheduled.rs     # Scheduled job execution
+│   ├── stats.rs         # compute_cost_today(); ghost shell counters; COST_TODAY_CACHE
+│   └── utils.rs         # sum_cost_between(); event logger; normalize_output helpers
+├── agents/
+│   ├── mod.rs           # AgentConfig CRUD; apply_agent_to_ghost_config()
+│   ├── policy.rs        # ToolPolicy — permits(); format_tool_restriction_block()
+│   └── mailbox.rs       # write_mailbox(); read_mailbox(); MailboxResult
+├── cli/                 # IPC client: chat interface, terminal rendering, subcommands
+│   └── commands/
+│       └── costs.rs     # aggregate_costs(reader, since, until, group_by, agent_filter)
+├── scheduler.rs         # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn
+├── runbook.rs           # Runbook markdown loader (frontmatter parser, CRUD); watchdog prompt builder
+├── webhook.rs           # HTTP alert ingestion (axum); parse_payload(); evaluate_watchdog_response()
+├── memory/
+│   ├── mod.rs           # Persistent memory CRUD; namespace-aware add/read/delete/list
+│   ├── index.rs         # FTS5 index (namespace column); BM25 search with grep fallback
+│   └── migrate.rs       # Schema migration tool (idempotent)
+├── scripts.rs           # Script management: list, write (chmod 700), read, delete, resolve
+├── session_store.rs     # Named session persistence: save/load/list/delete/rename; ArtifactRef
+├── sys_context.rs       # One-time host audit (OS, uptime, memory, processes, shell history)
 ├── tmux/
-│   ├── mod.rs       # tmux interoperability layer (capture-pane, send-keys, create/kill job windows, etc.)
-│   ├── cache.rs     # Background poller; SessionCache; PaneState; get_labeled_context()
-│   └── session.rs   # Session-level helpers: other_sessions_context(); client_dimensions(); session_exists()
-├── config.rs        # ~/.daemoneye/etc/config.toml parsing, prompt loading, directory helpers
+│   ├── mod.rs           # tmux interoperability layer (capture-pane, send-keys, job windows, etc.)
+│   ├── cache.rs         # Background poller; SessionCache; PaneState; get_labeled_context()
+│   └── session.rs       # Session-level helpers: other_sessions_context(); client_dimensions()
 └── ai/
-    ├── mod.rs       # AiClient trait; send_with_retry(); CircuitBreaker
-    ├── types.rs     # PendingCall / AiEvent enums; Message; AiUsage
-    ├── tools.rs     # Tool definitions (Anthropic/OpenAI); dispatch_tool_event()
-    ├── backends/    # Per-provider SSE streaming: anthropic.rs, openai.rs, gemini.rs
-    └── filter.rs    # Regex-based sensitive-data masking; init_masking()
+    ├── mod.rs           # AiClient trait; send_with_retry(); CircuitBreaker
+    ├── types.rs         # PendingCall / AiEvent enums; TokenBreakdown; Message; AiUsage
+    ├── tools.rs         # Tool definitions (all 3 backends share TOOLS slice); dispatch_tool_event()
+    ├── backends/        # Per-provider SSE streaming: anthropic.rs, openai.rs, gemini.rs
+    └── filter.rs        # Regex-based sensitive-data masking; init_masking()
 ```
 
 ---
 
 ## Command Audit Log
 
-Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in `~/.daemoneye/var/log/events.jsonl`:
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in `~/.daemoneye/var/log/events.jsonl`. AI cost records are written to the same file after each completed turn:
 
 ```
 [1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
 [1748000001] session=abc123 mode=foreground pane=%3 status=denied cmd=sudo rm -rf /tmp/old out=
+{"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
 ```
 
-Fields: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
+Fields for command records: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
 
 Control with `--command-log-file FILE` or `--no-command-log` on `daemoneye daemon`.
 
@@ -941,4 +1054,3 @@ overwrites the allocation on drop.
 MIT License
 
 Copyright (c) 2026 Matt Ryanczak
-
