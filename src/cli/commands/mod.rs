@@ -23,7 +23,7 @@ pub use setup::run_setup;
 
 use approval::SessionApproval;
 use ipc_client::{
-    new_session_id, send_delete_saved_session, send_diff_sessions, send_list_models,
+    new_session_id, send_delete_saved_session, send_list_models,
     send_list_panes_for_session, send_list_saved_sessions, send_load_session, send_query_limits,
     send_refresh, send_rename_session, send_reset_session_tool_count, send_save_session,
     send_set_model, send_set_pane,
@@ -71,8 +71,8 @@ fn render_slash_command_help(chat_width: usize) {
         (
             "/session rename <old> <new>",
             "rename session",
-            "/session diff <n1> <n2>",
-            "compare two sessions",
+            "",
+            "",
         ),
     ];
     let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
@@ -1109,28 +1109,6 @@ async fn run_chat_inner_raw(
             continue;
         }
 
-        // /session diff <name1> <name2>
-        if let Some(rest) = query.strip_prefix("/session diff ").map(str::trim) {
-            match rest.split_once(' ') {
-                Some((n1, n2)) => {
-                    let n1 = n1.trim().to_string();
-                    let n2 = n2.trim().to_string();
-                    println!("\x1b[2mComparing '{}' and '{}'…\x1b[0m", n1, n2);
-                    match send_diff_sessions(&n1, &n2).await {
-                        Ok(summary) => {
-                            println!();
-                            for line in summary.lines() {
-                                println!("  {}", line);
-                            }
-                            println!();
-                        }
-                        Err(e) => println!("\x1b[31m✗\x1b[0m  /session diff failed: {}", e),
-                    }
-                }
-                None => println!("Usage: /session diff <name1> <name2>"),
-            }
-            continue;
-        }
 
         {
             let cw = chat_width; // copy for Request::Ask

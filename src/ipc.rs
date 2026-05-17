@@ -334,12 +334,6 @@ pub enum Request {
         old_name: String,
         new_name: String,
     },
-    /// Compare two named sessions and return an AI-generated diff summary.
-    /// Returns `Response::SessionDiff` on success, `Response::Error` on failure.
-    DiffSessions {
-        name1: String,
-        name2: String,
-    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -628,8 +622,7 @@ pub enum Response {
     },
     /// All saved sessions (response to `ListSavedSessions`).
     SavedSessionList { sessions: Vec<SessionSummary> },
-    /// AI-generated diff summary between two named sessions (response to `DiffSessions`).
-    SessionDiff { summary: String },
+
     /// Effective limits config + live session counters (response to `QueryLimits`).
     LimitsInfo {
         /// Effective limits from `config.limits`.

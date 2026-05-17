@@ -281,9 +281,7 @@ pub async fn handle_client(
         Request::RenameSavedSession { old_name, new_name } => {
             handle_rename_saved_session(&mut tx, &sessions, old_name, new_name).await?;
         }
-        Request::DiffSessions { name1, name2 } => {
-            handle_diff_sessions(&mut tx, &sessions, &config, name1, name2).await?;
-        }
+
         Request::NotifyActivity { pane_id, .. } => {
             crate::daemon::hook::handle_notify_activity(&mut tx, &pane_id).await?;
         }
@@ -1072,52 +1070,6 @@ where
     Ok(())
 }
 
-async fn handle_diff_sessions<W>(
-    tx: &mut W,
-    _sessions: &SessionStore,
-    config: &Config,
-    name1: String,
-    name2: String,
-) -> Result<()>
-where
-    W: tokio::io::AsyncWriteExt + Unpin,
-{
-    let meta1 = crate::session_store::load_session_meta(&name1);
-    let meta2 = crate::session_store::load_session_meta(&name2);
-    match (meta1, meta2) {
-        (Ok(m1), Ok(m2)) => {
-            match crate::daemon::auto_name::diff_sessions_summary(&m1, &m2, config).await {
-                Some(summary) => {
-                    send_response_split(tx, Response::SessionDiff { summary }).await?;
-                }
-                None => {
-                    send_response_split(
-                        tx,
-                        Response::Error(
-                            "diff failed: LLM call timed out or returned empty".to_string(),
-                        ),
-                    )
-                    .await?;
-                }
-            }
-        }
-        (Err(e), _) => {
-            send_response_split(
-                tx,
-                Response::Error(format!("could not load session '{}': {}", name1, e)),
-            )
-            .await?;
-        }
-        (_, Err(e)) => {
-            send_response_split(
-                tx,
-                Response::Error(format!("could not load session '{}': {}", name2, e)),
-            )
-            .await?;
-        }
-    }
-    Ok(())
-}
 
 // ── Ask handler ──────────────────────────────────────────────────────────────
 

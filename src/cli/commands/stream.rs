@@ -859,7 +859,7 @@ pub(super) async fn ask_with_session(
             | Response::SessionSaved { .. }
             | Response::SessionLoaded { .. }
             | Response::SavedSessionList { .. }
-            | Response::SessionDiff { .. } => {} // ToolStarted / ToolFinished are handled above; unreachable here.
+            => {} // ToolStarted / ToolFinished are handled above; unreachable here.
         }
     }
 

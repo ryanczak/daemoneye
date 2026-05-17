@@ -320,49 +320,6 @@ fn validate_name_exactly_65_chars_err() {
     assert!(validate_session_name(&name).is_err());
 }
 
-// ── Session diff metadata helpers ─────────────────────────────────────────
-
-#[test]
-fn saved_session_meta_artifacts_in_diff_input() {
-    with_temp_home(|| {
-        let msgs = fake_messages(4);
-        let artifacts = vec![ArtifactRef {
-            kind: "memory".to_string(),
-            name: "root-cause".to_string(),
-            at_turn: 2,
-        }];
-        save_session(
-            "session-a",
-            None,
-            "first session",
-            &msgs,
-            3,
-            "default",
-            &artifacts,
-            false,
-        )
-        .expect("save a");
-        save_session(
-            "session-b",
-            None,
-            "second session",
-            &msgs,
-            5,
-            "default",
-            &[],
-            false,
-        )
-        .expect("save b");
-
-        let meta_a = load_session_meta("session-a").expect("meta a");
-        let meta_b = load_session_meta("session-b").expect("meta b");
-
-        assert_eq!(meta_a.artifacts_created.len(), 1);
-        assert_eq!(meta_b.artifacts_created.len(), 0);
-        assert_eq!(meta_a.turn_count, 3);
-        assert_eq!(meta_b.turn_count, 5);
-    });
-}
 
 // ── backfill_session_origin ───────────────────────────────────────────────
 

@@ -216,7 +216,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::SessionSaved { .. }
             | Response::SessionLoaded { .. }
             | Response::SavedSessionList { .. }
-            | Response::SessionDiff { .. }
+
             | Response::ToolStarted { .. }
             | Response::ToolFinished { .. } => {}
         }

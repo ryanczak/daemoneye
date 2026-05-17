@@ -251,26 +251,6 @@ pub(super) async fn send_delete_saved_session(name: &str) -> Result<()> {
     }
 }
 
-pub(super) async fn send_diff_sessions(name1: &str, name2: &str) -> Result<String> {
-    let stream = connect().await?;
-    let (rx, mut tx) = stream.into_split();
-    send_request(
-        &mut tx,
-        Request::DiffSessions {
-            name1: name1.to_string(),
-            name2: name2.to_string(),
-        },
-    )
-    .await?;
-    let mut rx = BufReader::new(rx);
-    let mut line = String::new();
-    rx.read_line(&mut line).await?;
-    match serde_json::from_str::<Response>(line.trim())? {
-        Response::SessionDiff { summary } => Ok(summary),
-        Response::Error(e) => anyhow::bail!("{}", e),
-        _ => anyhow::bail!("unexpected response from daemon"),
-    }
-}
 
 pub(super) async fn send_rename_session(old_name: &str, new_name: &str) -> Result<()> {
     let stream = connect().await?;
