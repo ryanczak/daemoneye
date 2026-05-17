@@ -51,6 +51,8 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
             old_termios: old,
             sigwinch: None,
             resize: None,
+            cost_usd: &mut 0.0,
+            has_untracked: &mut false,
         },
     )
     .await;

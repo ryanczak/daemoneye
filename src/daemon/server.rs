@@ -716,6 +716,8 @@ where
             },
             daemon_session_costs: session_costs,
             daemon_total_cost_today_usd: cost_today.total_cost_usd,
+            daemon_cost_by_provider: cost_today.cost_by_provider,
+            daemon_cost_by_agent: cost_today.cost_by_agent,
         },
     )
     .await?;

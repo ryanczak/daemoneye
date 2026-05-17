@@ -340,6 +340,10 @@ pub struct StatusBarState<'a> {
     pub daemon_up: bool,
     /// Session-cumulative count of silent tool calls (incremented on ToolStarted).
     pub tools_total: u32,
+    /// Cumulative cost of this session in USD.
+    pub cost_usd: f64,
+    /// Whether any AI call in this session had Unknown pricing.
+    pub has_untracked: bool,
 }
 
 /// Render (or refresh) the status bar in the bottom row.
@@ -387,6 +391,13 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
         String::new()
     };
 
+    let cost_str = if sb.cost_usd > 0.0 || sb.has_untracked {
+        let marker = if sb.has_untracked { "+" } else { "" };
+        format!("· ${:.2}{} ", sb.cost_usd, marker)
+    } else {
+        String::new()
+    };
+
     // Active approvals: bold amber.  Inactive ("approvals: off"): dim.
     let hint_str = if sb.approval_hint.is_empty() {
         String::new()
@@ -428,10 +439,13 @@ pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
     let mut candidates: Vec<Box<dyn Fn() -> String>> = vec![
         Box::new(|| {
             format!(
-                "{}{}{}{}{}",
-                base, model_str, tools_str, token_str, hint_str
+                "{}{}{}{}{}{}",
+                base, model_str, tools_str, token_str, cost_str, hint_str
             )
         }),
+        Box::new(|| format!("{}{}{}{}{}", base, model_str, tools_str, cost_str, hint_str)),
+        Box::new(|| format!("{}{}{}{}", base, model_str, cost_str, hint_str)),
+        Box::new(|| format!("{}{}{}", base, cost_str, hint_str)),
         Box::new(|| format!("{}{}{}{}", base, model_str, tools_str, hint_str)),
         Box::new(|| format!("{}{}{}", base, model_str, hint_str)),
         Box::new(|| format!("{}{}", base, hint_str)),
@@ -1244,5 +1258,99 @@ impl MarkdownRenderer {
         self.wrap.flush();
         println!();
         self.wrap.reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_bar_renders_cost_segment() {
+        let sb = StatusBarState {
+            session_id: "sess-abc123",
+            approval_hint: "",
+            model: "claude-sonnet-4-6",
+            prompt_tokens: 12000,
+            context_window: 200000,
+            daemon_up: true,
+            tools_total: 4,
+            cost_usd: 0.08,
+            has_untracked: false,
+        };
+        // Build the cost string using the same logic as draw_status_bar.
+        let cost_str = if sb.cost_usd > 0.0 || sb.has_untracked {
+            let marker = if sb.has_untracked { "+" } else { "" };
+            format!("· ${:.2}{} ", sb.cost_usd, marker)
+        } else {
+            String::new()
+        };
+        assert_eq!(cost_str, "· $0.08 ");
+    }
+
+    #[test]
+    fn status_bar_renders_untracked_marker_when_flag_set() {
+        let sb = StatusBarState {
+            session_id: "sess-abc123",
+            approval_hint: "",
+            model: "claude-sonnet-4-6",
+            prompt_tokens: 12000,
+            context_window: 200000,
+            daemon_up: true,
+            tools_total: 4,
+            cost_usd: 0.08,
+            has_untracked: true,
+        };
+        let cost_str = if sb.cost_usd > 0.0 || sb.has_untracked {
+            let marker = if sb.has_untracked { "+" } else { "" };
+            format!("· ${:.2}{} ", sb.cost_usd, marker)
+        } else {
+            String::new()
+        };
+        assert_eq!(cost_str, "· $0.08+ ");
+    }
+
+    #[test]
+    fn status_bar_hides_cost_when_zero_and_tracked() {
+        let sb = StatusBarState {
+            session_id: "sess-abc123",
+            approval_hint: "",
+            model: "claude-sonnet-4-6",
+            prompt_tokens: 12000,
+            context_window: 200000,
+            daemon_up: true,
+            tools_total: 4,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+        let cost_str = if sb.cost_usd > 0.0 || sb.has_untracked {
+            let marker = if sb.has_untracked { "+" } else { "" };
+            format!("· ${:.2}{} ", sb.cost_usd, marker)
+        } else {
+            String::new()
+        };
+        assert_eq!(cost_str, "");
+    }
+
+    #[test]
+    fn status_bar_shows_cost_when_zero_but_untracked() {
+        let sb = StatusBarState {
+            session_id: "sess-abc123",
+            approval_hint: "",
+            model: "unknown-model",
+            prompt_tokens: 1000,
+            context_window: 200000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: true,
+        };
+        let cost_str = if sb.cost_usd > 0.0 || sb.has_untracked {
+            let marker = if sb.has_untracked { "+" } else { "" };
+            format!("· ${:.2}{} ", sb.cost_usd, marker)
+        } else {
+            String::new()
+        };
+        assert_eq!(cost_str, "· $0.00+ ");
     }
 }

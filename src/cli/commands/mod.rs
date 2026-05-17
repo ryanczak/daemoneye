@@ -327,6 +327,8 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             context_window: ctx_pre,
             daemon_up: false,
             tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
         },
     );
 
@@ -403,6 +405,9 @@ async fn run_chat_inner_raw(
     // Accumulated prompt token count — carried across turns so the query box
     // shows the context size from the *previous* completed turn.
     let mut prompt_tokens: u32 = 0;
+    // Accumulated session cost — carried across turns for the status bar.
+    let mut cost_usd: f64 = 0.0;
+    let mut has_untracked: bool = false;
     let config = Config::load().unwrap_or_default();
     let mut context_window = config.resolve_model(None).context_window();
     let mut model = config.resolve_model(None).model.clone();
@@ -434,6 +439,8 @@ async fn run_chat_inner_raw(
             daemon_up: false,
             tools_total: 0,
             has_frame: false,
+            cost_usd: 0.0,
+            has_untracked: false,
         };
         match ask_with_session(
             QueryArgs {
@@ -457,6 +464,8 @@ async fn run_chat_inner_raw(
                 old_termios,
                 sigwinch: Some(sigwinch),
                 resize: Some(resize),
+                cost_usd: &mut cost_usd,
+                has_untracked: &mut has_untracked,
             },
         )
         .await
@@ -488,6 +497,8 @@ async fn run_chat_inner_raw(
             context_window,
             daemon_up,
             tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
         },
     );
 
@@ -509,6 +520,8 @@ async fn run_chat_inner_raw(
                 context_window,
                 daemon_up,
                 tools_total: 0,
+                cost_usd: 0.0,
+                has_untracked: false,
             },
             &mut last_ctrl_c,
         )
@@ -562,6 +575,8 @@ async fn run_chat_inner_raw(
                     context_window,
                     daemon_up,
                     tools_total: 0,
+                    cost_usd: 0.0,
+                    has_untracked: false,
                 },
             );
             continue;
@@ -594,6 +609,8 @@ async fn run_chat_inner_raw(
                         context_window,
                         daemon_up,
                         tools_total: 0,
+                        cost_usd: 0.0,
+                        has_untracked: false,
                     },
                 );
             }
@@ -645,6 +662,8 @@ async fn run_chat_inner_raw(
                             context_window,
                             daemon_up,
                             tools_total: 0,
+                            cost_usd: 0.0,
+                            has_untracked: false,
                         },
                     );
                 }
@@ -706,6 +725,8 @@ async fn run_chat_inner_raw(
                             context_window,
                             daemon_up,
                             tools_total: 0,
+                            cost_usd: 0.0,
+                            has_untracked: false,
                         },
                     );
                     // Emit a system message into the AI context so it knows the target changed.
@@ -738,6 +759,8 @@ async fn run_chat_inner_raw(
                             context_window,
                             daemon_up,
                             tools_total: 0,
+                            cost_usd: 0.0,
+                            has_untracked: false,
                         },
                     );
                 }
@@ -850,6 +873,8 @@ async fn run_chat_inner_raw(
                         context_window,
                         daemon_up,
                         tools_total: 0,
+                        cost_usd: 0.0,
+                        has_untracked: false,
                     },
                 );
                 continue;
@@ -1117,6 +1142,8 @@ async fn run_chat_inner_raw(
                 daemon_up,
                 tools_total: 0,
                 has_frame: true,
+                cost_usd,
+                has_untracked,
             };
             match ask_with_session(
                 QueryArgs {
@@ -1140,6 +1167,8 @@ async fn run_chat_inner_raw(
                     old_termios,
                     sigwinch: Some(sigwinch),
                     resize: Some(resize),
+                    cost_usd: &mut cost_usd,
+                    has_untracked: &mut has_untracked,
                 },
             )
             .await
@@ -1168,6 +1197,8 @@ async fn run_chat_inner_raw(
                 context_window,
                 daemon_up,
                 tools_total: 0,
+                cost_usd,
+                has_untracked,
             },
         );
     }

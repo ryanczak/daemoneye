@@ -34,6 +34,8 @@ pub(super) struct PromptCtx<'a, 'r> {
     pub(super) session_id: Option<&'a str>,
     pub(super) prompt_tokens: u32,
     pub(super) context_window: u32,
+    pub(super) cost_usd: f64,
+    pub(super) has_untracked: bool,
 }
 
 /// Return value of `prompt_tool_call` and `prompt_edit_file`. A typed redirect
@@ -59,6 +61,8 @@ pub(super) fn refresh_status_bar(
     approval: &SessionApproval,
     prompt_tokens: u32,
     context_window: u32,
+    cost_usd: f64,
+    has_untracked: bool,
 ) {
     let Some(d) = resize else { return };
     if !d.has_frame {
@@ -76,6 +80,8 @@ pub(super) fn refresh_status_bar(
             context_window,
             daemon_up: d.daemon_up,
             tools_total: d.tools_total,
+            cost_usd,
+            has_untracked,
         },
     );
 }
@@ -98,6 +104,8 @@ pub(super) async fn prompt_tool_call(
         session_id,
         prompt_tokens,
         context_window,
+        cost_usd,
+        has_untracked,
     } = ctx;
 
     erase_spinner(response_started);
@@ -201,7 +209,15 @@ pub(super) async fn prompt_tool_call(
                 "  \x1b[32m✓ approved — all {} commands auto-approved for this session\x1b[0m",
                 if is_sudo { "sudo" } else { "regular" }
             );
-            refresh_status_bar(resize, session_id, approval, prompt_tokens, context_window);
+            refresh_status_bar(
+                resize,
+                session_id,
+                approval,
+                prompt_tokens,
+                context_window,
+                cost_usd,
+                has_untracked,
+            );
             ApprovalDecision::ApprovedSession
         } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {
             println!("  \x1b[2m✗ skipped\x1b[0m");
@@ -343,6 +359,8 @@ pub(super) async fn prompt_script_write(
         session_id,
         prompt_tokens,
         context_window,
+        cost_usd,
+        has_untracked,
     } = ctx;
 
     erase_spinner(response_started);
@@ -389,7 +407,15 @@ pub(super) async fn prompt_script_write(
                 "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
                 script_name
             );
-            refresh_status_bar(resize, session_id, approval, prompt_tokens, context_window);
+            refresh_status_bar(
+                resize,
+                session_id,
+                approval,
+                prompt_tokens,
+                context_window,
+                cost_usd,
+                has_untracked,
+            );
             true
         } else {
             println!("  \x1b[2m✗ denied\x1b[0m");
@@ -456,6 +482,8 @@ pub(super) async fn prompt_runbook_write(
         session_id,
         prompt_tokens,
         context_window,
+        cost_usd,
+        has_untracked,
     } = ctx;
 
     erase_spinner(response_started);
@@ -502,7 +530,15 @@ pub(super) async fn prompt_runbook_write(
                 "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
                 runbook_name
             );
-            refresh_status_bar(resize, session_id, approval, prompt_tokens, context_window);
+            refresh_status_bar(
+                resize,
+                session_id,
+                approval,
+                prompt_tokens,
+                context_window,
+                cost_usd,
+                has_untracked,
+            );
             true
         } else {
             println!("  \x1b[2m✗ denied\x1b[0m");
@@ -533,6 +569,8 @@ pub(super) async fn prompt_edit_file(
         session_id,
         prompt_tokens,
         context_window,
+        cost_usd,
+        has_untracked,
     } = ctx;
 
     erase_spinner(response_started);
@@ -611,7 +649,15 @@ pub(super) async fn prompt_edit_file(
                 "  \x1b[32m✓ approved — edits to '{}' auto-approved for this session\x1b[0m",
                 path
             );
-            refresh_status_bar(resize, session_id, approval, prompt_tokens, context_window);
+            refresh_status_bar(
+                resize,
+                session_id,
+                approval,
+                prompt_tokens,
+                context_window,
+                cost_usd,
+                has_untracked,
+            );
             FileDecision::ApprovedSession
         } else if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("n") {
             println!("  \x1b[2m✗ denied\x1b[0m");

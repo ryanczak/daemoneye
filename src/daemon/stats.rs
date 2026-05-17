@@ -412,8 +412,14 @@ pub fn get_compaction_ratio() -> f64 {
 }
 
 /// Cached result of today's daemon-wide cost aggregation.
-/// The tuple is `(cached_at, total_cost_usd, session_costs)`.
-type CostTodayCacheEntry = (Instant, f64, Vec<(String, f64)>);
+/// The tuple is `(cached_at, total_cost_usd, session_costs, cost_by_provider, cost_by_agent)`.
+type CostTodayCacheEntry = (
+    Instant,
+    f64,
+    Vec<(String, f64)>,
+    Vec<(String, f64)>,
+    Vec<(String, f64)>,
+);
 static COST_TODAY_CACHE: Mutex<Option<CostTodayCacheEntry>> = Mutex::new(None);
 
 /// Cost aggregation result for today.
@@ -422,6 +428,10 @@ pub struct CostTodayResult {
     pub total_cost_usd: f64,
     /// Per-session cost breakdown: `(session_id, cost_usd)`.
     pub session_costs: Vec<(String, f64)>,
+    /// Per-provider cost breakdown: `(provider, cost_usd)`.
+    pub cost_by_provider: Vec<(String, f64)>,
+    /// Per-agent cost breakdown: `(agent_name, cost_usd)`.
+    pub cost_by_agent: Vec<(String, f64)>,
 }
 
 /// Compute today's daemon-wide cost by scanning `events.jsonl` for `ai_cost` events.
@@ -433,12 +443,14 @@ pub fn compute_cost_today() -> CostTodayResult {
 
     // Check cache first.
     if let Ok(guard) = COST_TODAY_CACHE.lock()
-        && let Some((cached_at, total, sessions)) = guard.as_ref()
+        && let Some((cached_at, total, sessions, by_provider, by_agent)) = guard.as_ref()
         && cached_at.elapsed() < CACHE_TTL
     {
         return CostTodayResult {
             total_cost_usd: *total,
             session_costs: sessions.clone(),
+            cost_by_provider: by_provider.clone(),
+            cost_by_agent: by_agent.clone(),
         };
     }
 
@@ -452,6 +464,8 @@ pub fn compute_cost_today() -> CostTodayResult {
 
     let mut total: f64 = 0.0;
     let mut by_session: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut by_provider: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    let mut by_agent: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
     let events_path = crate::config::events_path();
     if let Ok(file) = std::fs::File::open(&events_path) {
@@ -490,20 +504,40 @@ pub fn compute_cost_today() -> CostTodayResult {
                 .unwrap_or("-")
                 .to_string();
             *by_session.entry(session_id).or_insert(0.0) += cost;
+            if let Some(provider) = value.get("provider").and_then(|v| v.as_str()) {
+                *by_provider.entry(provider.to_string()).or_insert(0.0) += cost;
+            }
+            if let Some(agent) = value.get("agent_name").and_then(|v| v.as_str()) {
+                *by_agent.entry(agent.to_string()).or_insert(0.0) += cost;
+            }
         }
     }
 
     let mut session_costs: Vec<(String, f64)> = by_session.into_iter().collect();
     session_costs.sort_by(|a, b| a.0.cmp(&b.0));
 
+    let mut provider_costs: Vec<(String, f64)> = by_provider.into_iter().collect();
+    provider_costs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut agent_costs: Vec<(String, f64)> = by_agent.into_iter().collect();
+    agent_costs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
     // Update cache.
     if let Ok(mut guard) = COST_TODAY_CACHE.lock() {
-        *guard = Some((Instant::now(), total, session_costs.clone()));
+        *guard = Some((
+            Instant::now(),
+            total,
+            session_costs.clone(),
+            provider_costs.clone(),
+            agent_costs.clone(),
+        ));
     }
 
     CostTodayResult {
         total_cost_usd: total,
         session_costs,
+        cost_by_provider: provider_costs,
+        cost_by_agent: agent_costs,
     }
 }
 
@@ -590,5 +624,83 @@ mod tests {
         let result = compute_cost_today();
 
         assert!((result.total_cost_usd - 0.10).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_cost_today_aggregates_by_provider() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let events_path = crate::config::events_path();
+        std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+        let today = chrono::Utc::now().to_rfc3339();
+        let line1 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","provider":"anthropic","cost":{{"total_cost_usd":0.10}}}}"#
+        );
+        let line2 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","provider":"gemini","cost":{{"total_cost_usd":0.05}}}}"#
+        );
+        let line3 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","provider":"anthropic","cost":{{"total_cost_usd":0.20}}}}"#
+        );
+        std::fs::write(&events_path, format!("{}\n{}\n{}\n", line1, line2, line3)).unwrap();
+
+        let result = compute_cost_today();
+
+        assert!((result.total_cost_usd - 0.35).abs() < 1e-10);
+        assert_eq!(result.cost_by_provider.len(), 2);
+        // Sorted by cost descending: anthropic (0.30) first, gemini (0.05) second.
+        assert_eq!(result.cost_by_provider[0].0, "anthropic");
+        assert!((result.cost_by_provider[0].1 - 0.30).abs() < 1e-10);
+        assert_eq!(result.cost_by_provider[1].0, "gemini");
+        assert!((result.cost_by_provider[1].1 - 0.05).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_cost_today_aggregates_by_agent() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let events_path = crate::config::events_path();
+        std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+        let today = chrono::Utc::now().to_rfc3339();
+        let line1 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s1","agent_name":"chat","cost":{{"total_cost_usd":0.15}}}}"#
+        );
+        let line2 = format!(
+            r#"{{"event":"ai_cost","ts":"{today}","session_id":"s2","agent_name":"architect","cost":{{"total_cost_usd":0.25}}}}"#
+        );
+        std::fs::write(&events_path, format!("{}\n{}\n", line1, line2)).unwrap();
+
+        let result = compute_cost_today();
+
+        assert_eq!(result.cost_by_agent.len(), 2);
+        // Sorted by cost descending: architect (0.25) first, chat (0.15) second.
+        assert_eq!(result.cost_by_agent[0].0, "architect");
+        assert!((result.cost_by_agent[0].1 - 0.25).abs() < 1e-10);
+        assert_eq!(result.cost_by_agent[1].0, "chat");
+        assert!((result.cost_by_agent[1].1 - 0.15).abs() < 1e-10);
+    }
+
+    #[test]
+    fn compute_cost_today_empty_events_shows_zero_breakdowns() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        reset_cost_today_cache();
+
+        let events_path = crate::config::events_path();
+        std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+        std::fs::write(&events_path, "").unwrap();
+
+        let result = compute_cost_today();
+
+        assert!((result.total_cost_usd - 0.0).abs() < 1e-10);
+        assert!(result.cost_by_provider.is_empty());
+        assert!(result.cost_by_agent.is_empty());
     }
 }

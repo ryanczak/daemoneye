@@ -608,6 +608,12 @@ pub enum Response {
         /// Aggregated daemon-wide cost for today from events.jsonl.
         #[serde(default)]
         daemon_total_cost_today_usd: f64,
+        /// Cost breakdown by provider for today: `(provider, cost_usd)`.
+        #[serde(default)]
+        daemon_cost_by_provider: Vec<(String, f64)>,
+        /// Cost breakdown by agent for today: `(agent_name, cost_usd)`.
+        #[serde(default)]
+        daemon_cost_by_agent: Vec<(String, f64)>,
     },
     /// Confirmation that a session was saved (response to `SaveSession`).
     SessionSaved { name: String },

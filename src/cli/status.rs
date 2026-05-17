@@ -72,7 +72,9 @@ pub async fn run_status() -> Result<()> {
                     limits,
                     active_agents,
                     daemon_session_costs: _,
-                    daemon_total_cost_today_usd: _,
+                    daemon_total_cost_today_usd,
+                    daemon_cost_by_provider,
+                    daemon_cost_by_agent,
                 }) => {
                     let hours = uptime_secs / 3600;
                     let mins = (uptime_secs % 3600) / 60;
@@ -371,6 +373,31 @@ pub async fn run_status() -> Result<()> {
                                 "idle".to_string()
                             };
                             right_items.push((format!("  {}:", info.name), status));
+                        }
+                    }
+
+                    // Cost (today) section — hidden when total is $0.
+                    if daemon_total_cost_today_usd > 0.0 {
+                        right_items.push(("─".to_string(), "".to_string()));
+                        right_items.push(("§".to_string(), format!("{section_header:<23}{deep_yellow}│{reset}{blood_red} Cost (today){reset}", section_header = "", deep_yellow = deep_yellow, reset = reset, blood_red = blood_red)));
+                        right_items.push((
+                            "  Total:".to_string(),
+                            format!("${:.2}", daemon_total_cost_today_usd),
+                        ));
+                        if !daemon_cost_by_provider.is_empty() {
+                            let provider_parts: Vec<String> = daemon_cost_by_provider
+                                .iter()
+                                .map(|(p, c)| format!("{} ${:.2}", p, c))
+                                .collect();
+                            right_items
+                                .push(("  By provider:".to_string(), provider_parts.join(" · ")));
+                        }
+                        if !daemon_cost_by_agent.is_empty() {
+                            let agent_parts: Vec<String> = daemon_cost_by_agent
+                                .iter()
+                                .map(|(a, c)| format!("{} ${:.2}", a, c))
+                                .collect();
+                            right_items.push(("  By agent:".to_string(), agent_parts.join(" · ")));
                         }
                     }
 

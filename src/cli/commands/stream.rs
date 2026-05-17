@@ -30,6 +30,10 @@ pub(super) struct StreamResizeDims<'a> {
     pub(super) has_frame: bool,
     /// Session-cumulative count of silent tool calls; shown in the status bar.
     pub(super) tools_total: u32,
+    /// Cumulative cost of this session in USD.
+    pub(super) cost_usd: f64,
+    /// Whether any AI call in this session had Unknown pricing.
+    pub(super) has_untracked: bool,
 }
 
 /// Tracks an in-flight silent tool call so the client can animate an elapsed
@@ -84,6 +88,8 @@ fn apply_stream_resize(
             context_window,
             daemon_up: d.daemon_up,
             tools_total: d.tools_total,
+            cost_usd: d.cost_usd,
+            has_untracked: d.has_untracked,
         },
     );
 }
@@ -110,6 +116,10 @@ pub(super) struct StreamCtx<'a> {
     pub(super) old_termios: libc::termios,
     pub(super) sigwinch: Option<&'a mut tokio::signal::unix::Signal>,
     pub(super) resize: Option<StreamResizeDims<'a>>,
+    /// Mutable reference to the persistent session cost accumulator.
+    pub(super) cost_usd: &'a mut f64,
+    /// Mutable reference to the persistent untracked-cost flag.
+    pub(super) has_untracked: &'a mut bool,
 }
 
 pub(super) async fn ask_with_session(
@@ -139,6 +149,8 @@ pub(super) async fn ask_with_session(
         old_termios,
         sigwinch,
         resize,
+        cost_usd: session_cost,
+        has_untracked: session_has_untracked,
     } = stream;
     let mut sigwinch = sigwinch;
     let mut resize = resize;
@@ -213,6 +225,10 @@ pub(super) async fn ask_with_session(
     // Session-cumulative count of silent tool calls for the status bar counter.
     // Seed from resize dim so the count survives across ask_with_session turns.
     let mut tools_total: u32 = resize.as_ref().map(|d| d.tools_total).unwrap_or(0);
+    // Session-cumulative cost in USD, seeded from persistent reference.
+    let mut cost_usd: f64 = *session_cost;
+    // Whether any AI call in this session had Unknown pricing.
+    let mut has_untracked: bool = *session_has_untracked;
     // prompt_tokens is passed in from the outer loop so the value from the
     // previous turn is visible when print_user_query renders the query box.
 
@@ -347,8 +363,17 @@ pub(super) async fn ask_with_session(
             Response::SessionInfo {
                 message_count: _,
                 turn_count,
-                ..
+                session_cost_usd,
+                has_untracked_cost,
             } => {
+                cost_usd = session_cost_usd;
+                has_untracked = has_untracked_cost;
+                *session_cost = cost_usd;
+                *session_has_untracked = has_untracked;
+                if let Some(ref mut d) = resize {
+                    d.cost_usd = cost_usd;
+                    d.has_untracked = has_untracked;
+                }
                 // Print the user query as a bordered box with token budget in the bottom border.
                 // Skip for the greeting turn (display_query is empty).
                 print!("\r\x1b[K"); // erase spinner line
@@ -384,6 +409,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     command,
                     background,
@@ -494,6 +521,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     panes,
                 )
@@ -512,6 +541,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     &script_name,
                 )
@@ -535,6 +566,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     &script_name,
                     &content,
@@ -560,6 +593,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     &name,
                     &kind,
@@ -667,6 +702,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     &runbook_name,
                     &content,
@@ -694,6 +731,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     &path,
                     &operation,
@@ -728,6 +767,8 @@ pub(super) async fn ask_with_session(
                         session_id,
                         prompt_tokens: *prompt_tokens,
                         context_window,
+                        cost_usd,
+                        has_untracked,
                     },
                     &runbook_name,
                     &active_jobs,

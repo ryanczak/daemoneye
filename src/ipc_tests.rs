@@ -708,6 +708,11 @@ fn response_daemon_status_roundtrip() {
             ("sess-def456".to_string(), 0.18),
         ],
         daemon_total_cost_today_usd: 0.60,
+        daemon_cost_by_provider: vec![
+            ("anthropic".to_string(), 0.45),
+            ("gemini".to_string(), 0.15),
+        ],
+        daemon_cost_by_agent: vec![("chat".to_string(), 0.35), ("architect".to_string(), 0.25)],
     };
     match roundtrip_resp(&resp) {
         Response::DaemonStatus {
