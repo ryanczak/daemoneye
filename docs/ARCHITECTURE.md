@@ -409,6 +409,140 @@ The webhook server (`webhook.rs`) is an optional axum HTTP server spawned as a d
 
 **Ghost Shell policy** (`GhostPolicy::is_safe()`): non-sudo commands always pass; only scripts listed in `auto_approve_scripts` may use sudo — regardless of `run_with_sudo`. `run_with_sudo: true` only affects `GhostPolicy::resolve_command()`, which auto-prepends `sudo` when executing an approved script, so the ghost AI can write `script.sh` instead of `sudo script.sh`; it does not grant permission to run arbitrary sudo commands. `trigger_ghost_turn` logs each turn start and tool dispatch to `daemon.log` (INFO), and writes `ghost_turn`, `ghost_complete`, and `ghost_error` structured records to `events.jsonl`. `inject_ghost_event` mirrors every lifecycle message to `events.jsonl` as `ghost_lifecycle` in addition to injecting it into session history. Background command output is archived to `~/.daemoneye/var/log/panes/` from the full pipe-pane log, bypassing the tmux scrollback cap.
 
+### 2.10 Cost Accounting
+
+DaemonEye tracks the dollar cost of every AI API call across all sessions, ghost shells, and scheduled jobs. Costs are attributed per-agent, per-provider, and per-session, and surfaced in the chat status bar, `daemoneye status`, `daemoneye costs`, and catch-up briefs.
+
+**Token tracking** (`src/ai/types.rs`): Every AI completion produces a `TokenBreakdown` with four buckets — `input_tokens` (uncached input), `output_tokens`, `cache_read_tokens`, and `cache_write_tokens`. All three backends parse their provider-specific usage fields into this shape:
+- **Anthropic**: `cache_creation_input_tokens` → `cache_write_tokens`; `cache_read_input_tokens` → `cache_read_tokens`; uncached remainder → `input_tokens`.
+- **OpenAI**: `prompt_tokens_details.cached_tokens` → `cache_read_tokens`; `cache_write_tokens` always 0.
+- **Gemini**: `usageMetadata.cachedContentTokenCount` → `cache_read_tokens`; `cache_write_tokens` always 0.
+
+`TokenBreakdown` carries a custom `Deserialize` that accepts the legacy `AiUsage { prompt_tokens, completion_tokens }` shape so historical session JSONL files load without error.
+
+**Pricing** (`src/config.rs`): Per-model rates are declared in `[models.<name>]` config blocks with four optional fields (`input_cost_per_mtok`, `output_cost_per_mtok`, `cache_read_cost_per_mtok`, `cache_write_cost_per_mtok`, all `#[serde(default)]`). `ModelEntry::pricing()` merges user-supplied rates with built-in defaults for known models. `default_pricing_for(provider, model)` embeds rates for Anthropic (`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5-*`), OpenAI (`gpt-4o`, `gpt-4o-mini`, `o1`, `o3-mini`), Gemini (`gemini-2.5-pro`, `gemini-2.5-flash`), and returns `Pricing::zero()` (source=`Local`) for `lmstudio` and `ollama`. An unknown model on a known provider returns `None` (`source=Unknown`); `Config::validate_pricing()` logs a single `warn!` at startup for each model without resolvable pricing.
+
+**Cost computation** (`src/cost.rs`): `compute_cost(tokens: &TokenBreakdown, pricing: &Pricing) -> Cost` multiplies each bucket by its per-million-token rate. `Cost` holds five fields: `input_cost_usd`, `output_cost_usd`, `cache_read_cost_usd`, `cache_write_cost_usd`, `total_cost_usd` (their sum). Arithmetic uses `f64` in USD; no rounding — f64 has sufficient precision for costs in the $0.0001–$100 range.
+
+**Attribution** (`src/cost.rs`): `CostAttribution { agent_name, is_ghost, parent_job_id }` is constructed once per conversation loop entry and threaded to the `AiEvent::Done` handler. Rules:
+- Interactive chat session → `agent_name = "chat"`.
+- Named ghost shell (`agent: "foo"` in runbook or spawn) → `agent_name = "foo"`, `is_ghost = true`.
+- Unnamed ghost shell → `agent_name = "ghost-anonymous"`, `is_ghost = true`.
+- Coordinator-spawned ghost → `parent_job_id = <coordinator job_id>`.
+- `/agent switch` (future) → `agent_name = <switched agent>`.
+
+`CostAttribution::from_ghost_config(ghost_config: Option<&GhostConfig>)` is the single constructor used by both the interactive path (`server.rs`) and the ghost path (`ghost.rs`) to ensure attribution rules are applied consistently.
+
+**`ai_cost` event** (`src/daemon/stream.rs`, `src/daemon/ghost.rs`): At `AiEvent::Done`, the daemon builds a `CostRecord` and calls `log_event("ai_cost", ...)`. Unknown-pricing records are still emitted (`pricing_source: "Unknown"`, all costs zero) so aggregators can surface "$X spent, $Y untracked." The `CostRecord` schema written to `events.jsonl`:
+
+```json
+{
+  "event": "ai_cost",
+  "ts": "<rfc3339>",
+  "session_id": "<id or '-'>",
+  "agent_name": "chat | ghost-anonymous | <name>",
+  "is_ghost": false,
+  "parent_job_id": null,
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "tokens": {
+    "input_tokens": 12000,
+    "output_tokens": 4000,
+    "cache_read_tokens": 8000,
+    "cache_write_tokens": 2000
+  },
+  "cost": {
+    "input_cost_usd": 0.036,
+    "output_cost_usd": 0.06,
+    "cache_read_cost_usd": 0.0024,
+    "cache_write_cost_usd": 0.0075,
+    "total_cost_usd": 0.1059
+  },
+  "pricing_source": "BuiltinDefault"
+}
+```
+
+**Session-level aggregation** (`src/daemon/session.rs`): `SessionEntry` carries `cost_usd: f64`, `cost_by_agent: HashMap<String, f64>`, and `has_untracked_cost: bool`. These are incremented after every `ai_cost` emission and sent to the client in `Response::SessionInfo` (`session_cost_usd`, `has_untracked_cost`) on every Ask response.
+
+**Daemon-wide aggregation** (`src/daemon/stats.rs`): `compute_cost_today() -> CostTodayResult` streams `events.jsonl` line-by-line via `BufReader`, filters `event == "ai_cost"` events with a UTC timestamp in today's window `[today_start, today_end)`, and accumulates `total_cost_usd`, `session_costs` (by session_id, sorted alphabetically), `cost_by_provider` (by provider, sorted by cost descending), and `cost_by_agent` (by agent_name, sorted by cost descending). Results are cached for 5 seconds via `COST_TODAY_CACHE: Mutex<Option<CostTodayCacheEntry>>` to avoid re-scanning on every `daemoneye status` call. The result is exposed via `Response::DaemonStatus` fields `daemon_total_cost_today_usd`, `daemon_session_costs`, `daemon_cost_by_provider`, `daemon_cost_by_agent` (all `#[serde(default)]` for backwards compatibility).
+
+**Catch-up brief** (`src/daemon/utils.rs`, `src/daemon/server.rs`): `sum_cost_between(from, to) -> CostSummary` is a daemon-wide scanner (not session-scoped) used by `build_catchup_brief()` when the client re-attaches. `SessionEntry.detach_time_utc: Option<DateTime<Utc>>` is set at detach and cleared at attach. If AI calls occurred during the detach window, the brief appends:
+```
+Cost during detach: $0.34 (architect $0.20 · ghost-anonymous $0.14)
+```
+If only local providers ran (cost == 0): `$0.00 (local providers only)`. If no AI calls occurred: line omitted. If no event messages (ghost completions, background tasks) were injected but there was cost, a `[Catch-up] AI activity while you were away (Xm):` header is emitted before the cost bullet.
+
+**User-visible displays**:
+- **Status bar** (`src/cli/render.rs`): `format_cost_segment(cost_usd, has_untracked) -> String` renders `· $0.08` (tracked) or `· $0.08+` (at least one Unknown-priced call). Omitted when `cost_usd == 0.0 && !has_untracked`. Dropped progressively on narrow terminals.
+- **`daemoneye status`** (`src/cli/status.rs`): "Cost (today)" section shows Total, By provider, By agent — hidden when total is $0.
+- **`daemoneye costs`** (`src/cli/commands/costs.rs`): reads `events.jsonl` directly (no daemon round-trip, works when daemon is down). `aggregate_costs(reader, since, until, group_by, agent_filter) -> CostSummary` is the testable inner function; `run_costs` is the thin CLI wrapper. Supports `--since`, `--until`, `--by day|agent|provider|model|session`, `--agent <name>`, `--json`. Date bounds use half-open intervals `[since, until_next_day)` matching the `compute_cost_today` pattern.
+
+---
+
+### 2.11 Named Agents
+
+Named Agents are persistent, reusable executor identities for ghost shells. Where a runbook defines *what* to do, an agent defines *who does it* — the role, the knowledge, the tools, the model, and the memory that persist across every task that executor handles.
+
+**Agents are configuration profiles, not processes.** An agent does not sit in memory between invocations. When work arrives, a ghost shell is instantiated from the agent's config profile; when the work is done, the ghost shell exits. The agent's memory namespace and briefing state survive; the process does not.
+
+**`AgentConfig`** (`src/agents/mod.rs`): stored at `~/.daemoneye/agents/<name>/config.toml`.
+
+```toml
+name = "security-auditor"
+description = "Reads IAM policies and audit logs; never writes to production"
+prompt = "You are a cautious security auditor..."   # replaces SRE prompt for this agent
+model = "opus"                                       # optional model key override
+memory_namespace = "security-auditor"               # optional; defaults to name
+max_turns = 30
+
+auto_approve_read_only = true
+auto_approve_scripts = ["audit-iam.sh"]
+
+[tools]
+allow = ["read_file", "read_memory", "list_memories", "search_repository", "run_terminal_command"]
+```
+
+**Runbook × Agent composability**: a runbook specifies `agent: <name>` in its TOML frontmatter. `apply_agent_to_ghost_config()` merges the two according to these rules:
+
+| Dimension | Resolution |
+|---|---|
+| System prompt | Agent prompt wins over runbook preamble; runbook task injected as first user turn |
+| Model | Runbook-level model beats agent default |
+| Tool policy | Intersection — deny wins; agent cannot expand `GhostPolicy` |
+| Memory | Search agent namespace → global namespace, in that order |
+
+**Tool policy** (`src/agents/policy.rs`): `ToolPolicy { allow: Option<Vec<String>>, deny: Option<Vec<String>> }`. Specify `allow` (allowlist) or `deny` (denylist), not both. `ToolPolicy::permits(tool_name)` returns false for calls the policy denies. The daemon enforces this in `execute_tool_call()` (`src/daemon/executor/mod.rs`) — the model cannot prompt its way past a tool denial; the IPC layer rejects the call and returns a structured error as a tool result.
+
+**Memory namespacing**: the FTS5 index (`var/index/memory.db`) has a `namespace TEXT NOT NULL DEFAULT 'global'` column. `add_memory` writes to the agent's namespace; `read_memory`/`list_memories`/`search_repository` query the agent namespace first, then fall back to global. The interactive chat session always reads from the global namespace only.
+
+**Persistent briefing state** (`src/daemon/briefing.rs`): after each ghost shell exits cleanly, `generate_and_save_briefing()` asks the model for a ≤500-token summary (what was found, what was done, what remains) and writes it to `~/.daemoneye/agents/<name>/briefing.md` after masking. On the next invocation of any ghost shell using that agent, `read_briefing()` injects the content as a `## Previous Session Summary` block in the system prompt. Each invocation overwrites the prior briefing — this is a rolling summary, not a log. `clear_briefing()` is called on abnormal exit so a failed run does not poison the next invocation.
+
+**Agent-to-agent delegation** (`src/agents/mailbox.rs`): the `spawn_ghost_shell` AI tool accepts an `agent` parameter. A coordinator ghost (depth 0) may spawn specialist ghosts (depth 1). The child ghost writes its final result to `~/.daemoneye/agents/<agent_name>/mailbox/<job_id>.json` via `write_mailbox()`. The coordinator reads the result via the `await_agent_result` tool, which calls `read_mailbox()`. `GhostConfig.spawn_depth: u8` is incremented at each level; depth ≥ 2 is rejected with an error — specialists cannot spawn further sub-agents.
+
+```
+coordinator (depth 0)
+  ├── access-auditor specialist (depth 1)
+  └── log-analyst specialist (depth 1)       ← maximum depth
+```
+
+**Security properties**:
+- Tool policy is additive restriction only — an agent cannot expand toolset beyond `GhostPolicy`.
+- Spawn depth cap is enforced by the daemon; the model cannot override it.
+- Agent configs cannot be written by AI tools without user approval (same gate as `edit_file`).
+- Briefings are masked before write — a model cannot launder a secret through a briefing file.
+- Memory namespacing is signal clarity and search efficiency, not an access-control boundary.
+
+**Key files**:
+
+| File | Role |
+|---|---|
+| `src/agents/mod.rs` | `AgentConfig` struct, CRUD (`create_agent`, `read_agent`, `list_agents`, `delete_agent`), `apply_agent_to_ghost_config()` |
+| `src/agents/policy.rs` | `ToolPolicy` — `permits()`, `format_tool_restriction_block()` |
+| `src/agents/mailbox.rs` | `MailboxResult`, `write_mailbox()`, `read_mailbox()` for agent-to-agent result passing |
+| `src/daemon/briefing.rs` | `generate_and_save_briefing()`, `read_briefing()`, `clear_briefing()` |
+
+---
+
 ## 4. Data Flow Example: Troubleshooting an Error
 
 1. The user encounters a daemon failure in their active tmux pane.
