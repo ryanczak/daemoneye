@@ -1,4 +1,4 @@
-# DaemonEye: AI Powered Operator
+# DaemonEye: Agentic Operator
 
 DaemonEye is a lightweight background daemon that integrates an AI-powered systems, software, and security expert directly into your tmux session. It understands your full terminal state — scrollback buffer, environment variables, running programs, command history, pane topology — and can act on it. Ghost Shells let it autonomously investigate and remediate incidents while you sleep. Named Agents give those ghost shells persistent identities: a specialist's system prompt, a dedicated model, a scoped memory pool, and a daemon-enforced tool policy that carries across every invocation. Webhooks wire it into Prometheus, Grafana, and any service that can POST JSON.
 

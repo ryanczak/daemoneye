@@ -253,7 +253,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             "██  ██ ██▀██ ██▄▄  ██▀▄▀██ ██▀██ ███▄██ ██▄▄   ▀███▀ ██▄▄",
             "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
         ];
-        let subtitle = "                 AI POWERED OPERATOR";
+        let subtitle = "                   AGENTIC OPERATOR";
         let logo_w = logo_lines
             .iter()
             .map(|l| l.chars().count())
