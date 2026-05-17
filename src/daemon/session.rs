@@ -38,6 +38,9 @@ pub struct SessionEntry {
     /// When the tmux client last detached from this session (`client-detached` hook, N15).
     /// `None` while a client is attached or before any detach has been observed.
     pub last_detach: Option<Instant>,
+    /// UTC wall-clock time of the last detach. Used to query `events.jsonl` for
+    /// cost incurred during the detach window (Phase 7).
+    pub detach_time_utc: Option<chrono::DateTime<chrono::Utc>>,
     /// Number of messages in `messages` at the time of `last_detach`.
     /// Used to identify messages injected while no client was present (N15).
     pub messages_at_detach: usize,
@@ -497,6 +500,7 @@ mod tests {
             last_prompt_tokens: 0,
             tmux_session: "test".to_string(),
             last_detach: None,
+            detach_time_utc: None,
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: false,
@@ -531,6 +535,7 @@ mod tests {
             last_prompt_tokens: 0,
             tmux_session: "test".to_string(),
             last_detach: None,
+            detach_time_utc: None,
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: false,
@@ -575,6 +580,7 @@ mod tests {
             last_prompt_tokens: 0,
             tmux_session: "test".to_string(),
             last_detach: None,
+            detach_time_utc: None,
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: false,
@@ -621,6 +627,7 @@ mod tests {
             last_prompt_tokens: 0,
             tmux_session: "test".to_string(),
             last_detach: None,
+            detach_time_utc: None,
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: false,

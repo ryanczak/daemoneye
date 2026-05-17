@@ -164,6 +164,7 @@ where
         for entry in store.values_mut() {
             if entry.tmux_session == session_name {
                 entry.last_detach = None;
+                entry.detach_time_utc = None;
             }
         }
     }
@@ -181,10 +182,12 @@ where
     W: AsyncWriteExt + Unpin,
 {
     let now = Instant::now();
+    let now_utc = chrono::Utc::now();
     if let Ok(mut store) = sessions.lock() {
         for entry in store.values_mut() {
             if entry.tmux_session == session_name {
                 entry.last_detach = Some(now);
+                entry.detach_time_utc = Some(now_utc);
                 entry.messages_at_detach = entry.messages.len();
             }
         }

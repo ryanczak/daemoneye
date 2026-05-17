@@ -226,6 +226,7 @@ impl GhostManager {
             last_prompt_tokens: 0,
             tmux_session: tmux_session.clone(),
             last_detach: None,
+            detach_time_utc: None,
             messages_at_detach: 0,
             pipe_source_pane: None,
             is_ghost: true,
