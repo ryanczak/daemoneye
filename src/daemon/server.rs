@@ -130,10 +130,14 @@ pub(crate) fn build_catchup_brief(
             away_str,
             lines,
         ));
-    }
-
-    if let Some(cost) = cost_line {
-        parts.push(format!("  • {}", cost));
+        if let Some(cost) = cost_line {
+            parts.push(format!("  • {}", cost));
+        }
+    } else if let Some(cost) = cost_line {
+        parts.push(format!(
+            "[Catch-up] AI activity while you were away ({}):\n  • {}",
+            away_str, cost
+        ));
     }
 
     Some(parts.join("\n"))
@@ -1917,6 +1921,41 @@ mod tests {
         assert!(
             brief.contains("$0.00+"),
             "should have + marker for untracked: {brief}"
+        );
+    }
+
+    #[test]
+    fn catchup_brief_cost_only_has_header_when_no_events() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+
+        let events_path = crate::config::events_path();
+        std::fs::create_dir_all(events_path.parent().unwrap()).unwrap();
+
+        // AI cost event during the detach window.
+        let ts = (chrono::Utc::now() - chrono::Duration::minutes(30)).to_rfc3339();
+        let line = format!(
+            r#"{{"event":"ai_cost","ts":"{ts}","session_id":"gs-1","agent_name":"architect","cost":{{"total_cost_usd":0.34}}}}"#
+        );
+        std::fs::write(&events_path, format!("{}\n", line)).unwrap();
+
+        // No injected event messages — only cost.
+        let detach_time = chrono::Utc::now() - chrono::Duration::hours(1);
+        let msgs: Vec<crate::ai::Message> = vec![];
+        let brief =
+            build_catchup_brief(&msgs, 3600, Some(detach_time)).expect("should produce a brief");
+        assert!(
+            brief.contains("[Catch-up] AI activity while you were away"),
+            "should have header when cost-only: {brief}"
+        );
+        assert!(
+            brief.contains("Cost during detach:"),
+            "should have cost line: {brief}"
+        );
+        assert!(
+            brief.contains("architect"),
+            "should show agent name: {brief}"
         );
     }
 
