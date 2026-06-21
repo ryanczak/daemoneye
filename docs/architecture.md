@@ -4,13 +4,29 @@
 > baseline for rexyMCP-driven development. This document describes the system as
 > it is built today; the milestone roadmap (§5) is the forward-looking part and
 > is scoped with the principal engineer before any phase is drafted.
+>
+> **Related docs.** This is the *concise* design baseline. For implementation
+> depth (IPC variants, completion-detection internals, cost schema, hook
+> formats) see [`design-reference.md`](design-reference.md); for product vision and
+> requirements see [`PRODUCT_DEFINITION.md`](PRODUCT_DEFINITION.md),
+> [`REQUIREMENTS.md`](REQUIREMENTS.md), and [`ROADMAP.md`](ROADMAP.md).
 
 DaemonEye is a Rust daemon that embeds an AI assistant directly into `tmux`. It
 runs in the background, watches the user's terminal panes, and lets the user
 converse with an LLM that can *see* the terminal context and *act* on it by
 running commands, editing files, scheduling jobs, and delegating to autonomous
-"ghost shells." Every action that touches the user's environment passes through
-an approval gate.
+"ghost shells."
+
+Its organizing principle is a **trust spectrum**: autonomy is not binary. The
+same engine operates across four levels of earned trust —
+(1) **supervised** pair-work where every tool call is approved per-call;
+(2) **session-scoped** trust where the user approves a class of action for the
+rest of the session; (3) **scheduled / watchdog** operations that run
+unattended against pre-vetted runbooks and scripts; and
+(4) **autonomous ghost shells** that respond to alerts on their own under
+runbook + policy control. Every action that touches the user's environment
+passes through a gate appropriate to its trust level; there is no global
+approval-bypass.
 
 ---
 
@@ -34,7 +50,8 @@ The daemon lifecycle and client↔daemon wire protocol.
   webhook) alive across panics.
 - **`src/ipc.rs`** — the full wire protocol: the `Request` and `Response` enums,
   serialized as newline-delimited JSON over a Unix domain socket
-  (`~/.daemoneye/daemoneye.sock`).
+  (`~/.daemoneye/var/run/daemoneye.sock`, resolved via
+  `config::default_socket_path()`). IPC payloads are capped (1 MiB).
 - **`src/cli/`** — the client side: terminal rendering (`render.rs`), readline
   input (`input.rs`), streaming display (`stream`), session-level approval
   state, and the `chat` / `ask` / `notify` / `status` commands. Slash commands
@@ -61,8 +78,14 @@ The brain: turns a `Request::Ask` into an AI conversation that can act.
   client attach/detach, session-created, …).
 - **`ghost.rs`** / **`policy.rs`** / **`briefing.rs`** — the Ghost Shell
   subsystem (see §3).
-- **`digest.rs`** / **`auto_name.rs`** — conversation compaction at 30 messages;
-  session auto-naming.
+- **`digest.rs`** / **`auto_name.rs`** — conversation compaction driven by
+  prompt-token pressure (minimum `DIGEST_THRESHOLD` = 20 messages; history is
+  bounded to `MAX_HISTORY` = 80), preserving tool-call/result pairs across the
+  cut; session auto-naming.
+- **`stats.rs`** + **`src/cost.rs`** / **`src/cli/status.rs`** — per-turn token
+  accounting (input / output / cache-read / cache-write), per-model pricing, and
+  cost attribution to chat vs ghost vs agent. Drives the status-bar cost
+  readout, `daemoneye status`, and the `daemoneye costs` CLI.
 
 ### 1.3 AI provider layer (`src/ai/`)
 
@@ -174,17 +197,25 @@ What DaemonEye explicitly does **not** do:
 - **No terminal multiplexer of its own.** It is a tmux *client*, not a
   replacement. Everything visual is a tmux pane/window; DaemonEye never draws its
   own UI surface.
-- **No unattended action without a gate.** Interactive tool calls require
-  per-call approval; autonomous ghost actions require a runbook + dual policy.
-  There is no "just run everything" mode.
+- **No web UI.** DaemonEye is terminal-native by deliberate choice; the audit
+  log is plain JSONL that existing tools (`grep`, `jq`, Grafana) consume.
+- **No unattended action without a gate, and no global approval-bypass.**
+  Interactive tool calls require per-call (or session-scoped) approval;
+  autonomous ghost actions require a runbook + dual policy. There is no "just run
+  everything" switch that flattens the trust spectrum.
+- **No long-running agents that own infrastructure.** Named agents are reusable
+  *configuration identities* (prompt, model, tool policy, memory namespace),
+  not persistent processes. They are instantiated per ghost/session and exit
+  when the work does.
 - **No provider lock-in.** The three backends sit behind one trait; no provider's
   wire format leaks above `src/ai/backends/`.
 - **No secret exfiltration surface.** The masking filter runs on all captured
   output and artifact content; `read_file` is blocked from the credential files
   (`etc/config.toml`, `etc/prompts/sre.toml`) and `edit_file` from `~/.daemoneye/`.
-- **No cross-host orchestration fabric.** A single daemon serves the tmux
+- **No free-form cross-host orchestration.** A single daemon serves the tmux
   sessions on its host; remote panes are reached *through* tmux (SSH/mosh), not
-  via a DaemonEye agent on the far side.
+  via a DaemonEye agent on the far side. Fleet-style cross-host work, if it ever
+  lands, is mediated by runbooks — not arbitrary `ssh $host $cmd` fan-out.
 - **No durable conversation store beyond named sessions.** Ephemeral per-session
   JSONL logs are for crash recovery, not a queryable history product.
 
@@ -205,12 +236,18 @@ speculation.
   context, pipe-pane logging.
 - **Foreground/background execution** — hook-based completion, PID-based local
   completion, respawn-pane retry, persistent background windows.
-- **Knowledge system** — runbooks, persistent memory (with FTS5 index and G2
-  schema), repository search, named agents with tool policies.
+- **Knowledge system** — runbooks, persistent memory (with FTS5 index, G2
+  schema, and per-agent namespacing), repository search, named agents with tool
+  policies and persistent briefings.
+- **Scheduled operations** — `Once` / `Every` / `Cron` jobs with `Alert` /
+  `Script` / `Ghost` actions; the unattended (Level 3) tier of the trust
+  spectrum, with `daemoneye install-sudoers` for pre-vetted privileged scripts.
 - **Ghost Shell architecture** — watchdog detection, scheduled ghost jobs,
   concurrency/depth caps, delegation mailbox, briefings.
 - **Multi-model support** — per-session model switching, per-runbook model
   override, circuit breaker, `daemoneye status`.
+- **Cost accounting** — per-turn token + cost tracking attributed to chat /
+  ghost / agent, status-bar readout, and the `daemoneye costs` CLI.
 - **Session persistence** — named sessions, auto-naming, session-origin
   stamping, `session import`.
 - **Webhook ingestion** — Alertmanager/Grafana/generic parsers, rate limiting,
@@ -218,7 +255,10 @@ speculation.
 
 ### Next milestone — to be defined
 
-`docs/dev/NEXT.md` currently points at **none**. The next milestone README is
-written under `docs/dev/milestones/M<n>-<slug>/` once its goal, scope, and
-non-scope are agreed with the principal engineer. Run `/rexymcp:architect` to
-scope it, then `/rexymcp:architect next` to draft the first phase.
+`docs/dev/NEXT.md` currently points at **none**. A pre-rexyMCP roadmap already
+exists in [`ROADMAP.md`](ROADMAP.md) (Phases B–F with numbered R/I
+opportunities) and serves as a reference baseline — not a commitment. The next
+milestone README is written under `docs/dev/milestones/M<n>-<slug>/` once its
+goal, scope, and non-scope are re-agreed with the principal engineer. Run
+`/rexymcp:architect` to scope it, then `/rexymcp:architect next` to draft the
+first phase.

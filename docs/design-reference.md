@@ -1,5 +1,9 @@
 # DaemonEye System Architecture
 
+> This is the detailed implementation reference. For the concise design baseline
+> used by the rexyMCP architect/executor workflow, see
+> [`architecture.md`](architecture.md).
+
 This document outlines the high-level architecture and core components of the DaemonEye daemon.
 
 ## 1. High-Level Architecture Diagram
