@@ -1117,6 +1117,7 @@ fn g5_mailbox_write_and_read() {
         uuid::Uuid::new_v4().simple()
     ));
     std::fs::create_dir_all(&tmp).unwrap();
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", &tmp);
