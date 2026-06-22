@@ -58,7 +58,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 01 | safe-remote-command-foundation (SSH escaping + shared helper)     | done   |
 | 02 | remote-file-op-parity ([phase-02](phase-02-remote-file-op-parity.md))   | done   |
 | 03 | script-exec-hardening ([phase-03](phase-03-script-exec-hardening.md)) — sudoers quoting + script-name allowlist | done   |
-| 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | review |
+| 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | done   |
 | 05 | interactive-remote-script-exec (daemon-host script streamed into a remote *user* pane — the non-ghost analogue of 04) | todo   |
 | 06 | namespace-access-control (memory/search ACL)                      | todo   |
 | 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |

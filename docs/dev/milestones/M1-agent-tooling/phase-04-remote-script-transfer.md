@@ -1,7 +1,7 @@
 # Phase 04: Remote Script Execution (ghost `ssh_target`: stream by default, persist for sudo)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (safe SSH quoting / `wrap_remote`), phase-03 (script-name
 allowlist — the basename is already `[A-Za-z0-9._-]`-safe by the time it reaches the
 remote)
@@ -510,3 +510,28 @@ Script executed correctly with args set — hex decode → pipe → interpreter 
 only needed for the approval display). The error message text changed slightly from
 "cannot transfer script" to "cannot run script" to better reflect that streaming is the
 default (no transfer occurs).
+
+### Review verdict — 2026-06-22 (v2)
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none
+- **Calibration:** `shebang_interpreter` uses `tokens[0].ends_with("env")` rather than
+  the spec's literal "basename is `env`". All five pinned acceptance cases pass; the
+  deviation only misfires on a hypothetical interpreter path whose basename merely
+  *ends* in `env` (e.g. `#!/usr/bin/myenv foo`), and the charset gate still protects
+  that path. Noted, not bounced — one occurrence is data, not a trend.
+
+**Independent re-verification (reviewer):**
+- `cargo fmt --all --check`, `cargo build`, `cargo clippy --all-targets --all-features
+  -- -D warnings`, `cargo test` — all clean (729 unit + 27 integration, 1 ignored).
+- Phase tests rerun green: `remote_stream_cmd` (4), `shebang_interpreter_cases` (1),
+  `remote_script_call` (2), delegation (1).
+- End-to-end: reconstructed the emitted pipeline for a `#!/bin/bash` script and ran it
+  through real `bash` — `bash /dev/stdin hello world` set `$1=hello $2=world`, rc 0, no
+  `mkdir`/`.de_tmp`/`mv`/redirect (no-remote-disk property holds). Perl fallback branch
+  and a `#!/usr/bin/env python3` script (streamed into real `python3 /dev/stdin`) both
+  executed correctly — cross-interpreter streaming confirmed.
+- New-code grep: no `unwrap`/`expect`/`panic!`/`unsafe`/`#[allow]`/`TODO` added by the
+  phase commit (`feat: stream remote scripts by default, persist only for sudo`).
