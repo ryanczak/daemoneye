@@ -1,7 +1,7 @@
 # Phase 08: Prompt & Tool-Def Fixes
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none (independent of the phase-10 tmux work; touches `sre.toml`, `tools.rs`, `config.rs` only)
 **Estimated diff:** ~100 lines (incl. tests)
 **Tags:** language=rust, kind=feature, size=m
@@ -448,3 +448,23 @@ Doc-tests: ok. 0 passed; 0 failed; 0 ignored; 0 measured
 
 **Commits:**
 - `16820fa` — feat: add enum schema constraints, fix auto_approve_scripts dual-format, teach prompt the § 2.4 model
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP local executor)
+- **Scope deviations:** none — all edits confined to `src/ai/tools.rs` and `assets/prompts/sre.toml` as authorized; no runtime/IPC/execution-path changes.
+- **Calibration:** none
+
+**Reviewer re-run (independent):** `cargo fmt --all --check`, `cargo build` (zero
+warnings), `cargo clippy --all-targets --all-features -- -D warnings`, and
+`cargo test` (750 lib + 27 integration passed, 1 ignored) all pass. The four new
+tests (`enum_values_known_params`, `anthropic_render_emits_enums`,
+`gemini_render_emits_enums`, `create_agent_accepts_array_and_string_scripts`) and
+`builtin_sre_prompt_parses` verified by name. Confirmed: enums render on the real
+`TOOLS` slice via `render_anthropic`/`render_gemini`; `control` param
+(`run_terminal_command.command`) carries no enum; § 2.4 three-class subsection and
+ghost `GhostPolicy` note present in the checked-in prompt with no managed-artifact
+tool implying `target_pane`; all new `.unwrap()`/`panic!` confined to test bodies
+(STANDARDS §1 exempt). Gemini `enum` key accepted (OpenAPI-subset Schema standard).
