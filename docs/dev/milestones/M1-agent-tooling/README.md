@@ -1,10 +1,12 @@
 # M1 — Agent Tooling Improvements
 
-**Goal:** Make every DaemonEye agent tool that touches files or runs commands work
-correctly and safely on **both the local daemon host and SSH-connected remote
-hosts**, fix the bugs and prompt gaps that prevent agents from using tools
-effectively, leverage tmux features where they add reliability, and close the
-security holes found in the tool-execution path.
+**Goal:** Give DaemonEye agents the full agency of a human operator on **both the
+local daemon host and SSH-connected remote hosts**, under one principle: the daemon
+host stores all of DaemonEye's managed artifacts; remotes are *execution* targets,
+never *storage* targets (architecture § 2.4). Make every tool correct and safe on
+both sides of that line, fix the bugs and prompt gaps that block effective tool use,
+leverage tmux features where they add reliability, and close the security holes in
+the tool-execution path.
 
 **Status:** planning
 
@@ -12,11 +14,15 @@ security holes found in the tool-execution path.
 
 **Exit criteria:**
 
-- `read_file`, `edit_file` (all operations), `write_script`, `write_runbook`,
-  and the matching delete tools work against a remote SSH pane *and* the local
-  daemon host, verified end-to-end.
-- A remote-bound script (`ssh_target` set) is transferred to the remote host
-  before execution; remote script execution succeeds end-to-end.
+- `read_file` and `edit_file` (all operations) — the operator-filesystem tools —
+  work against a remote SSH pane *and* the local daemon host, verified end-to-end.
+- Managed-artifact tools (`write_script` / `write_runbook` and the matching
+  delete/read/list tools) are **daemon-host only by design** (§ 2.4): they carry no
+  `target_pane` and never write to a remote. This is verified as a *negative*
+  property (the tool schemas expose no remote target).
+- A daemon-host script runs on a remote host via the **streamed, no-remote-disk**
+  mechanism by default, and via the **persistent sudoers-path materialize** when the
+  invocation requires `sudo`; both verified end-to-end at the wire-string level.
 - No agent-supplied string (command, script name, path, ssh target) reaches a
   shell, an `ssh` invocation, or a `/etc/sudoers.d` rule without correct
   escaping/quoting. The injection cases below have regression tests.
@@ -33,9 +39,12 @@ security holes found in the tool-execution path.
 ## Architecture references
 
 - `docs/architecture.md#13-ai-provider-layer` — the `TOOLS` slice and tool model.
+- `docs/architecture.md#24-remote-host-execution-model` — the daemon-host-storage
+  principle and the three tool classes (managed-artifact / operator-filesystem /
+  execution). This is the spine of the milestone.
 - `docs/architecture.md#3-the-ghost-shell-subsystem` — policy gates that tools run under.
-- `docs/architecture.md#4-non-goals` — "file tools must work local + SSH" extends the
-  remote-via-tmux model; cross-host stays runbook/pane-mediated.
+- `docs/architecture.md#4-non-goals` — no far-side daemon, no remote artifact storage;
+  operator parity is the goal, remote-resident DaemonEye state is not.
 - `docs/design-reference.md` — deep implementation detail (foreground/background
   completion, load-buffer/save-buffer remote reads, hook formats).
 
@@ -49,11 +58,11 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 01 | safe-remote-command-foundation (SSH escaping + shared helper)     | done   |
 | 02 | remote-file-op-parity ([phase-02](phase-02-remote-file-op-parity.md))   | done   |
 | 03 | script-exec-hardening ([phase-03](phase-03-script-exec-hardening.md)) — sudoers quoting + script-name allowlist | done   |
-| 04 | remote-script-transfer ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target` script push | done   |
-| 05 | write-tool-target-pane-parity (write/delete script + runbook)     | todo   |
+| 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | in-progress |
+| 05 | interactive-remote-script-exec (daemon-host script streamed into a remote *user* pane — the non-ghost analogue of 04) | todo   |
 | 06 | namespace-access-control (memory/search ACL)                      | todo   |
 | 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
-| 08 | prompt-and-tooldef-fixes (sre.toml + schema constraints)          | todo   |
+| 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
 
 ## Notes
@@ -73,6 +82,34 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
   connections for interactive tools. Ghost shells are the exception: they use
   `GhostPolicy.ssh_target` to wrap commands in `ssh <target> …`. This milestone
   must make both paths safe and complete.
+
+### Remote-execution model redirection (2026-06-22)
+
+Mid-milestone the principal engineer reset the remote model (architecture § 2.4):
+**the daemon host is the only place DaemonEye stores managed artifacts; remotes are
+execution targets, never storage targets.** Rationale the model must survive: the
+daemon may lack remote write privileges, the remote FS may be read-only, or its only
+writable storage may be volatile. The goal is operator parity — an agent does on a
+remote whatever a human at that pane could — *without* leaving DaemonEye state there.
+
+Consequences for the phase plan:
+- **`write_script` / `write_runbook` / `delete_script` / `delete_runbook` do NOT get
+  `target_pane`.** They are daemon-host-only by design. The original phase-05
+  ("write-tool target_pane parity") is **dropped** — there is nothing to build; the
+  current daemon-host-only behavior is now correct-by-design. Verify it as a negative
+  property only.
+- **Phase 04 was reopened** (done → in-progress). Its persistent
+  `~/.daemoneye/scripts/<name>` materialize assumed a writable, persistent remote
+  home — exactly what the new constraints forbid as a *default*. Revised mechanism:
+  **stream** hex-decoded content to `bash -s -- <args>` (no remote disk) by default;
+  fall back to the **persistent materialize only when `sudo` is required** (a NOPASSWD
+  sudoers rule needs a fixed authorized path — streamed stdin and `mktemp` cannot be
+  pre-authorized). `remote_materialize_cmd` is retained but demoted to the sudo case.
+- **Phase 05 repurposed** to *interactive* remote script execution: streaming a
+  daemon-host script into a remote *user* pane (`send-keys`), the non-ghost analogue
+  of phase 04. (Tentative — draft on demand; confirm scope at draft time.)
+- **Phases 06/07 unchanged** in scope (ACL; execution robustness). **Phase 08** grows:
+  `sre.toml` must teach the three tool classes and the local-vs-remote decision.
 
 ### Confirmed findings inventory (pre-injection source for phase drafts)
 
@@ -112,18 +149,25 @@ phases; re-verify line numbers at draft time (the tree moves).
   `[A-Za-z0-9._-]` allowlist (the script name is the agent-/user-controlled part
   that flows into the path used by both the sudoers rule and shell execution).
 
-**Phase 04 — remote script transfer** (ghost `ssh_target` script push)
-- `policy.rs:116-122` + `knowledge.rs:52-119` — remote script gap: `resolve_command`
-  emits `~/.daemoneye/scripts/<name>` for `ssh_target`, but `write_script` only
-  writes to the daemon host; the script never reaches the remote → remote script
-  execution silently broken (**critical functionality gap**). Add transfer (scp /
-  `ssh host 'cat > …'`) before execution.
+**Phase 04 — remote script execution** (ghost `ssh_target`; reopened 2026-06-22)
+- Original gap (closed): `resolve_command` emitted `~/.daemoneye/scripts/<name>` for
+  `ssh_target` but `write_script` only writes the daemon host, so the remote script
+  never existed. Phase 04 (v1) added a persistent hex-materialize before execution.
+- Reopen reason (model § 2.4): persistent remote materialize must not be the
+  *default* — it assumes a writable, persistent remote home. Revised mechanism:
+  **stream** hex-decoded content to `bash -s -- <args>` (no remote disk) by default;
+  use the persistent `remote_materialize_cmd` **only when `sudo` is required** (fixed
+  sudoers-authorized path). See phase-04 doc Spec for the worked design.
 
-**Phase 05 — write-tool target_pane parity**
-- `tools.rs` — `write_script`/`write_runbook`/`delete_script`/`delete_runbook`
-  lack `target_pane`; only `read_file`/`edit_file`/`run_terminal_command` have it.
-  Add for local+SSH parity. Wide blast radius: 4 `PendingCall` variants across
-  `types.rs`/`tools.rs`/`stream.rs`/`ghost.rs`/`executor/mod.rs` + 3 backends.
+**Phase 05 — interactive remote script execution** (repurposed 2026-06-22)
+- The original "write-tool target_pane parity" finding is **withdrawn**: per § 2.4,
+  managed-artifact tools are daemon-host-only and do not get `target_pane`. Nothing
+  to build; current behavior is correct-by-design.
+- New scope: when a *user* pane is SSH'd to a remote, invoking a daemon-host script
+  via `run_terminal_command` send-keys the bare name into the remote shell where the
+  file does not exist (**functionality gap**, the interactive analogue of phase 04).
+  Stream the script into the pane via the same hex-decode-to-`bash -s` idiom. Re-scope
+  and confirm at draft time.
 
 **Phase 06 — namespace access control**
 - `knowledge.rs:521-537` (`read_memory`) and `knowledge.rs:604-607`

@@ -166,6 +166,43 @@ Memory, runbooks, and scripts created inside a *named* session are stamped with
 retroactive backfill on first save. Ghost sessions are excluded. Memory is
 indexed in an FTS5 SQLite db with a grep fallback for search.
 
+### 2.4 Remote-host execution model
+
+DaemonEye gives its agents the full agency of a human operator on remote hosts —
+**without** storing anything on them. The governing principle: the **daemon host
+is the only place DaemonEye keeps its managed artifacts** (scripts, runbooks,
+memory, config). A remote host is an *execution target*, never a *storage
+target* — because the daemon may lack write privileges there, the remote
+filesystem may be read-only, or its only writable storage may be volatile.
+
+Tools fall into three classes by how they treat a remote:
+
+- **Managed-artifact tools** — `write_script` / `read_script` / `list_scripts` /
+  `delete_script`, `write_runbook` / … / `delete_runbook`, `add_memory` / …
+  These curate DaemonEye's own knowledge base and are **daemon-host only**; they
+  carry no `target_pane` and never write to a remote.
+- **Operator-filesystem tools** — `read_file`, `edit_file`. These act on whatever
+  host `target_pane` points at: editing a remote `/etc/...` through an existing
+  SSH/mosh pane is legitimate operator parity, not artifact storage.
+- **Execution tools** — `run_terminal_command`, remote *script execution*, and
+  ghost `ssh_target` / runbook loops. These route *execution* to the remote. A
+  daemon-host **script** is instantiated on the remote *transiently* and run; a
+  daemon-host **runbook** is followed by the agent loop with its issued commands
+  routed to the remote. The runbook file itself never leaves the daemon host.
+
+Remote script execution has two mechanisms:
+
+- **Default — stream, no remote disk.** The hex-decoded script content is piped
+  to a remote interpreter's stdin (`… | bash -s -- <args>`), so nothing touches
+  the remote filesystem. This is what makes read-only / volatile remotes work.
+- **Sudo exception — persistent materialize.** A NOPASSWD `sudoers` rule can only
+  authorize a *fixed path*; neither streamed stdin nor a random `mktemp` path can
+  be pre-authorized. So a remote script that must run under `sudo` is materialized
+  to the sudoers-authorized `~/.daemoneye/scripts/<name>` path before execution.
+  This is the one case that requires a writable, persistent remote location plus a
+  matching remote sudoers rule; where that is unavailable, remote-sudo-script
+  execution fails loud rather than silently degrading.
+
 ---
 
 ## 3. The Ghost Shell subsystem
@@ -212,10 +249,14 @@ What DaemonEye explicitly does **not** do:
 - **No secret exfiltration surface.** The masking filter runs on all captured
   output and artifact content; `read_file` is blocked from the credential files
   (`etc/config.toml`, `etc/prompts/sre.toml`) and `edit_file` from `~/.daemoneye/`.
-- **No free-form cross-host orchestration.** A single daemon serves the tmux
-  sessions on its host; remote panes are reached *through* tmux (SSH/mosh), not
-  via a DaemonEye agent on the far side. Fleet-style cross-host work, if it ever
-  lands, is mediated by runbooks — not arbitrary `ssh $host $cmd` fan-out.
+- **No DaemonEye agent on the far side, and no remote artifact storage.** A
+  single daemon serves the tmux sessions on its host; it acts on remote hosts by
+  routing *execution* there (through an existing SSH/mosh pane, or a ghost
+  `ssh_target`), never by running a second DaemonEye on the remote and never by
+  storing its managed artifacts (scripts, runbooks, memory) on the remote. Remote
+  hosts are execution targets, not storage targets (see § 2.4). Operator parity —
+  an agent doing on a remote whatever a human at that pane could do — is a goal;
+  a far-side daemon or remote-resident DaemonEye state is not.
 - **No durable conversation store beyond named sessions.** Ephemeral per-session
   JSONL logs are for crash recovery, not a queryable history product.
 

@@ -1,437 +1,375 @@
-# Phase 04: Remote Script Transfer (ghost `ssh_target` script push)
+# Phase 04: Remote Script Execution (ghost `ssh_target`: stream by default, persist for sudo)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** done
+**Status:** in-progress
 **Depends on:** phase-01 (safe SSH quoting / `wrap_remote`), phase-03 (script-name
-allowlist — the basename is already `[A-Za-z0-9._-]`-safe by the time it reaches
-the remote path)
-**Estimated diff:** ~150 lines
+allowlist — the basename is already `[A-Za-z0-9._-]`-safe by the time it reaches the
+remote)
+**Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=feature, size=m
+
+> **Reopened 2026-06-22.** v1 of this phase (approved first try) materialized the
+> script to a **persistent** `~/.daemoneye/scripts/<name>` path on the remote. The
+> remote-execution model was then reset (architecture § 2.4): the daemon host is the
+> only place DaemonEye stores managed artifacts; **remotes are execution targets, not
+> storage targets**, because the daemon may lack remote write privileges, the remote
+> FS may be read-only, or its only writable storage may be volatile. Persistent
+> materialize can therefore no longer be the **default**. This revision makes
+> **streaming** (pipe the script to a remote interpreter's stdin — *no remote disk*)
+> the default, and keeps the v1 persistent materialize **only for the `sudo` case**,
+> where a NOPASSWD sudoers rule fundamentally requires a fixed authorized path.
 
 ## Goal
 
-Close the remote-script functionality gap: when a Ghost Shell runs with
-`ssh_target` set and invokes a pre-approved script, the script is currently
-**rewritten to a remote path that does not exist on the remote host**. The script
-file is only ever written to the *daemon host's* `~/.daemoneye/scripts/`; it is
-never transferred to the remote. So `ssh <target> '~/.daemoneye/scripts/foo.sh'`
-fails with "No such file or directory" — remote script execution is silently
-broken.
+Run a daemon-host script on a Ghost Shell's `ssh_target` remote host, with the script
+content always sourced from the daemon host (never stored on the remote), via two
+mechanisms:
 
-This phase makes the daemon **materialize the script on the remote host inside the
-same `ssh` invocation that runs it**, immediately before execution, so the remote
-always has the current version of the approved script. The transfer is hex-encoded
-(no shell-injection surface), atomic (temp-file + rename), idempotent (overwrites
-on every run), and `chmod 700`. This is **functionality + safety**, not a schema
-change: no new tool, no new IPC type, no new `PendingCall` variant.
+- **Default — stream, no remote disk.** Hex-decode the script content on the remote
+  and pipe it straight into the shebang-derived interpreter's stdin
+  (`… | bash /dev/stdin <args>`). Nothing is written to the remote filesystem, so this
+  works on read-only and volatile remotes.
+- **Sudo exception — persistent materialize.** When the invocation runs under `sudo`,
+  stream is impossible: a NOPASSWD `sudoers` rule authorizes a *fixed path*, and
+  neither piped stdin nor a random `mktemp` path can be pre-authorized. So fall back to
+  the v1 mechanism: materialize the script to `~/.daemoneye/scripts/<name>` (atomic,
+  hex-encoded, `chmod 700`) before running `sudo ~/.daemoneye/scripts/<name>`.
+
+This is functionality + safety; no new tool, IPC type, `PendingCall`, or backend.
 
 ## Architecture references
 
 Read before starting:
 
+- `docs/architecture.md#24-remote-host-execution-model` — the daemon-host-storage
+  principle and the two remote-script mechanisms (stream default / persist-for-sudo).
+  **This is the governing design for this phase.**
 - `docs/architecture.md#3-the-ghost-shell-subsystem` — Ghost Shells use
-  `GhostPolicy.ssh_target` to wrap approved commands in `ssh <target> …`; scripts
-  run under ghost policy. This is the only tool path that opens its own SSH
-  connection (interactive file tools go through an existing `target_pane`).
-- `docs/dev/milestones/M1-agent-tooling/README.md` — § "Confirmed findings
-  inventory" → **Phase 04 — remote script transfer** (the gap this phase closes),
-  and § Notes → "Remote model" (ghost `ssh_target` is the exception that wraps in
-  `ssh`).
+  `GhostPolicy.ssh_target` to wrap approved commands in `ssh <target> …`; scripts run
+  under ghost policy. This is the only tool path that opens its own SSH connection
+  (interactive file tools go through an existing `target_pane`).
+- `docs/dev/milestones/M1-agent-tooling/README.md` — § Notes →
+  "Remote-execution model redirection (2026-06-22)" and § "Confirmed findings
+  inventory" → **Phase 04**.
 
 ## Pre-flight
 
 1. Read `docs/dev/STANDARDS.md` top to bottom.
-2. Read the architecture references above.
+2. Read the architecture references above (especially § 2.4).
 3. Read this entire phase doc before touching any code.
-4. Confirm the repo is on a clean branch with no uncommitted changes.
-5. Re-verify the cited line numbers in `src/daemon/policy.rs`,
-   `src/daemon/executor/foreground.rs`, and `src/scripts.rs` before editing — the
-   tree moves and the line numbers below were captured at draft time.
+4. Re-verify the cited line numbers in `src/daemon/policy.rs`,
+   `src/daemon/executor/foreground.rs`, and `src/scripts.rs` before editing — the tree
+   moves and the numbers below were captured at draft time. **Note:** v1 of this phase
+   already added `remote_materialize_cmd` (scripts.rs), `to_hex` (scripts.rs),
+   `remote_script_name` (policy.rs), and the foreground wire-in; this revision *adds*
+   the stream path and *gates* the persistent path on `sudo` — it does not start from
+   scratch. Read what v1 left in those files first.
 
-## Current state
+## Current state (after v1)
 
-### The gap
+v1 shipped these, which this revision builds on:
 
-`GhostPolicy::resolve_command` (`src/daemon/policy.rs`, ≈ lines 113–133) rewrites a
-whitelisted bare/relative script name to a path. For the **remote** case it emits a
-**tilde path** that the *remote* shell expands:
+- `src/scripts.rs` — `fn to_hex(s) -> String` (private), and
+  `pub fn remote_materialize_cmd(name, content) -> String` (the persistent
+  hex-materialize fragment: `mkdir -p ~/.daemoneye/scripts && {decode} > tmp &&
+  chmod 700 && mv -f tmp ~/.daemoneye/scripts/<name>`). **Keep both.**
+- `src/daemon/policy.rs` — `GhostPolicy::remote_script_name(cmd) -> Option<String>`:
+  returns the basename of a whitelisted, non-absolute, remote (`ssh_target.is_some()`)
+  script invocation (after stripping an optional `sudo `). **Keep.**
+- `src/daemon/policy.rs` — `GhostPolicy::resolve_command(cmd)` rewrites a whitelisted
+  bare name to `~/.daemoneye/scripts/<name>` for the remote case (used for the
+  approval display and the sudo path). **Unchanged.**
+- `src/daemon/executor/foreground.rs` — the background path detects
+  `remote_script_name`, and **after approval, before `wrap_remote`** prepends the
+  materialize fragment with `&&`. v1 did this **unconditionally** for every remote
+  whitelisted script. **This revision makes that the sudo-only branch and adds the
+  streamed branch.**
 
-```rust
-if self.auto_approve_scripts.iter().any(|s| s == basename) {
-    let use_sudo = had_sudo || self.run_with_sudo;
-    if self.ssh_target.is_some() {
-        // Remote execution: use tilde path — the remote shell expands it.
-        let remote_path = format!("~/.daemoneye/scripts/{}", basename);
-        return if use_sudo {
-            format!("sudo {}{}", remote_path, rest)
-        } else {
-            format!("{}{}", remote_path, rest)
-        };
-    } else {
-        // Local execution: use the absolute path on this machine.
-        let full_path = crate::scripts::scripts_dir().join(basename);
-        ...
-    }
-}
-```
-
-`wrap_remote` (≈ lines 143–154) then wraps the resolved command in
-`ssh <target> '<cmd>'`, safely single-quoted (phase-01):
-
-```rust
-pub fn wrap_remote(&self, cmd: &str) -> String {
-    match &self.ssh_target {
-        Some(target) if !cmd.trim_start().starts_with("ssh ") => {
-            format!("ssh {} {}", target, crate::daemon::utils::sh_single_quote(cmd))
-        }
-        _ => cmd.to_string(),
-    }
-}
-```
-
-But **nothing ever writes the script to the remote** `~/.daemoneye/scripts/`. The
-`write_script` tool (`src/daemon/executor/knowledge.rs`, ≈ lines 52–119) calls
-`scripts::write_script`, which writes only to the **local** daemon host
-(`src/scripts.rs` line 45–56). So the remote tilde path resolves to a file that
-isn't there.
-
-### Where execution happens
-
-`src/daemon/executor/foreground.rs`, the **background** execution path (the
-function whose tail is ≈ lines 856–964). The relevant sequence today:
-
-```rust
-    // Ghost shells: resolve bare/relative script names to absolute path.
-    let resolved_cmd;
-    let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
-        resolved_cmd = policy.resolve_command(cmd);
-        resolved_cmd.as_str()
-    } else {
-        cmd
-    };
-
-    let cmd_id = match prompt_and_await_approval( /* ... approval ... */ ).await? {
-        Ok(id) => id,
-        Err(outcome) => return Ok(outcome),
-    };
-
-    // Ghost shells: wrap the approved command in `ssh <target> <cmd>` when configured.
-    let ssh_wrapped_cmd;
-    let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
-        ssh_wrapped_cmd = policy.wrap_remote(cmd);
-        ssh_wrapped_cmd.as_str()
-    } else {
-        cmd
-    };
-    // ... sudo-credential handling (is_ghost short-circuits to None) ...
-    let output = run_background_in_window(session_name, id, cmd_id, cmd, ...).await;
-```
-
-The transfer must happen **after approval, before `wrap_remote`** — so the
-materialize prefix and the script invocation become one compound command that
-`wrap_remote` wraps in a single `ssh` call.
-
-### The hex-transfer idiom already in the codebase
-
-Phase-02 established the hex-encode-then-decode-remotely idiom for shipping
-arbitrary bytes to a remote host without a shell-injection surface.
-`src/daemon/executor/file_ops.rs` has the helper (≈ lines 25–28):
-
-```rust
-/// Hex-encode a string (no external crate required).
-fn to_hex(s: &str) -> String {
-    s.bytes().map(|b| format!("{:02x}", b)).collect()
-}
-```
-
-and `build_remote_create_cmd` (≈ lines 656–697) decodes hex remotely via a
-`if command -v python3 …; else perl …; fi` fallback. **That function is `private`
-to `file_ops.rs` and checks file-already-exists (it must *not* overwrite) — this
-phase's transfer is the opposite (it *must* overwrite idempotently and `chmod 700`),
-so do not reuse it.** Replicate only the *idiom* (hex + python3/perl fallback) in a
-new, purpose-built function in `src/scripts.rs`. `to_hex` is trivially small;
-duplicate it as a private helper in `scripts.rs` rather than making the
-`file_ops.rs` one `pub` (per STANDARDS §2.2 — abstract at the *fourth* caller, not
-the second; the cross-module export would also drag `file_ops.rs` into this phase's
-diff unnecessarily).
+The hex round-trip idiom (python3 with perl fallback) lives in both
+`remote_materialize_cmd` and `file_ops.rs::build_remote_create_cmd`; reuse the *shape*.
 
 ## Spec
 
-Pin the behavior below; choose implementation details where not pinned. Three
-files change: `src/scripts.rs` (new pure builder + test), `src/daemon/policy.rs`
-(new detection method + test), `src/daemon/executor/foreground.rs` (wire-in). Do
+Pin the behavior below; choose unpinned implementation details. Three files change:
+`src/scripts.rs` (new stream builder + interpreter helper + tests),
+`src/daemon/policy.rs` (one detection method that also yields args + a test),
+`src/daemon/executor/foreground.rs` (branch the post-approval wire-in on `sudo`). Do
 **not** change any tool schema, IPC type, `PendingCall` variant, or backend.
 
-### 1. Add `remote_materialize_cmd` to `src/scripts.rs`
-
-Add a `pub` pure function that builds the remote shell fragment which writes the
-script to the remote `~/.daemoneye/scripts/<name>` and makes it executable:
+### 1. Add `remote_stream_cmd` to `src/scripts.rs`
 
 ```rust
-/// Build a self-contained remote shell fragment that materializes `name` (with
-/// the given `content`) into `~/.daemoneye/scripts/<name>` on the remote host,
-/// `chmod 700`, atomically (temp file + rename) and idempotently (overwrites any
-/// existing copy). Content is hex-encoded so no byte of the script reaches the
-/// remote shell unquoted. The fragment exits non-zero on any failure, so it is
-/// safe to `&&`-join before the script invocation.
+/// Build a remote shell fragment that runs `content` (a daemon-host script) on the
+/// remote host **without writing it to the remote filesystem**: the hex-encoded
+/// content is decoded on the remote and piped straight into the shebang-derived
+/// interpreter's stdin via `/dev/stdin`. `args` is the verbatim argument tail from
+/// the original invocation (already shell text, e.g. " --flag arg", or empty); it is
+/// appended after the interpreter so the script's positional parameters are set.
 ///
-/// `name` is assumed already validated to `[A-Za-z0-9._-]` (see
-/// `validate_script_name`), so it is safe to interpolate unquoted into the path.
-pub fn remote_materialize_cmd(name: &str, content: &str) -> String {
+/// Content is hex-encoded, so no byte of the script reaches the remote shell unquoted.
+pub fn remote_stream_cmd(content: &str, args: &str) -> String {
     // implementation
 }
 ```
 
 Pinned behavior of the produced string:
 
-- The remote directory is created first: `mkdir -p ~/.daemoneye/scripts`. Use the
-  **tilde** form (`~/.daemoneye/scripts`) so the *remote shell* expands it — this
-  matches the tilde path `resolve_command` already emits. (Do **not** hex-encode or
-  embed the path inside python/perl — the leading `~` must be seen by the shell, so
-  the path stays as literal shell text; only the *content* is hex-encoded.)
-- Decode the hex **content** to the temp file using the same fallback shape as
-  `build_remote_create_cmd`: prefer `python3`, fall back to `perl`. The decode
-  must write the **raw decoded bytes to stdout**, which the shell redirects to the
-  temp file — e.g.
-  `python3 -c "import sys;sys.stdout.buffer.write(bytes.fromhex('<hex>'))"` and
-  `perl -e 'print pack("H*","<hex>")'`. Use the
-  `if command -v python3 >/dev/null 2>&1; then …; else …; fi` form (not `||`) so a
-  python3 that exists-but-errors does not also run perl and double the content.
-- Write to `~/.daemoneye/scripts/<name>.de_tmp`, then `chmod 700` the temp file,
-  then `mv -f` it onto `~/.daemoneye/scripts/<name>` (atomic replace; `-f` makes
-  it idempotent across repeated runs).
-- Chain every step with `&&` so any failure aborts the fragment with a non-zero
-  exit (and therefore aborts the subsequent `&&`-joined script invocation —
-  a stale or missing script must never run).
+- **No remote filesystem write.** The output must contain **no** `mkdir`, no `.de_tmp`,
+  no `mv`, and **no redirection of the decoded bytes to a file path** (no `> ~/…`,
+  no `> /tmp/…`). The decoded content goes only to a pipe. (Negative property — tested.)
+- Decode the hex **content** with the same fallback shape as `remote_materialize_cmd`:
+  prefer `python3`, fall back to `perl`, using
+  `if command -v python3 >/dev/null 2>&1; then …; else …; fi` (not `||`, so a python3
+  that exists-but-errors does not also run perl and double the content). The decode
+  writes raw bytes to **stdout**.
+- Pipe that stdout into `<interp> /dev/stdin<args>`, where `<interp>` is derived from
+  the script's shebang (see § 2 below). `/dev/stdin` lets the interpreter read the
+  piped script as if it were a file, so the shebang's interpreter runs the source
+  correctly (a Python script runs under `python3`, a bash script under `bash`) — this
+  is why streaming does not regress non-shell scripts.
 
-A correct shape (the executor may adjust spacing / quoting so long as the pinned
-behaviors hold):
+A correct shape (executor may adjust spacing/grouping so long as the pinned behaviors
+hold), for a bash script invoked as `foo.sh --flag arg`:
 
 ```
-mkdir -p ~/.daemoneye/scripts && \
-if command -v python3 >/dev/null 2>&1; then \
-  python3 -c "import sys;sys.stdout.buffer.write(bytes.fromhex('<HEX>'))"; \
-else \
-  perl -e 'print pack("H*","<HEX>")'; \
-fi > ~/.daemoneye/scripts/<name>.de_tmp && \
-chmod 700 ~/.daemoneye/scripts/<name>.de_tmp && \
-mv -f ~/.daemoneye/scripts/<name>.de_tmp ~/.daemoneye/scripts/<name>
+{ if command -v python3 >/dev/null 2>&1; then \
+    python3 -c "import sys;sys.stdout.buffer.write(bytes.fromhex('<HEX>'))"; \
+  else \
+    perl -e 'print pack("H*","<HEX>")'; \
+  fi; } | bash /dev/stdin --flag arg
 ```
 
-Add a private `to_hex` helper to `scripts.rs` (duplicate of the `file_ops.rs` one):
+### 2. Shebang-derived interpreter (private helper in `src/scripts.rs`)
 
 ```rust
-fn to_hex(s: &str) -> String {
-    s.bytes().map(|b| format!("{:02x}", b)).collect()
-}
-```
-
-### 2. Add `remote_script_name` to `GhostPolicy` in `src/daemon/policy.rs`
-
-Add a method that reports **which** whitelisted script (if any) a command invokes
-and therefore needs transferring — using the *same* detection logic as
-`resolve_command`, but returning the basename instead of a rewritten command, and
-only when remote:
-
-```rust
-/// When `ssh_target` is set and `cmd` invokes a whitelisted script (bare or
-/// relative name, optionally `sudo`-prefixed, possibly with args), return the
-/// script basename that must be transferred to the remote host before execution.
-/// Returns `None` for local policies (no `ssh_target`), commands whose first
-/// token is already absolute, and commands that do not invoke a whitelisted
-/// script. Mirrors `resolve_command`'s whitelist detection exactly.
-pub fn remote_script_name(&self, cmd: &str) -> Option<String> {
+/// Derive the interpreter command name from a script's shebang line. Returns a name
+/// guaranteed to match `[A-Za-z0-9._-]+` (safe to interpolate unquoted into the remote
+/// command). Falls back to `"bash"` when there is no shebang or the derived name is
+/// not a clean interpreter token.
+fn shebang_interpreter(content: &str) -> String {
     // implementation
 }
 ```
 
-Pinned behavior — return `Some(basename)` **iff all** of:
-- `self.ssh_target.is_some()`;
-- after stripping an optional leading `sudo ` (same `strip_prefix("sudo ")` +
-  `trim_start` as `resolve_command`), the first whitespace-delimited token is
-  **non-empty** and **not** absolute (does not start with `/`);
-- the `Path::file_name` basename of that token is present in
-  `self.auto_approve_scripts`.
+Pinned behavior:
 
-Otherwise return `None`. Do **not** refactor `resolve_command` to call this (or
-vice versa) — duplicating the few lines of detection is acceptable (STANDARDS
-§2.2) and keeps `resolve_command`'s settled behavior untouched. The two must agree
-on the same inputs (the tests below pin that).
+- If the first line starts with `#!`: strip `#!`, trim, `split_whitespace`. If the
+  first token's basename is `env` and a second token exists, the interpreter is the
+  **second** token; otherwise it is the **basename of the first token**.
+  - `#!/bin/bash` → `bash`; `#!/usr/bin/env python3` → `python3`;
+    `#!/usr/bin/perl -w` → `perl`.
+- **Validate** the derived name against `^[A-Za-z0-9._-]+$`. If it does not match
+  (e.g. it picked up a `;`, space, quote, or `$`), **fall back to `"bash"`** — never
+  emit an unvalidated interpreter token into the remote command.
+  - `#!/bin/sh; rm -rf /` → first token basename is `sh;` → fails the charset →
+    falls back to `bash`. (Injection negative case — tested.)
+- No shebang, or empty content → `"bash"`.
 
-### 3. Wire the transfer into `src/daemon/executor/foreground.rs`
+This is the one new place agent-/file-controlled text could reach the remote shell as
+a *command word*; the charset gate is the security boundary. Do not skip it.
 
-In the background execution path:
+### 3. Make `remote_script_name` also yield the argument tail
 
-1. **Before** the `resolve_command` block (the `let resolved_cmd;` block ≈ line
-   857, while `cmd` still holds the *original* command), capture the script to
-   transfer:
+The streamed builder needs the script's args (the tail after the script token). Add a
+method that returns both basename and args, and reimplement `remote_script_name` to
+delegate (so the detection logic exists once, not twice):
 
-   ```rust
-   let transfer_script: Option<String> = ghost_policy
-       .as_ref()
-       .filter(|_| is_ghost)
-       .and_then(|p| p.remote_script_name(cmd));
-   ```
+```rust
+/// When `ssh_target` is set and `cmd` invokes a whitelisted script (bare or relative
+/// name, optionally `sudo`-prefixed, possibly with args), return
+/// `(basename, args_tail)` where `args_tail` is everything after the first token
+/// (verbatim, including its leading space; empty if none). `None` otherwise. Mirrors
+/// `resolve_command`'s whitelist detection exactly.
+pub fn remote_script_call(&self, cmd: &str) -> Option<(String, String)> {
+    // implementation
+}
 
-2. **After** approval and **before** the `wrap_remote` block (between ≈ line 882
-   and the `let ssh_wrapped_cmd;` block at ≈ line 884), if a transfer is needed,
-   read the local script content and prepend the materialize fragment:
+pub fn remote_script_name(&self, cmd: &str) -> Option<String> {
+    self.remote_script_call(cmd).map(|(name, _)| name)
+}
+```
 
-   ```rust
-   let transfer_prefixed_cmd;
-   let cmd = if let Some(name) = transfer_script.as_deref() {
-       match crate::scripts::read_script(name) {
-           Ok(content) => {
-               let prefix = crate::scripts::remote_materialize_cmd(name, &content);
-               transfer_prefixed_cmd = format!("{} && {}", prefix, cmd);
-               transfer_prefixed_cmd.as_str()
-           }
-           Err(e) => {
-               let msg = format!(
-                   "Error: cannot transfer script '{}' to remote host — it is not \
-                    available on the daemon host: {}. Use write_script to create it \
-                    first.",
-                   name, e
-               );
-               send_response_split(tx, Response::ToolResult(msg.clone())).await?;
-               log_command(session_id, "background", "", cmd, "transfer-failed", &msg);
-               return Ok(ToolCallOutcome::Result(msg));
-           }
-       }
-   } else {
-       cmd
-   };
-   ```
+Pinned: `remote_script_call` returns `Some((name, args))` under **exactly** the same
+conditions `remote_script_name` did in v1 (ssh_target set; first token after an
+optional `sudo ` is non-empty and not absolute; its basename is in
+`auto_approve_scripts`). `args` is the substring of the post-`sudo` command after the
+first whitespace-delimited token, taken verbatim (do **not** re-quote or normalize it —
+it must round-trip through the outer `sh_single_quote` unchanged, exactly as v1's
+materialize-prefixed command did). For `"foo.sh"` → `args == ""`; for
+`"sudo foo.sh --flag arg"` → `(name="foo.sh", args=" --flag arg")`.
 
-   The existing `wrap_remote` block then wraps the **whole** compound command
-   (`<materialize> && <script invocation>`) in one `ssh <target> '…'` call —
-   `wrap_remote` is unchanged. Because the materialize content is hex (no quotes)
-   and the script name is allowlisted, `sh_single_quote` handles the wrap safely.
+### 4. Branch the foreground wire-in on `sudo`
 
-Notes for the wire-in:
-- Use the existing owned-String-then-`.as_str()` shadowing pattern already used for
-  `resolved_cmd` and `ssh_wrapped_cmd` (so the borrow lives long enough).
-- `read_script` already calls `validate_script_name` internally and errors if the
-  file is absent — the `Err` arm above surfaces a model-visible advisory and does
-  **not** execute, which is the correct "fail loud, no stale run" behavior
-  (STANDARDS §2.2 "no fallbacks for if-X-is-missing").
-- `log_command` is already in scope in this file (used at ≈ lines 852, 963); reuse
-  it. `Response` and `send_response_split` are already imported.
+In `src/daemon/executor/foreground.rs`, the background path. **Before** the
+`resolve_command` block (while `cmd` still holds the original), capture the call and
+whether it is sudo:
+
+```rust
+// § 2.4 remote execution: a ghost ssh_target whitelisted-script invocation ships to
+// the remote either by streaming (default, no remote disk) or — under sudo — by a
+// persistent materialize to the sudoers-authorized path.
+let remote_script = ghost_policy
+    .as_ref()
+    .filter(|_| is_ghost)
+    .and_then(|p| p.remote_script_call(cmd)); // Option<(String, String)>
+let remote_script_is_sudo = remote_script.is_some()
+    && (crate::daemon::utils::command_has_sudo(cmd)
+        || ghost_policy.as_ref().map(|p| p.run_with_sudo).unwrap_or(false));
+```
+
+Keep `resolve_command` and the approval call exactly as today (so the approval prompt
+still shows the clean `~/.daemoneye/scripts/foo.sh --flag` form, **not** a hex blob).
+
+**After** approval and **before** the `wrap_remote` block, replace the v1
+unconditional materialize-prefix with this branch (read the local content once; the
+`Err` arm is the v1 fail-loud advisory — keep it verbatim):
+
+```rust
+let remote_built_cmd;
+let cmd = if let Some((name, args)) = remote_script.as_ref() {
+    match crate::scripts::read_script(name) {
+        Ok(content) => {
+            remote_built_cmd = if remote_script_is_sudo {
+                // Sudo: persistent materialize to the sudoers-authorized path, then
+                // run the resolved `sudo ~/.daemoneye/scripts/<name> …` command.
+                format!("{} && {}", crate::scripts::remote_materialize_cmd(name, &content), cmd)
+            } else {
+                // Default: stream content to the interpreter's stdin — no remote disk.
+                crate::scripts::remote_stream_cmd(&content, args)
+            };
+            remote_built_cmd.as_str()
+        }
+        Err(e) => {
+            let msg = format!(
+                "Error: cannot run script '{}' on the remote host — it is not \
+                 available on the daemon host: {}. Use write_script to create it first.",
+                name, e
+            );
+            send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+            log_command(session_id, "background", "", cmd, "transfer-failed", &msg);
+            return Ok(ToolCallOutcome::Result(msg));
+        }
+    }
+} else {
+    cmd
+};
+```
+
+`wrap_remote` then wraps the whole built command in one `ssh <target> '…'`. Because the
+content is hex (no quotes) and the interpreter name is charset-validated, the streamed
+pipeline survives `sh_single_quote` intact; the sudo branch is byte-identical to v1.
+
+Notes:
+- Reuse the owned-`String`-then-`.as_str()` shadowing already used for `resolved_cmd` /
+  `ssh_wrapped_cmd`.
+- In the **streamed** branch the resolved-path form produced by `resolve_command` is
+  intentionally discarded (the pipeline reads from stdin; there is no remote path).
+  That is correct — the resolved form was only needed for the approval display.
+- `read_script` validates the name and errors if absent (fail loud, no stale run —
+  STANDARDS §2.2 "no fallbacks for if-X-is-missing").
 
 ## Acceptance criteria
 
-Verifiable by running the named tests and reading the diff.
-
-- [ ] `GhostPolicy::remote_script_name` returns `Some("foo.sh")` for a remote
-      policy whitelisting `foo.sh` given `"foo.sh"`, `"./foo.sh"`, `"sudo foo.sh"`,
-      and `"foo.sh --flag arg"`; and returns `None` for: a local policy
-      (`ssh_target = None`) even when `foo.sh` is whitelisted, an absolute path
-      (`"/usr/bin/foo.sh"`), a non-whitelisted name (`"bar.sh"`), and the empty
-      string.
-- [ ] On the same inputs where `remote_script_name` returns `Some(name)`,
-      `resolve_command` rewrites to a path ending in `~/.daemoneye/scripts/<name>`
-      (the two agree about *which* commands invoke a whitelisted remote script).
-- [ ] `remote_materialize_cmd("foo.sh", content)` produces a string that: contains
-      `mkdir -p ~/.daemoneye/scripts`; contains the **hex** of `content` and does
-      **not** contain the raw `content` bytes verbatim (proving injection-safety);
-      references `~/.daemoneye/scripts/foo.sh.de_tmp` and `mv`s it to
-      `~/.daemoneye/scripts/foo.sh`; contains `chmod 700`; and has both a `python3`
-      and a `perl` decode branch.
-- [ ] For a `content` containing shell metacharacters (e.g.
-      `"echo 'hi'; rm -rf /\n"`), none of those raw characters appear in the
-      `remote_materialize_cmd` output outside the hex blob — the only occurrences
-      are inside the hex encoding. (must-NOT-leak negative case.)
+- [ ] `remote_stream_cmd(content, " --flag arg")` for `content` with a `#!/bin/bash`
+      shebang produces a string that: contains the **hex** of `content` and **not** the
+      raw `content` bytes; has both a `python3` and a `perl` decode branch; pipes into
+      `bash /dev/stdin --flag arg`; and contains **no** `mkdir`, no `.de_tmp`, no `mv`,
+      and no `>`-redirection of the decoded bytes to a file (the no-remote-disk
+      negative property).
+- [ ] `shebang_interpreter` returns `bash` for `#!/bin/bash`, `python3` for
+      `#!/usr/bin/env python3`, `perl` for `#!/usr/bin/perl -w`, `bash` for content
+      with no shebang, and `bash` for the injection case `#!/bin/sh; rm -rf /`
+      (charset gate rejects `sh;`).
+- [ ] `remote_script_call` returns `Some(("foo.sh", ""))` for `"foo.sh"`,
+      `Some(("foo.sh", " --flag arg"))` for `"foo.sh --flag arg"` and
+      `"sudo foo.sh --flag arg"`, `Some(("foo.sh", ""))` for `"./foo.sh"`; and `None`
+      for a local policy, `"/usr/bin/foo.sh"`, `"bar.sh"`, and `""`. `remote_script_name`
+      still returns the basename for all the `Some` cases (delegation intact).
+- [ ] `remote_materialize_cmd` is unchanged and still used for the sudo path (its v1
+      tests still pass).
 - [ ] `cargo fmt --all`, `cargo build` (zero new warnings),
       `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test`
       all pass.
 
 ## Test plan
 
-Test names are fixed for auditability; exact assertion shape is yours.
+Test names are fixed; assertion shape is yours.
 
-**In `src/daemon/policy_tests.rs`** (extend; it already has `policy`,
-`remote_policy`, `remote_sudo_policy` helpers — reuse them):
+**In `src/scripts.rs` `#[cfg(test)] mod tests`** (extend; pure builders — assert on the
+returned string directly):
 
-- `remote_script_name_detects_whitelisted` — positive cases: assert
-  `remote_policy(&["foo.sh"], "host").remote_script_name(x) == Some("foo.sh".into())`
-  for `x` ∈ {`"foo.sh"`, `"./foo.sh"`, `"sudo foo.sh"`, `"foo.sh --flag arg"`}.
-- `remote_script_name_none_when_local` — `policy(&["foo.sh"]).remote_script_name("foo.sh")`
-  is `None` (no `ssh_target`).
-- `remote_script_name_none_for_absolute_or_unlisted` — `None` for
-  `"/usr/bin/foo.sh"`, `"bar.sh"` (not whitelisted), and `""`.
-- `remote_script_name_agrees_with_resolve_command` — for an input where
-  `remote_script_name` is `Some("foo.sh")`, assert
-  `remote_policy(&["foo.sh"], "h").resolve_command("foo.sh")` contains
-  `"~/.daemoneye/scripts/foo.sh"`. (The two code paths agree.)
+- `remote_stream_cmd_pipes_hex_no_disk` — build with `content = "#!/bin/bash\necho hi\n"`,
+  `args = ""`; assert output contains `to_hex(content)`, does **not** contain
+  `"echo hi"`, contains `bash /dev/stdin`, and contains **none** of `"mkdir"`,
+  `".de_tmp"`, `" mv "`, or a `> ` redirect of the decoded bytes to a path. (no-disk
+  negative property.)
+- `remote_stream_cmd_passes_args` — with `args = " --flag arg"`, assert the output ends
+  the pipeline with `bash /dev/stdin --flag arg`.
+- `remote_stream_cmd_python_and_perl_branches` — assert output contains both `python3`
+  and `perl`.
+- `remote_stream_cmd_honors_shebang` — `content = "#!/usr/bin/env python3\nprint(1)\n"`;
+  assert the pipeline interpreter is `python3 /dev/stdin`.
+- `shebang_interpreter_cases` — assert the five mappings in the acceptance criterion,
+  including the `#!/bin/sh; rm -rf /` → `bash` injection fallback.
 
-**In `src/scripts.rs`** `#[cfg(test)] mod tests` (extend; pure builder — assert on
-the returned string directly, no `with_home` / temp dir needed):
+**In `src/daemon/policy_tests.rs`** (extend; reuse `policy`, `remote_policy`,
+`remote_sudo_policy` helpers):
 
-- `remote_materialize_cmd_contains_hex_not_raw` — build with
-  `content = "echo secret-token\n"`; assert the output contains
-  `to_hex("echo secret-token\n")` and does **not** contain the substring
-  `"echo secret-token"`. (must-NOT-leak.)
-- `remote_materialize_cmd_has_mkdir_chmod_atomic_mv` — assert the output contains
-  `mkdir -p ~/.daemoneye/scripts`, `chmod 700`, `.de_tmp`, and an
-  `mv` onto `~/.daemoneye/scripts/foo.sh`.
-- `remote_materialize_cmd_has_python_and_perl_branches` — assert the output
-  contains both `python3` and `perl` (the decode fallback).
-- `remote_materialize_cmd_metachars_stay_hex` — build with
-  `content = "x'; rm -rf / #\n"`; assert none of `'`, `;`, `#` from the *content*
-  appear outside the hex blob. (Practical assertion: the output split at the hex
-  substring has neither half containing the raw dangerous bytes — or simply assert
-  the raw content substring is absent and the hex is present, which is sufficient
-  to prove the bytes were encoded.)
+- `remote_script_call_returns_name_and_args` — for `remote_policy(&["foo.sh"], "h")`:
+  `remote_script_call("foo.sh") == Some(("foo.sh".into(), "".into()))`,
+  `remote_script_call("foo.sh --flag arg") == Some(("foo.sh".into(), " --flag arg".into()))`,
+  `remote_script_call("sudo foo.sh --flag arg") == Some(("foo.sh".into(), " --flag arg".into()))`,
+  `remote_script_call("./foo.sh") == Some(("foo.sh".into(), "".into()))`.
+- `remote_script_call_none_cases` — `None` for `policy(&["foo.sh"])` (local),
+  `"/usr/bin/foo.sh"`, `"bar.sh"`, `""`.
+- `remote_script_name_delegates_to_call` — `remote_script_name` returns the basename for
+  each `Some` case above (proves the delegation, keeps v1 behavior).
+
+(Keep the v1 `remote_materialize_cmd_*` tests; they still guard the sudo path.)
 
 ## End-to-end verification
 
-`remote_materialize_cmd` and `remote_script_name` are pure functions whose return
-value *is* the artifact — the wire string sent to the remote shell, and the
-transfer decision, respectively. The unit tests assert those return values
-directly, which is the real-artifact check (no live SSH host is required or
-available — consistent with phases 01 and 02, which verified remote behavior at the
-wire-string level).
+`remote_stream_cmd`, `shebang_interpreter`, and `remote_script_call` are pure functions
+whose return value *is* the artifact (the wire string / the decision). Unit tests assert
+those directly (no live SSH host — consistent with phases 01/02/04-v1).
 
-Additionally, **prove the hex round-trips on a real interpreter** (the remote will
-run exactly this): take the `python3` (and, if available, the `perl`) decode
-expression that `remote_materialize_cmd` emits for a known content, run it locally,
-and confirm it reproduces the original bytes byte-for-byte. Quote the passing
-output of `cargo test remote_materialize_cmd` and `cargo test remote_script_name`,
-and quote one real round-trip (e.g. piping the emitted `python3 -c "…"` through
-`xxd`/`diff` against the original) in the completion Update Log. This is the
-phase-02 reviewer discipline (run the generated interpreter code) applied
-proactively.
+Additionally, **prove the streamed pipeline runs the script on a real interpreter**:
+take the `python3` (and `perl`) decode expression `remote_stream_cmd` emits for a known
+`#!/bin/bash` script, pipe it through `bash /dev/stdin <args>` locally, and confirm the
+script executes with the args set (e.g. a script that echoes `"$1"`). Quote the passing
+output of `cargo test remote_stream_cmd`, `cargo test shebang_interpreter`, and
+`cargo test remote_script_call`, plus one real local run of the emitted pipeline, in the
+completion Update Log. This is the phase-02 reviewer discipline (run the generated
+interpreter code) applied proactively.
 
 ## Authorizations
 
-- [ ] May add dependencies: **no.** `python3` / `perl` run on the *remote* host at
-      runtime (not Rust deps); `to_hex` uses only `std`. The remote interpreters
-      are the same runtime expectation phase-02 already established for remote file
-      ops — no new toolchain dependency is introduced by this phase.
-- [ ] May touch `docs/architecture.md`: **no.**
+- [ ] May add dependencies: **no.** `python3` / `perl` / `bash` run on the *remote* at
+      runtime; `to_hex` and `shebang_interpreter` use only `std`.
+- [ ] May touch `docs/architecture.md`: **no** (§ 2.4 was already written as part of the
+      reopen).
 
 None beyond editing `src/scripts.rs`, `src/daemon/policy.rs`, and
 `src/daemon/executor/foreground.rs` (plus their co-located test modules).
 
 ## Out of scope
 
-- **Write-tool `target_pane` parity** (`write_script` / `write_runbook` /
-  `delete_script` / `delete_runbook` gaining `target_pane`) — Phase 05. No
-  tool-schema, `PendingCall`, `AiEvent`, IPC, or backend changes here.
-- **The N11 retry path** (`respawn_background_in_pane`, ≈ lines 794–854). It calls
-  `resolve_command` but never `wrap_remote`, so it does not currently do remote
-  execution at all; do **not** add transfer there. If a reviewer wants remote
-  retry, that is a separate follow-up.
-- **Removing the script from the remote afterward.** The transfer is push-on-run;
-  cleanup of remote `~/.daemoneye/scripts/` is not in scope.
-- **scp / rsync.** Do not shell out to `scp`/`rsync` or open a second SSH
-  connection — the transfer rides inside the existing single `ssh <target> '…'`
-  invocation, which keeps auth, monitoring, and the tmux window identical to today.
-- **Changing `resolve_command`, `wrap_remote`, or `sh_single_quote`** — they are
-  correct (phase-01). This phase only *adds* the detection method and the
-  materialize builder and *prepends* to the resolved command.
-- **Binary / non-UTF-8 script content.** `read_script` uses `read_to_string`;
-  scripts are text. Do not add a base64/binary fallback.
+- **Write-tool `target_pane`** (`write_script` / `write_runbook` / `delete_*`). Per
+  § 2.4 these are daemon-host-only and gain **no** `target_pane`. The original phase-05
+  was dropped; do not add it here.
+- **Interactive (non-ghost) remote script execution** — streaming a daemon-host script
+  into a remote *user* pane. That is the repurposed phase-05; do not build it here.
+- **Scripts that read their own stdin.** Streaming consumes the interpreter's stdin with
+  the script source (same limitation as `bash -s`). Do not try to dup an alternate fd;
+  out of scope.
+- **Removing/cleaning the remote `~/.daemoneye/scripts/` file** left by the sudo path.
+- **scp / rsync / a second SSH connection.** Everything rides inside the existing single
+  `ssh <target> '…'` invocation.
+- **Changing `resolve_command`, `wrap_remote`, or `sh_single_quote`** — correct as-is;
+  this phase only adds the stream builder + the args-yielding detection and re-branches
+  the post-approval wire-in.
+- **The N11 retry path** (`respawn_background_in_pane`) — still does not do remote
+  execution; do not add transfer there.
 
 ## Update Log
 
@@ -439,15 +377,15 @@ None beyond editing `src/scripts.rs`, `src/daemon/policy.rs`, and
 
 <!-- entries appended below this line -->
 
-### Update — 2026-06-22 03:32 (started)
+### Update — 2026-06-22 03:32 (started, v1)
 
 **Executor:** rexyMCP executor
 **Summary:** Implementing remote script transfer for ghost `ssh_target` — hex-encoded materialize prefix prepended to the resolved command before `wrap_remote` wraps it in a single `ssh` invocation.
 
-### Update — 2026-06-22 03:34 (complete)
+### Update — 2026-06-22 03:34 (complete, v1)
 
 **Executor:** rexyMCP executor
-**Summary:** All three spec tasks implemented and verified.
+**Summary:** All three v1 spec tasks implemented and verified.
 
 **Files changed:**
 - `src/scripts.rs` — added `to_hex` private helper, `remote_materialize_cmd` public builder, and 4 unit tests
@@ -455,83 +393,41 @@ None beyond editing `src/scripts.rs`, `src/daemon/policy.rs`, and
 - `src/daemon/policy_tests.rs` — added 4 unit tests for `remote_script_name`
 - `src/daemon/executor/foreground.rs` — wired transfer detection before `resolve_command` and materialize prefix between approval and `wrap_remote`
 
-**Verification commands (all passed):**
-```
-$ cargo fmt --all
-(no output — clean)
+**Verification commands (all passed):** `cargo fmt --all` clean, `cargo build` zero
+warnings, `cargo clippy --all-targets --all-features -- -D warnings` clean, `cargo test`
+721 passed.
 
-$ cargo build
-Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+**End-to-end verification:** hex round-trip verified on real `python3` and `perl`
+interpreters; full materialize fragment executed in a sandbox `HOME` (mode-700 atomic
+file create, no `.de_tmp` left behind).
 
-$ cargo clippy --all-targets --all-features -- -D warnings
-Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.53s
-
-$ cargo test
-test result: ok. 721 passed; 0 failed; 0 ignored; measured 0 filtered out
-```
-
-**One-line verification summary:** `cargo fmt` clean, `cargo build` zero warnings, `cargo clippy` clean, `cargo test` 721 passed.
-
-**End-to-end verification:**
-`remote_materialize_cmd` and `remote_script_name` are pure functions — unit tests assert return values directly (the wire string and transfer decision). Hex round-trip verified on real interpreters:
-- `python3 -c "import sys;sys.stdout.buffer.write(bytes.fromhex('6563686f207365637265742d746f6b656e0a'))"` → `echo secret-token\n` (confirmed via `xxd`)
-- `perl -e 'print pack("H*","6563686f207365637265742d746f6b656e0a")'` → identical output (confirmed via `xxd`)
-
-**Grep for pinned literals:**
-```
-$ grep -r 'remote_materialize_cmd' src/
-  src/scripts.rs: pub fn remote_materialize_cmd(name: &str, content: &str) -> String {
-  src/scripts.rs:     let output = remote_materialize_cmd("foo.sh", content);
-  src/scripts.rs:     let output = remote_materialize_cmd("foo.sh", "echo hi");
-  src/scripts.rs:     let output = remote_materialize_cmd("foo.sh", "echo hi");
-  src/scripts.rs:     let output = remote_materialize_cmd("foo.sh", content);
-  src/daemon/executor/foreground.rs:                 let prefix = crate::scripts::remote_materialize_cmd(name, &content);
-```
-
-```
-$ grep -r 'remote_script_name' src/
-  src/daemon/policy.rs:    pub fn remote_script_name(&self, cmd: &str) -> Option<String> {
-  src/daemon/policy_tests.rs: fn remote_script_name_detects_whitelisted() {
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("foo.sh"), Some("foo.sh".into()));
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("./foo.sh"), Some("foo.sh".into()));
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("sudo foo.sh"), Some("foo.sh".into()));
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("foo.sh --flag arg"), Some("foo.sh".into()));
-  src/daemon/policy_tests.rs: fn remote_script_name_none_when_local() {
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("foo.sh"), None);
-  src/daemon/policy_tests.rs: fn remote_script_name_none_for_absolute_or_unlisted() {
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("/usr/bin/foo.sh"), None);
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("bar.sh"), None);
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name(""), None);
-  src/daemon/policy_tests.rs: fn remote_script_name_agrees_with_resolve_command() {
-  src/daemon/policy_tests.rs:     assert_eq!(p.remote_script_name("foo.sh"), Some("foo.sh".into()));
-  src/daemon/executor/foreground.rs:         .and_then(|p| p.remote_script_name(cmd));
-```
-
-**Notes for review:** None — implementation follows the spec exactly. No architectural changes, no new dependencies, no build/config edits.
-
-### Review verdict — 2026-06-22
+### Review verdict — 2026-06-22 (v1)
 
 - **Verdict:** approved_first_try
 - **Bounces:** none
 - **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
-- **Scope deviations:** none — three files changed exactly as specified
-  (`src/scripts.rs`, `src/daemon/policy.rs`, `src/daemon/executor/foreground.rs`
-  + co-located test modules); no tool-schema, IPC, `PendingCall`, or backend
-  changes.
+- **Scope deviations:** none
 - **Calibration:** none
 
-**Independent re-verification (reviewer):**
-- `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets
-  --all-features -- -D warnings`, `cargo test` all pass — 721 passed, 0 failed,
-  1 ignored. All 8 new tests (`remote_materialize_cmd_*` ×4,
-  `remote_script_name_*` ×4) pass.
-- End-to-end beyond unit fakes: ran the exact `python3` and `perl` decode
-  expressions the builder emits against the real interpreters — both reproduce
-  the original bytes byte-for-byte. Executed the full materialize fragment in a
-  sandboxed `HOME`: it creates `~/.daemoneye/scripts/`, decodes the hex content,
-  writes the file with mode `700` (`-rwx------`), and the atomic `mv -f` leaves
-  no `.de_tmp` behind.
-- No new `unwrap`/`expect`/`panic!`/`unsafe`/`#[allow]` in production paths (the
-  grep hits — `policy.rs:26` `#[allow(dead_code)]`, `scripts.rs:247` `println!`,
-  and the `unsafe` env-var blocks at `scripts.rs:305–313` — are all pre-existing
-  and outside this phase's diff; the latter are in the `#[cfg(test)]` module).
+### Update — 2026-06-22 (reopened by architect)
+
+**By:** Claude (architect)
+**Summary:** Phase reopened (done → in-progress) after the remote-execution model was
+reset (architecture § 2.4): the daemon host is the only place DaemonEye stores managed
+artifacts; remotes are execution targets, not storage targets. v1's persistent
+`~/.daemoneye/scripts/<name>` materialize assumed a writable, persistent remote home,
+which the new constraints forbid as a default.
+
+**Revision required (see updated Goal/Spec):**
+- Add `remote_stream_cmd` + `shebang_interpreter` to `src/scripts.rs` — stream the
+  hex-decoded script into `<interp> /dev/stdin <args>`, **no remote disk** (the new
+  default).
+- Add `GhostPolicy::remote_script_call` (basename + args); `remote_script_name`
+  delegates to it. (v1's `remote_script_name`/`remote_materialize_cmd` are retained.)
+- In `foreground.rs`, branch the post-approval wire-in on `sudo`: **stream** by default,
+  **persist (v1 materialize) only under sudo** (sudoers needs a fixed authorized path).
+
+**Notes for executor:** This is a *delta on v1*, not a rewrite. `remote_materialize_cmd`,
+`to_hex`, `resolve_command`, and `wrap_remote` stay. Keep the v1 materialize tests. The
+new default must write nothing to the remote filesystem — the `remote_stream_cmd_*` tests
+pin that as a negative property.
