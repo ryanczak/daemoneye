@@ -23,10 +23,10 @@ pub use setup::run_setup;
 
 use approval::SessionApproval;
 use ipc_client::{
-    new_session_id, send_delete_saved_session, send_list_models,
-    send_list_panes_for_session, send_list_saved_sessions, send_load_session, send_query_limits,
-    send_refresh, send_rename_session, send_reset_session_tool_count, send_save_session,
-    send_set_model, send_set_pane,
+    new_session_id, send_delete_saved_session, send_list_models, send_list_panes_for_session,
+    send_list_saved_sessions, send_load_session, send_query_limits, send_refresh,
+    send_rename_session, send_reset_session_tool_count, send_save_session, send_set_model,
+    send_set_pane,
 };
 use pane::resolve_target_pane;
 use stream::{AskTmuxCtx, QueryArgs, StreamCtx, StreamResizeDims, TokenCtx, ask_with_session};
@@ -68,12 +68,7 @@ fn render_slash_command_help(chat_width: usize) {
             "/session delete <name>",
             "delete saved session",
         ),
-        (
-            "/session rename <old> <new>",
-            "rename session",
-            "",
-            "",
-        ),
+        ("/session rename <old> <new>", "rename session", "", ""),
     ];
     let lc_w = rows.iter().map(|(c, _, _, _)| c.len()).max().unwrap_or(0);
     let ld_w = rows.iter().map(|(_, d, _, _)| d.len()).max().unwrap_or(0);
@@ -1108,7 +1103,6 @@ async fn run_chat_inner_raw(
             }
             continue;
         }
-
 
         {
             let cw = chat_width; // copy for Request::Ask

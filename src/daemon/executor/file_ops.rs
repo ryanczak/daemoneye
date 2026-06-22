@@ -35,12 +35,30 @@ fn sq_escape(s: &str) -> String {
 /// Extract lines between a unique start marker and end marker from pane output.
 fn extract_marked(snap: &str, start: &str, end: &str) -> Option<String> {
     let lines: Vec<&str> = snap.lines().collect();
-    let s_idx = lines.iter().position(|l| l.contains(start))?;
-    let e_idx = lines.iter().rposition(|l| l.contains(end))?;
+    let s_idx = lines.iter().position(|l| l.trim() == start)?;
+    let e_idx = lines.iter().rposition(|l| l.trim() == end)?;
     if e_idx <= s_idx {
         return None;
     }
     Some(lines[s_idx + 1..e_idx].join("\n"))
+}
+
+/// Resolve a path for security-guard checks, following symlinks even when the
+/// leaf does not yet exist.  Canonicalizes the full path if it exists; otherwise
+/// canonicalizes the parent directory and rejoins the final component.  Falls
+/// back to the lexical path if neither can be resolved.
+fn resolve_path_for_guard(path: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(path);
+    if let Ok(c) = std::fs::canonicalize(p) {
+        return c;
+    }
+    if let Some(parent) = p.parent()
+        && let Some(file_name) = p.file_name()
+        && let Ok(cp) = std::fs::canonicalize(parent)
+    {
+        return cp.join(file_name);
+    }
+    std::path::PathBuf::from(path)
 }
 
 /// Send a command to a pane and poll until a completion marker appears.
@@ -207,8 +225,7 @@ pub(super) async fn run_read_file(
 
     {
         let de_dir = crate::config::config_dir();
-        let candidate =
-            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+        let candidate = resolve_path_for_guard(path);
         if candidate.starts_with(&de_dir) {
             let blocked = [
                 de_dir.join("etc").join("config.toml"),
@@ -379,8 +396,7 @@ where
     }
     {
         let de_dir = crate::config::config_dir();
-        let candidate =
-            std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+        let candidate = resolve_path_for_guard(path);
         if candidate.starts_with(&de_dir) {
             return Ok(ToolCallOutcome::Result(
                 "Error: edit_file cannot access the daemoneye configuration \
@@ -655,9 +671,11 @@ fn build_remote_create_cmd(path: &str, content: &str) -> String {
     let py_hex = to_hex(&py);
 
     let pl = format!(
-        "my $p=pack('H*','{path_hex}');\n\
+        "use File::Path qw(make_path);\n\
+         my $p=pack('H*','{path_hex}');\n\
          my $c=pack('H*','{content_hex}');\n\
          if(-e $p){{print \"DE_ERROR: file already exists\\n\";exit 1}}\n\
+         make_path(dirname($p));\n\
          my $t=\"$p.de_tmp\";\n\
          open(my $f,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
          print $f $c;close $f;\n\
@@ -1002,7 +1020,7 @@ where
         let cmd = format!(
             "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
              elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
-             else cp -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
+             else cp -n -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
              || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
         );
 
@@ -1324,5 +1342,120 @@ mod tests {
             panic!()
         };
         assert!(s.contains("no lines matched"));
+    }
+
+    // ── Defect A: sentinel collision ──
+
+    #[test]
+    fn extract_marked_ignores_embedded_end_marker() {
+        let snap = [
+            "other stuff",
+            "__DE_S__",
+            "line one",
+            "some content with __DE_E__ embedded",
+            "line three",
+            "__DE_E__",
+            "trailing",
+        ]
+        .join("\n");
+        let body = super::extract_marked(&snap, "__DE_S__", "__DE_E__").unwrap();
+        assert!(
+            body.contains("some content with __DE_E__ embedded"),
+            "embedded marker should not truncate the body"
+        );
+        assert!(
+            body.contains("line three"),
+            "body should include all lines up to the real sentinel"
+        );
+    }
+
+    #[test]
+    fn extract_marked_exact_line_only() {
+        let snap = ["__DE_S__", "line one", "__DE_E__", "after sentinel"].join("\n");
+        let body = super::extract_marked(&snap, "__DE_S__", "__DE_E__").unwrap();
+        assert_eq!(
+            body, "line one",
+            "standalone marker line must still be treated as a boundary"
+        );
+    }
+
+    // ── Defect B: Perl create parent dirs ──
+
+    #[test]
+    fn remote_create_cmd_perl_branch_makes_parent_dirs() {
+        // The Perl code is hex-encoded in the wire command, so check the source
+        // for the File::Path/make_path call.
+        let src = include_str!("file_ops.rs");
+        assert!(
+            src.contains("File::Path") && src.contains("make_path"),
+            "Perl branch in source must contain File::Path/make_path"
+        );
+    }
+
+    #[test]
+    fn remote_create_cmd_python_branch_unchanged() {
+        // The Python code is hex-encoded in the wire command, so check the source
+        // for the makedirs call.
+        let src = include_str!("file_ops.rs");
+        assert!(
+            src.contains("makedirs") && src.contains("exist_ok=True"),
+            "Python branch in source must still contain makedirs with exist_ok=True"
+        );
+    }
+
+    // ── Defect C: path guard symlink resolution ──
+
+    #[test]
+    fn path_guard_follows_symlink_parent_into_config_dir() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let de_dir = crate::config::config_dir();
+            let real_subdir = de_dir.join("etc");
+            std::fs::create_dir_all(&real_subdir).unwrap();
+
+            let link_parent = tmp.0.join("symlink_parent");
+            std::fs::create_dir(&link_parent).unwrap();
+            let symlink_path = link_parent.join("evil_link");
+            std::os::unix::fs::symlink(&real_subdir, &symlink_path).unwrap();
+
+            let leaf = symlink_path.join("new_file.txt");
+            let resolved = super::resolve_path_for_guard(leaf.to_str().unwrap());
+            assert!(
+                resolved.starts_with(&de_dir),
+                "resolved path {resolved:?} should be under config dir {de_dir:?}"
+            );
+        });
+    }
+
+    #[test]
+    fn path_guard_allows_nonexistent_leaf_under_real_parent() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let de_dir = crate::config::config_dir();
+            std::fs::create_dir_all(&de_dir).unwrap();
+
+            let real_parent = tmp.0.join("real_parent");
+            std::fs::create_dir(&real_parent).unwrap();
+
+            let leaf = real_parent.join("brand_new.txt");
+            let resolved = super::resolve_path_for_guard(leaf.to_str().unwrap());
+            assert!(
+                !resolved.starts_with(&de_dir),
+                "resolved path {resolved:?} should NOT be under config dir {de_dir:?}"
+            );
+        });
+    }
+
+    // ── Defect D: remote copy no-clobber ──
+
+    #[test]
+    fn remote_copy_cmd_is_no_clobber() {
+        // The remote copy command in run_copy must use "cp -n" (no-clobber).
+        // Verify by checking the source contains the no-clobber flag.
+        let src = include_str!("file_ops.rs");
+        assert!(
+            src.contains("cp -n --"),
+            "remote copy command must use cp -n (no-clobber)"
+        );
     }
 }

@@ -47,7 +47,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | #  | Phase                                                              | Status |
 |----|-------------------------------------------------------------------|--------|
 | 01 | safe-remote-command-foundation (SSH escaping + shared helper)     | done   |
-| 02 | remote-file-op-parity (read_file/edit_file correctness + paths)   | todo   |
+| 02 | remote-file-op-parity ([phase-02](phase-02-remote-file-op-parity.md))   | review   |
 | 03 | remote-script-transfer (script/runbook over SSH + sudoers)        | todo   |
 | 04 | namespace-access-control (memory/search ACL)                      | todo   |
 | 05 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |

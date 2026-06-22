@@ -320,7 +320,6 @@ fn validate_name_exactly_65_chars_err() {
     assert!(validate_session_name(&name).is_err());
 }
 
-
 // ── backfill_session_origin ───────────────────────────────────────────────
 
 #[test]

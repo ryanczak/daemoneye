@@ -858,8 +858,7 @@ pub(super) async fn ask_with_session(
             Response::LimitsInfo { .. }
             | Response::SessionSaved { .. }
             | Response::SessionLoaded { .. }
-            | Response::SavedSessionList { .. }
-            => {} // ToolStarted / ToolFinished are handled above; unreachable here.
+            | Response::SavedSessionList { .. } => {} // ToolStarted / ToolFinished are handled above; unreachable here.
         }
     }
 

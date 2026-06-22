@@ -7,16 +7,34 @@ use crate::ipc::{Request, Response};
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
-fn c_accent(s: &str) -> String { format!("\x1b[1m\x1b[38;2;100;210;255m{s}\x1b[0m") }
-fn c_key(s: &str) -> String    { format!("\x1b[38;2;140;140;165m{s}\x1b[0m") }
-fn c_val(s: &str) -> String    { format!("\x1b[1m\x1b[38;2;220;220;240m{s}\x1b[0m") }
-fn c_ok(s: &str) -> String     { format!("\x1b[38;2;80;210;130m{s}\x1b[0m") }
-fn c_err(s: &str) -> String    { format!("\x1b[38;2;230;80;80m{s}\x1b[0m") }
-fn c_warn(s: &str) -> String   { format!("\x1b[38;2;250;190;50m{s}\x1b[0m") }
-fn c_num(s: &str) -> String    { format!("\x1b[38;2;130;195;255m{s}\x1b[0m") }
-fn c_dim(s: &str) -> String    { format!("\x1b[38;2;80;80;105m{s}\x1b[0m") }
+fn c_accent(s: &str) -> String {
+    format!("\x1b[1m\x1b[38;2;100;210;255m{s}\x1b[0m")
+}
+fn c_key(s: &str) -> String {
+    format!("\x1b[38;2;140;140;165m{s}\x1b[0m")
+}
+fn c_val(s: &str) -> String {
+    format!("\x1b[1m\x1b[38;2;220;220;240m{s}\x1b[0m")
+}
+fn c_ok(s: &str) -> String {
+    format!("\x1b[38;2;80;210;130m{s}\x1b[0m")
+}
+fn c_err(s: &str) -> String {
+    format!("\x1b[38;2;230;80;80m{s}\x1b[0m")
+}
+fn c_warn(s: &str) -> String {
+    format!("\x1b[38;2;250;190;50m{s}\x1b[0m")
+}
+fn c_num(s: &str) -> String {
+    format!("\x1b[38;2;130;195;255m{s}\x1b[0m")
+}
+fn c_dim(s: &str) -> String {
+    format!("\x1b[38;2;80;80;105m{s}\x1b[0m")
+}
 
-fn dsep() -> String { c_dim("  ·  ") }
+fn dsep() -> String {
+    c_dim("  ·  ")
+}
 
 // ── Section builder ───────────────────────────────────────────────────────────
 
@@ -34,7 +52,10 @@ enum Row {
 
 impl Section {
     fn new(title: &'static str) -> Self {
-        Self { title, rows: Vec::new() }
+        Self {
+            title,
+            rows: Vec::new(),
+        }
     }
 
     fn kv(&mut self, key: &str, val: impl Into<String>) {
@@ -206,12 +227,11 @@ pub async fn run_status() -> Result<()> {
 
                     // ── Header ────────────────────────────────────────────────
                     let home = std::env::var("HOME").unwrap_or_default();
-                    let socket_disp =
-                        if !home.is_empty() && socket_path.starts_with(&home) {
-                            socket_path.replacen(&home, "~", 1)
-                        } else {
-                            socket_path.clone()
-                        };
+                    let socket_disp = if !home.is_empty() && socket_path.starts_with(&home) {
+                        socket_path.replacen(&home, "~", 1)
+                    } else {
+                        socket_path.clone()
+                    };
                     println!();
                     println!(
                         "  {}  {}{}{}  {}{}{}  {}",
@@ -473,18 +493,14 @@ pub async fn run_status() -> Result<()> {
                     webhooks.render(tw);
 
                     // ── REDACTIONS ────────────────────────────────────────────
-                    let mut redact_sorted: Vec<_> =
-                        redaction_counts.into_iter().collect();
+                    let mut redact_sorted: Vec<_> = redaction_counts.into_iter().collect();
                     redact_sorted.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-                    let nonzero: Vec<_> =
-                        redact_sorted.iter().filter(|(_, n)| *n > 0).collect();
+                    let nonzero: Vec<_> = redact_sorted.iter().filter(|(_, n)| *n > 0).collect();
                     if !nonzero.is_empty() {
                         let mut redactions = Section::new("REDACTIONS");
                         let parts: Vec<String> = nonzero
                             .iter()
-                            .map(|(t, n)| {
-                                format!("{} {}", c_key(t), c_num(&n.to_string()))
-                            })
+                            .map(|(t, n)| format!("{} {}", c_key(t), c_num(&n.to_string())))
                             .collect();
                         redactions.kv("counts", parts.join(&dsep()));
                         redactions.render(tw);
@@ -501,7 +517,10 @@ pub async fn run_status() -> Result<()> {
                             fmt_unlimited_u32(limits.total_tool_calls_per_turn),
                         ),
                     );
-                    lims.kv("result chars", fmt_unlimited_usize(limits.tool_result_chars));
+                    lims.kv(
+                        "result chars",
+                        fmt_unlimited_usize(limits.tool_result_chars),
+                    );
                     lims.kv("max history", fmt_unlimited_usize(limits.max_history));
                     lims.kv("max turns", fmt_unlimited_usize(limits.max_turns));
                     lims.kv(
@@ -512,13 +531,7 @@ pub async fn run_status() -> Result<()> {
                         let ovr: Vec<String> = limits
                             .per_tool_overrides
                             .iter()
-                            .map(|(t, c)| {
-                                format!(
-                                    "{} {}",
-                                    c_key(t),
-                                    fmt_unlimited_u32(*c)
-                                )
-                            })
+                            .map(|(t, c)| format!("{} {}", c_key(t), fmt_unlimited_u32(*c)))
                             .collect();
                         lims.kv("overrides", ovr.join(&dsep()));
                     }
@@ -551,7 +564,6 @@ pub async fn run_status() -> Result<()> {
                         }
                         cost.render(tw);
                     }
-
                 }
                 _ => {
                     eprintln!("{}", c_err("Daemon did not return status."));

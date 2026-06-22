@@ -251,7 +251,6 @@ pub(super) async fn send_delete_saved_session(name: &str) -> Result<()> {
     }
 }
 
-
 pub(super) async fn send_rename_session(old_name: &str, new_name: &str) -> Result<()> {
     let stream = connect().await?;
     let (rx, mut tx) = stream.into_split();

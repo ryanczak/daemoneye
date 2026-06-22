@@ -83,4 +83,3 @@ pub async fn suggest_session_name(
 
     Some((raw_name, description))
 }
-
