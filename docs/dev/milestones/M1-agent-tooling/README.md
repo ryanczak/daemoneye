@@ -60,7 +60,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 03 | script-exec-hardening ([phase-03](phase-03-script-exec-hardening.md)) — sudoers quoting + script-name allowlist | done   |
 | 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | done   |
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
-| 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | review   |
+| 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | done   |
 | 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |

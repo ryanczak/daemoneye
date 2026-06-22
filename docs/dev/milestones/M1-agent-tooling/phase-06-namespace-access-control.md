@@ -1,7 +1,7 @@
 # Phase 06: Namespace Access Control (lock the memory/search ACL as correct-by-design)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none (the ACL this phase locks already exists; this phase only adds tests)
 **Estimated diff:** ~120 lines (tests only)
 **Tags:** language=rust, kind=test, size=s
@@ -439,3 +439,21 @@ Not applicable — phase ships no runtime-loadable artifact (test-only; locks an
 **Notes for review:**
 - `MemoryInfo` does not derive `Debug`, so assertion messages in `memory_scan_is_confined_to_supplied_namespaces` omit `{results:?}` formatting to avoid requiring a production-code change. The assertions themselves (`.any(|e| e.key == "secret")`) are unaffected.
 - The `namespaces_ghost_excludes_foreign_namespace` test constructs a full `SessionEntry` literal — if fields drift in a future phase, this test will fail to compile, serving as the intended regression signal.
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Claude (opus-4-5-20251101) via rexyMCP local executor
+- **Scope deviations:** none — test-only as scoped; `git diff` confirms all source
+  additions are inside `#[cfg(test)]` scopes (`src/ai/tools.rs`, `src/memory_tests.rs`,
+  new `mod tests` in `src/daemon/executor/mod.rs`); no production function, schema,
+  IPC type, or signature touched.
+- **Independent re-run:** `cargo fmt --all --check`, `cargo build` (zero warnings),
+  `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test`
+  (740 + 27 pass, 1 ignored) all green on a fresh run.
+- **Test-reality spot-check:** mutating `build_memory_namespaces` to push a foreign
+  `"victim"` namespace makes `namespaces_ghost_excludes_foreign_namespace` FAIL at the
+  victim-absent assertion (mod.rs:1013) — the security property is genuinely pinned,
+  not a vacuous pass. Reverted; tree clean.
+- **Calibration:** none
