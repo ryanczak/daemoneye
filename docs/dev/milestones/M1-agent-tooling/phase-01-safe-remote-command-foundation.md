@@ -1,7 +1,7 @@
 # Phase 01: Safe Remote Command Foundation
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** todo
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -215,3 +215,49 @@ None beyond editing `src/daemon/policy.rs`, `src/daemon/utils.rs`, and
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-06-22 00:19 (complete)
+
+**Summary:** Added `sh_single_quote` POSIX single-quote helper to `src/daemon/utils.rs` and wired it into `GhostPolicy::wrap_remote` in `src/daemon/policy.rs`, fixing the SSH command-injection vulnerability. All existing `wrap_remote` tests pass with byte-identical output for quote-free commands. Two new injection regression tests confirm single-quote escaping.
+
+**Acceptance criteria:** all ticked above.
+
+**Commands:**
+
+```
+cargo fmt --all
+(passed, no output)
+
+cargo build 2>&1 | tail -20
+(passed, no warnings)
+
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20
+(passed, no warnings)
+
+cargo test sh_single_quote 2>&1 | tail -15
+test result: ok. 4 passed; 0 failed
+
+cargo test wrap_remote 2>&1 | tail -15
+test result: ok. 8 passed; 0 failed
+```
+
+**End-to-end verification:**
+
+Not applicable — phase ships no independently runtime-loadable artifact reachable without a live remote SSH host + ghost shell. `wrap_remote`'s output *is* the wire string sent to the daemon-host shell, and the unit tests assert that exact string byte-for-byte.
+
+**Files changed:**
+- `src/daemon/utils.rs` — added `sh_single_quote` helper + 4 unit tests
+- `src/daemon/policy.rs` — wired `sh_single_quote` into `wrap_remote`
+- `src/daemon/policy_tests.rs` — added 2 injection regression tests
+
+**New tests:**
+- `sh_single_quote_plain` in `src/daemon/utils.rs`
+- `sh_single_quote_embedded_quote` in `src/daemon/utils.rs`
+- `sh_single_quote_breakout_attempt` in `src/daemon/utils.rs`
+- `sh_single_quote_dollar_is_literal` in `src/daemon/utils.rs`
+- `wrap_remote_escapes_single_quote` in `src/daemon/policy_tests.rs`
+- `wrap_remote_escapes_breakout_attempt` in `src/daemon/policy_tests.rs`
+
+**Grep verification:** `grep -c "sh_single_quote" src/daemon/utils.rs src/daemon/policy.rs` → confirmed helper present in both files.
+
+**Notes for review:** Pre-existing integration test `g5_mailbox_write_and_read` is flaky (fails on `cargo test` but passes on isolated `cargo test g5_mailbox_write_and_read`). This is unrelated to this phase — no changes touch that code path.

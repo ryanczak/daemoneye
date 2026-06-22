@@ -50,6 +50,14 @@ pub fn shell_escape_arg(s: &str) -> String {
         .replace('`', "\\`")
 }
 
+/// Single-quote an arbitrary string so a POSIX shell parses it as one literal
+/// token. Wraps in `'…'` and rewrites each embedded `'` as `'\''`. Use this
+/// (NOT `shell_escape_arg`) whenever a value is placed inside single quotes —
+/// e.g. building an `ssh <host> <cmd>` invocation.
+pub fn sh_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
 /// Return true when `cmd` will start an interactive session in the pane
 /// rather than run a command and exit.  Such commands (ssh, mosh, telnet,
 /// screen, rlogin) occupy the pane for the duration of the session and never
@@ -706,6 +714,28 @@ mod tests {
     #[test]
     fn shell_escape_arg_multiple_single_quotes() {
         assert_eq!(shell_escape_arg("a'b'c"), "a'\\''b'\\''c");
+    }
+
+    // ── sh_single_quote ──────────────────────────────────────────────────────
+
+    #[test]
+    fn sh_single_quote_plain() {
+        assert_eq!(sh_single_quote("echo hi"), "'echo hi'");
+    }
+
+    #[test]
+    fn sh_single_quote_embedded_quote() {
+        assert_eq!(sh_single_quote("echo 'pwned'"), r"'echo '\''pwned'\'''");
+    }
+
+    #[test]
+    fn sh_single_quote_breakout_attempt() {
+        assert_eq!(sh_single_quote("x'; rm -rf ~ #"), r"'x'\''; rm -rf ~ #'");
+    }
+
+    #[test]
+    fn sh_single_quote_dollar_is_literal() {
+        assert_eq!(sh_single_quote("$HOME"), "'$HOME'");
     }
 
     // ── is_interactive_command ────────────────────────────────────────────────

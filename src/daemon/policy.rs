@@ -143,7 +143,11 @@ impl GhostPolicy {
     pub fn wrap_remote(&self, cmd: &str) -> String {
         match &self.ssh_target {
             Some(target) if !cmd.trim_start().starts_with("ssh ") => {
-                format!("ssh {} '{}'", target, cmd)
+                format!(
+                    "ssh {} {}",
+                    target,
+                    crate::daemon::utils::sh_single_quote(cmd)
+                )
             }
             _ => cmd.to_string(),
         }

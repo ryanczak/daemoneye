@@ -269,6 +269,24 @@ fn wrap_remote_sudo_script() {
 }
 
 #[test]
+fn wrap_remote_escapes_single_quote() {
+    let p = remote_policy(&[], "user@zap");
+    assert_eq!(
+        p.wrap_remote("echo 'pwned'"),
+        r"ssh user@zap 'echo '\''pwned'\'''"
+    );
+}
+
+#[test]
+fn wrap_remote_escapes_breakout_attempt() {
+    let p = remote_policy(&[], "user@zap");
+    assert_eq!(
+        p.wrap_remote("x'; rm -rf ~ #"),
+        r"ssh user@zap 'x'\''; rm -rf ~ #'"
+    );
+}
+
+#[test]
 fn is_safe_tilde_path_on_whitelist() {
     // After resolve_command with ssh_target the command is a tilde path;
     // is_safe must still recognise it via basename matching.
