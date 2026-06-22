@@ -97,6 +97,8 @@ The AI doesn't just suggest — it acts. Every proposed action goes through an e
 - **Drift detection** — if the foreground target changes between turns (pane closed, user moved focus), the daemon sends a `[Pane target changed]` system message before the first AI token so the model updates its mental model without manual intervention.
 - **Format validation** — if the AI passes a malformed pane ID (e.g. `"1"` instead of `"%7"`), the daemon returns an error with the correct ID so the model can self-correct on the same turn.
 
+**Remote script streaming** — When a foreground command targets a pane that is SSH'd or mosh'd to a remote host and the command names a daemon-host script (one stored in `~/.daemoneye/scripts/`), DaemonEye automatically detects that the bare filename does not exist on the remote and streams the script's content instead: the script is hex-encoded and piped into the remote interpreter's stdin (`python3`/`perl` decode → `bash /dev/stdin <args>`), so the script runs on the remote with no disk write and no remote-side setup. A local pane or a command that is not a managed script is sent verbatim, unchanged. Running a daemon-host script under `sudo` on a remote interactive pane is not supported on this path (a NOPASSWD sudoers rule must authorize a fixed file path, which streaming cannot provide); DaemonEye returns an advisory pointing at the Ghost Shell `ssh_target` mechanism for that case.
+
 **Tool call history** — For silent tools (reads, memory, search, terminal context, etc.) that don't require an approval prompt, DaemonEye renders a compact history line in chat: `▸ tool(args)` when the tool starts, then `⎿ detail · Xs` when it finishes. The spinner shows a live elapsed timer between the two lines so you always know what the AI is doing and how long it has been running. The status bar shows a session-cumulative count (`· tools: N`) so you can see at a glance how many silent tool calls have occurred in the conversation.
 
 **`/approvals`** — type this at the chat prompt to inspect which approvals are currently active across all five scopes: terminal commands (regular and sudo), scripts, runbooks, and file paths. Use `/approvals revoke` to instantly revoke all session approvals, or revoke a single class with `/approvals revoke commands`, `/approvals revoke scripts`, `/approvals revoke runbooks`, or `/approvals revoke files`. The status bar shows a compact count-based summary (e.g. `⚡approvals: all · files: 2 · Ctrl+C revokes`) so you always know what the AI can do without opening `/approvals`. Cumulative write-approval and denial counts for scripts, runbooks, and file edits are tracked by the daemon and shown in `daemoneye status`.
@@ -682,8 +684,11 @@ Ghost AI turn loop (up to max_ghost_turns)
   • Policy gate: non-sudo commands always allowed (OS permissions are the boundary);
     sudo commands must be in auto_approve_scripts + have a NOPASSWD sudoers rule;
     named agent tool policy enforced independently at IPC layer
-  • resolve_command() rewrites bare/relative script names
-    to ~/.daemoneye/scripts/<name> (+ sudo prefix if run_with_sudo: true)
+  • Script dispatch: without ssh_target, bare/relative names resolve to
+    ~/.daemoneye/scripts/<name> (+ sudo prefix if run_with_sudo: true);
+    with ssh_target, scripts are hex-streamed to the remote interpreter's
+    stdin by default (no remote disk write) — sudo cases only materialize
+    the script to the sudoers-authorized path on the remote host
   • watch_pane blocks until command exits before next turn
         │
         ▼
@@ -802,7 +807,7 @@ captures the error log for post-incident review.
 | `run_with_sudo` | bool | `false` | Auto-prepend `sudo` when executing scripts listed in `auto_approve_scripts`. The ghost AI can then write `script.sh` instead of `sudo script.sh`. Does **not** grant permission to run arbitrary sudo commands — the `auto_approve_scripts` whitelist is always enforced. Each approved script still requires a NOPASSWD sudoers rule via `daemoneye install-sudoers`. |
 | `max_ghost_turns` | integer | `0` | Per-runbook turn cap. Clamped to the daemon ceiling (`ghost.max_ghost_turns` in `config.toml`). `0` means use the daemon ceiling. |
 | `model` | string | *(agent or default)* | Model key for this ghost shell. Beats the agent-level model if both are set. |
-| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all commands are transparently wrapped in `ssh <target> <cmd>` before execution. Scripts are resolved to `~/.daemoneye/scripts/<name>` on the remote host. The AI is instructed not to SSH manually — omit this field for local-only execution. |
+| `ssh_target` | string | *(none)* | SSH destination (e.g. `user@host` or `host`) for remote execution. When set, all commands are transparently wrapped in `ssh <target> <cmd>` before execution. Daemon-host scripts are **streamed** to the remote via hex-decode → interpreter stdin by default (no remote disk write); when `sudo` is required the script is materialized to its `~/.daemoneye/scripts/<name>` path on the remote (a NOPASSWD sudoers rule must cover that path). The AI is instructed not to SSH manually — omit this field for local-only execution. |
 | `auto_approve_commands` | bool | `false` | Explicitly tell the ghost shell it may run non-sudo investigation commands freely. Non-sudo commands are always permitted by OS permissions regardless of this flag; setting it to `true` makes that explicit in the system prompt so the model does not withhold useful investigation commands. Can also be enabled daemon-wide via `[approvals] ghost_commands = true` in `config.toml`; the two sources are OR-ed together. |
 
 ### Step 4 — Enable the webhook and configure Alertmanager
