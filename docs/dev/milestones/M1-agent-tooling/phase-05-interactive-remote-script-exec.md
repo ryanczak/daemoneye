@@ -1,7 +1,7 @@
 # Phase 05: Interactive Remote Script Execution (stream a daemon-host script into a remote *user* pane)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (remote pane handling), phase-03 (script-name allowlist —
 `validate_script_name`), phase-04 (the `remote_stream_cmd` / `shebang_interpreter`
 builders this phase reuses verbatim)
@@ -381,3 +381,25 @@ grep -rn 'parse_script_invocation' src/scripts.rs
 - `parse_script_invocation_rejects_metachar_name` in `src/scripts.rs`
 
 **Notes for review:** None — implementation matches spec exactly. No deviations.
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP executor)
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independently re-ran `cargo fmt --all --check`, `cargo build` (fresh recompile,
+zero warnings), `cargo clippy --all-targets --all-features -- -D warnings`, and
+`cargo test` (736 unit + 27 integration, 0 failed). The 7 `parse_script_invocation`
+unit tests assert all pinned mappings, including the `foo;rm -rf /` metacharacter
+rejection. End-to-end: reproduced `remote_stream_cmd`'s pipeline for a
+`#!/bin/bash`/`echo "$1"` script and ran it through `bash -c` locally — output was
+`--flag`, confirming the streamed hex-decode→interpreter-stdin path executes with
+positional args intact. Confirmed `remote_stream_cmd` / `shebang_interpreter` /
+`remote_script_call` bodies are unchanged by the commit and their phase-04 tests
+remain green. `foreground.rs` wire-in verified by inspection: transform sits between
+`is_remote_pane` and hook install, sudo branch fails loud before the hook with only
+`finish_command`, `send_keys` uses `send_cmd`, and downstream completion/extraction/
+logging all still use the original `cmd`.
