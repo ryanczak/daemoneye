@@ -1,7 +1,7 @@
 # Phase 02: Remote File-Op Parity & Correctness
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-phase-02-1.md`)
 **Depends on:** phase-01 (uses the safe-quoting discipline established there)
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
