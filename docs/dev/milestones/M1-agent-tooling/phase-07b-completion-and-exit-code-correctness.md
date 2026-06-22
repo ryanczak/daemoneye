@@ -1,7 +1,7 @@
 # Phase 07b: Completion & Exit-Code Correctness
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** phase-07a (shares the foreground execution path; 07a must be `done`)
 **Estimated diff:** ~110 lines (incl. tests)
 **Tags:** language=rust, kind=bugfix, size=m
@@ -553,3 +553,23 @@ grep -rn 'command exited with status' src/daemon/executor/foreground.rs
 - (pending — one commit below)
 
 **Notes for review:** None — implementation matches spec exactly.
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none — only the local completion branch and the shared
+  capture/return point were touched; sudo/interactive/remote branches and the N9
+  silence-monitor install left intact; `LOCAL_CHILD_POLL`/`LOCAL_SLOW_POLL`
+  retained and in use.
+- **Calibration:** none
+
+Independent re-run: `cargo fmt --all -- --check`, `cargo build` (zero warnings),
+`cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test`
+(746 lib + 27 integration, 1 ignored) all pass. The three
+`exit_status_annotation` unit tests pass and are non-trivial (each pins a
+distinct branch of the helper). The model-facing `read_pane_exit_status(...).
+unwrap_or(0)` fabrication is gone; the remaining `unwrap_or(0)` feeds stats only,
+as the spec allows. No new `unwrap()`/`expect()`/`panic!`/`unsafe` in production
+paths.

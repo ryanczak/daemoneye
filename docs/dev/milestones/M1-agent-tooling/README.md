@@ -62,7 +62,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
 | 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | done   |
 | 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | done   |
-| 07b | completion-and-exit-code-correctness ([phase-07b](phase-07b-completion-and-exit-code-correctness.md)) — local completion via the `DE_EXIT` latch + non-zero exit surfacing (tmux-verb leverage split out to 07c) | review   |
+| 07b | completion-and-exit-code-correctness ([phase-07b](phase-07b-completion-and-exit-code-correctness.md)) — local completion via the `DE_EXIT` latch + non-zero exit surfacing (tmux-verb leverage split out to 07c) | done   |
 | 07c | tmux-verb-leverage — `wait-for`/`set-buffer`/`copy-mode -X`/`if-shell` where they replace fragile polling (deferred; draft on demand only if a concrete site warrants it) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
