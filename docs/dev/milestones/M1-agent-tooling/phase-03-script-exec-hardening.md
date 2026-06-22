@@ -1,7 +1,7 @@
 # Phase 03: Script-Exec Hardening (sudoers quoting + script-name allowlist)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** todo
+**Status:** review
 **Depends on:** none (self-contained in `src/scripts.rs`; phases 01–02 are unrelated files)
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=security, size=s
@@ -257,3 +257,51 @@ None beyond editing `src/scripts.rs`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-06-22 02:58 (started)
+
+**Executor:** rexyMCP executor
+**Status:** in-progress
+
+Implementing Defect A (allowlist validation) and Defect B (sudoers path escaping) in `src/scripts.rs`.
+
+### Update — 2026-06-22 02:58 (complete)
+
+**Executor:** rexyMCP executor
+**Status:** review
+
+**Summary:** Tightened `validate_script_name` to `[A-Za-z0-9._-]` allowlist and added `sudoers_escape_path` to backslash-escape sudoers-special characters in the command path.
+
+**Files changed:**
+- `src/scripts.rs` — replaced permissive `validate_script_name` with allowlist; added `sudoers_escape_path` helper; updated `sudoers_rule` to call it; added 4 new unit tests.
+
+**Commits:**
+- `fix: harden script-name validation and sudoers path escaping` — one commit covering both defects.
+
+**Verification commands:**
+- `cargo fmt --all` — passed
+- `cargo build` — zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` — passed
+- `cargo test` — 27 passed, 0 failed, 1 ignored
+
+**End-to-end verification:**
+- `cargo test validate_` — 9 passed including `validate_rejects_metacharacters` and `validate_accepts_allowlisted`
+- `cargo test sudoers_rule` — 4 passed including `sudoers_rule_escapes_special_chars` and `sudoers_rule_passthrough_when_safe`
+
+**Grep proof — allowlist literal landed:**
+```
+$ grep -n 'is_ascii_alphanumeric' src/scripts.rs
+118:    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') {
+```
+
+**Grep proof — sudoers escape helper landed:**
+```
+$ grep -n 'sudoers_escape_path' src/scripts.rs
+134:    format!("{} ALL=(ALL) NOPASSWD: {}\n", user, sudoers_escape_path(script_path))
+143:fn sudoers_escape_path(path: &str) -> String {
+```
+
+**Notes for review:**
+- `sudoers_escape_path` is a private helper; only `sudoers_rule` calls it.
+- The `user` field in `sudoers_rule` is intentionally left unescaped per spec authorization (username is system-derived, not agent-controlled).
+- No other files were touched; `install_sudoers` orchestration is unchanged.

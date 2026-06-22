@@ -114,7 +114,13 @@ fn validate_script_name(name: &str) -> Result<()> {
     if name.is_empty() {
         bail!("Script name cannot be empty");
     }
-    if name.contains('/') || name.contains('\0') || name == "." || name == ".." {
+    if name == "." || name == ".." {
+        bail!("Invalid script name: '{}'", name);
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
         bail!("Invalid script name: '{}'", name);
     }
     Ok(())
@@ -125,7 +131,31 @@ fn validate_script_name(name: &str) -> Result<()> {
 ///
 /// This is a pure function and does not touch the filesystem — useful for testing.
 pub fn sudoers_rule(user: &str, script_path: &str) -> String {
-    format!("{} ALL=(ALL) NOPASSWD: {}\n", user, script_path)
+    format!(
+        "{} ALL=(ALL) NOPASSWD: {}\n",
+        user,
+        sudoers_escape_path(script_path)
+    )
+}
+
+/// Escape sudoers-special characters in a pathname.
+///
+/// Per sudoers(5), these characters terminate words or inject directives and must
+/// be backslash-escaped: `\`, space, tab, `@`, `!`, `=`, `:`, `,`, `(`, `)`.
+/// Backslash is escaped first so the other escapes are not re-escaped.
+fn sudoers_escape_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ' ' | '\t' | '@' | '!' | '=' | ':' | ',' | '(' | ')' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Install a NOPASSWD sudoers rule for a named script in `~/.daemoneye/scripts/`.
@@ -322,5 +352,54 @@ mod tests {
         // Paths with hyphens and underscores should pass through unchanged.
         let rule = sudoers_rule("bob", "/opt/scripts/rotate_certs.sh");
         assert!(rule.starts_with("bob ALL=(ALL) NOPASSWD: /opt/scripts/rotate_certs.sh"));
+    }
+
+    #[test]
+    fn validate_rejects_metacharacters() {
+        assert!(validate_script_name("foo bar").is_err());
+        assert!(validate_script_name("foo;rm -rf").is_err());
+        assert!(validate_script_name("foo|bar").is_err());
+        assert!(validate_script_name("foo&bar").is_err());
+        assert!(validate_script_name("foo$x").is_err());
+        assert!(validate_script_name("foo>out").is_err());
+        assert!(validate_script_name("a`b").is_err());
+        assert!(validate_script_name("foo\nbar").is_err());
+        assert!(validate_script_name("foo\0").is_err());
+        assert!(validate_script_name("foo'bar").is_err());
+        assert!(validate_script_name("foo(bar)").is_err());
+    }
+
+    #[test]
+    fn validate_accepts_allowlisted() {
+        assert!(validate_script_name("check-disk.sh").is_ok());
+        assert!(validate_script_name("my_script").is_ok());
+        assert!(validate_script_name("a.b.c").is_ok());
+        assert!(validate_script_name("Backup-01").is_ok());
+        assert!(validate_script_name("x").is_ok());
+    }
+
+    #[test]
+    fn sudoers_rule_escapes_special_chars() {
+        // Space and comma in path must be backslash-escaped.
+        let rule = sudoers_rule("alice", "/home/od d/scripts/a,b.sh");
+        assert!(rule.contains("\\ "), "space should be escaped");
+        assert!(rule.contains("\\,"), "comma should be escaped");
+        assert!(!rule.contains("od d"), "raw space must not appear");
+        assert!(!rule.contains("a,b"), "raw comma must not appear");
+        assert!(rule.ends_with('\n'));
+
+        // Literal backslash must be doubled.
+        let rule = sudoers_rule("alice", "/home/al\\ice/scripts/x.sh");
+        assert!(rule.contains("\\\\"), "backslash should be doubled");
+    }
+
+    #[test]
+    fn sudoers_rule_passthrough_when_safe() {
+        let path = "/home/alice/.daemoneye/scripts/check-disk.sh";
+        let rule = sudoers_rule("alice", path);
+        assert_eq!(
+            rule,
+            "alice ALL=(ALL) NOPASSWD: /home/alice/.daemoneye/scripts/check-disk.sh\n"
+        );
     }
 }
