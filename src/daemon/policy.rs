@@ -154,12 +154,11 @@ impl GhostPolicy {
     }
 
     /// When `ssh_target` is set and `cmd` invokes a whitelisted script (bare or
-    /// relative name, optionally `sudo`-prefixed, possibly with args), return the
-    /// script basename that must be transferred to the remote host before execution.
-    /// Returns `None` for local policies (no `ssh_target`), commands whose first
-    /// token is already absolute, and commands that do not invoke a whitelisted
-    /// script. Mirrors `resolve_command`'s whitelist detection exactly.
-    pub fn remote_script_name(&self, cmd: &str) -> Option<String> {
+    /// relative name, optionally `sudo`-prefixed, possibly with args), return
+    /// `(basename, args_tail)` where `args_tail` is everything after the first token
+    /// (verbatim, including its leading space; empty if none). `None` otherwise.
+    /// Mirrors `resolve_command`'s whitelist detection exactly.
+    pub fn remote_script_call(&self, cmd: &str) -> Option<(String, String)> {
         self.ssh_target.as_ref()?;
 
         // Strip a leading `sudo` so `sudo script.sh` resolves identically to
@@ -181,16 +180,28 @@ impl GhostPolicy {
             return None;
         }
 
+        let args_tail = parts.next().map(|s| format!(" {}", s)).unwrap_or_default();
+
         let basename = std::path::Path::new(first)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(first);
 
         if self.auto_approve_scripts.iter().any(|s| s == basename) {
-            Some(basename.to_string())
+            Some((basename.to_string(), args_tail))
         } else {
             None
         }
+    }
+
+    /// When `ssh_target` is set and `cmd` invokes a whitelisted script (bare or
+    /// relative name, optionally `sudo`-prefixed, possibly with args), return the
+    /// script basename that must be transferred to the remote host before execution.
+    /// Returns `None` for local policies (no `ssh_target`), commands whose first
+    /// token is already absolute, and commands that do not invoke a whitelisted
+    /// script. Mirrors `resolve_command`'s whitelist detection exactly.
+    pub fn remote_script_name(&self, cmd: &str) -> Option<String> {
+        self.remote_script_call(cmd).map(|(name, _)| name)
     }
 }
 

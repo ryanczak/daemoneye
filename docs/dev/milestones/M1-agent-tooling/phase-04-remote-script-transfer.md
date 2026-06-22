@@ -1,7 +1,7 @@
 # Phase 04: Remote Script Execution (ghost `ssh_target`: stream by default, persist for sudo)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (safe SSH quoting / `wrap_remote`), phase-03 (script-name
 allowlist — the basename is already `[A-Za-z0-9._-]`-safe by the time it reaches the
 remote)
@@ -431,3 +431,82 @@ which the new constraints forbid as a default.
 `to_hex`, `resolve_command`, and `wrap_remote` stay. Keep the v1 materialize tests. The
 new default must write nothing to the remote filesystem — the `remote_stream_cmd_*` tests
 pin that as a negative property.
+
+### Update — 2026-06-22 16:50 (complete, v2 revision)
+
+**Executor:** rexyMCP executor
+**Summary:** Implemented the streaming default for remote script execution. Added
+`remote_stream_cmd` and `shebang_interpreter` to `src/scripts.rs`, added
+`GhostPolicy::remote_script_call` (with `remote_script_name` delegating to it) in
+`src/daemon/policy.rs`, and branched the foreground wire-in on `sudo` in
+`src/daemon/executor/foreground.rs`.
+
+**Acceptance criteria:** all ticked above.
+
+**Commands:**
+
+```
+cargo fmt --all
+(clean, no output)
+
+cargo build 2>&1 | tail -20
+(clean, zero warnings)
+
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20
+(clean, no warnings)
+
+cargo test 2>&1 | tail -30
+729 passed; 0 failed; 1 ignored (daemon_ping_status_loop)
+```
+
+**End-to-end verification:**
+
+`cargo test remote_stream_cmd` — 4 passed (pipes_hex_no_disk, passes_args,
+python_and_perl_branches, honors_shebang).
+
+`cargo test shebang` — 5 passed (shebang_interpreter_cases covers #!/bin/bash→bash,
+#!/usr/bin/env python3→python3, #!/usr/bin/perl -w→perl, no shebang→bash,
+#!/bin/sh; rm -rf /→bash injection fallback).
+
+`cargo test remote_script_call` — 2 passed (returns_name_and_args, none_cases).
+
+`cargo test remote_script_name_delegates_to_call` — 1 passed (proves delegation).
+
+Real local pipeline run:
+```
+$ bash -c "{ if command -v python3 >/dev/null 2>&1; then \
+    python3 -c \"import sys;sys.stdout.buffer.write(bytes.fromhex('...'))\"; \
+  else \
+    perl -e 'print pack(\"H*\",\"...\")'; \
+  fi; } | bash /dev/stdin hello world"
+arg1=hello arg2=world
+```
+Script executed correctly with args set — hex decode → pipe → interpreter works.
+
+**Files changed:**
+- `src/scripts.rs` — added `shebang_interpreter` private helper, `remote_stream_cmd`
+  public builder, and 5 new unit tests
+- `src/daemon/policy.rs` — added `GhostPolicy::remote_script_call` method;
+  reimplemented `remote_script_name` to delegate to it
+- `src/daemon/policy_tests.rs` — added 3 new tests for `remote_script_call` and
+  delegation
+- `src/daemon/executor/foreground.rs` — replaced unconditional materialize prefix with
+  sudo-gated branch (stream default, persist for sudo)
+
+**New tests:**
+- `remote_stream_cmd_pipes_hex_no_disk` in `src/scripts.rs`
+- `remote_stream_cmd_passes_args` in `src/scripts.rs`
+- `remote_stream_cmd_python_and_perl_branches` in `src/scripts.rs`
+- `remote_stream_cmd_honors_shebang` in `src/scripts.rs`
+- `shebang_interpreter_cases` in `src/scripts.rs`
+- `remote_script_call_returns_name_and_args` in `src/daemon/policy_tests.rs`
+- `remote_script_call_none_cases` in `src/daemon/policy_tests.rs`
+- `remote_script_name_delegates_to_call` in `src/daemon/policy_tests.rs`
+
+**Grep verification:** `grep -r 'remote_stream_cmd\|shebang_interpreter\|remote_script_call' src/` confirms all three new symbols landed in the correct files.
+
+**Notes for review:** The streamed branch discards the resolved-path form from
+`resolve_command` (intentional — the pipeline reads from stdin; the resolved form was
+only needed for the approval display). The error message text changed slightly from
+"cannot transfer script" to "cannot run script" to better reflect that streaming is the
+default (no transfer occurs).

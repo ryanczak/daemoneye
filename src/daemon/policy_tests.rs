@@ -427,3 +427,65 @@ fn remote_script_name_agrees_with_resolve_command() {
         resolved
     );
 }
+
+// ── remote_script_call ────────────────────────────────────────────────────
+
+#[test]
+fn remote_script_call_returns_name_and_args() {
+    let p = remote_policy(&["foo.sh"], "h");
+    assert_eq!(
+        p.remote_script_call("foo.sh"),
+        Some(("foo.sh".into(), "".into()))
+    );
+    assert_eq!(
+        p.remote_script_call("foo.sh --flag arg"),
+        Some(("foo.sh".into(), " --flag arg".into()))
+    );
+    assert_eq!(
+        p.remote_script_call("sudo foo.sh --flag arg"),
+        Some(("foo.sh".into(), " --flag arg".into()))
+    );
+    assert_eq!(
+        p.remote_script_call("./foo.sh"),
+        Some(("foo.sh".into(), "".into()))
+    );
+}
+
+#[test]
+fn remote_script_call_none_cases() {
+    // Local policy (no ssh_target)
+    let p = policy(&["foo.sh"]);
+    assert_eq!(p.remote_script_call("foo.sh"), None);
+
+    // Absolute path
+    let p = remote_policy(&["foo.sh"], "h");
+    assert_eq!(p.remote_script_call("/usr/bin/foo.sh"), None);
+
+    // Not on whitelist
+    assert_eq!(p.remote_script_call("bar.sh"), None);
+
+    // Empty command
+    assert_eq!(p.remote_script_call(""), None);
+}
+
+#[test]
+fn remote_script_name_delegates_to_call() {
+    let p = remote_policy(&["foo.sh"], "h");
+    // For every case where remote_script_call returns Some,
+    // remote_script_name must return the same basename.
+    for cmd in &[
+        "foo.sh",
+        "foo.sh --flag arg",
+        "sudo foo.sh --flag arg",
+        "./foo.sh",
+    ] {
+        let call_result = p.remote_script_call(cmd);
+        let name_result = p.remote_script_name(cmd);
+        assert_eq!(
+            call_result.map(|(n, _)| n),
+            name_result,
+            "mismatch for cmd={:?}",
+            cmd
+        );
+    }
+}

@@ -853,11 +853,19 @@ where
         return Ok(ToolCallOutcome::Result(output));
     }
 
-    // Ghost shells: capture which script (if any) needs transferring to the remote.
-    let transfer_script: Option<String> = ghost_policy
+    // § 2.4 remote execution: a ghost ssh_target whitelisted-script invocation ships to
+    // the remote either by streaming (default, no remote disk) or — under sudo — by a
+    // persistent materialize to the sudoers-authorized path.
+    let remote_script = ghost_policy
         .as_ref()
         .filter(|_| is_ghost)
-        .and_then(|p| p.remote_script_name(cmd));
+        .and_then(|p| p.remote_script_call(cmd)); // Option<(String, String)>
+    let remote_script_is_sudo = remote_script.is_some()
+        && (crate::daemon::utils::command_has_sudo(cmd)
+            || ghost_policy
+                .as_ref()
+                .map(|p| p.run_with_sudo)
+                .unwrap_or(false));
 
     // Ghost shells: resolve bare/relative script names to absolute path.
     let resolved_cmd;
@@ -886,21 +894,29 @@ where
         Err(outcome) => return Ok(outcome),
     };
 
-    // Ghost shells: if a whitelisted script needs transferring to the remote,
-    // prepend the materialize fragment so the remote has the current version.
-    let transfer_prefixed_cmd;
-    let cmd = if let Some(name) = transfer_script.as_deref() {
+    // Ghost shells: build the remote command — stream by default, persist only for sudo.
+    let remote_built_cmd;
+    let cmd = if let Some((name, args)) = remote_script.as_ref() {
         match crate::scripts::read_script(name) {
             Ok(content) => {
-                let prefix = crate::scripts::remote_materialize_cmd(name, &content);
-                transfer_prefixed_cmd = format!("{} && {}", prefix, cmd);
-                transfer_prefixed_cmd.as_str()
+                remote_built_cmd = if remote_script_is_sudo {
+                    // Sudo: persistent materialize to the sudoers-authorized path, then
+                    // run the resolved `sudo ~/.daemoneye/scripts/<name> …` command.
+                    format!(
+                        "{} && {}",
+                        crate::scripts::remote_materialize_cmd(name, &content),
+                        cmd
+                    )
+                } else {
+                    // Default: stream content to the interpreter's stdin — no remote disk.
+                    crate::scripts::remote_stream_cmd(&content, args)
+                };
+                remote_built_cmd.as_str()
             }
             Err(e) => {
                 let msg = format!(
-                    "Error: cannot transfer script '{}' to remote host — it is not \
-                     available on the daemon host: {}. Use write_script to create it \
-                     first.",
+                    "Error: cannot run script '{}' on the remote host — it is not \
+                     available on the daemon host: {}. Use write_script to create it first.",
                     name, e
                 );
                 send_response_split(tx, Response::ToolResult(msg.clone())).await?;

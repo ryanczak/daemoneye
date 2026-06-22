@@ -281,6 +281,68 @@ pub fn remote_materialize_cmd(name: &str, content: &str) -> String {
     )
 }
 
+/// Derive the interpreter command name from a script's shebang line.
+///
+/// Returns a name guaranteed to match `[A-Za-z0-9._-]+` (safe to interpolate
+/// unquoted into the remote command). Falls back to `"bash"` when there is no
+/// shebang or the derived name is not a clean interpreter token.
+fn shebang_interpreter(content: &str) -> String {
+    let first_line = content.lines().next().unwrap_or("");
+    let Some(rest) = first_line.strip_prefix("#!") else {
+        return "bash".to_string();
+    };
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    let tokens = if tokens.is_empty() {
+        return "bash".to_string();
+    } else {
+        tokens
+    };
+
+    let interp_token = if tokens[0].ends_with("env") && tokens.len() >= 2 {
+        tokens[1]
+    } else {
+        tokens[0]
+    };
+
+    // Extract basename (strip any directory prefix)
+    let basename = std::path::Path::new(interp_token)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(interp_token)
+        .to_string();
+
+    // Validate against safe charset — reject anything that could inject shell metachars
+    if basename
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        basename
+    } else {
+        "bash".to_string()
+    }
+}
+
+/// Build a remote shell fragment that runs `content` (a daemon-host script) on the
+/// remote host **without writing it to the remote filesystem**: the hex-encoded
+/// content is decoded on the remote and piped straight into the shebang-derived
+/// interpreter's stdin via `/dev/stdin`. `args` is the verbatim argument tail from
+/// the original invocation (already shell text, e.g. " --flag arg", or empty); it is
+/// appended after the interpreter so the script's positional parameters are set.
+///
+/// Content is hex-encoded, so no byte of the script reaches the remote shell unquoted.
+pub fn remote_stream_cmd(content: &str, args: &str) -> String {
+    let hex = to_hex(content);
+    let interp = shebang_interpreter(content);
+    format!(
+        "{{ if command -v python3 >/dev/null 2>&1; then \\\n\
+          python3 -c \"import sys;sys.stdout.buffer.write(bytes.fromhex('{}'))\"; \\\n\
+        else \\\n\
+          perl -e 'print pack(\"H*\",\"{}\")'; \\\n\
+        fi; }} | {} /dev/stdin{}",
+        hex, hex, interp, args,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +545,91 @@ mod tests {
             "raw metacharacters must not appear in output, got: {}",
             output
         );
+    }
+
+    #[test]
+    fn remote_stream_cmd_pipes_hex_no_disk() {
+        let content = "#!/bin/bash\necho hi\n";
+        let output = remote_stream_cmd(content, "");
+        let expected_hex = to_hex(content);
+        assert!(
+            output.contains(&expected_hex),
+            "output should contain the hex encoding, got: {}",
+            output
+        );
+        assert!(
+            !output.contains("echo hi"),
+            "output must NOT contain the raw content, got: {}",
+            output
+        );
+        assert!(
+            output.contains("bash /dev/stdin"),
+            "output should pipe into bash /dev/stdin, got: {}",
+            output
+        );
+        // Negative property: no remote disk write
+        assert!(
+            !output.contains("mkdir"),
+            "output must NOT contain mkdir, got: {}",
+            output
+        );
+        assert!(
+            !output.contains(".de_tmp"),
+            "output must NOT contain .de_tmp, got: {}",
+            output
+        );
+        assert!(
+            !output.contains(" mv "),
+            "output must NOT contain mv, got: {}",
+            output
+        );
+        // No redirection of decoded bytes to a file path
+        assert!(
+            !output.contains("> ~/") && !output.contains("> /tmp/"),
+            "output must NOT redirect decoded bytes to a file path, got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn remote_stream_cmd_passes_args() {
+        let content = "#!/bin/bash\necho hi\n";
+        let output = remote_stream_cmd(content, " --flag arg");
+        assert!(
+            output.ends_with("bash /dev/stdin --flag arg"),
+            "output should end with interpreter + args, got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn remote_stream_cmd_python_and_perl_branches() {
+        let output = remote_stream_cmd("#!/bin/bash\necho hi\n", "");
+        assert!(output.contains("python3"));
+        assert!(output.contains("perl"));
+    }
+
+    #[test]
+    fn remote_stream_cmd_honors_shebang() {
+        let content = "#!/usr/bin/env python3\nprint(1)\n";
+        let output = remote_stream_cmd(content, "");
+        assert!(
+            output.contains("python3 /dev/stdin"),
+            "output should use python3 interpreter, got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn shebang_interpreter_cases() {
+        assert_eq!(shebang_interpreter("#!/bin/bash\necho hi"), "bash");
+        assert_eq!(
+            shebang_interpreter("#!/usr/bin/env python3\nprint(1)"),
+            "python3"
+        );
+        assert_eq!(shebang_interpreter("#!/usr/bin/perl -w\nprint 1"), "perl");
+        assert_eq!(shebang_interpreter("echo hi"), "bash");
+        // Injection case: semicolon in basename fails charset gate
+        assert_eq!(shebang_interpreter("#!/bin/sh; rm -rf /\necho hi"), "bash");
     }
 }
