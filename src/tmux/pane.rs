@@ -385,6 +385,18 @@ pub fn read_pane_exit_status(pane_id: &str) -> Option<i32> {
         .and_then(|(_, val)| val.parse::<i32>().ok())
 }
 
+/// Clear the `DE_EXIT_<pane>` latch before sending a foreground command, so its
+/// later reappearance — written by the shell hook when the prompt redraws — marks
+/// *this* command's completion and carries its real exit code, not a stale one.
+/// Best-effort: a missing hook simply means the key never reappears, and the
+/// caller falls back to PID-return completion.
+pub fn clear_pane_exit_status(pane_id: &str) {
+    let key = format!("DE_EXIT_{}", pane_id.trim_start_matches('%'));
+    let _ = Command::new("tmux")
+        .args(["set-environment", "-u", &key])
+        .output();
+}
+
 /// Send keys (a command) to a specific pane.
 pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
     let output = Command::new("tmux")

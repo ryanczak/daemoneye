@@ -62,7 +62,8 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
 | 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | done   |
 | 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | done   |
-| 07b | completion-and-exit-code-correctness — local completion robustness, non-zero exit surfacing, tmux-verb leverage (drafted on demand) | todo   |
+| 07b | completion-and-exit-code-correctness ([phase-07b](phase-07b-completion-and-exit-code-correctness.md)) — local completion via the `DE_EXIT` latch + non-zero exit surfacing (tmux-verb leverage split out to 07c) | review   |
+| 07c | tmux-verb-leverage — `wait-for`/`set-buffer`/`copy-mode -X`/`if-shell` where they replace fragile polling (deferred; draft on demand only if a concrete site warrants it) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
 
@@ -111,6 +112,20 @@ Consequences for the phase plan:
   of phase 04. (Tentative — draft on demand; confirm scope at draft time.)
 - **Phases 06/07 unchanged** in scope (ACL; execution robustness). **Phase 08** grows:
   `sre.toml` must teach the three tool classes and the local-vs-remote decision.
+
+### 07b/07c split (2026-06-22)
+
+At 07b draft time the architect split the remaining phase-07 work again. 07b's
+spec covers **only** the two `high` items — local completion detection (via the
+`DE_EXIT` latch) and exit-code surfacing. The third bullet of the original 07b
+scope — open-ended **tmux-verb leverage** (`wait-for`, `set-buffer`/`paste-buffer`,
+`copy-mode -X`, `if-shell`) — was moved to a new **07c**, deferred and drafted on
+demand. Rationale: each verb is a genuine redesign of a send/capture path (e.g.
+`wait-for` requires wrapping the sent command so it signals a channel, which
+changes what the user sees typed into their pane and breaks the interactive
+path), and bundling an exploratory rewrite with the delicate completion-detection
+change is exactly the risk that motivated the 07a/07b split in the first place.
+07c may never be drafted if no concrete fragile-polling site justifies it.
 
 ### Confirmed findings inventory (pre-injection source for phase drafts)
 
@@ -216,22 +231,32 @@ and it mixes safe mechanical fixes with delicate completion-detection changes).
   abort or panic leaks the hook. Mirror the existing `FgHookGuard`
   (`foreground.rs:50-84`) with a `Drop` guard moved into the task (**medium**).
 
-**→ Phase 07b — completion & exit-code correctness** (the two `high` items + leverage):
+**→ Phase 07b — completion & exit-code correctness** (the two `high` items; drafted
+2026-06-22 — [phase-07b](phase-07b-completion-and-exit-code-correctness.md)). The
+open-ended tmux-leverage bullet was **split out to 07c** at draft time (see Notes
+§ "07b/07c split"):
 - `foreground.rs:696-735` local completion: the `saw_child`/PID-return loop can
   false-early-exit on very fast commands and has a too-short start window
   (`LOCAL_CHILD_START_WINDOW = 300ms`) (**high**). The `DE_EXIT_<pane>` env var
   written by the shell hook is a more reliable completion signal than PID-return
   for the user's (non-`remain-on-exit`) foreground pane; `pane_dead_status` does
-  **not** apply to a live user pane.
+  **not** apply to a live user pane. → 07b clears the latch before send and polls
+  for its reappearance as the exact primary signal, PID-return as the no-hook
+  fallback; widens the start window to 750ms.
 - `foreground.rs:780` exit-code capture (`read_pane_exit_status(...).unwrap_or(0)`)
   fabricates `0` when the hook didn't write `DE_EXIT_*`, and the captured code is
   only fed to `finish_command` (stats) — it never reaches the AI, so the model
-  cannot tell a failed command from a clean one (**high**). Surface a non-zero
-  exit in the `ToolResult`.
-- tmux leverage opportunities (apply where they replace fragile polling, **not**
-  as blanket rewrites): `wait-for` for completion signalling, `set-buffer`/
-  `paste-buffer` for large/binary remote transfer, `copy-mode`+`send-keys -X` for
-  scrollback extraction, `if-shell` for atomic file-existence checks.
+  cannot tell a failed command from a clean one (**high**). → 07b annotates the
+  `ToolResult` with the real non-zero code (local pane only; unknown/clean stay
+  silent — never fabricate success).
+
+**→ Phase 07c — tmux-verb leverage** (deferred; not yet drafted). Apply where it
+replaces fragile polling, **not** as a blanket rewrite: `wait-for` for completion
+signalling, `set-buffer`/`paste-buffer` for large/binary remote transfer,
+`copy-mode`+`send-keys -X` for scrollback extraction, `if-shell` for atomic
+file-existence checks. Draft on demand only if a concrete fragile-polling site
+warrants it (each verb is a real redesign of a send/capture path — too risky to
+bundle with the delicate 07b completion change).
 
 **Phase 08 — prompt + tool-def fixes**
 - `assets/prompts/sre.toml` omits 9 shipped tools: `create_agent`/`read_agent`/

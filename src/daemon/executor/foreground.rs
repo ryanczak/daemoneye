@@ -32,7 +32,7 @@ const MAX_SUDO_RETRIES: usize = 3;
 const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const REMOTE_CMD_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCAL_CHILD_POLL: Duration = Duration::from_millis(25);
-const LOCAL_CHILD_START_WINDOW: Duration = Duration::from_millis(300);
+const LOCAL_CHILD_START_WINDOW: Duration = Duration::from_millis(750);
 const LOCAL_CMD_TIMEOUT: Duration = Duration::from_secs(45);
 const LOCAL_SLOW_POLL: Duration = Duration::from_millis(500);
 const POST_CMD_CAPTURE_DELAY: Duration = Duration::from_millis(50);
@@ -355,11 +355,18 @@ where
     let mut fg_hook_guard = FgHookGuard::new(target_str, hook_name.clone());
     let mut fg_rx = bg_done_subscribe();
 
+    // Clear the DE_EXIT latch so its reappearance signals THIS command's
+    // completion (and carries its real exit code) rather than a stale value from
+    // the previous command. No-op for remote/interactive panes (they don't
+    // consult it).
+    tmux::clear_pane_exit_status(target_str);
+
     let result = match tmux::send_keys(target_str, send_cmd) {
         Ok(()) => {
             tmux::highlight_pane(target_str, chat_pane);
             let mut switched_to_working = false;
             let mut is_interactive = false;
+            let mut exit_status: Option<i32> = None;
 
             if command_has_sudo(cmd) {
                 // Unified sudo authentication detection.
@@ -695,28 +702,43 @@ where
 
                 let deadline = tokio::time::Instant::now() + LOCAL_CMD_TIMEOUT;
 
-                // Wait until the child process is visible via a PID change.
-                // idle_pid == 0 means the query failed; treat as child-started
-                // immediately so we fall through to the hook-based completion wait.
-                let saw_child = if idle_pid == 0 {
-                    true
-                } else {
-                    tokio::time::timeout(LOCAL_CHILD_START_WINDOW, async {
-                        loop {
-                            tokio::time::sleep(LOCAL_CHILD_POLL).await;
-                            let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
-                            if cur_pid != idle_pid {
-                                break;
-                            }
+                // Phase 1 — within the start window, detect either the child
+                // appearing (PID diverges from idle) or a fast command having
+                // already finished (the DE_EXIT latch reappeared). The latch is
+                // exact regardless of how fast the command was; PID-divergence is
+                // the fallback when the shell hook is not installed.
+                let mut saw_child = idle_pid == 0;
+                if idle_pid != 0 {
+                    let start_deadline = tokio::time::Instant::now() + LOCAL_CHILD_START_WINDOW;
+                    while tokio::time::Instant::now() < start_deadline
+                        && exit_status.is_none()
+                        && !saw_child
+                    {
+                        if let Some(code) = tmux::read_pane_exit_status(target_str) {
+                            exit_status = Some(code);
+                            break;
                         }
-                    })
-                    .await
-                    .is_ok()
-                };
+                        tokio::time::sleep(LOCAL_CHILD_POLL).await;
+                        if tmux::pane_pid(target_str).unwrap_or(0) != idle_pid {
+                            saw_child = true;
+                        }
+                    }
+                }
 
+                // Phase 2 — only when a child was seen running (a non-trivial
+                // command). A command that finished inside the start window is
+                // already done: either its latch was read above, or — hook absent —
+                // it is captured as-is below (matching the prior fast-path
+                // behavior, no false hang). Completion = the DE_EXIT latch (exact,
+                // primary) or the child PID returning to idle (fallback). Hook
+                // signals (fg_rx) drive promptness.
                 if saw_child {
-                    loop {
+                    while exit_status.is_none() {
                         if tokio::time::Instant::now() >= deadline {
+                            break;
+                        }
+                        if let Some(code) = tmux::read_pane_exit_status(target_str) {
+                            exit_status = Some(code);
                             break;
                         }
                         tokio::select! {
@@ -724,7 +746,6 @@ where
                                 if let Ok(notified_pane) = result
                                     && notified_pane == target_str {
                                         let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
-                                        // idle_pid == 0: rely solely on hook signals
                                         if idle_pid != 0 && cur_pid == idle_pid { break; }
                                     }
                             }
@@ -741,7 +762,7 @@ where
             tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
             tmux::unhighlight_pane(target_str, chat_pane);
 
-            let output = match tmux::capture_pane(target_str, 200) {
+            let mut output = match tmux::capture_pane(target_str, 200) {
                 Ok(snap) if is_interactive => {
                     let destination = interactive_destination(cmd)
                         .unwrap_or_else(|| "the remote host".to_string());
@@ -779,8 +800,17 @@ where
                 let _ = tmux::select_pane(cp);
             }
 
-            let exit_code = tmux::read_pane_exit_status(target_str).unwrap_or(0);
-            crate::daemon::stats::finish_command(cmd_id, exit_code);
+            // Surface the exit status to the model — local pane only. Interactive
+            // sessions never "exit"; on a remote pane the shell hook records the
+            // ssh wrapper's status, not the remote command's — neither is a
+            // meaningful per-command code, so both are left unannotated.
+            if !is_interactive
+                && !is_remote_pane
+                && let Some(note) = exit_status_annotation(exit_status)
+            {
+                output.push_str(&note);
+            }
+            crate::daemon::stats::finish_command(cmd_id, exit_status.unwrap_or(0));
             send_response_split(tx, Response::ToolResult(output.clone())).await?;
             log_command(
                 session_id,
@@ -1061,12 +1091,28 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Exit status annotation
+// ---------------------------------------------------------------------------
+
+/// Build the trailing annotation appended to a local command's captured output so
+/// the model can see a failure. Returns `None` for unknown (`None`, hook absent)
+/// and clean (`Some(0)`) — neither is annotated, so a clean or
+/// exit-code-unknown command reads exactly as its output. A non-zero code yields
+/// a one-line note.
+fn exit_status_annotation(exit_status: Option<i32>) -> Option<String> {
+    match exit_status {
+        Some(code) if code != 0 => Some(format!("\n[command exited with status {code}]")),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-    use super::{is_shell_prompt, looks_like_shell_prompt};
+    use super::{exit_status_annotation, is_shell_prompt, looks_like_shell_prompt};
 
     #[test]
     fn is_shell_prompt_recognises_common_shells() {
@@ -1125,5 +1171,22 @@ mod tests {
     fn looks_like_shell_prompt_empty_returns_false() {
         assert!(!looks_like_shell_prompt(""));
         assert!(!looks_like_shell_prompt("   \n  "));
+    }
+
+    #[test]
+    fn exit_status_annotation_unknown_is_silent() {
+        assert!(exit_status_annotation(None).is_none());
+    }
+
+    #[test]
+    fn exit_status_annotation_zero_is_silent() {
+        assert!(exit_status_annotation(Some(0)).is_none());
+    }
+
+    #[test]
+    fn exit_status_annotation_nonzero_notes_code() {
+        let s = exit_status_annotation(Some(2));
+        assert!(s.is_some());
+        assert!(s.as_ref().unwrap().contains("2"));
     }
 }
