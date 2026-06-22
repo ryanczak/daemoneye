@@ -1,7 +1,7 @@
 # Phase 01: Safe Remote Command Foundation
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -261,3 +261,15 @@ Not applicable — phase ships no independently runtime-loadable artifact reacha
 **Grep verification:** `grep -c "sh_single_quote" src/daemon/utils.rs src/daemon/policy.rs` → confirmed helper present in both files.
 
 **Notes for review:** Pre-existing integration test `g5_mailbox_write_and_read` is flaky (fails on `cargo test` but passes on isolated `cargo test g5_mailbox_write_and_read`). This is unrelated to this phase — no changes touch that code path.
+
+### Review verdict — 2026-06-21
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP, 74 turns)
+- **Scope deviations:** none — touched only `utils.rs`, `policy.rs`, `policy_tests.rs` (plus the authorized README/phase-doc status updates); committed as a single `fix:` commit.
+- **Calibration:** none
+
+**Independent re-run:** `cargo fmt --all`, `cargo build` (zero warnings), `cargo clippy --all-targets --all-features -- -D warnings`, and the phase tests all pass. `cargo test --lib sh_single_quote` → 4 passed; `cargo test --lib wrap_remote` → 8 passed (6 existing + 2 new injection regressions). Spot-checked `wrap_remote_escapes_breakout_attempt`: asserts the exact wire string `r"ssh user@zap 'x'\''; rm -rf ~ #'"`, which fails if escaping is removed — a real test.
+
+**Pre-existing flaky test (not a bounce):** the executor's noted `g5_mailbox_write_and_read` failure was confirmed pre-existing and unrelated. Root cause is a `HOME`-env race in the integration-test harness — the test mutates `HOME` without `TEST_HOME_LOCK` (which integration-test binaries cannot reach), so a parallel test swaps `HOME` and the mailbox parent dir goes missing. Failure count is nondeterministic across identical runs (observed 4/1/1), it passes in isolation, and the phase commit touches no mailbox/`HOME` code. Tracked separately for the principal engineer; out of scope for phase-01.
