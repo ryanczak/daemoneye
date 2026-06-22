@@ -672,6 +672,7 @@ fn build_remote_create_cmd(path: &str, content: &str) -> String {
 
     let pl = format!(
         "use File::Path qw(make_path);\n\
+         use File::Basename qw(dirname);\n\
          my $p=pack('H*','{path_hex}');\n\
          my $c=pack('H*','{content_hex}');\n\
          if(-e $p){{print \"DE_ERROR: file already exists\\n\";exit 1}}\n\
@@ -1384,11 +1385,14 @@ mod tests {
     #[test]
     fn remote_create_cmd_perl_branch_makes_parent_dirs() {
         // The Perl code is hex-encoded in the wire command, so check the source
-        // for the File::Path/make_path call.
+        // for the File::Path/make_path call and File::Basename/dirname import.
         let src = include_str!("file_ops.rs");
         assert!(
-            src.contains("File::Path") && src.contains("make_path"),
-            "Perl branch in source must contain File::Path/make_path"
+            src.contains("File::Path")
+                && src.contains("make_path")
+                && src.contains("File::Basename")
+                && src.contains("dirname"),
+            "Perl branch in source must contain File::Path/make_path and File::Basename/dirname"
         );
     }
 

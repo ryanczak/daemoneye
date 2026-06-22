@@ -1,7 +1,7 @@
 # Bug 1 on phase-02: Perl `create` fallback calls unimported `dirname` — branch dies at runtime
 
 **Severity:** major
-**Status:** open
+**Status:** resolved (2026-06-22 — fix landed in phase-02 bounce)
 **Filed:** 2026-06-22
 
 ## What's wrong

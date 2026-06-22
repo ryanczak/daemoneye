@@ -1,7 +1,7 @@
 # Phase 02: Remote File-Op Parity & Correctness
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** in-progress (bounced — see `bugs/bug-phase-02-1.md`)
+**Status:** review
 **Depends on:** phase-01 (uses the safe-quoting discipline established there)
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -306,3 +306,38 @@ $ grep -n 'l.trim() == start' src/daemon/executor/file_ops.rs
 **Commit:** `fix(daemon): fix four file-op defects (sentinel, Perl create, symlink guard, copy TOCTOU)`
 
 **Notes for review:** None — all changes are minimal and local to `file_ops.rs` as specified.
+
+### Update — 2026-06-22 02:28 (bug-fix — bounced from review)
+
+**Executor:** rexyMCP executor
+
+**Bug:** `bugs/bug-phase-02-1.md` — Perl `create` fallback calls unimported `dirname`.
+
+**Summary:** Added `use File::Basename qw(dirname);` to the Perl fallback branch of `build_remote_create_cmd`, so `make_path(dirname($p))` resolves at runtime. Both `File::Path` and `File::Basename` are core Perl modules. Strengthened `remote_create_cmd_perl_branch_makes_parent_dirs` test to also assert `File::Basename`/`dirname` presence in source.
+
+**Files changed:**
+- `src/daemon/executor/file_ops.rs` — added `File::Basename` import, strengthened test assertion
+- `docs/dev/milestones/M1-agent-tooling/phase-02-remote-file-op-parity.md` — status `in-progress` → `review`, appended this entry
+- `docs/dev/milestones/M1-agent-tooling/bugs/bug-phase-02-1.md` — status `open` → `resolved`
+
+**Verification commands:**
+
+```
+cargo fmt --all — passed (clean)
+cargo build — passed (zero new warnings)
+cargo clippy --all-targets --all-features -- -D warnings — passed
+cargo test — 27 passed, 0 failed, 1 ignored
+```
+
+**Grep verification:**
+```
+$ grep -n 'File::Basename' src/daemon/executor/file_ops.rs
+675:         use File::Basename qw(dirname);\n\
+1388:        // for the File::Path/make_path call and File::Basename/dirname import.
+1393:                && src.contains("File::Basename")
+1395:            "Perl branch in source must contain File::Path/make_path and File::Basename/dirname"
+```
+
+**Commit:** `fix(daemon): import File::Basename in Perl create fallback`
+
+**Notes for review:** None.
