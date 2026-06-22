@@ -193,10 +193,7 @@ where
     if let Some(tp) = target
         && chat_pane != Some(tp)
     {
-        let pane_exists = {
-            let panes = cache.panes.read().unwrap_or_log();
-            panes.contains_key(tp)
-        };
+        let pane_exists = crate::tmux::pane_exists(tp);
         if !pane_exists {
             let correct = session_id
                 .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone())
@@ -561,6 +558,11 @@ where
 
                             // P6: Return a structured error to the AI on sudo failure.
                             if let Some(fail) = sudo_fail {
+                                if matches!(fail, SudoFail::Cancelled) {
+                                    // sudo is still sitting at the password prompt — clear it so the
+                                    // pane returns to a usable shell rather than a dangling prompt.
+                                    let _ = crate::tmux::send_cancel(target_str);
+                                }
                                 let msg = match fail {
                                     SudoFail::Cancelled => format!(
                                         "sudo timed out waiting for a password — \

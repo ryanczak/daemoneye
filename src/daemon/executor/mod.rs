@@ -811,6 +811,15 @@ where
 // Pane selection — shared by the foreground execution path.
 // ---------------------------------------------------------------------------
 
+/// Build the user-facing pane-selection list, excluding the chat pane (a command
+/// must never be offered to run in the conversation pane). Sorted by pane id for a
+/// stable display order.
+fn exclude_chat_pane(mut panes: Vec<PaneInfo>, chat_pane: Option<&str>) -> Vec<PaneInfo> {
+    panes.retain(|p| chat_pane != Some(p.id.as_str()));
+    panes.sort_by(|a, b| a.id.cmp(&b.id));
+    panes
+}
+
 async fn find_best_target_pane<W, R>(
     specified_pane: Option<&str>,
     chat_pane: Option<&str>,
@@ -855,7 +864,7 @@ where
 
     let pane_list: Vec<PaneInfo> = {
         let panes = cache.panes.read().unwrap_or_log();
-        let mut v: Vec<PaneInfo> = panes
+        let raw: Vec<PaneInfo> = panes
             .iter()
             .map(|(pid, state)| PaneInfo {
                 id: pid.clone(),
@@ -863,8 +872,7 @@ where
                 summary: state.summary.clone(),
             })
             .collect();
-        v.sort_by(|a, b| a.id.cmp(&b.id));
-        v
+        exclude_chat_pane(raw, chat_pane)
     };
 
     if pane_list.is_empty() {
@@ -916,6 +924,78 @@ mod tests {
         let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
         let ns = build_memory_namespaces(Some("any-sid"), &store, false);
         assert_eq!(ns, vec!["global".to_string()]);
+    }
+
+    #[test]
+    fn excludes_chat_pane_from_selection() {
+        let panes = vec![
+            PaneInfo {
+                id: "%1".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+            PaneInfo {
+                id: "%2".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+            PaneInfo {
+                id: "%3".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+        ];
+        let result = exclude_chat_pane(panes, Some("%2"));
+        let ids: Vec<&str> = result.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["%1", "%3"]);
+    }
+
+    #[test]
+    fn keeps_all_panes_when_no_chat_pane() {
+        let panes = vec![
+            PaneInfo {
+                id: "%1".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+            PaneInfo {
+                id: "%2".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+            PaneInfo {
+                id: "%3".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+        ];
+        let result = exclude_chat_pane(panes, None);
+        let ids: Vec<&str> = result.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["%1", "%2", "%3"]);
+    }
+
+    #[test]
+    fn exclude_chat_pane_sorts_by_id() {
+        let panes = vec![
+            PaneInfo {
+                id: "%3".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+            PaneInfo {
+                id: "%1".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+            PaneInfo {
+                id: "%2".into(),
+                current_cmd: String::new(),
+                summary: String::new(),
+            },
+        ];
+        let result = exclude_chat_pane(panes, None);
+        let ids: Vec<&str> = result.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["%1", "%2", "%3"]);
     }
 
     #[test]

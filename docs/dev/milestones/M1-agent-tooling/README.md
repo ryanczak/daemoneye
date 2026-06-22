@@ -61,7 +61,8 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | done   |
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
 | 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | done   |
-| 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
+| 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | review   |
+| 07b | completion-and-exit-code-correctness — local completion robustness, non-zero exit surfacing, tmux-verb leverage (drafted on demand) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
 
@@ -186,24 +187,51 @@ phases; re-verify line numbers at draft time (the tree moves).
   excludes foreign namespaces). No production change. See
   [phase-06](phase-06-namespace-access-control.md).
 
-**Phase 07 — execution robustness + tmux leverage**
-- `foreground.rs:650-689` local completion: `saw_child`/PID-return loop can
+**Phase 07 — execution robustness + tmux leverage** (split 2026-06-22 into 07a/07b;
+six findings + open-ended tmux leverage is too large/risky for one executor session,
+and it mixes safe mechanical fixes with delicate completion-detection changes).
+
+*Line numbers below were re-verified against the current tree at the 07a draft
+(2026-06-22); the tree moved since the M1 review — phases 04/05 reshaped
+`foreground.rs`.*
+
+**→ Phase 07a — pane-targeting & cleanup safety** (the four `medium` mechanical fixes):
+- `mod.rs:856-868` `find_best_target_pane` builds the manual pane-selection list
+  from the cache **without excluding the chat pane** → the user can pick (or the
+  default can become) the chat pane, running a command in the conversation pane
+  (**medium**).
+- `foreground.rs:193-221` C3b stale-pane guard reads the (up to 2 s stale) cache
+  (`cache.panes.read()`); a pane closed < 2 s ago still passes, and a just-created
+  pane is falsely rejected. Query tmux directly via `crate::tmux::pane_exists(tp)`
+  (**medium**).
+- `foreground.rs` local sudo flow: on the **Cancelled (password-prompt timeout)**
+  path (`SudoFail::Cancelled`, ~line 545) `sudo` is left sitting at the password
+  prompt in the user's pane. Send `C-c` to the target pane before returning the
+  error so the pane returns to a clean shell (**medium**). (The `AuthExhausted`
+  path needs no C-c: `sudo` exits itself after 3 wrong attempts. The remote path
+  switches focus and never injects, so there is no injected prompt to abort —
+  finding's original "remote" wording is stale vs. the current tree.)
+- `knowledge.rs:876-878` `watch_pane` uninstalls its `pane-title-changed[@de_wp_N]`
+  hook only inside the spawned task body, *after* the `timeout(...).await`; a task
+  abort or panic leaks the hook. Mirror the existing `FgHookGuard`
+  (`foreground.rs:50-84`) with a `Drop` guard moved into the task (**medium**).
+
+**→ Phase 07b — completion & exit-code correctness** (the two `high` items + leverage):
+- `foreground.rs:696-735` local completion: the `saw_child`/PID-return loop can
   false-early-exit on very fast commands and has a too-short start window
-  (**high**). Consider `pane_dead_status` (tmux already tracks `pane_dead`).
-- `foreground.rs:734` exit-code capture falls back to `0` when the shell hook
-  didn't write `DE_EXIT_*` → wrong success reports (**high**).
-- `mod.rs:856-868` manual pane-selection list does not exclude the chat pane →
-  agent/user can run a command in the chat pane (**medium**).
-- `foreground.rs:193-221` C3b stale-pane guard reads the (up to 2 s stale) cache;
-  query tmux directly for the specific pane (**medium**).
-- `foreground.rs:482-484` sudo-prompt timeout leaves the remote `sudo` waiting;
-  send `C-c` on timeout (**medium**).
-- `knowledge.rs:796-878` `watch_pane` removes its tmux hook only inside the spawn
-  body — cancellation leaks zombie hooks; use a `Drop` guard (**medium**).
-- tmux leverage opportunities: `wait-for` for completion signalling, `set-buffer`/
+  (`LOCAL_CHILD_START_WINDOW = 300ms`) (**high**). The `DE_EXIT_<pane>` env var
+  written by the shell hook is a more reliable completion signal than PID-return
+  for the user's (non-`remain-on-exit`) foreground pane; `pane_dead_status` does
+  **not** apply to a live user pane.
+- `foreground.rs:780` exit-code capture (`read_pane_exit_status(...).unwrap_or(0)`)
+  fabricates `0` when the hook didn't write `DE_EXIT_*`, and the captured code is
+  only fed to `finish_command` (stats) — it never reaches the AI, so the model
+  cannot tell a failed command from a clean one (**high**). Surface a non-zero
+  exit in the `ToolResult`.
+- tmux leverage opportunities (apply where they replace fragile polling, **not**
+  as blanket rewrites): `wait-for` for completion signalling, `set-buffer`/
   `paste-buffer` for large/binary remote transfer, `copy-mode`+`send-keys -X` for
-  scrollback extraction, `if-shell` for atomic file-existence checks. Apply where
-  they replace fragile polling — not as blanket rewrites.
+  scrollback extraction, `if-shell` for atomic file-existence checks.
 
 **Phase 08 — prompt + tool-def fixes**
 - `assets/prompts/sre.toml` omits 9 shipped tools: `create_agent`/`read_agent`/

@@ -3,14 +3,14 @@
 **Active milestone:** M1 — Agent Tooling Improvements
 (`docs/dev/milestones/M1-agent-tooling/README.md`)
 
-**Active phase:** phase-05-interactive-remote-script-exec
-(`docs/dev/milestones/M1-agent-tooling/phase-05-interactive-remote-script-exec.md`),
-status `todo`. Drafted 2026-06-22. Streams a daemon-host script into a remote
-*user* pane on the foreground/interactive path — the non-ghost analogue of
-phase-04. Dispatch with `/rexymcp:dispatch phase-05-interactive-remote-script-exec`.
-(Phases 06–09 remain `todo`.)
+**Active phase:** phase-07a-pane-targeting-and-cleanup-safety
+(`docs/dev/milestones/M1-agent-tooling/phase-07a-pane-targeting-and-cleanup-safety.md`),
+status `todo`. Drafted 2026-06-22. The original phase-07
+("execution-robustness-and-tmux") was split into **07a** (this — the four `medium`
+mechanical/safety fixes: chat-pane exclusion, live stale-pane guard, sudo-cancel C-c,
+watch_pane hook Drop guard) and **07b** (the two `high` completion/exit-code items +
+tmux leverage, drafted on demand). Dispatch with
+`/rexymcp:dispatch phase-07a-pane-targeting-and-cleanup-safety`.
 
-Note: the milestone redirection also **dropped** the old phase-05 ("write-tool
-target_pane parity" — managed-artifact tools are daemon-host-only by design) and
-**repurposed** phase-05 to interactive remote script execution. See the README
-§ Notes → "Remote-execution model redirection (2026-06-22)".
+Note: phase-06 is `done` and approved (commit `5a007ad`). Phases 07b, 08, 09 remain
+`todo`.

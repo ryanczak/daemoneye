@@ -398,6 +398,18 @@ pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
     Ok(())
 }
 
+/// Send a `C-c` (SIGINT) to a pane without a trailing Enter, to cancel a process
+/// waiting at a prompt (e.g. a sudo password prompt the user let time out).
+pub fn send_cancel(pane_id: &str) -> Result<()> {
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", pane_id, "C-c"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to send C-c to pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
 /// Set the `remain-on-exit` option for a specific pane.
 /// Get the global window ID (`#{window_id}`, e.g. `@3`) of the window containing a pane.
 pub fn pane_window_id(pane_id: &str) -> Result<String> {

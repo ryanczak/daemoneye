@@ -773,6 +773,22 @@ pub(super) fn list_panes(
 // Watch pane
 // ---------------------------------------------------------------------------
 
+/// Uninstalls a tmux hook on drop so an aborted or panicking `watch_pane` task
+/// never leaves a stale `pane-title-changed` hook firing forever. Mirrors
+/// `FgHookGuard` in `foreground.rs` (kept separate — see STANDARDS §2.2).
+struct WatchHookGuard {
+    pane_id: String,
+    hook_name: String,
+}
+
+impl Drop for WatchHookGuard {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("tmux")
+            .args(["set-hook", "-u", "-t", &self.pane_id, &self.hook_name])
+            .output();
+    }
+}
+
 pub(super) fn watch_pane(
     pane_id: &str,
     timeout_secs: u64,
@@ -793,8 +809,9 @@ pub(super) fn watch_pane(
         pane_id,
         crate::daemon::utils::shell_escape_arg(session_name)
     );
+    let hook_name_clone = hook_name.clone();
     let _ = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", pane_id, &hook_name, &notify_cmd])
+        .args(["set-hook", "-t", pane_id, &hook_name_clone, &notify_cmd])
         .output();
 
     let mut wp_rx = bg_done_subscribe();
@@ -820,6 +837,11 @@ pub(super) fn watch_pane(
     );
 
     tokio::spawn(async move {
+        let _guard = WatchHookGuard {
+            pane_id: pane_id_owned.clone(),
+            hook_name: hook_name.clone(),
+        };
+
         let slow_poll = Duration::from_millis(500);
         let start_wait = Duration::from_secs(5);
 
@@ -872,10 +894,6 @@ pub(super) fn watch_pane(
                 }
             }
         }).await.is_ok();
-
-        let _ = std::process::Command::new("tmux")
-            .args(["set-hook", "-u", "-t", &pane_id_owned, &hook_name])
-            .output();
 
         let raw = crate::tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
         let mut body = mask_sensitive(&normalize_output(&raw));
