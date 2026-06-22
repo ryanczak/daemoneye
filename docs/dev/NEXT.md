@@ -3,11 +3,10 @@
 **Active milestone:** M1 — Agent Tooling Improvements
 (`docs/dev/milestones/M1-agent-tooling/README.md`)
 
-**Active phase:** phase-04-remote-script-transfer is `todo` and **drafted**
-(2026-06-21), ready to dispatch. phase-03-script-exec-hardening is `done`
-(approved first try, 2026-06-21). Phases 05–08 remain `todo` and undrafted.
+**Active phase:** none drafted. phase-04-remote-script-transfer is `done`
+(approved first try, 2026-06-22). Phases 05–08 remain `todo` and undrafted.
 
-Run `/rexymcp:dispatch phase-04-remote-script-transfer` to execute it.
+Run `/rexymcp:architect next` to draft phase-05-write-tool-target-pane-parity.
 
 Note: the original row-03 bundle was split — remote script transfer is now
 phase-04, write-tool `target_pane` parity is phase-05, and namespace ACL /

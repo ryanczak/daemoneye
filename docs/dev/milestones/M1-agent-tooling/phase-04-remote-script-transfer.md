@@ -1,7 +1,7 @@
 # Phase 04: Remote Script Transfer (ghost `ssh_target` script push)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (safe SSH quoting / `wrap_remote`), phase-03 (script-name
 allowlist — the basename is already `[A-Za-z0-9._-]`-safe by the time it reaches
 the remote path)
@@ -508,3 +508,30 @@ $ grep -r 'remote_script_name' src/
 ```
 
 **Notes for review:** None — implementation follows the spec exactly. No architectural changes, no new dependencies, no build/config edits.
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none — three files changed exactly as specified
+  (`src/scripts.rs`, `src/daemon/policy.rs`, `src/daemon/executor/foreground.rs`
+  + co-located test modules); no tool-schema, IPC, `PendingCall`, or backend
+  changes.
+- **Calibration:** none
+
+**Independent re-verification (reviewer):**
+- `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets
+  --all-features -- -D warnings`, `cargo test` all pass — 721 passed, 0 failed,
+  1 ignored. All 8 new tests (`remote_materialize_cmd_*` ×4,
+  `remote_script_name_*` ×4) pass.
+- End-to-end beyond unit fakes: ran the exact `python3` and `perl` decode
+  expressions the builder emits against the real interpreters — both reproduce
+  the original bytes byte-for-byte. Executed the full materialize fragment in a
+  sandboxed `HOME`: it creates `~/.daemoneye/scripts/`, decodes the hex content,
+  writes the file with mode `700` (`-rwx------`), and the atomic `mv -f` leaves
+  no `.de_tmp` behind.
+- No new `unwrap`/`expect`/`panic!`/`unsafe`/`#[allow]` in production paths (the
+  grep hits — `policy.rs:26` `#[allow(dead_code)]`, `scripts.rs:247` `println!`,
+  and the `unsafe` env-var blocks at `scripts.rs:305–313` — are all pre-existing
+  and outside this phase's diff; the latter are in the `#[cfg(test)]` module).
