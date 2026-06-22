@@ -3,10 +3,12 @@
 **Active milestone:** M1 — Agent Tooling Improvements
 (`docs/dev/milestones/M1-agent-tooling/README.md`)
 
-**Active phase:** none — phase-04-remote-script-execution was approved
-(`done`, approved_first_try) on 2026-06-22 (v2: streaming default, persistent
-materialize for the sudo case). Select the next phase via
-`/rexymcp:architect next` (phases 05–09 remain `todo`).
+**Active phase:** phase-05-interactive-remote-script-exec
+(`docs/dev/milestones/M1-agent-tooling/phase-05-interactive-remote-script-exec.md`),
+status `todo`. Drafted 2026-06-22. Streams a daemon-host script into a remote
+*user* pane on the foreground/interactive path — the non-ghost analogue of
+phase-04. Dispatch with `/rexymcp:dispatch phase-05-interactive-remote-script-exec`.
+(Phases 06–09 remain `todo`.)
 
 Note: the milestone redirection also **dropped** the old phase-05 ("write-tool
 target_pane parity" — managed-artifact tools are daemon-host-only by design) and

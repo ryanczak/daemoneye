@@ -322,6 +322,39 @@ fn shebang_interpreter(content: &str) -> String {
     }
 }
 
+/// Parse a command line for a daemon-host script invocation suitable for streaming to
+/// a remote pane. Strips one optional leading `sudo ` token, then inspects the first
+/// whitespace-delimited token of the remainder:
+///
+/// - returns `None` if there is no first token, or the token is an **absolute** path
+///   (starts with `/`);
+/// - otherwise takes the token's **basename**; returns `None` if that basename is not a
+///   valid script name (`validate_script_name` — the `[A-Za-z0-9._-]` allowlist);
+/// - on success returns `Some((basename, args_tail))` where `args_tail` is everything
+///   after the first token, verbatim, with its single leading space preserved (empty if
+///   there were no args).
+///
+/// Pure parser — does NOT touch the filesystem. The caller confirms the script exists on
+/// the daemon host via `read_script`; a parse hit whose script does not exist is a normal
+/// remote command, not an error.
+pub fn parse_script_invocation(cmd: &str) -> Option<(String, String)> {
+    let cmd = cmd.strip_prefix("sudo ").unwrap_or(cmd).trim_start();
+    let mut parts = cmd.splitn(2, char::is_whitespace);
+    let first = parts.next()?;
+    if first.is_empty() {
+        return None;
+    }
+    if first.starts_with('/') {
+        return None;
+    }
+    let args_tail = parts.next().map(|s| format!(" {}", s)).unwrap_or_default();
+    let basename = std::path::Path::new(first).file_name()?.to_str()?;
+    if validate_script_name(basename).is_err() {
+        return None;
+    }
+    Some((basename.to_string(), args_tail))
+}
+
 /// Build a remote shell fragment that runs `content` (a daemon-host script) on the
 /// remote host **without writing it to the remote filesystem**: the hex-encoded
 /// content is decoded on the remote and piped straight into the shebang-derived
@@ -631,5 +664,47 @@ mod tests {
         assert_eq!(shebang_interpreter("echo hi"), "bash");
         // Injection case: semicolon in basename fails charset gate
         assert_eq!(shebang_interpreter("#!/bin/sh; rm -rf /\necho hi"), "bash");
+    }
+
+    #[test]
+    fn parse_script_invocation_bare_name() {
+        let result = parse_script_invocation("foo.sh");
+        assert_eq!(result, Some(("foo.sh".into(), "".into())));
+    }
+
+    #[test]
+    fn parse_script_invocation_with_args() {
+        let result = parse_script_invocation("foo.sh --flag arg");
+        assert_eq!(result, Some(("foo.sh".into(), " --flag arg".into())));
+    }
+
+    #[test]
+    fn parse_script_invocation_strips_sudo() {
+        let result = parse_script_invocation("sudo foo.sh --flag");
+        assert_eq!(result, Some(("foo.sh".into(), " --flag".into())));
+    }
+
+    #[test]
+    fn parse_script_invocation_relative() {
+        let result = parse_script_invocation("./foo.sh");
+        assert_eq!(result, Some(("foo.sh".into(), "".into())));
+    }
+
+    #[test]
+    fn parse_script_invocation_none_for_absolute() {
+        let result = parse_script_invocation("/usr/bin/foo.sh");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_script_invocation_none_for_empty() {
+        let result = parse_script_invocation("");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn parse_script_invocation_rejects_metachar_name() {
+        let result = parse_script_invocation("foo;rm -rf /");
+        assert_eq!(result, None);
     }
 }

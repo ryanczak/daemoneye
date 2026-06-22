@@ -296,6 +296,52 @@ where
     let idle_pid = tmux::pane_pid(target_str).unwrap_or(0);
     let is_remote_pane = get_pane_remote_host(target_str).is_some();
 
+    // § 2.4 remote execution: when the foreground target is a remote (SSH/mosh) pane and
+    // the command invokes a daemon-host script, the bare name does not exist on the remote.
+    // Stream the script's content into the pane (hex-decode → interpreter stdin, no remote
+    // disk) so it runs there with operator parity. Local panes and non-script commands are
+    // sent verbatim.
+    let streamed_cmd;
+    let send_cmd: &str = if is_remote_pane
+        && let Some((name, args)) = crate::scripts::parse_script_invocation(cmd)
+    {
+        match crate::scripts::read_script(&name) {
+            Ok(content) => {
+                if command_has_sudo(cmd) {
+                    // A streamed stdin script cannot run under sudo on the interactive path:
+                    // a NOPASSWD sudoers rule authorizes a fixed path, which streaming does
+                    // not provide. Fail loud (no silent doomed send) and point at the ghost
+                    // ssh_target mechanism (phase-04), which materializes to that path.
+                    let msg = format!(
+                        "Error: running daemon-host script '{name}' under sudo on a remote \
+                         pane is not supported on the interactive path. Run it without sudo, \
+                         or use a Ghost Shell with an ssh_target — that path materializes the \
+                         script to a sudoers-authorized location before running it."
+                    );
+                    crate::daemon::stats::finish_command(cmd_id, 1);
+                    send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                    log_command(
+                        session_id,
+                        "foreground",
+                        target_str,
+                        cmd,
+                        "stream-rejected",
+                        &msg,
+                    );
+                    return Ok(ToolCallOutcome::Result(msg));
+                }
+                // Default: stream content to the interpreter's stdin — no remote disk.
+                streamed_cmd = crate::scripts::remote_stream_cmd(&content, &args);
+                streamed_cmd.as_str()
+            }
+            // Basename did not resolve to a daemon-host script — a normal remote command
+            // (e.g. `ls -la`). Send it verbatim.
+            Err(_) => cmd,
+        }
+    } else {
+        cmd
+    };
+
     let current_exe =
         std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("daemoneye"));
     let hook_idx = FG_HOOK_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -312,7 +358,7 @@ where
     let mut fg_hook_guard = FgHookGuard::new(target_str, hook_name.clone());
     let mut fg_rx = bg_done_subscribe();
 
-    let result = match tmux::send_keys(target_str, cmd) {
+    let result = match tmux::send_keys(target_str, send_cmd) {
         Ok(()) => {
             tmux::highlight_pane(target_str, chat_pane);
             let mut switched_to_working = false;
