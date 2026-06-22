@@ -252,6 +252,35 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Hex-encode a string (no external crate required).
+fn to_hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Build a self-contained remote shell fragment that materializes `name` (with
+/// the given `content`) into `~/.daemoneye/scripts/<name>` on the remote host,
+/// `chmod 700`, atomically (temp file + rename) and idempotently (overwrites any
+/// existing copy). Content is hex-encoded so no byte of the script reaches the
+/// remote shell unquoted. The fragment exits non-zero on any failure, so it is
+/// safe to `&&`-join before the script invocation.
+///
+/// `name` is assumed already validated to `[A-Za-z0-9._-]` (see
+/// `validate_script_name`), so it is safe to interpolate unquoted into the path.
+pub fn remote_materialize_cmd(name: &str, content: &str) -> String {
+    let hex = to_hex(content);
+    format!(
+        "mkdir -p ~/.daemoneye/scripts && \\\n\
+         if command -v python3 >/dev/null 2>&1; then \\\n\
+           python3 -c \"import sys;sys.stdout.buffer.write(bytes.fromhex('{}'))\"; \\\n\
+         else \\\n\
+           perl -e 'print pack(\"H*\",\"{}\")'; \\\n\
+         fi > ~/.daemoneye/scripts/{}.de_tmp && \\\n\
+         chmod 700 ~/.daemoneye/scripts/{}.de_tmp && \\\n\
+         mv -f ~/.daemoneye/scripts/{}.de_tmp ~/.daemoneye/scripts/{}",
+        hex, hex, name, name, name, name,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,6 +429,59 @@ mod tests {
         assert_eq!(
             rule,
             "alice ALL=(ALL) NOPASSWD: /home/alice/.daemoneye/scripts/check-disk.sh\n"
+        );
+    }
+
+    #[test]
+    fn remote_materialize_cmd_contains_hex_not_raw() {
+        let content = "echo secret-token\n";
+        let output = remote_materialize_cmd("foo.sh", content);
+        let expected_hex = to_hex(content);
+        assert!(
+            output.contains(&expected_hex),
+            "output should contain the hex encoding, got: {}",
+            output
+        );
+        assert!(
+            !output.contains("echo secret-token"),
+            "output must NOT contain the raw content verbatim, got: {}",
+            output
+        );
+    }
+
+    #[test]
+    fn remote_materialize_cmd_has_mkdir_chmod_atomic_mv() {
+        let output = remote_materialize_cmd("foo.sh", "echo hi");
+        assert!(output.contains("mkdir -p ~/.daemoneye/scripts"));
+        assert!(output.contains("chmod 700"));
+        assert!(output.contains(".de_tmp"));
+        assert!(
+            output.contains("mv -f ~/.daemoneye/scripts/foo.sh.de_tmp ~/.daemoneye/scripts/foo.sh")
+        );
+    }
+
+    #[test]
+    fn remote_materialize_cmd_has_python_and_perl_branches() {
+        let output = remote_materialize_cmd("foo.sh", "echo hi");
+        assert!(output.contains("python3"));
+        assert!(output.contains("perl"));
+    }
+
+    #[test]
+    fn remote_materialize_cmd_metachars_stay_hex() {
+        let content = "x'; rm -rf / #\n";
+        let output = remote_materialize_cmd("foo.sh", content);
+        let expected_hex = to_hex(content);
+        assert!(
+            output.contains(&expected_hex),
+            "output should contain the hex encoding, got: {}",
+            output
+        );
+        // The raw content substring must NOT appear outside the hex blob.
+        assert!(
+            !output.contains("x'; rm -rf / #"),
+            "raw metacharacters must not appear in output, got: {}",
+            output
         );
     }
 }

@@ -49,7 +49,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 01 | safe-remote-command-foundation (SSH escaping + shared helper)     | done   |
 | 02 | remote-file-op-parity ([phase-02](phase-02-remote-file-op-parity.md))   | done   |
 | 03 | script-exec-hardening ([phase-03](phase-03-script-exec-hardening.md)) — sudoers quoting + script-name allowlist | done   |
-| 04 | remote-script-transfer (ghost `ssh_target` script push)           | todo   |
+| 04 | remote-script-transfer ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target` script push | review   |
 | 05 | write-tool-target-pane-parity (write/delete script + runbook)     | todo   |
 | 06 | namespace-access-control (memory/search ACL)                      | todo   |
 | 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |

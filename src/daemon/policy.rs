@@ -152,6 +152,46 @@ impl GhostPolicy {
             _ => cmd.to_string(),
         }
     }
+
+    /// When `ssh_target` is set and `cmd` invokes a whitelisted script (bare or
+    /// relative name, optionally `sudo`-prefixed, possibly with args), return the
+    /// script basename that must be transferred to the remote host before execution.
+    /// Returns `None` for local policies (no `ssh_target`), commands whose first
+    /// token is already absolute, and commands that do not invoke a whitelisted
+    /// script. Mirrors `resolve_command`'s whitelist detection exactly.
+    pub fn remote_script_name(&self, cmd: &str) -> Option<String> {
+        self.ssh_target.as_ref()?;
+
+        // Strip a leading `sudo` so `sudo script.sh` resolves identically to
+        // bare `script.sh`.
+        let effective_cmd = if let Some(rest) = cmd.strip_prefix("sudo ") {
+            rest.trim_start()
+        } else {
+            cmd
+        };
+
+        let mut parts = effective_cmd.splitn(2, |c: char| c.is_whitespace());
+        let first = match parts.next() {
+            Some(t) if !t.is_empty() => t,
+            _ => return None,
+        };
+
+        // Already absolute — no script name to transfer.
+        if first.starts_with('/') {
+            return None;
+        }
+
+        let basename = std::path::Path::new(first)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(first);
+
+        if self.auto_approve_scripts.iter().any(|s| s == basename) {
+            Some(basename.to_string())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

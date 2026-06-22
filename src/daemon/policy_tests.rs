@@ -387,3 +387,43 @@ fn from_config_copies_auto_approve_commands() {
     let policy = GhostPolicy::from_config(&gc);
     assert!(policy.auto_approve_commands);
 }
+
+// ── remote_script_name ────────────────────────────────────────────────────
+
+#[test]
+fn remote_script_name_detects_whitelisted() {
+    let p = remote_policy(&["foo.sh"], "host");
+    assert_eq!(p.remote_script_name("foo.sh"), Some("foo.sh".into()));
+    assert_eq!(p.remote_script_name("./foo.sh"), Some("foo.sh".into()));
+    assert_eq!(p.remote_script_name("sudo foo.sh"), Some("foo.sh".into()));
+    assert_eq!(
+        p.remote_script_name("foo.sh --flag arg"),
+        Some("foo.sh".into())
+    );
+}
+
+#[test]
+fn remote_script_name_none_when_local() {
+    let p = policy(&["foo.sh"]);
+    assert_eq!(p.remote_script_name("foo.sh"), None);
+}
+
+#[test]
+fn remote_script_name_none_for_absolute_or_unlisted() {
+    let p = remote_policy(&["foo.sh"], "host");
+    assert_eq!(p.remote_script_name("/usr/bin/foo.sh"), None);
+    assert_eq!(p.remote_script_name("bar.sh"), None);
+    assert_eq!(p.remote_script_name(""), None);
+}
+
+#[test]
+fn remote_script_name_agrees_with_resolve_command() {
+    let p = remote_policy(&["foo.sh"], "h");
+    assert_eq!(p.remote_script_name("foo.sh"), Some("foo.sh".into()));
+    let resolved = p.resolve_command("foo.sh");
+    assert!(
+        resolved.contains("~/.daemoneye/scripts/foo.sh"),
+        "resolve_command should rewrite to tilde path, got: {}",
+        resolved
+    );
+}

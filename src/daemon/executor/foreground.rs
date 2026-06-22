@@ -853,6 +853,12 @@ where
         return Ok(ToolCallOutcome::Result(output));
     }
 
+    // Ghost shells: capture which script (if any) needs transferring to the remote.
+    let transfer_script: Option<String> = ghost_policy
+        .as_ref()
+        .filter(|_| is_ghost)
+        .and_then(|p| p.remote_script_name(cmd));
+
     // Ghost shells: resolve bare/relative script names to absolute path.
     let resolved_cmd;
     let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
@@ -878,6 +884,32 @@ where
     {
         Ok(id) => id,
         Err(outcome) => return Ok(outcome),
+    };
+
+    // Ghost shells: if a whitelisted script needs transferring to the remote,
+    // prepend the materialize fragment so the remote has the current version.
+    let transfer_prefixed_cmd;
+    let cmd = if let Some(name) = transfer_script.as_deref() {
+        match crate::scripts::read_script(name) {
+            Ok(content) => {
+                let prefix = crate::scripts::remote_materialize_cmd(name, &content);
+                transfer_prefixed_cmd = format!("{} && {}", prefix, cmd);
+                transfer_prefixed_cmd.as_str()
+            }
+            Err(e) => {
+                let msg = format!(
+                    "Error: cannot transfer script '{}' to remote host — it is not \
+                     available on the daemon host: {}. Use write_script to create it \
+                     first.",
+                    name, e
+                );
+                send_response_split(tx, Response::ToolResult(msg.clone())).await?;
+                log_command(session_id, "background", "", cmd, "transfer-failed", &msg);
+                return Ok(ToolCallOutcome::Result(msg));
+            }
+        }
+    } else {
+        cmd
     };
 
     // Ghost shells: wrap the approved command in `ssh <target> <cmd>` when configured.
