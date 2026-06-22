@@ -1,7 +1,7 @@
 # Phase 03: Script-Exec Hardening (sudoers quoting + script-name allowlist)
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none (self-contained in `src/scripts.rs`; phases 01–02 are unrelated files)
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=security, size=s
@@ -305,3 +305,21 @@ $ grep -n 'sudoers_escape_path' src/scripts.rs
 - `sudoers_escape_path` is a private helper; only `sudoers_rule` calls it.
 - The `user` field in `sudoers_rule` is intentionally left unescaped per spec authorization (username is system-derived, not agent-controlled).
 - No other files were touched; `install_sudoers` orchestration is unchanged.
+
+### Review verdict — 2026-06-21
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none — all changes local to `src/scripts.rs`; `install_sudoers`
+  orchestration and the `user` field left untouched per spec.
+- **Calibration:** The `execute_phase` call returned `hard_fail`
+  (`StuckGateFeedback`, 5 consecutive identical Status-line confirmations) **after**
+  the work was complete, green, and committed (`b15949f`) and the phase doc had
+  already been flipped to `review`. This is a post-completion governor artifact,
+  not partial/failed work, so this was reviewed rather than escalated. Reviewer
+  independently re-ran fmt/build/clippy/test (all pass) and mutation-tested both
+  new tests (`sudoers_rule_escapes_special_chars`, `validate_rejects_metacharacters`)
+  — each fails when the code under test is broken, confirming real tests. Escape
+  set matches sudoers(5). One occurrence — watch for a recurring
+  "executor loops on Status-line confirmation after a clean completion" pattern.
