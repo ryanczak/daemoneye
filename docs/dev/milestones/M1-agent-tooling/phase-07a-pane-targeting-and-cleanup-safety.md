@@ -1,7 +1,7 @@
 # Phase 07a: Pane-Targeting & Cleanup Safety
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none (independent of phases 01–06; touches the foreground execution path they shaped)
 **Estimated diff:** ~230 lines (incl. tests)
 **Tags:** language=rust, kind=bugfix, size=m
@@ -442,3 +442,13 @@ $ grep -rn 'WatchHookGuard' src/daemon/executor/knowledge.rs
 **Notes for review:**
 - `PaneInfo` uses `String` for `current_cmd` and `summary` (not `Option<String>`), so test fixtures use `String::new()` — verified against `src/ipc.rs`.
 - `hook_name` required a `.clone()` for the `set-hook` install call before the spawn block consumes the original for the guard.
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none — all four tasks implemented exactly as specced; out-of-scope items (local completion detection, exit-code surfacing, `target_hint`/AI-target cache reads, `FgHookGuard` generalization, remote sudo branch) left untouched.
+- **Calibration:** none
+
+Reviewer re-ran `cargo fmt --all --check`, `cargo build` (zero warnings), `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` (743 lib + 27 integration, 0 failed) — all green. Verified by inspection: `exclude_chat_pane` helper + 3 real unit tests (mod.rs); C3b guard now calls `crate::tmux::pane_exists(tp)` (foreground.rs); `send_cancel` issues `C-c` with no `C-m` and fires only on `SudoFail::Cancelled` (pane.rs, foreground.rs); `WatchHookGuard` Drop moved into the spawned task with the manual `set-hook -u` removed (knowledge.rs). No new unwrap/expect/panic/unsafe/allow/TODO in production paths.

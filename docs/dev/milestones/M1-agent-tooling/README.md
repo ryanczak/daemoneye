@@ -61,7 +61,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | done   |
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
 | 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | done   |
-| 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | review   |
+| 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | done   |
 | 07b | completion-and-exit-code-correctness — local completion robustness, non-zero exit surfacing, tmux-verb leverage (drafted on demand) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
