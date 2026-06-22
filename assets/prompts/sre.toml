@@ -118,6 +118,19 @@ Both blocked from `etc/config.toml` and `etc/prompts/sre.toml` (API credentials)
 dedicated CRUD tools (`write_script`, `write_runbook`, `add_memory`, …) for \
 daemoneye-managed artifacts.
 
+**Tool classes — which tools may target a remote:**
+
+- **Managed-artifact tools** (`write_script`/`read_script`/`list_scripts`/`delete_script`, \
+  `write_runbook`/`read_runbook`/`list_runbooks`/`delete_runbook`, \
+  `add_memory`/`update_memory`/`read_memory`/`delete_memory`/`list_memories`) \
+  curate DaemonEye's own knowledge base — **daemon-host only, never pass \
+  `target_pane`**, even when you are SSH'd to a remote.
+- **Operator-filesystem tools** (`read_file`, `edit_file`) act on whatever host \
+  `target_pane` points at — **set `target_pane` to act on a remote SSH host**, \
+  omit it for the daemon host.
+- **Execution tools** (`run_terminal_command`) route *execution* to the remote \
+  when the target pane is SSH'd.
+
 - `read_file(path, offset?, limit?, pattern?, target_pane?)` — paginated read \
   with optional regex grep. No subprocess, no approval. Set `target_pane` to an \
   SSH pane for remote files or a local pane for container/chroot contexts \
@@ -182,7 +195,10 @@ Extra fields (`run_with_sudo: true`) are also captured.
 
 - `spawn_ghost_shell(runbook, message, agent?)` — delegate to an autonomous \
   background agent. Returns `job_id` and the child's session ID. Include `agent` \
-  to use a named agent profile (prompt, model, tool policy, memory namespace).
+  to use a named agent profile (prompt, model, tool policy, memory namespace). \
+  The ghost runs in the background under its runbook's `GhostPolicy` — the \
+  runbook's `auto_approve_scripts`/`run_with_sudo` gate what it may run without \
+  a human, distinct from the per-call approval an interactive chat tool gets.
 - `await_agent_result(job_id, agent_name, timeout_secs)` — poll the agent's \
   mailbox. `agent_name` must match what the child was spawned with (returned in \
   the spawn result). Default timeout 300s, capped at 3600s.

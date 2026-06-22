@@ -101,6 +101,21 @@ A provider-agnostic abstraction over three LLM backends.
 - **`filter.rs`** — regex-based sensitive-data masking, initialized at daemon
   start and applied to all captured terminal output and artifact content.
 
+**Core vs. deferred tools (on-demand loading).** Each `ToolDef` carries a
+`deferred_group: Option<&'static str>`. `None` marks a **core** tool, rendered into
+every request's tool schema. `Some(group)` marks a **deferred** tool — rarely used,
+omitted from the default render to keep per-request context small, and grouped under
+`group`. The per-request tool set a backend sends is therefore
+`core ∪ {deferred tools the session has loaded}`, computed in
+`get_*_tool_definition(loaded)` (the pure `render_*` helpers render whatever
+selection they are handed). The model pulls a group in by calling the core
+`load_tools` tool, whose own description carries a catalog generated from the
+deferred set; the daemon records the loaded names in `SessionEntry.loaded_tools`, and
+their schemas appear on subsequent turns. The split is self-declaring (adding a tool
+sets one field; the compiler forces it) and the loaded set is a `HashSet<String>`
+(an `unload_tools` mirror is a future, additive extension). This is distinct from
+`ToolPolicy`/`GhostPolicy`, which gate tools at **execution** time, not render time.
+
 Models are configured as `[models.<name>]` TOML tables; `Config::resolve_model()`
 resolves by key (falling back to `"default"`), and sessions can switch models at
 runtime via `/model`.

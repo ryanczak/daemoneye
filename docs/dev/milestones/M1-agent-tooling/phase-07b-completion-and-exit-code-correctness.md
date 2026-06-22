@@ -473,9 +473,9 @@ What the executor must **not** do, even if tempted:
 
 - **tmux-verb leverage** (`wait-for`, `set-buffer`/`paste-buffer`, `copy-mode
   -X`, `if-shell`). This is open-ended and risks a fragile rewrite of the send
-  path; it is deferred to a separately-drafted **phase 07c**, to be drafted only
-  if a concrete fragile-polling site is identified. Do not introduce any of these
-  verbs in this phase.
+  path; it is deferred to a separately-drafted phase (originally **07c**, since
+  renumbered → **phase-10** "tmux-surface-and-safe-verbs"). Do not introduce any
+  of these verbs in this phase.
 - **The sudo branch** (`command_has_sudo(cmd)` block, ~lines 364-601), the
   **interactive branch** (`is_interactive_command(cmd)`, ~603-646), and the
   **remote branch** (`is_remote_pane`, ~647-672). Only the local `else` branch and

@@ -3,14 +3,24 @@
 **Active milestone:** M1 — Agent Tooling Improvements
 (`docs/dev/milestones/M1-agent-tooling/README.md`)
 
-**Active phase:** none. phase-07b-completion-and-exit-code-correctness is `done`
-(approved_first_try, 2026-06-22) — local completion detection via the `DE_EXIT`
-latch and non-zero exit-code surfacing to the model both landed.
+**Active phase:** phase-08-prompt-and-tooldef-fixes
+(`docs/dev/milestones/M1-agent-tooling/phase-08-prompt-and-tooldef-fixes.md`) —
+`todo`, drafted 2026-06-22, **re-scoped same day**. Now schema-correctness only:
+JSON-schema `enum` constraints for `edit_file.operation` / `search_repository.kind`
+/ memory `category`, fixes the `create_agent.auto_approve_scripts` schema/parser
+mismatch, and teaches the prompt the § 2.4 local-vs-remote tool-class model. The
+tool-discoverability work it originally carried moved to phase-11 (see below).
 
-The original phase-07 ("execution-robustness-and-tmux") was split into **07a**
-(done — four `medium` mechanical/safety fixes), **07b** (done — the two `high`
-completion/exit-code items), and **07c** (deferred — open-ended tmux-verb
-leverage; drafted on demand only if a concrete site warrants it).
+Dispatch with `/rexymcp:dispatch phase-08-prompt-and-tooldef-fixes`.
 
-Next: pick the next phase via `/rexymcp:architect next`. Phases 07c, 08, 09
-remain `todo`.
+Remaining (drafted, `todo`, dispatchable in any order — all independent of 08):
+- phase-09 (error-suppress-audit).
+- phase-10 (tmux-surface-and-safe-verbs, renumbered from 07c) — stand-alone
+  tmux-integration phase: centralize inline `tmux` buffer calls into `src/tmux/` +
+  adopt `tmux wait-for` at the `read_file` local-buffer-read site.
+  `Depends on: none`; leaves the hardened foreground completion path untouched.
+- phase-11 (on-demand-tool-loading) — split `TOOLS` into core + deferred via a
+  self-declaring `ToolDef.deferred_group`; default render emits core only; a new
+  `load_tools` tool pulls a deferred group into the session on demand so deferred
+  schemas stop shipping every request. `Depends on: none` (no conflict with 08;
+  sequence 08 → 11 for clean diffs).

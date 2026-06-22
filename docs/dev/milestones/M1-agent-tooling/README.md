@@ -30,9 +30,11 @@ the tool-execution path.
   bypassed via symlinks or non-existent-path canonicalization.
 - Memory/search namespace access is enforced against the calling agent's
   allowlist, not the caller-supplied namespace list.
-- `assets/prompts/sre.toml` documents every shipped tool, the local-vs-remote
+- `assets/prompts/sre.toml` documents the **core** tool set, the local-vs-remote
   (`target_pane`) decision, and the approval/ghost rules; tool-def schemas carry
-  enum constraints and match their `PendingCall` variants.
+  enum constraints and match their `PendingCall` variants. Rarely-used tools are
+  **deferred** — discoverable and loadable on demand via `load_tools` (phase-11),
+  not resident in every request.
 - `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features
   -- -D warnings`, and `cargo test` all pass.
 
@@ -62,10 +64,11 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
 | 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | done   |
 | 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | done   |
-| 07b | completion-and-exit-code-correctness ([phase-07b](phase-07b-completion-and-exit-code-correctness.md)) — local completion via the `DE_EXIT` latch + non-zero exit surfacing (tmux-verb leverage split out to 07c) | done   |
-| 07c | tmux-verb-leverage — `wait-for`/`set-buffer`/`copy-mode -X`/`if-shell` where they replace fragile polling (deferred; draft on demand only if a concrete site warrants it) | todo   |
-| 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
+| 07b | completion-and-exit-code-correctness ([phase-07b](phase-07b-completion-and-exit-code-correctness.md)) — local completion via the `DE_EXIT` latch + non-zero exit surfacing (tmux-verb leverage split out, later renumbered → phase-10) | done   |
+| 08 | prompt-and-tooldef-fixes ([phase-08](phase-08-prompt-and-tooldef-fixes.md)) — sre.toml teaches the § 2.4 model + enum schema constraints + `auto_approve_scripts` dual-format (re-scoped 2026-06-22: tool re-documentation moved to phase-11) | review |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
+| 10 | tmux-surface-and-safe-verbs ([phase-10](phase-10-tmux-surface-and-safe-verbs.md)) — stand-alone tmux-integration phase (was 07c): centralize inline buffer calls into `src/tmux/`, adopt `tmux wait-for` at the one daemon-host-local sentinel-poll site (`read_file` local buffer read); foreground path left untouched | todo   |
+| 11 | on-demand-tool-loading ([phase-11](phase-11-on-demand-tool-loading.md)) — split `TOOLS` into core + deferred via a self-declaring `ToolDef.deferred_group`; default render emits core only; a new `load_tools` tool pulls a deferred group into the session on demand (deferred schemas no longer ship every request) | todo   |
 
 ## Notes
 
@@ -125,7 +128,35 @@ demand. Rationale: each verb is a genuine redesign of a send/capture path (e.g.
 changes what the user sees typed into their pane and breaks the interactive
 path), and bundling an exploratory rewrite with the delicate completion-detection
 change is exactly the risk that motivated the 07a/07b split in the first place.
-07c may never be drafted if no concrete fragile-polling site justifies it.
+**Update (2026-06-22):** 07c was subsequently promoted to a drafted stand-alone
+tmux-integration phase and **renumbered → phase-10** (to put execution order in
+numeric order, since it sequences after 08/09), scoped down to the safe slice
+(buffer-call centralization + `wait-for` at the one daemon-host-local read site)
+with the risky verbs deferred with reasons — see the phase-10 row and "→ Phase 10"
+below.
+
+### Tool discoverability: prose → on-demand loading (2026-06-22)
+
+The principal engineer corrected the phase-08 premise. Phase-08 was drafted to
+re-add the nine tools absent from `sre.toml` and add a test forcing *every* `TOOLS`
+entry to be documented. But those tools were pulled **deliberately** to cut
+context, and the real cost is the tool **JSON schemas**: all three backends send
+the full `TOOLS` slice on every request (`body["tools"] = get_tool_definition()` →
+`render_anthropic(TOOLS)`), so prose changes do not touch it. Re-documenting them
+would re-bloat the prompt without addressing the schema cost.
+
+Resolution:
+- **Phase-08 re-scoped** to schema-correctness only (enum constraints +
+  `auto_approve_scripts` dual-format + § 2.4 prose + ghost note). Its two
+  discoverability tasks (re-document nine; `every_tool_is_named_in_sre_prompt`)
+  were **removed**.
+- **Phase-11 (on-demand-tool-loading) added** for true deferred loading: a
+  self-declaring `ToolDef.deferred_group` splits `TOOLS` into core (always
+  rendered) and deferred (omitted by default); a new core `load_tools` tool pulls a
+  deferred group into the session, whose schemas then ship only on subsequent
+  turns. Designed data-driven (adding a tool is a one-liner, compiler-forced to set
+  the field) and unload-ready (a future `unload_tools` mirrors the arg shape).
+  See [phase-11](phase-11-on-demand-tool-loading.md).
 
 ### Confirmed findings inventory (pre-injection source for phase drafts)
 
@@ -250,18 +281,30 @@ open-ended tmux-leverage bullet was **split out to 07c** at draft time (see Note
   `ToolResult` with the real non-zero code (local pane only; unknown/clean stay
   silent — never fabricate success).
 
-**→ Phase 07c — tmux-verb leverage** (deferred; not yet drafted). Apply where it
-replaces fragile polling, **not** as a blanket rewrite: `wait-for` for completion
-signalling, `set-buffer`/`paste-buffer` for large/binary remote transfer,
-`copy-mode`+`send-keys -X` for scrollback extraction, `if-shell` for atomic
-file-existence checks. Draft on demand only if a concrete fragile-polling site
-warrants it (each verb is a real redesign of a send/capture path — too risky to
-bundle with the delicate 07b completion change).
+**→ Phase 10 — tmux-surface-and-safe-verbs** (drafted 2026-06-22 as a stand-alone
+tmux-integration phase, renumbered from 07c —
+[phase-10](phase-10-tmux-surface-and-safe-verbs.md)).
+A code survey (recorded in the phase doc's Current state) found most tmux polling
+lives on the foreground completion path 07a/07b just hardened — high-risk to touch
+for marginal gain — so the phase takes the low-blast-radius slice: (1) centralize
+the three inline `tmux` buffer subprocess calls (`save-buffer`/`delete-buffer`) in
+`file_ops.rs` into `src/tmux/` wrappers, and (2) replace the one **daemon-host-local**
+sentinel-poll loop (the `read_file` local buffer read) with native `tmux wait-for`,
+designed so a lost/raced signal degrades to the prior behavior. **Deferred with
+reasons** (in the phase's Out of scope): `wait-for` on the foreground path (touches
+hardened 07a/07b code); `if-shell` for existence checks (they run on the *remote*
+host's shell, unreachable by the daemon's tmux server); `set-buffer`/`paste-buffer`
+(no consumer — tmux buffers are daemon-host-local so they don't fix remote
+binary/large transfer, which is its own future phase); the remote read sentinel
+(remote shell can't signal the daemon's tmux server).
 
-**Phase 08 — prompt + tool-def fixes**
-- `assets/prompts/sre.toml` omits 9 shipped tools: `create_agent`/`read_agent`/
-  `list_agents`/`delete_agent`, `read_script`/`list_scripts`, `read_runbook`/
-  `list_runbooks` (**high — undiscoverable**).
+**Phase 08 — prompt + tool-def fixes** (discoverability finding moved to phase-11)
+- `assets/prompts/sre.toml` omits 9 shipped tools:
+  `create_agent`/`read_agent`/`list_agents`/`delete_agent`,
+  `read_script`/`list_scripts`, `read_runbook`/`list_runbooks`, **`delete_memory`**.
+  Originally framed as "undiscoverable, re-document them"; **re-scoped 2026-06-22**
+  — these are the deferred set handled by **phase-11** (on-demand loading), not
+  re-documented in 08. See the "Tool discoverability" note above.
 - No JSON-schema `enum` constraint for `edit_file.operation`, `search_repository.kind`,
   `add_memory.category` — descriptions only; add an `enum_values` to the param
   renderer (**low**).

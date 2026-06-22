@@ -716,7 +716,7 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "auto_approve_scripts",
                 ty: ParamTy::Str,
                 required: false,
-                description: "JSON array of script names in ~/.daemoneye/scripts/ pre-approved for sudo execution. e.g. [\"check.sh\"].",
+                description: "JSON array of script names in ~/.daemoneye/scripts/ pre-approved for sudo execution. Accepts either a real array [\"check.sh\"] or a JSON-encoded string \"[\\\"check.sh\\\"]\".",
             },
         ],
     },
@@ -781,17 +781,32 @@ pub static TOOLS: &[ToolDef] = &[
 // Provider renderers
 // ---------------------------------------------------------------------------
 
+/// Closed value set for a parameter, keyed by param name. Returned as a JSON
+/// `enum` in every provider's schema so the model is constrained to valid values
+/// instead of relying on the prose description. Param names are globally unique
+/// across `TOOLS` (operation→edit_file, kind→search_repository) or share one set
+/// (category→the five memory tools), so name-keying is unambiguous.
+fn enum_values(param_name: &str) -> Option<&'static [&'static str]> {
+    match param_name {
+        "operation" => Some(&["edit", "create", "delete", "copy"]),
+        "kind" => Some(&["runbooks", "scripts", "memory", "events", "all"]),
+        "category" => Some(&["session", "knowledge", "incident"]),
+        _ => None,
+    }
+}
+
 fn build_properties(params: &[ParamDef]) -> serde_json::Map<String, Value> {
     params
         .iter()
         .map(|p| {
-            (
-                p.name.to_string(),
-                json!({
-                    "type": p.ty.as_str(),
-                    "description": p.description,
-                }),
-            )
+            let mut schema = json!({
+                "type": p.ty.as_str(),
+                "description": p.description,
+            });
+            if let Some(values) = enum_values(p.name) {
+                schema["enum"] = json!(values);
+            }
+            (p.name.to_string(), schema)
         })
         .collect()
 }
@@ -800,13 +815,14 @@ fn build_gemini_properties(params: &[ParamDef]) -> serde_json::Map<String, Value
     params
         .iter()
         .map(|p| {
-            (
-                p.name.to_string(),
-                json!({
-                    "type": p.ty.as_gemini_str(),
-                    "description": p.description,
-                }),
-            )
+            let mut schema = json!({
+                "type": p.ty.as_gemini_str(),
+                "description": p.description,
+            });
+            if let Some(values) = enum_values(p.name) {
+                schema["enum"] = json!(values);
+            }
+            (p.name.to_string(), schema)
         })
         .collect()
 }
@@ -1060,8 +1076,7 @@ struct CreateAgentArgs {
     max_turns: Option<u32>,
     #[serde(default)]
     auto_approve_read_only: bool,
-    #[serde(default)]
-    auto_approve_scripts: Vec<String>,
+    auto_approve_scripts: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1426,7 +1441,11 @@ impl ToolArgs for CreateAgentArgs {
             memory_namespace: self.memory_namespace,
             max_turns: self.max_turns,
             auto_approve_read_only: self.auto_approve_read_only,
-            auto_approve_scripts: self.auto_approve_scripts,
+            auto_approve_scripts: self
+                .auto_approve_scripts
+                .as_ref()
+                .and_then(extract_string_vec)
+                .unwrap_or_default(),
             thought_signature: ts,
         }
     }
@@ -1718,6 +1737,168 @@ mod tests {
                     p.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn enum_values_known_params() {
+        assert_eq!(
+            enum_values("operation"),
+            Some(&["edit", "create", "delete", "copy"] as &[&str])
+        );
+        assert_eq!(
+            enum_values("kind"),
+            Some(&["runbooks", "scripts", "memory", "events", "all"] as &[&str])
+        );
+        assert_eq!(
+            enum_values("category"),
+            Some(&["session", "knowledge", "incident"] as &[&str])
+        );
+        assert!(enum_values("command").is_none());
+        assert!(enum_values("nonexistent").is_none());
+    }
+
+    #[test]
+    fn anthropic_render_emits_enums() {
+        let rendered = render_anthropic(TOOLS);
+        let arr = rendered.as_array().unwrap();
+
+        let edit_file = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
+        let op = &edit_file["input_schema"]["properties"]["operation"];
+        assert_eq!(
+            op.get("enum"),
+            Some(&json!(["edit", "create", "delete", "copy"])),
+            "edit_file.operation must carry an enum"
+        );
+
+        let search = arr
+            .iter()
+            .find(|e| e["name"] == "search_repository")
+            .unwrap();
+        let kind = &search["input_schema"]["properties"]["kind"];
+        assert_eq!(
+            kind.get("enum"),
+            Some(&json!(["runbooks", "scripts", "memory", "events", "all"])),
+            "search_repository.kind must carry an enum"
+        );
+
+        let add_mem = arr.iter().find(|e| e["name"] == "add_memory").unwrap();
+        let cat = &add_mem["input_schema"]["properties"]["category"];
+        assert_eq!(
+            cat.get("enum"),
+            Some(&json!(["session", "knowledge", "incident"])),
+            "add_memory.category must carry an enum"
+        );
+
+        let run_cmd = arr
+            .iter()
+            .find(|e| e["name"] == "run_terminal_command")
+            .unwrap();
+        let cmd = &run_cmd["input_schema"]["properties"]["command"];
+        assert!(
+            cmd.get("enum").is_none(),
+            "run_terminal_command.command must NOT carry an enum"
+        );
+    }
+
+    #[test]
+    fn gemini_render_emits_enums() {
+        let rendered = render_gemini(TOOLS);
+        let arr = rendered.as_array().unwrap();
+
+        let edit_file = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
+        let op = &edit_file["parameters"]["properties"]["operation"];
+        assert_eq!(
+            op.get("enum"),
+            Some(&json!(["edit", "create", "delete", "copy"])),
+            "edit_file.operation must carry an enum in Gemini render"
+        );
+
+        let search = arr
+            .iter()
+            .find(|e| e["name"] == "search_repository")
+            .unwrap();
+        let kind = &search["parameters"]["properties"]["kind"];
+        assert_eq!(
+            kind.get("enum"),
+            Some(&json!(["runbooks", "scripts", "memory", "events", "all"])),
+            "search_repository.kind must carry an enum in Gemini render"
+        );
+
+        let add_mem = arr.iter().find(|e| e["name"] == "add_memory").unwrap();
+        let cat = &add_mem["parameters"]["properties"]["category"];
+        assert_eq!(
+            cat.get("enum"),
+            Some(&json!(["session", "knowledge", "incident"])),
+            "add_memory.category must carry an enum in Gemini render"
+        );
+    }
+
+    #[test]
+    fn create_agent_accepts_array_and_string_scripts() {
+        // As a real JSON array
+        let ev_array = dispatch_tool_event(
+            "tc_1",
+            "create_agent",
+            &json!({
+                "name": "analyst",
+                "description": "test",
+                "prompt": "You are a test.",
+                "auto_approve_scripts": ["a.sh"],
+            }),
+            None,
+        );
+        if let Some(AiEvent::CreateAgent {
+            auto_approve_scripts,
+            ..
+        }) = ev_array
+        {
+            assert_eq!(auto_approve_scripts, vec!["a.sh"]);
+        } else {
+            panic!("expected AiEvent::CreateAgent from array input");
+        }
+
+        // As a JSON-encoded string
+        let ev_string = dispatch_tool_event(
+            "tc_1",
+            "create_agent",
+            &json!({
+                "name": "analyst",
+                "description": "test",
+                "prompt": "You are a test.",
+                "auto_approve_scripts": "[\"a.sh\"]",
+            }),
+            None,
+        );
+        if let Some(AiEvent::CreateAgent {
+            auto_approve_scripts,
+            ..
+        }) = ev_string
+        {
+            assert_eq!(auto_approve_scripts, vec!["a.sh"]);
+        } else {
+            panic!("expected AiEvent::CreateAgent from string input");
+        }
+
+        // Omitted — defaults to empty
+        let ev_omit = dispatch_tool_event(
+            "tc_1",
+            "create_agent",
+            &json!({
+                "name": "analyst",
+                "description": "test",
+                "prompt": "You are a test.",
+            }),
+            None,
+        );
+        if let Some(AiEvent::CreateAgent {
+            auto_approve_scripts,
+            ..
+        }) = ev_omit
+        {
+            assert!(auto_approve_scripts.is_empty());
+        } else {
+            panic!("expected AiEvent::CreateAgent from omitted input");
         }
     }
 }
