@@ -608,3 +608,38 @@ fn delete_memory_deletes_from_correct_path() {
         assert_eq!(val, "global value");
     });
 }
+
+/// The storage layer must read only the namespaces it is handed.
+/// A memory written only in namespace `victim` is invisible to a scan
+/// over `["analyst","global"]` and visible only when `victim` is in the slice.
+#[test]
+fn memory_scan_is_confined_to_supplied_namespaces() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory("secret", "v", MemoryCategory::Knowledge, "victim").unwrap();
+
+        // Negative (read): the key exists only in `victim`, so an `analyst`-scoped read must fail.
+        assert!(
+            read_memory("secret", MemoryCategory::Knowledge, "analyst").is_err(),
+            "read_memory must not find a key in a different namespace"
+        );
+
+        // Negative (scan): `["analyst","global"]` must not include the `victim`-only key.
+        let results =
+            list_memories_with_tags(Some(MemoryCategory::Knowledge), &["analyst", "global"])
+                .unwrap();
+        assert!(
+            !results.iter().any(|e| e.key == "secret"),
+            "scan over [analyst, global] must not include victim-only key"
+        );
+
+        // Positive control: `["victim"]` must include it (proves the memory was written
+        // and the namespace slice is the only boundary).
+        let results =
+            list_memories_with_tags(Some(MemoryCategory::Knowledge), &["victim"]).unwrap();
+        assert!(
+            results.iter().any(|e| e.key == "secret"),
+            "scan over [victim] must include the key"
+        );
+    });
+}

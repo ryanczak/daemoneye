@@ -904,3 +904,114 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[test]
+    fn namespaces_non_ghost_is_global_only() {
+        let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let ns = build_memory_namespaces(Some("any-sid"), &store, false);
+        assert_eq!(ns, vec!["global".to_string()]);
+    }
+
+    #[test]
+    fn namespaces_ghost_excludes_foreign_namespace() {
+        use crate::agents::AgentConfig;
+        use crate::daemon::session::SessionEntry;
+        use crate::util::UnpoisonExt;
+        use std::collections::HashMap;
+
+        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let tmp = std::env::temp_dir().join(format!("de_ns_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let old = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
+
+        crate::agents::save_agent(&AgentConfig {
+            name: "analyst".to_string(),
+            description: String::new(),
+            prompt: String::new(),
+            model: None,
+            memory_namespace: "analyst".to_string(),
+            max_turns: None,
+            auto_approve_read_only: false,
+            auto_approve_scripts: Vec::new(),
+            read_namespaces: vec!["shared".to_string()],
+            tools: None,
+        })
+        .unwrap();
+
+        let entry = SessionEntry {
+            messages: vec![],
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: true,
+            ghost_config: Some(crate::ipc::GhostConfig {
+                agent: Some("analyst".to_string()),
+                ..Default::default()
+            }),
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+        };
+        let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        store
+            .lock()
+            .unwrap_or_log()
+            .insert("gsid".to_string(), entry);
+
+        let ns = build_memory_namespaces(Some("gsid"), &store, true);
+
+        match old {
+            Some(v) => unsafe {
+                std::env::set_var("HOME", v);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        assert!(
+            ns.iter().any(|n| n == "analyst"),
+            "own namespace present: {ns:?}"
+        );
+        assert!(
+            ns.iter().any(|n| n == "shared"),
+            "declared read_namespace present: {ns:?}"
+        );
+        assert!(
+            ns.iter().any(|n| n == "global"),
+            "global fallback present: {ns:?}"
+        );
+        assert!(
+            !ns.iter().any(|n| n == "victim"),
+            "agent must NOT reach an unrelated namespace it was never granted: {ns:?}"
+        );
+    }
+}

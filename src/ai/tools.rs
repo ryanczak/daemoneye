@@ -1699,4 +1699,25 @@ mod tests {
             );
         }
     }
+
+    /// The model must not be able to inject a namespace into a read tool.
+    /// This is the direct lock: if any read tool ever gains a `namespace` or
+    /// `namespaces` param, this test fails.
+    #[test]
+    fn read_tools_expose_no_namespace_param() {
+        for tool in ["read_memory", "list_memories", "search_repository"] {
+            let def = TOOLS
+                .iter()
+                .find(|t| t.name == tool)
+                .unwrap_or_else(|| panic!("tool {tool} missing from TOOLS"));
+            for p in def.params {
+                assert!(
+                    p.name != "namespace" && p.name != "namespaces",
+                    "{tool} must not expose a namespace param (got '{}') — the namespace \
+                     set is built server-side, never caller-supplied",
+                    p.name
+                );
+            }
+        }
+    }
 }

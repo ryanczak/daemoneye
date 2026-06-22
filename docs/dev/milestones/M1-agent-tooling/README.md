@@ -60,7 +60,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 03 | script-exec-hardening ([phase-03](phase-03-script-exec-hardening.md)) — sudoers quoting + script-name allowlist | done   |
 | 04 | remote-script-execution ([phase-04](phase-04-remote-script-transfer.md)) — ghost `ssh_target`: stream by default, persistent materialize for sudo | done   |
 | 05 | interactive-remote-script-exec ([phase-05](phase-05-interactive-remote-script-exec.md)) — daemon-host script streamed into a remote *user* pane; the non-ghost analogue of 04 | done   |
-| 06 | namespace-access-control (memory/search ACL)                      | todo   |
+| 06 | namespace-access-control ([phase-06](phase-06-namespace-access-control.md)) — lock the memory/search ACL with regression tests (already enforced by construction) | review   |
 | 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml teaches the § 2.4 model + schema constraints) | todo   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
@@ -169,12 +169,22 @@ phases; re-verify line numbers at draft time (the tree moves).
   Stream the script into the pane via the same hex-decode-to-`bash -s` idiom. Re-scope
   and confirm at draft time.
 
-**Phase 06 — namespace access control**
-- `knowledge.rs:521-537` (`read_memory`) and `knowledge.rs:604-607`
-  (`search_repository`) trust the caller-supplied `namespaces` slice; no check
-  against the agent's identity → an agent can read another agent's namespace
-  (**medium, security**). `agents/mod.rs` has an unused `read_namespaces` field —
-  populate and enforce it.
+**Phase 06 — namespace access control** (re-scoped 2026-06-22)
+- Original finding (**withdrawn as a live bug**): "`read_memory`
+  (`knowledge.rs:521`) / `search_repository` (`knowledge.rs:604`) trust the
+  caller-supplied `namespaces` slice → an agent can read another agent's namespace."
+  Re-verification shows this is **not reachable**: none of the read tools
+  (`read_memory`/`list_memories`/`search_repository`) expose a namespace parameter,
+  and the slice is built **server-side** by `build_memory_namespaces()`
+  (`executor/mod.rs:78`) from the agent's own config (own namespace +
+  `read_namespaces` + `"global"`). `read_namespaces` is **not** unused —
+  `build_memory_namespaces:95` already grants it (wired in G2, commit `b7025ba`,
+  predating the M1 review). The ACL is enforced by construction.
+- Re-scoped (principal engineer, "lock with tests, no code change"): phase-06 is now
+  **test-only** — regression tests that pin three negative properties (no namespace
+  tool param; storage layer reads only the supplied slice; `build_memory_namespaces`
+  excludes foreign namespaces). No production change. See
+  [phase-06](phase-06-namespace-access-control.md).
 
 **Phase 07 — execution robustness + tmux leverage**
 - `foreground.rs:650-689` local completion: `saw_child`/PID-return loop can
