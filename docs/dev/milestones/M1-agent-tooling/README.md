@@ -54,6 +54,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 06 | namespace-access-control (memory/search ACL)                      | todo   |
 | 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
 | 08 | prompt-and-tooldef-fixes (sre.toml + schema constraints)          | todo   |
+| 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | todo   |
 
 ## Notes
 
