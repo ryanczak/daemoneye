@@ -48,10 +48,12 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 |----|-------------------------------------------------------------------|--------|
 | 01 | safe-remote-command-foundation (SSH escaping + shared helper)     | done   |
 | 02 | remote-file-op-parity ([phase-02](phase-02-remote-file-op-parity.md))   | done   |
-| 03 | remote-script-transfer (script/runbook over SSH + sudoers)        | todo   |
-| 04 | namespace-access-control (memory/search ACL)                      | todo   |
-| 05 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
-| 06 | prompt-and-tooldef-fixes (sre.toml + schema constraints)          | todo   |
+| 03 | script-exec-hardening ([phase-03](phase-03-script-exec-hardening.md)) — sudoers quoting + script-name allowlist | todo   |
+| 04 | remote-script-transfer (ghost `ssh_target` script push)           | todo   |
+| 05 | write-tool-target-pane-parity (write/delete script + runbook)     | todo   |
+| 06 | namespace-access-control (memory/search ACL)                      | todo   |
+| 07 | execution-robustness-and-tmux (completion, exit code, tmux verbs) | todo   |
+| 08 | prompt-and-tooldef-fixes (sre.toml + schema constraints)          | todo   |
 
 ## Notes
 
@@ -61,7 +63,8 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
   hardening, agent prompt + tool-def fixes, tmux leverage + execution bugs.
 - **Security sequencing = interleave.** Each subsystem's security fix lands in
   the phase that already touches that subsystem (SSH escaping in 01, path/symlink
-  guards in 02, sudoers in 03, namespace ACL in 04), rather than a single
+  guards in 02, sudoers + script-name allowlist in 03, namespace ACL in 06),
+  rather than a single
   up-front hardening phase. The two highest-severity bugs exist *today* and are
   pulled as early as possible (01 and 03) to minimize their window.
 - **Remote model:** file/command tools reach remote hosts *through an existing
@@ -99,28 +102,36 @@ phases; re-verify line numbers at draft time (the tree moves).
 - Binary/non-UTF-8 files: `read_to_string` fails locally; remote uses
   `from_utf8_lossy` (silent corruption) (**minor** — document or base64 fallback).
 
-**Phase 03 — remote script transfer + write-tool parity + sudoers**
+**Phase 03 — script-exec hardening** (sudoers quoting + script-name allowlist)
+- `scripts.rs:127` `sudoers_rule` inserts `script_path` unquoted/unescaped into
+  the NOPASSWD rule (**high, security**). Escape sudoers-special characters in the
+  path so no path component can terminate the command or inject a directive.
+- `scripts.rs:112-121` `validate_script_name` only rejects empty, `/`, NUL, `.`,
+  `..` — it allows spaces and shell metacharacters. Tighten to a strict
+  `[A-Za-z0-9._-]` allowlist (the script name is the agent-/user-controlled part
+  that flows into the path used by both the sudoers rule and shell execution).
+
+**Phase 04 — remote script transfer** (ghost `ssh_target` script push)
 - `policy.rs:116-122` + `knowledge.rs:52-119` — remote script gap: `resolve_command`
   emits `~/.daemoneye/scripts/<name>` for `ssh_target`, but `write_script` only
   writes to the daemon host; the script never reaches the remote → remote script
   execution silently broken (**critical functionality gap**). Add transfer (scp /
   `ssh host 'cat > …'`) before execution.
+
+**Phase 05 — write-tool target_pane parity**
 - `tools.rs` — `write_script`/`write_runbook`/`delete_script`/`delete_runbook`
   lack `target_pane`; only `read_file`/`edit_file`/`run_terminal_command` have it.
-  Add for local+SSH parity.
-- `scripts.rs:128` `sudoers_rule` inserts `script_path` unquoted into the NOPASSWD
-  rule (**high, security**). Quote it; and `scripts.rs:113-121`
-  `validate_script_name` allows spaces/shell metachars — tighten to
-  `[A-Za-z0-9._-]` allowlist.
+  Add for local+SSH parity. Wide blast radius: 4 `PendingCall` variants across
+  `types.rs`/`tools.rs`/`stream.rs`/`ghost.rs`/`executor/mod.rs` + 3 backends.
 
-**Phase 04 — namespace access control**
+**Phase 06 — namespace access control**
 - `knowledge.rs:521-537` (`read_memory`) and `knowledge.rs:604-607`
   (`search_repository`) trust the caller-supplied `namespaces` slice; no check
   against the agent's identity → an agent can read another agent's namespace
   (**medium, security**). `agents/mod.rs` has an unused `read_namespaces` field —
   populate and enforce it.
 
-**Phase 05 — execution robustness + tmux leverage**
+**Phase 07 — execution robustness + tmux leverage**
 - `foreground.rs:650-689` local completion: `saw_child`/PID-return loop can
   false-early-exit on very fast commands and has a too-short start window
   (**high**). Consider `pane_dead_status` (tmux already tracks `pane_dead`).
@@ -139,7 +150,7 @@ phases; re-verify line numbers at draft time (the tree moves).
   scrollback extraction, `if-shell` for atomic file-existence checks. Apply where
   they replace fragile polling — not as blanket rewrites.
 
-**Phase 06 — prompt + tool-def fixes**
+**Phase 08 — prompt + tool-def fixes**
 - `assets/prompts/sre.toml` omits 9 shipped tools: `create_agent`/`read_agent`/
   `list_agents`/`delete_agent`, `read_script`/`list_scripts`, `read_runbook`/
   `list_runbooks` (**high — undiscoverable**).
