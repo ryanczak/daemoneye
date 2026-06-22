@@ -3,8 +3,7 @@
 **Active milestone:** M1 — Agent Tooling Improvements
 (`docs/dev/milestones/M1-agent-tooling/README.md`)
 
-**Active phase:** phase-02-remote-file-op-parity (`todo`, drafted 2026-06-21)
-(`docs/dev/milestones/M1-agent-tooling/phase-02-remote-file-op-parity.md`).
-Phases 03–06 remain `todo`.
+**Active phase:** none. phase-02-remote-file-op-parity is `done` (approved
+after 1 bounce, 2026-06-22). Phases 03–06 remain `todo` and undrafted.
 
-Run `/rexymcp:dispatch phase-02-remote-file-op-parity` to execute it.
+Run `/rexymcp:architect next` to draft and select the next phase.

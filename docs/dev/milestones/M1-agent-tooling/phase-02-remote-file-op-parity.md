@@ -1,7 +1,7 @@
 # Phase 02: Remote File-Op Parity & Correctness
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (uses the safe-quoting discipline established there)
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -341,3 +341,17 @@ $ grep -n 'File::Basename' src/daemon/executor/file_ops.rs
 **Commit:** `fix(daemon): import File::Basename in Perl create fallback`
 
 **Notes for review:** None.
+
+### Review verdict — 2026-06-22
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-phase-02-1.md` — Perl `create` fallback called
+  unimported `dirname`; fixed by importing `File::Basename qw(dirname)`)
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none — all changes local to `file_ops.rs` as specified
+- **Calibration:** The bounced bug was a fix-introduced regression masked by a
+  source-grep test. Reviewer independently ran the generated Perl (`perl`) to
+  confirm the branch executes end-to-end — exit 0, nested dirs created. All
+  four defects (A sentinel exact-match, B Perl parent-dir create, C symlink
+  guard resolution, D remote-copy `cp -n`) verified; 7 phase tests + full suite
+  (709 + 27) pass; fmt/build/clippy clean.
