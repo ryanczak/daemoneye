@@ -1,11 +1,11 @@
 # NEXT
 
-**Active phase:** none
+**Active milestone:** M1 — Agent Tooling Improvements
+(`docs/dev/milestones/M1-agent-tooling/README.md`)
 
-No milestone is scoped yet. DaemonEye has been bootstrapped for the rexyMCP
-architect/executor workflow and `docs/architecture.md` describes the current
-design baseline.
+**Active phase:** none yet — phase 01 (`safe-remote-command-foundation`) is the
+next to draft.
 
-To scope the next milestone, run `/rexymcp:architect` and define its goal,
-scope, and non-scope with the principal engineer. Then `/rexymcp:architect next`
-drafts the first phase doc and repoints this file at it.
+The milestone is scoped and its phase table is set, but no phase doc has been
+written. Run `/rexymcp:architect next` to draft `phase-01-safe-remote-command-foundation.md`,
+then `/rexymcp:dispatch phase-01-safe-remote-command-foundation` to execute it.
