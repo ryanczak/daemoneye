@@ -1,7 +1,7 @@
 # Phase 10: tmux Surface Centralization & Safe Native Verbs
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none (stand-alone tmux-integration phase; decoupled from the 07a/07b
 execution-robustness work — it deliberately does **not** touch the foreground
 completion path those phases hardened). Schedulable any time after the active phase.
@@ -357,6 +357,27 @@ What the executor must **not** do, with the reason (so it isn't re-derived wrong
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Review verdict — 2026-06-23
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen3 (rexyMCP local executor, `brain:8000`)
+- **Scope deviations:** none — `remote_run_and_capture` and `foreground.rs`
+  untouched (0 diff lines); `__DE_DONE__` survives only in the remote path
+  (file_ops.rs:78/91/187/681/876/1013) and the new test's negative assertion.
+- **Verification:** `cargo fmt --all` clean; forced rebuild (`touch` on
+  `src/tmux/pane.rs` + `src/daemon/executor/file_ops.rs`) → `cargo build` zero
+  warnings; `clippy --all-targets --all-features -D warnings` clean; `cargo test`
+  751 unit + 27 integration pass; `local_buffer_read_cmd_signals_via_wait_for`
+  passes and is a real test (pins positive `wait-for -S`, negatives `__DE_DONE__`
+  + `echo`, unchanged `load-buffer`). Three wrappers reachable as `tmux::*`
+  (pane.rs:505/517/529). No new `unwrap()`/`expect()`/`panic!`/`unsafe` in
+  production; `save_buffer().unwrap_or_default()` is the spec's prescribed
+  graceful fallback, sound under the `!signalled && bytes.is_empty()` bail. Live
+  E2E not run (no daemon in executor env) — permitted by the criterion.
+- **Calibration:** Update Log "Commits" line cited `5a450d8`; actual commit is
+  `ef661a5` (doc nit, not a DoD failure — noted for executor's future logs).
 
 ### Update — 2026-06-23 15:50 (progress)
 
