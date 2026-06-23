@@ -17,7 +17,7 @@ const EVENTS_TAIL_LINES: usize = 10_000;
 ///
 /// `kind`: `"runbooks"` | `"scripts"` | `"memory"` | `"events"` | `"all"`
 /// `context_lines`: lines of surrounding context to include with each match.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn search_repository(query: &str, kind: &str, context_lines: usize) -> Vec<SearchResult> {
     search_repository_with_namespaces(query, kind, context_lines, &["global"])
 }

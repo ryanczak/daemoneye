@@ -1,7 +1,7 @@
 # Phase 09: Error-Suppress Audit
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** in-progress (bounced — see bugs/bug-phase-09-1.md)
+**Status:** review
 **Depends on:** none (standalone; can follow any of 05–08 — touches different code paths)
 **Estimated diff:** ~80–120 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -478,3 +478,54 @@ returns **2 hits**, not zero (`src/header.rs:294`, `src/search.rs:20`). Both
   acceptance grep.
 
 See `bugs/bug-phase-09-1.md` for fixes. Re-dispatch once resolved.
+
+### Update — 2026-06-23 15:28 (complete)
+
+**Summary:** Resolved the two remaining `#[allow(dead_code)]` hits from bug-phase-09-1. Replaced `#[allow(dead_code)]` on `parse_yaml_frontmatter` in `src/header.rs` with `#[cfg(test)]` since all callers are test-only. Replaced `#[allow(dead_code)]` on `search_repository` in `src/search.rs` with `#[cfg(test)]` since it's a dead production wrapper only called by its own tests. Both fixes eliminate the underlying diagnostic rather than suppressing it.
+
+**Acceptance criteria:** all ticked.
+
+**Commands:**
+
+```
+cargo fmt --all
+(no output — already formatted)
+
+cargo build 2>&1 | tail -20
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.30s
+
+cargo test 2>&1 | tail -30
+running 27 tests
+test result: ok. 27 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests daemoneye
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Verification greps:**
+```
+grep -n 'unsafe {' src/main.rs src/cli/render.rs src/daemon/server.rs
+→ 4 production unsafe blocks, each preceded by // SAFETY: comment ✓
+
+grep -rn '#\[allow(dead_code' $(find src -name '*.rs' | grep -v '_tests.rs')
+→ zero hits ✓
+
+grep -rn '#\[allow(deprecated' $(find src -name '*.rs' | grep -v '_tests.rs')
+→ 2 hits: src/scheduler.rs:585 and :743 (both inside #[test] functions, exempt) ✓
+```
+
+**End-to-end verification:** N/A — this phase ships no new runtime behavior. Verification surface is the four acceptance greps and the zero-warning/zero-test-failure build.
+
+**Files changed:**
+- `src/header.rs` — replaced `#[allow(dead_code)]` on `parse_yaml_frontmatter` with `#[cfg(test)]`
+- `src/search.rs` — replaced `#[allow(dead_code)]` on `search_repository` with `#[cfg(test)]`
+
+**New tests:** none (refactor-only phase)
+
+**Commits:** pending
+
+**Notes for review:** None — clean resolution of bug-phase-09-1.

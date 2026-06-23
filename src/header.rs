@@ -291,7 +291,7 @@ pub fn render_comment_header(h: &Header, prefix: &str) -> String {
 ///
 /// This is a compatibility shim so callers that previously called the private
 /// parsers in `runbook.rs` / `memory.rs` can migrate to the shared type.
-#[allow(dead_code)] // Used in #[cfg(test)] module; dead_code warning emitted during non-test builds
+#[cfg(test)]
 pub fn parse_yaml_frontmatter(src: &str) -> (Header, usize) {
     if !src.starts_with("---\n") {
         return (Header::default(), 0);
