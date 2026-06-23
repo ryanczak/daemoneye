@@ -1158,7 +1158,7 @@ impl ToolArgs for CancelDeleteScheduleArgs {
     }
     fn to_event(self, _id: &str, _ts: Option<String>) -> AiEvent {
         // Never called directly — cancel/delete schedule use schedule_id_event()
-        panic!("use schedule_id_event instead")
+        unreachable!("use schedule_id_event instead")
     }
 }
 

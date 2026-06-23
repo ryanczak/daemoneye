@@ -199,6 +199,9 @@ fn truncate_to_visual(s: &str, max_chars: usize) -> &str {
 /// Uses `ioctl(TIOCGWINSZ)` so the value is always live — pane resizes are
 /// reflected automatically.  Falls back to `$COLUMNS`, then to 79.
 pub fn terminal_width() -> usize {
+    // SAFETY: `ioctl(TIOCGWINSZ)` has no safe Rust alternative for querying live
+    // terminal dimensions. `ws` is zeroed before the call and only read after
+    // a successful return.
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
         if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 1 {
@@ -216,6 +219,9 @@ pub fn terminal_width() -> usize {
 /// Query the visible row height of the terminal on stdout.
 /// Uses `ioctl(TIOCGWINSZ)` so the value is live; falls back to `$LINES` then 24.
 pub fn terminal_height() -> usize {
+    // SAFETY: `ioctl(TIOCGWINSZ)` has no safe Rust alternative for querying live
+    // terminal dimensions. `ws` is zeroed before the call and only read after
+    // a successful return.
     unsafe {
         let mut ws: libc::winsize = std::mem::zeroed();
         if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_row > 2 {

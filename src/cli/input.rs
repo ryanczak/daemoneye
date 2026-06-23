@@ -467,6 +467,7 @@ async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
 /// and kill shortcuts (Ctrl+K/U).  Integrates the SIGWINCH resize handler
 /// so the input row repaints correctly after a terminal resize.
 /// Returns `None` on EOF or Ctrl+D with an empty buffer.
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
 pub async fn read_input_line(
     state: &mut InputState,
@@ -491,6 +492,7 @@ pub async fn read_input_line(
     .await
 }
 
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
 async fn read_input_line_inner(
     state: &mut InputState,

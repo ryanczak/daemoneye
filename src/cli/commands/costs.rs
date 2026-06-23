@@ -231,6 +231,7 @@ pub fn run_costs(
             .with_context(|| format!("Invalid --since date: {s} (expected YYYY-MM-DD)"))?,
         None => {
             let naive = now.date_naive() - chrono::Duration::days(6);
+            // INVARIANT: midnight (0, 0, 0) is always a valid NaiveTime
             naive.and_hms_opt(0, 0, 0).unwrap().and_utc()
         }
     };
@@ -282,11 +283,13 @@ fn parse_date_bound(s: &str, start: bool) -> Result<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .with_context(|| format!("Invalid date format: {s}"))?;
     if start {
+        // INVARIANT: midnight (0, 0, 0) is always a valid NaiveTime
         Ok(date.and_hms_opt(0, 0, 0).unwrap().and_utc())
     } else {
         let next_day = date
             .succ_opt()
             .with_context(|| format!("Invalid date: {s}"))?;
+        // INVARIANT: midnight (0, 0, 0) is always a valid NaiveTime
         Ok(next_day.and_hms_opt(0, 0, 0).unwrap().and_utc())
     }
 }

@@ -22,8 +22,8 @@ pub struct GhostPolicy {
     /// the permission explicit so the AI does not withhold investigation commands.
     /// Set per-runbook via `auto_approve_commands: true` in frontmatter, or
     /// daemon-wide via `[approvals] ghost_commands = true` in `config.toml`.
-    /// Carried here for completeness; the system prompt reads from `GhostConfig` directly.
-    #[allow(dead_code)]
+    /// Carried here for completeness; the system prompt reads from `GhostConfig`
+    /// directly. Kept as a mirror so `GhostPolicy` is a complete snapshot.
     pub auto_approve_commands: bool,
 }
 

@@ -136,7 +136,6 @@ pub enum ActionOn {
     ///
     /// Deprecated: prefer `Script` for auditable, pre-vetted commands.
     /// Kept for backwards-compatibility with existing `schedules.json` files.
-    #[deprecated(note = "use ActionOn::Script instead")]
     Command(String),
     /// Execute a named script from `~/.daemoneye/scripts/`.
     Script(String),
@@ -149,7 +148,6 @@ pub enum ActionOn {
 
 impl ActionOn {
     pub fn describe(&self) -> String {
-        #[allow(deprecated)]
         match self {
             ActionOn::Alert => "alert".to_string(),
             ActionOn::Command(c) => format!("cmd: {}", c),

@@ -825,6 +825,7 @@ impl Config {
             .get(key)
             .or_else(|| self.models.get("default"))
             .or_else(|| self.models.values().next())
+            // INVARIANT: Config::load() validates that at least one model entry is present
             .expect("models map must not be empty")
     }
 

@@ -14,7 +14,6 @@ pub struct Runbook {
     /// Tags parsed from frontmatter `tags: [a, b]`.
     /// Exposed for future use (e.g. filtering by tag); currently carried through
     /// `RunbookInfo` from `list_runbooks()`.
-    #[allow(dead_code)]
     pub tags: Vec<String>,
     /// Knowledge memory keys to load when this runbook runs as a watchdog.
     pub memories: Vec<String>,

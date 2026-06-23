@@ -40,7 +40,8 @@ pub struct InternalAlert {
     pub severity: String,
     pub summary: String,
     pub description: String,
-    #[allow(dead_code)]
+    /// Structured metadata from the upstream alert. Kept for future use (e.g.
+    /// filtering, grouping, or alert dedup enhancements).
     pub labels: HashMap<String, String>,
     /// Stable identity key used for deduplication.
     pub fingerprint: String,

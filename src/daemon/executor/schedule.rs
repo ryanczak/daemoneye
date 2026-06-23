@@ -41,7 +41,6 @@ where
         ghost_runbook,
         cron,
     } = args;
-    #[allow(deprecated)]
     let (action, runbook) = if let Some(rb) = ghost_runbook {
         (
             ActionOn::Ghost {

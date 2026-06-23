@@ -381,6 +381,8 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     send_response_split(tx, Response::Ok).await?;
+    // SAFETY: Graceful self-signal to trigger the tokio signal handler. No safe
+    // wrapper exists in the Rust stdlib for sending a signal to self.
     unsafe {
         libc::kill(libc::getpid(), libc::SIGTERM);
     }
@@ -1073,7 +1075,7 @@ where
 // ── Ask handler ──────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
-// Central dispatcher; single caller; struct refactor would obscure data flow.
+// TODO(M2): consolidate params into a struct
 async fn handle_ask<W, R>(
     initial_query: String,
     client_pane: Option<String>,

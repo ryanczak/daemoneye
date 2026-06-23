@@ -431,6 +431,7 @@ pub(super) fn add_memory(
     }
 }
 
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update_memory(
     key: &str,
@@ -1070,6 +1071,7 @@ pub(super) async fn spawn_ghost(
 // Agents
 // ---------------------------------------------------------------------------
 
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn create_agent<W, R>(
     id: &str,

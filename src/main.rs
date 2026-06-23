@@ -254,6 +254,9 @@ fn main() -> anyhow::Result<()> {
     // For `daemon` without `--console`, fork into the background before
     // starting the async runtime so the calling shell is released immediately.
     if let Commands::Daemon { console: false, .. } = &cli.command {
+        // SAFETY: This runs before the tokio runtime starts, so only the main
+        // thread exists. Forking a live multi-threaded runtime is unsound because
+        // only the calling thread survives in the child.
         unsafe {
             let pid = libc::fork();
             if pid < 0 {

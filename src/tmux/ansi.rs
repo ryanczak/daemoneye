@@ -55,6 +55,7 @@ pub(super) fn annotate_ansi(s: &str) -> String {
     // Remaining branches match other escape sequences that should be stripped.
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
+        // INVARIANT: literal is a valid regex
         Regex::new(concat!(
             r"\x1b\[([0-9;]*)m",                    // group 1: SGR
             r"|\x1b\[[0-9;?<=>!]*[A-Za-z]",         // other CSI
@@ -72,6 +73,7 @@ pub(super) fn annotate_ansi(s: &str) -> String {
     let mut last_end = 0usize;
 
     for cap in re.captures_iter(s) {
+        // INVARIANT: capture group 0 is always present when Regex::captures() succeeds
         let m = cap.get(0).unwrap();
         let plain = &s[last_end..m.start()];
         if !plain.is_empty() {

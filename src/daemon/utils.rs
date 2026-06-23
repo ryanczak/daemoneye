@@ -186,7 +186,10 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     use regex::Regex;
     use std::sync::OnceLock;
     static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap());
+    let re = RE.get_or_init(|| {
+        // INVARIANT: literal is a valid regex
+        Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap()
+    });
     re.is_match(cmd)
 }
 

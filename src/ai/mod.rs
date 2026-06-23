@@ -121,6 +121,7 @@ pub fn http() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
+            // INVARIANT: default reqwest client config is always valid
             .unwrap()
     })
 }

@@ -796,6 +796,7 @@ async fn do_ghost_turn(
                         };
                         crate::daemon::utils::log_event(
                             "ai_cost",
+                            // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
                             serde_json::to_value(&record)
                                 .expect("CostRecord serialization is infallible"),
                         );

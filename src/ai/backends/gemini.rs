@@ -75,6 +75,7 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
     // Match: command = "value" or command = 'value', within the argument list only.
     static CMD_RE: OnceLock<Regex> = OnceLock::new();
     let cmd_re = CMD_RE.get_or_init(|| {
+        // INVARIANT: literal is a valid regex
         Regex::new(r#"command\s*=\s*["']((?:[^"'\\]|\\.)*)["']"#).expect("valid regex")
     });
     let cmd = cmd_re.captures(call_body)?[1]
@@ -83,8 +84,10 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
 
     // Match: background = true|false (optional; defaults to false).
     static BG_RE: OnceLock<Regex> = OnceLock::new();
-    let bg_re =
-        BG_RE.get_or_init(|| Regex::new(r#"background\s*=\s*(true|false)"#).expect("valid regex"));
+    let bg_re = BG_RE.get_or_init(|| {
+        // INVARIANT: literal is a valid regex
+        Regex::new(r#"background\s*=\s*(true|false)"#).expect("valid regex")
+    });
     let bg = bg_re
         .captures(call_body)
         .map(|c| &c[1] == "true")

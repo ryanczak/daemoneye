@@ -458,6 +458,7 @@ pub fn compute_cost_today() -> CostTodayResult {
     let today_start = chrono::Utc::now()
         .date_naive()
         .and_hms_opt(0, 0, 0)
+        // INVARIANT: midnight (0, 0, 0) is always a valid NaiveTime
         .unwrap()
         .and_utc();
     let today_end = today_start + chrono::Duration::days(1);

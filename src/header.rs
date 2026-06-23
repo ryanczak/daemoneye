@@ -50,7 +50,6 @@ pub struct Header {
 
 impl Header {
     /// Returns `true` when every field is empty or `None`.
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.tags.is_empty()
             && self.summary.is_none()
@@ -210,6 +209,7 @@ pub fn parse_comment_header(src: &str) -> (Header, usize) {
         }
 
         // Inside the block — look for the closing sentinel.
+        // INVARIANT: found_prefix is Some; the None branch continues the outer loop above
         let pfx = found_prefix.unwrap();
         let close_sentinel = format!("{}{}", pfx, CLOSE_TAG);
         if line.trim() == close_sentinel {
@@ -236,7 +236,6 @@ pub fn parse_comment_header(src: &str) -> (Header, usize) {
 /// Returns an empty string when the header is empty.  The rendered string
 /// includes a trailing newline after the closing sentinel so callers can
 /// concatenate it directly with the script body.
-#[allow(dead_code)]
 pub fn render_comment_header(h: &Header, prefix: &str) -> String {
     if h.is_empty() {
         return String::new();
@@ -292,7 +291,7 @@ pub fn render_comment_header(h: &Header, prefix: &str) -> String {
 ///
 /// This is a compatibility shim so callers that previously called the private
 /// parsers in `runbook.rs` / `memory.rs` can migrate to the shared type.
-#[allow(dead_code)]
+#[allow(dead_code)] // Used in #[cfg(test)] module; dead_code warning emitted during non-test builds
 pub fn parse_yaml_frontmatter(src: &str) -> (Header, usize) {
     if !src.starts_with("---\n") {
         return (Header::default(), 0);

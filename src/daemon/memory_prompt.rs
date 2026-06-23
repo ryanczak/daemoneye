@@ -3,16 +3,13 @@
 //! Stable ambient block (pinned + high-relevance, cached with TTL) and
 //! dynamic turn-relevant block (computed per turn from tag overlap).
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 use crate::config::Config;
 use crate::daemon::stats;
 use crate::memory::index;
 use crate::memory::tags::SessionTags;
 use crate::memory::{MemoryInfo, list_memories_with_tags};
-use crate::util::UnpoisonExt;
 
 /// Monotonic dirty sequence counter for pinned-memory changes.
 static PINNED_DIRTY_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -22,32 +19,6 @@ pub fn invalidate_stable_block() {
     PINNED_DIRTY_SEQ.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Current dirty sequence value.
-#[allow(dead_code)]
-fn current_dirty_seq() -> u64 {
-    PINNED_DIRTY_SEQ.load(Ordering::Relaxed)
-}
-
-/// Cached stable block content.
-#[allow(dead_code)]
-struct StableBlockCache {
-    content: String,
-    computed_at: Instant,
-    dirty_seq: u64,
-}
-
-#[allow(dead_code)]
-static STABLE_BLOCK: Mutex<Option<StableBlockCache>> = Mutex::new(None);
-
-/// Compute the composite score for a memory entry.
-/// G5 stub: uses effective_confidence only until volatility/usefulness fields are added.
-#[allow(dead_code)]
-fn composite_score(info: &MemoryInfo) -> f64 {
-    crate::memory::review::effective_confidence(info)
-}
-
-/// Format a single memory entry for a prompt block.
-/// Uses summary if available, otherwise first 200 chars of body.
 fn format_memory_entry(info: &MemoryInfo) -> String {
     let summary = info.summary.as_deref().unwrap_or("");
     let text = if !summary.is_empty() {
@@ -56,94 +27,6 @@ fn format_memory_entry(info: &MemoryInfo) -> String {
         format!("[memory: {}]", info.key)
     };
     format!("--- {} ---\n{}\n", info.key, text.trim())
-}
-
-/// Assemble the stable ambient memory block.
-/// G5 stub: returns None until Config.memory section and MemoryInfo fields are added.
-pub fn assemble_ambient_memory(_config: &Config) -> Option<String> {
-    None
-}
-
-#[allow(dead_code)]
-fn assemble_ambient_memory_rebuild(_namespaces: &[&str], budget: usize) -> Option<String> {
-    let all_memories = list_memories_with_tags(None, &["global"]).unwrap_or_default();
-
-    // Exclude archived memories
-    let active: Vec<&MemoryInfo> = all_memories.iter().filter(|m| !m.is_expired()).collect();
-
-    // Separate pinned and scored
-    let pinned: Vec<&MemoryInfo> = active
-        .iter()
-        .filter(|m| m.pinned.unwrap_or(false))
-        .cloned()
-        .collect();
-    let mut scored: Vec<&MemoryInfo> = active
-        .iter()
-        .filter(|m| !m.pinned.unwrap_or(false))
-        .cloned()
-        .collect();
-
-    // Sort scored by composite score descending
-    scored.sort_by(|a, b| {
-        let sa = composite_score(a);
-        let sb = composite_score(b);
-        sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    // Build block: pinned first, then scored until budget exhausted
-    let mut parts: Vec<String> = Vec::new();
-    let mut total = 0usize;
-    let mut count = 0usize;
-    let mut dropped = 0usize;
-
-    // Pinned memories (never truncated)
-    for info in &pinned {
-        let entry = format_memory_entry(info);
-        total += entry.len();
-        parts.push(entry);
-        count += 1;
-    }
-
-    // Scored memories until budget
-    for info in &scored {
-        let entry = format_memory_entry(info);
-        if total + entry.len() <= budget {
-            total += entry.len();
-            parts.push(entry);
-            count += 1;
-        } else {
-            dropped += 1;
-        }
-    }
-
-    if dropped > 0 {
-        log::warn!(
-            "Stable memory budget exceeded: dropped {} memories ({} bytes used, {} budget)",
-            dropped,
-            total,
-            budget
-        );
-    }
-
-    if parts.is_empty() {
-        return None;
-    }
-
-    let header = format!("[AMBIENT MEMORY] {} memories, {} bytes\n", count, total);
-    let block = format!("{}\n{}", header, parts.join("\n"));
-
-    // Update cache
-    {
-        let mut guard = STABLE_BLOCK.lock().unwrap_or_log();
-        *guard = Some(StableBlockCache {
-            content: block.clone(),
-            computed_at: Instant::now(),
-            dirty_seq: current_dirty_seq(),
-        });
-    }
-
-    stats::set_memories_in_stable_block(count);
-    Some(block)
 }
 
 /// Assemble the dynamic turn-relevant memory block.
@@ -204,6 +87,7 @@ pub fn assemble_turn_relevant_memory(
         let eff = crate::memory::review::effective_confidence(info);
         let combined = score * eff;
         candidate_keys.entry(info.key.clone()).or_insert(0.0);
+        // INVARIANT: key was just inserted via .or_insert(0.0) on the preceding line
         *candidate_keys.get_mut(&info.key).unwrap() = combined;
     }
 

@@ -36,7 +36,6 @@ pub async fn run_scheduled_job(
     crate::daemon::stats::inc_schedules_executed();
 
     // Ghost-mode: hand off entirely to the ghost shell infrastructure.
-    #[allow(deprecated)]
     if let ActionOn::Ghost { runbook: rb_name } = &job.action {
         if !check_ghost_capacity(&config) {
             log::warn!(
@@ -159,7 +158,6 @@ pub async fn run_scheduled_job(
 
     let unix_ts = chrono::Utc::now().timestamp();
     let temp_win_name = format!("{}tmp-{}", crate::daemon::SCHED_WINDOW_PREFIX, unix_ts);
-    #[allow(deprecated)]
     let cmd = match &job.action {
         ActionOn::Alert => {
             // Pure alert: no command to run.

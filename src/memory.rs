@@ -266,6 +266,7 @@ fn validate_memory_key(key: &str) -> Result<()> {
 /// If the entry does not exist, a new one is created.
 /// `updated` timestamp is always set to the current UTC time.
 /// `namespace` controls which namespace directory to write to.
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
 pub fn update_memory(
     key: &str,

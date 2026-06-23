@@ -39,8 +39,8 @@ const APPROVAL_GATED: &[&str] = &[
 /// - Tool execution (foreground, background, ghost spawn)
 /// - Response persistence (in-memory and on-disk)
 /// - Auto-name suggestion for unnamed sessions
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
-// Core loop entry; single caller from handle_ask; stable signature.
 pub async fn run_conversation_loop<W, R>(
     tx: &mut W,
     rx: &mut R,
@@ -572,6 +572,7 @@ where
                         };
                         log_event(
                             "ai_cost",
+                            // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
                             serde_json::to_value(&record)
                                 .expect("CostRecord serialization is infallible"),
                         );
@@ -702,6 +703,7 @@ where
                     };
                     log_event(
                         "ai_cost",
+                        // INVARIANT: CostRecord derives Serialize; serde_json::to_value never fails for it
                         serde_json::to_value(&record)
                             .expect("CostRecord serialization is infallible"),
                     );

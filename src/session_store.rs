@@ -170,8 +170,8 @@ fn save_index(index: &HashMap<String, IndexEntry>) -> Result<()> {
 ///
 /// If `name` is already in the index AND `current_saved_name != Some(name)`, returns an error
 /// unless `force` is true.  Use `force` only when the user explicitly passes `--force`.
+// TODO(M2): consolidate params into a struct
 #[allow(clippy::too_many_arguments)]
-// Public API boundary; multiple callers; stable signature.
 pub fn save_session(
     name: &str,
     current_saved_name: Option<&str>,
@@ -333,6 +333,7 @@ pub fn rename_session(old_name: &str, new_name: &str) -> Result<()> {
         .with_context(|| format!("renaming {} → {}", old_dir.display(), new_dir.display()))?;
 
     // Atomic index flip — this is the commit point.
+    // INVARIANT: old_name was verified present in the index before the filesystem rename above
     let entry = index.remove(old_name).unwrap();
     index.insert(new_name.to_string(), entry);
     save_index(&index)?;

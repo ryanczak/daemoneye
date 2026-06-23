@@ -39,6 +39,7 @@ pub(super) fn resolve_target_pane(chat_pane: &str, session: &str) -> Option<Stri
             offer_no_sibling_options(chat_pane, session)
         }
         1 => {
+            // INVARIANT: match arm guarantees siblings.len() == 1
             let target = siblings.into_iter().next().unwrap();
             crate::pane_prefs::save(session, &target);
             Some(target)

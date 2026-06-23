@@ -103,7 +103,6 @@ pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
 /// Default maximum number of messages retained per session.
 /// The runtime value comes from `config.limits.max_history`; this constant
 /// exists as the canonical default and as a reference value in tests.
-#[allow(dead_code)]
 pub const MAX_HISTORY: usize = 80;
 
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
