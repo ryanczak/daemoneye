@@ -113,6 +113,7 @@ pub trait AiClient: Send + Sync {
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
         use_tools: bool,
+        loaded_tools: Vec<String>,
     ) -> Result<()>;
 }
 

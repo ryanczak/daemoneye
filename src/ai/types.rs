@@ -176,6 +176,12 @@ pub enum PendingCall {
         /// 5-field cron expression (e.g. `*/5 * * * *`). Mutually exclusive with `interval`.
         cron: Option<String>,
     },
+    /// Load a deferred group of tools into the active set for this session.
+    LoadTools {
+        id: String,
+        groups: Vec<String>,
+        thought_signature: Option<String>,
+    },
     ListSchedules {
         id: String,
         thought_signature: Option<String>,
@@ -406,6 +412,12 @@ impl PendingCall {
                 name: "list_schedules".to_string(),
                 arguments: "{}".to_string(),
             },
+            PendingCall::LoadTools { id, thought_signature, groups } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "load_tools".to_string(),
+                arguments: serde_json::json!({"groups": groups}).to_string(),
+            },
             PendingCall::CancelSchedule { id, thought_signature, job_id } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
@@ -597,6 +609,7 @@ impl PendingCall {
             PendingCall::Background { id, .. } => id,
             PendingCall::ScheduleCommand { id, .. } => id,
             PendingCall::ListSchedules { id, .. } => id,
+            PendingCall::LoadTools { id, .. } => id,
             PendingCall::CancelSchedule { id, .. } => id,
             PendingCall::DeleteSchedule { id, .. } => id,
             PendingCall::WriteScript { id, .. } => id,
@@ -652,6 +665,7 @@ impl PendingCall {
                 | PendingCall::ReadAgent { .. }
                 | PendingCall::ListAgents { .. }
                 | PendingCall::AwaitAgentResult { .. }
+                | PendingCall::LoadTools { .. }
         )
     }
 
@@ -723,6 +737,9 @@ impl PendingCall {
             PendingCall::ListAgents { .. } => String::new(),
             PendingCall::DeleteAgent { name, .. } => name.clone(),
             PendingCall::AwaitAgentResult { job_id, .. } => job_id.clone(),
+            PendingCall::LoadTools { groups, .. } => {
+                format!("load_tools: {}", groups.join(", "))
+            }
             _ => String::new(),
         }
     }
@@ -735,6 +752,7 @@ impl PendingCall {
             }
             PendingCall::ScheduleCommand { .. } => "schedule_command",
             PendingCall::ListSchedules { .. } => "list_schedules",
+            PendingCall::LoadTools { .. } => "load_tools",
             PendingCall::CancelSchedule { .. } => "cancel_schedule",
             PendingCall::DeleteSchedule { .. } => "delete_schedule",
             PendingCall::WriteScript { .. } => "write_script",
@@ -789,6 +807,11 @@ pub enum AiEvent {
         runbook: Option<String>,
         ghost_runbook: Option<String>,
         cron: Option<String>,
+        thought_signature: Option<String>,
+    },
+    LoadTools {
+        id: String,
+        groups: Vec<String>,
         thought_signature: Option<String>,
     },
     ListSchedules {

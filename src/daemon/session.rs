@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -80,6 +80,9 @@ pub struct SessionEntry {
     /// True if messages have been added since the last save or load.
     /// Guards `/session load` against discarding unsaved work.
     pub dirty: bool,
+    /// Deferred tool names that have been loaded into this session via `load_tools`.
+    /// When non-empty, those tools' schemas are included in the next AI render.
+    pub loaded_tools: HashSet<String>,
     /// Artifacts (memories, runbooks, scripts) created during this session.
     /// Used for retroactive `session_origin` frontmatter backfill on save (Phase 3).
     pub artifacts_created: Vec<crate::session_store::ArtifactRef>,
@@ -516,6 +519,7 @@ mod tests {
             auto_name_suggested: false,
             ghost_task_message: None,
             cost_usd: 0.0,
+            loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
         };
@@ -551,6 +555,7 @@ mod tests {
             auto_name_suggested: false,
             ghost_task_message: None,
             cost_usd: 0.0,
+            loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
         };
@@ -596,6 +601,7 @@ mod tests {
             auto_name_suggested: false,
             ghost_task_message: None,
             cost_usd: 0.0,
+            loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
         };
@@ -643,6 +649,7 @@ mod tests {
             auto_name_suggested: false,
             ghost_task_message: None,
             cost_usd: 0.0,
+            loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
         };

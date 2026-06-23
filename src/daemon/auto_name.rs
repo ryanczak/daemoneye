@@ -49,7 +49,13 @@ pub async fn suggest_session_name(
     );
 
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
-    let chat_fut = client.chat(AUTONAME_SYSTEM_PROMPT, vec![user_msg], ev_tx, false);
+    let chat_fut = client.chat(
+        AUTONAME_SYSTEM_PROMPT,
+        vec![user_msg],
+        ev_tx,
+        false,
+        Vec::new(),
+    );
     let timeout = std::time::Duration::from_secs(AUTONAME_TIMEOUT_SECS);
 
     match tokio::time::timeout(timeout, chat_fut).await {

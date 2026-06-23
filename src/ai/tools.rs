@@ -42,6 +42,10 @@ pub struct ToolDef {
     pub name: &'static str,
     pub description: &'static str,
     pub params: &'static [ParamDef],
+    /// `None` = core (always rendered, prose-documented in sre.toml).
+    /// `Some(group)` = deferred: omitted from the default render, loaded on demand
+    /// via `load_tools`, and listed in that tool's generated catalog under `group`.
+    pub deferred_group: Option<&'static str>,
 }
 
 pub static TOOLS: &[ToolDef] = &[
@@ -95,6 +99,7 @@ pub static TOOLS: &[ToolDef] = &[
                               above the new run. Omit to create a fresh background window.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "schedule_command",
@@ -165,11 +170,13 @@ pub static TOOLS: &[ToolDef] = &[
                               Mutually exclusive with interval and run_at.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "list_schedules",
         description: "Return the current list of scheduled jobs with their status, schedule, and next run time.",
         params: &[],
+        deferred_group: None,
     },
     ToolDef {
         name: "cancel_schedule",
@@ -181,6 +188,7 @@ pub static TOOLS: &[ToolDef] = &[
             required: true,
             description: "UUID of the scheduled job to cancel.",
         }],
+        deferred_group: None,
     },
     ToolDef {
         name: "delete_schedule",
@@ -193,6 +201,7 @@ pub static TOOLS: &[ToolDef] = &[
             required: true,
             description: "UUID of the scheduled job to delete.",
         }],
+        deferred_group: None,
     },
     ToolDef {
         name: "write_script",
@@ -221,14 +230,17 @@ pub static TOOLS: &[ToolDef] = &[
                               the daemoneye comment header block.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "list_scripts",
+        deferred_group: Some("scripts"),
         description: "Return the list of scripts in ~/.daemoneye/scripts/ with their sizes.",
         params: &[],
     },
     ToolDef {
         name: "read_script",
+        deferred_group: Some("scripts"),
         description: "Read the content of a script from ~/.daemoneye/scripts/.",
         params: &[ParamDef {
             name: "script_name",
@@ -247,6 +259,7 @@ pub static TOOLS: &[ToolDef] = &[
             required: true,
             description: "Name of the script to delete.",
         }],
+        deferred_group: None,
     },
     ToolDef {
         name: "watch_pane",
@@ -278,6 +291,7 @@ pub static TOOLS: &[ToolDef] = &[
                                      or 'build (succeeded|failed)'.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "read_file",
@@ -322,6 +336,7 @@ pub static TOOLS: &[ToolDef] = &[
                                      daemon-host files.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "edit_file",
@@ -389,6 +404,7 @@ pub static TOOLS: &[ToolDef] = &[
                               Omit for daemon-host files.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "write_runbook",
@@ -410,6 +426,7 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "Full markdown content of the runbook, including optional YAML frontmatter.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "delete_runbook",
@@ -421,9 +438,11 @@ pub static TOOLS: &[ToolDef] = &[
             required: true,
             description: "Name of the runbook to delete (no extension).",
         }],
+        deferred_group: None,
     },
     ToolDef {
         name: "read_runbook",
+        deferred_group: Some("runbooks"),
         description: "Read the full content of a named runbook from ~/.daemoneye/runbooks/.",
         params: &[ParamDef {
             name: "name",
@@ -434,6 +453,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "list_runbooks",
+        deferred_group: Some("runbooks"),
         description: "List all runbooks in ~/.daemoneye/runbooks/ with their tags.",
         params: &[],
     },
@@ -463,6 +483,7 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "'session', 'knowledge', or 'incident'.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "update_memory",
@@ -520,9 +541,11 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "ISO date when this memory expires, e.g. '2026-04-15'. For time-bounded facts.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "delete_memory",
+        deferred_group: Some("memory"),
         description: "Remove a memory entry from ~/.daemoneye/memory/<category>/<key>.md.",
         params: &[
             ParamDef {
@@ -556,6 +579,7 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "'session', 'knowledge', or 'incident'.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "list_memories",
@@ -566,6 +590,7 @@ pub static TOOLS: &[ToolDef] = &[
             required: false,
             description: "Optional: 'session', 'knowledge', or 'incident'. Omit to list all.",
         }],
+        deferred_group: None,
     },
     ToolDef {
         name: "search_repository",
@@ -585,6 +610,7 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "'runbooks', 'scripts', 'memory', 'events', or 'all'.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "get_terminal_context",
@@ -595,6 +621,22 @@ pub static TOOLS: &[ToolDef] = &[
                       The terminal snapshot is NOT automatically included in every message — \
                       call this tool to get it on demand.",
         params: &[],
+        deferred_group: None,
+    },
+    ToolDef {
+        name: "load_tools",
+        description: "Load an additional group of tools into your available tool set for the rest \
+                      of this session. Some rarely-used tools are not loaded by default to save \
+                      context; call this to enable a group, then call the tools it contains. \
+                      Pass `groups` as an array of group names.",
+        params: &[ParamDef {
+            name: "groups",
+            ty: ParamTy::Str,
+            required: true,
+            description: "Array of group names to load (e.g. [\"agents\"]). \
+                          Accepts a real JSON array or a JSON-encoded string of an array.",
+        }],
+        deferred_group: None,
     },
     ToolDef {
         name: "list_panes",
@@ -607,6 +649,7 @@ pub static TOOLS: &[ToolDef] = &[
                       This tool reads from an in-memory cache (refreshed every 2 s) and returns \
                       immediately with no tmux subprocess overhead.",
         params: &[],
+        deferred_group: None,
     },
     ToolDef {
         name: "close_background_window",
@@ -624,6 +667,7 @@ pub static TOOLS: &[ToolDef] = &[
                               Obtained from a [Background Task Completed] message or \
                               a [BACKGROUND PANE] context block.",
         }],
+        deferred_group: None,
     },
     ToolDef {
         name: "spawn_ghost_shell",
@@ -662,9 +706,11 @@ pub static TOOLS: &[ToolDef] = &[
                               Omit to use the default ghost shell identity.",
             },
         ],
+        deferred_group: None,
     },
     ToolDef {
         name: "create_agent",
+        deferred_group: Some("agents"),
         description: "Create or update a named agent config in ~/.daemoneye/agents/<name>/config.toml. \
                       An agent defines *who* executes a ghost shell — the role, model, memory namespace, \
                       and trust boundaries — separate from *what* the runbook asks it to do. \
@@ -722,6 +768,7 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "read_agent",
+        deferred_group: Some("agents"),
         description: "Read the full config of a named agent from ~/.daemoneye/agents/<name>/config.toml.",
         params: &[ParamDef {
             name: "name",
@@ -732,11 +779,13 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "list_agents",
+        deferred_group: Some("agents"),
         description: "List all named agents in ~/.daemoneye/agents/ with their descriptions and models.",
         params: &[],
     },
     ToolDef {
         name: "delete_agent",
+        deferred_group: Some("agents"),
         description: "Delete a named agent from ~/.daemoneye/agents/<name>/. User approval required. \
                       Will warn if any runbooks reference this agent.",
         params: &[ParamDef {
@@ -774,6 +823,7 @@ pub static TOOLS: &[ToolDef] = &[
                 description: "Maximum seconds to wait before timing out. Default 300, capped at 3600.",
             },
         ],
+        deferred_group: None,
     },
 ];
 
@@ -835,7 +885,8 @@ fn required_names(params: &[ParamDef]) -> Vec<&'static str> {
         .collect()
 }
 
-fn render_anthropic(tools: &[ToolDef]) -> Value {
+fn render_anthropic(tools: &[&ToolDef]) -> Value {
+    let catalog = deferred_catalog_text();
     Value::Array(
         tools
             .iter()
@@ -846,13 +897,19 @@ fn render_anthropic(tools: &[ToolDef]) -> Value {
                 if !req.is_empty() {
                     schema["required"] = json!(req);
                 }
-                json!({ "name": t.name, "description": t.description, "input_schema": schema })
+                let desc = if t.name == "load_tools" {
+                    format!("{}\n\nAvailable groups:\n{}", t.description, catalog)
+                } else {
+                    t.description.to_string()
+                };
+                json!({ "name": t.name, "description": desc, "input_schema": schema })
             })
             .collect(),
     )
 }
 
-fn render_openai(tools: &[ToolDef]) -> Value {
+fn render_openai(tools: &[&ToolDef]) -> Value {
+    let catalog = deferred_catalog_text();
     Value::Array(
         tools
             .iter()
@@ -863,15 +920,21 @@ fn render_openai(tools: &[ToolDef]) -> Value {
                 if !req.is_empty() {
                     params["required"] = json!(req);
                 }
+                let desc = if t.name == "load_tools" {
+                    format!("{}\n\nAvailable groups:\n{}", t.description, catalog)
+                } else {
+                    t.description.to_string()
+                };
                 json!({ "type": "function", "function": {
-                    "name": t.name, "description": t.description, "parameters": params
+                    "name": t.name, "description": desc, "parameters": params
                 }})
             })
             .collect(),
     )
 }
 
-pub fn render_gemini(tools: &[ToolDef]) -> Value {
+pub fn render_gemini(tools: &[&ToolDef]) -> Value {
+    let catalog = deferred_catalog_text();
     Value::Array(
         tools
             .iter()
@@ -882,26 +945,70 @@ pub fn render_gemini(tools: &[ToolDef]) -> Value {
                 if !req.is_empty() {
                     params["required"] = json!(req);
                 }
-                json!({ "name": t.name, "description": t.description, "parameters": params })
+                let desc = if t.name == "load_tools" {
+                    format!("{}\n\nAvailable groups:\n{}", t.description, catalog)
+                } else {
+                    t.description.to_string()
+                };
+                json!({ "name": t.name, "description": desc, "parameters": params })
             })
             .collect(),
     )
 }
 
-// ---------------------------------------------------------------------------
-// Public API (unchanged callers)
-// ---------------------------------------------------------------------------
-
-pub fn get_tool_definition() -> Value {
-    render_anthropic(TOOLS)
+/// Return the subset of `TOOLS` that should be rendered for this session.
+/// Core tools (deferred_group: None) are always included.
+/// Deferred tools are included only if their name appears in `loaded`.
+pub fn select_tools(loaded: &[String]) -> Vec<&'static ToolDef> {
+    TOOLS
+        .iter()
+        .filter(|t| t.deferred_group.is_none() || loaded.iter().any(|n| n == t.name))
+        .collect()
 }
 
-pub fn get_openai_tool_definition() -> Value {
-    render_openai(TOOLS)
+/// Lines describing each deferred group and its members, e.g.
+/// "  - agents: create_agent, read_agent, list_agents, delete_agent".
+pub fn deferred_catalog_text() -> String {
+    let mut groups: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    for t in TOOLS.iter() {
+        if let Some(g) = t.deferred_group {
+            if let Some(entry) = groups.iter_mut().find(|(grp, _)| *grp == g) {
+                entry.1.push(t.name);
+            } else {
+                groups.push((g, vec![t.name]));
+            }
+        }
+    }
+    groups
+        .iter()
+        .map(|(g, names)| format!("  - {}: {}", g, names.join(", ")))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-pub fn get_gemini_tool_definition() -> Value {
-    render_gemini(TOOLS)
+/// Resolve a deferred group name to its member tool names.
+pub fn tools_in_group(group: &str) -> Vec<&'static str> {
+    TOOLS
+        .iter()
+        .filter(|t| t.deferred_group == Some(group))
+        .map(|t| t.name)
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+pub fn get_tool_definition(loaded: &[String]) -> Value {
+    render_anthropic(&select_tools(loaded).into_iter().collect::<Vec<_>>())
+}
+
+pub fn get_openai_tool_definition(loaded: &[String]) -> Value {
+    render_openai(&select_tools(loaded).into_iter().collect::<Vec<_>>())
+}
+
+pub fn get_gemini_tool_definition(loaded: &[String]) -> Value {
+    render_gemini(&select_tools(loaded).into_iter().collect::<Vec<_>>())
 }
 
 // ---------------------------------------------------------------------------
@@ -940,6 +1047,17 @@ struct ScheduleCommandArgs {
     runbook: Option<String>,
     ghost_runbook: Option<String>,
     cron: Option<String>,
+}
+
+struct LoadToolsArgs {
+    groups: Value,
+}
+
+impl LoadToolsArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        let groups = value.get("groups")?.clone();
+        Some(Self { groups })
+    }
 }
 
 #[derive(Deserialize)]
@@ -1147,6 +1265,20 @@ impl ToolArgs for ScheduleCommandArgs {
             runbook: self.runbook,
             ghost_runbook: self.ghost_runbook,
             cron: self.cron,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for LoadToolsArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        LoadToolsArgs::from_value(value)
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        let groups = extract_string_vec(&self.groups).unwrap_or_default();
+        AiEvent::LoadTools {
+            id: id.to_string(),
+            groups,
             thought_signature: ts,
         }
     }
@@ -1495,6 +1627,7 @@ pub fn dispatch_tool_event(
     let args = args.clone();
     match name {
         "run_terminal_command" => dispatch::<RunTerminalCommandArgs>(id, args, ts),
+        "load_tools" => dispatch::<LoadToolsArgs>(id, args, ts),
         "schedule_command" => dispatch::<ScheduleCommandArgs>(id, args, ts),
         "list_schedules" => Some(AiEvent::ListSchedules {
             id: id.to_string(),
@@ -1578,7 +1711,8 @@ mod tests {
     /// "tool missing from Gemini" bug.
     #[test]
     fn render_gemini_names_match_tools_slice() {
-        let rendered = render_gemini(TOOLS);
+        let selection: Vec<&ToolDef> = TOOLS.iter().collect();
+        let rendered = render_gemini(&selection);
         let arr = rendered
             .as_array()
             .expect("render_gemini must return an array");
@@ -1603,7 +1737,7 @@ mod tests {
     /// variants used by Anthropic/OpenAI.
     #[test]
     fn render_gemini_types_are_uppercase() {
-        let rendered = render_gemini(TOOLS);
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
         let arr = rendered.as_array().unwrap();
         let rtc = arr
             .iter()
@@ -1619,7 +1753,7 @@ mod tests {
     /// Required fields must match the ParamDef required flags.
     #[test]
     fn render_gemini_required_fields_correct() {
-        let rendered = render_gemini(TOOLS);
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
         let arr = rendered.as_array().unwrap();
 
         // run_terminal_command: only "command" is required
@@ -1652,7 +1786,7 @@ mod tests {
     /// Tools with no params must not have a "required" key (would be an API error).
     #[test]
     fn render_gemini_no_required_for_empty_params() {
-        let rendered = render_gemini(TOOLS);
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
         let arr = rendered.as_array().unwrap();
         let ls = arr.iter().find(|e| e["name"] == "list_schedules").unwrap();
         assert!(
@@ -1702,6 +1836,7 @@ mod tests {
                 "list_agents" => json!({}),
                 "delete_agent" => json!({"name": "analyst"}),
                 "await_agent_result" => json!({"job_id": "ghost-abc-123", "agent_name": "analyst"}),
+                "load_tools" => json!({"groups": ["agents"]}),
                 _ => json!({}),
             }
         }
@@ -1760,7 +1895,7 @@ mod tests {
 
     #[test]
     fn anthropic_render_emits_enums() {
-        let rendered = render_anthropic(TOOLS);
+        let rendered = render_anthropic(&TOOLS.iter().collect::<Vec<_>>());
         let arr = rendered.as_array().unwrap();
 
         let edit_file = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
@@ -1803,7 +1938,7 @@ mod tests {
 
     #[test]
     fn gemini_render_emits_enums() {
-        let rendered = render_gemini(TOOLS);
+        let rendered = render_gemini(&TOOLS.iter().collect::<Vec<_>>());
         let arr = rendered.as_array().unwrap();
 
         let edit_file = arr.iter().find(|e| e["name"] == "edit_file").unwrap();
@@ -1900,5 +2035,198 @@ mod tests {
         } else {
             panic!("expected AiEvent::CreateAgent from omitted input");
         }
+    }
+
+    /// Helper: collect the tool names emitted by an Anthropic-style render Value.
+    fn rendered_names(v: &Value) -> Vec<String> {
+        v.as_array()
+            .expect("render must be an array")
+            .iter()
+            .map(|e| {
+                e["name"]
+                    .as_str()
+                    .expect("name must be a string")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// The core/deferred partition is total and matches the Goal table: the nine
+    /// deferred tools carry their group, a control core tool is None.
+    #[test]
+    fn deferred_group_split_is_total() {
+        let expected: &[(&str, &str)] = &[
+            ("create_agent", "agents"),
+            ("read_agent", "agents"),
+            ("list_agents", "agents"),
+            ("delete_agent", "agents"),
+            ("read_script", "scripts"),
+            ("list_scripts", "scripts"),
+            ("read_runbook", "runbooks"),
+            ("list_runbooks", "runbooks"),
+            ("delete_memory", "memory"),
+        ];
+        for (name, group) in expected {
+            let t = TOOLS
+                .iter()
+                .find(|t| t.name == *name)
+                .unwrap_or_else(|| panic!("deferred tool {name} must exist in TOOLS"));
+            assert_eq!(
+                t.deferred_group,
+                Some(*group),
+                "{name} must be deferred under group {group}"
+            );
+        }
+        // Every other tool must be core (None).
+        let deferred_names: Vec<&str> = expected.iter().map(|(n, _)| *n).collect();
+        for t in TOOLS.iter() {
+            if !deferred_names.contains(&t.name) {
+                assert_eq!(
+                    t.deferred_group, None,
+                    "{} must be core (deferred_group: None)",
+                    t.name
+                );
+            }
+        }
+        // Control: a representative hot tool is core.
+        let rtc = TOOLS
+            .iter()
+            .find(|t| t.name == "run_terminal_command")
+            .unwrap();
+        assert_eq!(rtc.deferred_group, None);
+
+        // Loading every deferred tool reproduces the full set (no tool is dropped
+        // or duplicated by selection) — the render count/order invariants then hold.
+        let all_deferred: Vec<String> = TOOLS
+            .iter()
+            .filter(|t| t.deferred_group.is_some())
+            .map(|t| t.name.to_string())
+            .collect();
+        assert_eq!(select_tools(&all_deferred).len(), TOOLS.len());
+    }
+
+    /// The default render (empty loaded set) emits core only — no deferred tool,
+    /// but the load_tools meta-tool is present.
+    #[test]
+    fn default_render_omits_deferred() {
+        let names = rendered_names(&get_tool_definition(&[]));
+        assert!(
+            names.contains(&"run_terminal_command".to_string()),
+            "core tool must be present"
+        );
+        assert!(
+            names.contains(&"load_tools".to_string()),
+            "load_tools meta-tool must be present"
+        );
+        for deferred in [
+            "create_agent",
+            "delete_memory",
+            "read_script",
+            "list_runbooks",
+        ] {
+            assert!(
+                !names.contains(&deferred.to_string()),
+                "deferred tool {deferred} must be omitted from the default render"
+            );
+        }
+    }
+
+    /// Loading a group's member names surfaces exactly those tools' schemas, while
+    /// still excluding other deferred groups.
+    #[test]
+    fn load_then_render_includes_group() {
+        let loaded: Vec<String> = vec!["read_runbook".to_string(), "list_runbooks".to_string()];
+        let names = rendered_names(&get_tool_definition(&loaded));
+        assert!(names.contains(&"read_runbook".to_string()));
+        assert!(names.contains(&"list_runbooks".to_string()));
+        // Other deferred groups stay hidden.
+        assert!(!names.contains(&"create_agent".to_string()));
+        assert!(!names.contains(&"delete_memory".to_string()));
+    }
+
+    /// The rendered load_tools description carries the generated catalog naming all
+    /// four groups and at least one member of each.
+    #[test]
+    fn load_tools_catalog_lists_all_groups() {
+        let rendered = get_tool_definition(&[]);
+        let arr = rendered.as_array().unwrap();
+        let load_tools = arr.iter().find(|e| e["name"] == "load_tools").unwrap();
+        let desc = load_tools["description"].as_str().unwrap();
+        for group in ["agents", "scripts", "runbooks", "memory"] {
+            assert!(
+                desc.contains(group),
+                "load_tools catalog must name group {group}"
+            );
+        }
+        for member in [
+            "create_agent",
+            "read_script",
+            "read_runbook",
+            "delete_memory",
+        ] {
+            assert!(
+                desc.contains(member),
+                "load_tools catalog must list member {member}"
+            );
+        }
+    }
+
+    /// load_tools dispatch accepts groups as a real array and as a JSON-encoded
+    /// string; both yield the same AiEvent::LoadTools groups vector.
+    #[test]
+    fn load_tools_accepts_array_and_string_groups() {
+        let ev_array =
+            dispatch_tool_event("tc_1", "load_tools", &json!({"groups": ["agents"]}), None);
+        if let Some(AiEvent::LoadTools { groups, .. }) = ev_array {
+            assert_eq!(groups, vec!["agents".to_string()]);
+        } else {
+            panic!("expected AiEvent::LoadTools from array input");
+        }
+
+        let ev_string = dispatch_tool_event(
+            "tc_1",
+            "load_tools",
+            &json!({"groups": "[\"agents\"]"}),
+            None,
+        );
+        if let Some(AiEvent::LoadTools { groups, .. }) = ev_string {
+            assert_eq!(groups, vec!["agents".to_string()]);
+        } else {
+            panic!("expected AiEvent::LoadTools from string input");
+        }
+    }
+
+    /// The group→names resolver returns the four agent tools for "agents" and an
+    /// empty vec for an unknown group.
+    #[test]
+    fn tools_in_group_resolves_members() {
+        let agents = tools_in_group("agents");
+        assert_eq!(
+            agents,
+            vec!["create_agent", "read_agent", "list_agents", "delete_agent"]
+        );
+        assert!(tools_in_group("nonexistent").is_empty());
+    }
+
+    /// End-to-end seam the conversation loop relies on: the names the executor
+    /// persists (`tools_in_group(group)`) are exactly what surfaces when the
+    /// loop reads `loaded_tools` back and renders. Guards against the loop
+    /// dropping the loaded set on the floor (regression: `Vec::new()` passed to
+    /// `chat` instead of the session's `loaded_tools`).
+    #[test]
+    fn loaded_group_names_render_their_schemas() {
+        let loaded: Vec<String> = tools_in_group("agents")
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let names = rendered_names(&get_tool_definition(&loaded));
+        for member in ["create_agent", "read_agent", "list_agents", "delete_agent"] {
+            assert!(
+                names.contains(&member.to_string()),
+                "loaded agent tool {member} must render its schema"
+            );
+        }
+        // A group that was not loaded stays hidden.
+        assert!(!names.contains(&"delete_memory".to_string()));
     }
 }

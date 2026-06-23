@@ -305,7 +305,10 @@ pub async fn run_scheduled_job(
             turn: None,
         }];
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-        let api_err = client.chat(&system, msgs, ai_tx, false).await.is_err();
+        let api_err = client
+            .chat(&system, msgs, ai_tx, false, Vec::new())
+            .await
+            .is_err();
         let mut ai_response = String::new();
         while let Some(ev) = ai_rx.recv().await {
             if let AiEvent::Token(t) = ev {

@@ -401,7 +401,7 @@ pub async fn build_narrative_summary(
 
     // Race the chat call against a timeout.  On success or failure we still
     // drain the channel (via the receiver loop below) so no tokens are lost.
-    let chat_fut = client.chat(&system, msgs, tx, false);
+    let chat_fut = client.chat(&system, msgs, tx, false, Vec::new());
     let chat_result = tokio::time::timeout(NARRATIVE_TIMEOUT, chat_fut).await;
 
     match chat_result {

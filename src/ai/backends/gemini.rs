@@ -174,6 +174,7 @@ impl AiClient for GeminiClient {
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
         use_tools: bool,
+        loaded_tools: Vec<String>,
     ) -> Result<()> {
         let url = format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
@@ -185,7 +186,8 @@ impl AiClient for GeminiClient {
             "contents": converted,
         });
         if use_tools {
-            body["tools"] = json!([{"function_declarations": get_gemini_tool_definition()}]);
+            body["tools"] =
+                json!([{"function_declarations": get_gemini_tool_definition(&loaded_tools)}]);
         } else {
             // Explicitly disable function calling so the model is forced to
             // respond with plain text (e.g. watchdog analysis calls).

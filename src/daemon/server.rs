@@ -1163,6 +1163,7 @@ where
                 artifacts_created: Vec::new(),
                 auto_name_suggested: false,
                 ghost_task_message: None,
+                loaded_tools: std::collections::HashSet::new(),
                 cost_usd: 0.0,
                 cost_by_agent: std::collections::HashMap::new(),
                 has_untracked_cost: false,

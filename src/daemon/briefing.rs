@@ -108,7 +108,10 @@ async fn do_generate_briefing(
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
     tokio::spawn(async move {
-        if let Err(e) = client.chat(system_prompt, recent, tx, false).await {
+        if let Err(e) = client
+            .chat(system_prompt, recent, tx, false, Vec::new())
+            .await
+        {
             log::error!("Briefing AI call failed: {}", e);
         }
     });

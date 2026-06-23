@@ -104,6 +104,7 @@ impl AiClient for OpenAiClient {
         messages: Vec<Message>,
         tx: UnboundedSender<AiEvent>,
         use_tools: bool,
+        loaded_tools: Vec<String>,
     ) -> Result<()> {
         let converted = self.convert_messages(messages);
         let mut full_messages = vec![json!({"role": "system", "content": system})];
@@ -117,7 +118,7 @@ impl AiClient for OpenAiClient {
             "messages": full_messages,
         });
         if use_tools {
-            body["tools"] = json!(get_openai_tool_definition());
+            body["tools"] = json!(get_openai_tool_definition(&loaded_tools));
         } else {
             body["tool_choice"] = json!("none");
         }

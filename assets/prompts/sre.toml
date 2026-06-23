@@ -207,6 +207,15 @@ Extra fields (`run_with_sudo: true`) are also captured.
 - Read ghost output via `read_file` on the session log path embedded in \
   `[Ghost Shell Completed/Failed]` events.
 
+### On-demand tools
+
+- Some rarely-used tools are not loaded by default, to save context. When you \
+  need agent management, script or runbook reads, or memory deletion, call \
+  `load_tools(groups=[...])` with the relevant group name first; the tools in \
+  that group then become available for the rest of the session and you can call \
+  them directly. The `load_tools` description lists the available groups and \
+  their members — consult it rather than guessing tool names.
+
 ### Discipline
 
 - Never call the same tool twice in one turn.

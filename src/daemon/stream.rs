@@ -8,6 +8,7 @@ use crate::daemon::utils::{log_event, send_response_split};
 use crate::ipc::Response;
 use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
+use crate::util::UnpoisonExt;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -77,9 +78,27 @@ where
         let sys_prompt_turn = sys_prompt.clone();
         let messages_clone = messages.clone();
 
+        // Read the session's on-demand tool set so deferred groups loaded via
+        // `load_tools` on a prior turn are rendered for this turn (M1 phase-11).
+        let loaded_tools: Vec<String> = session_id
+            .as_deref()
+            .and_then(|sid| {
+                let store = sessions.lock().unwrap_or_log();
+                store
+                    .get(sid)
+                    .map(|e| e.loaded_tools.iter().cloned().collect())
+            })
+            .unwrap_or_default();
+
         tokio::spawn(async move {
             if let Err(e) = client_instance
-                .chat(&sys_prompt_turn, messages_clone, ai_tx.clone(), true)
+                .chat(
+                    &sys_prompt_turn,
+                    messages_clone,
+                    ai_tx.clone(),
+                    true,
+                    loaded_tools,
+                )
                 .await
             {
                 let _ = ai_tx.send(AiEvent::Error(e.to_string()));
@@ -147,6 +166,17 @@ where
                         runbook,
                         ghost_runbook,
                         cron,
+                        thought_signature,
+                    });
+                }
+                AiEvent::LoadTools {
+                    id,
+                    groups,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::LoadTools {
+                        id,
+                        groups,
                         thought_signature,
                     });
                 }

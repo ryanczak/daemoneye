@@ -242,6 +242,7 @@ impl GhostManager {
             artifacts_created: Vec::new(),
             auto_name_suggested: false,
             ghost_task_message: None,
+            loaded_tools: std::collections::HashSet::new(),
             cost_usd: 0.0,
             cost_by_agent: std::collections::HashMap::new(),
             has_untracked_cost: false,
@@ -478,12 +479,15 @@ async fn do_ghost_turn(
             if wrap_up_turn { " (wrap-up)" } else { "" }
         );
 
-        let chat_messages = {
+        let (chat_messages, loaded_tools) = {
             let store = sessions.lock().unwrap_or_log();
             let Some(entry) = store.get(session_id) else {
                 break;
             };
-            entry.messages.clone()
+            (
+                entry.messages.clone(),
+                entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
+            )
         };
 
         let client_clone = Arc::clone(&client);
@@ -493,7 +497,7 @@ async fn do_ghost_turn(
 
         tokio::spawn(async move {
             if let Err(e) = client_clone
-                .chat(&system_clone, chat_messages, ai_tx, true)
+                .chat(&system_clone, chat_messages, ai_tx, true, loaded_tools)
                 .await
             {
                 log::error!("Ghost Shell AI error: {}", e);

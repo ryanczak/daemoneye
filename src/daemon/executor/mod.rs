@@ -311,6 +311,47 @@ where
 
         PendingCall::ListSchedules { .. } => schedule::list_schedules(schedule_store, tx).await,
 
+        PendingCall::LoadTools { groups, .. } => {
+            let mut loaded: Vec<String> = Vec::new();
+            let mut unknown: Vec<String> = Vec::new();
+            for g in groups {
+                let members = crate::ai::tools::tools_in_group(g);
+                if members.is_empty() {
+                    unknown.push(g.clone());
+                } else {
+                    for m in members {
+                        loaded.push(m.to_string());
+                    }
+                }
+            }
+            // Persist into session state
+            if let Some(sid) = session_id
+                && let Ok(mut store) = sessions.lock()
+                && let Some(entry) = store.get_mut(sid)
+            {
+                for name in &loaded {
+                    entry.loaded_tools.insert(name.clone());
+                }
+                entry.dirty = true;
+            }
+            let mut result_parts = Vec::new();
+            for g in groups {
+                let members = crate::ai::tools::tools_in_group(g);
+                if !members.is_empty() {
+                    result_parts.push(format!("Loaded group(s): {} → {}", g, members.join(", ")));
+                }
+            }
+            if !unknown.is_empty() {
+                result_parts.push(format!(
+                    "Unknown group(s): {} (valid groups: {})",
+                    unknown.join(", "),
+                    crate::ai::tools::deferred_catalog_text()
+                ));
+            }
+            result_parts.push("They are now available; call them directly.".to_string());
+            Ok(ToolCallOutcome::Result(result_parts.join(". ")))
+        }
+
         PendingCall::CancelSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
             schedule::cancel_schedule(schedule_store, job_id, session_id),
         )),
@@ -1055,6 +1096,7 @@ mod tests {
             artifacts_created: vec![],
             auto_name_suggested: false,
             ghost_task_message: None,
+            loaded_tools: std::collections::HashSet::new(),
             cost_usd: 0.0,
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
