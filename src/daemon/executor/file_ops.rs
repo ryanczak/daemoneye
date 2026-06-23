@@ -106,8 +106,8 @@ fn build_local_buffer_read_cmd(
         .map(|p| format!(" | grep -E '{}'", sq_escape(p)))
         .unwrap_or_default();
     format!(
-        "sed -n '{},{}p' '{}'{}  | tmux load-buffer -b '{}' -; echo '__DE_DONE__'",
-        start, end, safe_path, grep_part, buf_name
+        "sed -n '{},{}p' '{}'{}  | tmux load-buffer -b '{}' -; tmux wait-for -S '{}'",
+        start, end, safe_path, grep_part, buf_name, buf_name
     )
 }
 
@@ -124,32 +124,19 @@ async fn local_read_via_buffer(
     let cmd = build_local_buffer_read_cmd(path, start, end, pattern, &buf_name);
 
     tmux::send_keys(pane_id, &cmd)?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        if tokio::time::Instant::now() > deadline {
-            let _ = std::process::Command::new("tmux")
-                .args(["delete-buffer", "-b", &buf_name])
-                .output();
-            anyhow::bail!("Timed out waiting for buffer load in pane {}", pane_id);
-        }
-        let snap = tmux::capture_pane(pane_id, 5).unwrap_or_default();
-        if snap.contains("__DE_DONE__") {
-            break;
-        }
-    }
 
-    let out = std::process::Command::new("tmux")
-        .args(["save-buffer", "-b", &buf_name, "-"])
-        .output()?;
-    let _ = std::process::Command::new("tmux")
-        .args(["delete-buffer", "-b", &buf_name])
-        .output();
+    // Local pane → its shell shares our tmux server, so it can signal `buf_name`.
+    let signalled = tmux::wait_for(&buf_name, Duration::from_secs(30)).await;
 
-    if !out.status.success() {
-        return Ok(String::new());
+    // Read the buffer regardless: a lost or raced signal must not lose a load that
+    // actually completed, and an empty buffer after a timeout is the real failure.
+    let bytes = tmux::save_buffer(&buf_name).unwrap_or_default();
+    tmux::delete_buffer(&buf_name);
+
+    if !signalled && bytes.is_empty() {
+        anyhow::bail!("Timed out waiting for buffer load in pane {}", pane_id);
     }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Build the shell command that runs a Python3-then-Perl atomic replacement in a remote pane.
@@ -1461,6 +1448,28 @@ mod tests {
         assert!(
             src.contains("cp -n --"),
             "remote copy command must use cp -n (no-clobber)"
+        );
+    }
+
+    #[test]
+    fn local_buffer_read_cmd_signals_via_wait_for() {
+        let cmd = super::build_local_buffer_read_cmd("/var/log/x", 1, 40, None, "de-rb-7");
+
+        assert!(
+            cmd.contains("tmux wait-for -S 'de-rb-7'"),
+            "command must signal via wait-for: {cmd}"
+        );
+        assert!(
+            !cmd.contains("__DE_DONE__"),
+            "command must NOT contain the old sentinel: {cmd}"
+        );
+        assert!(
+            !cmd.contains("echo"),
+            "command must NOT contain echo: {cmd}"
+        );
+        assert!(
+            cmd.contains("tmux load-buffer -b 'de-rb-7' -"),
+            "command must still load the buffer: {cmd}"
         );
     }
 }

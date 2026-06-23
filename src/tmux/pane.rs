@@ -499,3 +499,51 @@ pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {
     }
     Ok(())
 }
+
+/// Read a named tmux buffer's contents to bytes (`tmux save-buffer -b <name> -`).
+/// Returns the raw bytes; the buffer is NOT deleted (caller decides).
+pub fn save_buffer(name: &str) -> Result<Vec<u8>> {
+    let output = Command::new("tmux")
+        .args(["save-buffer", "-b", name, "-"])
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to save tmux buffer '{}'", name);
+    }
+    Ok(output.stdout)
+}
+
+/// Best-effort delete of a named tmux buffer (`tmux delete-buffer -b <name>`).
+/// Errors are swallowed — a missing buffer is not a failure.
+pub fn delete_buffer(name: &str) {
+    let _ = Command::new("tmux")
+        .args(["delete-buffer", "-b", name])
+        .output();
+}
+
+/// Block until `channel` is signalled with `tmux wait-for -S <channel>`, or until
+/// `timeout` elapses. Returns `true` if the signal arrived, `false` on timeout.
+/// On timeout the spawned waiter is killed and the channel is released so a later
+/// reuse cannot inherit a stuck waiter. The signalling side must run on a shell
+/// that shares THIS tmux server (i.e. a local/daemon-host pane) — a remote host's
+/// shell cannot reach this server.
+pub async fn wait_for(channel: &str, timeout: std::time::Duration) -> bool {
+    let mut child = match tokio::process::Command::new("tmux")
+        .args(["wait-for", channel])
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(_) => true,
+        Err(_) => {
+            let _ = child.start_kill();
+            // Release the channel so a future waiter on the same name isn't stuck.
+            let _ = tokio::process::Command::new("tmux")
+                .args(["wait-for", "-S", channel])
+                .output()
+                .await;
+            false
+        }
+    }
+}
