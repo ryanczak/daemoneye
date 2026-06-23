@@ -1,7 +1,7 @@
 # Phase 09: Error-Suppress Audit
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-09-1.md)
 **Depends on:** none (standalone; can follow any of 05–08 — touches different code paths)
 **Estimated diff:** ~80–120 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -457,3 +457,24 @@ grep -rn '#\[allow(deprecated' $(find src -name '*.rs' | grep -v '_tests.rs')
 - `parse_yaml_frontmatter` in `header.rs` retains `#[allow(dead_code)]` because it's only called from the `#[cfg(test)]` module. The compiler emits a dead_code warning during non-test builds since `#[cfg(test)]` code is excluded. This is the correct approach per STANDARDS §2.
 - `search_repository` in `search.rs` has a pre-existing `#[allow(dead_code)]` that was not touched — it was not in the spec's inventory.
 - The `format_memory_entry` function in `memory_prompt.rs` was preserved because it's called by `assemble_turn_relevant_memory` (live code). The G5 stub function `assemble_ambient_memory_rebuild` that also used it was deleted.
+
+### Review — 2026-06-23 (bounced — bug-phase-09-1)
+
+**Verdict:** bounced. Re-ran all four commands independently: `cargo fmt --all`
+(clean), `cargo build` (0 warnings), `cargo clippy --all-targets --all-features
+-- -D warnings` (clean), `cargo test` (27 + integration pass, 1 ignored). Spec 1
+(unsafe SAFETY comments), Spec 3 (deprecated), Spec 4 (too_many_arguments TODOs),
+and Spec 5 (INVARIANT/unreachable) all verified met.
+
+**Blocking issue:** acceptance criterion #2 — `grep -rn '#\[allow(dead_code' …`
+returns **2 hits**, not zero (`src/header.rs:294`, `src/search.rs:20`). Both
+*suppress* a `dead_code` diagnostic that can be *eliminated*:
+- `header.rs:294 parse_yaml_frontmatter` is test-only (callers at 542/552/560/568,
+  all inside `#[cfg(test)]`); the clean fix is `#[cfg(test)]`-gating the function,
+  not re-adding the allow. The spec's "stale" classification was wrong, but the
+  resolution should have been a blocker (STANDARDS §7) or the `cfg(test)` fix.
+- `search.rs:20 search_repository` is a dead production wrapper (production uses
+  `knowledge::search_repository`); pre-existing but still caught by the global
+  acceptance grep.
+
+See `bugs/bug-phase-09-1.md` for fixes. Re-dispatch once resolved.
