@@ -123,9 +123,11 @@ pub struct ToolDef {
 }
 ```
 
-There are 32 `ToolDef` literals in the `TOOLS` slice (line ~47). Adding a field
-forces all 32 to set it — a compile error until they do, which is the point: the
-split cannot be silently incomplete.
+There are 31 `ToolDef` literals in the `TOOLS` slice (line ~47; `load_tools`
+makes 32 once added). Adding a field forces all of them to set it — a compile
+error until they do, which is the point: the split cannot be silently
+incomplete. (Don't hand-count; the compiler is the authority — set the field on
+every literal the build flags.)
 
 ### The chat trait carries no tool set — `src/ai/mod.rs:110`
 
