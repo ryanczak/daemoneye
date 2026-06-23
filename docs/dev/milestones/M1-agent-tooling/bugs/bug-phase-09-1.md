@@ -1,7 +1,7 @@
 # Bug 1 on phase-09: `dead_code` acceptance grep still returns 2 hits — diagnostics suppressed, not eliminated
 
 **Severity:** major
-**Status:** open
+**Status:** verified (2026-06-23 — fixed in commit b6f0e1b; both sites `#[cfg(test)]`-gated)
 **Filed:** 2026-06-23
 
 ## What's wrong

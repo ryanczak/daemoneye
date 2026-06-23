@@ -1,7 +1,7 @@
 # Phase 09: Error-Suppress Audit
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** review
+**Status:** done
 **Depends on:** none (standalone; can follow any of 05–08 — touches different code paths)
 **Estimated diff:** ~80–120 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -529,3 +529,13 @@ grep -rn '#\[allow(deprecated' $(find src -name '*.rs' | grep -v '_tests.rs')
 **Commits:** pending
 
 **Notes for review:** None — clean resolution of bug-phase-09-1.
+
+### Review verdict — 2026-06-23
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-09-1 — major; `dead_code` acceptance grep returned 2 hits)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP)
+- **Scope deviations:** none — both remaining sites resolved via `#[cfg(test)]` gating (eliminates the diagnostic rather than suppressing it), exactly as the bug prescribed.
+- **Calibration:** Spec 2a misclassified the `header.rs` allow as "stale" and its 8-site inventory missed `search.rs:20`. The `#[cfg(test)]`-gating pattern (not `#[allow(dead_code)]`) is the correct resolution for test-only `pub fn`s — worth carrying into future audit-phase specs.
+
+Independent re-run (forced recompile of both changed files): `cargo fmt --all` clean · `cargo build` 0 warnings · `cargo clippy --all-targets --all-features -- -D warnings` clean · `cargo test` 750 unit + 27 integration pass (1 ignored). All four acceptance greps verified: `dead_code` → 0 hits, `deprecated` → only the 2 exempt `#[test]` sites, `unsafe` → 4 blocks each with a `// SAFETY:` comment.

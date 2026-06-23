@@ -66,7 +66,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 07a | pane-targeting-and-cleanup-safety ([phase-07a](phase-07a-pane-targeting-and-cleanup-safety.md)) — chat-pane exclusion, live stale-pane guard, sudo-cancel C-c, watch_pane hook Drop guard | done   |
 | 07b | completion-and-exit-code-correctness ([phase-07b](phase-07b-completion-and-exit-code-correctness.md)) — local completion via the `DE_EXIT` latch + non-zero exit surfacing (tmux-verb leverage split out, later renumbered → phase-10) | done   |
 | 08 | prompt-and-tooldef-fixes ([phase-08](phase-08-prompt-and-tooldef-fixes.md)) — sre.toml teaches the § 2.4 model + enum schema constraints + `auto_approve_scripts` dual-format (re-scoped 2026-06-22: tool re-documentation moved to phase-11) | done   |
-| 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | review |
+| 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | done   |
 | 10 | tmux-surface-and-safe-verbs ([phase-10](phase-10-tmux-surface-and-safe-verbs.md)) — stand-alone tmux-integration phase (was 07c): centralize inline buffer calls into `src/tmux/`, adopt `tmux wait-for` at the one daemon-host-local sentinel-poll site (`read_file` local buffer read); foreground path left untouched | todo   |
 | 11 | on-demand-tool-loading ([phase-11](phase-11-on-demand-tool-loading.md)) — split `TOOLS` into core + deferred via a self-declaring `ToolDef.deferred_group`; default render emits core only; a new `load_tools` tool pulls a deferred group into the session on demand (deferred schemas no longer ship every request) | todo   |
 
