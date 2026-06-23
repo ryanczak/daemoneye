@@ -1,7 +1,7 @@
 # Phase 11: On-Demand Tool Loading
 
 **Milestone:** M1 — Agent Tooling Improvements
-**Status:** todo
+**Status:** done
 **Depends on:** none for correctness. If phase-08 lands first there is **no
 conflict** — 08 edits `build_properties` (param-level enum) while this phase edits
 `get_*_tool_definition` (tool-level selection); different functions in the same
@@ -451,3 +451,94 @@ it in "Notes for review" rather than widening scope.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Completion (takeover) — 2026-06-23
+
+**Executor:** Claude Code (direct) — the local-LLM executor `hard_failed` mid-phase
+(left the tree non-compiling). Per the escalation path, Claude Code took over and
+completed the phase directly.
+
+**What was implemented (all 7 Spec tasks):**
+
+1. `ToolDef.deferred_group: Option<&'static str>` added; compiler-forced every
+   literal to set it. The nine deferred tools carry their group (`agents` ×4,
+   `scripts` ×2, `runbooks` ×2, `memory` ×1); all others `None`.
+2. `chat` trait + all three backend impls (`anthropic`/`openai`/`gemini`) gained
+   `loaded_tools: Vec<String>`; `render_*` changed from `&[ToolDef]` to
+   `&[&ToolDef]`; getters became `get_*_tool_definition(loaded: &[String])` with
+   `select_tools(loaded)` doing the core+loaded filter.
+3. `deferred_catalog_text()` generates the group→members catalog, appended to the
+   `load_tools` description inside each renderer (stable first-appearance order).
+4. `load_tools` wired end-to-end: `PendingCall::LoadTools` / `AiEvent::LoadTools`
+   / `LoadToolsArgs` (dual array+string parse via `extract_string_vec`) / dispatch
+   arm / `stream.rs` event arm. Silent tool (`should_emit_tool_feedback() = true`).
+5. Executor arm resolves groups → names via `tools_in_group()`, inserts into
+   `entry.loaded_tools`, marks `dirty`, returns a `Result` naming what loaded +
+   valid groups for any unknown group.
+6. `SessionEntry.loaded_tools: HashSet<String>` (see Scope deviation below);
+   **both** the interactive loop (`stream.rs`) and the ghost loop (`ghost.rs`)
+   now read the session's `loaded_tools` at the top of each turn and thread it
+   into `chat()`. One-shot `use_tools=false` callers (auto_name, briefing, digest,
+   scheduled, webhook) pass `Vec::new()`.
+7. `assets/prompts/sre.toml` gained a terse "On-demand tools" subsection teaching
+   the `load_tools` behavior without enumerating the nine tools; `sre.toml` still
+   parses (`builtin_sre_prompt_parses`).
+
+**Two latent blocker bugs found and fixed during takeover** (the hard_fail had
+left them; they compiled and the executor's partial tests passed, masking them):
+
+- **Interactive loop dropped the loaded set.** `run_conversation_loop`
+  (`stream.rs`) hardcoded `Vec::new()` into `chat()` instead of reading the
+  session's `loaded_tools`. The feature was inert: a session could call
+  `load_tools`, the executor persisted the names, but the next render still went
+  core-only. Fixed to read `loaded_tools` through the `sessions` lock at the top
+  of the outer loop (acceptance criterion: *"the next render … includes their
+  schemas"*).
+- **Ghost loop had the same `Vec::new()` bug** in `trigger_ghost_turn`
+  (`ghost.rs`) — fixed identically so the mechanism is uniform across interactive
+  and ghost sessions, as the architecture requires.
+
+**Tests added (`src/ai/tools.rs`, all from the Test plan + one seam regression):**
+`deferred_group_split_is_total` (now also asserts `select_tools(all_deferred).len()
+== TOOLS.len()`), `default_render_omits_deferred`, `load_then_render_includes_group`,
+`load_tools_catalog_lists_all_groups`, `load_tools_accepts_array_and_string_groups`,
+`tools_in_group_resolves_members`, plus `loaded_group_names_render_their_schemas`
+(locks the executor→loop→render seam that the `Vec::new()` bug had broken).
+
+**Scope deviation — `loaded_tools` is ephemeral, not serde-persisted.** Spec Task 6
+asked for `#[serde(default)]` on the field for named-session round-trip. `SessionEntry`
+has **no serde derive** — it is a plain in-memory record ("evicted after 30 minutes
+of inactivity"); named-session persistence uses the separate `session_store.rs`
+types, not `SessionEntry`. So `loaded_tools` is per-live-session state that resets to
+empty on reload. This satisfies the "no parse break for pre-existing session files"
+half of the criterion (the field is in no serialized form) and matches the struct's
+documented purpose; persisting it would have required widening the named-session
+store, out of proportion to the feature. Flagged here rather than silently widened.
+
+**Cross-check (chat call sites threaded):** interactive (`stream.rs`, reads set),
+ghost (`ghost.rs`, reads set), and the one-shot `Vec::new()` callers `auto_name.rs`,
+`briefing.rs`, `digest.rs`, `scheduled.rs`, `webhook.rs`. No caller silently dropped
+to the full set; all reach session state or legitimately send no tools.
+
+**End-to-end verification.** `get_tool_definition(&[])` omits all nine deferred
+schemas (`create_agent`, `read_agent`, `list_agents`, `delete_agent`, `read_script`,
+`list_scripts`, `read_runbook`, `list_runbooks`, `delete_memory`) while including
+`load_tools` — asserted by `default_render_omits_deferred`. Gate: `cargo fmt --all`,
+`cargo build` (zero new warnings), `cargo clippy --all-targets --all-features -D
+warnings`, and `cargo test` (758 lib + 27 integration, 0 failed, 1 ignored) all pass.
+
+### Review verdict — 2026-06-23
+
+- **Verdict:** escalated
+- **Bounces:** none (executor `hard_failed`; taken over directly rather than bounced)
+- **Executor:** Claude Code (direct), after local-LLM `hard_fail`
+- **Scope deviations:** `loaded_tools` is ephemeral in-memory state, not
+  `#[serde(default)]`-persisted — `SessionEntry` is not a serde type (see Completion
+  entry). All other tasks match spec and architecture §1.3.
+- **Calibration:** The local executor left a non-compiling tree **and** two inert
+  call sites (`Vec::new()` passed to `chat` in both the interactive and ghost loops)
+  that compiled and passed the partial test set while making the headline feature do
+  nothing. Lesson: when a phase threads a new value through a trait, the loop call
+  sites that *read* it need an explicit end-to-end seam test — a green build + unit
+  tests on the pure helpers do not catch a loop that ignores the value. The added
+  `loaded_group_names_render_their_schemas` test documents that seam.

@@ -68,7 +68,7 @@ Phases are subsystem-scoped; each carries its own security hardening (per the
 | 08 | prompt-and-tooldef-fixes ([phase-08](phase-08-prompt-and-tooldef-fixes.md)) — sre.toml teaches the § 2.4 model + enum schema constraints + `auto_approve_scripts` dual-format (re-scoped 2026-06-22: tool re-documentation moved to phase-11) | done   |
 | 09 | error-suppress-audit ([phase-09](phase-09-error-suppress-audit.md)) — unwrap/expect/panic!/unsafe/#[allow] cleanup | done   |
 | 10 | tmux-surface-and-safe-verbs ([phase-10](phase-10-tmux-surface-and-safe-verbs.md)) — stand-alone tmux-integration phase (was 07c): centralize inline buffer calls into `src/tmux/`, adopt `tmux wait-for` at the one daemon-host-local sentinel-poll site (`read_file` local buffer read); foreground path left untouched | done   |
-| 11 | on-demand-tool-loading ([phase-11](phase-11-on-demand-tool-loading.md)) — split `TOOLS` into core + deferred via a self-declaring `ToolDef.deferred_group`; default render emits core only; a new `load_tools` tool pulls a deferred group into the session on demand (deferred schemas no longer ship every request) | todo   |
+| 11 | on-demand-tool-loading ([phase-11](phase-11-on-demand-tool-loading.md)) — split `TOOLS` into core + deferred via a self-declaring `ToolDef.deferred_group`; default render emits core only; a new `load_tools` tool pulls a deferred group into the session on demand (deferred schemas no longer ship every request) | done   |
 
 ## Notes
 
@@ -315,6 +315,48 @@ binary/large transfer, which is its own future phase); the remote read sentinel
 - Cross-check every `ToolDef` param against its `PendingCall` variant in
   `types.rs` for drift while here.
 
-### Retrospective
+### Retrospective (2026-06-23)
 
-(Filled in at milestone close, before any M2 phase 01.)
+**Outcome.** All eleven phases (01–11) landed. M1 delivered: remote/SSH command +
+file parity (01–05), the namespace ACL (06), execution-correctness hardening
+(07a/07b), the error-suppression audit (09), the tmux-surface refactor (10), the
+prompt/tool-def fixes (08), and on-demand tool loading (11).
+
+**What worked.**
+- **Interleaved security sequencing.** Landing each subsystem's security fix in the
+  phase that already touched it (SSH escaping in 01, path/symlink guards in 02,
+  sudoers + allowlist in 03, namespace ACL in 06) kept diffs coherent and pulled the
+  two highest-severity bugs to the front (01, 03). No regressions traced back to a
+  deferred-hardening gap.
+- **Mid-milestone model reset absorbed cleanly.** The 2026-06-22 remote-execution
+  redirection (daemon-host is the only artifact store) reshaped 04/05 and *dropped*
+  work (write-tool `target_pane` parity) rather than bolting it on. Reopening 04 to
+  stream-by-default + sudo-only materialize was the right call.
+- **Splitting risky phases paid off.** 07a/07b (and the 07c→phase-10 promotion) kept
+  the delicate completion-detection change away from exploratory tmux-verb work.
+- **Compiler-forced completeness in 11.** Making `deferred_group` a required field
+  meant the core/deferred split could never be silently incomplete.
+
+**What broke — calibration data.**
+- **Phase 09 bounced once** (bug-phase-09-1) — a real but bounded miss, fixed on
+  re-dispatch. One occurrence.
+- **Phase 11 hard_failed and was taken over.** The local-LLM executor left a
+  non-compiling tree *and*, more insidiously, two inert call sites: both the
+  interactive (`stream.rs`) and ghost (`ghost.rs`) loops passed `Vec::new()` to
+  `chat()` instead of the session's `loaded_tools`. The tree compiled and the
+  partial unit tests (on the *pure* helpers) passed — so the headline feature did
+  nothing while looking green. The takeover fixed both sites and added a seam test
+  (`loaded_group_names_render_their_schemas`).
+
+**Trend to watch (not yet a fix).** Two of eleven phases needed architect
+intervention (one bounce, one takeover), both on the *back half* of the milestone
+(09, 11) and both involving **the gap between "compiles + unit tests pass" and "the
+feature actually runs"** — 09 was suppression cleanup, 11 was a value threaded
+through a trait but ignored at the loop call site. One occurrence is data, two is a
+trend. The candidate WORKFLOW.md fold: *when a phase threads a new value through a
+trait/signature, an acceptance criterion must be a live end-to-end seam test that
+fails if the loop call site drops the value — not just unit tests on the pure
+helpers it feeds.* **Not yet folded** — per WORKFLOW.md this needs a third occurrence
+or explicit user sign-off; raised here for the human's milestone-close review.
+
+**Boundary.** M1 is complete. Human sign-off required before M2 is drafted.
