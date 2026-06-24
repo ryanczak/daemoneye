@@ -1,6 +1,7 @@
 # DaemonEye Roadmap & Project Review
 
 *Drafted 2026-05-09 against `master` at v0.9.1.*
+*Revised 2026-06-23 against `master` at v0.9.7 — refreshed metrics, marked R2/R4 done, recorded M1 completion. See the "Status as of 2026-06-23" note in §3.*
 
 This document is a candid review of the project — both code and product —
 followed by a prioritised list of opportunities. It is not a commitment;
@@ -16,9 +17,9 @@ audit-first) and substantial implementation depth.
 
 | Metric | Value |
 |---|---|
-| Version | 0.9.1 (heading toward 1.0) |
-| Source | ~38,300 lines of Rust across 72 files |
-| Tests | 598 passing + 1 ignored (587 unit + 11 integration + 1 ignored) |
+| Version | 0.9.7 (heading toward 1.0) |
+| Source | ~47,000 lines of Rust across 82 files |
+| Tests | 785 passing + 1 ignored |
 | Targets | Linux only, tmux 2.6+, Rust 1.79+ (edition 2024) |
 | AI providers | Anthropic, OpenAI, Gemini, Ollama, LM Studio |
 
@@ -26,7 +27,13 @@ audit-first) and substantial implementation depth.
 - 0.7 — pane discovery & persistence, pipe-pane log, ANSI semantic markers
 - 0.8 — `daemoneye status`, circuit breaker, supervised tasks, catch-up brief, cross-session context
 - 0.9 — Ghost-shell architecture convergence, scheduled ghosts, sudoers tooling
-- 0.9.1 / Unreleased — structured memory frontmatter, configurable tool limits, named session persistence
+- 0.9.1 — structured memory frontmatter, configurable tool limits, named session persistence
+- 0.9.x — cost accounting (`daemoneye costs`, closes R2), `daemoneye prompts` + `/prompt` (closes R4)
+- **M1 (Agent Tooling Improvements)** — completed 2026-06-23; all 11 phases done. Remote
+  execution model (daemon-host owns artifacts, remotes are execution targets only), script-exec
+  hardening, namespace access control, pane-targeting + completion-detection correctness,
+  error-suppression audit, tmux surface + safe verbs, on-demand tool loading. **Orthogonal to the
+  R/I feature list below — closed no roadmap items.**
 
 The product is doing a lot of things right: every approval path has a
 visible UI, ghost shells are gated behind two independent locks, the
@@ -67,10 +74,10 @@ than bolted on.
 | ~~C2~~ | ~~**12 `cargo test --no-run` warnings.**~~ | **Fixed** | — |
 | ~~C3~~ | ~~**Two competing logging facades.**~~ | **Fixed** | — |
 | ~~C4~~ | ~~**125+ `unwrap()` calls outside test code.**~~ | **Fixed** | — |
-| C5 | **Files trending past 1000 lines.** `server.rs` (1634), `config.rs` (1381), `background.rs` (1369), `render.rs` (1245), `webhook.rs` (1207), `cli/commands/mod.rs` (1199). Each has natural seams (e.g. `config.rs` has ~60 inline test cases). | Low | Largest files |
+| C5 | **Files trending past 1000 lines — and growing.** As of v0.9.7, 11 files exceed 1000 lines: `ai/tools.rs` (2232), `server.rs` (1976), `config.rs` (1631), `executor/file_ops.rs` (1475), `ai/types.rs` (1413), `background.rs` (1369), `executor/knowledge.rs` (1341), `render.rs` (1305), `webhook.rs` (1210), `executor/foreground.rs` (1192), `cli/commands/mod.rs` (1181). Each has natural seams (e.g. `config.rs` has ~60 inline test cases). | Low | Largest files |
 | ~~C6~~ | ~~**`tests/integration.rs` exists but is shallow**~~ — covers serde round-trips and on-disk format only. The IPC `Request`/`Response` types are re-declared locally rather than imported from the crate, so production drift goes undetected; schedule and session tests hand-write JSON instead of calling `ScheduleStore` / `session_store`; no end-to-end Ask → ToolCall → Result loop. See Phase A.5 below.~~ | **Fixed** | `tests/integration.rs` |
 | ~~C7~~ | ~~**Stringly-typed tool dispatch.**~~ `dispatch_tool_event` parses JSON arg names; a typo in a backend's tool definition surfaces as a runtime error rather than a compile-time miss.~~ | **Fixed** | `src/ai/tools.rs` |
-| C8 | **`anyhow` everywhere; no `thiserror` at module boundaries.** Recovery decisions cannot be made by callers — every error is opaque. | Low | repo-wide |
+| C8 | **`anyhow` everywhere; no `thiserror` at module boundaries.** Recovery decisions cannot be made by callers — every error is opaque. Latent, not active: the codebase pre-classifies the one boundary that matters (HTTP status in `send_with_retry_inner` decides retry *before* the error is built), and the only error-string match in the tree is a test (`session_store_tests.rs:141`). The fix is *not* a repo-wide migration — define a small `thiserror` `AiError` enum (`CircuitOpen`/`RateLimited`/`Auth`/`BadRequest`/`Server`/`Network`) so callers can branch (e.g. `doctor` reporting *why* a probe failed), and keep `anyhow` as the glue type elsewhere. Best done as a rider on the next AI-touching feature (R1 or R5), not on its own. | Low | repo-wide |
 
 ~~**Recommendation:** treat C1–C3 as a brief hygiene sprint; they are
 small fixes whose absence undermines confidence in the rest of the
@@ -95,12 +102,14 @@ candidates. Today they are re-tokenised on every turn.
 **Impact:** 30–80 % cost reduction on long conversations and watchdog
 loops; faster TTFB. **Fit:** zero behavioural change.
 
-#### R2. Cost & token telemetry
-`UsageUpdate` already tracks prompt tokens per turn. Add a
-`var/log/usage.jsonl` and a `daemoneye costs [--day | --week]` view.
-Add `[budget] max_cost_per_day` as a daemon-wide ceiling that opens
-the circuit breaker when crossed.
-**Fit:** matches DaemonEye's audit-first design.
+#### R2. ~~Cost & token telemetry~~
+**Done (v0.9.x).** `src/cost.rs` computes per-call USD cost from
+`TokenBreakdown` + `Pricing`; cost data is written to `events.jsonl`;
+`daemoneye costs --group-by day|agent|provider|model|session` aggregates
+it (no daemon round-trip — reads the log directly); cost appears in
+`daemoneye status`. **Remaining gap:** the `[budget] max_cost_per_day`
+ceiling that opens the circuit breaker is *not* implemented — track as a
+follow-up if a spend cap is wanted.
 
 #### R3. Plugin architecture (FR-1.5)
 Listed in REQUIREMENTS as MUST, but not implemented. Define a
@@ -108,10 +117,10 @@ versioned `AlertProvider` and `ToolProvider` trait that loads `.so`
 plugins from `~/.daemoneye/lib/`. Start with a built-in plugin
 crate so the API is forced through a single seam.
 
-#### R4. Prompt library subcommand (FR-1.3.2)
-Config + file loading exist; the `daemoneye prompts` listing
-subcommand and the `/prompt <name>` slash command are noted as
-"pending" in REQUIREMENTS. Close the gap.
+#### R4. ~~Prompt library subcommand (FR-1.3.2)~~
+**Done.** `daemoneye prompts` listing subcommand (`Commands::Prompts`
+in `main.rs`) and the `/prompt <name>` slash command (`cli/commands/mod.rs`)
+both ship.
 
 #### R5. `daemoneye doctor`
 Check tmux version, sudoers rules, webhook port, AI connectivity,
@@ -298,10 +307,13 @@ A6. ~~**Mark C6 fully closed.**~~ C6 row in §2.2 struck through, severity chang
 
 ### Phase B — Quick product wins (weeks)
 5. **R1** — Anthropic prompt caching on system prompt + manifest.
-6. **R2** — usage log + `daemoneye costs`.
+6. ~~**R2** — usage log + `daemoneye costs`.~~ **Done (v0.9.x);** budget-cap follow-up remains.
 7. **R5** — `daemoneye doctor`.
-8. **R4** — finish the prompt library subcommand.
+8. ~~**R4** — finish the prompt library subcommand.~~ **Done.**
 9. **R7** — webhook clustering.
+
+With R2 and R4 landed, the remaining Phase B quick wins are **R1, R5, R7**
+(plus the two open code issues, C5 and C8).
 
 ### Phase C — Trust & observability (a release)
 10. **R6** — replay & forensics CLI.
@@ -367,6 +379,7 @@ design philosophy and are best deferred or declined:
 
 ---
 
-*This roadmap should be re-reviewed after Phase A lands. Phase B
-ordering is likely to shift once cost telemetry (R2) reveals where
-real spend lives.*
+*Phase A and the M1 agent-tooling milestone are complete. Cost telemetry
+(R2) has landed — Phase B ordering should now be informed by what
+`daemoneye costs` reveals about real spend. The next milestone is to be
+picked from the remaining R/I items and the two open code issues (C5, C8).*

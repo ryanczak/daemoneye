@@ -3,7 +3,25 @@ use std::collections::HashSet;
 
 use crate::cli::input::*;
 use crate::cli::render::*;
+use crate::cli::render_ratatui::RatatuiRendererStdout;
 use crate::config::Config;
+
+/// Which renderer path the chat loop should use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RendererMode {
+    Legacy,
+    Ratatui,
+}
+
+impl RendererMode {
+    fn from_env() -> Self {
+        match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
+            None | Some("") | Some("legacy") => Self::Legacy,
+            Some("ratatui") => Self::Ratatui,
+            _ => Self::Legacy,
+        }
+    }
+}
 
 mod approval;
 mod approval_ui;
@@ -216,143 +234,172 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             chat_height = terminal_height();
         } // stable for SETTLE_MS — proceed
     }
+    // Branch on renderer mode.  The ratatui path skips DECSTBM scroll-region
+    // setup and raw-mode hand-management — ratatui owns both.
+    let renderer_mode = RendererMode::from_env();
 
-    // Install the scroll region.  The input frame and status bar are
-    // intentionally NOT drawn yet — the greeting streams next and the
-    // dimensions may still shift.  Drawing the frame now would show it in
-    // the wrong place or have it visually overwritten by the greeting content.
-    setup_scroll_region(chat_height);
+    if renderer_mode == RendererMode::Ratatui {
+        // Ratatui path: create the inline-viewport renderer (enters raw mode
+        // internally).  Do NOT call set_raw_mode or setup_scroll_region.
+        let renderer = match RatatuiRendererStdout::new(start_time) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Failed to initialise ratatui renderer: {e}");
+                return Err(e.into());
+            }
+        };
 
-    // ASCII logo — centered using the settled chat_width.
-    {
-        let logo_lines = [
-            "                        ▄      ▄",
-            "                       ██▄    ▄██",
-            "                      █████▄▄█████",
-            "                   ▄████████████████▄",
-            "                  ████████████████████",
-            "                 ████████  ▀▀  ████████",
-            "                ██████▀   ▄██▄   ▀██████",
-            "                █████    ███ ██    █████",
-            "                █████    ▀████▀    █████",
-            "                ██████▄   ▀██▀   ▄██████",
-            "                 ████████▄▄  ▄▄████████",
-            "                  ████████████████████",
-            "                   ▀████▀▀████▀▀████▀",
-            "                   ▄▀  █  █  █  █  ▀▄",
-            "                  █    █  █  █  █    █",
-            "                 ▄▀   ▄▀  █  █  ▀▄   ▀▄",
-            "                 █   █    █  █    █   █",
-            "",
-            "████▄   ▄▄▄  ▄▄▄▄▄ ▄▄   ▄▄  ▄▄▄  ▄▄  ▄▄ ██████ ▄▄ ▄▄ ▄▄▄▄▄",
-            "██  ██ ██▀██ ██▄▄  ██▀▄▀██ ██▀██ ███▄██ ██▄▄   ▀███▀ ██▄▄",
-            "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
-        ];
-        let subtitle = "                   AGENTIC OPERATOR";
-        let logo_w = logo_lines
-            .iter()
-            .map(|l| l.chars().count())
-            .max()
-            .unwrap_or(0);
-        let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
-        println!();
-        let blood_red = "\x1b[1m\x1b[38;2;180;0;0m";
-        let deep_yellow = "\x1b[38;2;220;160;0m"; // bold inherited from blood_red prefix
-        for (i, line) in logo_lines.iter().enumerate() {
-            // For eye lines, split the line around the yellow segment and render
-            // the outer body in red and the inner pupil/iris in deep yellow.
-            let eye = match i {
-                6 => "▄██▄",   // line 7 of art — iris
-                7 => "███ ██", // line 8 — pupil
-                8 => "▀████▀", // line 9 — eye interior
-                9 => "▀██▀",   // line 10 — pupil highlight
-                _ => "",
-            };
-            let s = if !eye.is_empty() {
-                if let Some(p) = line.find(eye) {
-                    format!(
-                        "{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
-                        &line[..p],
-                        &line[p + eye.len()..]
-                    )
+        let result = run_chat_inner_raw(
+            InputHandles {
+                state: &mut input_state,
+                stdin: &stdin,
+                sigwinch: &mut sigwinch,
+            },
+            TerminalCtx {
+                chat_width,
+                start_time,
+                old_termios: unsafe { std::mem::zeroed() }, // unused for ratatui
+            },
+            session_id,
+            current_prompt,
+            &mut approval,
+            TmuxCtx {
+                session: tmux_session,
+                pane: target_pane,
+            },
+            renderer_mode,
+            Some(renderer),
+        )
+        .await;
+        // Ratatui renderer is consumed by run_chat_inner_raw (restores on exit).
+        result
+    } else {
+        // Legacy path: unchanged.
+        setup_scroll_region(chat_height);
+
+        // ASCII logo — centered using the settled chat_width.
+        {
+            let logo_lines = [
+                "                        ▄      ▄",
+                "                       ██▄    ▄██",
+                "                      █████▄▄█████",
+                "                   ▄████████████████▄",
+                "                  ████████████████████",
+                "                 ████████  ▀▀  ████████",
+                "                ██████▀   ▄██▄   ▀██████",
+                "                █████    ███ ██    █████",
+                "                █████    ▀████▀    █████",
+                "                ██████▄   ▀██▀   ▄██████",
+                "                 ████████▄▄  ▄▄████████",
+                "                  ████████████████████",
+                "                   ▀████▀▀████▀▀████▀",
+                "                   ▄▀  █  █  █  █  ▀▄",
+                "                  █    █  █  █  █    █",
+                "                 ▄▀   ▄▀  █  █  ▀▄   ▀▄",
+                "                 █   █    █  █    █   █",
+                "",
+                "████▄   ▄▄▄  ▄▄▄▄▄ ▄▄   ▄▄  ▄▄▄  ▄▄  ▄▄ ██████ ▄▄ ▄▄ ▄▄▄▄▄",
+                "██  ██ ██▀██ ██▄▄  ██▀▄▀██ ██▀██ ███▄██ ██▄▄   ▀███▀ ██▄▄",
+                "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
+            ];
+            let subtitle = "                   AGENTIC OPERATOR";
+            let logo_w = logo_lines
+                .iter()
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0);
+            let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
+            println!();
+            let blood_red = "\x1b[1m\x1b[38;2;180;0;0m";
+            let deep_yellow = "\x1b[38;2;220;160;0m";
+            for (i, line) in logo_lines.iter().enumerate() {
+                let eye = match i {
+                    6 => "▄██▄",
+                    7 => "███ ██",
+                    8 => "▀████▀",
+                    9 => "▀██▀",
+                    _ => "",
+                };
+                let s = if !eye.is_empty() {
+                    if let Some(p) = line.find(eye) {
+                        format!(
+                            "{blood_red}{}{deep_yellow}{eye}{blood_red}{}\x1b[0m",
+                            &line[..p],
+                            &line[p + eye.len()..]
+                        )
+                    } else {
+                        format!("{blood_red}{line}\x1b[0m")
+                    }
+                } else if i >= 18 {
+                    format!("\x1b[1m\x1b[97m{line}\x1b[0m")
                 } else {
                     format!("{blood_red}{line}\x1b[0m")
-                }
-            } else if i >= 18 {
-                format!("\x1b[1m\x1b[97m{line}\x1b[0m")
-            } else {
-                format!("{blood_red}{line}\x1b[0m")
-            };
-            println!("{pad}{s}");
+                };
+                println!("{pad}{s}");
+            }
+            println!("{pad}\x1b[2m{subtitle}\x1b[0m");
         }
-        println!("{pad}\x1b[2m{subtitle}\x1b[0m");
-    }
 
-    // Compact splash hint — full command list is available via /help.
-    {
-        let hint_plain = "/help  — list commands      /exit  — quit";
-        let hint = "\x1b[96m/help\x1b[0m  \x1b[2m— list commands\x1b[0m      \x1b[96m/exit\x1b[0m  \x1b[2m— quit\x1b[0m".to_string();
-        let pad = " ".repeat((chat_width.saturating_sub(hint_plain.chars().count())) / 2);
-        println!();
-        println!("{pad}{hint}");
-        println!();
-    }
+        // Compact splash hint.
+        {
+            let hint_plain = "/help  — list commands      /exit  — quit";
+            let hint = "\x1b[96m/help\x1b[0m  \x1b[2m— list commands\x1b[0m      \x1b[96m/exit\x1b[0m  \x1b[2m— quit\x1b[0m".to_string();
+            let pad = " ".repeat((chat_width.saturating_sub(hint_plain.chars().count())) / 2);
+            println!();
+            println!("{pad}{hint}");
+            println!();
+        }
 
-    // Hold off on the AI greeting until a tmux client is attached to this
-    // session.  When the daemon auto-opens the chat pane in a freshly-created
-    // (detached) session, nobody is watching yet; firing the greeting
-    // immediately would waste an API call and surface a stale response when
-    // the user eventually attaches.
-    //
-    // In the normal keybinding workflow (user already inside an active tmux
-    // session), #{session_attached} is already ≥ 1 so the loop exits on the
-    // first check with no perceptible delay.
-    let config = Config::load().unwrap_or_default();
-    let model_pre = config.resolve_model(None).model.clone();
-    let ctx_pre = config.resolve_model(None).context_window();
-    let hint = approval.hint();
-    draw_status_bar(
-        chat_height,
-        chat_width,
-        &StatusBarState {
-            session_id: &session_id,
-            approval_hint: &hint,
-            model: &model_pre,
-            prompt_tokens: 0,
-            context_window: ctx_pre,
-            daemon_up: false,
-            tools_total: 0,
-            cost_usd: 0.0,
-            has_untracked: false,
-        },
-    );
-
-    // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
-    let old_termios = crate::cli::input::set_raw_mode()?;
-
-    let result = run_chat_inner_raw(
-        InputHandles {
-            state: &mut input_state,
-            stdin: &stdin,
-            sigwinch: &mut sigwinch,
-        },
-        TerminalCtx {
+        // Wait for tmux client attachment before greeting.
+        let config = Config::load().unwrap_or_default();
+        let model_pre = config.resolve_model(None).model.clone();
+        let ctx_pre = config.resolve_model(None).context_window();
+        let hint = approval.hint();
+        draw_status_bar(
+            chat_height,
             chat_width,
-            start_time,
-            old_termios,
-        },
-        session_id,
-        current_prompt,
-        &mut approval,
-        TmuxCtx {
-            session: tmux_session,
-            pane: target_pane,
-        },
-    )
-    .await;
+            &StatusBarState {
+                session_id: &session_id,
+                approval_hint: &hint,
+                model: &model_pre,
+                prompt_tokens: 0,
+                context_window: ctx_pre,
+                daemon_up: false,
+                tools_total: 0,
+                cost_usd: 0.0,
+                has_untracked: false,
+            },
+        );
 
-    crate::cli::input::restore_termios(old_termios);
-    result
+        // Switch to raw mode for the entire chat session so we can trap Ctrl+C.
+        let old_termios = crate::cli::input::set_raw_mode()?;
+
+        let result = run_chat_inner_raw(
+            InputHandles {
+                state: &mut input_state,
+                stdin: &stdin,
+                sigwinch: &mut sigwinch,
+            },
+            TerminalCtx {
+                chat_width,
+                start_time,
+                old_termios,
+            },
+            session_id,
+            current_prompt,
+            &mut approval,
+            TmuxCtx {
+                session: tmux_session,
+                pane: target_pane,
+            },
+            renderer_mode,
+            None,
+        )
+        .await;
+
+        crate::cli::input::restore_termios(old_termios);
+        result
+    }
 }
 
 struct InputHandles<'a> {
@@ -372,6 +419,7 @@ struct TmuxCtx {
     pane: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_chat_inner_raw(
     handles: InputHandles<'_>,
     term: TerminalCtx,
@@ -379,6 +427,8 @@ async fn run_chat_inner_raw(
     mut current_prompt: Option<String>,
     approval: &mut SessionApproval,
     tmux: TmuxCtx,
+    renderer_mode: RendererMode,
+    renderer: Option<RatatuiRendererStdout>,
 ) -> Result<()> {
     let InputHandles {
         state: input_state,
@@ -394,6 +444,495 @@ async fn run_chat_inner_raw(
         session: tmux_session,
         pane: target_pane,
     } = tmux;
+
+    if renderer_mode == RendererMode::Ratatui {
+        let mut renderer = renderer.expect("ratatui renderer required");
+        return run_chat_ratatui(
+            input_state,
+            stdin,
+            sigwinch,
+            &mut renderer,
+            chat_width,
+            start_time,
+            session_id,
+            current_prompt,
+            approval,
+            tmux_session.as_deref(),
+            target_pane.as_deref(),
+        )
+        .await;
+    }
+    // ── Ratatui chat loop ──────────────────────────────────────────────
+    #[allow(clippy::too_many_arguments)]
+    async fn run_chat_ratatui(
+        input_state: &mut InputState,
+        stdin: &AsyncStdin,
+        sigwinch: &mut tokio::signal::unix::Signal,
+        renderer: &mut RatatuiRendererStdout,
+        chat_width: usize,
+        start_time: std::time::Instant,
+        mut session_id: String,
+        current_prompt: Option<String>,
+        approval: &mut SessionApproval,
+        tmux_session: Option<&str>,
+        target_pane: Option<&str>,
+    ) -> Result<()> {
+        let mut chat_width = chat_width;
+        let mut last_ctrl_c: Option<std::time::Instant> = None;
+        let mut daemon_up = false;
+        let mut prompt_tokens: u32 = 0;
+        let mut cost_usd: f64 = 0.0;
+        let mut has_untracked: bool = false;
+        let config = Config::load().unwrap_or_default();
+        let mut context_window = config.resolve_model(None).context_window();
+        let mut model = config.resolve_model(None).model.clone();
+
+        // Wait for tmux client attachment.
+        loop {
+            let attached = std::process::Command::new("tmux")
+                .args(["display-message", "-p", "#{session_attached}"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(1);
+            if attached > 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
+        // Helper: re-draw the live region.
+        let redraw = |r: &mut RatatuiRendererStdout,
+                      is: &InputState,
+                      sid: &str,
+                      ap: &SessionApproval,
+                      mdl: &str,
+                      pt: u32,
+                      cw: u32,
+                      du: bool,
+                      cost: f64,
+                      hu: bool| {
+            let sb = StatusBarState {
+                session_id: sid,
+                approval_hint: &ap.hint(),
+                model: mdl,
+                prompt_tokens: pt,
+                context_window: cw,
+                daemon_up: du,
+                tools_total: 0,
+                cost_usd: cost,
+                has_untracked: hu,
+            };
+            let _ = r.draw(is.current_line(), &sb);
+        };
+
+        redraw(
+            renderer,
+            input_state,
+            &session_id,
+            approval,
+            &model,
+            prompt_tokens,
+            context_window,
+            daemon_up,
+            0.0,
+            false,
+        );
+
+        // Send the greeting query.
+        {
+            let cw = chat_width;
+            let resize = StreamResizeDims {
+                width: &mut chat_width,
+                height: &mut 0,
+                start: start_time,
+                model: model.clone(),
+                daemon_up: false,
+                tools_total: 0,
+                has_frame: false,
+                cost_usd: 0.0,
+                has_untracked: false,
+            };
+            match ask_with_session(
+                QueryArgs {
+                    query: "Hello!".to_string(),
+                    display_query: "",
+                    prompt_override: current_prompt.as_deref(),
+                },
+                Some(&session_id),
+                approval,
+                AskTmuxCtx {
+                    session: tmux_session,
+                    pane: target_pane,
+                },
+                TokenCtx {
+                    prompt_tokens: &mut prompt_tokens,
+                    context_window,
+                },
+                StreamCtx {
+                    stdin,
+                    chat_width: Some(cw),
+                    old_termios: unsafe { std::mem::zeroed() },
+                    sigwinch: Some(sigwinch),
+                    resize: Some(resize),
+                    cost_usd: &mut cost_usd,
+                    has_untracked: &mut has_untracked,
+                },
+            )
+            .await
+            {
+                Ok(()) => daemon_up = true,
+                Err(e) => {
+                    eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
+                    eprintln!(
+                        "  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m"
+                    );
+                    eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
+                }
+            }
+        }
+
+        redraw(
+            renderer,
+            input_state,
+            &session_id,
+            approval,
+            &model,
+            prompt_tokens,
+            context_window,
+            daemon_up,
+            0.0,
+            false,
+        );
+
+        // Help text for /help command.
+        let help_text = [
+            "Commands:",
+            "  /help     show this list        /exit     quit",
+            "  /clear    reset session         /refresh  resync context",
+            "  /model    list or switch model  /pane     list or pin target pane",
+            "  /approvals list approvals       /prompt   switch system prompt",
+            "  /limits   show active limits    /session  save/load sessions",
+            "",
+        ]
+        .join("\n");
+
+        loop {
+            // Read input using the existing key handler but render via ratatui.
+            let line_opt = read_input_line_inner_ratatui(
+                input_state,
+                stdin,
+                sigwinch,
+                renderer,
+                &mut chat_width,
+                start_time,
+                &session_id,
+                approval,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+                &mut last_ctrl_c,
+            )
+            .await?;
+
+            let Some(line) = line_opt else { break };
+
+            let query = line.trim().to_string();
+            if query.is_empty() {
+                continue;
+            }
+
+            input_state.push_history(query.clone());
+
+            if query == "/exit" || query == "/quit" || query == "exit" || query == "quit" {
+                break;
+            }
+            if query == "/help" || query == "help" || query == "?" || query == "/?" {
+                let _ = renderer.commit(&help_text);
+                let _ = renderer.commit("\n");
+                redraw(
+                    renderer,
+                    input_state,
+                    &session_id,
+                    approval,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    cost_usd,
+                    has_untracked,
+                );
+                continue;
+            }
+            if query == "/clear" {
+                let _ = renderer.commit("\n");
+                redraw(
+                    renderer,
+                    input_state,
+                    &session_id,
+                    approval,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    cost_usd,
+                    has_untracked,
+                );
+                continue;
+            }
+            if query == "/new" {
+                session_id = uuid::Uuid::new_v4().to_string();
+                prompt_tokens = 0;
+                cost_usd = 0.0;
+                has_untracked = false;
+                redraw(
+                    renderer,
+                    input_state,
+                    &session_id,
+                    approval,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    cost_usd,
+                    has_untracked,
+                );
+                continue;
+            }
+            if query.starts_with("/model ") {
+                let new_model = query["model ".len()..].trim().to_string();
+                if let Ok(cfg) = Config::load() {
+                    let m = cfg.resolve_model(Some(&new_model));
+                    model = m.model.clone();
+                    context_window = m.context_window();
+                }
+                redraw(
+                    renderer,
+                    input_state,
+                    &session_id,
+                    approval,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    cost_usd,
+                    has_untracked,
+                );
+                continue;
+            }
+            if query.starts_with("/approval ") {
+                let sub = query["approval ".len()..].trim();
+                match sub {
+                    "on" | "auto" => {
+                        approval.regular = true;
+                    }
+                    "off" | "manual" => {
+                        approval.regular = false;
+                    }
+                    _ => {}
+                }
+                redraw(
+                    renderer,
+                    input_state,
+                    &session_id,
+                    approval,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    cost_usd,
+                    has_untracked,
+                );
+                continue;
+            }
+            if query.starts_with("/") {
+                let _ = renderer.commit(&format!("Unknown command: {}\n", query));
+                redraw(
+                    renderer,
+                    input_state,
+                    &session_id,
+                    approval,
+                    &model,
+                    prompt_tokens,
+                    context_window,
+                    daemon_up,
+                    cost_usd,
+                    has_untracked,
+                );
+                continue;
+            }
+
+            // Commit user query to scrollback.
+            let _ = renderer.commit(&format!("> {}\n", query));
+
+            // Send query to AI.
+            chat_width = terminal_width();
+            let cw = chat_width;
+            let mut dummy_height = 0usize;
+            let resize = StreamResizeDims {
+                width: &mut chat_width,
+                height: &mut dummy_height,
+                start: start_time,
+                model: model.clone(),
+                daemon_up,
+                tools_total: 0,
+                has_frame: false,
+                cost_usd,
+                has_untracked,
+            };
+            match ask_with_session(
+                QueryArgs {
+                    query,
+                    display_query: "",
+                    prompt_override: None,
+                },
+                Some(&session_id),
+                approval,
+                AskTmuxCtx {
+                    session: tmux_session,
+                    pane: target_pane,
+                },
+                TokenCtx {
+                    prompt_tokens: &mut prompt_tokens,
+                    context_window,
+                },
+                StreamCtx {
+                    stdin,
+                    chat_width: Some(cw),
+                    old_termios: unsafe { std::mem::zeroed() },
+                    sigwinch: Some(sigwinch),
+                    resize: Some(resize),
+                    cost_usd: &mut cost_usd,
+                    has_untracked: &mut has_untracked,
+                },
+            )
+            .await
+            {
+                Ok(()) => daemon_up = true,
+                Err(e) => {
+                    let _ = renderer.commit(&format!("\n✗ {}\n", e));
+                }
+            }
+
+            last_ctrl_c = None;
+            chat_width = terminal_width();
+            redraw(
+                renderer,
+                input_state,
+                &session_id,
+                approval,
+                &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+            );
+        }
+
+        renderer.restore();
+        println!("\n\x1b[2mGoodbye.\x1b[0m");
+        Ok(())
+    }
+
+    // Read one line of input using the ratatui renderer for display.
+    #[allow(clippy::too_many_arguments)]
+    async fn read_input_line_inner_ratatui(
+        state: &mut InputState,
+        stdin: &AsyncStdin,
+        sigwinch: &mut tokio::signal::unix::Signal,
+        renderer: &mut RatatuiRendererStdout,
+        chat_width: &mut usize,
+        _start_time: std::time::Instant,
+        session_id: &str,
+        approval: &SessionApproval,
+        model: &str,
+        prompt_tokens: u32,
+        context_window: u32,
+        daemon_up: bool,
+        cost_usd: f64,
+        has_untracked: bool,
+        last_ctrl_c: &mut Option<std::time::Instant>,
+    ) -> anyhow::Result<Option<String>> {
+        loop {
+            tokio::select! {
+                _ = sigwinch.recv() => {
+                    *chat_width = terminal_width();
+                    let sb = StatusBarState {
+                        session_id,
+                        approval_hint: &approval.hint(),
+                        model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                        tools_total: 0,
+                        cost_usd,
+                        has_untracked,
+                    };
+                    let _ = renderer.draw(state.current_line(), &sb);
+                }
+                key = read_key(stdin) => {
+                    let Some(key) = key else {
+                        return Ok(None);
+                    };
+                    match key {
+                        Key::Enter => {
+                            let s = state.current_line().as_str();
+                            return Ok(Some(s));
+                        }
+                        Key::CtrlD => {
+                            if state.current_line().as_str().is_empty() {
+                                return Ok(None);
+                            }
+                            state.current_line_mut().delete();
+                        }
+                        Key::CtrlC => {
+                            if let Some(t) = last_ctrl_c.as_ref()
+                                && t.elapsed() < std::time::Duration::from_millis(1000)
+                            {
+                                return Ok(None);
+                            }
+                            *last_ctrl_c = Some(std::time::Instant::now());
+                            *state.current_line_mut() = InputLine::new();
+                            state.clear_history_nav();
+                        }
+                        Key::Char(c) if c != '\0' => { state.current_line_mut().insert(c); }
+                        Key::Backspace => { state.current_line_mut().backspace(); }
+                        Key::Delete => { state.current_line_mut().delete(); }
+                        Key::Left => { state.current_line_mut().move_left(); }
+                        Key::Right => { state.current_line_mut().move_right(); }
+                        Key::Up => { state.history_up(); }
+                        Key::Down => { state.history_down(); }
+                        Key::Home => { state.current_line_mut().move_home(); }
+                        Key::End => { state.current_line_mut().move_end(); }
+                        Key::CtrlA => { state.current_line_mut().move_home(); }
+                        Key::CtrlE => { state.current_line_mut().move_end(); }
+                        Key::CtrlK => { state.current_line_mut().kill_to_end(); }
+                        Key::CtrlU => { state.current_line_mut().kill_to_start(); }
+                        _ => {}
+                    }
+                    let sb = StatusBarState {
+                        session_id,
+                        approval_hint: &approval.hint(),
+                        model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                        tools_total: 0,
+                        cost_usd,
+                        has_untracked,
+                    };
+                    let _ = renderer.draw(state.current_line(), &sb);
+                }
+            }
+        }
+    }
+
+    // ── Legacy path (unchanged below) ──────────────────────────────────
     let mut chat_width = chat_width;
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;

@@ -104,45 +104,48 @@ impl InputLine {
         Self { buf, cursor }
     }
 
-    fn insert(&mut self, c: char) {
+    pub fn insert(&mut self, c: char) {
         self.buf.insert(self.cursor, c);
         self.cursor += 1;
     }
-    fn backspace(&mut self) {
+    pub fn backspace(&mut self) {
         if self.cursor > 0 {
             self.buf.remove(self.cursor - 1);
             self.cursor -= 1;
         }
     }
-    fn delete(&mut self) {
+    pub fn delete(&mut self) {
         if self.cursor < self.buf.len() {
             self.buf.remove(self.cursor);
         }
     }
-    fn move_left(&mut self) {
+    pub fn move_left(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
         }
     }
-    fn move_right(&mut self) {
+    pub fn move_right(&mut self) {
         if self.cursor < self.buf.len() {
             self.cursor += 1;
         }
     }
-    fn move_home(&mut self) {
+    pub fn move_home(&mut self) {
         self.cursor = 0;
     }
-    fn move_end(&mut self) {
+    pub fn move_end(&mut self) {
         self.cursor = self.buf.len();
     }
-    fn kill_to_end(&mut self) {
+    pub fn kill_to_end(&mut self) {
         self.buf.truncate(self.cursor);
     }
-    fn kill_to_start(&mut self) {
+    pub fn kill_to_start(&mut self) {
         self.buf.drain(..self.cursor);
         self.cursor = 0;
     }
     fn as_string(&self) -> String {
+        self.buf.iter().collect()
+    }
+    pub fn as_str(&self) -> String {
         self.buf.iter().collect()
     }
 }
@@ -181,7 +184,17 @@ impl InputState {
         self.current = InputLine::new();
     }
 
-    fn history_up(&mut self) {
+    /// Access the current editable line.
+    pub fn current_line(&self) -> &InputLine {
+        &self.current
+    }
+
+    /// Mutable access to the current editable line.
+    pub fn current_line_mut(&mut self) -> &mut InputLine {
+        &mut self.current
+    }
+
+    pub fn history_up(&mut self) {
         if self.history.is_empty() {
             return;
         }
@@ -197,7 +210,7 @@ impl InputState {
         self.current = InputLine::from_str(&self.history[new_idx].clone());
     }
 
-    fn history_down(&mut self) {
+    pub fn history_down(&mut self) {
         match self.history_idx {
             None => {}
             Some(i) if i + 1 >= self.history.len() => {
@@ -212,10 +225,15 @@ impl InputState {
             }
         }
     }
+
+    /// Clear the history navigation state (used on Ctrl+C to reset).
+    pub fn clear_history_nav(&mut self) {
+        self.history_idx = None;
+    }
 }
 
 /// Parsed key event from raw-mode terminal input.
-enum Key {
+pub enum Key {
     Char(char),
     Backspace,
     Delete,
@@ -379,7 +397,7 @@ fn collapse_input_area(
 ///
 /// Arrow keys and other escape sequences are consumed with a 30 ms inter-byte
 /// timeout so a lone Escape is distinguishable from a CSI sequence.
-async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
+pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
     use tokio::time::{Duration, timeout};
 
     let b = stdin.read_byte().await?;
