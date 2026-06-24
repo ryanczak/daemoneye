@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-01-3)
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -463,3 +463,41 @@ $ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
 - The only code change from the prior dispatch is adding `crossterm::terminal::enable_raw_mode()?` at the top of `RatatuiRendererStdout::new()` and fixing the doc comment. All other code (context structs, `Option<termios>`, ratatui chat loop, tests) is unchanged from the bug-phase-01-1 fix dispatch.
 - `ratatui::try_restore()` in `restore()` correctly disables raw mode on exit — verified by the crossterm docs.
 - The `TestBackend` tests remain structurally blind to raw-mode state (no tty line discipline), so the principal engineer should verify under tmux: `DAEMONEYE_RENDERER=ratatui daemoneye chat`, type characters, confirm they appear inside the input box (not echoed as cooked-mode text), submit a line, confirm it commits to scrollback, and on exit confirm the terminal returns to cooked mode.
+
+### Review verdict — 2026-06-24 (bounced, 3rd)
+
+- **Verdict:** bounced (bug-phase-01-3 filed)
+- **Bounces:** 3rd review bounce
+- **Executor:** local LLM (Qwen3.6-27B-FP8)
+- **Bugs filed:** 1 (major) — `bugs/bug-phase-01-3.md`
+- **Scope deviations:** none (legacy default path still untouched)
+- **Calibration:** lean spec; the bug-phase-01-2 raw-mode fix is **correct and
+  verified live** — under `DAEMONEYE_RENDERER=ratatui` typed chars now enter the
+  input box (no cooked echo), the box+status bar sit in a fixed bottom region,
+  the user line commits to scrollback (`> hello in box`), and `/exit` restores
+  cooked mode (shell echo confirmed). But the **same live tmux E2E** (still the
+  only thing that catches these) exposed a distinct acceptance miss: the **AI's
+  final answer is not committed to scrollback.** The ratatui loop produces the
+  answer via the **legacy `ask_with_session` stdout streamer** (`mod.rs:~810`),
+  which paints directly over the inline viewport; ratatui's diff renderer can't
+  reconcile externally-written cells, so the answer text is stranded inside the
+  input box (typing `X` overwrote the stale `Hey there…` → `Xy there…`). Spec
+  item 4 explicitly sanctions *minimal* AI rendering but requires the final
+  answer **text** be committed to scrollback (`renderer.commit`), which was not
+  done. Third consecutive green-but-broken shortcut catchable only by live E2E
+  — consistent ceiling signal: the executor reuses legacy integration points
+  wholesale rather than routing through the new renderer the phase is building.
+
+**Deep-review axes (per milestone directive):**
+1. **Spec conformance** — *partial.* Met: starts, accepts typed input, fixed
+   bottom region, user-line scrollback commit, raw-mode entry **and** clean
+   cooked-mode restore on exit, no DECSTBM in new module, hermetic tests. Unmet:
+   "the AI's final answer into terminal scrollback … above the input region."
+2. **Reasoning quality** — *good on the raw-mode fix, weak on integration
+   boundaries again.* The `enable_raw_mode()` fix is exactly right and the doc
+   comment was corrected. But the executor reused the DECSTBM-era streamer
+   inside the ratatui loop without recognizing it writes over the viewport — the
+   same "bolt onto the legacy seam" pattern as bug-phase-01-1.
+3. **Code & test quality** — clean and unchanged from the prior dispatch (only
+   `enable_raw_mode()` + comment added); banned-construct fixes hold. The gap is
+   the answer-commit wiring, invisible to `TestBackend`.
