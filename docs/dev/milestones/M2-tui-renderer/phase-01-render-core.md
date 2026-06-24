@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-phase-01-1.md`)
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -279,3 +279,47 @@ docs/dev/milestones/M2-tui-renderer/README.md:139:- `DAEMONEYE_RENDERER=ratatui`
 - Several `InputLine` methods (`insert`, `backspace`, `delete`, `move_left`, etc.) and `InputState` methods (`history_up`, `history_down`, `current_line`) were made public to allow the ratatui input loop to drive the editor state. This is necessary because the ratatui path reads keys directly and needs to manipulate the input buffer.
 - The ratatui chat loop duplicates the legacy loop structure (slash commands, AI query, etc.) because the streaming migration (phase 02) will refactor this. No attempt was made to share the loop body between the two paths.
 - `ratatui` and `crossterm` were already present in `Cargo.toml` from prior work — no dependency addition was needed.
+
+### Review verdict — 2026-06-24 (bounced)
+
+- **Verdict:** bounced (bug-phase-01-1 filed)
+- **Bounces:** 1st review bounce
+- **Executor:** local LLM (Qwen3.6-27B-FP8)
+- **Bugs filed:** 1 (major) — `bugs/bug-phase-01-1.md`
+- **Scope deviations:** none (legacy path behavior-unchanged; only ratatui +
+  crossterm added — both pre-present; no DECSTBM escape in the new module)
+- **Calibration:** lean + task-granularity pin (infra confound), API
+  self-discovered. The granularity pin worked — the executor cleared the
+  one-shot stream-decode wall and produced a build-green, functionally
+  plausible inline-viewport renderer. **Ceiling located on the code-quality
+  axis, not the API-discovery axis:** the ratatui API was discovered and used
+  correctly (`Terminal::with_options` + `Viewport::Inline`, `insert_before`,
+  `TestBackend`), but when the new path didn't fit the existing
+  `TerminalCtx`/chat-loop signatures, the executor reached for **banned
+  shortcuts** instead of the codebase's own idiom: 3× `unsafe {
+  std::mem::zeroed() }` for a termios it claimed was "unused" (it isn't — it
+  reaches `restore_termios`→`tcsetattr` and corrupts the real terminal on the
+  first ratatui-path tool approval), 3× `#[allow(clippy::too_many_arguments)]`
+  to silence clippy rather than the in-file `*Ctx` context-struct pattern, and
+  1× production `.expect()`. All three are STANDARDS §1 violations; the unsafe
+  one is also a latent correctness bug — the "green-but-subtly-broken" failure
+  mode this milestone exists to catch.
+
+**Deep-review axes (per milestone directive):**
+1. **Spec conformance** — *partial.* Acceptance criteria functionally met
+   (selector seam, legacy default untouched, scrollback commit, hermetic
+   `TestBackend` tests, no DECSTBM in new path), but DoD §1 banned-construct
+   boxes fail. E2E (tmux capture-pane) not performed — executor is headless;
+   acknowledged and deferred. Acceptance checkboxes in this doc left unticked.
+2. **Reasoning quality** — *good on the hard part, weak on integration.* Live
+   ratatui API correctly discovered and trusted (e.g. `VIEWPORT_ROWS=4`
+   discovered empirically when a 3-row split collapsed; generic-over-`Backend`
+   so `TestBackend` works). Did **not** surface the green-but-inert risk itself
+   and did not recognize the termios it zeroed is live on the approval path.
+3. **Code & test quality** — tests genuinely assert rendered cells (session
+   id, model, box border, input text) and scrollback content — real, not
+   trivial. But the integration code violates STANDARDS §1 three ways (see
+   bug). Secondary non-blocking note: the ratatui chat loop reimplements only a
+   subset of slash commands (`/help /clear /new /model /approval`); `/refresh
+   /pane /approvals /prompt /limits /session` are absent — acceptable for
+   phase 01 (phase 02 owns the streaming/loop refactor), noted for tracking.
