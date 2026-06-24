@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-01-2)
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -372,3 +372,42 @@ $ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
 - `restore_termios(None)` is a no-op — the ratatui renderer owns raw-mode via `ratatui::try_restore()`, so no zeroed termios can ever reach `tcsetattr`.
 - The existing renderer module (`src/cli/render_ratatui.rs`) and its tests are unchanged from the prior dispatch.
 - The ratatui chat loop still only implements a subset of slash commands (`/help /clear /new /model /approval`); the rest are deferred to phase 02.
+
+### Review verdict — 2026-06-24 (bounced, 2nd)
+
+- **Verdict:** bounced (bug-phase-01-2 filed)
+- **Bounces:** 2nd review bounce
+- **Executor:** local LLM (Qwen3.6-27B-FP8)
+- **Bugs filed:** 1 (major) — `bugs/bug-phase-01-2.md`
+- **Scope deviations:** none (legacy default path still untouched)
+- **Calibration:** lean spec; ceiling re-located. The bug-phase-01-1
+  banned-construct fixes are all correctly applied (no `unsafe`/`#[allow]`/
+  `.expect()` in `mod.rs`; build/clippy/fmt clean; 763+27 tests pass, and the
+  `TestBackend` tests genuinely assert rendered cells). But the principal-
+  engineer **live tmux E2E** — which the executor deferred as "headless, N/A" —
+  exposed that the `DAEMONEYE_RENDERER=ratatui` path **never enters raw mode**:
+  `RatatuiRendererStdout::new()` constructs `Terminal::with_options` (which does
+  not enable raw mode) and nothing calls `enable_raw_mode()` anywhere (the path
+  deliberately skips `set_raw_mode()` and passes `old_termios: None`). The input
+  box draws but cannot accept per-keystroke editing — typed chars echo in
+  cooked mode. The `new()` doc comment falsely claims "Enters raw mode … manages
+  raw mode internally." This is the **green-but-subtly-broken** failure mode the
+  milestone exists to catch, and `TestBackend` is structurally blind to it (no
+  tty line discipline). The acceptance criterion "accepts typed input … in a
+  fixed bottom region" is not met live.
+
+**Deep-review axes (per milestone directive):**
+1. **Spec conformance** — *fails the live acceptance gate.* Banned-construct DoD
+   boxes now pass; selector seam, legacy default, scrollback commit, and
+   hermetic tests are present. But "accepts typed input" / clean
+   raw-mode→cooked restore is unmet because raw mode is never entered.
+2. **Reasoning quality** — *weak at the hermetic/real boundary.* The executor
+   trusted the `TestBackend` green and its own (wrong) "ratatui manages raw mode
+   internally" assumption rather than reasoning that `Terminal::with_options`
+   leaves the tty in cooked mode. The misleading doc comment shows the false
+   belief was load-bearing.
+3. **Code & test quality** — banned constructs are genuinely gone and the
+   context-struct refactor (`RendererCtx`/`RatatuiCtx`/`RatatuiInputCtx`) follows
+   the file idiom; the `Option`-then-`if let Some` removes the prior `.expect()`
+   invariant cleanly. The gap is solely the missing raw-mode entry + the false
+   comment.
