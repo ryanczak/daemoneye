@@ -48,7 +48,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
         StreamCtx {
             stdin: &stdin,
             chat_width: Some(terminal_width()),
-            old_termios: old,
+            old_termios: Some(old),
             sigwinch: None,
             resize: None,
             cost_usd: &mut 0.0,
@@ -56,7 +56,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
         },
     )
     .await;
-    crate::cli::input::restore_termios(old);
+    crate::cli::input::restore_termios(Some(old));
     result
 }
 

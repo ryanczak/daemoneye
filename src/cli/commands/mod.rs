@@ -258,7 +258,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             TerminalCtx {
                 chat_width,
                 start_time,
-                old_termios: unsafe { std::mem::zeroed() }, // unused for ratatui
+                old_termios: None, // ratatui renderer owns raw-mode
             },
             session_id,
             current_prompt,
@@ -267,8 +267,10 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
                 session: tmux_session,
                 pane: target_pane,
             },
-            renderer_mode,
-            Some(renderer),
+            RendererCtx {
+                mode: renderer_mode,
+                renderer: Some(renderer),
+            },
         )
         .await;
         // Ratatui renderer is consumed by run_chat_inner_raw (restores on exit).
@@ -383,7 +385,7 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
             TerminalCtx {
                 chat_width,
                 start_time,
-                old_termios,
+                old_termios: Some(old_termios),
             },
             session_id,
             current_prompt,
@@ -392,12 +394,14 @@ async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
                 session: tmux_session,
                 pane: target_pane,
             },
-            renderer_mode,
-            None,
+            RendererCtx {
+                mode: renderer_mode,
+                renderer: None,
+            },
         )
         .await;
 
-        crate::cli::input::restore_termios(old_termios);
+        crate::cli::input::restore_termios(Some(old_termios));
         result
     }
 }
@@ -411,7 +415,9 @@ struct InputHandles<'a> {
 struct TerminalCtx {
     chat_width: usize,
     start_time: std::time::Instant,
-    old_termios: libc::termios,
+    /// Saved termios for cooked-mode restore. `None` when the renderer owns
+    /// raw-mode itself (ratatui path).
+    old_termios: Option<libc::termios>,
 }
 
 struct TmuxCtx {
@@ -419,7 +425,25 @@ struct TmuxCtx {
     pane: Option<String>,
 }
 
-#[allow(clippy::too_many_arguments)]
+struct RendererCtx {
+    mode: RendererMode,
+    renderer: Option<RatatuiRendererStdout>,
+}
+
+struct RatatuiCtx<'a> {
+    input_state: &'a mut InputState,
+    stdin: &'a AsyncStdin,
+    sigwinch: &'a mut tokio::signal::unix::Signal,
+    renderer: RatatuiRendererStdout,
+    chat_width: usize,
+    start_time: std::time::Instant,
+    session_id: String,
+    current_prompt: Option<String>,
+    approval: &'a mut SessionApproval,
+    tmux_session: Option<String>,
+    target_pane: Option<String>,
+}
+
 async fn run_chat_inner_raw(
     handles: InputHandles<'_>,
     term: TerminalCtx,
@@ -427,8 +451,7 @@ async fn run_chat_inner_raw(
     mut current_prompt: Option<String>,
     approval: &mut SessionApproval,
     tmux: TmuxCtx,
-    renderer_mode: RendererMode,
-    renderer: Option<RatatuiRendererStdout>,
+    renderer_ctx: RendererCtx,
 ) -> Result<()> {
     let InputHandles {
         state: input_state,
@@ -445,39 +468,39 @@ async fn run_chat_inner_raw(
         pane: target_pane,
     } = tmux;
 
-    if renderer_mode == RendererMode::Ratatui {
-        let mut renderer = renderer.expect("ratatui renderer required");
-        return run_chat_ratatui(
+    if renderer_ctx.mode == RendererMode::Ratatui
+        && let Some(renderer) = renderer_ctx.renderer
+    {
+        return run_chat_ratatui(RatatuiCtx {
             input_state,
             stdin,
             sigwinch,
-            &mut renderer,
+            renderer,
             chat_width,
             start_time,
             session_id,
             current_prompt,
             approval,
-            tmux_session.as_deref(),
-            target_pane.as_deref(),
-        )
+            tmux_session,
+            target_pane,
+        })
         .await;
     }
     // ── Ratatui chat loop ──────────────────────────────────────────────
-    #[allow(clippy::too_many_arguments)]
-    async fn run_chat_ratatui(
-        input_state: &mut InputState,
-        stdin: &AsyncStdin,
-        sigwinch: &mut tokio::signal::unix::Signal,
-        renderer: &mut RatatuiRendererStdout,
-        chat_width: usize,
-        start_time: std::time::Instant,
-        mut session_id: String,
-        current_prompt: Option<String>,
-        approval: &mut SessionApproval,
-        tmux_session: Option<&str>,
-        target_pane: Option<&str>,
-    ) -> Result<()> {
-        let mut chat_width = chat_width;
+    async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
+        let RatatuiCtx {
+            input_state,
+            stdin,
+            sigwinch,
+            mut renderer,
+            mut chat_width,
+            start_time,
+            mut session_id,
+            current_prompt,
+            approval,
+            tmux_session,
+            target_pane,
+        } = ctx;
         let mut last_ctrl_c: Option<std::time::Instant> = None;
         let mut daemon_up = false;
         let mut prompt_tokens: u32 = 0;
@@ -528,7 +551,7 @@ async fn run_chat_inner_raw(
         };
 
         redraw(
-            renderer,
+            &mut renderer,
             input_state,
             &session_id,
             approval,
@@ -563,8 +586,8 @@ async fn run_chat_inner_raw(
                 Some(&session_id),
                 approval,
                 AskTmuxCtx {
-                    session: tmux_session,
-                    pane: target_pane,
+                    session: tmux_session.as_deref(),
+                    pane: target_pane.as_deref(),
                 },
                 TokenCtx {
                     prompt_tokens: &mut prompt_tokens,
@@ -573,7 +596,7 @@ async fn run_chat_inner_raw(
                 StreamCtx {
                     stdin,
                     chat_width: Some(cw),
-                    old_termios: unsafe { std::mem::zeroed() },
+                    old_termios: None, // ratatui renderer owns raw-mode
                     sigwinch: Some(sigwinch),
                     resize: Some(resize),
                     cost_usd: &mut cost_usd,
@@ -594,7 +617,7 @@ async fn run_chat_inner_raw(
         }
 
         redraw(
-            renderer,
+            &mut renderer,
             input_state,
             &session_id,
             approval,
@@ -620,23 +643,22 @@ async fn run_chat_inner_raw(
 
         loop {
             // Read input using the existing key handler but render via ratatui.
-            let line_opt = read_input_line_inner_ratatui(
-                input_state,
+            let line_opt = read_input_line_inner_ratatui(RatatuiInputCtx {
+                state: input_state,
                 stdin,
                 sigwinch,
-                renderer,
-                &mut chat_width,
-                start_time,
-                &session_id,
+                renderer: &mut renderer,
+                chat_width: &mut chat_width,
+                session_id: &session_id,
                 approval,
-                &model,
+                model: &model,
                 prompt_tokens,
                 context_window,
                 daemon_up,
                 cost_usd,
                 has_untracked,
-                &mut last_ctrl_c,
-            )
+                last_ctrl_c: &mut last_ctrl_c,
+            })
             .await?;
 
             let Some(line) = line_opt else { break };
@@ -655,7 +677,7 @@ async fn run_chat_inner_raw(
                 let _ = renderer.commit(&help_text);
                 let _ = renderer.commit("\n");
                 redraw(
-                    renderer,
+                    &mut renderer,
                     input_state,
                     &session_id,
                     approval,
@@ -671,7 +693,7 @@ async fn run_chat_inner_raw(
             if query == "/clear" {
                 let _ = renderer.commit("\n");
                 redraw(
-                    renderer,
+                    &mut renderer,
                     input_state,
                     &session_id,
                     approval,
@@ -690,7 +712,7 @@ async fn run_chat_inner_raw(
                 cost_usd = 0.0;
                 has_untracked = false;
                 redraw(
-                    renderer,
+                    &mut renderer,
                     input_state,
                     &session_id,
                     approval,
@@ -711,7 +733,7 @@ async fn run_chat_inner_raw(
                     context_window = m.context_window();
                 }
                 redraw(
-                    renderer,
+                    &mut renderer,
                     input_state,
                     &session_id,
                     approval,
@@ -736,7 +758,7 @@ async fn run_chat_inner_raw(
                     _ => {}
                 }
                 redraw(
-                    renderer,
+                    &mut renderer,
                     input_state,
                     &session_id,
                     approval,
@@ -752,7 +774,7 @@ async fn run_chat_inner_raw(
             if query.starts_with("/") {
                 let _ = renderer.commit(&format!("Unknown command: {}\n", query));
                 redraw(
-                    renderer,
+                    &mut renderer,
                     input_state,
                     &session_id,
                     approval,
@@ -793,8 +815,8 @@ async fn run_chat_inner_raw(
                 Some(&session_id),
                 approval,
                 AskTmuxCtx {
-                    session: tmux_session,
-                    pane: target_pane,
+                    session: tmux_session.as_deref(),
+                    pane: target_pane.as_deref(),
                 },
                 TokenCtx {
                     prompt_tokens: &mut prompt_tokens,
@@ -803,7 +825,7 @@ async fn run_chat_inner_raw(
                 StreamCtx {
                     stdin,
                     chat_width: Some(cw),
-                    old_termios: unsafe { std::mem::zeroed() },
+                    old_termios: None, // ratatui renderer owns raw-mode
                     sigwinch: Some(sigwinch),
                     resize: Some(resize),
                     cost_usd: &mut cost_usd,
@@ -821,7 +843,7 @@ async fn run_chat_inner_raw(
             last_ctrl_c = None;
             chat_width = terminal_width();
             redraw(
-                renderer,
+                &mut renderer,
                 input_state,
                 &session_id,
                 approval,
@@ -840,24 +862,42 @@ async fn run_chat_inner_raw(
     }
 
     // Read one line of input using the ratatui renderer for display.
-    #[allow(clippy::too_many_arguments)]
-    async fn read_input_line_inner_ratatui(
-        state: &mut InputState,
-        stdin: &AsyncStdin,
-        sigwinch: &mut tokio::signal::unix::Signal,
-        renderer: &mut RatatuiRendererStdout,
-        chat_width: &mut usize,
-        _start_time: std::time::Instant,
-        session_id: &str,
-        approval: &SessionApproval,
-        model: &str,
+    struct RatatuiInputCtx<'a> {
+        state: &'a mut InputState,
+        stdin: &'a AsyncStdin,
+        sigwinch: &'a mut tokio::signal::unix::Signal,
+        renderer: &'a mut RatatuiRendererStdout,
+        chat_width: &'a mut usize,
+        session_id: &'a str,
+        approval: &'a SessionApproval,
+        model: &'a str,
         prompt_tokens: u32,
         context_window: u32,
         daemon_up: bool,
         cost_usd: f64,
         has_untracked: bool,
-        last_ctrl_c: &mut Option<std::time::Instant>,
+        last_ctrl_c: &'a mut Option<std::time::Instant>,
+    }
+
+    async fn read_input_line_inner_ratatui(
+        ctx: RatatuiInputCtx<'_>,
     ) -> anyhow::Result<Option<String>> {
+        let RatatuiInputCtx {
+            state,
+            stdin,
+            sigwinch,
+            renderer,
+            chat_width,
+            session_id,
+            approval,
+            model,
+            prompt_tokens,
+            context_window,
+            daemon_up,
+            cost_usd,
+            has_untracked,
+            last_ctrl_c,
+        } = ctx;
         loop {
             tokio::select! {
                 _ = sigwinch.recv() => {

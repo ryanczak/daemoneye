@@ -281,9 +281,11 @@ pub fn set_raw_mode() -> anyhow::Result<libc::termios> {
     }
 }
 
-pub fn restore_termios(old: libc::termios) {
-    unsafe {
-        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old);
+pub fn restore_termios(old: Option<libc::termios>) {
+    if let Some(old) = old {
+        unsafe {
+            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &old);
+        }
     }
 }
 

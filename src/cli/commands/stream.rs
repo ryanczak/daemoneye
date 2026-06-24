@@ -113,7 +113,9 @@ pub(super) struct TokenCtx<'a> {
 pub(super) struct StreamCtx<'a> {
     pub(super) stdin: &'a AsyncStdin,
     pub(super) chat_width: Option<usize>,
-    pub(super) old_termios: libc::termios,
+    /// Saved termios for cooked-mode restore during approval prompts.
+    /// `None` when the renderer owns raw-mode itself (ratatui path).
+    pub(super) old_termios: Option<libc::termios>,
     pub(super) sigwinch: Option<&'a mut tokio::signal::unix::Signal>,
     pub(super) resize: Option<StreamResizeDims<'a>>,
     /// Mutable reference to the persistent session cost accumulator.

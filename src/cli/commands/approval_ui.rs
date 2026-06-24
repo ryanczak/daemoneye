@@ -26,7 +26,9 @@ use super::stream::StreamResizeDims;
 /// so the caller can resume using them for the outer loop.
 pub(super) struct PromptCtx<'a, 'r> {
     pub(super) stdin: &'a AsyncStdin,
-    pub(super) old_termios: libc::termios,
+    /// Saved termios for cooked-mode restore during approval prompts.
+    /// `None` when the renderer owns raw-mode itself (ratatui path).
+    pub(super) old_termios: Option<libc::termios>,
     pub(super) md: &'a mut MarkdownRenderer,
     pub(super) response_started: &'a mut bool,
     pub(super) approval: &'a mut SessionApproval,

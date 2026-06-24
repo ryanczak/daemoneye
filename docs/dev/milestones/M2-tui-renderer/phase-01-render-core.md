@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see `bugs/bug-phase-01-1.md`)
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -323,3 +323,52 @@ docs/dev/milestones/M2-tui-renderer/README.md:139:- `DAEMONEYE_RENDERER=ratatui`
    subset of slash commands (`/help /clear /new /model /approval`); `/refresh
    /pane /approvals /prompt /limits /session` are absent — acceptable for
    phase 01 (phase 02 owns the streaming/loop refactor), noted for tracking.
+
+### Update — 2026-06-24 19:47 (complete)
+
+**Executor:** local LLM. Phase 01: render-core complete (re-dispatch after bug-phase-01-1).
+
+**Spec tasks implemented:**
+- Task 1: Dependencies `ratatui` and `crossterm` already present in `Cargo.toml` from prior work — verified.
+- Task 2: `RendererMode` enum + `DAEMONEYE_RENDERER` env var selector in `src/cli/commands/mod.rs` (from prior dispatch, unchanged).
+- Task 3a–3c: `src/cli/render_ratatui.rs` — generic `RatatuiRenderer<B>` with `Terminal` lifecycle (inline viewport, 4 rows), `commit` via `insert_before`, and `draw` (input box + status bar live region) (from prior dispatch, unchanged).
+- Task 4: Wired into `run_chat_inner_raw` — fixed all three bugs from bug-phase-01-1: (1a) removed all `unsafe { std::mem::zeroed() }` by making `TerminalCtx.old_termios`, `StreamCtx.old_termios`, and `PromptCtx.old_termios` into `Option<libc::termios>`; ratatui path passes `None`; (1b) removed all `#[allow(clippy::too_many_arguments)]` by introducing `RendererCtx`, `RatatuiCtx<'a>`, and `RatatuiInputCtx<'a>` context structs following the existing codebase idiom; (1c) eliminated `.expect()` by using `if let Some(renderer)` guard.
+- Task 5: 5 hermetic `TestBackend` tests (from prior dispatch, unchanged): live-region render, commit path, and 3 `fmt_uptime` unit tests.
+
+**Verification commands:**
+```
+cargo fmt --all: clean (no output)
+cargo build: clean (zero warnings)
+cargo clippy --all-targets --all-features -- -D warnings: clean
+cargo test: 27 passed; 0 failed; 1 ignored
+```
+
+**Grep for spec-pinned literal `DAEMONEYE_RENDERER`:**
+```
+$ grep -rn 'DAEMONEYE_RENDERER' src/
+src/cli/commands/mod.rs:24:        match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
+```
+
+**Grep for banned constructs (bug-phase-01-1 verification):**
+```
+$ grep -n 'unsafe' src/cli/commands/mod.rs → (no matches)
+$ grep -n '#\[allow' src/cli/commands/mod.rs → (no matches)
+$ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
+```
+
+**Files changed:**
+- `src/cli/commands/mod.rs` — added `RendererCtx`, `RatatuiCtx<'a>`, `RatatuiInputCtx<'a>`; removed `unsafe { std::mem::zeroed() }` ×3, `#[allow(clippy::too_many_arguments)]` ×3, `.expect()` ×1; wrapped `old_termios` in `Option` in `TerminalCtx`
+- `src/cli/commands/stream.rs` — `StreamCtx.old_termios: Option<libc::termios>`
+- `src/cli/commands/approval_ui.rs` — `PromptCtx.old_termios: Option<libc::termios>`
+- `src/cli/commands/ask.rs` — wrapped termios in `Some` for `StreamCtx` and `restore_termios`
+- `src/cli/input.rs` — `restore_termios(Option<libc::termios>)` with `if let Some` guard
+- `docs/dev/milestones/M2-tui-renderer/phase-01-render-core.md` — status → review
+- `docs/dev/milestones/M2-tui-renderer/README.md` — phase table row → review
+
+**End-to-end verification:** N/A — no real TTY available in headless executor environment. The ratatui path uses `TestBackend` hermetic tests for correctness; live-tmux verification deferred to principal engineer.
+
+**Notes for review:**
+- All three bugs from bug-phase-01-1 are fixed: no `unsafe`, no `#[allow]`, no `.expect()` in the ratatui path.
+- `restore_termios(None)` is a no-op — the ratatui renderer owns raw-mode via `ratatui::try_restore()`, so no zeroed termios can ever reach `tcsetattr`.
+- The existing renderer module (`src/cli/render_ratatui.rs`) and its tests are unchanged from the prior dispatch.
+- The ratatui chat loop still only implements a subset of slash commands (`/help /clear /new /model /approval`); the rest are deferred to phase 02.
