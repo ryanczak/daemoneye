@@ -30,10 +30,13 @@ pub type RatatuiRendererStdout =
 impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
     /// Create a new renderer with an inline viewport on stdout.
     ///
-    /// Enters raw mode and constructs the terminal.  Callers must **not**
-    /// have called `set_raw_mode()` from `input.rs` before this — ratatui
-    /// manages raw mode internally and we avoid double-entering it.
+    /// Enters raw mode via `crossterm::terminal::enable_raw_mode()` and
+    /// constructs the terminal. Callers must **not** have called
+    /// `set_raw_mode()` from `input.rs` before this — the two raw-mode
+    /// paths conflict.  Call `restore()` on exit to leave the terminal
+    /// in cooked mode.
     pub fn new(start_time: std::time::Instant) -> std::io::Result<Self> {
+        crossterm::terminal::enable_raw_mode()?;
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let terminal = Terminal::with_options(
             backend,

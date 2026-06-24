@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bug-phase-01-2)
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -411,3 +411,55 @@ $ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
    the file idiom; the `Option`-then-`if let Some` removes the prior `.expect()`
    invariant cleanly. The gap is solely the missing raw-mode entry + the false
    comment.
+
+### Update — 2026-06-24 22:00 (complete)
+
+**Executor:** local LLM. Phase 01: render-core complete (re-dispatch after bug-phase-01-2).
+
+**Spec tasks implemented:**
+- Task 1: Dependencies `ratatui` and `crossterm` already present in `Cargo.toml` from prior work — verified.
+- Task 2: `RendererMode` enum + `DAEMONEYE_RENDERER` env var selector in `src/cli/commands/mod.rs` (from prior dispatch, unchanged).
+- Task 3a–3c: `src/cli/render_ratatui.rs` — generic `RatatuiRenderer<B>` with `Terminal` lifecycle (inline viewport, 4 rows), `commit` via `insert_before`, and `draw` (input box + status bar live region) (from prior dispatch, unchanged).
+- Task 4: Wired into `run_chat_inner_raw` (from prior dispatch, unchanged).
+- Task 5: 5 hermetic `TestBackend` tests (from prior dispatch, unchanged): live-region render, commit path, and 3 `fmt_uptime` unit tests.
+- **Bug fix (bug-phase-01-2):** Added `crossterm::terminal::enable_raw_mode()?` as the first call in `RatatuiRendererStdout::new()`, so the ratatui path enters raw mode before constructing the `Terminal`. Fixed the misleading doc comment to accurately describe that raw mode is entered via crossterm (not "managed internally" by ratatui). `restore()` already calls `ratatui::try_restore()` which disables raw mode on exit — no change needed there.
+
+**Verification commands:**
+```
+cargo fmt --all: clean (no output)
+cargo build: clean (zero warnings)
+cargo clippy --all-targets --all-features -- -D warnings: clean
+cargo test: 27 passed; 0 failed; 1 ignored
+```
+
+**Files changed:**
+- `src/cli/render_ratatui.rs` — added `crossterm::terminal::enable_raw_mode()?` in `new()`, fixed doc comment
+- `docs/dev/milestones/M2-tui-renderer/phase-01-render-core.md` — status → review, appended completion entry
+- `docs/dev/milestones/M2-tui-renderer/README.md` — phase table row → review
+
+**Grep for spec-pinned literal `DAEMONEYE_RENDERER`:**
+```
+$ grep -rn 'DAEMONEYE_RENDERER' src/
+src/cli/commands/mod.rs:24:        match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
+```
+
+**Grep for `enable_raw_mode` (bug-phase-01-2 verification):**
+```
+$ grep -rnE 'enable_raw_mode' src/
+src/cli/render_ratatui.rs:33:    /// Enters raw mode via `crossterm::terminal::enable_raw_mode()` and
+src/cli/render_ratatui.rs:39:        crossterm::terminal::enable_raw_mode()?;
+```
+
+**Grep for banned constructs (bug-phase-01-1 verification still holds):**
+```
+$ grep -n 'unsafe' src/cli/commands/mod.rs → (no matches)
+$ grep -n '#\[allow' src/cli/commands/mod.rs → (no matches)
+$ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
+```
+
+**End-to-end verification:** N/A — no real TTY available in headless executor environment. The ratatui path uses `TestBackend` hermetic tests for correctness; live-tmux verification deferred to principal engineer. The `enable_raw_mode()` fix addresses the root cause identified in bug-phase-01-2.
+
+**Notes for review:**
+- The only code change from the prior dispatch is adding `crossterm::terminal::enable_raw_mode()?` at the top of `RatatuiRendererStdout::new()` and fixing the doc comment. All other code (context structs, `Option<termios>`, ratatui chat loop, tests) is unchanged from the bug-phase-01-1 fix dispatch.
+- `ratatui::try_restore()` in `restore()` correctly disables raw mode on exit — verified by the crossterm docs.
+- The `TestBackend` tests remain structurally blind to raw-mode state (no tty line discipline), so the principal engineer should verify under tmux: `DAEMONEYE_RENDERER=ratatui daemoneye chat`, type characters, confirm they appear inside the input box (not echoed as cooked-mode text), submit a line, confirm it commits to scrollback, and on exit confirm the terminal returns to cooked mode.
