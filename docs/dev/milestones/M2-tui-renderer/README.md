@@ -45,7 +45,7 @@ close C5. Statuses mirror the phase-doc frontmatter.
 
 | #  | Phase                              | Status |
 |----|------------------------------------|--------|
-| 01 | render-core — add deps; ratatui inline `Terminal` lifecycle + live-region widgets (input box, status bar) + `insert_before` commit API, selected behind a transitional `DAEMONEYE_RENDERER` switch (default = legacy); reuses existing input editing; hermetic `TestBackend` tests | review |
+| 01 | render-core — add deps; ratatui inline `Terminal` lifecycle + live-region widgets (input box, status bar) + `insert_before` commit API, selected behind a transitional `DAEMONEYE_RENDERER` switch (default = legacy); reuses existing input editing; hermetic `TestBackend` tests | done |
 | 02 | streaming-and-default — route user-query echo, streamed AI markdown, tool panels, spinner through the new path; flip the switch default to ratatui; resize handling | todo |
 | 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | todo |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | todo |

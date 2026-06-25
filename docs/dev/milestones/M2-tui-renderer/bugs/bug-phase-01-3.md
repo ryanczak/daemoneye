@@ -1,8 +1,10 @@
 # Bug 3 on phase-01: AI final answer is not committed to scrollback — the legacy streamer paints over the inline viewport and corrupts the input box
 
 **Severity:** major
-**Status:** open
+**Status:** resolved
 **Filed:** 2026-06-24
+**Resolved:** 2026-06-24 — AI answer now routed through `ask_with_session_ratatui` +
+`renderer.commit`; verified live (see phase-01 Review verdict, approved_after_3).
 
 The bug-phase-01-2 raw-mode fix is correct and verified live: under
 `DAEMONEYE_RENDERER=ratatui`, typed characters now enter the input box (no

@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -115,19 +115,19 @@ Read before starting:
 
 ## Acceptance criteria
 
-- [ ] `cargo build` succeeds with zero new warnings; `ratatui` and `crossterm` are the
+- [x] `cargo build` succeeds with zero new warnings; `ratatui` and `crossterm` are the
       only added dependencies.
-- [ ] With `DAEMONEYE_RENDERER` unset, the chat client behaves exactly as before this
+- [x] With `DAEMONEYE_RENDERER` unset, the chat client behaves exactly as before this
       phase (legacy path untouched).
-- [ ] With `DAEMONEYE_RENDERER=ratatui`, the chat client starts, accepts typed input,
+- [x] With `DAEMONEYE_RENDERER=ratatui`, the chat client starts, accepts typed input,
       shows the input box and status bar in a fixed bottom region, commits submitted
       user input and the AI's final answer into terminal scrollback (i.e. they remain
       visible as ordinary scrollback above the input region), and exits cleanly
       restoring the terminal.
-- [ ] The new renderer path contains **no** DECSTBM scroll-region escape (`\x1b[…r`)
+- [x] The new renderer path contains **no** DECSTBM scroll-region escape (`\x1b[…r`)
       and no absolute-CUP chrome drawing — it uses the ratatui inline viewport.
-- [ ] Hermetic `TestBackend` tests for the live-region render pass.
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all`,
+- [x] Hermetic `TestBackend` tests for the live-region render pass.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all`,
       and `cargo test` all pass.
 
 ## Test plan
@@ -565,3 +565,74 @@ src/cli/render_ratatui.rs:39:        crossterm::terminal::enable_raw_mode()?;
 - The `start_time` field was removed from `RatatuiCtx` since it was unused (the ratatui renderer tracks its own start time internally).
 - The ratatui chat loop still only implements a subset of slash commands (`/help /clear /new /model /approval`); the rest are deferred to phase 02.
 - All prior bug fixes (bug-phase-01-1: no `unsafe`/`#[allow]`/`.expect()`, bug-phase-01-2: `enable_raw_mode()`) remain intact.
+
+### Review verdict — 2026-06-24 (approved)
+
+- **Verdict:** approved_after_3
+- **Bounces:** 3 (bug-phase-01-1, bug-phase-01-2, bug-phase-01-3 — all now resolved)
+- **Executor:** local LLM (Qwen3.6-27B-FP8)
+- **Scope deviations:** none (legacy default path untouched; only ratatui +
+  crossterm — both pre-present; no DECSTBM escape in the new module)
+- **Calibration:** lean spec + task-granularity pin (the infra-confound fix);
+  ratatui API self-discovered throughout. **The lean spec cleared on the code
+  axis only after three live-E2E bounces, each catching a distinct
+  green-but-broken integration miss that `TestBackend` is structurally blind
+  to** (01-1 banned-construct termios shortcut → latent tcsetattr corruption;
+  01-2 raw mode never entered; 01-3 AI answer painted over the viewport instead
+  of committed to scrollback). The consistent ceiling signal across all three:
+  the executor reuses legacy integration points wholesale rather than routing
+  through the new renderer the phase is building, and never surfaces the
+  green-but-inert risk on its own — the principal-engineer live `capture-pane`
+  E2E is the only thing that catches it. The bug-01-3 fix (a dedicated
+  `ask_with_session_ratatui` token-collector that returns the answer `String`
+  for `renderer.commit`, with all interactive prompts auto-denied) is the
+  correct minimal approach sanctioned by Spec item 4. Roll this three-bounce
+  pattern into the M2 retrospective's fold decision.
+
+**Deep-review axes (per milestone directive):**
+1. **Spec conformance** — *met, verified live.* All five Spec tasks implemented;
+   every acceptance criterion confirmed under tmux (see E2E below), not just by
+   `TestBackend`. ratatui + crossterm only added deps; legacy default path
+   untouched; no DECSTBM/absolute-CUP in the new module.
+2. **Reasoning quality** — *good on this fix.* The executor correctly diagnosed
+   that the legacy stdout streamer cannot coexist with the inline viewport and
+   built a non-streaming collector that hands a finished `String` to
+   `commit` — exactly the commit-vs-live-region split the README pins. The
+   weakness remains pattern-level (took three bounces to stop bolting onto the
+   legacy seam), not specific to this dispatch.
+3. **Code & test quality** — *clean.* No `unsafe`/`#[allow]`/`.expect()` in
+   `src/cli/commands/mod.rs` (greps clean); the auto-deny match arm is
+   exhaustive over the IPC `Response` variants; `RatatuiQueryCtx` groups the
+   extra params to avoid `too_many_arguments` without a lint shim. Hermetic
+   tests genuinely assert rendered cells. The only non-blocking observation is a
+   **minor cosmetic exit residue**: `ratatui::try_restore()` does not clear the
+   inline-viewport rows, so the last status-bar frame can linger on the shell
+   prompt line for one command after `/exit` (terminal is functionally restored
+   to cooked mode — `echo` works immediately). Acceptable under the milestone's
+   correctness-first fidelity decision and minor-visual-drift allowance;
+   flagged for the phase 02/03 clear-on-restore polish, not a bounce.
+
+**End-to-end verification (principal engineer, live tmux):**
+Ran `DAEMONEYE_RENDERER=ratatui ./target/debug/daemoneye chat` under an attached
+tmux session (note: the renderer's pre-greeting `session_attached` wait loop
+requires a real attached client; a `new-session -d` detached session blocks it).
+After submitting `say PINEAPPLE once`, `capture-pane -p` showed both the user
+line and the AI answer committed as scrollback **above** a clean, empty input
+box:
+```
+> say PINEAPPLE once
+
+
+PINEAPPLE
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ session:636c075a · Qwen/Qwen3.6-27B-FP8 · up 57s
+```
+Typing fresh `XYZ` after the turn showed only `│XYZ` in the box (no stale answer
+text behind it). Typed chars entered the box with no cooked-mode echo (raw mode
+active). `/exit` restored cooked mode (`echo COOKED_MODE_OK` printed normally at
+a clean shell prompt). With `DAEMONEYE_RENDERER` unset, the legacy DECSTBM path
+rendered its status bar unchanged. Independent re-run of fmt/build/clippy/test:
+all clean (763 + 27 tests pass).
