@@ -46,7 +46,7 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | #  | Phase                              | Status |
 |----|------------------------------------|--------|
 | 01 | render-core — add deps; ratatui inline `Terminal` lifecycle + live-region widgets (input box, status bar) + `insert_before` commit API, selected behind a transitional `DAEMONEYE_RENDERER` switch (default = legacy); reuses existing input editing; hermetic `TestBackend` tests | done |
-| 02a | streaming-markdown — stream the AI response: pre-first-token spinner in the live region + styled, wrapped markdown committed line-by-line to scrollback + resize redraw; tools stay auto-denied; default stays legacy ([phase-02a-streaming.md](phase-02a-streaming.md)) | review |
+| 02a | streaming-markdown — stream the AI response: pre-first-token spinner in the live region + styled, wrapped markdown committed line-by-line to scrollback + resize redraw; tools stay auto-denied; default stays legacy ([phase-02a-streaming.md](phase-02a-streaming.md)) | done |
 | 02b | tools-and-default — interactive tool-call approval (raw/cooked-mode coexistence) + tool panels through the ratatui path, then flip the `DAEMONEYE_RENDERER` default to ratatui | todo |
 | 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | todo |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | todo |
@@ -54,6 +54,18 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | 06 | split-commands — extract `run_chat_inner_raw` loop + ctx structs + slash help from `cli/commands/mod.rs` | todo |
 
 ## Notes
+
+### Pre-02b follow-up: code-block state on the ratatui streaming path (from 02a review)
+
+Phase 02a's streaming renderer (`MarkdownRenderer::render_line_to_spans`, `&self`) does
+**not** track fenced-code-block state — `feed_to_lines` never toggles
+`in_code_block`/`code_lang` (only the legacy stdout `process_line` does). On the ratatui
+path this mis-renders fenced code blocks: bodies lose syntax highlighting, markdown-like
+lines *inside* a code block render as headings/bullets, and the closing fence renders as a
+second opening border. **Accepted for 02a** because the ratatui path is not the default and
+no acceptance criterion covers code-block fidelity — but **02b must fix this before it
+flips `DAEMONEYE_RENDERER` to ratatui** (give the streaming path a stateful line renderer
+so code-block state carries across lines). See phase-02a Review verdict for detail.
 
 ### Phase 02 split into 02a + 02b (2026-06-24)
 

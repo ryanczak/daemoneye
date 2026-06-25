@@ -1,7 +1,7 @@
 # Phase 02a: streaming-markdown
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review (bounced once — see bugs/bug-phase-02a-1.md, fixed)
+**Status:** done (approved_after_1 — see bugs/bug-phase-02a-1.md, fixed)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -357,3 +357,61 @@ cargo test: PASS (27 passed, 1 ignored)
 - No new dependencies. No `unsafe`. No `.unwrap()` in production paths.
 - The legacy `ask_with_session` (line 717 `md.feed`) is untouched per authorization.
 
+
+### Review verdict — 2026-06-25
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-02a-1, blocker — green-but-inert: tokens streamed to stdout, not scrollback)
+- **Executor:** Qwen3.6-27B-FP8 (rexyMCP executor)
+- **Scope deviations:** none (legacy `ask_with_session` byte-for-byte unchanged; no new deps; default stays legacy; tools auto-denied)
+- **Calibration:** lean spec, **unblocked at rung 1.5** — the re-dispatch carried only the bug
+  report (a concrete integration pin naming the exact call site: "replace `md.feed` with
+  `render_line_to_spans` → `commit_styled`"), no API sketch/snippet/test skeleton added.
+  That single targeted pin cleared it in one pass (117 turns).
+
+#### Independent command re-run
+
+`cargo fmt --all -- --check` PASS · `cargo build` zero warnings · `cargo clippy
+--all-targets --all-features -- -D warnings` PASS · `cargo test` PASS (769 lib + 27
+integration, 1 ignored). The 3 new streaming tests pass.
+
+#### Three-axis assessment (M2 calibration, deep review)
+
+**1. Spec conformance — all named acceptance criteria met.** The core deliverable is now
+correct: `Response::Token` (`stream.rs:292`) routes through `md.feed_to_lines(&t,
+render_width)` → `renderer.commit_styled(&lines)`; the final partial line flushes on
+`Response::Ok` (`stream.rs:274`) via `flush_to_lines` → `commit_styled`. No token reaches
+stdout. `render_line_to_spans` now has real production call sites (`render.rs:1120,1141`) —
+no longer dead code. Legacy `ask_with_session` untouched (the only `md.feed` left,
+`stream.rs:717`, is the legacy path, per authorization). Default stays legacy; tools stay
+auto-denied; no new deps.
+
+**2. Reasoning quality — the integration step landed once it was pinned.** This is the
+same axis the phase floundered on in dispatch 1 (and phase 01 ×3): connecting a
+correctly-discovered ratatui API to the live control flow. Given an explicit call-site
+pin in the bug report, the executor wired it cleanly and even added the right helper
+shape (`feed_to_lines` buffering until newline boundaries, `flush_to_lines` for the
+trailing partial). Calibration read: at 27B the discovery is reliable; the *integration*
+needs a concrete seam named. That is the actionable retrospective signal.
+
+**3. Code & test quality — real tests; one documented fidelity gap.**
+`streaming_tokens_appear_in_scrollback_without_escapes` (`render_ratatui.rs`) drives the
+actual `feed_to_lines`→`commit_styled` path and asserts rendered **cells** contain the
+text with **no `\x1b` byte** — it fails if the commit regresses (verified real).
+`feed_to_lines_buffers_partial_lines` / `_handles_empty_lines` assert the buffering
+contract. No `unwrap`/`expect`/`panic`/`unsafe`/`#[allow]` in new production code.
+
+**Known limitation — code-block state on the streaming path (pre-02b follow-up, not a
+02a blocker).** `render_line_to_spans` takes `&self` and `feed_to_lines` never toggles
+`in_code_block`/`code_lang` (only the legacy `process_line` does, `render.rs:1398-1408`).
+Consequence on the ratatui path: a fenced ```` ``` ```` opening renders its border but
+state stays `false`, so (a) code bodies render as prose (no `highlight_code`), (b) a
+`# comment` or `- item` *inside* a code block is mis-rendered as an H1 heading / bullet,
+and (c) the closing fence renders as a second opening border. This is real but **not an
+acceptance-criterion failure** (no escapes leak, text is present and committed, streaming
+works) and the ratatui path is **not the default**, so no user is exposed in M2 yet. Per
+the milestone's "correctness-first, allowed to refine" fidelity directive it is acceptable
+to ship behind the flag — **but it must be fixed before 02b flips the default to ratatui.**
+Recommended fix: give the streaming path a stateful `&mut self` line renderer (or have
+`feed_to_lines` own the fence toggle) so `in_code_block`/`code_lang` track across lines.
+Tracked in the README "Pre-02b follow-up" note.

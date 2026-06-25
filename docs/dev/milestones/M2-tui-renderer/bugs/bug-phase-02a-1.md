@@ -1,7 +1,7 @@
 # Bug 1 on phase-02a: AI tokens stream to stdout, not to renderer scrollback — bug-phase-01-3 reintroduced
 
 **Severity:** blocker
-**Status:** open
+**Status:** fixed (verified at review 2026-06-25, commit eea63f5)
 **Filed:** 2026-06-25
 
 ## What's wrong
