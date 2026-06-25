@@ -1,7 +1,7 @@
 # Phase 02a: streaming-markdown
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bugs/bug-phase-02a-1.md)
+**Status:** review (bounced once — see bugs/bug-phase-02a-1.md, fixed)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -303,4 +303,57 @@ exact axis. Recommend the re-dispatch carry an explicit integration pin (rung 2
 "+ API sketch" naming the call site: "in the `Response::Token` arm, replace
 `md.feed` with `render_line_to_spans` → `commit_styled`"). Roll into the M2
 retrospective fold decision.
+
+### Update — 2026-06-25 21:05 (complete — re-dispatch fix)
+
+**Summary:** Fixed the green-but-inert bug: AI tokens now stream to ratatui
+scrollback as styled lines through the renderer, not stdout.
+
+**Files changed:**
+- `src/cli/render.rs` — added `MarkdownRenderer::feed_to_lines()` (buffers
+  tokens, yields `Vec<Line>` on newline boundaries via `render_line_to_spans`)
+  and `MarkdownRenderer::flush_to_lines()` (renders final partial line).
+- `src/cli/commands/stream.rs` — replaced `md.feed(&t)` in the `Response::Token`
+  arm of `ask_with_session_ratatui` with `md.feed_to_lines(&t, render_width)`
+  → `renderer.commit_styled(&lines)`. Replaced `md.flush()` in the
+  `Response::Ok` arm with `md.flush_to_lines(render_width)` → `commit_styled`.
+  Removed `_render_width` dead binding, made it `render_width` used at the call
+  site.
+- `src/cli/render_ratatui.rs` — added 3 new hermetic tests:
+  `streaming_tokens_appear_in_scrollback_without_escapes` (full path: feed
+  tokens → render → commit_styled → assert buffer/scrollback cells contain text
+  with no `\x1b`), `feed_to_lines_buffers_partial_lines` (buffers until newline),
+  `feed_to_lines_handles_empty_lines` (bare newlines produce empty Line entries).
+
+**Verification commands:**
+```
+cargo fmt --all -- --check: PASS
+cargo build: PASS (zero warnings)
+cargo clippy --all-targets --all-features -- -D warnings: PASS
+cargo test: PASS (27 passed, 1 ignored)
+```
+
+**One-line verification summary:** fmt clean, build zero warnings, clippy clean, 27 tests pass.
+
+**Bug-phase-02a-1 verification checklist:**
+- `grep -n "md.feed" src/cli/commands/stream.rs` → line 292 uses `md.feed_to_lines` (not `md.feed`); line 717 is the legacy `ask_with_session` (untouched, out of scope). ✓
+- `grep -rn "render_line_to_spans" src/` → called from `feed_to_lines` (render.rs:1120, 1141) and `flush_to_lines` (render.rs:1141). ✓
+- `TestBackend` test `streaming_tokens_appear_in_scrollback_without_escapes` drives the full streaming path with fake tokens spanning a line boundary and asserts committed cells contain text with no `\x1b`. ✓
+- All gates pass. ✓
+
+**End-to-end verification:** N/A — requires a live daemon connection and tmux session which cannot be exercised in the executor environment. The streaming path was verified via hermetic `TestBackend` tests asserting styled text appears in committed cells with no raw `\x1b` bytes.
+
+**Notes for review:**
+- **Commit-styling approach:** ANSI escape sequences produced by the existing
+  `render_inline`/`highlight_code` pipeline are parsed by `parse_ansi_to_spans`
+  into ratatui `Span`s with `Style`, then committed via `commit_styled` which
+  renders them through a `Paragraph` widget into the `insert_before` buffer.
+- `render_line_to_spans` is now called from production code via `feed_to_lines`
+  and `flush_to_lines` — no dead code.
+- `commit_styled` is called from production code in the `Response::Token` and
+  `Response::Ok` arms of `ask_with_session_ratatui`.
+- The `draw_spinner` method (from phase 01) animates the spinner in the live
+  region, leaving no scrollback residue.
+- No new dependencies. No `unsafe`. No `.unwrap()` in production paths.
+- The legacy `ask_with_session` (line 717 `md.feed`) is untouched per authorization.
 
