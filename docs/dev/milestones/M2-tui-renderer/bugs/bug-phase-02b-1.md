@@ -173,3 +173,30 @@ real state tests), sub-deliverable 2 (`commit_panel`, `render_ratatui.rs:234-285
 - [ ] Update Log quotes real `tmux capture-pane -p` output: Y approves + runs a
       command; a typed redirect course-corrects; a fenced code block renders
       highlighted; `DAEMONEYE_RENDERER=legacy` unchanged.
+
+## Live E2E note (architect, 2026-06-25)
+
+Ran the ratatui-default path live under an attached tmux pane (daemon rebuilt
+from this branch, `DAEMONEYE_RENDERER` unset). Confirmed:
+
+- **New default is ratatui** ✓ — greeting streamed to scrollback, input box +
+  status bar render cleanly, no literal escapes (`session:… · Qwen/… · up 27s`).
+- **Tool-call panel renders cleanly** ✓ (sub-deliverable 2) — `capture-pane`:
+  ```
+  ╭─ terminal · visible to you ─…─╮
+    $ echo hello-e2e-test
+    → target: %0
+  ╰─…─╯
+  ```
+  No literal `\x1b[` bytes in the committed panel cells.
+- **Interactive typed-redirect / line-editing path (the broken one) was NOT
+  exercised live**: the command hit the `auto_approved` branch
+  (`prompt_tool_call_ratatui`, `stream.rs:1418`) and printed
+  `✓ auto-approved (session)`, so the per-byte `commit` editing loop never ran.
+  Finding #1 therefore stands on the code-trace evidence above
+  (`commit` = one `insert_before` per call; `read_approval_input` echoes one
+  byte per call + literal `\x1b[D\x1b[P` on backspace). A fix must still be
+  verified live with a non-auto-approved command and a typed redirect.
+- Observed separately (not a 02b bug, flag for awareness): foreground target
+  resolved to `%0` and the command was injected into the unrelated active pane;
+  re-confirm pane targeting when re-running the E2E in isolation.
