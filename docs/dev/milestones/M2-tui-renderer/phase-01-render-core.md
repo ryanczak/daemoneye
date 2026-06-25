@@ -1,7 +1,7 @@
 # Phase 01: render-core
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bug-phase-01-3)
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -501,3 +501,67 @@ $ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
 3. **Code & test quality** — clean and unchanged from the prior dispatch (only
    `enable_raw_mode()` + comment added); banned-construct fixes hold. The gap is
    the answer-commit wiring, invisible to `TestBackend`.
+
+### Update — 2026-06-24 22:43 (complete)
+
+**Executor:** local LLM. Phase 01: render-core complete (re-dispatch after bug-phase-01-3).
+
+**Spec tasks implemented:**
+- Task 1: Dependencies `ratatui` and `crossterm` already present in `Cargo.toml` from prior work — verified.
+- Task 2: `RendererMode` enum + `DAEMONEYE_RENDERER` env var selector in `src/cli/commands/mod.rs` (from prior dispatch, unchanged).
+- Task 3a–3c: `src/cli/render_ratatui.rs` — generic `RatatuiRenderer<B>` with `Terminal` lifecycle (inline viewport, 4 rows), `commit` via `insert_before`, and `draw` (input box + status bar live region) (from prior dispatch, unchanged).
+- Task 4: Wired into `run_chat_inner_raw` — **fixed bug-phase-01-3**: replaced the legacy `ask_with_session` stdout streamer with a new `ask_with_session_ratatui` function in `src/cli/commands/stream.rs` that collects all response tokens into a `String` and returns it (no stdout writes). The ratatui chat loop then commits the answer text to scrollback via `renderer.commit(&format!("\n{}\n", answer))`. Both the greeting query and user-submitted queries now route through this path. Tool calls and interactive prompts are auto-denied (same as `run_ask_raw`), since rich streaming is phase 02.
+- Task 5: 5 hermetic `TestBackend` tests (from prior dispatch, unchanged): live-region render, commit path, and 3 `fmt_uptime` unit tests.
+
+**Verification commands:**
+```
+cargo fmt --all: clean (no output)
+cargo build: clean (zero warnings)
+cargo clippy --all-targets --all-features -- -D warnings: clean
+cargo test: 27 passed; 0 failed; 1 ignored
+```
+
+**Files changed:**
+- `src/cli/commands/stream.rs` — added `RatatuiQueryCtx` struct and `ask_with_session_ratatui` function (collects tokens into String, auto-denies prompts, no stdout rendering)
+- `src/cli/commands/mod.rs` — imported `RatatuiQueryCtx` and `ask_with_session_ratatui`; replaced both `ask_with_session` calls in the ratatui path (greeting + user query) with `ask_with_session_ratatui` + `renderer.commit` for the answer; removed unused `start_time` field from `RatatuiCtx`; removed `StreamResizeDims` construction from ratatui path
+- `docs/dev/milestones/M2-tui-renderer/phase-01-render-core.md` — status → review, appended completion entry
+- `docs/dev/milestones/M2-tui-renderer/README.md` — phase table row → review
+
+**Grep for spec-pinned literal `DAEMONEYE_RENDERER`:**
+```
+$ grep -rn 'DAEMONEYE_RENDERER' src/
+src/cli/commands/mod.rs:24:        match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
+```
+
+**Grep for `ask_with_session_ratatui` (bug-phase-01-3 verification):**
+```
+$ grep -rn 'ask_with_session_ratatui' src/
+src/cli/commands/mod.rs:50:    ask_with_session, ask_with_session_ratatui,
+src/cli/commands/mod.rs:570:            match ask_with_session_ratatui(
+src/cli/commands/mod.rs:786:                match ask_with_session_ratatui(
+src/cli/commands/stream.rs:139:pub(super) async fn ask_with_session_ratatui(
+```
+
+**Grep for banned constructs (bug-phase-01-1 verification still holds):**
+```
+$ grep -n 'unsafe' src/cli/commands/mod.rs → (no matches)
+$ grep -n '#\[allow' src/cli/commands/mod.rs → (no matches)
+$ grep -n '\.expect(' src/cli/commands/mod.rs → (no matches in ratatui path)
+```
+
+**Grep for `enable_raw_mode` (bug-phase-01-2 verification still holds):**
+```
+$ grep -rnE 'enable_raw_mode' src/
+src/cli/render_ratatui.rs:33:    /// Enters raw mode via `crossterm::terminal::enable_raw_mode()` and
+src/cli/render_ratatui.rs:39:        crossterm::terminal::enable_raw_mode()?;
+```
+
+**End-to-end verification:** N/A — no real TTY available in headless executor environment. The ratatui path uses `TestBackend` hermetic tests for correctness; live-tmux verification deferred to principal engineer. The `ask_with_session_ratatui` fix addresses the root cause identified in bug-phase-01-3: the AI answer is now collected as a String and committed via `renderer.commit` instead of streaming to stdout.
+
+**Notes for review:**
+- The core fix for bug-phase-01-3: `ask_with_session_ratatui` is a minimal query function that collects all `Response::Token` strings into a single `String`, auto-denies all interactive prompts (tool calls, credentials, pane selects, scripts, schedules, runbooks, file edits), and returns the accumulated answer. The ratatui chat loop then commits it via `renderer.commit(&format!("\n{}\n", answer))`.
+- `ToolStarted`, `ToolFinished`, and `ToolResult` responses are accumulated into the answer string for minimal display (since tools are auto-denied, these should rarely fire, but they're handled if the daemon emits them before the denial takes effect).
+- The `RatatuiQueryCtx` struct groups the 3 extra parameters (`chat_width`, `session_cost`, `session_has_untracked`) to satisfy `clippy::too_many_arguments` without `#[allow]`.
+- The `start_time` field was removed from `RatatuiCtx` since it was unused (the ratatui renderer tracks its own start time internally).
+- The ratatui chat loop still only implements a subset of slash commands (`/help /clear /new /model /approval`); the rest are deferred to phase 02.
+- All prior bug fixes (bug-phase-01-1: no `unsafe`/`#[allow]`/`.expect()`, bug-phase-01-2: `enable_raw_mode()`) remain intact.

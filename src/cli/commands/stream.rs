@@ -124,6 +124,238 @@ pub(super) struct StreamCtx<'a> {
     pub(super) has_untracked: &'a mut bool,
 }
 
+/// Context for the ratatui-path query function.
+pub(super) struct RatatuiQueryCtx<'a> {
+    pub(super) chat_width: Option<usize>,
+    pub(super) session_cost: &'a mut f64,
+    pub(super) session_has_untracked: &'a mut bool,
+}
+
+/// Minimal query for the ratatui renderer path.
+///
+/// Sends the query to the daemon, collects all response tokens into a single
+/// String, and returns it.  No stdout rendering occurs — the caller commits
+/// the result through the ratatui renderer's `commit` path.
+///
+/// Tool calls and interactive prompts are auto-denied (same as `run_ask_raw`)
+/// since rich streaming is phase 02.
+pub(super) async fn ask_with_session_ratatui(
+    qa: QueryArgs<'_>,
+    session_id: Option<&str>,
+    approval: &mut SessionApproval,
+    tmux: AskTmuxCtx<'_>,
+    tok: TokenCtx<'_>,
+    ctx: RatatuiQueryCtx<'_>,
+) -> Result<String> {
+    let QueryArgs {
+        query,
+        prompt_override,
+        ..
+    } = qa;
+    let AskTmuxCtx {
+        session: tmux_session,
+        pane: target_pane,
+    } = tmux;
+    let TokenCtx {
+        prompt_tokens,
+        context_window: _,
+    } = tok;
+    let RatatuiQueryCtx {
+        chat_width,
+        session_cost,
+        session_has_untracked,
+    } = ctx;
+
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    let mut rx = BufReader::new(rx);
+
+    let chat_pane = std::env::var("TMUX_PANE").ok();
+    let tmux_pane = target_pane
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("TMUX_PANE").ok());
+
+    send_request(
+        &mut tx,
+        Request::Ask {
+            query,
+            tmux_pane,
+            session_id: session_id.map(|s| s.to_string()),
+            chat_pane,
+            prompt: prompt_override.map(|s| s.to_string()),
+            chat_width,
+            tmux_session: tmux_session.map(|s| s.to_string()),
+            target_pane: target_pane.map(|s| s.to_string()),
+            model: None,
+        },
+    )
+    .await?;
+
+    let mut answer = String::new();
+
+    loop {
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(120), recv(&mut rx))
+            .await
+            .map_err(|_| anyhow::anyhow!("Daemon stopped responding (120 s timeout)"))?
+            .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?;
+
+        match msg {
+            Response::KeepAlive => continue,
+            Response::Ok => break,
+            Response::Error(e) => anyhow::bail!("{}", e),
+            Response::Token(t) => {
+                answer.push_str(&t);
+            }
+            Response::SessionInfo {
+                session_cost_usd,
+                has_untracked_cost,
+                ..
+            } => {
+                *session_cost = session_cost_usd;
+                *session_has_untracked = has_untracked_cost;
+            }
+            Response::UsageUpdate { prompt_tokens: pt } => {
+                *prompt_tokens = pt;
+            }
+            Response::SystemMsg(msg) => {
+                answer.push_str(&format!("\n⚙ {}\n", msg));
+            }
+            // Auto-deny tool calls — daemon will inform the AI and respond in text.
+            Response::ToolCallPrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::ToolCallResponse {
+                        id,
+                        approved: false,
+                        user_message: None,
+                    },
+                )
+                .await?;
+            }
+            Response::CredentialPrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::CredentialResponse {
+                        id,
+                        credential: String::new(),
+                    },
+                )
+                .await?;
+            }
+            Response::PaneSelectPrompt { id, panes } => {
+                let pane_id = panes.into_iter().next().map(|p| p.id).unwrap_or_default();
+                send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
+            }
+            Response::ScriptDeletePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::ScriptDeleteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
+            }
+            Response::ScriptWritePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::ScriptWriteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
+            }
+            Response::ScheduleWritePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::ScheduleWriteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
+            }
+            Response::RunbookWritePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::RunbookWriteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
+            }
+            Response::RunbookDeletePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::RunbookDeleteResponse {
+                        id,
+                        approved: false,
+                    },
+                )
+                .await?;
+            }
+            Response::EditFilePrompt { id, .. } => {
+                send_request(
+                    &mut tx,
+                    Request::EditFileResponse {
+                        id,
+                        approved: false,
+                        user_message: None,
+                    },
+                )
+                .await?;
+            }
+            // Silent tool calls and results — accumulate for minimal display.
+            Response::ToolStarted { tool, summary, .. } => {
+                if !summary.is_empty() {
+                    answer.push_str(&format!("\n⏳ {} ({})\n", tool, summary));
+                } else {
+                    answer.push_str(&format!("\n⏳ {}\n", tool));
+                }
+            }
+            Response::ToolFinished { ok, elapsed_ms, .. } => {
+                let status = if ok { "✓" } else { "✗" };
+                let secs = elapsed_ms as f64 / 1000.0;
+                answer.push_str(&format!("{} {} ({:.1}s)\n", status, status, secs));
+            }
+            Response::ToolResult(output) => {
+                let lines: Vec<&str> = output.lines().collect();
+                let total = lines.len();
+                let shown = if total > 5 { 5 } else { total };
+                for line in &lines[..shown] {
+                    answer.push_str(&format!("  {}\n", line));
+                }
+                if total > shown {
+                    answer.push_str(&format!("  … {} more lines\n", total - shown));
+                }
+            }
+            // Ignore informational responses not relevant to minimal rendering.
+            Response::ScheduleList { .. }
+            | Response::ScriptList { .. }
+            | Response::RunbookList { .. }
+            | Response::DaemonStatus { .. }
+            | Response::ModelChanged { .. }
+            | Response::ModelList { .. }
+            | Response::PaneChanged { .. }
+            | Response::PaneList { .. }
+            | Response::LimitsInfo { .. }
+            | Response::SessionSaved { .. }
+            | Response::SessionLoaded { .. }
+            | Response::SavedSessionList { .. } => {}
+        }
+    }
+
+    // Update approval from config in case it changed during the turn.
+    {
+        let cfg = Config::load().unwrap_or_default();
+        *approval = SessionApproval::from_config(&cfg.approvals);
+    }
+
+    Ok(answer)
+}
+
 pub(super) async fn ask_with_session(
     qa: QueryArgs<'_>,
     session_id: Option<&str>,

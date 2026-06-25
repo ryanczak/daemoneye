@@ -47,7 +47,10 @@ use ipc_client::{
     send_set_pane,
 };
 use pane::resolve_target_pane;
-use stream::{AskTmuxCtx, QueryArgs, StreamCtx, StreamResizeDims, TokenCtx, ask_with_session};
+use stream::{
+    AskTmuxCtx, QueryArgs, RatatuiQueryCtx, StreamCtx, StreamResizeDims, TokenCtx,
+    ask_with_session, ask_with_session_ratatui,
+};
 
 /// Render the two-column slash-command reference, centered to `chat_width`.
 /// Shown on `/help` during chat and whenever the caller wants the full command list.
@@ -436,7 +439,6 @@ struct RatatuiCtx<'a> {
     sigwinch: &'a mut tokio::signal::unix::Signal,
     renderer: RatatuiRendererStdout,
     chat_width: usize,
-    start_time: std::time::Instant,
     session_id: String,
     current_prompt: Option<String>,
     approval: &'a mut SessionApproval,
@@ -477,7 +479,6 @@ async fn run_chat_inner_raw(
             sigwinch,
             renderer,
             chat_width,
-            start_time,
             session_id,
             current_prompt,
             approval,
@@ -494,7 +495,6 @@ async fn run_chat_inner_raw(
             sigwinch,
             mut renderer,
             mut chat_width,
-            start_time,
             mut session_id,
             current_prompt,
             approval,
@@ -563,21 +563,10 @@ async fn run_chat_inner_raw(
             false,
         );
 
-        // Send the greeting query.
+        // Send the greeting query — minimal rendering via ratatui commit path.
         {
             let cw = chat_width;
-            let resize = StreamResizeDims {
-                width: &mut chat_width,
-                height: &mut 0,
-                start: start_time,
-                model: model.clone(),
-                daemon_up: false,
-                tools_total: 0,
-                has_frame: false,
-                cost_usd: 0.0,
-                has_untracked: false,
-            };
-            match ask_with_session(
+            match ask_with_session_ratatui(
                 QueryArgs {
                     query: "Hello!".to_string(),
                     display_query: "",
@@ -593,19 +582,20 @@ async fn run_chat_inner_raw(
                     prompt_tokens: &mut prompt_tokens,
                     context_window,
                 },
-                StreamCtx {
-                    stdin,
+                RatatuiQueryCtx {
                     chat_width: Some(cw),
-                    old_termios: None, // ratatui renderer owns raw-mode
-                    sigwinch: Some(sigwinch),
-                    resize: Some(resize),
-                    cost_usd: &mut cost_usd,
-                    has_untracked: &mut has_untracked,
+                    session_cost: &mut cost_usd,
+                    session_has_untracked: &mut has_untracked,
                 },
             )
             .await
             {
-                Ok(()) => daemon_up = true,
+                Ok(answer) => {
+                    daemon_up = true;
+                    if !answer.is_empty() {
+                        let _ = renderer.commit(&format!("\n{}\n", answer));
+                    }
+                }
                 Err(e) => {
                     eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
                     eprintln!(
@@ -791,52 +781,42 @@ async fn run_chat_inner_raw(
             // Commit user query to scrollback.
             let _ = renderer.commit(&format!("> {}\n", query));
 
-            // Send query to AI.
-            chat_width = terminal_width();
-            let cw = chat_width;
-            let mut dummy_height = 0usize;
-            let resize = StreamResizeDims {
-                width: &mut chat_width,
-                height: &mut dummy_height,
-                start: start_time,
-                model: model.clone(),
-                daemon_up,
-                tools_total: 0,
-                has_frame: false,
-                cost_usd,
-                has_untracked,
-            };
-            match ask_with_session(
-                QueryArgs {
-                    query,
-                    display_query: "",
-                    prompt_override: None,
-                },
-                Some(&session_id),
-                approval,
-                AskTmuxCtx {
-                    session: tmux_session.as_deref(),
-                    pane: target_pane.as_deref(),
-                },
-                TokenCtx {
-                    prompt_tokens: &mut prompt_tokens,
-                    context_window,
-                },
-                StreamCtx {
-                    stdin,
-                    chat_width: Some(cw),
-                    old_termios: None, // ratatui renderer owns raw-mode
-                    sigwinch: Some(sigwinch),
-                    resize: Some(resize),
-                    cost_usd: &mut cost_usd,
-                    has_untracked: &mut has_untracked,
-                },
-            )
-            .await
+            // Send query to AI — minimal rendering via ratatui commit path.
             {
-                Ok(()) => daemon_up = true,
-                Err(e) => {
-                    let _ = renderer.commit(&format!("\n✗ {}\n", e));
+                let cw = chat_width;
+                match ask_with_session_ratatui(
+                    QueryArgs {
+                        query,
+                        display_query: "",
+                        prompt_override: None,
+                    },
+                    Some(&session_id),
+                    approval,
+                    AskTmuxCtx {
+                        session: tmux_session.as_deref(),
+                        pane: target_pane.as_deref(),
+                    },
+                    TokenCtx {
+                        prompt_tokens: &mut prompt_tokens,
+                        context_window,
+                    },
+                    RatatuiQueryCtx {
+                        chat_width: Some(cw),
+                        session_cost: &mut cost_usd,
+                        session_has_untracked: &mut has_untracked,
+                    },
+                )
+                .await
+                {
+                    Ok(answer) => {
+                        daemon_up = true;
+                        if !answer.is_empty() {
+                            let _ = renderer.commit(&format!("\n{}\n", answer));
+                        }
+                    }
+                    Err(e) => {
+                        let _ = renderer.commit(&format!("\n✗ {}\n", e));
+                    }
                 }
             }
 
