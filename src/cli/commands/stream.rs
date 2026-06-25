@@ -129,16 +129,15 @@ pub(super) struct RatatuiQueryCtx<'a> {
     pub(super) chat_width: Option<usize>,
     pub(super) session_cost: &'a mut f64,
     pub(super) session_has_untracked: &'a mut bool,
+    pub(super) renderer: &'a mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    pub(super) model: &'a str,
 }
 
-/// Minimal query for the ratatui renderer path.
+/// Stream the AI response through the ratatui renderer.
 ///
-/// Sends the query to the daemon, collects all response tokens into a single
-/// String, and returns it.  No stdout rendering occurs — the caller commits
-/// the result through the ratatui renderer's `commit` path.
-///
-/// Tool calls and interactive prompts are auto-denied (same as `run_ask_raw`)
-/// since rich streaming is phase 02.
+/// Before the first token, animates a spinner in the inline viewport.
+/// Tokens are fed through markdown rendering and committed line-by-line
+/// to scrollback as styled spans.  Tool calls are auto-denied.
 pub(super) async fn ask_with_session_ratatui(
     qa: QueryArgs<'_>,
     session_id: Option<&str>,
@@ -146,7 +145,7 @@ pub(super) async fn ask_with_session_ratatui(
     tmux: AskTmuxCtx<'_>,
     tok: TokenCtx<'_>,
     ctx: RatatuiQueryCtx<'_>,
-) -> Result<String> {
+) -> Result<()> {
     let QueryArgs {
         query,
         prompt_override,
@@ -158,12 +157,14 @@ pub(super) async fn ask_with_session_ratatui(
     } = tmux;
     let TokenCtx {
         prompt_tokens,
-        context_window: _,
+        context_window,
     } = tok;
     let RatatuiQueryCtx {
         chat_width,
         session_cost,
         session_has_untracked,
+        renderer,
+        model,
     } = ctx;
 
     let stream = connect().await?;
@@ -191,20 +192,95 @@ pub(super) async fn ask_with_session_ratatui(
     )
     .await?;
 
-    let mut answer = String::new();
+    // ── Spinner animation (Phase 1 — waiting for first content) ──
+    const SPINNER: &[&str] = &["(─)", "(○)", "(◎)", "(◉)", "(◎)", "(○)"];
+    const VERBS: &[&str] = &[
+        "scrying",
+        "peering",
+        "gazing",
+        "surveying",
+        "scanning",
+        "beholding",
+        "watching",
+        "glimpsing",
+        "piercing",
+        "discerning",
+    ];
+    const TICKS_PER_VERB: usize = 62;
+    let verb_offset = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as usize)
+        % VERBS.len();
+    let mut spin = verb_offset * TICKS_PER_VERB;
+    let mut response_started = false;
+
+    // Markdown renderer for streaming — feeds tokens and produces styled lines.
+    let mut md = MarkdownRenderer::new();
 
     loop {
-        let msg = tokio::time::timeout(std::time::Duration::from_secs(120), recv(&mut rx))
-            .await
-            .map_err(|_| anyhow::anyhow!("Daemon stopped responding (120 s timeout)"))?
-            .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?;
+        // Phase 1 — waiting for first content: poll with short timeout for spinner.
+        let msg = if !response_started {
+            loop {
+                let result =
+                    tokio::time::timeout(std::time::Duration::from_millis(80), recv(&mut rx)).await;
+                match result {
+                    Err(_timeout) => {
+                        let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
+                        let dot_period = 18;
+                        let pos = (spin % TICKS_PER_VERB) % dot_period;
+                        let dot_count = if pos < 10 {
+                            pos + 1
+                        } else {
+                            dot_period - pos + 1
+                        };
+                        let spinner_text = format!(
+                            "  {} {}{}",
+                            SPINNER[spin % SPINNER.len()],
+                            verb,
+                            ".".repeat(dot_count)
+                        );
+                        let sb = StatusBarState {
+                            session_id: session_id.unwrap_or(""),
+                            approval_hint: &approval.hint(),
+                            model,
+                            prompt_tokens: *prompt_tokens,
+                            context_window,
+                            daemon_up: false,
+                            tools_total: 0,
+                            cost_usd: 0.0,
+                            has_untracked: false,
+                        };
+                        let _ = renderer.draw_spinner(&spinner_text, &sb);
+                        spin = spin.wrapping_add(1);
+                    }
+                    Ok(r) => break r?,
+                }
+            }
+        } else {
+            // Phase 2 — streaming: 120s timeout per message.
+
+            tokio::time::timeout(std::time::Duration::from_secs(120), recv(&mut rx))
+                .await
+                .map_err(|_| anyhow::anyhow!("Daemon stopped responding (120 s timeout)"))?
+                .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
+        };
 
         match msg {
             Response::KeepAlive => continue,
-            Response::Ok => break,
-            Response::Error(e) => anyhow::bail!("{}", e),
+            Response::Ok => {
+                md.flush();
+                break;
+            }
+            Response::Error(e) => {
+                let _ = renderer.commit(&format!("\n✗ {}\n", e));
+                break;
+            }
             Response::Token(t) => {
-                answer.push_str(&t);
+                if !response_started {
+                    response_started = true;
+                }
+                md.feed(&t);
             }
             Response::SessionInfo {
                 session_cost_usd,
@@ -218,7 +294,10 @@ pub(super) async fn ask_with_session_ratatui(
                 *prompt_tokens = pt;
             }
             Response::SystemMsg(msg) => {
-                answer.push_str(&format!("\n⚙ {}\n", msg));
+                if !response_started {
+                    response_started = true;
+                }
+                let _ = renderer.commit(&format!("\n⚙ {}\n", msg));
             }
             // Auto-deny tool calls — daemon will inform the AI and respond in text.
             Response::ToolCallPrompt { id, .. } => {
@@ -310,25 +389,25 @@ pub(super) async fn ask_with_session_ratatui(
             // Silent tool calls and results — accumulate for minimal display.
             Response::ToolStarted { tool, summary, .. } => {
                 if !summary.is_empty() {
-                    answer.push_str(&format!("\n⏳ {} ({})\n", tool, summary));
+                    let _ = renderer.commit(&format!("\n⏳ {} ({})\n", tool, summary));
                 } else {
-                    answer.push_str(&format!("\n⏳ {}\n", tool));
+                    let _ = renderer.commit(&format!("\n⏳ {}\n", tool));
                 }
             }
             Response::ToolFinished { ok, elapsed_ms, .. } => {
                 let status = if ok { "✓" } else { "✗" };
                 let secs = elapsed_ms as f64 / 1000.0;
-                answer.push_str(&format!("{} {} ({:.1}s)\n", status, status, secs));
+                let _ = renderer.commit(&format!("{} ({:.1}s)\n", status, secs));
             }
             Response::ToolResult(output) => {
                 let lines: Vec<&str> = output.lines().collect();
                 let total = lines.len();
                 let shown = if total > 5 { 5 } else { total };
                 for line in &lines[..shown] {
-                    answer.push_str(&format!("  {}\n", line));
+                    let _ = renderer.commit(&format!("  {}\n", line));
                 }
                 if total > shown {
-                    answer.push_str(&format!("  … {} more lines\n", total - shown));
+                    let _ = renderer.commit(&format!("  … {} more lines\n", total - shown));
                 }
             }
             // Ignore informational responses not relevant to minimal rendering.
@@ -353,7 +432,7 @@ pub(super) async fn ask_with_session_ratatui(
         *approval = SessionApproval::from_config(&cfg.approvals);
     }
 
-    Ok(answer)
+    Ok(())
 }
 
 pub(super) async fn ask_with_session(

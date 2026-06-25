@@ -586,15 +586,14 @@ async fn run_chat_inner_raw(
                     chat_width: Some(cw),
                     session_cost: &mut cost_usd,
                     session_has_untracked: &mut has_untracked,
+                    renderer: &mut renderer,
+                    model: &model,
                 },
             )
             .await
             {
-                Ok(answer) => {
+                Ok(()) => {
                     daemon_up = true;
-                    if !answer.is_empty() {
-                        let _ = renderer.commit(&format!("\n{}\n", answer));
-                    }
                 }
                 Err(e) => {
                     eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
@@ -804,15 +803,14 @@ async fn run_chat_inner_raw(
                         chat_width: Some(cw),
                         session_cost: &mut cost_usd,
                         session_has_untracked: &mut has_untracked,
+                        renderer: &mut renderer,
+                        model: &model,
                     },
                 )
                 .await
                 {
-                    Ok(answer) => {
+                    Ok(()) => {
                         daemon_up = true;
-                        if !answer.is_empty() {
-                            let _ = renderer.commit(&format!("\n{}\n", answer));
-                        }
                     }
                     Err(e) => {
                         let _ = renderer.commit(&format!("\n✗ {}\n", e));

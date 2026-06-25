@@ -46,13 +46,36 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | #  | Phase                              | Status |
 |----|------------------------------------|--------|
 | 01 | render-core — add deps; ratatui inline `Terminal` lifecycle + live-region widgets (input box, status bar) + `insert_before` commit API, selected behind a transitional `DAEMONEYE_RENDERER` switch (default = legacy); reuses existing input editing; hermetic `TestBackend` tests | done |
-| 02 | streaming-and-default — route user-query echo, streamed AI markdown, tool panels, spinner through the new path; flip the switch default to ratatui; resize handling | todo |
+| 02a | streaming-markdown — stream the AI response: pre-first-token spinner in the live region + styled, wrapped markdown committed line-by-line to scrollback + resize redraw; tools stay auto-denied; default stays legacy ([phase-02a-streaming.md](phase-02a-streaming.md)) | review |
+| 02b | tools-and-default — interactive tool-call approval (raw/cooked-mode coexistence) + tool panels through the ratatui path, then flip the `DAEMONEYE_RENDERER` default to ratatui | todo |
 | 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | todo |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | todo |
 | 05 | split-input — termios/`AsyncStdin` → `cli/input/tty`; `InputLine`/`InputState` editing → `cli/input/editor` | todo |
 | 06 | split-commands — extract `run_chat_inner_raw` loop + ctx structs + slash help from `cli/commands/mod.rs` | todo |
 
 ## Notes
+
+### Phase 02 split into 02a + 02b (2026-06-24)
+
+Original phase 02 ("streaming-and-default") bundled the streaming migration, interactive
+tool-call approval, and the default-flip into one phase. Split on principal-engineer
+direction because of a load-bearing coupling and a risk concern:
+
+- **Coupling:** flipping the `DAEMONEYE_RENDERER` default to `ratatui` is only safe once
+  the ratatui path supports **interactive** tool approval — today it auto-denies every
+  tool call, so shipping it as the default would silently break all tool use. So the
+  default-flip and tool approval must move together, separate from streaming.
+- **Risk:** interactive approval requires raw/cooked-mode coexistence (the renderer owns
+  raw mode; the y/N prompt needs cooked mode) — the hardest integration in M2. Phase 01
+  needed three live-E2E bounces, every one tracing to the executor reusing legacy
+  integration seams instead of routing through the new renderer. Isolating approval into
+  its own phase keeps each executor session tractable and yields cleaner per-piece
+  calibration signal.
+
+Result: **02a** = streamed markdown + spinner + resize (behind the flag, default stays
+legacy, tools stay auto-denied); **02b** = tool panels + interactive approval, then flip
+the default. Phases 03–06 unchanged. Both 02a/02b remain LEAN rewrite-phase specs per the
+calibration protocol.
 
 ### Locked decisions (2026-06-23, milestone kickoff)
 

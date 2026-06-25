@@ -5,7 +5,115 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+
+/// Convert a string with ANSI escape sequences into a vector of styled `Span`s
+/// suitable for ratatui rendering.  Each contiguous run of characters sharing
+/// the same style becomes one `Span`.
+pub fn parse_ansi_to_spans(input: &str) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_text = String::new();
+    let mut current_style = Style::default();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Flush accumulated text with current style.
+            if !current_text.is_empty() {
+                spans.push(Span::styled(current_text.clone(), current_style));
+                current_text.clear();
+            }
+            // Peek for '[' without consuming.
+            let is_csi = matches!(chars.peek(), Some(&'['));
+            if is_csi {
+                chars.next(); // consume '['
+                let mut seq = String::new();
+                loop {
+                    let c = chars.peek().copied();
+                    match c {
+                        Some(c) if c.is_ascii_alphabetic() => {
+                            chars.next();
+                            seq.push(c);
+                            break;
+                        }
+                        Some(c) if c.is_ascii_digit() || c == ';' => {
+                            chars.next();
+                            seq.push(c);
+                        }
+                        _ => break,
+                    }
+                }
+                current_style = apply_sgr(current_style, &seq);
+            }
+        } else {
+            current_text.push(ch);
+        }
+    }
+    if !current_text.is_empty() {
+        spans.push(Span::styled(current_text, current_style));
+    }
+    spans
+}
+
+/// Apply an SGR escape sequence to a `Style`.
+fn apply_sgr(mut style: Style, seq: &str) -> Style {
+    let params_str = seq.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let parts: Vec<&str> = params_str.split(';').collect();
+    let mut i = 0;
+    while i < parts.len() {
+        let part = parts[i];
+        match part {
+            "0" => style = Style::default(),
+            "1" => style = style.add_modifier(Modifier::BOLD),
+            "2" => style = style.add_modifier(Modifier::DIM),
+            "3" => style = style.add_modifier(Modifier::ITALIC),
+            "22" => style = style.remove_modifier(Modifier::BOLD | Modifier::DIM),
+            "23" => style = style.remove_modifier(Modifier::ITALIC),
+            "90" => style = style.fg(Color::DarkGray),
+            "93" => style = style.fg(Color::Yellow),
+            "94" => style = style.fg(Color::Blue),
+            "95" => style = style.fg(Color::Magenta),
+            "96" => style = style.fg(Color::Cyan),
+            "97" => style = style.fg(Color::Gray),
+            "31" => style = style.fg(Color::Red),
+            "32" => style = style.fg(Color::Green),
+            "33" => style = style.fg(Color::Yellow),
+            "36" => style = style.fg(Color::Cyan),
+            "38" if i + 2 < parts.len() && parts[i + 1] == "5" => {
+                if let Ok(idx) = parts[i + 2].parse::<u8>() {
+                    style = style.fg(color_from_256(idx));
+                    i += 2;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    style
+}
+
+/// Map a 256-color index to a ratatui `Color`.
+fn color_from_256(idx: u8) -> Color {
+    match idx {
+        0 => Color::Reset,
+        1 => Color::Red,
+        2 => Color::Green,
+        3 => Color::Yellow,
+        4 => Color::Blue,
+        5 => Color::Magenta,
+        6 => Color::Cyan,
+        7 => Color::Gray,
+        8 => Color::DarkGray,
+        9 => Color::Red,
+        10 => Color::Green,
+        11 => Color::Yellow,
+        12 => Color::Blue,
+        13 => Color::Magenta,
+        14 => Color::Cyan,
+        15 => Color::White,
+        _ => Color::Indexed(idx),
+    }
+}
 
 /// The number of rows the inline viewport occupies (input + status bar).
 const VIEWPORT_ROWS: u16 = 4;
@@ -53,7 +161,7 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
 
 impl<B: Backend> RatatuiRenderer<B> {
     /// Commit one or more finished transcript lines into scrollback above
-    /// the inline viewport.
+    /// the inline viewport.  Plain text, no styling.
     pub fn commit(&mut self, lines: &str) -> Result<(), B::Error> {
         let row_count = lines.matches('\n').count() + 1;
         self.terminal.insert_before(row_count as u16, |buf| {
@@ -69,6 +177,20 @@ impl<B: Backend> RatatuiRenderer<B> {
         })
     }
 
+    /// Commit already-styled lines into scrollback above the inline viewport.
+    ///
+    /// Each `Line` carries its own `Span`s with `Style` — the `Paragraph`
+    /// widget renders them into the `insert_before` buffer so styling becomes
+    /// real cell attributes, not literal ANSI escape bytes.
+    pub fn commit_styled(&mut self, lines: &[Line<'static>]) -> Result<(), B::Error> {
+        let row_count = lines.len().max(1);
+        self.terminal.insert_before(row_count as u16, |buf| {
+            let text: ratatui::text::Text<'static> = lines.to_vec().into();
+            let para = Paragraph::new(text);
+            para.render(buf.area, buf);
+        })
+    }
+
     /// Draw the live region: input box and status bar.
     pub fn draw(&mut self, input: &InputLine, status: &StatusBarState<'_>) -> Result<(), B::Error> {
         let input_text = input.as_str();
@@ -79,6 +201,26 @@ impl<B: Backend> RatatuiRenderer<B> {
         let _completed = self.terminal.draw(|frame| {
             let area = frame.area();
             render_live_region(frame, area, &input_text, &session_id, &model, start_time);
+        })?;
+        Ok(())
+    }
+
+    /// Draw the live region with a spinner message in the input box area.
+    ///
+    /// The spinner is transient — it lives only in the `draw` frame and leaves
+    /// no residue in scrollback.
+    pub fn draw_spinner(
+        &mut self,
+        spinner_text: &str,
+        status: &StatusBarState<'_>,
+    ) -> Result<(), B::Error> {
+        let session_id = status.session_id.to_string();
+        let model = status.model.to_string();
+        let start_time = self.start_time;
+
+        let _completed = self.terminal.draw(|frame| {
+            let area = frame.area();
+            render_spinner_region(frame, area, spinner_text, &session_id, &model, start_time);
         })?;
         Ok(())
     }
@@ -107,6 +249,46 @@ fn render_live_region(
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
     let input_para = Paragraph::new(input_line).block(input_block);
+    frame.render_widget(input_para, chunks[0]);
+
+    // ── Status bar ─────────────────────────────────────────────
+    let uptime = fmt_uptime(start_time.elapsed());
+    let status_text = format!(
+        " session:{} · {} · up {} ",
+        &session_id[..8.min(session_id.len())],
+        model,
+        uptime,
+    );
+    let status_block = Block::default().borders(Borders::NONE).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    );
+    let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
+    frame.render_widget(status_para, chunks[1]);
+}
+
+/// Render the live region with a spinner message replacing the input box content.
+fn render_spinner_region(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    spinner_text: &str,
+    session_id: &str,
+    model: &str,
+    start_time: std::time::Instant,
+) {
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
+
+    // ── Spinner line inside the input box ──────────────────────
+    let spinner_line = Line::from(vec![Span::styled(
+        spinner_text,
+        Style::default().fg(Color::Red),
+    )]);
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(Color::Gray));
+    let input_para = Paragraph::new(spinner_line).block(input_block);
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
@@ -276,5 +458,86 @@ mod tests {
     #[test]
     fn fmt_uptime_formats_hours() {
         assert_eq!(fmt_uptime(std::time::Duration::from_secs(3725)), "1h 2m");
+    }
+
+    #[test]
+    fn commit_styled_renders_into_buffer_without_escapes() {
+        let mut renderer = make_test_renderer();
+
+        // First draw the live region so the viewport has content.
+        let input = InputLine::new();
+        let status = StatusBarState {
+            session_id: "test-session",
+            approval_hint: "",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: false,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+        renderer.draw(&input, &status).unwrap();
+
+        // Commit styled lines.
+        let lines: Vec<Line<'static>> = vec![Line::from(vec![
+            Span::styled("Styled ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("text", Style::default().fg(Color::Yellow)),
+        ])];
+        renderer.commit_styled(&lines).unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+
+        // Check that the text is present in the buffer or scrollback.
+        let buf_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        let scroll_text: String = scroll
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            buf_text.contains("Styled text") || scroll_text.contains("Styled text"),
+            "styled text should appear in buffer or scrollback. buf: {} scroll: {}",
+            buf_text,
+            scroll_text,
+        );
+
+        // Verify no raw ANSI escape bytes in committed cells.
+        let all_symbols: Vec<&str> = buf
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .chain(scroll.content.iter().map(|c| c.symbol()))
+            .collect();
+        for sym in &all_symbols {
+            assert!(
+                !sym.contains('\x1b'),
+                "cell content should not contain raw ANSI escape byte: {:?}",
+                sym,
+            );
+        }
+    }
+
+    #[test]
+    fn parse_ansi_to_spans_converts_simple_sgr() {
+        let spans = parse_ansi_to_spans("hello \x1b[1mworld\x1b[0m");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content.as_ref(), "hello ");
+        assert!(spans[1].style.add_modifier(Modifier::BOLD) == spans[1].style);
+        assert_eq!(spans[1].content.as_ref(), "world");
+    }
+
+    #[test]
+    fn parse_ansi_to_spans_handles_color() {
+        let spans = parse_ansi_to_spans("\x1b[33myellow\x1b[0m text");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content.as_ref(), "yellow");
+        assert_eq!(spans[0].style.fg, Some(Color::Yellow));
     }
 }
