@@ -16,9 +16,9 @@ enum RendererMode {
 impl RendererMode {
     fn from_env() -> Self {
         match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
-            None | Some("") | Some("legacy") => Self::Legacy,
-            Some("ratatui") => Self::Ratatui,
-            _ => Self::Legacy,
+            Some("legacy") => Self::Legacy,
+            None | Some("") | Some("ratatui") => Self::Ratatui,
+            _ => Self::Ratatui,
         }
     }
 }
@@ -588,6 +588,7 @@ async fn run_chat_inner_raw(
                     session_has_untracked: &mut has_untracked,
                     renderer: &mut renderer,
                     model: &model,
+                    stdin,
                 },
             )
             .await
@@ -805,6 +806,7 @@ async fn run_chat_inner_raw(
                         session_has_untracked: &mut has_untracked,
                         renderer: &mut renderer,
                         model: &model,
+                        stdin,
                     },
                 )
                 .await
@@ -1735,4 +1737,51 @@ async fn run_chat_inner_raw(
     teardown_scroll_region(chat_height);
     println!("\n\x1b[2mGoodbye.\x1b[0m");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── RendererMode::from_env ──────────────────────────────────────────
+
+    #[test]
+    fn renderer_mode_default_is_ratatui_when_unset() {
+        unsafe {
+            std::env::remove_var("DAEMONEYE_RENDERER");
+        }
+        assert!(matches!(RendererMode::from_env(), RendererMode::Ratatui));
+    }
+
+    #[test]
+    fn renderer_mode_default_is_ratatui_when_empty() {
+        unsafe {
+            std::env::set_var("DAEMONEYE_RENDERER", "");
+        }
+        assert!(matches!(RendererMode::from_env(), RendererMode::Ratatui));
+    }
+
+    #[test]
+    fn renderer_mode_explicit_ratatui() {
+        unsafe {
+            std::env::set_var("DAEMONEYE_RENDERER", "ratatui");
+        }
+        assert!(matches!(RendererMode::from_env(), RendererMode::Ratatui));
+    }
+
+    #[test]
+    fn renderer_mode_explicit_legacy() {
+        unsafe {
+            std::env::set_var("DAEMONEYE_RENDERER", "legacy");
+        }
+        assert!(matches!(RendererMode::from_env(), RendererMode::Legacy));
+    }
+
+    #[test]
+    fn renderer_mode_unknown_value_defaults_to_ratatui() {
+        unsafe {
+            std::env::set_var("DAEMONEYE_RENDERER", "foobar");
+        }
+        assert!(matches!(RendererMode::from_env(), RendererMode::Ratatui));
+    }
 }

@@ -225,6 +225,65 @@ impl<B: Backend> RatatuiRenderer<B> {
         Ok(())
     }
 
+    /// Commit a styled bordered panel into scrollback above the inline viewport.
+    ///
+    /// Renders a top border with a title, body lines (optionally dimmed and
+    /// truncated), and a bottom border — the same logical structure as the
+    /// legacy `print_tool_panel`, but as real styled cells with no literal
+    /// ANSI escapes.
+    pub fn commit_panel(
+        &mut self,
+        title: &str,
+        body: &[String],
+        dim_body: bool,
+    ) -> Result<(), B::Error> {
+        use ratatui::widgets::Clear;
+
+        let w = self.terminal.size().map(|s| s.width as usize).unwrap_or(80);
+        let inner = w.saturating_sub(2).max(2);
+        let title_len = title.chars().count();
+        let fill = inner.saturating_sub(title_len + 4);
+
+        let border_style = Style::default()
+            .fg(Color::Blue)
+            .add_modifier(Modifier::BOLD);
+        let top_border = format!("╭─ {} {}─╮", title, "─".repeat(fill));
+        let bottom_border = format!("╰{}╯", "─".repeat(inner));
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        // Top border
+        lines.push(Line::from(Span::styled(top_border, border_style)));
+
+        // Body lines
+        let body_style = if dim_body {
+            Style::default().add_modifier(Modifier::DIM)
+        } else {
+            Style::default()
+        };
+        for line in body {
+            let truncated: String = line.chars().take(inner.saturating_sub(2)).collect();
+            lines.push(Line::from(Span::styled(
+                format!("  {}", truncated),
+                body_style,
+            )));
+        }
+
+        // Bottom border
+        lines.push(Line::from(Span::styled(bottom_border, border_style)));
+
+        // Blank line after panel
+        lines.push(Line::from(vec![]));
+
+        let row_count = lines.len();
+        self.terminal.insert_before(row_count as u16, |buf| {
+            Clear.render(buf.area, buf);
+            let text: ratatui::text::Text<'static> = lines.into();
+            let para = Paragraph::new(text);
+            para.render(buf.area, buf);
+        })
+    }
+
     /// Restore the terminal to its original state (exit raw mode, show
     /// cursor, clear inline viewport rows).
     pub fn restore(&mut self) {
