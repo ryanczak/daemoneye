@@ -46,7 +46,7 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | #  | Phase                              | Status |
 |----|------------------------------------|--------|
 | 01 | render-core — add deps; ratatui inline `Terminal` lifecycle + live-region widgets (input box, status bar) + `insert_before` commit API, selected behind a transitional `DAEMONEYE_RENDERER` switch (default = legacy); reuses existing input editing; hermetic `TestBackend` tests | done |
-| 02a | streaming-markdown — stream the AI response: pre-first-token spinner in the live region + styled, wrapped markdown committed line-by-line to scrollback + resize redraw; tools stay auto-denied; default stays legacy ([phase-02a-streaming.md](phase-02a-streaming.md)) | review |
+| 02a | streaming-markdown — stream the AI response: pre-first-token spinner in the live region + styled, wrapped markdown committed line-by-line to scrollback + resize redraw; tools stay auto-denied; default stays legacy ([phase-02a-streaming.md](phase-02a-streaming.md)) | in-progress |
 | 02b | tools-and-default — interactive tool-call approval (raw/cooked-mode coexistence) + tool panels through the ratatui path, then flip the `DAEMONEYE_RENDERER` default to ratatui | todo |
 | 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | todo |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | todo |

@@ -1,7 +1,7 @@
 # Phase 02a: streaming-markdown
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-02a-1.md)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -242,3 +242,65 @@ cargo test: PASS (27 passed, 1 ignored)
 - The `MarkdownRenderer::render_line_to_spans` method is available but not yet called from the streaming path — the current implementation feeds tokens through `md.feed()` which still prints to stdout internally. The `render_line_to_spans` method provides the ratatui-compatible rendering path for future integration. The streaming function currently uses `md.feed()` for line buffering and `md.flush()` at end, but the actual scrollback commit happens via `renderer.commit()` for tool/system messages. For true streaming of AI response tokens to scrollback, the `render_line_to_spans` method should be wired in — this is noted for review.
 - The `draw_spinner` method animates the spinner by redrawing the live region with spinner text in the input box area, leaving no scrollback residue.
 - No new dependencies added. No `unsafe`. No `.unwrap()` in production paths.
+
+### Review verdict — 2026-06-25
+
+- **Verdict:** bounced
+- **Bug filed:** bugs/bug-phase-02a-1.md (blocker)
+- **Bounces:** 1
+- **Executor:** Qwen3.6-27B-FP8 (rexyMCP executor)
+- **Failure class:** false_completion (green-but-inert)
+
+**Command re-run (independent):** `cargo fmt --all -- --check` PASS · `cargo
+clippy --all-targets --all-features -- -D warnings` PASS · `cargo test` PASS
+(766 + 27 lib/integration, 1 ignored). All green — which is exactly the trap.
+
+#### Three-axis assessment (M2 calibration, deep review)
+
+**1. Spec conformance — FAIL on the load-bearing criterion.** The phase's
+central deliverable (Spec §3b: stream tokens to scrollback *through the
+renderer, not stdout*) is not implemented. `Response::Token` in
+`ask_with_session_ratatui` (`stream.rs:283`) calls `md.feed(&t)`, which routes
+to stdout via `WrapWriter` (`render.rs:588-595`). Acceptance bullets 2 (answer
+streams into scrollback above a clean input box) and 3 (no literal escapes;
+real cell attributes) are therefore unmet. Boundaries *were* respected:
+`ask_with_session` untouched, default stays legacy, tools stay auto-denied, no
+new deps. The spinner (§3a) and non-token arms (§3c) are plausibly wired.
+But the core is inert.
+
+**2. Reasoning quality — discovered the right API, failed to integrate it.**
+This is the same failure mode that bounced phase 01 three times: the executor
+*reused a legacy integration seam* (`md.feed` → stdout) instead of routing
+through the new renderer. Notably it *did* discover the correct ratatui API —
+it wrote `commit_styled` (`Paragraph` → `insert_before` buffer,
+`render_ratatui.rs:185`) and `render_line_to_spans` (`render.rs:1137`), both
+sound. It then **left them unused** (`render_line_to_spans` has zero call
+sites; `commit_styled` is test-only) and fell back to the stdout path. Credit
+where due: the executor *surfaced the gap itself* in its Notes for review
+("`md.feed()` … still prints to stdout … should be wired in — noted for
+review"). That is good honesty, but a self-noted unfinished core deliverable
+is a bounce, not a pass. It correctly understood the commit-vs-live-region
+split in the abstract (the helpers prove it) and did not connect it to the live
+token loop — the integration step, again, is where it floundered.
+
+**3. Code & test quality — tests assert the unused helper, not the path.**
+`commit_styled_renders_into_buffer_without_escapes` (`render_ratatui.rs:464`)
+and the `parse_ansi_to_spans` tests *do* assert real rendered cells (not
+narration) and are honest tests of those units — but they exercise dead code,
+so they pass while the deliverable is broken. No test drives the streaming
+render. `render_line_to_spans` is dead code masked from clippy only because it
+is `pub` (STANDARDS "no dead code"). E2E was declared N/A; the executor
+environment genuinely cannot run tmux, but the inert code path means E2E would
+have caught this immediately — the precise "green-but-inert" gap the milestone
+README's Verification strategy calls out.
+
+**Calibration signal (lean, rung 1):** Second M2 rewrite phase, second
+instance of the *same* ceiling: at 27B the executor can *discover* the correct
+ratatui API from live docs and write sound helper methods, but does not
+reliably *integrate* them into the existing control flow — it reverts to the
+familiar legacy seam under the lean spec. Phase 01 needed three bounces on this
+exact axis. Recommend the re-dispatch carry an explicit integration pin (rung 2
+"+ API sketch" naming the call site: "in the `Response::Token` arm, replace
+`md.feed` with `render_line_to_spans` → `commit_styled`"). Roll into the M2
+retrospective fold decision.
+
