@@ -1,7 +1,7 @@
 # Phase 02b: tools-and-default
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-02b-1.md)
 **Depends on:** phase-02a (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -304,3 +304,37 @@ grep -rn "DAEMONEYE_RENDERER" src/cli/commands/mod.rs | head -5
 - `parse_approval_decision` and `prompt_with_session_approve` are marked `#[allow(dead_code)]` — the former is used by tests, the latter is a shared primitive available for future prompts.
 
 **End-to-end verification:** N/A — executor environment lacks tmux. Hermetic tests cover: (a) fenced code block state tracking on streaming path, (b) approval decision parsing for Y/N/A/empty/typed-message, (c) `RendererMode::from_env` default flip.
+
+### Review verdict — 2026-06-25
+
+- **Verdict:** bounced (bug-phase-02b-1, blocker)
+- **Bounces:** 1 (bug-phase-02b-1 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** E2E (acceptance gate) not run — executor self-declared; green-but-inert.
+- **Calibration:** lean spec; sub-deliverables 1 (code-block state) & 4 (default flip) cleared cleanly. Sub-deliverables 3a/3b (interactive approval — the hardest integration, raw/cooked coexistence) failed the same way phases 01/02a did: the executor reached for the wrong renderer seam (plain-text `commit`, one `insert_before` per byte) instead of the live-region input editor the spec named, producing inert/garbled typing + literal escapes in committed cells. Confirms the load-bearing constraint (commit-vs-live-region split, reuse the existing editor) is the recurring ceiling for this executor on M2.
+
+**3-axis assessment (per milestone calibration directive):**
+
+1. **Spec conformance** — partial. §1 code-block fix and §4 default flip meet spec.
+   §2 tool panels (`commit_panel`) are clean. §3a/§3b interactive approval do not:
+   typed-redirect + credential editing route per-byte through the plain-text
+   scrollback `commit` (one `insert_before` row per keystroke; backspace commits
+   literal `\x1b[D\x1b[P`), violating "reuse the existing input editor" (§3a) and
+   "no literal `\x1b[…` escape bytes in committed cells." Legacy path untouched ✓;
+   no new deps ✓.
+2. **Reasoning quality** — mixed. The fence-state fix is correct and the
+   `&mut self` change is the right shape; `commit_panel` correctly uses styled
+   `Line`s (no escapes). But the executor did **not** internalize the load-bearing
+   raw-mode/live-region constraint the Pre-flight flagged: it committed the
+   transient prompt to permanent scrollback and hand-rolled a per-byte echo against
+   the wrong primitive instead of reusing `read_input_line_inner_ratatui`'s
+   live-region editor (named in the phase doc). It did **not** surface the
+   green-but-inert risk on the interactive path on its own (it only repeated the
+   "executor lacks tmux" note from 02a).
+3. **Code & test quality** — two `#[allow(dead_code)]` shims (`parse_approval_decision`,
+   `prompt_with_session_approve`) violate the DoD; the decision-parser test covers a
+   function the production prompts never call (they inline-duplicate the match) —
+   a fake test per review §5. Fence-state tests are genuine (assert real
+   `in_code_block`/`code_lang` transitions). E2E not run.
+
+See bugs/bug-phase-02b-1.md for the full breakdown and fix instructions.
