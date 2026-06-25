@@ -540,4 +540,132 @@ mod tests {
         assert_eq!(spans[0].content.as_ref(), "yellow");
         assert_eq!(spans[0].style.fg, Some(Color::Yellow));
     }
+
+    /// Test that the full streaming path — `MarkdownRenderer::feed_to_lines`
+    /// producing styled lines committed via `commit_styled` — renders text into
+    /// the TestBackend buffer/scrollback with no raw `\x1b` escape bytes.
+    #[test]
+    fn streaming_tokens_appear_in_scrollback_without_escapes() {
+        let mut renderer = make_test_renderer();
+
+        // Draw the live region first.
+        let input = InputLine::new();
+        let status = StatusBarState {
+            session_id: "test-session",
+            approval_hint: "",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: false,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+        renderer.draw(&input, &status).unwrap();
+
+        // Simulate streaming tokens through the markdown renderer.
+        let mut md = crate::cli::render::MarkdownRenderer::new();
+        let width = 58; // match test backend width minus borders
+
+        // Feed tokens that span a line boundary.
+        let lines1 = md.feed_to_lines("Hello ", width);
+        let lines2 = md.feed_to_lines("world\n", width);
+        let all_lines: Vec<Line<'static>> = lines1.into_iter().chain(lines2).collect();
+
+        if !all_lines.is_empty() {
+            renderer.commit_styled(&all_lines).unwrap();
+        }
+
+        // Feed a second line with markdown styling (bold).
+        let lines3 = md.feed_to_lines("**bold** ", width);
+        let lines4 = md.feed_to_lines("text\n", width);
+        let all_lines2: Vec<Line<'static>> = lines3.into_iter().chain(lines4).collect();
+
+        if !all_lines2.is_empty() {
+            renderer.commit_styled(&all_lines2).unwrap();
+        }
+
+        // Flush any remaining partial line.
+        let remaining = md.flush_to_lines(width);
+        if !remaining.is_empty() {
+            renderer.commit_styled(&remaining).unwrap();
+        }
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+
+        let buf_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        let scroll_text: String = scroll
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+
+        // The committed text should be present.
+        assert!(
+            buf_text.contains("Hello world") || scroll_text.contains("Hello world"),
+            "streamed text should appear in buffer or scrollback. buf: {} scroll: {}",
+            buf_text,
+            scroll_text,
+        );
+
+        // No raw ANSI escape bytes in any cell.
+        let all_symbols: Vec<&str> = buf
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .chain(scroll.content.iter().map(|c| c.symbol()))
+            .collect();
+        for sym in &all_symbols {
+            assert!(
+                !sym.contains('\x1b'),
+                "cell content should not contain raw ANSI escape byte: {:?}",
+                sym,
+            );
+        }
+    }
+
+    /// Test that `feed_to_lines` correctly buffers partial lines and only
+    /// emits on newline boundaries.
+    #[test]
+    fn feed_to_lines_buffers_partial_lines() {
+        let mut md = crate::cli::render::MarkdownRenderer::new();
+        let width = 60;
+
+        // Feed a partial line — no newline yet.
+        let lines = md.feed_to_lines("partial", width);
+        assert!(lines.is_empty(), "no complete line yet, got {:?}", lines);
+
+        // Complete the line with a newline.
+        let lines = md.feed_to_lines(" line\n", width);
+        assert!(!lines.is_empty(), "should have one complete line");
+
+        // Feed another partial line.
+        let lines = md.feed_to_lines("second", width);
+        assert!(lines.is_empty(), "no complete line yet");
+
+        // Flush the final partial line.
+        let lines = md.flush_to_lines(width);
+        assert!(!lines.is_empty(), "flush should produce the final line");
+    }
+
+    /// Test that `feed_to_lines` handles empty lines (bare newlines).
+    #[test]
+    fn feed_to_lines_handles_empty_lines() {
+        let mut md = crate::cli::render::MarkdownRenderer::new();
+        let width = 60;
+
+        let lines = md.feed_to_lines("first\n\nsecond\n", width);
+        // Should produce 3 lines: "first", empty, "second"
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected 3 lines for 'first\\n\\nsecond\\n'"
+        );
+    }
 }

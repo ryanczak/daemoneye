@@ -1097,6 +1097,50 @@ impl MarkdownRenderer {
         Self::default()
     }
 
+    /// Feed a streaming token into the renderer, yielding completed styled
+    /// lines suitable for ratatui scrollback.  Unlike `feed` (which prints to
+    /// stdout), this method buffers tokens until complete lines are formed,
+    /// then renders each line to `Vec<Line>` via `render_line_to_spans`.
+    ///
+    /// Returns the styled lines for any complete lines finished by this token.
+    /// Partial trailing content stays in `line_buf` for the next call.
+    /// Call `flush_to_lines()` at the end of the turn to render the final
+    /// partial line.
+    pub fn feed_to_lines(
+        &mut self,
+        token: &str,
+        width: usize,
+    ) -> Vec<ratatui::text::Line<'static>> {
+        let mut lines = Vec::new();
+        for ch in token.chars() {
+            match ch {
+                '\n' => {
+                    let text = std::mem::take(&mut self.line_buf);
+                    if !text.is_empty() {
+                        lines.extend(self.render_line_to_spans(&text, width));
+                    } else {
+                        // Empty line
+                        lines.push(ratatui::text::Line::from(vec![]));
+                    }
+                }
+                '\r' => {}
+                _ => self.line_buf.push(ch),
+            }
+        }
+        lines
+    }
+
+    /// Flush any remaining partial line to styled `Line`s.
+    /// Call this at the end of a streaming turn to render the final
+    /// incomplete line.  Returns the styled lines (may be empty).
+    pub fn flush_to_lines(&mut self, width: usize) -> Vec<ratatui::text::Line<'static>> {
+        if self.line_buf.is_empty() {
+            return Vec::new();
+        }
+        let text = std::mem::take(&mut self.line_buf);
+        self.render_line_to_spans(&text, width)
+    }
+
     /// Feed a streaming token into the renderer.
     pub fn feed(&mut self, token: &str) {
         for ch in token.chars() {

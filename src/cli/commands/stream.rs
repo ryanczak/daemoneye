@@ -217,6 +217,7 @@ pub(super) async fn ask_with_session_ratatui(
 
     // Markdown renderer for streaming — feeds tokens and produces styled lines.
     let mut md = MarkdownRenderer::new();
+    let render_width = chat_width.map(|w| w - 2).unwrap_or(80).max(20);
 
     loop {
         // Phase 1 — waiting for first content: poll with short timeout for spinner.
@@ -269,7 +270,11 @@ pub(super) async fn ask_with_session_ratatui(
         match msg {
             Response::KeepAlive => continue,
             Response::Ok => {
-                md.flush();
+                // Flush any remaining partial line to scrollback.
+                let remaining = md.flush_to_lines(render_width);
+                if !remaining.is_empty() {
+                    let _ = renderer.commit_styled(&remaining);
+                }
                 break;
             }
             Response::Error(e) => {
@@ -279,8 +284,15 @@ pub(super) async fn ask_with_session_ratatui(
             Response::Token(t) => {
                 if !response_started {
                     response_started = true;
+                    // Spinner disappears — first token arrived. The live region
+                    // will be redrawn normally after the turn completes.
                 }
-                md.feed(&t);
+                // Stream token through markdown renderer, committing completed
+                // styled lines to scrollback via the renderer.
+                let lines = md.feed_to_lines(&t, render_width);
+                if !lines.is_empty() {
+                    let _ = renderer.commit_styled(&lines);
+                }
             }
             Response::SessionInfo {
                 session_cost_usd,
