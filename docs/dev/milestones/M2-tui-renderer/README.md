@@ -51,7 +51,7 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | done |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | done |
 | 05 | split-input — termios/`AsyncStdin` → `cli/input/tty`; `InputLine`/`InputState` editing → `cli/input/editor` ([phase-05-split-input.md](phase-05-split-input.md)) | done |
-| 06 | split-commands — extract `run_chat_inner_raw` loop + ctx structs + slash help from `cli/commands/mod.rs` | todo |
+| 06 | split-commands — extract `run_chat_inner` + the ratatui chat loop + ctx structs + slash handling from `cli/commands/mod.rs` into a `chat` submodule ([phase-06-split-commands.md](phase-06-split-commands.md)) | review |
 
 ## Notes
 

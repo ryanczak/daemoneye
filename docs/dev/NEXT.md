@@ -2,8 +2,9 @@
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
 
-**Active phase:** none drafted — **06 split-commands is next to draft.** Run
-`/rexymcp:architect next` to author `phase-06-split-commands.md`, then `/rexymcp:dispatch 06`.
+**Active phase:** **06 split-commands** — drafted at
+`docs/dev/milestones/M2-tui-renderer/phase-06-split-commands.md` (status `todo`).
+Run `/rexymcp:dispatch 06` to execute it. This is the final M2 split phase.
 
 Phase 05 (split-input) is `done` (approved_first_try — Qwen/Qwen3.6-27B-FP8; faithful
 byte-for-byte move verified by 374-vs-369 sorted multiset line diff — only delta is the 2
