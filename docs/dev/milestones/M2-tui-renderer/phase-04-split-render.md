@@ -1,7 +1,7 @@
 # Phase 04: split-render — extract markdown + syntax-highlight into `cli/markdown`
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-03 (done)
 **Estimated diff:** ~1150 lines moved, ~10 lines net new (module decls + import updates)
 **Tags:** language=rust, kind=refactor, size=m
@@ -313,3 +313,45 @@ wc -l src/cli/render.rs src/cli/markdown/*.rs
 - `split-render` — extract markdown + syntax-highlight into cli/markdown submodule
 
 **Notes for review:** None — this is a pure mechanical move with zero behavior change.
+
+### Review verdict — 2026-06-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** one cosmetic-only deviation — the `// ── Syntax highlighting ──`
+  section-banner comment that preceded `CommentStyle` in the old `render.rs` was dropped
+  rather than carried into `syntax.rs` (the file now *is* the syntax module, so the banner
+  is redundant). The sibling `// ── Markdown rendering ──` banner was correctly kept in
+  `markdown/mod.rs`. Zero behavior/runtime impact; not worth a bug.
+- **Calibration:** none. Phase 04 is a mechanical split (specced normally per the M2
+  protocol — the lean spec-density experiment applies only to rewrite phases 01–03), so it
+  carries no spec-density signal. Recorded for the retrospective: the normally-specced
+  mechanical split cleared first try with the executor producing a faithful move.
+
+**Deep-review (M2 3-axis, per README directive):**
+
+1. **Spec conformance** — full. Faithfulness verified by multiset line diff of the moved
+   region (old `render.rs` lines 236–1364 vs `syntax.rs` + `markdown/mod.rs` body): both
+   sides 1051 non-blank lines; the *only* content deltas are the authorized
+   `fn highlight_code` → `pub(super) fn highlight_code` and the necessary call-site repoint
+   `crate::cli::render::highlight_code(…)` → imported `highlight_code(…)` inside
+   `MarkdownRenderer`. Acceptance grep clean (no moved symbol left in `render.rs`);
+   `render.rs` 234 lines, `mod.rs` 746, `syntax.rs` 386 (all under the 800 target, render
+   under 300); `pub mod markdown;` present with no `pub use markdown::*` glob; legacy/other
+   `cli/` files untouched; no new deps.
+2. **Reasoning quality** — correct on the load-bearing call: `WrapWriter` (private, no
+   `^struct`-anchored doc shown in the phase doc's line table) was moved *with*
+   `MarkdownRenderer` because it is that struct's `wrap` field — the one coupling an
+   executor could get wrong by reading the file top-down. Visibility minimization correct
+   (widened only `highlight_code`; kept `CommentStyle`/`lang_*`/`emit_word_token` private to
+   `syntax.rs`; preserved `pub` on `render_inline`/`MarkdownRenderer`). No re-export shim
+   (followed the explicit boundary). The closed syntax cluster was kept self-contained
+   (`syntax.rs` needs no `use crate::cli::render::…`), matching the spec.
+3. **Code & test quality** — idiomatic submodule (`mod syntax;` + scoped `use`s). The four
+   markdown tests relocated byte-identical to `cli::markdown::tests` and pass on a targeted
+   run (`cargo test --lib markdown::` → 4 passed); they assert real state
+   (`md.in_code_block`, `md.code_lang`, rendered span content), not trivia. No
+   error-suppressing idioms, `#[allow]`, `TODO`, or dead code introduced (grep clean).
+   E2E correctly declared N/A (no runtime-loadable artifact); behavior preservation is
+   carried by the relocated tests + clippy/build gates, all green on independent re-run.
