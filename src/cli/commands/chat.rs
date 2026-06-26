@@ -677,7 +677,7 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
         "██  ██ ██▀██ ██▄▄  ██▀▄▀██ ██▀██ ███▄██ ██▄▄   ▀███▀ ██▄▄",
         "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
     ];
-    let subtitle = "                   AGENTIC OPERATOR";
+    let subtitle = "AGENTIC OPERATOR";
 
     let logo_w = logo.iter().map(|l| l.chars().count()).max().unwrap_or(0);
     let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
@@ -739,13 +739,12 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
         lines.push(Line::from(spans));
     }
 
-    // Subtitle
-    let sub_pad = " ".repeat(
-        (chat_width.saturating_sub(subtitle.chars().count())) / 2,
-    );
+    // Subtitle: same block offset as logo lines, then centered within logo_w.
+    let sub_pad = pad.clone()
+        + &" ".repeat(logo_w.saturating_sub(subtitle.chars().count()) / 2);
     lines.push(Line::from(vec![
-        Span::styled(sub_pad, Style::default()),
-        Span::styled(subtitle.to_owned(), dim),
+        Span::raw(sub_pad),
+        Span::styled(subtitle, dim),
     ]));
 
     // Blank line then slash-command hint.
