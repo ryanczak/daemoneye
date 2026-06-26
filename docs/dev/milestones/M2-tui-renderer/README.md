@@ -7,7 +7,7 @@ tmux window switches and making the transcript real terminal scrollback. Along t
 way, split the three oversized `cli/` files (`render.rs`, `input.rs`,
 `commands/mod.rs`) into focused modules (closes the bulk of code-issue C5).
 
-**Status:** in-progress
+**Status:** complete
 
 **Depends on:** M1 (complete)
 
@@ -51,7 +51,7 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | done |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | done |
 | 05 | split-input — termios/`AsyncStdin` → `cli/input/tty`; `InputLine`/`InputState` editing → `cli/input/editor` ([phase-05-split-input.md](phase-05-split-input.md)) | done |
-| 06 | split-commands — extract `run_chat_inner` + the ratatui chat loop + ctx structs + slash handling from `cli/commands/mod.rs` into a `chat` submodule ([phase-06-split-commands.md](phase-06-split-commands.md)) | review |
+| 06 | split-commands — extract `run_chat_inner` + the ratatui chat loop + ctx structs + slash handling from `cli/commands/mod.rs` into a `chat` submodule ([phase-06-split-commands.md](phase-06-split-commands.md)) | done |
 
 ## Notes
 
@@ -248,3 +248,71 @@ call sites, so neither is dead; the build stays green at every phase. The switch
 the entire legacy path are **deleted in phase 03**. This is the one sanctioned feature
 flag for the milestone (STANDARDS §2.2 allows it when the phase authorizes it); each
 phase doc that touches it restates the authorization and phase 03 owns its removal.
+
+## Retrospective (2026-06-26, milestone complete)
+
+All seven phases `done`. The corruption fix landed (DECSTBM scroll-region path gone;
+ratatui inline viewport + `insert_before` scrollback is the only path), and the three
+oversized `cli/` C5 files are split (`render.rs` → `cli/markdown`; `input.rs` →
+`cli/input/{tty,editor}`; `commands/mod.rs` → `commands/chat`). Only `ratatui` +
+`crossterm` were added. Exit criteria met.
+
+### Outcome ledger (executor: Qwen/Qwen3.6-27B-FP8, every phase)
+
+| Phase | Kind | Verdict | Bounces/Escalation |
+|---|---|---|---|
+| 01 render-core | rewrite | approved_after_2 | 2 review bounces |
+| 02a streaming | rewrite | approved_after_1 | 1 bounce (green-but-inert: tokens → stdout, not scrollback) |
+| 02b tools-and-default | rewrite | approved_after_2 | 2 bounces (raw/cooked approval; credential-masking regression in the bounce-fix) |
+| 03 retire-legacy-and-verify | rewrite + E2E | escalated | architect takeover after 2 hard_fails |
+| 04 split-render | mechanical | approved_first_try | none |
+| 05 split-input | mechanical | approved_first_try | none |
+| 06 split-commands | mechanical | approved_first_try | none |
+
+### The calibration result (the experiment's payload)
+
+The milestone was run as a spec-density probe (lean specs on the rewrite phases,
+normal specs on the mechanical splits) to test the hypothesis that *at 27B,
+front-loading may be unnecessary for single-subsystem rewrites*. The data **refutes
+that hypothesis for design-discovery work and confirms it for mechanical work** —
+and the discriminator that fell out is **task shape, not model size**:
+
+- **Rewrite phases (01–03): lean specs failed, every time.** 5 review bounces + 1
+  escalation across 3 phases. The recurring ceiling was identical at every bounce: the
+  executor reached for the **wrong renderer seam** — plain-text `commit` / one
+  `insert_before` per byte / the legacy integration path — instead of the live-region
+  editor + commit-vs-live-region split the spec *named but did not pin*. A lean
+  "what + acceptance + boundaries" spec did not let this executor *discover* the
+  load-bearing architectural constraint (fixed viewport height; raw/cooked coexistence;
+  commit-to-scrollback vs. draw-in-viewport). Phase 03 required full architect takeover.
+  The "green-but-inert" trap fired literally (02a: streamed to stdout and passed its own
+  self-check; 02b: E2E self-declared, never run).
+- **Mechanical phases (04–06): normal specs cleared first try, every time.** Three
+  verbatim move-and-re-path splits, zero bounces, each verified by a sorted-multiset
+  line diff proving byte-for-byte fidelity. Front-loading here would have been wasted
+  effort — the spec already fully determined the shape.
+
+Scorecard corroboration (Qwen3.6-27B-FP8, cross-project): `kind=refactor`
+approved_first_try 0.83 but escalation 0.45 (the rewrite-shaped refactors drag it);
+`size=s` escalation 0.08 vs `size=l` 0.59. Small, shape-determined work is reliable;
+large design-discovery work escalates.
+
+### Fold decision (proposed — pending principal-engineer sign-off)
+
+Three design-heavy bounces/escalation (01/02a/02b/03) and three clean mechanical passes
+(04/05/06) is a **trend → fix** under the WORKFLOW calibration rule. The proposed fold:
+**make WORKFLOW.md's front-loading default _task-shape-conditional_, not model-size-
+conditional.** The discriminator is whether the phase is *design-discovery* (executor
+must find a load-bearing API/architecture constraint) vs. *mechanical* (move/rename/
+extract whose shape the spec fully determines):
+
+- **Design-discovery phase →** front-load the load-bearing constraint. Do not make the
+  executor discover the renderer/architecture seam; pin it (rung 2 "API sketch" or rung
+  3 "worked example" from the calibration ladder) in the first dispatch. At this model
+  tier, lean discovery specs on design-heavy work cost ~2 bounces or a takeover.
+- **Mechanical phase →** lean/normal specs suffice; front-loading is wasted. Keep the
+  byte-for-byte move + multiset-diff verification idiom (it caught fidelity cleanly in
+  04–06).
+
+This fold is **not yet applied** to WORKFLOW.md — per STANDARDS §5 and the skill's §9,
+it needs principal-engineer sign-off before editing WORKFLOW.md.

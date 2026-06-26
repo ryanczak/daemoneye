@@ -1,7 +1,7 @@
 # Phase 06: split-commands — extract the interactive chat loop from `cli/commands/mod.rs` into a `chat` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-05 (done)
 **Estimated diff:** ~638 lines moved, ~12 lines net new (one import block + `mod chat;` + `use chat::run_chat_inner;` + one `pub(super)`)
 **Tags:** language=rust, kind=refactor, size=s
@@ -346,3 +346,63 @@ Extracting the interactive chat loop from `cli/commands/mod.rs` into a new `cli/
 **End-to-end verification:** N/A — pure internal module split, no runtime-loadable artifact. Compile + clippy + test suite serve as behavior-preservation guard.
 
 **Notes for review:** None — this is a verbatim mechanical move with exactly two edits (sibling `use` paths gain `super::`, `run_chat_inner` gains `pub(super)`).
+
+### Review verdict — 2026-06-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP executor)
+- **Scope deviations:** none
+- **Calibration:** lean spec not in play here (this is a normally-specced mechanical
+  split, per the milestone calibration protocol — splits 04–06 yield little
+  density-probe signal). Cleared first try.
+
+**Independent command re-run (reviewer host):**
+
+- `cargo fmt --all -- --check` → exit 0 (clean)
+- `cargo build` → exit 0, zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` → exit 0
+- `cargo test` → 773 unit + 27 integration passed, 0 failed, 2 ignored — no net
+  change from the 800-test baseline (no tests added/removed/relocated, as specced)
+
+**Move-fidelity proof (sorted-multiset line diff, old `mod.rs` vs new `mod.rs` +
+`chat.rs`):** old 679 lines → new 32 + 650 = 682 (+3 net). Every line delta is an
+authorized edit and nothing else:
+
+1. `async fn run_chat_inner` → `pub(super) async fn run_chat_inner` (the one
+   authorized visibility widening).
+2. `+ mod chat;` and `+ use chat::run_chat_inner;` in `mod.rs`.
+3. `+ use anyhow::Result;` second copy (chat.rs needs its own).
+4. Four sibling imports re-pathed bare → `super::` (`approval`, `ipc_client`,
+   `pane`, `stream`).
+
+The +3 net = `mod chat;` + `use chat::run_chat_inner;` + duplicated `use
+anyhow::Result;`. **No function body line changed, nothing dropped, nothing
+reordered** — a faithful byte-for-byte move.
+
+**Three-axis assessment (M2 directive):**
+
+1. **Spec conformance** — all 14 acceptance criteria verified by the prescribed
+   greps (both-files-exist, no moved items in `mod.rs`, `mod chat;` +
+   `use chat::run_chat_inner;` present, `pub(super)` on `run_chat_inner`, 5 moved
+   items in `chat.rs`, no `run_chat`/`uuid` in `chat.rs`, `cli/mod.rs` and
+   `main.rs` untouched). Stayed strictly inside boundaries: only `commands/mod.rs`
+   and new `commands/chat.rs` touched; no other `cli/` file split; no behavior
+   change. chat.rs import block matches the spec's prescribed set verbatim.
+2. **Reasoning quality** — picked the clean cut correctly: moving `run_chat_inner`
+   (not just `run_chat_inner_raw`) keeps all five ctx structs private (construction
+   and consumption both land in `chat.rs`), so only one visibility widened. The
+   `uuid::Uuid::new_v4()` call was correctly left fully-qualified (no spurious
+   import). Dropped the now-unused top-level imports from `mod.rs` cleanly (clippy
+   -D warnings confirms no unused-import leak — the single highest-risk part of the
+   phase, handled correctly).
+3. **Code & test quality** — no error-suppressing idioms, `unsafe`, `#[allow]`, or
+   `#[ignore]` introduced (verbatim move; greps confirm none in `chat.rs`). No new
+   tests, as specced (no co-located `#[cfg(test)]` existed to relocate). Idiomatic
+   module-root/submodule layout.
+
+**Minor (nit, not bounced):** the commit `d4e4600` swept in a pre-existing
+`Cargo.toml`/`Cargo.lock` version bump (0.9.7 → 0.9.9) that was already in the dirty
+working tree before this phase ran. It is **not** a dependency change and not an
+executor-authored logical change — just untracked pre-existing state captured by
+`git add`. Noted for commit hygiene; does not affect correctness or the DoD.
