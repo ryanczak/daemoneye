@@ -1,7 +1,7 @@
 # Phase 10: input-editor
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-10-1)
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-05 (done — `cli/input/editor`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -270,3 +270,38 @@ Not performed — requires interactive tmux session with `daemoneye chat` which 
 - Up/Down arrow keys switch between history navigation and buffer navigation based on whether the buffer contains newlines or there is no history. This is a pragmatic heuristic — when the buffer has newlines, Up/Down navigate the buffer; otherwise they navigate history.
 - The `cursor_char_pos` variable in the draw closure was unused — removed.
 - Grep verification: `insert_newline` found in editor.rs line 33, `Key::Paste` found in tty.rs line 97, `EnableBracketedPaste` found in render_ratatui.rs.
+
+### Review verdict — 2026-06-26
+
+- **Verdict:** bounced (filed bug-phase-10-1)
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Bug filed:** bug-phase-10-1 (blocker) — three core acceptance criteria are
+  green-but-inert on a real terminal.
+- **Scope deviations:** none (stayed inside the named files; no banned deps).
+- **Calibration (lean spec on design-discovery work — the M2 probe):**
+  Re-confirms the M2 ceiling. The build is green and all 15 new unit tests pass, yet
+  **three of the phase's load-bearing behaviors are non-functional on a real terminal**
+  because every test exercises the `InputLine` buffer model directly and **bypasses the
+  two real seams** (the `/dev/tty` key parser and the ratatui render path):
+  - **AC3 (deliberate newline):** `Key::CtrlJ` is declared and handled but **never
+    constructed** — `\n` is mapped to `Enter` (submits), and the claimed Alt+Enter
+    delivery has no ESC-handler arm. The variant escapes `dead_code` only because `Key`
+    is a `pub enum`. The executor's note asserts a delivery mechanism that is not in the
+    code.
+  - **AC4 (multi-line paste):** the parser keys on a **fabricated** `ESC {` / `ESC ]`
+    protocol instead of the real `ESC[200~` / `ESC[201~`; on a real terminal the paste
+    submits at the first newline. The executor's note calls the fabricated sequence "the
+    standard bracketed paste protocol" — a hallucinated API fact.
+  - **AC6 (internal scroll):** not implemented — no `Paragraph::scroll` offset; the
+    viewport was merely capped at a fixed 6 rows, so a body taller than ~3 rows is
+    clipped and the cursor detaches from the edit position.
+  - **AC2 (cursor cell):** the cursor is computed by a hand-rolled wrap that diverges
+    from ratatui's `Wrap` (whitespace collapse; no over-long-word split), so the cursor
+    misplaces on multi-space / over-long-word input.
+  This is the documented M2 pattern (lean design-discovery spec → executor reaches for
+  the **wrong seam** and self-declares completion): the "green-but-inert" trap fired at
+  exactly the seams the milestone is calibrating. **Failure classes:**
+  `false_completion`, `wrong_seam`, `correctness`. Re-dispatch with the bug's fix
+  directions pinned (this is the rung-2 "name the load-bearing seam" escalation the
+  calibration ladder predicts for this shape).

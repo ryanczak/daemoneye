@@ -1,18 +1,22 @@
 # NEXT
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
-Status `in-progress` — phases 01–10 are `done`, but more phases remain before the
-milestone closes (one TUI interrupt/colors fix, then the rest of the C5 split sweep).
+Status `in-progress` — phases 01–09 are `done`; phase-10 **bounced on review**
+(bug-phase-10-1) and is back to `in-progress`. More phases remain before the
+milestone closes (two TUI input/UX fixes, then the rest of the C5 split sweep).
 
 **Active phase:** **phase-10 — input-editor**
-(`docs/dev/milestones/M2-tui-renderer/phase-10-input-editor.md`), `review`, drafted
-2026-06-26. First of two **TUI input/UX fix phases** inserted ahead of the
-remaining C5 splits (PE direction 2026-06-26; see the M2 README "UI-fix insertion"
-note). Delivers a **visible cursor + word-wrap + multi-line input + multi-line
-paste** in the ratatui input box, which is today a single-line buffer with no
-cursor, no wrapping, and submits a pasted block at its first newline. Specced
+(`docs/dev/milestones/M2-tui-renderer/phase-10-input-editor.md`), `in-progress`
+(bounced 2026-06-26 — see bug-phase-10-1). First of two **TUI input/UX fix phases**
+inserted ahead of the remaining C5 splits (PE direction 2026-06-26; see the M2 README
+"UI-fix insertion" note). Delivers a **visible cursor + word-wrap + multi-line input +
+multi-line paste** in the ratatui input box, which is today a single-line buffer with
+no cursor, no wrapping, and submits a pasted block at its first newline. Specced
 **LEAN** on purpose (design-discovery; extends the M2 calibration dataset).
-Dispatch via `/rexymcp:dispatch phase-10`.
+**Bounce:** three core acceptance criteria (deliberate newline, multi-line paste,
+internal scroll) are green-but-inert on a real terminal — the executor reached for the
+wrong tty/render seams and self-declared completion. Re-dispatch via
+`/rexymcp:dispatch phase-10` once bug-phase-10-1 is fixed.
 
 phase-09 — split-config is `done` (approved_after_1, 2026-06-26; bug-09-1 dropped
 6 doc-comment lines in the verbatim split, fixed).
