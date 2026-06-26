@@ -7,7 +7,7 @@ tmux window switches and making the transcript real terminal scrollback. Along t
 way, split the three oversized `cli/` files (`render.rs`, `input.rs`,
 `commands/mod.rs`) into focused modules (closes the bulk of code-issue C5).
 
-**Status:** planning
+**Status:** in-progress
 
 **Depends on:** M1 (complete)
 
@@ -48,7 +48,7 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | 01 | render-core — add deps; ratatui inline `Terminal` lifecycle + live-region widgets (input box, status bar) + `insert_before` commit API, selected behind a transitional `DAEMONEYE_RENDERER` switch (default = legacy); reuses existing input editing; hermetic `TestBackend` tests | done |
 | 02a | streaming-markdown — stream the AI response: pre-first-token spinner in the live region + styled, wrapped markdown committed line-by-line to scrollback + resize redraw; tools stay auto-denied; default stays legacy ([phase-02a-streaming.md](phase-02a-streaming.md)) | done |
 | 02b | tools-and-default — interactive tool-call approval (raw/cooked-mode coexistence) + tool panels through the ratatui path + code-block-state fix, then flip the `DAEMONEYE_RENDERER` default to ratatui ([phase-02b-tools-and-default.md](phase-02b-tools-and-default.md)) | done |
-| 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | todo |
+| 03 | retire-legacy-and-verify — delete the DECSTBM scroll-region path, absolute-CUP chrome, manual SIGWINCH repair, and the transitional switch; tmux `capture-pane` E2E proving window-switch no longer corrupts (corruption fix is fully landed here) | done |
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | todo |
 | 05 | split-input — termios/`AsyncStdin` → `cli/input/tty`; `InputLine`/`InputState` editing → `cli/input/editor` | todo |
 | 06 | split-commands — extract `run_chat_inner_raw` loop + ctx structs + slash help from `cli/commands/mod.rs` | todo |

@@ -72,37 +72,6 @@ fn visual_len_no_escape_inside_word() {
     assert_eq!(visual_len("DaemonEye"), 9);
 }
 
-// ── fmt_uptime ────────────────────────────────────────────────────────────────
-
-#[test]
-fn fmt_uptime_seconds_only() {
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(0)), "0s");
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(42)), "42s");
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(59)), "59s");
-}
-
-#[test]
-fn fmt_uptime_minutes_and_seconds() {
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(60)), "1m 0s");
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(90)), "1m 30s");
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(3599)), "59m 59s");
-}
-
-#[test]
-fn fmt_uptime_hours_and_minutes() {
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(3600)), "1h 0m");
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(3660)), "1h 1m");
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(7322)), "2h 2m");
-}
-
-#[test]
-fn fmt_uptime_exact_hour_boundary() {
-    // 3600s == 1h 0m, not shown as minutes
-    let out = fmt_uptime(std::time::Duration::from_secs(3600));
-    assert!(out.contains('h'), "should show hours: {out}");
-    assert!(!out.contains('s'), "should not show seconds: {out}");
-}
-
 #[test]
 fn wrap_line_hard_with_newlines() {
     use crate::cli::render::wrap_line_hard;

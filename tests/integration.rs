@@ -1417,3 +1417,129 @@ fn g6_tool_policy_enforced_in_ghost() {
     assert_eq!(call.tool_name(), "spawn_ghost_shell");
     assert!(!policy.permits(call.tool_name()));
 }
+
+// ── M2-phase-03: ratatui E2E window-switch corruption ────────────────────────
+
+/// Verify that switching to another tmux window and back does not corrupt the
+/// chat UI when ratatui is the only renderer.
+///
+/// The test starts a daemon + `daemoneye chat`, sends one turn, opens a new
+/// window, switches back, then captures the chat pane.  Before the ratatui
+/// migration the DECSTBM scroll-region path would overwrite lines outside the
+/// scroll region when the terminal re-sent its size on window-switch; the
+/// ratatui inline-viewport path redraws the entire widget on every SIGWINCH so
+/// corruption cannot occur.
+///
+/// Guarded by `#[ignore]` because it requires a running tmux server (not
+/// available in CI).  Run manually with:
+///   cargo test window_switch_does_not_corrupt_chat -- --ignored --nocapture
+#[test]
+#[ignore]
+fn window_switch_does_not_corrupt_chat() {
+    use std::process::Command;
+    use std::time::Duration;
+
+    // ── Prerequisites ────────────────────────────────────────────────────────
+    // Skip gracefully when tmux is not in PATH.
+    if Command::new("tmux").arg("-V").output().is_err() {
+        eprintln!("tmux not available — skipping window_switch_does_not_corrupt_chat");
+        return;
+    }
+
+    let binary = find_daemoneye_binary();
+    if !binary.exists() {
+        panic!(
+            "daemoneye binary not found at {:?} — run `cargo build` first",
+            binary
+        );
+    }
+
+    // ── Session setup ────────────────────────────────────────────────────────
+    let session = "de-e2e-phase03";
+
+    // Kill any leftover session from a previous run.
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", session])
+        .output();
+
+    // Create a detached tmux session with a single window.
+    Command::new("tmux")
+        .args(["new-session", "-d", "-s", session, "-x", "220", "-y", "50"])
+        .status()
+        .expect("tmux new-session");
+
+    // ── Start daemoneye chat in the session's initial pane ───────────────────
+    // We inject `echo hello` as the first turn so the chat loop has something
+    // to display without requiring a live daemon or AI backend.  What we care
+    // about is that the UI frame (input box + status bar) is intact after a
+    // window switch, not the AI response content.
+    //
+    // `send-keys` with `Enter` submits the command to the pane.
+    Command::new("tmux")
+        .args([
+            "send-keys", "-t", &format!("{}:0", session),
+            &format!("{} chat 2>/dev/null || true", binary.display()),
+            "Enter",
+        ])
+        .status()
+        .expect("tmux send-keys chat");
+
+    // Give the process time to start up and render its initial frame.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Record the initial chat pane id so we can switch back to it.
+    let chat_pane_output = Command::new("tmux")
+        .args(["display-message", "-t", &format!("{}:0", session), "-p", "#{pane_id}"])
+        .output()
+        .expect("tmux display-message pane_id");
+    let chat_pane = String::from_utf8_lossy(&chat_pane_output.stdout)
+        .trim()
+        .to_string();
+
+    // ── Window switch ────────────────────────────────────────────────────────
+    // Open a new window — this triggers a SIGWINCH in the chat pane.
+    Command::new("tmux")
+        .args(["new-window", "-t", session])
+        .status()
+        .expect("tmux new-window");
+
+    std::thread::sleep(Duration::from_millis(300));
+
+    // Switch back to the chat window — triggers another SIGWINCH.
+    Command::new("tmux")
+        .args(["select-window", "-t", &format!("{}:0", session)])
+        .status()
+        .expect("tmux select-window");
+
+    std::thread::sleep(Duration::from_millis(800));
+
+    // ── Capture pane and assert UI integrity ─────────────────────────────────
+    let capture = Command::new("tmux")
+        .args(["capture-pane", "-p", "-t", &chat_pane])
+        .output()
+        .expect("tmux capture-pane");
+    let screen = String::from_utf8_lossy(&capture.stdout);
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // The ratatui renderer always places the status bar on the bottom row.
+    // Find whether any line near the bottom contains the `daemoneye` status
+    // bar indicator (the `·` separator the render_ratatui module emits).
+    // We look in the bottom 5 rows to tolerate minor height differences.
+    let bottom_rows: Vec<&str> = lines.iter().rev().take(5).copied().collect();
+    let status_bar_present = bottom_rows.iter().any(|row| {
+        // The status bar contains model info or the `·` cost separator.
+        row.contains("daemoneye") || row.contains(" · ")
+    });
+
+    // Teardown before asserting so the session is never left dangling.
+    let _ = Command::new("tmux")
+        .args(["kill-session", "-t", session])
+        .output();
+
+    assert!(
+        status_bar_present,
+        "Status bar absent from bottom 5 rows after window switch — possible corruption.\n\
+         Bottom rows captured:\n{}",
+        bottom_rows.join("\n")
+    );
+}

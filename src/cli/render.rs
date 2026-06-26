@@ -1,7 +1,3 @@
-// ── Async stdin wrapper ───────────────────────────────────────────────────────
-
-/// Non-owning handle to fd 0 used with `AsyncFd`.  Does not close the fd on
-/// drop — closing stdin would break the process.
 /// Render a bordered panel at terminal width.
 ///
 /// `title`    — label embedded in the top border
@@ -182,19 +178,6 @@ pub fn visual_len(s: &str) -> usize {
     count
 }
 
-/// Truncate `s` (no ANSI escapes) to at most `max_chars` visible characters.
-/// Returns the truncated string without any ellipsis — callers append `…` as needed.
-fn truncate_to_visual(s: &str, max_chars: usize) -> &str {
-    let mut end = s.len();
-    for (count, (i, _ch)) in s.char_indices().enumerate() {
-        if count >= max_chars {
-            end = i;
-            break;
-        }
-    }
-    &s[..end]
-}
-
 /// Query the visible column width of the terminal on stdout.
 /// Uses `ioctl(TIOCGWINSZ)` so the value is always live — pane resizes are
 /// reflected automatically.  Falls back to `$COLUMNS`, then to 79.
@@ -234,108 +217,6 @@ pub fn terminal_height() -> usize {
         .unwrap_or(24)
 }
 
-/// Install a terminal scroll region that reserves the bottom four rows:
-///   rows 1..(height-3-n) — scrolling content area  (n = input_rows, default 1)
-///   row (height-2-n)     — input box top border (app name + uptime)
-///   rows (height-1-n)..(height-2) — n input prompt rows
-///   row (height-1)       — input box bottom border
-///   row  height          — status bar
-///
-/// With n=1 this is identical to the previous fixed layout.
-pub fn setup_scroll_region(height: usize) {
-    setup_scroll_region_n(height, 1);
-}
-
-/// Like `setup_scroll_region` but reserves `input_rows` rows for the input area.
-pub fn setup_scroll_region_n(height: usize, input_rows: usize) {
-    use std::io::Write;
-    let scroll_bottom = height.saturating_sub(3 + input_rows).max(1);
-    // DECSTBM — set scrolling region (1-indexed).
-    print!("\x1b[1;{scroll_bottom}r");
-    // Position cursor at the bottom of the scroll region so the first output
-    // starts at the correct row.
-    print!("\x1b[{scroll_bottom};1H");
-    std::io::stdout().flush().ok();
-}
-
-/// Reset the terminal to full-screen scrolling and clear the four reserved rows.
-pub fn teardown_scroll_region(height: usize) {
-    use std::io::Write;
-    // \x1b[r resets the scroll region to the full screen.
-    print!("\x1b[r");
-    for row in [
-        height.saturating_sub(3).max(1),
-        height.saturating_sub(2).max(1),
-        height.saturating_sub(1).max(1),
-        height,
-    ] {
-        print!("\x1b[{row};1H\x1b[2K");
-    }
-    // Leave cursor near the bottom of the now-full-screen terminal.
-    print!("\x1b[{};1H", height.saturating_sub(4).max(1));
-    std::io::stdout().flush().ok();
-}
-
-/// Format an elapsed duration as a compact uptime string.
-pub fn fmt_uptime(elapsed: std::time::Duration) -> String {
-    let s = elapsed.as_secs();
-    if s < 60 {
-        format!("{}s", s)
-    } else if s < 3600 {
-        format!("{}m {}s", s / 60, s % 60)
-    } else {
-        format!("{}h {}m", s / 3600, (s % 3600) / 60)
-    }
-}
-
-/// Draw (or redraw) the input box borders with a 1-row input area.
-pub fn draw_input_frame(height: usize, width: usize, start: std::time::Instant) {
-    draw_input_frame_n(height, width, 1, start);
-}
-
-/// Draw (or redraw) the input box borders for `input_rows` input rows.
-///
-/// The top border carries the app name and current uptime; the bottom border
-/// is plain.  Uses DEC save/restore cursor so it is safe to call at any point
-/// without disturbing the scroll-region cursor position.
-///   row (height-2-n): ╭─ DaemonEye ─────────────────────── up 4m 12s ─╮
-///   row (height-1):   ╰────────────────────────────────────────────────╯
-pub fn draw_input_frame_n(
-    height: usize,
-    width: usize,
-    input_rows: usize,
-    start: std::time::Instant,
-) {
-    use std::io::Write;
-    let border_top = height.saturating_sub(2 + input_rows).max(1);
-    let border_bottom = height.saturating_sub(1).max(1);
-    let inner = width.saturating_sub(2);
-
-    let user_host = local_user_host();
-    let uptime = fmt_uptime(start.elapsed());
-    let title_left = format!("─ {} ─", user_host); // plain for visual_len
-    let title_right = format!(" up {} ─", uptime); // plain for visual_len
-    let anchors = visual_len(&title_left) + visual_len(&title_right);
-    let top = if inner >= anchors {
-        let mid = "─".repeat(inner - anchors);
-        format!(
-            "\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{mid} \x1b[38;2;220;160;0mup {uptime}\x1b[38;5;88m ─╮\x1b[0m"
-        )
-    } else {
-        let dashes = "─".repeat(inner.saturating_sub(visual_len(&title_left)));
-        format!("\x1b[38;5;88m\x1b[1m╭─ \x1b[38;5;136m{user_host}\x1b[38;5;88m ─{dashes}╮\x1b[0m")
-    };
-
-    print!("\x1b7");
-    print!("\x1b[{border_top};1H\x1b[2K{top}");
-    print!(
-        "\x1b[{border_bottom};1H\x1b[2K\x1b[38;5;88m\x1b[1m╰{}╯\x1b[0m",
-        "─".repeat(inner)
-    );
-    print!("\x1b8");
-    std::io::stdout().flush().ok();
-}
-
 /// The status-bar fields passed as a single reference to every rendering function.
 pub struct StatusBarState<'a> {
     pub session_id: &'a str,
@@ -350,144 +231,6 @@ pub struct StatusBarState<'a> {
     pub cost_usd: f64,
     /// Whether any AI call in this session had Unknown pricing.
     pub has_untracked: bool,
-}
-
-/// Format the cost segment for the status bar.
-///
-/// Returns `"· $0.08 "` for tracked cost, `"· $0.08+ "` when any call had
-/// unknown pricing (the `+` signals untracked spend), or `""` when both are zero.
-fn format_cost_segment(cost_usd: f64, has_untracked: bool) -> String {
-    if cost_usd > 0.0 || has_untracked {
-        let marker = if has_untracked { "+" } else { "" };
-        format!("· ${:.2}{} ", cost_usd, marker)
-    } else {
-        String::new()
-    }
-}
-
-/// Render (or refresh) the status bar in the bottom row.
-/// Uses DEC save/restore cursor (`\x1b7` / `\x1b8`) so this is safe to call
-/// at any point without disturbing the scroll-region cursor position.
-///
-/// Layout (left to right, progressively dropped when the terminal is narrow):
-/// - base: ` ⬡ daemoneye  ·  session:XXXXXXXX `
-/// - model name
-/// - token budget (`12k / 200k`)
-/// - approval hint (bold amber, only when auto-approve is active)
-pub fn draw_status_bar(height: usize, width: usize, sb: &StatusBarState<'_>) {
-    use std::io::Write;
-    let icon = if sb.daemon_up {
-        "\x1b[0m\x1b[1m\x1b[31m(\x1b[33m◉\x1b[31m)\x1b[0m\x1b[2m"
-    } else {
-        "\x1b[0m\x1b[2m(◉)\x1b[0m\x1b[2m"
-    };
-    let base = format!(
-        " {} · session:{} ",
-        icon,
-        &sb.session_id[..8.min(sb.session_id.len())],
-    );
-
-    // Optional segments assembled right-to-left in priority order.
-    let model_str = if sb.model.is_empty() {
-        String::new()
-    } else {
-        format!("· {} ", sb.model)
-    };
-
-    let tools_str = if sb.tools_total > 0 {
-        format!("· tools: {} ", sb.tools_total)
-    } else {
-        String::new()
-    };
-
-    let token_str = if sb.prompt_tokens > 0 && sb.context_window > 0 {
-        let pct_used = (sb.prompt_tokens as f64 / sb.context_window.max(1) as f64 * 100.0) as u32;
-        format!(
-            "· {} / {} ({}%) ",
-            sb.prompt_tokens, sb.context_window, pct_used
-        )
-    } else {
-        String::new()
-    };
-
-    let cost_str = format_cost_segment(sb.cost_usd, sb.has_untracked);
-
-    // Active approvals: bold amber.  Inactive ("approvals: off"): dim.
-    let hint_str = if sb.approval_hint.is_empty() {
-        String::new()
-    } else if sb.approval_hint.starts_with('⚡') {
-        format!(
-            "· \x1b[1m\x1b[33m{}\x1b[0m\x1b[22m\x1b[2m ",
-            sb.approval_hint
-        )
-    } else {
-        format!("· \x1b[2m{}\x1b[0m ", sb.approval_hint)
-    };
-
-    // If the hint still overflows when paired only with base, build a truncated
-    // version that fits.  The hint_str layout is "· {text} " (3 visual chars of
-    // overhead); we reserve at least 6 visible chars for the truncated text plus
-    // the ellipsis, otherwise we skip the hint entirely.
-    let hint_str_truncated: String = {
-        let avail = width.saturating_sub(visual_len(&base));
-        let hint_vis = visual_len(&hint_str);
-        if hint_vis <= avail || avail < 9 {
-            // Fits already, or too narrow to be useful — handled by cascade below.
-            String::new()
-        } else {
-            // "· " (2) + text + "… " (2) must fit in avail.
-            let text_budget = avail.saturating_sub(4);
-            let truncated = truncate_to_visual(sb.approval_hint, text_budget);
-            if sb.approval_hint.starts_with('⚡') {
-                format!("· \x1b[1m\x1b[33m{}…\x1b[0m\x1b[22m\x1b[2m ", truncated)
-            } else {
-                format!("· \x1b[2m{}…\x1b[0m ", truncated)
-            }
-        }
-    };
-
-    // Try progressively shorter combinations until one fits.
-    // The truncated-hint candidate is only inserted when a truncated string was
-    // produced (i.e. the full hint overflows base alone but the terminal is wide
-    // enough to show something useful).
-    let mut candidates: Vec<Box<dyn Fn() -> String>> = vec![
-        Box::new(|| {
-            format!(
-                "{}{}{}{}{}{}",
-                base, model_str, tools_str, token_str, cost_str, hint_str
-            )
-        }),
-        Box::new(|| format!("{}{}{}{}{}", base, model_str, tools_str, cost_str, hint_str)),
-        Box::new(|| format!("{}{}{}{}", base, model_str, cost_str, hint_str)),
-        Box::new(|| format!("{}{}{}", base, cost_str, hint_str)),
-        Box::new(|| format!("{}{}{}{}", base, model_str, tools_str, hint_str)),
-        Box::new(|| format!("{}{}{}", base, model_str, hint_str)),
-        Box::new(|| format!("{}{}", base, hint_str)),
-    ];
-    if !hint_str_truncated.is_empty() {
-        candidates.push(Box::new(|| format!("{}{}", base, hint_str_truncated)));
-    }
-    candidates.push(Box::new(|| base.clone()));
-
-    let mut out = base.clone();
-    let mut vis = visual_len(&base);
-    for candidate in &candidates {
-        let s = candidate();
-        let v = visual_len(&s);
-        if v <= width {
-            out = s;
-            vis = v;
-            break;
-        }
-    }
-
-    let pad = " ".repeat(width.saturating_sub(vis));
-
-    print!("\x1b7"); // DEC save cursor
-    print!("\x1b[{height};1H"); // move to status bar row
-    print!("\x1b[2m{}{}\x1b[0m", out, pad);
-    print!("\x1b8"); // DEC restore cursor
-    std::io::stdout().flush().ok();
 }
 
 /// Streaming word-wrap writer.
@@ -1546,30 +1289,6 @@ impl MarkdownRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn status_bar_renders_cost_segment() {
-        let result = format_cost_segment(0.08, false);
-        assert_eq!(result, "· $0.08 ");
-    }
-
-    #[test]
-    fn status_bar_renders_untracked_marker_when_flag_set() {
-        let result = format_cost_segment(0.08, true);
-        assert_eq!(result, "· $0.08+ ");
-    }
-
-    #[test]
-    fn status_bar_hides_cost_when_zero_and_tracked() {
-        let result = format_cost_segment(0.0, false);
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn status_bar_shows_cost_when_zero_but_untracked() {
-        let result = format_cost_segment(0.0, true);
-        assert_eq!(result, "· $0.00+ ");
-    }
 
     // ── Fenced code block state on streaming path ──────────────────────
 

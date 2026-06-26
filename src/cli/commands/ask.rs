@@ -1,21 +1,20 @@
 //! `daemoneye ask` — one-shot query to the daemon. Two modes:
 //!
-//! * default: spinner + styled streaming output via `ask_with_session` (shares the
-//!   chat rendering pipeline).
+//! * default: spinner + styled streaming output via the legacy streamer.
 //! * `--raw`: plain-stdout streaming, auto-denies all interactive prompts.
 //!   Intended for scripting and piping.
 
 use anyhow::Result;
 use tokio::io::BufReader;
 
-use crate::cli::input::{AsyncStdin, set_raw_mode};
+use crate::cli::input::AsyncStdin;
 use crate::cli::render::terminal_width;
 use crate::config::Config;
 use crate::ipc::{Request, Response};
 
 use super::approval::SessionApproval;
 use super::ipc_client::{connect, recv, send_request};
-use super::stream::{AskTmuxCtx, QueryArgs, StreamCtx, TokenCtx, ask_with_session};
+use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, ask_with_session_ratatui};
 
 pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     if raw {
@@ -26,38 +25,40 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     let ask_config = Config::load().unwrap_or_default();
     let mut approval = SessionApproval::from_config(&ask_config.approvals);
 
-    let old = set_raw_mode()?;
-    let tmux_session = crate::tmux::current_session_name();
-    // For one-shot asks the user's current pane IS the working pane; no split/discovery needed.
-    let result = ask_with_session(
+    let mut renderer =
+        match crate::cli::render_ratatui::RatatuiRendererStdout::new(std::time::Instant::now()) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Failed to initialise ratatui renderer: {e}");
+                return Err(e.into());
+            }
+        };
+
+    ask_with_session_ratatui(
         QueryArgs {
             query: query.clone(),
-            display_query: &query,
             prompt_override: None,
         },
         None,
         &mut approval,
         AskTmuxCtx {
-            session: tmux_session.as_deref(),
+            session: crate::tmux::current_session_name().as_deref(),
             pane: None,
         },
         TokenCtx {
             prompt_tokens: &mut 0,
             context_window: 0,
         },
-        StreamCtx {
-            stdin: &stdin,
+        RatatuiQueryCtx {
             chat_width: Some(terminal_width()),
-            old_termios: Some(old),
-            sigwinch: None,
-            resize: None,
-            cost_usd: &mut 0.0,
-            has_untracked: &mut false,
+            session_cost: &mut 0.0,
+            session_has_untracked: &mut false,
+            renderer: &mut renderer,
+            model: &ask_config.resolve_model(None).model,
+            stdin: &stdin,
         },
     )
-    .await;
-    crate::cli::input::restore_termios(Some(old));
-    result
+    .await
 }
 
 /// Minimal ask: sends the query, prints only the agent's response tokens to stdout,
