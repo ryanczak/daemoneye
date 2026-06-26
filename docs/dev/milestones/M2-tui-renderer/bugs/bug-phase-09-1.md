@@ -1,7 +1,7 @@
 # Bug 1 on phase-09: Six `///` doc-comment lines dropped during the "verbatim" move
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (commit 5cf62d1; verified at review 2026-06-26)
 **Filed:** 2026-06-26
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Phase 09: Split `config.rs` into a `config/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-08 (done)
 **Estimated diff:** ~1631 lines moved (mechanical), ~40 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
@@ -538,3 +538,30 @@ Restored six `///` doc-comment lines dropped during the initial verbatim split (
 - Updated: phase-09-split-config.md (status → review, Update Log), M2 README (phase table row → review)
 
 **Notes for review:** Pure bug-fix — only the six dropped doc-comments were restored. No other code changes.
+
+### Review verdict — 2026-06-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-09-1 — six `///` doc-comment lines dropped during the
+  verbatim move: `Config` struct, `overwrite_knowledge_memories`,
+  `overwrite_sre_prompt`; all restored in fix commit `5cf62d1`)
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** none — diff touches only the four `config/` files
+  (verbatim move + 14 `include_str!` `../../` adjustments + `SRE_PROMPT_TOML`
+  → `pub(crate)` + one `#[cfg(test)]` use) and the phase-doc/README status
+  rows. `src/lib.rs` unchanged.
+- **Verification:** `cargo build` / `clippy -D warnings` / `cargo fmt --all
+  -- --check` / `cargo test` all clean (773 unit + 27 integration, 2 ignored).
+  Line-multiset fidelity vs. old `config.rs` now shows zero deletions — only
+  the intentional second `impl Config {` block and per-file `use` glue.
+  All 14 `include_str!` resolve `../../assets/`; 12 `// ----` banners + 8
+  `// ──` bars + 40 `#[test]` fns intact. E2E `config::tests::builtin_sre_prompt_parses`
+  → `test result: ok. 1 passed`.
+- **Calibration:** repeat of the phase-07 comment-fidelity failure mode
+  (silent doc-comment drop during a "verbatim" move) despite the phase doc
+  pre-injecting that exact lesson in Pre-flight 5 & 7. The pre-warning
+  surfaced banner/bar lines (caught) but the executor still dropped plain
+  `///` doc-comments. Signal for the M2 close fold: the verbatim-move
+  pre-flight should call out **doc-comments above moved items**, not only
+  `// ----`/`// ──` decoration lines, and reviewers should run the
+  sorted-multiset line check on every split phase (it caught this one).
