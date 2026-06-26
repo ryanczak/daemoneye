@@ -1,7 +1,7 @@
 # Phase 02b: tools-and-default
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bugs/bug-phase-02b-1.md)
+**Status:** review (bounced — see bugs/bug-phase-02b-1.md; fix landed)
 **Depends on:** phase-02a (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -338,3 +338,61 @@ grep -rn "DAEMONEYE_RENDERER" src/cli/commands/mod.rs | head -5
    `in_code_block`/`code_lang` transitions). E2E not run.
 
 See bugs/bug-phase-02b-1.md for the full breakdown and fix instructions.
+
+### Update — 2026-06-25 23:21 (complete — bounce fix)
+
+**Executor:** Claude (Sonnet 4.5)
+**Tasks:** Fix all issues from bug-phase-02b-1.md: route approval prompts through live region, remove dead code, fix decision-parser test.
+
+**Verification commands:**
+```
+cargo fmt --all
+  → (clean)
+cargo build 2>&1 | tail -20
+  → Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.46s
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20
+  → Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.52s
+cargo test 2>&1 | tail -30
+  → test result: ok. 786 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+  → test result: ok. 27 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+```
+
+**Verification summary:**
+- `cargo build`: zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean
+- `cargo fmt --all`: clean
+- `cargo test`: 813 passed, 0 failed, 1 ignored
+
+**Files changed:**
+- `src/cli/render_ratatui.rs` — added `draw_prompt` method and `render_prompt_region` function for live-region prompt rendering with input box
+- `src/cli/commands/stream.rs` — rewrote `read_approval_input` to render through `draw_prompt` (live region, not scrollback `commit`); removed per-byte `commit` echo and literal `\x1b[D\x1b[P` backspace; removed `prompt_y_na_message`, `prompt_yes_no`, `#[allow(dead_code)]` shims; `parse_approval_decision` now returns `(bool, bool, Option<String>)` with `is_approve_session` flag; all prompt functions updated to take `StatusBarState` and route through `draw_prompt`; updated all callers in `ask_with_session_ratatui` arms; tests updated for new `parse_approval_decision` signature
+- `docs/dev/milestones/M2-tui-renderer/phase-02b-tools-and-default.md` — Update Log entries, status flip
+- `docs/dev/milestones/M2-tui-renderer/README.md` — phase table status flip
+
+**Grep for pinned literal `DAEMONEYE_RENDERER`:**
+```
+grep -rn "DAEMONEYE_RENDERER" src/cli/commands/mod.rs | head -5
+  → 18:        match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
+```
+
+**Grep for no `allow(dead_code)` in stream.rs:**
+```
+grep -rn "allow(dead_code)" src/cli/commands/stream.rs
+  → (no matches)
+```
+
+**Grep for no per-byte `commit` in approval path:**
+```
+grep -n 'commit.*"\\x1b\|commit.*format.*b as char' src/cli/commands/stream.rs
+  → (no matches)
+```
+
+**Notes for review:**
+- The `draw_prompt` method uses `render_prompt_region` which splits the live viewport into prompt text area + input box + status bar. The prompt is transient — it lives only in the `draw` frame and leaves no residue in scrollback.
+- `read_approval_input` now redraws the live region on every keystroke (backspace, insert, etc.) so typed input appears in place. Only the final outcome (approved/denied/redirected) is committed to scrollback.
+- `prompt_credential_ratatui` renders masked `•` characters in the live region via `draw_prompt`, not via per-char `commit`.
+- Legacy `ask_with_session` and all `approval_ui::prompt_*` functions are byte-for-byte unchanged.
+- `parse_approval_decision` is now called by `prompt_with_session_approve` (the shared primitive all prompts use) — the test covers the actual production path.
+- E2E tmux verification: not available in executor environment. Architect will run live E2E at review.
+
+**End-to-end verification:** N/A — executor environment lacks tmux. Hermetic tests cover: (a) fenced code block state tracking on streaming path (render.rs tests), (b) approval decision parsing for Y/N/A/empty/typed-message with `is_approve_session` flag (stream.rs tests), (c) `RendererMode::from_env` default flip (mod.rs tests).

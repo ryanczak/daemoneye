@@ -320,9 +320,21 @@ pub(super) async fn ask_with_session_ratatui(
                 background,
                 target_pane,
             } => {
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let (approved, user_message) = prompt_tool_call_ratatui(
                     renderer,
                     stdin,
+                    &sb,
                     approval,
                     &command,
                     background,
@@ -340,17 +352,51 @@ pub(super) async fn ask_with_session_ratatui(
                 .await?;
             }
             Response::CredentialPrompt { id, prompt } => {
-                let credential = prompt_credential_ratatui(renderer, stdin, &prompt).await;
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
+                let credential = prompt_credential_ratatui(renderer, stdin, &sb, &prompt).await;
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
             }
             Response::PaneSelectPrompt { id, panes } => {
-                let pane_id = prompt_pane_select_ratatui(renderer, stdin, &panes).await;
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
+                let pane_id = prompt_pane_select_ratatui(renderer, stdin, &sb, &panes).await;
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
             }
             Response::ScriptDeletePrompt { id, script_name } => {
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let approved = prompt_yes_no_ratatui(
                     renderer,
                     stdin,
+                    &sb,
                     &format!("AI wants to delete script: {}", script_name),
                     &format!("Approve deleting ~/.daemoneye/scripts/{}?", script_name),
                 )
@@ -363,19 +409,31 @@ pub(super) async fn ask_with_session_ratatui(
                 content,
                 existing_content,
             } => {
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
+                    &sb,
                     approval,
                     &script_name,
                     &content,
                     existing_content.as_deref(),
                     "script",
-                    |a, name| {
+                    |a: &mut super::approval::SessionApproval, name: &str| {
                         a.scripts.insert(name.to_string());
                     },
-                    |a| a.scripts_all,
-                    |a, name| a.scripts.contains(name),
+                    |a: &super::approval::SessionApproval| a.scripts_all,
+                    |a: &super::approval::SessionApproval, name: &str| a.scripts.contains(name),
                 )
                 .await;
                 send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
@@ -386,8 +444,20 @@ pub(super) async fn ask_with_session_ratatui(
                 kind,
                 action,
             } => {
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let approved =
-                    prompt_schedule_write_ratatui(renderer, stdin, &name, &kind, &action).await;
+                    prompt_schedule_write_ratatui(renderer, stdin, &sb, &name, &kind, &action)
+                        .await;
                 send_request(&mut tx, Request::ScheduleWriteResponse { id, approved }).await?;
             }
             Response::RunbookWritePrompt {
@@ -396,19 +466,31 @@ pub(super) async fn ask_with_session_ratatui(
                 content,
                 existing_content,
             } => {
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
+                    &sb,
                     approval,
                     &runbook_name,
                     &content,
                     existing_content.as_deref(),
                     "runbook",
-                    |a, name| {
+                    |a: &mut super::approval::SessionApproval, name: &str| {
                         a.runbooks.insert(name.to_string());
                     },
-                    |a| a.runbooks_all,
-                    |a, name| a.runbooks.contains(name),
+                    |a: &super::approval::SessionApproval| a.runbooks_all,
+                    |a: &super::approval::SessionApproval, name: &str| a.runbooks.contains(name),
                 )
                 .await;
                 send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
@@ -426,9 +508,21 @@ pub(super) async fn ask_with_session_ratatui(
                         active_jobs.join(", ")
                     )
                 };
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let approved = prompt_yes_no_ratatui(
                     renderer,
                     stdin,
+                    &sb,
                     &format!("AI wants to delete runbook: {}{}", runbook_name, job_info),
                     &format!("Approve deleting ~/.daemoneye/runbooks/{}?", runbook_name),
                 )
@@ -443,9 +537,21 @@ pub(super) async fn ask_with_session_ratatui(
                 new_content,
                 dest_path,
             } => {
+                let sb = crate::cli::render::StatusBarState {
+                    session_id: "",
+                    approval_hint: &approval.hint(),
+                    model: ctx.model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: *session_cost,
+                    has_untracked: *session_has_untracked,
+                };
                 let (approved, user_message) = prompt_edit_file_ratatui(
                     renderer,
                     stdin,
+                    &sb,
                     approval,
                     &path,
                     &operation,
@@ -1266,70 +1372,79 @@ pub(super) async fn ask_with_session(
 // ── Ratatui interactive approval primitives ──────────────────────────────────
 
 /// Parse a user response to a Y/N/A prompt.
-/// Returns `(approved, user_message)`.  `"a"` means approve-for-session.
+/// Returns `(approved, is_approve_session, user_message)`.
+/// `"a"` means approve-for-session.
 /// Any other non-empty string is treated as a typed redirect message.
-#[allow(dead_code)] // used in tests
-fn parse_approval_decision(input: &str) -> (bool, Option<String>) {
+fn parse_approval_decision(input: &str) -> (bool, bool, Option<String>) {
     let trimmed = input.trim();
     let lower = trimmed.to_lowercase();
     match lower.as_str() {
-        "y" | "yes" => (true, None),
-        "n" | "no" | "" => (false, None),
-        "a" => (true, None), // approve-for-session; caller handles the flag
-        _ => (false, Some(trimmed.to_string())),
+        "y" | "yes" => (true, false, None),
+        "n" | "no" | "" => (false, false, None),
+        "a" => (true, true, None),
+        _ => (false, false, Some(trimmed.to_string())),
     }
 }
 
-/// Read a single keypress or full line under crossterm raw mode.
-/// If the first character is Y, N, or A (case-insensitive), returns it immediately.
-/// Otherwise reads the full line using the input editor.
+/// Read a single keypress or full line under crossterm raw mode, rendering
+/// the prompt and input in the live region (not scrollback).
+///
+/// If the first character is Y, N, or A (case-insensitive), returns it
+/// immediately.  Otherwise reads the full line using the input editor,
+/// redrawing the live region on each keystroke so the user sees their
+/// typed text in place.
 async fn read_approval_input(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    prompt_text: &str,
+    status: &crate::cli::render::StatusBarState<'_>,
 ) -> String {
     use crate::cli::input::InputLine;
+
+    // Initial draw with empty input.
+    let mut line = InputLine::new();
+    let _ = renderer.draw_prompt(prompt_text, &line, status);
 
     // Read the first byte to decide: single-key shortcut vs. full line edit.
     if let Some(first) = stdin.read_byte().await {
         let ch = first as char;
         match ch.to_ascii_lowercase() {
             'y' | 'n' | 'a' => {
-                // Show the key the user pressed, then newline.
-                let _ = renderer.commit(&format!("{}\n", ch));
+                // Show the key the user pressed in the input box, then return.
+                line.insert(ch);
+                let _ = renderer.draw_prompt(prompt_text, &line, status);
                 ch.to_string()
             }
             '\r' | '\n' => {
                 // Empty input (Enter pressed immediately)
-                let _ = renderer.commit("\n");
                 String::new()
             }
             _ => {
                 // Start of a typed message — use the input editor.
-                // Echo the first character.
-                let mut line = InputLine::new();
                 line.insert(ch);
-                let _ = renderer.commit(&format!("{}", ch));
+                let _ = renderer.draw_prompt(prompt_text, &line, status);
 
                 loop {
                     match stdin.read_byte().await {
                         Some(b'\r' | b'\n') => {
-                            let _ = renderer.commit("\n");
                             return line.as_str();
                         }
                         Some(b'\x7f' | b'\x08') => {
                             line.backspace();
-                            // Erase last char on screen
-                            let _ = renderer.commit("\x1b[D\x1b[P");
+                            let _ = renderer.draw_prompt(prompt_text, &line, status);
                         }
                         Some(b'\x03') => {
                             // Ctrl+C — cancel, return empty
-                            let _ = renderer.commit("^C\n");
+                            return String::new();
+                        }
+                        Some(b'\x1b') => {
+                            // Escape — cancel, return empty
                             return String::new();
                         }
                         Some(b) => {
                             if b >= 0x20 {
                                 line.insert(b as char);
-                                let _ = renderer.commit(&format!("{}", b as char));
+                                let _ = renderer.draw_prompt(prompt_text, &line, status);
                             }
                         }
                         None => return line.as_str(),
@@ -1342,46 +1457,22 @@ async fn read_approval_input(
     }
 }
 
-/// Render a prompt line and read a Y/N/A or typed-message response.
-async fn prompt_y_na_message(
-    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
-    stdin: &AsyncStdin,
-    prompt_text: &str,
-) -> String {
-    let _ = renderer.commit(&format!("{}\n", prompt_text));
-    read_approval_input(renderer, stdin).await
-}
-
-/// Render a Y/N prompt (no A option, no typed message) and return `true` for yes.
-async fn prompt_yes_no(
-    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
-    stdin: &AsyncStdin,
-    prompt_text: &str,
-) -> bool {
-    let input = prompt_y_na_message(renderer, stdin, prompt_text).await;
-    input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes"
-}
-
-/// Display info text, then prompt Y/N/A with typed-message support.
+/// Display info text and prompt Y/N/A with typed-message support.
 /// Returns `(approved, is_approve_session, user_message)`.
-#[allow(dead_code)] // may be used in future prompts
 async fn prompt_with_session_approve(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     info_lines: &[&str],
     prompt_text: &str,
 ) -> (bool, bool, Option<String>) {
+    // Commit info lines to scrollback (these are permanent).
     for line in info_lines {
         let _ = renderer.commit(&format!("{}\n", line));
     }
-    let input = prompt_y_na_message(renderer, stdin, prompt_text).await;
-    let trimmed = input.trim().to_lowercase();
-    match trimmed.as_str() {
-        "y" | "yes" => (true, false, None),
-        "a" => (true, true, None),
-        "n" | "no" | "" => (false, false, None),
-        other => (false, false, Some(other.to_string())),
-    }
+    // Read the decision in the live region.
+    let input = read_approval_input(renderer, stdin, prompt_text, status).await;
+    parse_approval_decision(&input)
 }
 
 // ── Ratatui prompt functions (called from ask_with_session_ratatui) ──────────
@@ -1389,6 +1480,7 @@ async fn prompt_with_session_approve(
 pub(super) async fn prompt_tool_call_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     approval: &mut super::approval::SessionApproval,
     command: &str,
     background: bool,
@@ -1425,15 +1517,11 @@ pub(super) async fn prompt_tool_call_ratatui(
         "  Approve? [Y]es  [N]o  [A]pprove for {}  or type a message › ",
         session_label
     );
-    let input = prompt_y_na_message(renderer, stdin, &prompt_text).await;
-    let trimmed = input.trim().to_lowercase();
+    let (approved, is_session, user_msg) =
+        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
-    match trimmed.as_str() {
-        "y" | "yes" => {
-            let _ = renderer.commit("  ✓ approved\n");
-            Ok((true, None))
-        }
-        "a" => {
+    if approved {
+        if is_session {
             if is_sudo {
                 approval.sudo = true;
             } else {
@@ -1444,56 +1532,60 @@ pub(super) async fn prompt_tool_call_ratatui(
                 "  ✓ approved — all {} commands auto-approved for this session\n",
                 kind
             ));
-            Ok((true, None))
+        } else {
+            let _ = renderer.commit("  ✓ approved\n");
         }
-        "n" | "no" | "" => {
-            let _ = renderer.commit("  ✗ skipped\n");
-            Ok((false, None))
-        }
-        other => {
-            let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
-            Ok((false, Some(other.to_string())))
-        }
+        Ok((true, None))
+    } else if let Some(msg) = user_msg {
+        let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
+        Ok((false, Some(msg)))
+    } else {
+        let _ = renderer.commit("  ✗ skipped\n");
+        Ok((false, None))
     }
 }
 
 pub(super) async fn prompt_credential_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     prompt: &str,
 ) -> String {
     let _ = renderer.commit(&format!("\n⚠ {}\n", prompt));
-    let _ = renderer.commit("  Password: ");
-    // Read silently (no echo) under raw mode
-    let mut cred = String::new();
+
+    // Read the credential in the live region, showing • for each char.
+    let prompt_text = "  Password: ";
+    let mut cred = crate::cli::input::InputLine::new();
+    let _ = renderer.draw_prompt(prompt_text, &cred, status);
+
     while let Some(b) = stdin.read_byte().await {
         match b {
-            b'\r' | b'\n' => {
-                let _ = renderer.commit("\n");
-                break;
-            }
+            b'\r' | b'\n' => break,
             b'\x7f' | b'\x08' => {
-                let _ = cred.pop();
+                cred.backspace();
+                let _ = renderer.draw_prompt(prompt_text, &cred, status);
             }
-            b'\x03' => {
-                // Ctrl+C
-                let _ = renderer.commit("^C\n");
-                cred.clear();
+            b'\x03' | b'\x1b' => {
+                cred = crate::cli::input::InputLine::new();
                 break;
             }
             c if c >= 0x20 => {
-                cred.push(c as char);
-                let _ = renderer.commit("•");
+                cred.insert('•'); // mask the character
+                let _ = renderer.draw_prompt(prompt_text, &cred, status);
             }
             _ => {}
         }
     }
-    cred
+
+    // Commit the final masked line to scrollback.
+    let _ = renderer.commit(&format!("{}\n", prompt_text));
+    cred.as_str()
 }
 
 pub(super) async fn prompt_pane_select_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     panes: &[crate::ipc::PaneInfo],
 ) -> String {
     let _ = renderer.commit("\n  ⚙ Which pane should receive this command?\n");
@@ -1506,7 +1598,8 @@ pub(super) async fn prompt_pane_select_ratatui(
             pane.summary
         ));
     }
-    let input = prompt_y_na_message(renderer, stdin, "  Select pane › ").await;
+    let prompt_text = "  Select pane › ";
+    let input = read_approval_input(renderer, stdin, prompt_text, status).await;
     input
         .trim()
         .parse::<usize>()
@@ -1518,17 +1611,21 @@ pub(super) async fn prompt_pane_select_ratatui(
 pub(super) async fn prompt_yes_no_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     info: &str,
     prompt_text: &str,
 ) -> bool {
     let _ = renderer.commit(&format!("\n  ⚙ {}\n", info));
-    prompt_yes_no(renderer, stdin, &format!("  {} [y/N] › ", prompt_text)).await
+    let full_prompt = format!("  {} [y/N] › ", prompt_text);
+    let input = read_approval_input(renderer, stdin, &full_prompt, status).await;
+    input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes"
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn prompt_write_ratatui<FAll, FInsert, FContains>(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     approval: &mut super::approval::SessionApproval,
     name: &str,
     content: &str,
@@ -1565,32 +1662,30 @@ where
     } else {
         "  Approve? [Y]es  [N]o  › ".to_string()
     };
-    let input = prompt_y_na_message(renderer, stdin, &prompt_text).await;
-    let trimmed = input.trim().to_lowercase();
+    let (approved, is_session, _user_msg) =
+        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
-    match trimmed.as_str() {
-        "y" | "yes" => {
-            let _ = renderer.commit("  ✓ approved\n");
-            true
-        }
-        "a" if has_a => {
+    if approved {
+        if is_session && has_a {
             insert_for_session(approval, name);
             let _ = renderer.commit(&format!(
                 "  ✓ approved — edits to '{}' auto-approved for this session\n",
                 name
             ));
-            true
+        } else {
+            let _ = renderer.commit("  ✓ approved\n");
         }
-        _ => {
-            let _ = renderer.commit("  ✗ denied\n");
-            false
-        }
+        true
+    } else {
+        let _ = renderer.commit("  ✗ denied\n");
+        false
     }
 }
 
 pub(super) async fn prompt_schedule_write_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     name: &str,
     kind: &str,
     action: &str,
@@ -1599,13 +1694,14 @@ pub(super) async fn prompt_schedule_write_ratatui(
         "\n  ⚙ AI wants to schedule: {} ({})\n  Action: {}\n",
         name, kind, action
     ));
-    prompt_yes_no(renderer, stdin, "  Approve? [y/N] › ").await
+    prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn prompt_edit_file_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
     approval: &mut super::approval::SessionApproval,
     path: &str,
     operation: &str,
@@ -1653,30 +1749,26 @@ pub(super) async fn prompt_edit_file_ratatui(
     } else {
         "  Approve? [Y]es  [A]pprove for session  [N]o  or type a message › ".to_string()
     };
-    let input = prompt_y_na_message(renderer, stdin, &prompt_text).await;
-    let trimmed = input.trim().to_lowercase();
+    let (approved, is_session, user_msg) =
+        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
-    match trimmed.as_str() {
-        "y" | "yes" => {
-            let _ = renderer.commit("  ✓ approved\n");
-            (true, None)
-        }
-        "a" if !all_approved => {
+    if approved {
+        if is_session && !all_approved {
             approval.file_edits.insert(path.to_string());
             let _ = renderer.commit(&format!(
                 "  ✓ approved — edits to '{}' auto-approved for this session\n",
                 path
             ));
-            (true, None)
+        } else {
+            let _ = renderer.commit("  ✓ approved\n");
         }
-        "n" | "no" | "" => {
-            let _ = renderer.commit("  ✗ skipped\n");
-            (false, None)
-        }
-        other => {
-            let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
-            (false, Some(other.to_string()))
-        }
+        (true, None)
+    } else if let Some(msg) = user_msg {
+        let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
+        (false, Some(msg))
+    } else {
+        let _ = renderer.commit("  ✗ skipped\n");
+        (false, None)
     }
 }
 
@@ -1688,57 +1780,65 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_y_approves() {
-        let (approved, msg) = parse_approval_decision("y");
+        let (approved, is_session, msg) = parse_approval_decision("y");
         assert!(approved);
+        assert!(!is_session);
         assert!(msg.is_none());
     }
 
     #[test]
     fn parse_approval_decision_yes_approves() {
-        let (approved, msg) = parse_approval_decision("yes");
+        let (approved, is_session, msg) = parse_approval_decision("yes");
         assert!(approved);
+        assert!(!is_session);
         assert!(msg.is_none());
     }
 
     #[test]
     fn parse_approval_decision_y_uppercase_approves() {
-        let (approved, msg) = parse_approval_decision("Y");
+        let (approved, is_session, msg) = parse_approval_decision("Y");
         assert!(approved);
+        assert!(!is_session);
         assert!(msg.is_none());
     }
 
     #[test]
     fn parse_approval_decision_n_denies() {
-        let (approved, msg) = parse_approval_decision("n");
+        let (approved, is_session, msg) = parse_approval_decision("n");
         assert!(!approved);
+        assert!(!is_session);
         assert!(msg.is_none());
     }
 
     #[test]
     fn parse_approval_decision_empty_denies() {
-        let (approved, msg) = parse_approval_decision("");
+        let (approved, is_session, msg) = parse_approval_decision("");
         assert!(!approved);
+        assert!(!is_session);
         assert!(msg.is_none());
     }
 
     #[test]
     fn parse_approval_decision_a_approves_session() {
-        let (approved, msg) = parse_approval_decision("a");
+        let (approved, is_session, msg) = parse_approval_decision("a");
         assert!(approved);
+        assert!(is_session);
         assert!(msg.is_none());
     }
 
     #[test]
     fn parse_approval_decision_typed_message_redirects() {
-        let (approved, msg) = parse_approval_decision("do X instead");
+        let (approved, is_session, msg) = parse_approval_decision("do X instead");
         assert!(!approved);
+        assert!(!is_session);
         assert_eq!(msg, Some("do X instead".to_string()));
     }
 
     #[test]
     fn parse_approval_decision_typed_message_preserves_case() {
-        let (approved, msg) = parse_approval_decision("Fix the path please");
+        let (approved, is_session, msg) = parse_approval_decision("Fix the path please");
         assert!(!approved);
+        assert!(!is_session);
         assert_eq!(msg, Some("Fix the path please".to_string()));
     }
 }

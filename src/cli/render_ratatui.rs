@@ -225,6 +225,38 @@ impl<B: Backend> RatatuiRenderer<B> {
         Ok(())
     }
 
+    /// Draw the live region with a prompt and editable input line.
+    ///
+    /// The prompt is transient — it lives only in the `draw` frame and leaves
+    /// no residue in scrollback.  The input text (from `InputLine`) is shown
+    /// after the prompt label inside the bordered input box.
+    pub fn draw_prompt(
+        &mut self,
+        prompt: &str,
+        input: &InputLine,
+        status: &StatusBarState<'_>,
+    ) -> Result<(), B::Error> {
+        let input_text = input.as_str();
+        let session_id = status.session_id.to_string();
+        let model = status.model.to_string();
+        let start_time = self.start_time;
+        let prompt_owned = prompt.to_string();
+
+        let _completed = self.terminal.draw(|frame| {
+            let area = frame.area();
+            render_prompt_region(
+                frame,
+                area,
+                &prompt_owned,
+                &input_text,
+                &session_id,
+                &model,
+                start_time,
+            );
+        })?;
+        Ok(())
+    }
+
     /// Commit a styled bordered panel into scrollback above the inline viewport.
     ///
     /// Renders a top border with a title, body lines (optionally dimmed and
@@ -325,6 +357,68 @@ fn render_live_region(
     );
     let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
     frame.render_widget(status_para, chunks[1]);
+}
+
+/// Render the live region with a prompt above the input box.
+///
+/// Layout: top rows show the prompt text, the bottom rows show the
+/// bordered input box (with the current input text) and the status bar.
+fn render_prompt_region(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    prompt: &str,
+    input_text: &str,
+    session_id: &str,
+    model: &str,
+    start_time: std::time::Instant,
+) {
+    // Reserve 1 row for status bar, 2 for input box, rest for prompt.
+    let total = area.height;
+    if total < 4 {
+        // Too small — fall back to normal input region.
+        render_live_region(frame, area, input_text, session_id, model, start_time);
+        return;
+    }
+    let prompt_rows = total - 3; // 1 status + 2 input box
+    let chunks = Layout::vertical([
+        Constraint::Length(prompt_rows),
+        Constraint::Length(2), // input box
+        Constraint::Length(1), // status bar
+    ])
+    .split(area);
+
+    // ── Prompt text ────────────────────────────────────────────
+    let prompt_line = Line::from(Span::styled(
+        prompt,
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+    ));
+    let prompt_para = Paragraph::new(prompt_line);
+    frame.render_widget(prompt_para, chunks[0]);
+
+    // ── Input box ──────────────────────────────────────────────
+    let input_line = Line::from(Span::raw(input_text));
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(Color::Gray));
+    let input_para = Paragraph::new(input_line).block(input_block);
+    frame.render_widget(input_para, chunks[1]);
+
+    // ── Status bar ─────────────────────────────────────────────
+    let uptime = fmt_uptime(start_time.elapsed());
+    let status_text = format!(
+        " session:{} · {} · up {} ",
+        &session_id[..8.min(session_id.len())],
+        model,
+        uptime,
+    );
+    let status_block = Block::default().borders(Borders::NONE).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    );
+    let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
+    frame.render_widget(status_para, chunks[2]);
 }
 
 /// Render the live region with a spinner message replacing the input box content.
