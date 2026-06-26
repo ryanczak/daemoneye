@@ -1,7 +1,7 @@
 # Phase 08: Split `daemon/server.rs` into a `server/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-07 (done)
 **Estimated diff:** ~1976 lines moved (mechanical), ~50 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
@@ -419,3 +419,46 @@ Otherwise: None.
 **End-to-end verification:** N/A — pure internal refactor. Build + full test suite passing with unchanged test count, `git diff --stat` shows no changes to `src/daemon/mod.rs` or `src/daemon/hook.rs`.
 
 **Notes for review:** None — mechanical split, no behavior changes.
+
+### Review verdict — 2026-06-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP)
+- **Scope deviations:** one **nit** — duplicated `#[cfg(test)]` attribute at
+  `src/daemon/server/catchup.rs:126–127` (the original had a single
+  `#[cfg(test)]` on `mod tests`). Harmless: redundant identical `cfg(test)` gates
+  compile and pass `clippy -D warnings` as a no-op; no content lost, no behavior
+  change. Left as-is (nit per WORKFLOW severity — executor may decline); a
+  one-line cleanup if ever touched. Not bounced: disproportionate to a redundant
+  no-op line on an otherwise byte-clean split.
+- **Calibration:** mechanical phase, normal spec — cleared in **one dispatch**
+  (129 turns), unlike phase-07 which bounced. The forward-injected bug-07 lessons
+  held: comment fidelity perfect (all 10 `// ──` bars + the `// TODO(M2)` line +
+  the pre-existing `#[allow(clippy::too_many_arguments)]` moved verbatim), and the
+  `cargo fmt --all` collateral was avoided (commit `ef154b2` touches only the
+  deleted `server.rs`, the four new files, and the two phase docs — `daemon/mod.rs`
+  and `hook.rs` untouched). The `is_valid_pane_id` re-export
+  (`pub(crate) use catchup::is_valid_pane_id;`) keeps `hook.rs` compiling without
+  edits. Line-fidelity multiset (old vs. new, minus glue): every OLD-not-in-NEW
+  line is an authorized `async fn`→`pub(super) async fn` visibility change or the
+  `tokio::io` import split — **zero body content lost**. The lone artifact is the
+  duplicated `#[cfg(test)]`. **Emerging trend (2 of 2 recent splits):** this
+  executor introduces a small fidelity artifact on large mechanical splits (07:
+  dropped 4 comments; 08: duplicated an attribute) even when bodies move
+  byte-clean — worth a line in the M2 retrospective, but each artifact is
+  ≤ nit/minor and caught by the multiset-diff idiom, so no fold yet.
+
+**Independent re-run command set (separate invocations):**
+- `cargo fmt --all -- --check` → clean (exit 0, whole tree)
+- `cargo build` → Finished, zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` → clean
+- `cargo test` → 773 unit + 27 integration pass, 2 ignored (800 total, unchanged count)
+
+**Acceptance criteria:** all met. `src/daemon/server.rs` deleted; `src/daemon/server/`
+= exactly `mod.rs`/`catchup.rs`/`handlers.rs`/`ask.rs`; `src/daemon/mod.rs` (`pub mod
+server;` + `pub use server::*;`) and `src/daemon/hook.rs` untouched (`git show --stat
+ef154b2` confirms neither is in the commit); 21 catchup tests run under
+`daemon::server::catchup::tests`; new-file hygiene greps (unwrap/expect/panic/dbg!/
+new-TODO/new-`#[allow]`) all clean — the one `#[allow(clippy::too_many_arguments)]`
+and the one `// TODO(M2)` are pre-existing, moved verbatim.
