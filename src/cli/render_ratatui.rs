@@ -242,7 +242,14 @@ impl<B: Backend> RatatuiRenderer<B> {
 
         let _completed = self.terminal.draw(|f| {
             let area = f.area();
-            render_spinner_region(f, area, spinner_line.clone(), &session_id, &model, start_time);
+            render_spinner_region(
+                f,
+                area,
+                spinner_line.clone(),
+                &session_id,
+                &model,
+                start_time,
+            );
         })?;
         Ok(())
     }

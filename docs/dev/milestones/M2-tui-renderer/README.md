@@ -41,7 +41,10 @@ way, split the three oversized `cli/` files (`render.rs`, `input.rs`,
 
 Drafted on demand (per WORKFLOW.md). The rewrite (01–03) lands the corruption fix
 behind a transitional switch that phase 03 removes; the mechanical splits (04–06)
-close C5. Statuses mirror the phase-doc frontmatter.
+close C5 inside `cli/`. Phases 07–13 extend C5 to the rest of the tree: every
+remaining source file over 1000 lines, biggest first, split toward a ~600-line
+target (`defs.rs`-style flat-data files documented as exceptions). Statuses mirror
+the phase-doc frontmatter.
 
 | #  | Phase                              | Status |
 |----|------------------------------------|--------|
@@ -52,6 +55,13 @@ close C5. Statuses mirror the phase-doc frontmatter.
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | done |
 | 05 | split-input — termios/`AsyncStdin` → `cli/input/tty`; `InputLine`/`InputState` editing → `cli/input/editor` ([phase-05-split-input.md](phase-05-split-input.md)) | done |
 | 06 | split-commands — extract `run_chat_inner` + the ratatui chat loop + ctx structs + slash handling from `cli/commands/mod.rs` into a `chat` submodule ([phase-06-split-commands.md](phase-06-split-commands.md)) | done |
+| 07 | split-tools — split `ai/tools.rs` (2232) into a `tools/` submodule: `schema` (types + renderers), `defs` (the `TOOLS` table, documented size exception), `args` (typed arg structs), `dispatch` (+ tests) ([phase-07-split-tools.md](phase-07-split-tools.md)) | review |
+| 08 | split-server — split `daemon/server.rs` (1976) into `server/` : `catchup` (`build_catchup_brief`, `is_valid_pane_id`), `handlers` (stateless IPC handlers), `ask` (`handle_ask` orchestrator) | todo |
+| 09 | split-config — split `config.rs` (1631) into `config/` : `types` (config structs), `load` (load/resolve/validate/path helpers), `seeds` (seeding fns + embedded asset constants) | todo |
+| 10 | split-file-ops — split `daemon/executor/file_ops.rs` (1475) into `file_ops/` : `read` (`run_read_file` + helpers), `write` (`EditArgs`, edit-command builder, response wait), `ops` (`run_edit`/`create`/`delete`/`copy`) | todo |
+| 11 | split-types — split `ai/types.rs` (1413) into `types/` : `wire` (`ToolCall`/`ToolResult`/`Message`/`TokenBreakdown`), `pending` (`PendingCall`), `events` (`AiEvent`) | todo |
+| 12 | split-background — split `daemon/background.rs` (1369) into `background/` : `helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC) | todo |
+| 13 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` | todo |
 
 ## Notes
 

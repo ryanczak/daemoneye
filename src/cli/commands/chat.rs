@@ -692,19 +692,17 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
     let dim = Style::default().add_modifier(Modifier::DIM);
 
     // Eye highlights: which string to color per line index.
-    let eye_markers: &[(usize, &str)] = &[
-        (6, "▄██▄"),
-        (7, "███ ██"),
-        (8, "▀████▀"),
-        (9, "▀██▀"),
-    ];
+    let eye_markers: &[(usize, &str)] = &[(6, "▄██▄"), (7, "███ ██"), (8, "▀████▀"), (9, "▀██▀")];
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(logo.len() + 4);
 
     lines.push(Line::raw(""));
 
     for (i, &raw) in logo.iter().enumerate() {
-        let eye_opt = eye_markers.iter().find(|&&(idx, _)| idx == i).map(|&(_, s)| s);
+        let eye_opt = eye_markers
+            .iter()
+            .find(|&&(idx, _)| idx == i)
+            .map(|&(_, s)| s);
 
         let spans: Vec<Span<'static>> = if let Some(eye) = eye_opt {
             // Line has an eye highlight: split into pre/eye/post.
@@ -740,8 +738,7 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
     }
 
     // Subtitle: same block offset as logo lines, then centered within logo_w.
-    let sub_pad = pad.clone()
-        + &" ".repeat(logo_w.saturating_sub(subtitle.chars().count()) / 2);
+    let sub_pad = pad.clone() + &" ".repeat(logo_w.saturating_sub(subtitle.chars().count()) / 2);
     lines.push(Line::from(vec![
         Span::raw(sub_pad),
         Span::styled(subtitle, dim),
@@ -751,9 +748,7 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
     lines.push(Line::raw(""));
 
     let hint_plain = "/help  — list commands      /exit  — quit";
-    let hint_pad = " ".repeat(
-        (chat_width.saturating_sub(hint_plain.chars().count())) / 2,
-    );
+    let hint_pad = " ".repeat((chat_width.saturating_sub(hint_plain.chars().count())) / 2);
     lines.push(Line::from(vec![
         Span::raw(hint_pad),
         Span::styled("/help".to_owned(), Style::default().fg(Color::Cyan)),
