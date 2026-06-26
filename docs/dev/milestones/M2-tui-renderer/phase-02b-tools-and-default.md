@@ -1,7 +1,7 @@
 # Phase 02b: tools-and-default
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-02a (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -445,3 +445,37 @@ grep -rn "DAEMONEYE_RENDERER" src/cli/commands/mod.rs | head -5
 - E2E tmux verification: not available in executor environment. Architect will run live E2E at review.
 
 **End-to-end verification:** N/A — executor environment lacks tmux. Hermetic tests cover: (a) fenced code block state tracking on streaming path, (b) approval decision parsing for Y/N/A/empty/typed-message with `is_approve_session` flag, (c) `RendererMode::from_env` default flip. The credential masking bug is a structural fix verified by code inspection (two-buffer pattern matches the bug report's prescribed fix exactly).
+
+### Review verdict — 2026-06-25
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-phase-02b-1 — wrong renderer seam for approval UI; bug-phase-02b-2 — credential single-buffer returned `•` chars)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (original dispatch); Claude (Sonnet 4.5) (bounce fixes 1 & 2)
+- **Scope deviations:** none
+- **Calibration:** rung 1 (lean spec) cleared sub-deliverables 1, 2, 4, 5 cleanly across all three executor passes. Sub-deliverable 3 (interactive approval — the hardest integration) required 2 bounces: bounce 1 hit the same wrong-seam pattern as phases 01/02a (committed live region to scrollback per-byte); bounce-fix-1 landed it correctly at the live-region level but introduced a single-buffer credential regression; bounce-fix-2 resolved the credential path. Net: lean spec reached approval at rung 1 for the mechanical sub-deliverables and at rung 1+2-fixes for the raw-mode integration, consistent with the M2 calibration prediction that 27B needs guidance on the commit-vs-live-region constraint but not on the simpler structural work.
+
+**3-axis assessment:**
+
+1. **Spec conformance** — met after bounce-fix-2. All five sub-deliverables implemented; legacy path byte-for-byte unchanged (grep verified); no new dependencies; `DAEMONEYE_RENDERER` default flipped correctly; `parse_approval_decision` now called by the production path; no `#[allow(dead_code)]` shims remain.
+
+2. **Reasoning quality** — correct after two targeted fixes. The commit-vs-live-region constraint (the recurring M2 ceiling) was finally internalised in bounce-fix-1: `read_approval_input` now calls `draw_prompt` on every keystroke through the live region, not `commit`. The credential two-buffer pattern (bounce-fix-2) was a mechanical correctness fix that the executor correctly implemented from the bug report spec. No scope creep; `ask_with_session` untouched.
+
+3. **Code & test quality** — sound. `parse_approval_decision` tests are real (drive the production code path, cover Y/y/YES/n/empty/a/typed-message/preserves-case). Fenced code block tests are genuine (`in_code_block`/`code_lang` state transitions asserted). `RendererMode::from_env` tests cover all four cases. Credential two-buffer fix structurally correct (code review: `cred_real` returned, `cred_display` used only for masked render). 786+27 tests pass, 0 warnings.
+
+**Live E2E verification (architect):**
+
+- `DAEMONEYE_RENDERER` unset → ratatui renderer active. Status bar: `session:2d7b266d · Qwen/Qwen3.6-27B-FP8 · up 2m 44s`. No legacy DECSTBM chrome. ✓
+- Approval prompt rendered in live region (captured via `tmux capture-pane`):
+  ```
+    Approve? [Y]es  [N]o  [A]pprove for sudo session  or type a message ›
+  ┌─────────────────────────────────────────────────────┐
+  └─────────────────────────────────────────────────────┘
+   session: · Qwen/Qwen3.6-27B-FP8 · up 1m 18s
+  ```
+- **Y** → `✓ approved` committed to scrollback; command ran. ✓
+- **N** → `✗ skipped` committed to scrollback. ✓
+- **Typed redirect** ("use echo instead" on a `sudo id` prompt) → agent course-corrected and ran `echo "hello from DaemonEye"` instead; `↩ redirecting agent with your message…` committed. ✓
+- **Target pane correct**: `→ target: %26` (shell pane in the two-pane window, not the chat pane). ✓
+- **Credential prompt end-to-end** (user-run, screenshot): `sudo id` → Y approved → daemon sent `CredentialPrompt` → `Password:` rendered in live region → user entered password → `sudo id` returned `uid=0(root) gid=0(root) groups=0(root)`. Confirms bug-02b-2 two-buffer fix: real credential returned (not `•` chars). ✓
+- Tool panels committed to scrollback as styled bordered cells with no literal `\x1b[` escapes. ✓
+- `DAEMONEYE_RENDERER=legacy` → legacy renderer unchanged. ✓
