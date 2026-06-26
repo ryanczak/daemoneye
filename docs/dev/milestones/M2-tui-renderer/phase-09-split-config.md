@@ -1,7 +1,7 @@
 # Phase 09: Split `config.rs` into a `config/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-09-1.md)
 **Depends on:** phase-08 (done)
 **Estimated diff:** ~1631 lines moved (mechanical), ~40 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
