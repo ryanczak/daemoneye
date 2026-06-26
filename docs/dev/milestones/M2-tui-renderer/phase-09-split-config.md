@@ -1,7 +1,7 @@
 # Phase 09: Split `config.rs` into a `config/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bugs/bug-phase-09-1.md)
+**Status:** review
 **Depends on:** phase-08 (done)
 **Estimated diff:** ~1631 lines moved (mechanical), ~40 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
@@ -513,3 +513,28 @@ Split `src/config.rs` (1631 lines) into `src/config/` submodule: `types.rs`, `lo
 - Updated: phase-09-split-config.md (status + Update Log), M2 README (phase table)
 
 **Notes for review:** None — pure mechanical split, no behavior changes.
+
+### Update — 2026-06-26 21:06 (complete — bug fix for bug-09-1)
+
+**Executor:** rexyMCP executor (re-dispatch)
+
+Restored six `///` doc-comment lines dropped during the initial verbatim split (bug-09-1):
+- `Config` struct: 2 lines (`/// Top-level configuration…`, `/// All sections default…`)
+- `overwrite_knowledge_memories`: 2 lines (`/// Re-seed all built-in…`, `/// Called by… --overwrite-memory`)
+- `overwrite_sre_prompt`: 2 lines (`/// Overwrite the built-in SRE prompt…`, `/// Called by… --overwrite-all`)
+
+**Verification commands:**
+- `cargo build` — succeeded with zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` — passed clean
+- `cargo fmt --all -- --check` — whole tree clean
+- `cargo test` — all 40 `config::tests` tests pass (27 total integration tests pass, 2 ignored)
+- `cargo test --lib config::tests::builtin_sre_prompt_parses -- --nocapture` — `test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 772 filtered out`
+
+**Comment fidelity (post-fix):** All 6 dropped doc-comment lines restored. 12 `// ----` banner lines across `types.rs` (4) and `seeds.rs` (8); 8 `// ──` bars in `mod.rs` test module. Total doc-comment + banner count matches the original `src/config.rs`.
+
+**Files changed:**
+- Modified: `src/config/types.rs` (+2 doc-comment lines)
+- Modified: `src/config/seeds.rs` (+4 doc-comment lines)
+- Updated: phase-09-split-config.md (status → review, Update Log), M2 README (phase table row → review)
+
+**Notes for review:** Pure bug-fix — only the six dropped doc-comments were restored. No other code changes.

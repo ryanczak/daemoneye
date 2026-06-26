@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+
+/// Top-level configuration loaded from `~/.daemoneye/etc/config.toml`.
+/// All sections default to sensible values so the file is optional.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
     #[serde(default)]

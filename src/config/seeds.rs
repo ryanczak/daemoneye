@@ -98,6 +98,8 @@ pub fn seed_agent(name: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// Re-seed all built-in memory files (knowledge + session), overwriting existing ones.
+/// Called by `daemoneye setup --overwrite-memory`.
 pub fn overwrite_knowledge_memories() -> Result<()> {
     seed_memory_inner("knowledge", "webhook-setup", WEBHOOK_SETUP_MEMORY, true)?;
     seed_memory_inner("knowledge", "runbook-format", RUNBOOK_FORMAT_MEMORY, true)?;
@@ -140,6 +142,8 @@ pub fn overwrite_knowledge_memories() -> Result<()> {
     Ok(())
 }
 
+/// Overwrite the built-in SRE prompt regardless of whether it already exists.
+/// Called by `daemoneye setup --overwrite-all`.
 pub fn overwrite_sre_prompt() -> Result<()> {
     let sre_path = prompts_dir().join("sre.toml");
     std::fs::write(&sre_path, SRE_PROMPT_TOML)
