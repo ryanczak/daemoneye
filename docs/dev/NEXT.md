@@ -4,12 +4,17 @@
 Status `in-progress` — phases 01–06 are `done`, but more phases remain before the
 milestone closes.
 
-**Active phase:** none drafted. **phase-08 — split-server** is `done`
-(approved_first_try, 2026-06-26; one nit — duplicated `#[cfg(test)]` in
-`server/catchup.rs`, left as-is). The next phase is **phase-09 — split-config**
-(`config.rs`, 1631 lines → `config/` : `types` / `load` / `seeds`), a README
-phase-table row not yet expanded into a full phase doc. Draft it via
-`/rexymcp:architect next`, then dispatch via `/rexymcp:dispatch phase-09`.
+**Active phase:** **phase-09 — split-config**
+(`docs/dev/milestones/M2-tui-renderer/phase-09-split-config.md`), `todo`, drafted
+2026-06-26. Splits `config.rs` (1631 lines) → `config/` : `types` (config
+structs) / `load` (load/resolve/validate/path helpers) / `seeds` (seeding fns +
+embedded asset constants) + `mod.rs` (re-exports + the 40-test suite). The
+load-bearing hazard pre-injected in the spec: the file moves one directory
+deeper, so all **14 `include_str!("../assets/…")`** macros must become
+`../../assets/…`. Dispatch via `/rexymcp:dispatch phase-09`.
+
+phase-08 — split-server is `done` (approved_first_try, 2026-06-26; one nit —
+duplicated `#[cfg(test)]` in `server/catchup.rs`, left as-is).
 
 Phases 07–13 are the broader C5 sweep: split every remaining source file over 1000
 lines, biggest first, toward a ~600-line target. Order: 07 `ai/tools.rs` →
