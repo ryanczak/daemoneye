@@ -1554,24 +1554,28 @@ pub(super) async fn prompt_credential_ratatui(
     let _ = renderer.commit(&format!("\n⚠ {}\n", prompt));
 
     // Read the credential in the live region, showing • for each char.
+    // Two buffers: cred_real holds the actual typed value; cred_display holds masked bullets.
     let prompt_text = "  Password: ";
-    let mut cred = crate::cli::input::InputLine::new();
-    let _ = renderer.draw_prompt(prompt_text, &cred, status);
+    let mut cred_real = String::new();
+    let mut cred_display = crate::cli::input::InputLine::new();
+    let _ = renderer.draw_prompt(prompt_text, &cred_display, status);
 
     while let Some(b) = stdin.read_byte().await {
         match b {
             b'\r' | b'\n' => break,
             b'\x7f' | b'\x08' => {
-                cred.backspace();
-                let _ = renderer.draw_prompt(prompt_text, &cred, status);
+                cred_real.pop();
+                cred_display.backspace();
+                let _ = renderer.draw_prompt(prompt_text, &cred_display, status);
             }
             b'\x03' | b'\x1b' => {
-                cred = crate::cli::input::InputLine::new();
+                cred_real.clear();
                 break;
             }
             c if c >= 0x20 => {
-                cred.insert('•'); // mask the character
-                let _ = renderer.draw_prompt(prompt_text, &cred, status);
+                cred_real.push(c as char);
+                cred_display.insert('•');
+                let _ = renderer.draw_prompt(prompt_text, &cred_display, status);
             }
             _ => {}
         }
@@ -1579,7 +1583,7 @@ pub(super) async fn prompt_credential_ratatui(
 
     // Commit the final masked line to scrollback.
     let _ = renderer.commit(&format!("{}\n", prompt_text));
-    cred.as_str()
+    cred_real
 }
 
 pub(super) async fn prompt_pane_select_ratatui(

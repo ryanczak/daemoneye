@@ -1,7 +1,7 @@
 # Phase 02b: tools-and-default
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bugs/bug-phase-02b-1.md, bug-phase-02b-2.md)
+**Status:** review
 **Depends on:** phase-02a (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -404,3 +404,44 @@ grep -n 'commit.*"\\x1b\|commit.*format.*b as char' src/cli/commands/stream.rs
 - **Executor:** Qwen/Qwen3.6-27B-FP8
 - **Scope deviations:** E2E (acceptance gate) not run again — executor self-declared; still unverified.
 - **Calibration:** bounce-fix landed sub-deliverables 3a/3b correctly at the live-region vs. scrollback level — `read_approval_input` now calls `draw_prompt` on every keystroke (no per-byte `commit`), `parse_approval_decision` is now called by the production path and tested. The recurring ceiling pattern advanced one rung. New blocker: `prompt_credential_ratatui` stores `'•'` in the `InputLine` it returns (`stream.rs:1573`), so the daemon receives bullet characters instead of the real credential — a correctness regression introduced in the bounce fix. The Y/N/A + typed-redirect paths are structurally correct; only the credential path is broken. Fix is mechanical (two-buffer split: `cred_real: String` for the returned value, `cred_display: InputLine` for masking).
+
+### Update — 2026-06-26 00:34 (complete — bounce fix 2)
+
+**Executor:** Claude (Sonnet 4.5)
+**Tasks:** Fix bug-phase-02b-2: credential prompt returns masking bullet characters instead of actual typed credential.
+
+**Verification commands:**
+```
+cargo fmt --all
+  → (clean)
+cargo build 2>&1 | tail -20
+  → Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.1s
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20
+  → Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.4s
+cargo test 2>&1 | tail -30
+  → test result: ok. 27 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+```
+
+**Verification summary:**
+- `cargo build`: zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean
+- `cargo fmt --all`: clean
+- `cargo test`: 27 passed, 0 failed, 1 ignored
+
+**Files changed:**
+- `src/cli/commands/stream.rs` — `prompt_credential_ratatui` now uses two buffers: `cred_real: String` for the actual typed value (returned), `cred_display: InputLine` for masked `•` display. Backspace pops from both; Ctrl+C/Escape clears `cred_real` and breaks. Returns `cred_real` instead of `cred_display.as_str()`.
+- `docs/dev/milestones/M2-tui-renderer/phase-02b-tools-and-default.md` — Update Log entry, status line updated
+
+**Grep for pinned literal `DAEMONEYE_RENDERER`:**
+```
+grep -rn "DAEMONEYE_RENDERER" src/cli/commands/mod.rs | head -5
+  → 18:        match std::env::var("DAEMONEYE_RENDERER").ok().as_deref() {
+```
+
+**Notes for review:**
+- The fix is mechanical per bug-phase-02b-2.md instructions: two-buffer split in `prompt_credential_ratatui`. `cred_real` accumulates actual characters, `cred_display` accumulates `'•'` for the live region.
+- Removed the unused assignment `cred_display = InputLine::new()` on Ctrl+C/Escape (the `break` exits immediately, so reassigning `cred_display` was dead code causing a warning).
+- Legacy `ask_with_session` and all `approval_ui::prompt_*` functions are byte-for-byte unchanged.
+- E2E tmux verification: not available in executor environment. Architect will run live E2E at review.
+
+**End-to-end verification:** N/A — executor environment lacks tmux. Hermetic tests cover: (a) fenced code block state tracking on streaming path, (b) approval decision parsing for Y/N/A/empty/typed-message with `is_approve_session` flag, (c) `RendererMode::from_env` default flip. The credential masking bug is a structural fix verified by code inspection (two-buffer pattern matches the bug report's prescribed fix exactly).
