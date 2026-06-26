@@ -1,7 +1,7 @@
 # Phase 07: Split `ai/tools.rs` into a `tools/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-phase-07-1.md)
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~2240 lines moved (mechanical), ~40 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
@@ -376,3 +376,33 @@ cargo test 2>&1 | tail -20
 ```
 grep -rn 'pub static TOOLS' src/ai/tools/ → src/ai/tools/defs.rs:7:pub static TOOLS: &[ToolDef] = &[
 ```
+
+### Review verdict — 2026-06-26 (bounced)
+
+- **Verdict:** bounced (bug-phase-07-1, minor)
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP)
+- **Scope deviations:** (1) four comment lines dropped during the "verbatim"
+  move — the `/// Dispatch arm helper` doc comment on `fn dispatch` and the
+  three-line `// Tool event dispatcher` section header; (2) `cargo fmt --all`
+  reformatted two unauthorized, unrelated files (`src/cli/commands/chat.rs`,
+  `src/cli/render_ratatui.rs`) into the commit.
+- **Calibration:** mechanical phase (normal spec), but — unlike 04–06 which each
+  cleared a clean byte-for-byte multiset diff first try — phase 07 lost content
+  on the move. The body fidelity is perfect (`render_gemini` character-identical;
+  `TOOLS` whole in `defs.rs` per the documented exception; all 17 dispatch tests
+  intact; pinned caller files `backends/*.rs` + `executor/mod.rs` untouched), so
+  the structural split itself is sound — the miss is comment fidelity + an
+  over-broad `cargo fmt`. Records as a mechanical-phase first-try bounce, the
+  first in the C5 sweep.
+
+**Re-run command set (independent, separate invocations):**
+- `cargo fmt --all -- --check` → clean
+- `cargo build` → Finished, zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` → clean
+- `cargo test` → 773 unit + 27 integration pass, 2 ignored (unchanged count)
+
+**Verified facts:** old→new `render_gemini` byte-identical; `src/ai/tools.rs`
+deleted; `src/ai/tools/` = exactly `mod.rs`/`schema.rs`/`defs.rs`/`args.rs`/
+`dispatch.rs`; `src/ai/mod.rs:3` still `pub mod tools;`; `git diff --stat` on
+`src/ai/backends/*.rs` and `src/daemon/executor/mod.rs` empty.
