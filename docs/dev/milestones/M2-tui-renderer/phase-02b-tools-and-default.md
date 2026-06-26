@@ -1,7 +1,7 @@
 # Phase 02b: tools-and-default
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review (bounced — see bugs/bug-phase-02b-1.md; fix landed)
+**Status:** in-progress (bounced — see bugs/bug-phase-02b-1.md, bug-phase-02b-2.md)
 **Depends on:** phase-02a (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -396,3 +396,11 @@ grep -n 'commit.*"\\x1b\|commit.*format.*b as char' src/cli/commands/stream.rs
 - E2E tmux verification: not available in executor environment. Architect will run live E2E at review.
 
 **End-to-end verification:** N/A — executor environment lacks tmux. Hermetic tests cover: (a) fenced code block state tracking on streaming path (render.rs tests), (b) approval decision parsing for Y/N/A/empty/typed-message with `is_approve_session` flag (stream.rs tests), (c) `RendererMode::from_env` default flip (mod.rs tests).
+
+### Review verdict — 2026-06-25
+
+- **Verdict:** bounced (bug-phase-02b-2, blocker)
+- **Bounces:** 2 (bug-phase-02b-1 — bounced; bug-phase-02b-2 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** E2E (acceptance gate) not run again — executor self-declared; still unverified.
+- **Calibration:** bounce-fix landed sub-deliverables 3a/3b correctly at the live-region vs. scrollback level — `read_approval_input` now calls `draw_prompt` on every keystroke (no per-byte `commit`), `parse_approval_decision` is now called by the production path and tested. The recurring ceiling pattern advanced one rung. New blocker: `prompt_credential_ratatui` stores `'•'` in the `InputLine` it returns (`stream.rs:1573`), so the daemon receives bullet characters instead of the real credential — a correctness regression introduced in the bounce fix. The Y/N/A + typed-redirect paths are structurally correct; only the credential path is broken. Fix is mechanical (two-buffer split: `cred_real: String` for the returned value, `cred_display: InputLine` for masking).
