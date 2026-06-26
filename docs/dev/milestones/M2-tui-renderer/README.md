@@ -41,10 +41,11 @@ way, split the three oversized `cli/` files (`render.rs`, `input.rs`,
 
 Drafted on demand (per WORKFLOW.md). The rewrite (01–03) lands the corruption fix
 behind a transitional switch that phase 03 removes; the mechanical splits (04–06)
-close C5 inside `cli/`. Phases 07–13 extend C5 to the rest of the tree: every
+close C5 inside `cli/`. Phases 07–09 + 12–15 extend C5 to the rest of the tree: every
 remaining source file over 1000 lines, biggest first, split toward a ~600-line
-target (`defs.rs`-style flat-data files documented as exceptions). Statuses mirror
-the phase-doc frontmatter.
+target (`defs.rs`-style flat-data files documented as exceptions). Phases **10–11**
+are TUI input/UX fixes inserted ahead of the remaining splits (see the "UI-fix
+insertion" note). Statuses mirror the phase-doc frontmatter.
 
 | #  | Phase                              | Status |
 |----|------------------------------------|--------|
@@ -58,12 +59,41 @@ the phase-doc frontmatter.
 | 07 | split-tools — split `ai/tools.rs` (2232) into a `tools/` submodule: `schema` (types + renderers), `defs` (the `TOOLS` table, documented size exception), `args` (typed arg structs), `dispatch` (+ tests) ([phase-07-split-tools.md](phase-07-split-tools.md)) | done |
 | 08 | split-server — split `daemon/server.rs` (1976) into `server/` : `catchup` (`build_catchup_brief`, `is_valid_pane_id` + tests), `handlers` (15 stateless IPC handlers), `ask` (`handle_ask` orchestrator); `handle_client` stays in `mod.rs` ([phase-08-split-server.md](phase-08-split-server.md)) | done |
 | 09 | split-config — split `config.rs` (1631) into `config/` : `types` (config structs), `load` (load/resolve/validate/path helpers), `seeds` (seeding fns + embedded asset constants) ([phase-09-split-config.md](phase-09-split-config.md)) | done |
-| 10 | split-file-ops — split `daemon/executor/file_ops.rs` (1475) into `file_ops/` : `read` (`run_read_file` + helpers), `write` (`EditArgs`, edit-command builder, response wait), `ops` (`run_edit`/`create`/`delete`/`copy`) | todo |
-| 11 | split-types — split `ai/types.rs` (1413) into `types/` : `wire` (`ToolCall`/`ToolResult`/`Message`/`TokenBreakdown`), `pending` (`PendingCall`), `events` (`AiEvent`) | todo |
-| 12 | split-background — split `daemon/background.rs` (1369) into `background/` : `helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC) | todo |
-| 13 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` | todo |
+| 10 | input-editor — visible cursor + word-wrap + multi-line editing + multi-line paste in the ratatui input box ([phase-10-input-editor.md](phase-10-input-editor.md)) | review |
+| 11 | interrupt-and-colors — two-press ESC/Ctrl+C interrupt of a streaming agent turn + blood-red border / deep-yellow title recolor of committed command-output panels (`commit_panel`) | todo |
+| 12 | split-file-ops — split `daemon/executor/file_ops.rs` (1475) into `file_ops/` : `read` (`run_read_file` + helpers), `write` (`EditArgs`, edit-command builder, response wait), `ops` (`run_edit`/`create`/`delete`/`copy`) | todo |
+| 13 | split-types — split `ai/types.rs` (1413) into `types/` : `wire` (`ToolCall`/`ToolResult`/`Message`/`TokenBreakdown`), `pending` (`PendingCall`), `events` (`AiEvent`) | todo |
+| 14 | split-background — split `daemon/background.rs` (1369) into `background/` : `helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC) | todo |
+| 15 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` | todo |
 
 ## Notes
+
+### UI-fix insertion: phases 10–11 ahead of the remaining splits (2026-06-26)
+
+Principal-engineer direction: before continuing the C5 split sweep, address five
+TUI bugs/feature gaps the renderer overhaul surfaced. Grouped into **two phases**
+(PE choice, 2026-06-26), inserted as phases 10–11; the not-yet-drafted split
+phases shifted down (old 10→12 … 13→15, slugs unchanged, table rows only).
+
+- **Phase 10 — input-editor:** visible cursor, word-wrap, multi-line input, and
+  multi-line paste in the ratatui input box (the input box today is a single-line
+  buffer with no cursor and no wrapping; a pasted block submits at its first
+  newline). Design-discovery work touching `cli/input/editor.rs`,
+  `cli/render_ratatui.rs`, `cli/input/tty.rs`, `cli/commands/chat.rs`.
+- **Phase 11 — interrupt-and-colors:** two-press ESC/Ctrl+C interrupt of a
+  streaming agent turn (first press warns, second aborts) + recolor the committed
+  command-output panels (`commit_panel`, today `Color::Blue`) to blood-red borders
+  / deep-yellow title (the `Rgb(180,0,0)`/`Rgb(220,160,0)` constants already used
+  in `banner_lines`/`draw_spinner`). The color fix is a small pinned add alongside
+  the interrupt design-discovery core.
+
+**Spec density (PE choice, 2026-06-26): LEAN.** Both phases are design-discovery,
+the shape M2's 01–06 data shows lean specs bounce on — they are run lean anyway to
+**extend the calibration dataset**, not because lean is expected to clear first
+try. A bounce/escalation here is a successful probe, recorded in the verdict, and
+rolled into the (still-deferred) M2 retrospective fold. The "verify against live
+ratatui/crossterm docs" Pre-flight and the incremental-work guard are kept (both
+are discovery-directing, not pre-injection).
 
 ### Pre-02b follow-up: code-block state on the ratatui streaming path (from 02a review)
 

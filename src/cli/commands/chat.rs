@@ -605,6 +605,10 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         let s = state.current_line().as_str();
                         return Ok(Some(s));
                     }
+                    Key::CtrlJ => {
+                        // Ctrl+J or Alt+Enter: insert newline without submitting
+                        state.current_line_mut().insert_newline();
+                    }
                     Key::CtrlD => {
                         if state.current_line().as_str().is_empty() {
                             return Ok(None);
@@ -626,14 +630,33 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                     Key::Delete => { state.current_line_mut().delete(); }
                     Key::Left => { state.current_line_mut().move_left(); }
                     Key::Right => { state.current_line_mut().move_right(); }
-                    Key::Up => { state.history_up(); }
-                    Key::Down => { state.history_down(); }
+                    Key::Up => {
+                        if !state.has_history() || state.current_line().as_str().contains('\n') {
+                            // If buffer has newlines or no history, move cursor up in buffer
+                            let content_width = chat_width.saturating_sub(2);
+                            state.current_line_mut().move_up(content_width);
+                        } else {
+                            state.history_up();
+                        }
+                    }
+                    Key::Down => {
+                        if !state.has_history() || state.current_line().as_str().contains('\n') {
+                            // If buffer has newlines or no history, move cursor down in buffer
+                            let content_width = chat_width.saturating_sub(2);
+                            state.current_line_mut().move_down(content_width);
+                        } else {
+                            state.history_down();
+                        }
+                    }
                     Key::Home => { state.current_line_mut().move_home(); }
                     Key::End => { state.current_line_mut().move_end(); }
                     Key::CtrlA => { state.current_line_mut().move_home(); }
                     Key::CtrlE => { state.current_line_mut().move_end(); }
                     Key::CtrlK => { state.current_line_mut().kill_to_end(); }
                     Key::CtrlU => { state.current_line_mut().kill_to_start(); }
+                    Key::Paste(text) => {
+                        state.current_line_mut().insert_str(&text);
+                    }
                     _ => {}
                 }
                 let sb = StatusBarState {

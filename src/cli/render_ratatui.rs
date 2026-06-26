@@ -5,7 +5,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
 
 /// Convert a string with ANSI escape sequences into a vector of styled `Span`s
 /// suitable for ratatui rendering.  Each contiguous run of characters sharing
@@ -116,7 +116,7 @@ fn color_from_256(idx: u8) -> Color {
 }
 
 /// The number of rows the inline viewport occupies (input + status bar).
-const VIEWPORT_ROWS: u16 = 4;
+const VIEWPORT_ROWS: u16 = 6;
 
 /// Ratatui-based inline-viewport renderer.
 ///
@@ -145,6 +145,11 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
     /// in cooked mode.
     pub fn new(start_time: std::time::Instant) -> std::io::Result<Self> {
         crossterm::terminal::enable_raw_mode()?;
+        // Enable bracketed paste so pasted multi-line blocks are delivered as
+        // a single paste event rather than individual keypresses.
+        use crossterm::event::EnableBracketedPaste;
+        use crossterm::execute;
+        let _ = execute!(std::io::stdout(), EnableBracketedPaste);
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let terminal = Terminal::with_options(
             backend,
@@ -200,7 +205,19 @@ impl<B: Backend> RatatuiRenderer<B> {
 
         let _completed = self.terminal.draw(|frame| {
             let area = frame.area();
-            render_live_region(frame, area, &input_text, &session_id, &model, start_time);
+            let content_width = area.width.saturating_sub(2) as usize;
+            let (vis_row, vis_col) = input.cursor_visual_pos(content_width);
+            let cursor_pos = Some((vis_col as u16, vis_row as u16));
+
+            render_live_region(
+                frame,
+                area,
+                &input_text,
+                &session_id,
+                &model,
+                start_time,
+                cursor_pos,
+            );
         })?;
         Ok(())
     }
@@ -352,6 +369,7 @@ impl<B: Backend> RatatuiRenderer<B> {
     }
 }
 
+/// Render the live (non-committed) region: input box + status bar.
 fn render_live_region(
     frame: &mut ratatui::Frame,
     area: Rect,
@@ -359,6 +377,7 @@ fn render_live_region(
     session_id: &str,
     model: &str,
     start_time: std::time::Instant,
+    cursor_pos: Option<(u16, u16)>, // (col, row) within content area
 ) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
 
@@ -368,8 +387,17 @@ fn render_live_region(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new(input_line).block(input_block);
+    let input_para = Paragraph::new(input_line)
+        .block(input_block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(input_para, chunks[0]);
+
+    // ── Set cursor position ────────────────────────────────────
+    if let Some((col, row)) = cursor_pos {
+        let x = chunks[0].x + 1 + col.min(chunks[0].width.saturating_sub(2));
+        let y = chunks[0].y + 1 + row.min(chunks[0].height.saturating_sub(2));
+        frame.set_cursor_position((x, y));
+    }
 
     // ── Status bar ─────────────────────────────────────────────
     let uptime = fmt_uptime(start_time.elapsed());
@@ -405,7 +433,7 @@ fn render_prompt_region(
     let total = area.height;
     if total < 4 {
         // Too small — fall back to normal input region.
-        render_live_region(frame, area, input_text, session_id, model, start_time);
+        render_live_region(frame, area, input_text, session_id, model, start_time, None);
         return;
     }
     let prompt_rows = total - 3; // 1 status + 2 input box
@@ -430,7 +458,9 @@ fn render_prompt_region(
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new(input_line).block(input_block);
+    let input_para = Paragraph::new(input_line)
+        .block(input_block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(input_para, chunks[1]);
 
     // ── Status bar ─────────────────────────────────────────────
@@ -844,6 +874,92 @@ mod tests {
             lines.len(),
             3,
             "expected 3 lines for 'first\\n\\nsecond\\n'"
+        );
+    }
+
+    /// Test that wrapped multi-line input appears across the input box rows
+    /// in the TestBackend buffer.
+    #[test]
+    fn wrapped_multiline_input_renders_across_rows() {
+        let mut renderer = make_test_renderer();
+
+        let mut input = InputLine::new();
+        input.insert_str("the quick brown fox jumps over the lazy dog and continues");
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        renderer.draw(&input, &status).unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let all_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+
+        // The input text should be rendered (wrapped across rows)
+        assert!(
+            all_text.contains("the quick"),
+            "input should contain 'the quick', got: {}",
+            all_text
+        );
+        assert!(
+            all_text.contains("brown fox"),
+            "input should contain 'brown fox', got: {}",
+            all_text
+        );
+    }
+
+    /// Test that a multi-line buffer with embedded newlines renders correctly
+    /// and the cursor position is placed.
+    #[test]
+    fn multiline_buffer_renders_with_cursor() {
+        let mut renderer = make_test_renderer();
+
+        let mut input = InputLine::new();
+        input.insert_str("line one\nline two");
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        renderer.draw(&input, &status).unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let all_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+
+        // Both lines should be rendered
+        assert!(
+            all_text.contains("line one"),
+            "should contain 'line one', got: {}",
+            all_text
+        );
+        assert!(
+            all_text.contains("line two"),
+            "should contain 'line two', got: {}",
+            all_text
         );
     }
 }

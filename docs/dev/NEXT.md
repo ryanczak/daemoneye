@@ -1,31 +1,35 @@
 # NEXT
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
-Status `in-progress` — phases 01–06 are `done`, but more phases remain before the
-milestone closes.
+Status `in-progress` — phases 01–10 are `done`, but more phases remain before the
+milestone closes (one TUI interrupt/colors fix, then the rest of the C5 split sweep).
 
-**Active phase:** **phase-09 — split-config**
-(`docs/dev/milestones/M2-tui-renderer/phase-09-split-config.md`), `todo`, drafted
-2026-06-26. Splits `config.rs` (1631 lines) → `config/` : `types` (config
-structs) / `load` (load/resolve/validate/path helpers) / `seeds` (seeding fns +
-embedded asset constants) + `mod.rs` (re-exports + the 40-test suite). The
-load-bearing hazard pre-injected in the spec: the file moves one directory
-deeper, so all **14 `include_str!("../assets/…")`** macros must become
-`../../assets/…`. Dispatch via `/rexymcp:dispatch phase-09`.
+**Active phase:** **phase-10 — input-editor**
+(`docs/dev/milestones/M2-tui-renderer/phase-10-input-editor.md`), `review`, drafted
+2026-06-26. First of two **TUI input/UX fix phases** inserted ahead of the
+remaining C5 splits (PE direction 2026-06-26; see the M2 README "UI-fix insertion"
+note). Delivers a **visible cursor + word-wrap + multi-line input + multi-line
+paste** in the ratatui input box, which is today a single-line buffer with no
+cursor, no wrapping, and submits a pasted block at its first newline. Specced
+**LEAN** on purpose (design-discovery; extends the M2 calibration dataset).
+Dispatch via `/rexymcp:dispatch phase-10`.
 
-phase-08 — split-server is `done` (approved_first_try, 2026-06-26; one nit —
-duplicated `#[cfg(test)]` in `server/catchup.rs`, left as-is).
+phase-09 — split-config is `done` (approved_after_1, 2026-06-26; bug-09-1 dropped
+6 doc-comment lines in the verbatim split, fixed).
 
-Phases 07–13 are the broader C5 sweep: split every remaining source file over 1000
-lines, biggest first, toward a ~600-line target. Order: 07 `ai/tools.rs` →
-08 `daemon/server.rs` → 09 `config.rs` → 10 `daemon/executor/file_ops.rs` →
-11 `ai/types.rs` → 12 `daemon/background.rs` → 13 `daemon/executor/knowledge.rs`.
-All seven are drafted as rows in the M2 README phase table; only phase-07 has a
-full phase doc so far (the rest are drafted on demand via `/rexymcp:architect next`).
+**Next after phase 10:** phase-11 — interrupt-and-colors (two-press ESC/Ctrl+C
+agent interrupt + blood-red/deep-yellow `commit_panel` recolor). Draft on demand
+via `/rexymcp:architect next`.
 
-Phase order so far (01–08 all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
+The C5 split sweep resumes at **phase 12** (split-file-ops): split every remaining
+source file over 1000 lines, biggest first, toward a ~600-line target. Order:
+12 `daemon/executor/file_ops.rs` → 13 `ai/types.rs` → 14 `daemon/background.rs` →
+15 `daemon/executor/knowledge.rs`. All four are drafted as rows in the M2 README
+phase table; full phase docs are drafted on demand via `/rexymcp:architect next`.
+
+Phase order so far (01–09 all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
 05 split-input ✓ → 06 split-commands ✓ → 07 split-tools ✓ → 08 split-server ✓ →
-**09 split-config (next to draft)**.
+09 split-config ✓ → **10 input-editor (next to dispatch)**.
 
 **Deferred (until M2 closes):** the calibration fold into WORKFLOW.md (make front-loading
 task-shape-conditional) — drafted in the M2 README "Interim calibration findings", on

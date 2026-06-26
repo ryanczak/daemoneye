@@ -92,12 +92,16 @@ pub enum Key {
     Home,
     End,
     Enter,
+    /// Insert a newline in the editor (Alt+Enter / Ctrl+J).
+    CtrlJ,
     CtrlA,
     CtrlE,
     CtrlK,
     CtrlU,
     CtrlC,
     CtrlD,
+    /// A pasted block of text (bracketed paste).
+    Paste(String),
 }
 
 /// Switch stdin to raw (non-canonical, no-echo) mode.
@@ -189,6 +193,11 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                         _ => Key::Char('\x1b'),
                     }
                 }
+                Ok(Some(b'{')) => {
+                    // ESC { — start of bracketed paste
+                    let text = read_bracketed_paste(stdin).await;
+                    Key::Paste(text)
+                }
                 _ => Key::Char('\x1b'), // bare Escape
             }
         }
@@ -221,4 +230,35 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
             }
         }
     })
+}
+
+/// Read a bracketed paste: bytes between `ESC [` (already consumed) and `ESC ]`.
+/// Returns the pasted text as a String.
+async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
+    use tokio::time::{Duration, timeout};
+    let mut paste_buf = Vec::new();
+    loop {
+        match timeout(Duration::from_millis(50), stdin.read_byte()).await {
+            Ok(Some(0x1b)) => {
+                // Check for closing ']'
+                match timeout(Duration::from_millis(10), stdin.read_byte()).await {
+                    Ok(Some(b']')) => {
+                        // End of paste
+                        return String::from_utf8_lossy(&paste_buf).to_string();
+                    }
+                    _ => {
+                        // Not a paste end, treat as ESC
+                        paste_buf.push(0x1b);
+                    }
+                }
+            }
+            Ok(Some(b)) => {
+                paste_buf.push(b);
+            }
+            _ => {
+                // Timeout — return what we have
+                return String::from_utf8_lossy(&paste_buf).to_string();
+            }
+        }
+    }
 }
