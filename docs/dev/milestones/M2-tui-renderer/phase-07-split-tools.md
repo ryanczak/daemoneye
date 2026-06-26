@@ -1,7 +1,7 @@
 # Phase 07: Split `ai/tools.rs` into a `tools/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bugs/bug-phase-07-1.md)
+**Status:** review
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~2240 lines moved (mechanical), ~40 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
@@ -406,3 +406,42 @@ grep -rn 'pub static TOOLS' src/ai/tools/ → src/ai/tools/defs.rs:7:pub static 
 deleted; `src/ai/tools/` = exactly `mod.rs`/`schema.rs`/`defs.rs`/`args.rs`/
 `dispatch.rs`; `src/ai/mod.rs:3` still `pub mod tools;`; `git diff --stat` on
 `src/ai/backends/*.rs` and `src/daemon/executor/mod.rs` empty.
+
+### Update — 2026-06-26 18:12 (re-fix complete)
+
+**Executor:** rexyMCP executor (re-dispatch for bug-phase-07-1)
+**Action:** Re-fixed phase-07 — restored 4 dropped comment lines and reverted 2 unauthorized fmt changes.
+
+**Files changed:**
+- Modified: `src/ai/tools/dispatch.rs` — restored `/// Dispatch arm helper` doc comment on `fn dispatch` and the `// Tool event dispatcher` section header block
+- Reverted: `src/cli/commands/chat.rs` — restored to pre-phase-07 state (fmt-dirty pre-dates this phase)
+- Reverted: `src/cli/render_ratatui.rs` — restored to pre-phase-07 state (fmt-dirty pre-dates this phase)
+- Modified: `docs/dev/milestones/M2-tui-renderer/phase-07-split-tools.md` (status → review)
+- Modified: `docs/dev/milestones/M2-tui-renderer/README.md` (phase table row → review)
+
+**Verification commands:**
+```
+cargo build 2>&1 | tail -5
+   → Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.5s
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -5
+   → Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.3s
+rustfmt --check src/ai/tools/*.rs 2>&1
+   → (no output — clean)
+cargo test 2>&1 | grep 'test result'
+   → test result: ok. 773 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+   → test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+```
+
+**Verification summary:** build clean, clippy clean, fmt clean (tools files only — pre-existing fmt dirt in `src/cli/commands/chat.rs` and `src/cli/render_ratatui.rs` is out of scope), all 800 tests pass (773 lib + 27 bin). `grep -rn 'Dispatch arm helper' src/ai/tools/` → dispatch.rs:9. `grep -rn 'Tool event dispatcher' src/ai/tools/` → dispatch.rs:6. No changes to `src/ai/backends/*.rs` or `src/daemon/executor/mod.rs`.
+
+**Notes for review:**
+- The two pre-existing fmt-dirty files (`src/cli/commands/chat.rs`, `src/cli/render_ratatui.rs`) are intentionally excluded from this commit. `cargo fmt --all -- --check` will fail on them, but that failure predates phase-07 and is out of scope. A dedicated `chore:` commit can address them separately.
+- `rustfmt` was run directly on `src/ai/tools/*.rs` to ensure the new files are fmt-clean without touching unrelated files.
+- The sorted-multiset line-fidelity check now passes: the only differences between old `tools.rs` and the five new files (minus glue) are the spec-mandated `pub(super)` visibility changes and the authorized module doc-comments.
+
+**End-to-end verification:** N/A — this phase ships no runtime-loadable artifact.
+
+**Grep for spec-pinned literal `pub static TOOLS`:**
+```
+grep -rn 'pub static TOOLS' src/ai/tools/ → src/ai/tools/defs.rs:7:pub static TOOLS: &[ToolDef] = &[
+```

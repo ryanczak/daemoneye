@@ -2,6 +2,11 @@ use super::args::*;
 use crate::ai::types::AiEvent;
 use serde_json::Value;
 
+// ---------------------------------------------------------------------------
+// Tool event dispatcher (shared by all three provider backends)
+// ---------------------------------------------------------------------------
+
+/// Dispatch arm helper — deserialises `args` into `T` and constructs the event.
 fn dispatch<T: ToolArgs>(id: &str, args: Value, ts: Option<String>) -> Option<AiEvent> {
     T::from_value(args).map(|a| a.to_event(id, ts))
 }
