@@ -146,12 +146,6 @@ pub(super) async fn ask_with_session_ratatui(
                         } else {
                             dot_period - pos + 1
                         };
-                        let spinner_text = format!(
-                            "  {} {}{}",
-                            SPINNER[spin % SPINNER.len()],
-                            verb,
-                            ".".repeat(dot_count)
-                        );
                         let sb = StatusBarState {
                             session_id: session_id.unwrap_or(""),
                             approval_hint: &approval.hint(),
@@ -163,7 +157,12 @@ pub(super) async fn ask_with_session_ratatui(
                             cost_usd: 0.0,
                             has_untracked: false,
                         };
-                        let _ = renderer.draw_spinner(&spinner_text, &sb);
+                        let _ = renderer.draw_spinner(
+                            SPINNER[spin % SPINNER.len()],
+                            verb,
+                            dot_count,
+                            &sb,
+                        );
                         spin = spin.wrapping_add(1);
                     }
                     Ok(r) => break r?,

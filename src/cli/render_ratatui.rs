@@ -211,16 +211,38 @@ impl<B: Backend> RatatuiRenderer<B> {
     /// no residue in scrollback.
     pub fn draw_spinner(
         &mut self,
-        spinner_text: &str,
+        spinner_frame: &str,
+        verb: &str,
+        dot_count: usize,
         status: &StatusBarState<'_>,
     ) -> Result<(), B::Error> {
         let session_id = status.session_id.to_string();
         let model = status.model.to_string();
         let start_time = self.start_time;
 
-        let _completed = self.terminal.draw(|frame| {
-            let area = frame.area();
-            render_spinner_region(frame, area, spinner_text, &session_id, &model, start_time);
+        let blood_red = Style::default()
+            .fg(Color::Rgb(180, 0, 0))
+            .add_modifier(Modifier::BOLD);
+        let bright_yellow = Style::default().fg(Color::Rgb(220, 160, 0));
+        let (open, center, close) =
+            if spinner_frame.starts_with('(') && spinner_frame.ends_with(')') {
+                let inner = &spinner_frame[1..spinner_frame.len() - 1];
+                ("(", inner.to_string(), ")")
+            } else {
+                ("", spinner_frame.to_string(), "")
+            };
+        let spinner_line = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(open, blood_red),
+            Span::styled(center, bright_yellow),
+            Span::styled(close, blood_red),
+            Span::raw(format!(" {verb}")),
+            Span::styled(".".repeat(dot_count), bright_yellow),
+        ]);
+
+        let _completed = self.terminal.draw(|f| {
+            let area = f.area();
+            render_spinner_region(f, area, spinner_line.clone(), &session_id, &model, start_time);
         })?;
         Ok(())
     }
@@ -425,7 +447,7 @@ fn render_prompt_region(
 fn render_spinner_region(
     frame: &mut ratatui::Frame,
     area: Rect,
-    spinner_text: &str,
+    spinner_line: Line<'static>,
     session_id: &str,
     model: &str,
     start_time: std::time::Instant,
@@ -433,10 +455,6 @@ fn render_spinner_region(
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
 
     // ── Spinner line inside the input box ──────────────────────
-    let spinner_line = Line::from(vec![Span::styled(
-        spinner_text,
-        Style::default().fg(Color::Red),
-    )]);
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
