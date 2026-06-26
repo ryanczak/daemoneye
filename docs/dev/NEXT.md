@@ -2,8 +2,9 @@
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
 
-**Active phase:** none drafted — **05 split-input is next to draft.** Run
-`/rexymcp:architect next` to author `phase-05-split-input.md`, then `/rexymcp:dispatch 05`.
+**Active phase:** **05 split-input** — drafted at
+`docs/dev/milestones/M2-tui-renderer/phase-05-split-input.md` (status `todo`).
+Run `/rexymcp:dispatch 05` to execute it.
 
 Phase 04 (split-render) is `done` (approved_first_try — Qwen/Qwen3.6-27B-FP8; faithful
 mechanical move verified by 1051-vs-1051 multiset line diff; `render.rs` 1365 → 234 lines;
