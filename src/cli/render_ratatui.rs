@@ -236,7 +236,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             Span::styled(open, blood_red),
             Span::styled(center, bright_yellow),
             Span::styled(close, blood_red),
-            Span::raw(format!(" {verb}")),
+            Span::styled(format!(" {verb}"), blood_red),
             Span::styled(".".repeat(dot_count), bright_yellow),
         ]);
 
