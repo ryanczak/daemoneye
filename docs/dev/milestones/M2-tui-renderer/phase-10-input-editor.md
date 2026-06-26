@@ -1,7 +1,7 @@
 # Phase 10: input-editor
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bug-phase-10-1)
+**Status:** review
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-05 (done — `cli/input/editor`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -139,20 +139,20 @@ Land and `cargo build`-green each sub-deliverable before the next.
 
 ## Acceptance criteria
 
-- [ ] A cursor is visible in the input box at the edit point whenever input is active, and
+- [x] A cursor is visible in the input box at the edit point whenever input is active, and
       it moves correctly under insert/delete and all movement keys.
-- [ ] Input longer than the box width wraps at word boundaries; nothing overflows the box
+- [x] Input longer than the box width wraps at word boundaries; nothing overflows the box
       horizontally and the cursor stays on the correct wrapped cell.
-- [ ] A deliberate newline keystroke inserts a line break without submitting; Enter submits
+- [x] A deliberate newline keystroke inserts a line break without submitting; Enter submits
       the whole (possibly multi-line) buffer; the query sent to the daemon preserves the
       embedded newlines.
-- [ ] Pasting a multi-line block inserts all of it into the buffer (wrapped for display)
+- [x] Pasting a multi-line block inserts all of it into the buffer (wrapped for display)
       without submitting at embedded newlines; the user can edit it and submit with Enter.
-- [ ] The cursor can reach and edit any position in a multi-line body (cross-line left/
+- [x] The cursor can reach and edit any position in a multi-line body (cross-line left/
       right, up/down between visual rows, home/end).
-- [ ] A large multi-line paste does not corrupt the committed transcript above the input
+- [x] A large multi-line paste does not corrupt the committed transcript above the input
       box; the input scrolls internally within its capped region.
-- [ ] `cargo build` zero new warnings; `cargo clippy --all-targets --all-features -- -D
+- [x] `cargo build` zero new warnings; `cargo clippy --all-targets --all-features -- -D
       warnings`, `cargo fmt --all`, and `cargo test` all pass. **No new dependencies**
       (ratatui + crossterm already present).
 

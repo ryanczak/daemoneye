@@ -183,6 +183,34 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;
                             Key::End
                         }
+                        Ok(Some(b'2')) => {
+                            // Could be bracketed paste start: ESC [ 2 0 0 ~
+                            match timeout(Duration::from_millis(30), stdin.read_byte()).await {
+                                Ok(Some(b'0')) => {
+                                    match timeout(Duration::from_millis(30), stdin.read_byte())
+                                        .await
+                                    {
+                                        Ok(Some(b'0')) => {
+                                            match timeout(
+                                                Duration::from_millis(30),
+                                                stdin.read_byte(),
+                                            )
+                                            .await
+                                            {
+                                                Ok(Some(b'~')) => {
+                                                    // ESC[200~ = bracketed paste start
+                                                    let text = read_bracketed_paste(stdin).await;
+                                                    Key::Paste(text)
+                                                }
+                                                _ => Key::Char('\x1b'),
+                                            }
+                                        }
+                                        _ => Key::Char('\x1b'),
+                                    }
+                                }
+                                _ => Key::Char('\x1b'),
+                            }
+                        }
                         _ => Key::Char('\x1b'),
                     }
                 }
@@ -193,10 +221,9 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                         _ => Key::Char('\x1b'),
                     }
                 }
-                Ok(Some(b'{')) => {
-                    // ESC { — start of bracketed paste
-                    let text = read_bracketed_paste(stdin).await;
-                    Key::Paste(text)
+                Ok(Some(b'\r')) | Ok(Some(b'\n')) => {
+                    // Alt+Enter: ESC followed by CR/LF → deliberate newline
+                    Key::CtrlJ
                 }
                 _ => Key::Char('\x1b'), // bare Escape
             }
@@ -232,7 +259,7 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
     })
 }
 
-/// Read a bracketed paste: bytes between `ESC [` (already consumed) and `ESC ]`.
+/// Read a bracketed paste: bytes between `ESC[200~` (already consumed) and `ESC[201~`.
 /// Returns the pasted text as a String.
 async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
     use tokio::time::{Duration, timeout};
@@ -240,14 +267,37 @@ async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
     loop {
         match timeout(Duration::from_millis(50), stdin.read_byte()).await {
             Ok(Some(0x1b)) => {
-                // Check for closing ']'
+                // Check for ESC[201~ (bracketed paste end)
                 match timeout(Duration::from_millis(10), stdin.read_byte()).await {
-                    Ok(Some(b']')) => {
-                        // End of paste
-                        return String::from_utf8_lossy(&paste_buf).to_string();
+                    Ok(Some(b'[')) => {
+                        let b2 = timeout(Duration::from_millis(10), stdin.read_byte()).await;
+                        let b3 = timeout(Duration::from_millis(10), stdin.read_byte()).await;
+                        let b4 = timeout(Duration::from_millis(10), stdin.read_byte()).await;
+                        let b5 = timeout(Duration::from_millis(10), stdin.read_byte()).await;
+                        if b2 == Ok(Some(b'2'))
+                            && b3 == Ok(Some(b'0'))
+                            && b4 == Ok(Some(b'1'))
+                            && b5 == Ok(Some(b'~'))
+                        {
+                            return String::from_utf8_lossy(&paste_buf).to_string();
+                        }
+                        // Not the end sequence — push ESC and whatever we read back
+                        paste_buf.push(0x1b);
+                        if let Ok(Some(b)) = b2 {
+                            paste_buf.push(b);
+                        }
+                        if let Ok(Some(b)) = b3 {
+                            paste_buf.push(b);
+                        }
+                        if let Ok(Some(b)) = b4 {
+                            paste_buf.push(b);
+                        }
+                        if let Ok(Some(b)) = b5 {
+                            paste_buf.push(b);
+                        }
                     }
                     _ => {
-                        // Not a paste end, treat as ESC
+                        // Not ESC[, treat as bare ESC
                         paste_buf.push(0x1b);
                     }
                 }

@@ -198,7 +198,10 @@ impl<B: Backend> RatatuiRenderer<B> {
 
     /// Draw the live region: input box and status bar.
     pub fn draw(&mut self, input: &InputLine, status: &StatusBarState<'_>) -> Result<(), B::Error> {
-        let input_text = input.as_str();
+        // Split on '\n' so each logical line is a separate ratatui Line.
+        let s = input.as_str();
+        let input_text: ratatui::text::Text<'_> =
+            s.split('\n').map(|l| Line::from(Span::raw(l))).collect();
         let session_id = status.session_id.to_string();
         let model = status.model.to_string();
         let start_time = self.start_time;
@@ -373,29 +376,47 @@ impl<B: Backend> RatatuiRenderer<B> {
 fn render_live_region(
     frame: &mut ratatui::Frame,
     area: Rect,
-    input_text: &str,
+    input_text: &ratatui::text::Text<'_>,
     session_id: &str,
     model: &str,
     start_time: std::time::Instant,
-    cursor_pos: Option<(u16, u16)>, // (col, row) within content area
+    cursor_pos: Option<(u16, u16)>, // (col, row) within content area (before scroll)
 ) {
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
 
     // ── Input box ──────────────────────────────────────────────
-    let input_line = Line::from(Span::raw(input_text));
+    let content_area = chunks[0];
+    let content_height = content_area.height.saturating_sub(2) as usize; // minus borders
+    let _content_width = content_area.width.saturating_sub(2) as usize;
+
+    // Compute scroll offset so the cursor row stays visible
+    let scroll_offset = if let Some((_, cursor_row)) = cursor_pos {
+        let cursor_row = cursor_row as usize;
+        if cursor_row >= content_height {
+            (cursor_row + 1).saturating_sub(content_height) as u16
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new(input_line)
+    let input_para = Paragraph::new(input_text.clone())
         .block(input_block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input_para, chunks[0]);
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_offset, 0));
+    frame.render_widget(input_para, content_area);
 
-    // ── Set cursor position ────────────────────────────────────
+    // ── Set cursor position (clamped to visible content area) ──
     if let Some((col, row)) = cursor_pos {
-        let x = chunks[0].x + 1 + col.min(chunks[0].width.saturating_sub(2));
-        let y = chunks[0].y + 1 + row.min(chunks[0].height.saturating_sub(2));
+        let visible_row = (row as usize).saturating_sub(scroll_offset as usize);
+        let x = content_area.x + 1 + col.min(content_area.width.saturating_sub(2));
+        let y =
+            content_area.y + 1 + (visible_row as u16).min(content_area.height.saturating_sub(2));
         frame.set_cursor_position((x, y));
     }
 
@@ -433,7 +454,11 @@ fn render_prompt_region(
     let total = area.height;
     if total < 4 {
         // Too small — fall back to normal input region.
-        render_live_region(frame, area, input_text, session_id, model, start_time, None);
+        let it: ratatui::text::Text<'_> = input_text
+            .split('\n')
+            .map(|l| Line::from(Span::raw(l)))
+            .collect();
+        render_live_region(frame, area, &it, session_id, model, start_time, None);
         return;
     }
     let prompt_rows = total - 3; // 1 status + 2 input box
@@ -453,12 +478,15 @@ fn render_prompt_region(
     frame.render_widget(prompt_para, chunks[0]);
 
     // ── Input box ──────────────────────────────────────────────
-    let input_line = Line::from(Span::raw(input_text));
+    let input_text_obj: ratatui::text::Text<'_> = input_text
+        .split('\n')
+        .map(|l| Line::from(Span::raw(l)))
+        .collect();
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new(input_line)
+    let input_para = Paragraph::new(input_text_obj)
         .block(input_block)
         .wrap(Wrap { trim: false });
     frame.render_widget(input_para, chunks[1]);
@@ -959,6 +987,50 @@ mod tests {
         assert!(
             all_text.contains("line two"),
             "should contain 'line two', got: {}",
+            all_text
+        );
+    }
+
+    /// Test that a body taller than the visible content area scrolls internally
+    /// so the cursor row stays visible.
+    #[test]
+    fn tall_body_scrolls_cursor_into_view() {
+        let mut renderer = make_test_renderer();
+
+        // Build a body with 10 lines — more than the ~3 visible content rows.
+        let mut input = InputLine::new();
+        for i in 0..10 {
+            if i > 0 {
+                input.insert('\n');
+            }
+            input.insert_str(&format!("line {}", i));
+        }
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        renderer.draw(&input, &status).unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let all_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+
+        // The last line (where the cursor is) should be visible.
+        assert!(
+            all_text.contains("line 9"),
+            "cursor line 'line 9' should be visible after scroll, got: {}",
             all_text
         );
     }

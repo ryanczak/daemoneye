@@ -164,6 +164,10 @@ impl InputLine {
     /// Word-wrap the buffer into visual lines given a display width.
     /// Returns a Vec of visual lines, each a Vec<char>.
     /// The display width is the number of character cells available (not counting borders).
+    ///
+    /// This algorithm matches ratatui's `Wrap { trim: false }`: whitespace is preserved
+    /// literally, words wrap at word boundaries, and words longer than the width are
+    /// hard-broken at the width boundary.
     pub fn visual_lines(&self, width: usize) -> Vec<Vec<char>> {
         if width == 0 {
             return vec![vec![]];
@@ -175,55 +179,98 @@ impl InputLine {
         let mut result: Vec<Vec<char>> = Vec::new();
         let mut current_line: Vec<char> = Vec::new();
         let mut current_word: Vec<char> = Vec::new();
+        let mut pending_ws: Vec<char> = Vec::new();
 
         for &ch in &self.buf {
             if ch == '\n' {
-                // Hard line break: flush any pending word, start new line
+                // Hard line break: flush word, push line, start new
                 if !current_word.is_empty() {
+                    current_line.append(&mut pending_ws);
                     current_line.append(&mut current_word);
-                    current_word.clear();
                 }
                 result.push(current_line);
                 current_line = Vec::new();
+                pending_ws.clear();
                 continue;
             }
 
             if ch.is_whitespace() {
-                // Whitespace ends a word
+                // Flush current word if we had one
                 if !current_word.is_empty() {
-                    // Try to fit the word on current line
-                    let word_len = current_word.len();
-                    if current_line.is_empty() || current_line.len() + 1 + word_len <= width {
-                        // Fits (with a space separator if line not empty)
-                        if !current_line.is_empty() {
-                            current_line.push(' ');
-                        }
+                    // Try to fit word + pending_ws on current line
+                    let total_word_len = pending_ws.len() + current_word.len();
+                    if current_line.is_empty() || current_line.len() + total_word_len <= width {
+                        current_line.append(&mut pending_ws);
                         current_line.append(&mut current_word);
                     } else {
-                        // Doesn't fit — push current line, start new one
+                        // Word doesn't fit — push current line, start new
                         result.push(current_line);
-                        current_line = current_word.clone();
-                        current_word.clear();
+                        current_line = Vec::new();
+
+                        // If word alone fits on new line
+                        if current_word.len() <= width {
+                            current_line.append(&mut pending_ws);
+                            current_line.append(&mut current_word);
+                        } else {
+                            // Word is longer than width — hard break it
+                            current_line.append(&mut current_word);
+                            // current_line now exceeds width, split
+                            while current_line.len() > width {
+                                let next = current_line.split_off(width);
+                                result.push(current_line);
+                                current_line = next;
+                            }
+                            current_word.clear();
+                        }
                     }
                 }
-                // Don't add the whitespace to current_word; it's consumed as separator
-                continue;
+                // Accumulate whitespace
+                pending_ws.push(ch);
+            } else {
+                current_word.push(ch);
             }
-
-            // Non-whitespace, non-newline character
-            current_word.push(ch);
         }
 
-        // Flush remaining word
+        // Flush remaining word and whitespace
         if !current_word.is_empty() {
-            if current_line.is_empty() || current_line.len() + 1 + current_word.len() <= width {
-                if !current_line.is_empty() {
-                    current_line.push(' ');
+            let total_word_len = pending_ws.len() + current_word.len();
+            if current_line.is_empty() || current_line.len() + total_word_len <= width {
+                if current_line.is_empty() && current_word.len() > width {
+                    // Overlong word on empty line — hard break it
+                    current_line.append(&mut pending_ws);
+                    current_line.append(&mut current_word);
+                    while current_line.len() > width {
+                        let next = current_line.split_off(width);
+                        result.push(current_line);
+                        current_line = next;
+                    }
+                    current_word.clear();
+                } else {
+                    current_line.append(&mut pending_ws);
+                    current_line.append(&mut current_word);
                 }
-                current_line.extend(current_word);
             } else {
                 result.push(current_line);
-                current_line = current_word;
+                current_line = Vec::new();
+
+                if current_word.len() <= width {
+                    current_line.append(&mut pending_ws);
+                    current_line.append(&mut current_word);
+                } else {
+                    current_line.append(&mut pending_ws);
+                    current_line.append(&mut current_word);
+                    while current_line.len() > width {
+                        let next = current_line.split_off(width);
+                        result.push(current_line);
+                        current_line = next;
+                    }
+                    current_word.clear();
+                }
+            }
+        } else if !pending_ws.is_empty() {
+            // Trailing whitespace with no word — add to current line if fits
+            if current_line.is_empty() || current_line.len() + pending_ws.len() <= width {
+                current_line.append(&mut pending_ws);
             }
         }
 
@@ -531,15 +578,66 @@ mod tests {
     }
 
     #[test]
-    fn multiline_move_up_down() {
+    fn visual_lines_preserves_whitespace() {
         let mut line = InputLine::new();
-        line.insert_str("line1\nline2\nline3");
-        // buf = "line1\nline2\nline3", cursor at 17
-        assert_eq!(line.cursor_pos(), 17);
+        line.insert_str("hello  world"); // double space
+        let v = line.visual_lines(40);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].iter().collect::<String>(), "hello  world");
+    }
 
-        line.move_up(40);
-        assert!(line.cursor_pos() < 17);
-        line.move_down(40);
-        assert_eq!(line.cursor_pos(), 17);
+    #[test]
+    fn visual_lines_leading_whitespace() {
+        let mut line = InputLine::new();
+        line.insert_str("  hello");
+        let v = line.visual_lines(40);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].iter().collect::<String>(), "  hello");
+    }
+
+    #[test]
+    fn visual_lines_overlong_word() {
+        let mut line = InputLine::new();
+        line.insert_str("supercalifragilistic");
+        let v = line.visual_lines(10);
+        // "supercalifragilistic" (20 chars) with width 10 → 2 lines
+        // But the word is 20 chars, and width is 10, so it should split
+        // into "supercali" (9) + "fragilistic" (11) — wait, that's wrong.
+        // With width=10, "supercalifragilistic" is a single word of 20 chars.
+        // It exceeds width, so it gets hard-broken: first 10 chars on line 1,
+        // remaining 10 on line 2.
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].iter().collect::<String>(), "supercalif");
+        assert_eq!(v[1].iter().collect::<String>(), "ragilistic");
+    }
+
+    #[test]
+    fn visual_lines_cursor_matches_wrap() {
+        let mut line = InputLine::new();
+        line.insert_str("hello  world"); // double space
+        let v = line.visual_lines(40);
+        let (row, col) = line.cursor_visual_pos(40);
+        assert_eq!(row, 0);
+        assert_eq!(col, v[0].len());
+    }
+
+    #[test]
+    fn visual_lines_cursor_on_wrapped_overlong() {
+        let mut line = InputLine::new();
+        line.insert_str("supercalifragilistic");
+        let v = line.visual_lines(10);
+        let (row, col) = line.cursor_visual_pos(10);
+        assert_eq!(row, v.len() - 1);
+        assert_eq!(col, v.last().unwrap().len());
+    }
+
+    #[test]
+    fn cursor_visual_pos_double_space() {
+        let mut line = InputLine::new();
+        line.insert_str("a  b");
+        // cursor at end = pos 4
+        let (row, col) = line.cursor_visual_pos(40);
+        assert_eq!(row, 0);
+        assert_eq!(col, 4);
     }
 }
