@@ -1477,7 +1477,9 @@ fn window_switch_does_not_corrupt_chat() {
     // `send-keys` with `Enter` submits the command to the pane.
     Command::new("tmux")
         .args([
-            "send-keys", "-t", &format!("{}:0", session),
+            "send-keys",
+            "-t",
+            &format!("{}:0", session),
             &format!("{} chat 2>/dev/null || true", binary.display()),
             "Enter",
         ])
@@ -1489,7 +1491,13 @@ fn window_switch_does_not_corrupt_chat() {
 
     // Record the initial chat pane id so we can switch back to it.
     let chat_pane_output = Command::new("tmux")
-        .args(["display-message", "-t", &format!("{}:0", session), "-p", "#{pane_id}"])
+        .args([
+            "display-message",
+            "-t",
+            &format!("{}:0", session),
+            "-p",
+            "#{pane_id}",
+        ])
         .output()
         .expect("tmux display-message pane_id");
     let chat_pane = String::from_utf8_lossy(&chat_pane_output.stdout)

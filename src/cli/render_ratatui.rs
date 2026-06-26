@@ -717,7 +717,7 @@ mod tests {
         renderer.draw(&input, &status).unwrap();
 
         // Simulate streaming tokens through the markdown renderer.
-        let mut md = crate::cli::render::MarkdownRenderer::new();
+        let mut md = crate::cli::markdown::MarkdownRenderer::new();
         let width = 58; // match test backend width minus borders
 
         // Feed tokens that span a line boundary.
@@ -787,7 +787,7 @@ mod tests {
     /// emits on newline boundaries.
     #[test]
     fn feed_to_lines_buffers_partial_lines() {
-        let mut md = crate::cli::render::MarkdownRenderer::new();
+        let mut md = crate::cli::markdown::MarkdownRenderer::new();
         let width = 60;
 
         // Feed a partial line — no newline yet.
@@ -810,7 +810,7 @@ mod tests {
     /// Test that `feed_to_lines` handles empty lines (bare newlines).
     #[test]
     fn feed_to_lines_handles_empty_lines() {
-        let mut md = crate::cli::render::MarkdownRenderer::new();
+        let mut md = crate::cli::markdown::MarkdownRenderer::new();
         let width = 60;
 
         let lines = md.feed_to_lines("first\n\nsecond\n", width);

@@ -4,6 +4,7 @@ pub mod commands;
 pub(crate) mod diff;
 pub mod input;
 pub mod local_cmds;
+pub mod markdown;
 pub mod notify;
 pub mod render;
 pub mod render_ratatui;

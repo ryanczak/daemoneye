@@ -8,6 +8,7 @@ use anyhow::Result;
 use tokio::io::BufReader;
 
 use crate::cli::input::*;
+use crate::cli::markdown::MarkdownRenderer;
 use crate::cli::render::*;
 use crate::config::Config;
 use crate::ipc::{Request, Response};
