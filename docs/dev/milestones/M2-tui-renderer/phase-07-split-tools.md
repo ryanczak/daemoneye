@@ -1,7 +1,7 @@
 # Phase 07: Split `ai/tools.rs` into a `tools/` submodule
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~2240 lines moved (mechanical), ~40 lines new glue
 **Tags:** language=rust, kind=refactor, size=l
@@ -406,6 +406,44 @@ grep -rn 'pub static TOOLS' src/ai/tools/ → src/ai/tools/defs.rs:7:pub static 
 deleted; `src/ai/tools/` = exactly `mod.rs`/`schema.rs`/`defs.rs`/`args.rs`/
 `dispatch.rs`; `src/ai/mod.rs:3` still `pub mod tools;`; `git diff --stat` on
 `src/ai/backends/*.rs` and `src/daemon/executor/mod.rs` empty.
+
+### Review verdict — 2026-06-26 (re-dispatch)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-07-1, minor)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP)
+- **Scope deviations:** bug-phase-07-1 part (b) not honored — the two collateral
+  `cargo fmt` files (`src/cli/commands/chat.rs`, `src/cli/render_ratatui.rs`) were
+  **not** reverted (`git diff 56517a7 HEAD` on them is empty), and the re-fix
+  Update Log's "Reverted … restored to pre-phase-07 state" claim is inaccurate.
+  **Accepted as-is, not re-bounced** — see Calibration.
+- **Calibration:** part (a) (the substantive fidelity miss) is fully fixed —
+  `Dispatch arm helper` doc comment and the 3-line `Tool event dispatcher`
+  section header are restored (`grep` → `dispatch.rs:9` / `:6`; `// -----`
+  separator count back to 10, matching the pre-split original), and
+  `render_gemini` re-verified character-identical old→new. Part (b) was **not**
+  re-bounced because honoring it directly contradicts acceptance criterion #3
+  (`cargo fmt --all -- --check` passes): reverting those two files makes the tree
+  fmt-**dirty** and fails that DoD box, which is currently green for the whole
+  tree. This is the **second M2 instance of the "post-write formatting collateral"
+  class** (WORKFLOW § "Post-write formatting is a runtime concern, not a spec
+  concern"), whose existing fold already prescribes architect-resolve-at-close-out
+  and **explicitly warns the spec/bounce route is ineffective** — confirmed here
+  by the executor failing the revert a second time. The bundled fmt-clean state is
+  the desired end state; the only residue is commit-scope hygiene in `56517a7`
+  (the unrelated fmt belongs in a separate `chore:`), not a fidelity or
+  correctness defect. Records as `scope_deviation`, accepted.
+
+**Re-run command set (independent, separate invocations):**
+- `cargo build` → Finished, zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` → clean
+- `cargo fmt --all -- --check` → clean (whole tree)
+- `cargo test` → 773 unit + 27 integration pass, 2 ignored (unchanged count, 800 total)
+
+**All 8 acceptance criteria met.** `src/ai/tools.rs` deleted; `src/ai/tools/` =
+exactly the five spec'd files; `src/ai/mod.rs:3` unchanged; `git diff --stat` on
+`src/ai/backends/*.rs` + `src/daemon/executor/mod.rs` empty; new-file hygiene
+greps (TODO/`dbg!`/`unsafe`/`#[allow]`/`#[ignore]`) all clean.
 
 ### Update — 2026-06-26 18:12 (re-fix complete)
 

@@ -55,7 +55,7 @@ the phase-doc frontmatter.
 | 04 | split-render — extract markdown/syntax-highlight (`render_inline`, `highlight_code`, `MarkdownRenderer`, `lang_*`) into a `cli/markdown` submodule | done |
 | 05 | split-input — termios/`AsyncStdin` → `cli/input/tty`; `InputLine`/`InputState` editing → `cli/input/editor` ([phase-05-split-input.md](phase-05-split-input.md)) | done |
 | 06 | split-commands — extract `run_chat_inner` + the ratatui chat loop + ctx structs + slash handling from `cli/commands/mod.rs` into a `chat` submodule ([phase-06-split-commands.md](phase-06-split-commands.md)) | done |
-| 07 | split-tools — split `ai/tools.rs` (2232) into a `tools/` submodule: `schema` (types + renderers), `defs` (the `TOOLS` table, documented size exception), `args` (typed arg structs), `dispatch` (+ tests) ([phase-07-split-tools.md](phase-07-split-tools.md)) | review |
+| 07 | split-tools — split `ai/tools.rs` (2232) into a `tools/` submodule: `schema` (types + renderers), `defs` (the `TOOLS` table, documented size exception), `args` (typed arg structs), `dispatch` (+ tests) ([phase-07-split-tools.md](phase-07-split-tools.md)) | done |
 | 08 | split-server — split `daemon/server.rs` (1976) into `server/` : `catchup` (`build_catchup_brief`, `is_valid_pane_id`), `handlers` (stateless IPC handlers), `ask` (`handle_ask` orchestrator) | todo |
 | 09 | split-config — split `config.rs` (1631) into `config/` : `types` (config structs), `load` (load/resolve/validate/path helpers), `seeds` (seeding fns + embedded asset constants) | todo |
 | 10 | split-file-ops — split `daemon/executor/file_ops.rs` (1475) into `file_ops/` : `read` (`run_read_file` + helpers), `write` (`EditArgs`, edit-command builder, response wait), `ops` (`run_edit`/`create`/`delete`/`copy`) | todo |

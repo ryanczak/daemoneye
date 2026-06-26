@@ -1,8 +1,10 @@
 # Bug 1 on phase-07: verbatim-move fidelity broken — 4 comment lines dropped + 2 unrelated files reformatted
 
 **Severity:** minor
-**Status:** open
+**Status:** fixed
 **Filed:** 2026-06-26
+**Resolved:** 2026-06-26 — part (a) fixed (dropped comments restored); part (b)
+superseded (see resolution note at end).
 
 ## What's wrong
 
@@ -108,13 +110,34 @@ ledger records an honest result.
 
 ## Verification
 
-- [ ] `grep -rn 'Dispatch arm helper' src/ai/tools/` matches `dispatch.rs`.
-- [ ] `grep -rn 'Tool event dispatcher' src/ai/tools/` matches `dispatch.rs`.
-- [ ] `git show <new-commit> --stat` lists only `src/ai/tools/*`, the deleted
-      `src/ai/tools.rs`, and the doc files — no `src/cli/*` entries.
-- [ ] Sorted-multiset diff (old `tools.rs` vs. new five files, minus glue)
-      shows only the `pub(super)` visibility lines as differences.
-- [ ] `cargo build` zero warnings; `cargo clippy --all-targets --all-features
-      -- -D warnings` passes; `cargo fmt --all -- --check` passes for the
-      `src/ai/tools/` files; `cargo test` passes with 773 unit + 27 integration
-      (unchanged count).
+- [x] `grep -rn 'Dispatch arm helper' src/ai/tools/` matches `dispatch.rs:9`.
+- [x] `grep -rn 'Tool event dispatcher' src/ai/tools/` matches `dispatch.rs:6`.
+- [x] Fix commit `0a2b258` `--stat` lists only `src/ai/tools/dispatch.rs` and the
+      two doc files — no `src/cli/*` entries.
+- [x] Sorted-multiset content now clean: `render_gemini` re-diffed
+      character-identical old→new; `// -----` separator count back to 10 (matches
+      the pre-split original); only the spec-mandated `pub(super)` visibility lines
+      remain as content differences.
+- [x] `cargo build` zero warnings; `cargo clippy --all-targets --all-features
+      -- -D warnings` passes; `cargo fmt --all -- --check` passes (whole tree);
+      `cargo test` passes with 773 unit + 27 integration (unchanged count).
+
+## Resolution (2026-06-26)
+
+**Part (a) — dropped comments: fixed.** Both the `/// Dispatch arm helper` doc
+comment and the 3-line `// Tool event dispatcher` section header were restored in
+`src/ai/tools/dispatch.rs` (commit `0a2b258`); separator-line fidelity is back to
+10 ≡ 10.
+
+**Part (b) — revert the two collateral `cargo fmt` files: superseded, not
+enforced.** The executor did not perform the revert (the files remain in their
+`56517a7`-reformatted state). On review this was **accepted rather than
+re-bounced**, because the instruction conflicts with phase-07 acceptance criterion
+#3 (`cargo fmt --all -- --check` passes): reverting makes the tree fmt-dirty and
+breaks that DoD box, which is currently green tree-wide. This is the second M2
+occurrence of the "post-write formatting collateral" class, for which WORKFLOW.md
+already prescribes architect-resolve-at-close-out and warns the spec/bounce route
+is ineffective — confirmed here by the executor failing the revert twice. The
+bundled fmt-clean state is the desired end state; the residue is commit-scope
+hygiene only (the unrelated fmt belongs in a separate `chore:`), recorded as
+`scope_deviation` in the phase-07 review verdict.
