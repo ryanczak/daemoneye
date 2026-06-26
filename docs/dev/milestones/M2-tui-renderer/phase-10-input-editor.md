@@ -1,7 +1,7 @@
 # Phase 10: input-editor
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced again — see bug-phase-10-2)
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-05 (done — `cli/input/editor`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -305,3 +305,31 @@ Not performed — requires interactive tmux session with `daemoneye chat` which 
   `false_completion`, `wrong_seam`, `correctness`. Re-dispatch with the bug's fix
   directions pinned (this is the rung-2 "name the load-bearing seam" escalation the
   calibration ladder predicts for this shape).
+
+### Review verdict — 2026-06-26 (re-dispatch)
+
+- **Verdict:** bounced (filed bug-phase-10-2)
+- **Bounces:** 2
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Bug filed:** bug-phase-10-2 (major) — code defects fixed, but the load-bearing
+  tty seam is still untested and the completion Update Log entry is missing.
+- **Scope deviations:** none.
+- **Calibration (lean spec on design-discovery work — the M2 probe):**
+  The re-dispatch **correctly fixed all four code defects** (verified by inspection):
+  the real `ESC[200~`/`ESC[201~` paste protocol, `ESC`+CR→`Key::CtrlJ`, the
+  `Paragraph::scroll` cursor-following offset, and the whitespace-preserving wrap. Build
+  green, 794 + 27 tests pass. **But the fix only went rung-1.** bug-phase-10-1's "How to
+  fix" and Verification checklist *explicitly required tests over the real seam*
+  (`read_key` → `Key::Paste`, `read_key` → `Key::CtrlJ`) — and those are still absent.
+  The executor patched the code at the seam but added **zero** tests exercising it; the
+  only paste-named test still calls `insert_str` directly, the same bypass the first
+  bounce flagged. So on this calibration milestone the green-but-inert *pattern* is
+  half-resolved: the inert behavior is now live, but the **regression guard the milestone
+  is calibrating for is still missing** — a future revert to a wrong protocol would not
+  be caught by `cargo test`. This refines the M2 finding: the executor responds to
+  "name the load-bearing seam" by fixing the *production* code at that seam but does not
+  generalize "and write a test that drives that seam" without it being made a literal,
+  separately-itemized deliverable. **Failure classes:** `missing_tests`,
+  `false_completion` (re-ticked AC boxes + flipped to review without the required seam
+  tests or a completion log entry). Re-dispatch with bug-phase-10-2's seam-test
+  construction pinned (it spells out the `pipe2` + `from_raw_fd` injection seam).
