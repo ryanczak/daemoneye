@@ -1,4 +1,6 @@
 use anyhow::Result;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 
 use crate::cli::input::*;
 use crate::cli::render::*;
@@ -286,6 +288,8 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         0.0,
         false,
     );
+
+    let _ = renderer.commit_styled(&banner_lines(chat_width));
 
     // Send the greeting query — minimal rendering via ratatui commit path.
     {
@@ -647,4 +651,119 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
             }
         }
     }
+}
+
+fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
+    let logo: &[&str] = &[
+        "                        ▄      ▄",
+        "                       ██▄    ▄██",
+        "                      █████▄▄█████",
+        "                   ▄████████████████▄",
+        "                  ████████████████████",
+        "                 ████████  ▀▀  ████████",
+        "                ██████▀   ▄██▄   ▀██████",
+        "                █████    ███ ██    █████",
+        "                █████    ▀████▀    █████",
+        "                ██████▄   ▀██▀   ▄██████",
+        "                 ████████▄▄  ▄▄████████",
+        "                  ████████████████████",
+        "                   ▀████▀▀████▀▀████▀",
+        "                   ▄▀  █  █  █  █  ▀▄",
+        "                  █    █  █  █  █    █",
+        "                 ▄▀   ▄▀  █  █  ▀▄   ▀▄",
+        "                 █   █    █  █    █   █",
+        "",
+        "████▄   ▄▄▄  ▄▄▄▄▄ ▄▄   ▄▄  ▄▄▄  ▄▄  ▄▄ ██████ ▄▄ ▄▄ ▄▄▄▄▄",
+        "██  ██ ██▀██ ██▄▄  ██▀▄▀██ ██▀██ ███▄██ ██▄▄   ▀███▀ ██▄▄",
+        "████▀  ██▀██ ██▄▄▄ ██   ██ ▀███▀ ██ ▀██ ██▄▄▄▄   █   ██▄▄▄",
+    ];
+    let subtitle = "                   AGENTIC OPERATOR";
+
+    let logo_w = logo.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
+
+    let blood_red = Style::default()
+        .fg(Color::Rgb(180, 0, 0))
+        .add_modifier(Modifier::BOLD);
+    let deep_yellow = Style::default().fg(Color::Rgb(220, 160, 0));
+    let title_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+
+    // Eye highlights: which string to color per line index.
+    let eye_markers: &[(usize, &str)] = &[
+        (6, "▄██▄"),
+        (7, "███ ██"),
+        (8, "▀████▀"),
+        (9, "▀██▀"),
+    ];
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(logo.len() + 4);
+
+    lines.push(Line::raw(""));
+
+    for (i, &raw) in logo.iter().enumerate() {
+        let eye_opt = eye_markers.iter().find(|&&(idx, _)| idx == i).map(|&(_, s)| s);
+
+        let spans: Vec<Span<'static>> = if let Some(eye) = eye_opt {
+            // Line has an eye highlight: split into pre/eye/post.
+            if let Some(byte_pos) = raw.find(eye) {
+                let pre = raw[..byte_pos].to_owned();
+                let post = raw[byte_pos + eye.len()..].to_owned();
+                vec![
+                    Span::styled(pad.clone(), Style::default()),
+                    Span::styled(pre, blood_red),
+                    Span::styled(eye.to_owned(), deep_yellow),
+                    Span::styled(post, blood_red),
+                ]
+            } else {
+                vec![
+                    Span::styled(pad.clone(), Style::default()),
+                    Span::styled(raw.to_owned(), blood_red),
+                ]
+            }
+        } else if i >= 18 {
+            // DAEMONEYE word-mark lines.
+            vec![
+                Span::styled(pad.clone(), Style::default()),
+                Span::styled(raw.to_owned(), title_style),
+            ]
+        } else {
+            vec![
+                Span::styled(pad.clone(), Style::default()),
+                Span::styled(raw.to_owned(), blood_red),
+            ]
+        };
+
+        lines.push(Line::from(spans));
+    }
+
+    // Subtitle
+    let sub_pad = " ".repeat(
+        (chat_width.saturating_sub(subtitle.chars().count())) / 2,
+    );
+    lines.push(Line::from(vec![
+        Span::styled(sub_pad, Style::default()),
+        Span::styled(subtitle.to_owned(), dim),
+    ]));
+
+    // Blank line then slash-command hint.
+    lines.push(Line::raw(""));
+
+    let hint_plain = "/help  — list commands      /exit  — quit";
+    let hint_pad = " ".repeat(
+        (chat_width.saturating_sub(hint_plain.chars().count())) / 2,
+    );
+    lines.push(Line::from(vec![
+        Span::raw(hint_pad),
+        Span::styled("/help".to_owned(), Style::default().fg(Color::Cyan)),
+        Span::styled("  — list commands      ".to_owned(), dim),
+        Span::styled("/exit".to_owned(), Style::default().fg(Color::Cyan)),
+        Span::styled("  — quit".to_owned(), dim),
+    ]));
+
+    lines.push(Line::raw(""));
+
+    lines
 }
