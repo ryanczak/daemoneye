@@ -1,7 +1,7 @@
 # Phase 05: split-input — promote `cli/input.rs` to a `cli/input/` submodule (`tty` + `editor`)
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (done)
 **Estimated diff:** ~374 lines moved, ~6 lines net new (two file headers + `mod`/`pub use` lines)
 **Tags:** language=rust, kind=refactor, size=s
@@ -290,3 +290,41 @@ Split `src/cli/input.rs` into `src/cli/input/editor.rs` (InputLine, InputState) 
 **End-to-end verification:** N/A — pure internal module split with no runtime-loadable artifact.
 
 **Notes for review:** None. This is a byte-for-byte move with glob re-exports preserving all existing `crate::cli::input::…` paths.
+
+### Review verdict — 2026-06-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP executor)
+- **Scope deviations:** none — the only departure from a literal byte-copy is
+  dropping the two redundant section-banner comments (`// ── Async stdin wrapper ──`,
+  `// ── Interactive line editor ──`) and their 3 surrounding blank lines, which the
+  Spec (tasks 1–2) explicitly authorized ("You may keep or drop the banner").
+- **Calibration:** lean spec cleared first try (this is a normally-specced mechanical
+  split, not a rewrite phase — low calibration signal, as planned in the milestone's
+  calibration protocol). Independent re-run of the full command set: `cargo fmt`,
+  `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings` (forced
+  rebuild of the input module — zero warnings), `cargo test` (773 + 27 passed, 2
+  ignored, 0 failed — no net change).
+
+**Deep-review axes (M2 directive):**
+
+1. **Spec conformance** — all 5 tasks implemented; every acceptance criterion verified:
+   three new files exist + `input.rs` gone (`test ! -f` ✓); `editor.rs` holds only
+   `InputLine`/`InputState`, `tty.rs` holds only the I/O group (both negative greps
+   clean); `mod.rs` is 5 lines with both glob re-exports; `src/cli/mod.rs` unchanged;
+   no caller file (`commands/mod.rs`, `ask.rs`, `stream.rs`, `render_ratatui.rs`) was
+   edited (`git diff --stat` empty). Stayed inside boundaries — phase 06's
+   `commands/mod.rs` untouched; no new deps; `unsafe` moved verbatim, not refactored.
+2. **Reasoning quality** — correctly identified the two concerns as fully decoupled and
+   produced a clean two-file split with no cross-imports and no top-level `use`
+   statements (the function-local `use tokio::time::{Duration, timeout};` in `read_key`
+   stayed function-local, as specced). Faithful mechanical move — exactly the task.
+3. **Code & test quality** — byte-for-byte move proven by sorted multiset line diff of
+   the original `input.rs` (374 lines) vs the concatenated new files (369 lines): the
+   only delta is the 2 authorized banner comments + 3 blank lines; every line of code
+   is preserved. No new `unwrap`/`expect`/`panic!`, no `TODO`/`dbg!`/`#[allow]`, no
+   commented-out code in the new files. No new tests (correctly — `input.rs` had no
+   co-located tests; behavior preservation is guarded by the compile + full suite the
+   external callers exercise). One conventional commit (`refactor(cli): split input.rs
+   into input/ submodule (tty + editor)`).
