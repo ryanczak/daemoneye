@@ -1,20 +1,19 @@
 # NEXT
 
-**Active milestone:** none.
+**Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
+Status `in-progress` — phases 01–06 are `done`, but more phases remain before the
+milestone closes.
 
-**Active phase:** **none** — M2 (TUI Renderer Overhaul) is **complete** (all seven
-phases `done`; see its retrospective in
-`docs/dev/milestones/M2-tui-renderer/README.md`). The next milestone must be kicked
-off explicitly via `/rexymcp:architect`.
+**Active phase:** **none yet** — phase 06 (split-commands) is `done` and approved
+(approved_first_try). The next phase(s) are **under discussion** with the principal
+engineer; not yet drafted. Once scoped, draft via `/rexymcp:architect`.
 
-**Pending principal-engineer decision (from the M2 retrospective):** whether to fold
-the calibration result into `WORKFLOW.md` — make the front-loading default
-*task-shape-conditional* (front-load design-discovery phases, keep mechanical phases
-lean) rather than model-size-conditional. The fold is drafted in the M2 README
-retrospective but **not** applied to WORKFLOW.md; it needs sign-off first.
+Phase order so far (all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
+05 split-input ✓ → 06 split-commands ✓ → **(next phase TBD)**.
 
-Phase order (M2, all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
-05 split-input ✓ → 06 split-commands ✓.
+**Deferred (until M2 closes):** the calibration fold into WORKFLOW.md (make front-loading
+task-shape-conditional) — drafted in the M2 README "Interim calibration findings", on
+hold per PE 2026-06-26.
 
 M1 (Agent Tooling Improvements) is **complete** — all eleven phases `done`; see its
 retrospective in `docs/dev/milestones/M1-agent-tooling/README.md`.

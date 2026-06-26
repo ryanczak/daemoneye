@@ -7,7 +7,7 @@ tmux window switches and making the transcript real terminal scrollback. Along t
 way, split the three oversized `cli/` files (`render.rs`, `input.rs`,
 `commands/mod.rs`) into focused modules (closes the bulk of code-issue C5).
 
-**Status:** complete
+**Status:** in-progress
 
 **Depends on:** M1 (complete)
 
@@ -249,13 +249,18 @@ the entire legacy path are **deleted in phase 03**. This is the one sanctioned f
 flag for the milestone (STANDARDS §2.2 allows it when the phase authorizes it); each
 phase doc that touches it restates the authorization and phase 03 owns its removal.
 
-## Retrospective (2026-06-26, milestone complete)
+## Interim calibration findings (2026-06-26, phases 01–06 done; milestone still in-progress)
 
-All seven phases `done`. The corruption fix landed (DECSTBM scroll-region path gone;
+> **Not a final retrospective.** Phases 01–06 are `done` but more phases remain before
+> M2 closes (scope under discussion with the principal engineer). The calibration data
+> below covers 01–06; the fold decision and milestone retrospective are deferred until
+> M2 actually closes. The fold is **not** applied to WORKFLOW.md.
+
+Phases 01–06 `done`. The corruption fix landed (DECSTBM scroll-region path gone;
 ratatui inline viewport + `insert_before` scrollback is the only path), and the three
 oversized `cli/` C5 files are split (`render.rs` → `cli/markdown`; `input.rs` →
 `cli/input/{tty,editor}`; `commands/mod.rs` → `commands/chat`). Only `ratatui` +
-`crossterm` were added. Exit criteria met.
+`crossterm` were added.
 
 ### Outcome ledger (executor: Qwen/Qwen3.6-27B-FP8, every phase)
 
@@ -297,7 +302,7 @@ approved_first_try 0.83 but escalation 0.45 (the rewrite-shaped refactors drag i
 `size=s` escalation 0.08 vs `size=l` 0.59. Small, shape-determined work is reliable;
 large design-discovery work escalates.
 
-### Fold decision (proposed — pending principal-engineer sign-off)
+### Fold candidate (proposed — deferred until M2 closes; on hold per PE 2026-06-26)
 
 Three design-heavy bounces/escalation (01/02a/02b/03) and three clean mechanical passes
 (04/05/06) is a **trend → fix** under the WORKFLOW calibration rule. The proposed fold:
@@ -315,4 +320,5 @@ extract whose shape the spec fully determines):
   04–06).
 
 This fold is **not yet applied** to WORKFLOW.md — per STANDARDS §5 and the skill's §9,
-it needs principal-engineer sign-off before editing WORKFLOW.md.
+it needs principal-engineer sign-off before editing WORKFLOW.md. **On hold** (PE
+2026-06-26): defer the fold until M2 actually closes; more phases remain.
