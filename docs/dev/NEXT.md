@@ -4,9 +4,21 @@
 Status `in-progress` — phases 01–14 are `done`. The remaining work is the final entry of the C5
 split sweep (phase 15 — split-knowledge).
 
-**Active phase:** none currently dispatchable — phase 15 (split-knowledge) is the last in-scope
-M2 phase but its full phase doc is **not yet drafted**. Draft + select it via
-`/rexymcp:architect next`.
+**Active phase:** phase 15 — split-knowledge
+(`docs/dev/milestones/M2-tui-renderer/phase-15-split-knowledge.md`), status `todo`, **drafted and
+ready to dispatch** via `/rexymcp:dispatch phase-15-split-knowledge`. This is the **last in-scope
+M2 phase**: when it lands and is approved, M2 closes and the milestone retrospective + the deferred
+WORKFLOW.md front-loading fold come due (human gate).
+
+Phase 15 is a verbatim move-and-re-path split of `daemon/executor/knowledge.rs` (1341) into
+`knowledge/{mod,artifacts,memory,pane,ghost,agents}.rs`. **Shaped like phase 12 (`file_ops`), not
+phase 14 (`background`):** it needs (a) `super::` → `super::super::` re-pathing of `ToolCallOutcome`
+/ `USER_PROMPT_TIMEOUT` + the 4 `super::foreground::is_shell_prompt` call sites, and (b) the
+phase-12 E0364 fix — bump the 23 consumer-facing leaf fns `pub(super)` → `pub` so the `pub(super) use`
+re-exports in `mod.rs` compile. Shared `ArtifactCtx` (`pub(super)`) + `track_artifact` (private) live
+in `mod.rs` (file_ops idiom). **No test module exists in the file** — zero test relocation. NORMAL
+spec density; fully pinned (item→submodule table, visibility list, import-partition table incl.
+mid-file/function-body imports per the phase-14 calibration fold).
 
 phase-14 — split-background is `done` (**approved_first_try**, 2026-06-27). Verbatim
 move-and-re-path split of `daemon/background.rs` (1369) into `background/{mod,helpers,run,respawn,

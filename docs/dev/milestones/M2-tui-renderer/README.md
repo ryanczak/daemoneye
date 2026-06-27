@@ -64,7 +64,7 @@ insertion" note). Statuses mirror the phase-doc frontmatter.
 | 12 | split-file-ops — split `daemon/executor/file_ops.rs` (1475) into `file_ops/` : `read` (`run_read_file` + helpers), `write` (`EditArgs`, edit-command builder, response wait), `ops` (`run_edit`/`create`/`delete`/`copy`) ([phase-12-split-file-ops.md](phase-12-split-file-ops.md)) | done |
 | 13 | split-types — split `ai/types.rs` (1413) into `types/` : `wire` (`ToolCall`/`ToolResult`/`Message`/`TokenBreakdown`), `pending` (`PendingCall`), `events` (`AiEvent`) ([phase-13-split-types.md](phase-13-split-types.md)) | done |
 | 14 | split-background — split `daemon/background.rs` (1369) into `background/` : `helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC) ([phase-14-split-background.md](phase-14-split-background.md)) | done |
-| 15 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` | todo |
+| 15 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` ([phase-15-split-knowledge.md](phase-15-split-knowledge.md)) | review |
 
 ## Notes
 
