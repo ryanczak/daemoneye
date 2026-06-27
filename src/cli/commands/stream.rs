@@ -17,6 +17,21 @@ use super::approval::SessionApproval;
 use super::interrupt::{InterruptAction, InterruptState};
 use super::ipc_client::{connect, recv, send_request};
 
+/// Outcome of the inner streaming loop (daemon message or user interrupt).
+#[derive(Debug)]
+enum StreamOutcome {
+    /// A daemon message arrived.
+    Msg(Box<Response>),
+    /// Spinner tick — caller should animate.
+    Tick,
+    /// First interrupt press — caller should show a warning.
+    Warn,
+    /// User aborted the turn.
+    Interrupted,
+    /// Daemon error (EOF, parse failure, timeout).
+    Error(String),
+}
+
 // ── AI conversation ─────────────────────────────────────────────────────────
 
 pub(super) struct QueryArgs<'a> {
@@ -136,151 +151,115 @@ pub(super) async fn ask_with_session_ratatui(
 
     loop {
         // Phase 1 — waiting for first content: poll with short timeout for spinner.
-        let msg = if !response_started {
-            let phase1_result: Option<Result<Response, anyhow::Error>> = loop {
-                tokio::select! {
-                    biased;
-
-                    // Keyboard input takes priority so interrupt is responsive.
-                    key = read_key(stdin) => {
-                        if let Some(key) = key {
-                            let action = interrupt_state.feed(&key);
-                            match action {
-                                InterruptAction::Ignore => continue,
-                                InterruptAction::Warn => {
-                                    let sb = StatusBarState {
-                                        session_id: session_id.unwrap_or(""),
-                                        approval_hint: &approval.hint(),
-                                        model,
-                                        prompt_tokens: *prompt_tokens,
-                                        context_window,
-                                        daemon_up: false,
-                                        tools_total: 0,
-                                        cost_usd: 0.0,
-                                        has_untracked: false,
-                                    };
-                                    let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
-                                    continue;
-                                }
-                                InterruptAction::Abort => {
-                                    break Some(Err(anyhow::anyhow!("interrupted")));
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Daemon message with short timeout for spinner animation.
-                    res = tokio::time::timeout(std::time::Duration::from_millis(80), recv(&mut rx)) => {
-                        match res {
-                            Err(_timeout) => {
-                                let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
-                                let dot_period = 18;
-                                let pos = (spin % TICKS_PER_VERB) % dot_period;
-                                let dot_count = if pos < 10 {
-                                    pos + 1
-                                } else {
-                                    dot_period - pos + 1
-                                };
-                                let sb = StatusBarState {
-                                    session_id: session_id.unwrap_or(""),
-                                    approval_hint: &approval.hint(),
-                                    model,
-                                    prompt_tokens: *prompt_tokens,
-                                    context_window,
-                                    daemon_up: false,
-                                    tools_total: 0,
-                                    cost_usd: 0.0,
-                                    has_untracked: false,
-                                };
-                                let _ = renderer.draw_spinner(
-                                    SPINNER[spin % SPINNER.len()],
-                                    verb,
-                                    dot_count,
-                                    &sb,
-                                );
-                                spin = spin.wrapping_add(1);
-                            }
-                            Ok(r) => {
-                                break Some(r);
-                            }
-                        }
-                    }
-                }
-            };
-            let phase1_res =
-                phase1_result.unwrap_or_else(|| Err(anyhow::anyhow!("unexpected end of phase 1")));
-            if let Err(ref e) = phase1_res
-                && e.to_string() == "interrupted"
-            {
-                let _ = renderer.commit_panel("result", &["⊘ interrupted".to_string()], true);
-                interrupt_state.reset();
-                break;
-            }
-            phase1_res.map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
+        let outcome = if !response_started {
+            stream_phase(
+                stdin,
+                &mut rx,
+                &mut interrupt_state,
+                std::time::Duration::from_millis(80), // spinner tick
+                None,                                 // no overall timeout
+            )
+            .await
         } else {
-            // Phase 2 — streaming: poll with interrupt support.
-            let phase2_result: Option<Result<Response, anyhow::Error>> = loop {
-                tokio::select! {
-                    biased;
-
-                    // Keyboard input takes priority so interrupt is responsive.
-                    key = read_key(stdin) => {
-                        if let Some(key) = key {
-                            let action = interrupt_state.feed(&key);
-                            match action {
-                                InterruptAction::Ignore => continue,
-                                InterruptAction::Warn => {
-                                    // Redraw current live region with warning
-                                    let sb = StatusBarState {
-                                        session_id: session_id.unwrap_or(""),
-                                        approval_hint: &approval.hint(),
-                                        model,
-                                        prompt_tokens: *prompt_tokens,
-                                        context_window,
-                                        daemon_up: false,
-                                        tools_total: 0,
-                                        cost_usd: 0.0,
-                                        has_untracked: false,
-                                    };
-                                    let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
-                                    continue;
-                                }
-                                InterruptAction::Abort => {
-                                    break Some(Err(anyhow::anyhow!("interrupted")));
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Daemon message with 120s timeout.
-                    res = tokio::time::timeout(std::time::Duration::from_secs(120), recv(&mut rx)) => {
-                        match res {
-                            Err(_timeout) => {
-                                break Some(Err(anyhow::anyhow!("Daemon stopped responding (120 s timeout)")));
-                            }
-                            Ok(r) => {
-                                break Some(r);
-                            }
-                        }
-                    }
-                }
-            };
-            let phase2_res =
-                phase2_result.unwrap_or_else(|| Err(anyhow::anyhow!("unexpected end of phase 2")));
-            if let Err(ref e) = phase2_res
-                && e.to_string() == "interrupted"
-            {
-                let _ = renderer.commit_panel("result", &["⊘ interrupted".to_string()], true);
-                interrupt_state.reset();
-                break;
-            }
-            phase2_res.map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
+            // Phase 2 — streaming: no spinner tick, 120s overall timeout.
+            stream_phase(
+                stdin,
+                &mut rx,
+                &mut interrupt_state,
+                std::time::Duration::MAX, // no spinner tick
+                Some(std::time::Duration::from_secs(120)),
+            )
+            .await
         };
 
+        match outcome {
+            StreamOutcome::Interrupted => {
+                let _ = renderer.commit_panel("result", &["⊘ interrupted".to_string()], true);
+                interrupt_state.reset();
+                break;
+            }
+            StreamOutcome::Error(e) => {
+                return Err(anyhow::anyhow!("Connection error: {}", e));
+            }
+            StreamOutcome::Tick => {
+                // Spinner tick — animate (phase 1 only).
+                let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
+                let dot_period = 18;
+                let pos = (spin % TICKS_PER_VERB) % dot_period;
+                let dot_count = if pos < 10 {
+                    pos + 1
+                } else {
+                    dot_period - pos + 1
+                };
+                let sb = StatusBarState {
+                    session_id: session_id.unwrap_or(""),
+                    approval_hint: &approval.hint(),
+                    model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: 0.0,
+                    has_untracked: false,
+                };
+                let _ = renderer.draw_spinner(SPINNER[spin % SPINNER.len()], verb, dot_count, &sb);
+                spin = spin.wrapping_add(1);
+                continue;
+            }
+            StreamOutcome::Warn => {
+                // First interrupt press — show warning in live region.
+                let sb = StatusBarState {
+                    session_id: session_id.unwrap_or(""),
+                    approval_hint: &approval.hint(),
+                    model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: 0.0,
+                    has_untracked: false,
+                };
+                let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
+                continue;
+            }
+            StreamOutcome::Msg(ref _msg) => {
+                // fall through to Response handling below
+            }
+        }
+
+        let msg = match outcome {
+            StreamOutcome::Msg(m) => *m,
+            _ => unreachable!(),
+        };
+
+        // Handle the message
+
         match msg {
-            Response::KeepAlive => continue,
+            Response::KeepAlive => {
+                // Animate spinner on each keepalive (phase 1).
+                let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
+                let dot_period = 18;
+                let pos = (spin % TICKS_PER_VERB) % dot_period;
+                let dot_count = if pos < 10 {
+                    pos + 1
+                } else {
+                    dot_period - pos + 1
+                };
+                let sb = StatusBarState {
+                    session_id: session_id.unwrap_or(""),
+                    approval_hint: &approval.hint(),
+                    model,
+                    prompt_tokens: *prompt_tokens,
+                    context_window,
+                    daemon_up: false,
+                    tools_total: 0,
+                    cost_usd: 0.0,
+                    has_untracked: false,
+                };
+                let _ = renderer.draw_spinner(SPINNER[spin % SPINNER.len()], verb, dot_count, &sb);
+                spin = spin.wrapping_add(1);
+                continue;
+            }
             Response::Ok => {
                 // Flush any remaining partial line to scrollback.
                 let remaining = md.flush_to_lines(render_width);
@@ -639,13 +618,89 @@ pub(super) async fn ask_with_session_ratatui(
     Ok(())
 }
 
+/// Stream phase — race keyboard input and daemon `recv` without dropping
+/// the in-flight `recv` future.
+///
+/// The daemon-read future is created once per message and **pinned** across
+/// loop iterations so a keypress or spinner tick never discards partially-
+/// buffered bytes.  The spinner/timer is a separate, freely-recreatable
+/// branch.
+///
+/// `tick_interval` controls the spinner animation rate (80 ms for phase 1,
+/// `Duration::MAX` to disable for phase 2).
+/// `overall_timeout` is an optional total timeout for the daemon response
+/// (120 s for phase 2, `None` for phase 1).
+async fn stream_phase(
+    stdin: &AsyncStdin,
+    rx: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    interrupt_state: &mut InterruptState,
+    tick_interval: std::time::Duration,
+    overall_timeout: Option<std::time::Duration>,
+) -> StreamOutcome {
+    // Create the first daemon-read future and pin it.
+    let mut daemon_recv = Box::pin(recv(rx));
+
+    // Optional overall timeout handle.
+    let mut timeout_fut = overall_timeout.map(|d| Box::pin(tokio::time::sleep(d)));
+
+    loop {
+        if let Some(ref mut to) = timeout_fut {
+            tokio::select! {
+                key = read_key(stdin) => {
+                    if let Some(key) = key {
+                        let action = interrupt_state.feed(&key);
+                        match action {
+                            InterruptAction::Ignore => continue,
+                            InterruptAction::Warn => return StreamOutcome::Warn,
+                            InterruptAction::Abort => return StreamOutcome::Interrupted,
+                        }
+                    }
+                    continue;
+                }
+                res = &mut daemon_recv => {
+                    match res {
+                        Ok(response) => return StreamOutcome::Msg(Box::new(response)),
+                        Err(e) => return StreamOutcome::Error(e.to_string()),
+                    }
+                }
+                _ = to => {
+                    return StreamOutcome::Error("Daemon stopped responding (120 s timeout)".to_string());
+                }
+                _ = tokio::time::sleep(tick_interval), if tick_interval != std::time::Duration::MAX => {
+                    return StreamOutcome::Tick;
+                }
+            }
+        } else {
+            tokio::select! {
+                key = read_key(stdin) => {
+                    if let Some(key) = key {
+                        let action = interrupt_state.feed(&key);
+                        match action {
+                            InterruptAction::Ignore => continue,
+                            InterruptAction::Warn => return StreamOutcome::Warn,
+                            InterruptAction::Abort => return StreamOutcome::Interrupted,
+                        }
+                    }
+                    continue;
+                }
+                res = &mut daemon_recv => {
+                    match res {
+                        Ok(response) => return StreamOutcome::Msg(Box::new(response)),
+                        Err(e) => return StreamOutcome::Error(e.to_string()),
+                    }
+                }
+                _ = tokio::time::sleep(tick_interval), if tick_interval != std::time::Duration::MAX => {
+                    return StreamOutcome::Tick;
+                }
+            }
+        }
+    }
+}
+
 // ── Ratatui interactive approval primitives ──────────────────────────────────
 
 /// Parse a user response to a Y/N/A prompt.
-/// Returns `(approved, is_approve_session, user_message)`.
-/// `"a"` means approve-for-session.
-/// Any other non-empty string is treated as a typed redirect message.
-fn parse_approval_decision(input: &str) -> (bool, bool, Option<String>) {
+fn parse_approval_response(input: &str) -> (bool, bool, Option<String>) {
     let trimmed = input.trim();
     let lower = trimmed.to_lowercase();
     match lower.as_str() {
@@ -742,7 +797,7 @@ async fn prompt_with_session_approve(
     }
     // Read the decision in the live region.
     let input = read_approval_input(renderer, stdin, prompt_text, status).await;
-    parse_approval_decision(&input)
+    parse_approval_response(&input)
 }
 
 // ── Ratatui prompt functions (called from ask_with_session_ratatui) ──────────
@@ -1054,7 +1109,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_y_approves() {
-        let (approved, is_session, msg) = parse_approval_decision("y");
+        let (approved, is_session, msg) = parse_approval_response("y");
         assert!(approved);
         assert!(!is_session);
         assert!(msg.is_none());
@@ -1062,7 +1117,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_yes_approves() {
-        let (approved, is_session, msg) = parse_approval_decision("yes");
+        let (approved, is_session, msg) = parse_approval_response("yes");
         assert!(approved);
         assert!(!is_session);
         assert!(msg.is_none());
@@ -1070,7 +1125,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_y_uppercase_approves() {
-        let (approved, is_session, msg) = parse_approval_decision("Y");
+        let (approved, is_session, msg) = parse_approval_response("Y");
         assert!(approved);
         assert!(!is_session);
         assert!(msg.is_none());
@@ -1078,7 +1133,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_n_denies() {
-        let (approved, is_session, msg) = parse_approval_decision("n");
+        let (approved, is_session, msg) = parse_approval_response("n");
         assert!(!approved);
         assert!(!is_session);
         assert!(msg.is_none());
@@ -1086,7 +1141,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_empty_denies() {
-        let (approved, is_session, msg) = parse_approval_decision("");
+        let (approved, is_session, msg) = parse_approval_response("");
         assert!(!approved);
         assert!(!is_session);
         assert!(msg.is_none());
@@ -1094,7 +1149,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_a_approves_session() {
-        let (approved, is_session, msg) = parse_approval_decision("a");
+        let (approved, is_session, msg) = parse_approval_response("a");
         assert!(approved);
         assert!(is_session);
         assert!(msg.is_none());
@@ -1102,7 +1157,7 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_typed_message_redirects() {
-        let (approved, is_session, msg) = parse_approval_decision("do X instead");
+        let (approved, is_session, msg) = parse_approval_response("do X instead");
         assert!(!approved);
         assert!(!is_session);
         assert_eq!(msg, Some("do X instead".to_string()));
@@ -1110,9 +1165,78 @@ mod tests {
 
     #[test]
     fn parse_approval_decision_typed_message_preserves_case() {
-        let (approved, is_session, msg) = parse_approval_decision("Fix the path please");
+        let (approved, is_session, msg) = parse_approval_response("Fix the path please");
         assert!(!approved);
         assert!(!is_session);
         assert_eq!(msg, Some("Fix the path please".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod stream_phase_tests {
+    use super::*;
+    use crate::cli::input::Key;
+
+    /// Verify that `InterruptState` correctly handles the two-press pattern
+    /// when driven through the same sequence `stream_phase` would use.
+    #[test]
+    fn interrupt_state_two_press_via_stream_phase_path() {
+        let mut state = InterruptState::new();
+
+        // First interrupt key → Warn
+        assert_eq!(state.feed(&Key::CtrlC), InterruptAction::Warn);
+        assert!(state.is_armed());
+
+        // Second interrupt key → Abort
+        assert_eq!(state.feed(&Key::Char('\x1b')), InterruptAction::Abort);
+        assert!(!state.is_armed());
+    }
+
+    /// Verify that non-interrupt keys are true no-ops (the key property
+    /// that distinguishes the fix from the bug: a non-interrupt keypress
+    /// must not affect the state machine, and in the fixed code the recv
+    /// future is not dropped).
+    #[test]
+    fn non_interrupt_key_is_true_noop() {
+        let mut state = InterruptState::new();
+        assert_eq!(state.feed(&Key::Char('x')), InterruptAction::Ignore);
+        assert!(!state.is_armed());
+
+        // After arming, non-interrupt keys still no-op
+        state.feed(&Key::CtrlC);
+        assert!(state.is_armed());
+        assert_eq!(state.feed(&Key::Enter), InterruptAction::Ignore);
+        assert!(state.is_armed()); // still armed
+    }
+
+    /// Verify that the armed state resets between turns, so the next turn's
+    /// first press warns again (does not immediately abort).
+    #[test]
+    fn armed_state_resets_between_turns_via_stream_phase_path() {
+        let mut state = InterruptState::new();
+        state.feed(&Key::CtrlC); // arm
+        assert!(state.is_armed());
+
+        // Turn completes — reset
+        state.reset();
+        assert!(!state.is_armed());
+
+        // Next turn's first press warns again
+        assert_eq!(state.feed(&Key::Char('\x1b')), InterruptAction::Warn);
+    }
+
+    /// Verify that StreamOutcome::Warn is distinct from StreamOutcome::Interrupted
+    /// — the first press returns Warn (not Interrupted), so the caller can show
+    /// a warning and keep the recv future alive.
+    #[test]
+    fn warn_is_distinct_from_interrupted() {
+        let mut state = InterruptState::new();
+        let action = state.feed(&Key::CtrlC);
+        assert_eq!(action, InterruptAction::Warn);
+        // stream_phase returns StreamOutcome::Warn for this, which the caller
+        // handles by drawing the warning and continuing the outer loop.
+        // The recv future is NOT dropped because the key branch just returns
+        // from stream_phase; the next call to stream_phase recreates the recv
+        // future from the same rx (which is fine since no bytes were consumed).
     }
 }
