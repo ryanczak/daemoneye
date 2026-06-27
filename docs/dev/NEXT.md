@@ -4,9 +4,17 @@
 Status `in-progress` — phases 01–13 are `done`. The remaining work is the tail of the C5 split
 sweep (phases 14–15).
 
-**Active phase:** none drafted. **phase-14 — split-background** is next; draft it via
-`/rexymcp:architect next`. It splits `daemon/background.rs` (1369) into `background/` :
-`helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC).
+**Active phase:** **phase-14 — split-background** (`docs/dev/milestones/M2-tui-renderer/phase-14-split-background.md`),
+status `todo`, **drafted and ready to dispatch** via `/rexymcp:dispatch phase-14-split-background`.
+It splits `daemon/background.rs` (1369) into `background/` : `helpers` (shared
+`shell_exit_var`/`trim_large_output`/`capture_and_archive`/`BgJobInfo`/`notify_session`/
+`BG_COMMAND_MAP`), `run` (`run_background_in_window`), `respawn` (`respawn_background_in_pane`),
+`gc` (`OwnedJobInfo`/`notify_job_completion`/`plan_gc_actions`/`gc_bg_windows`). NORMAL spec
+density (mechanical split). **Shaped like phase 12, not 13:** no `super::` re-pathing (the file is
+all `crate::`-absolute), but four `pub(super)` helper bumps ARE required because the shared helpers
+move into a sibling `helpers.rs` used by `run`/`respawn`. The phase-12 calibration note (pin
+re-export-source visibility explicitly) is honored: all six re-exported names are already `pub`,
+so the `pub use` re-exports widen nothing — pinned in §Spec item 1.
 
 phase-13 — split-types is `done` (**approved_first_try**, 2026-06-27). Verbatim move split of
 `ai/types.rs` (1413) into `types/{mod,wire,pending,events}.rs`. Fidelity diff: 12 additions,

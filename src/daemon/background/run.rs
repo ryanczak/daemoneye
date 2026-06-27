@@ -1,0 +1,422 @@
+use super::helpers::{
+    BG_COMMAND_MAP, BgJobInfo, capture_and_archive, notify_session, shell_exit_var,
+};
+use crate::daemon::session::{BgWindowInfo, SessionStore, bg_done_subscribe, complete_subscribe};
+use crate::daemon::utils::{
+    command_has_sudo, is_fingerprint_prompt, log_event, shell_escape_arg, sudo_auth_failed,
+    wait_for_sudo_prompt_and_inject,
+};
+use crate::tmux;
+use crate::util::UnpoisonExt;
+use std::sync::Mutex;
+use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Chat-session background execution
+// ---------------------------------------------------------------------------
+
+/// Run a command in a dedicated tmux window (`de-bg-*`) on the daemon host.
+///
+/// Returns **immediately** after sending the command.  A background task
+/// monitors for completion via two paths:
+///
+/// - **Path A — pane died**: the shell exited (`pane-died` hook → `BG_DONE_TX`
+///   broadcast).  Output is captured, a `[Background Task Completed]` context
+///   message is injected, and the window is GC'd.
+/// - **Path B — exit marker found**: the command finished but the shell is still
+///   alive.  A `DAEMONEYE_EXIT_<id>:<N>` marker appended to the command detects
+///   this by scanning the pane scrollback every second.  Output is captured,
+///   context is injected, and the window is left open for follow-up commands.
+///
+/// The AI receives `[Background Task Completed]` asynchronously in its next
+/// turn.  The returned string includes the pane ID so the AI can direct
+/// follow-up commands there via `target="<pane_id>"`.
+pub async fn run_background_in_window(
+    session: &str,
+    _tool_id: &str,
+    cmd_id: usize,
+    cmd: &str,
+    credential: Option<&str>,
+    session_id: Option<String>,
+    sessions: SessionStore,
+) -> String {
+    let prefix = if let Some(sid) = &session_id {
+        if sid.starts_with("ghost-") {
+            // Use the prefix registered on the session entry so webhook-triggered,
+            // scheduler-triggered and interactive ghost shells get distinct prefixes.
+            let store = sessions.lock().unwrap_or_log();
+            store
+                .get(sid.as_str())
+                .map(|e| e.ghost_bg_prefix)
+                .unwrap_or(crate::daemon::GS_BG_WINDOW_PREFIX)
+        } else {
+            crate::daemon::BG_WINDOW_PREFIX
+        }
+    } else {
+        crate::daemon::BG_WINDOW_PREFIX
+    };
+
+    // Create the window with a temporary name first; we need the pane ID
+    // (returned by create_job_window) to build the final name.
+    let unix_ts = chrono::Utc::now().timestamp();
+    let temp_name = format!("{}tmp-{}", prefix, unix_ts);
+
+    let pane_id = match tmux::create_job_window(session, &temp_name) {
+        Ok(p) => p,
+        Err(e) => return format!("Failed to create background window: {}", e),
+    };
+
+    // Build final name: prefix + pane-number + unix-ts + command-slug.
+    let pane_num = pane_id.trim_start_matches('%');
+    let cmd_slug = crate::daemon::utils::sanitize_cmd_for_window(cmd, 30);
+    let final_name = format!("{}{}-{}-{}", prefix, pane_num, unix_ts, cmd_slug);
+    let win_name = match tmux::rename_window(session, &temp_name, &final_name) {
+        Ok(()) => final_name,
+        Err(e) => {
+            log::warn!(
+                "Failed to rename bg window {} -> {}: {}",
+                temp_name,
+                final_name,
+                e
+            );
+            temp_name
+        }
+    };
+
+    if let Ok(mut map) = BG_COMMAND_MAP
+        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+        .lock()
+    {
+        map.insert(pane_id.clone(), cmd_id);
+    }
+
+    let started_at = tokio::time::Instant::now();
+
+    // remain-on-exit lets us query pane_dead_status on shell crash (fallback path).
+    if let Err(e) = tmux::set_remain_on_exit(&pane_id, true) {
+        log::warn!("Failed to set remain-on-exit for {}: {}", win_name, e);
+    }
+
+    // Detect the shell to select the right exit-code variable.
+    let shell_name = tmux::pane_current_command(&pane_id).unwrap_or_default();
+    let exit_var = shell_exit_var(&shell_name);
+
+    // Wrap the command so it notifies the daemon on completion via IPC.
+    // The shell stays alive for follow-up commands (no `exit`).
+    //
+    // On Linux, if the binary was replaced after the daemon started (e.g. a
+    // `cargo build` while the daemon runs), the kernel appends " (deleted)"
+    // to the /proc/self/exe path returned by current_exe().  Strip it so the
+    // notify call remains valid — the original path still resolves on disk.
+    // Then shell-quote the path to handle any spaces in the binary location.
+    let exe_raw = std::env::current_exe()
+        .map(|p| {
+            p.to_string_lossy()
+                .trim_end_matches(" (deleted)")
+                .to_string()
+        })
+        .unwrap_or_else(|_| "daemoneye".to_string());
+    let exe = shell_escape_arg(&exe_raw);
+    let notify = format!(
+        "{exe} notify complete {pane_id} $__de_ec {session}",
+        pane_id = pane_id,
+        session = shell_escape_arg(session),
+    );
+    // P5: inject a locale-independent sentinel as the sudo password prompt so
+    // credential detection below does not rely on translated "password" strings.
+    // Only applied when a credential will actually be injected.
+    let sentineled_cmd;
+    let cmd: &str = if command_has_sudo(cmd) && credential.is_some() {
+        sentineled_cmd = format!("SUDO_PROMPT='[de-sudo-prompt]' {cmd}");
+        &sentineled_cmd
+    } else {
+        cmd
+    };
+
+    let wrapped = if exit_var == "$status" {
+        // fish: use set to capture status before running notify
+        format!("{cmd}; set __de_ec $status; {notify}")
+    } else {
+        // bash / zsh / sh / ksh / dash / ...
+        format!("{cmd}; __de_ec=$?; {notify}")
+    };
+
+    // Fix A: subscribe to completion channels BEFORE send_keys so a fast-completing
+    // command cannot fire its signal before the monitor has subscribed.
+    let mut complete_rx = complete_subscribe();
+    let mut died_rx = bg_done_subscribe();
+
+    // Fix B: start pipe-pane BEFORE the command fires to capture all output without
+    // any scrollback cap.  Falls back silently if pipe-pane isn't available.
+    let pipe_log = tmux::start_pipe_pane(&pane_id)
+        .map_err(|e| log::warn!("Failed to start pipe-pane for {}: {}", pane_id, e))
+        .ok();
+
+    if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
+        if pipe_log.is_some() {
+            tmux::stop_pipe_pane(&pane_id);
+        }
+        let _ = tmux::kill_job_window(session, &win_name);
+        return format!("Failed to send command to window: {}", e);
+    }
+
+    // Inject sudo credential synchronously (≤10 s); must happen before we return.
+    // P3: detect auth failure and log a warning — the failed exit code propagates
+    // through the completion monitor and will be visible to the AI.
+    if let Some(cred) = credential {
+        if wait_for_sudo_prompt_and_inject(&pane_id, cred).await {
+            if sudo_auth_failed(&pane_id).await {
+                log::warn!(
+                    "sudo authentication failed for background command in {}: {}",
+                    pane_id,
+                    cmd
+                );
+            }
+        } else {
+            // Distinguish fingerprint-reader failures from plain timeouts so the
+            // AI receives an actionable error rather than just a non-zero exit code.
+            let snap = crate::tmux::capture_pane(&pane_id, 10).unwrap_or_default();
+            if is_fingerprint_prompt(&snap) {
+                log::warn!(
+                    "sudo fingerprint auth not supported in background panes ({}): {}",
+                    pane_id,
+                    cmd
+                );
+                let _ = crate::tmux::kill_job_window(session, &win_name);
+                return "sudo failed: fingerprint authentication is not supported in background \
+                     panes — the pane has no TTY for a reader interaction. \
+                     Use `daemoneye install-sudoers <script-name>` to create a NOPASSWD \
+                     sudoers rule for this command, or run it in a foreground pane."
+                    .to_string();
+            }
+            log::warn!(
+                "sudo prompt not detected for background command in {}: {}",
+                pane_id,
+                cmd
+            );
+        }
+    }
+
+    // Register in the session's bg_windows list (cap enforcement runs in executor).
+    if let Some(ref sid) = session_id
+        && let Ok(mut store) = sessions.lock()
+        && let Some(entry) = store.get_mut(sid)
+    {
+        entry.bg_windows.push(BgWindowInfo {
+            pane_id: pane_id.clone(),
+            window_name: win_name.clone(),
+            tmux_session: session.to_string(),
+            exit_code: None,
+        });
+    }
+
+    log_event(
+        "job_start",
+        serde_json::json!({
+            "session": session_id.as_deref().unwrap_or("-"),
+            "job_name": win_name,
+            "pane": pane_id,
+        }),
+    );
+
+    // Inline completion wait (3 s): the async block borrows complete_rx / died_rx
+    // by &mut without moving them, so after .await the receivers are still owned
+    // here and can be moved into the async monitor on the slow path.
+    // Fast commands (like `df -h`) complete in ~0 ms because Fix A ensures the
+    // broadcast message is already buffered by the time we poll.
+    let inline = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            tokio::select! {
+                result = complete_rx.recv() => {
+                    if let Ok((pid, code)) = result
+                        && pid == pane_id { return (code, true); }
+                }
+                result = died_rx.recv() => {
+                    if let Ok(pid) = result
+                        && pid == pane_id {
+                            let code = tmux::pane_dead_status(&pane_id).unwrap_or(-1);
+                            return (code, false);
+                        }
+                }
+            }
+        }
+    })
+    .await;
+
+    match inline {
+        Ok((exit_code, pane_persists)) => {
+            // Fast path: command finished within 3 s — return output inline as the
+            // tool result.  Do NOT call notify_session; the output is already here.
+            if pipe_log.is_some() {
+                let _ = std::process::Command::new("tmux")
+                    .args(["pipe-pane", "-t", &pane_id])
+                    .output();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            let body = capture_and_archive(&pane_id, &win_name, pipe_log);
+
+            log_event(
+                "job_complete",
+                serde_json::json!({
+                    "session": session_id.as_deref().unwrap_or("-"),
+                    "job_name": win_name,
+                    "exit_code": exit_code,
+                    "duration_ms": started_at.elapsed().as_millis() as u64,
+                    "pane_persists": pane_persists,
+                }),
+            );
+
+            // Update exit_code in bg_windows.
+            if let Some(ref sid) = session_id
+                && let Ok(mut store) = sessions.lock()
+                && let Some(entry) = store.get_mut(sid)
+                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+            {
+                w.exit_code = Some(exit_code);
+            }
+
+            if !pane_persists {
+                let reason = if exit_code == 124 {
+                    "timeout"
+                } else {
+                    "pane-died"
+                };
+                log_event(
+                    "gc_window",
+                    serde_json::json!({
+                        "session": session_id.as_deref().unwrap_or("-"),
+                        "win_name": win_name,
+                        "reason": reason,
+                    }),
+                );
+                if let Err(e) = tmux::kill_job_window(session, &win_name) {
+                    log::error!("Failed to GC dead bg window {}: {}", win_name, e);
+                }
+                if let Some(ref sid) = session_id
+                    && let Ok(mut store) = sessions.lock()
+                    && let Some(entry) = store.get_mut(sid)
+                {
+                    entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                }
+            }
+
+            let persist_note = if pane_persists {
+                format!(
+                    "The window is still open (pane {pane_id}). \
+                     Use target=\"{pane_id}\" to run follow-up commands in the same shell."
+                )
+            } else {
+                format!(
+                    "The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log"
+                )
+            };
+            format!(
+                "Background command completed (exit {exit_code}).\n{persist_note}\n<output>\n{body}\n</output>"
+            )
+        }
+        Err(_elapsed) => {
+            // Slow path: command still running after 3 s.
+            // Borrows on complete_rx / died_rx ended when the timeout future was dropped;
+            // move them into the async monitor.
+            let pane_id_bg = pane_id.clone();
+            let win_name_bg = win_name.clone();
+            let cmd_bg = cmd.to_string();
+            let session_bg = session.to_string();
+            let session_id_bg = session_id.clone();
+            let sessions_bg = sessions.clone();
+
+            tokio::spawn(async move {
+                let mut complete_rx = complete_rx;
+                let mut died_rx = died_rx;
+
+                let (exit_code, pane_persists) = tokio::time::timeout(
+                    Duration::from_secs(3600),
+                    async {
+                        loop {
+                            tokio::select! {
+                                result = complete_rx.recv() => {
+                                    if let Ok((pid, code)) = result
+                                        && pid == pane_id_bg { return (code, true); }
+                                }
+                                result = died_rx.recv() => {
+                                    if let Ok(pid) = result
+                                        && pid == pane_id_bg {
+                                            let code = tmux::pane_dead_status(&pane_id_bg).unwrap_or(-1);
+                                            return (code, false);
+                                        }
+                                }
+                            }
+                        }
+                    }
+                ).await.unwrap_or((124, false));
+
+                if pipe_log.is_some() {
+                    let _ = std::process::Command::new("tmux")
+                        .args(["pipe-pane", "-t", &pane_id_bg])
+                        .output();
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+
+                let duration_ms = started_at.elapsed().as_millis() as u64;
+                let body = capture_and_archive(&pane_id_bg, &win_name_bg, pipe_log);
+
+                log_event(
+                    "job_complete",
+                    serde_json::json!({
+                        "session": session_id_bg.as_deref().unwrap_or("-"),
+                        "job_name": win_name_bg,
+                        "exit_code": exit_code,
+                        "duration_ms": duration_ms,
+                        "pane_persists": pane_persists,
+                    }),
+                );
+
+                if let Some(ref sid) = session_id_bg {
+                    notify_session(
+                        &sessions_bg,
+                        sid,
+                        BgJobInfo {
+                            pane_id: &pane_id_bg,
+                            cmd: &cmd_bg,
+                            win_name: &win_name_bg,
+                            exit_code,
+                            body: &body,
+                            pane_persists,
+                        },
+                    );
+                }
+
+                if !pane_persists {
+                    let reason = if exit_code == 124 {
+                        "timeout"
+                    } else {
+                        "pane-died"
+                    };
+                    log_event(
+                        "gc_window",
+                        serde_json::json!({
+                            "session": session_id_bg.as_deref().unwrap_or("-"),
+                            "win_name": win_name_bg,
+                            "reason": reason,
+                        }),
+                    );
+                    if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
+                        log::error!("Failed to GC dead bg window {}: {}", win_name_bg, e);
+                    }
+                    if let Some(ref sid) = session_id_bg
+                        && let Ok(mut store) = sessions_bg.lock()
+                        && let Some(entry) = store.get_mut(sid)
+                    {
+                        entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
+                    }
+                }
+            });
+
+            format!(
+                "Background command sent to pane {pane_id} (window {win_name}). \
+                 You will receive a [Background Task Completed] context message when it finishes. \
+                 Use target=\"{pane_id}\" to run follow-up commands in the same shell."
+            )
+        }
+    }
+}
