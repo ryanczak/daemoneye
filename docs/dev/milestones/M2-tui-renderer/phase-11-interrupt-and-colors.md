@@ -1,7 +1,7 @@
 # Phase 11: interrupt-and-colors
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-11-1)
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-10 (done — input editor)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -296,3 +296,49 @@ grep -rn 'Rgb(220, 160, 0)' src/cli/render_ratatui.rs → 2 matches (title_color
 - Used `tokio::select!` with `biased` flag to ensure keyboard input takes priority over daemon `recv` — this prevents the daemon branch from being silently dropped. The `biased` semantics guarantee that if the keyboard future is ready, it wins; the daemon future retains its internal state for the next iteration.
 - The abort mechanism relies on dropping the socket connection (breaking from the loop drops `rx`), which causes the daemon's `send_response_split` to fail with a broken pipe — no new IPC variant needed.
 - `InterruptState` is a small, directly unit-testable helper as required by the spec. It lives in its own module for clean separation.
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** bounced (filed bug-phase-11-1)
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Bug filed:** bug-phase-11-1 (major) — the streaming-interrupt seam drops the daemon
+  `recv` future on every keypress/spinner tick, so a partially-buffered `Response` line is
+  lost and the stream desyncs.
+- **Independent re-run:** `cargo fmt --all --check` ✓ · `cargo build` ✓ (0 warnings) ·
+  `cargo clippy --all-targets --all-features -- -D warnings` ✓ · `cargo test` ✓ (811 lib +
+  27 integration, 2 ignored). The 6 `InterruptState` tests + the `commit_panel` color test
+  all pass.
+- **Scope deviations:** none. Stayed in `commands/interrupt.rs` (new) / `commands/mod.rs` /
+  `commands/stream.rs` / `render_ratatui.rs`; no banned deps; `src/daemon/**` and `src/ipc.rs`
+  untouched (no new IPC variant — correct, the socket-close abort mechanism was used as the
+  spec named).
+- **Color recolor (the pinned add): correct and well-tested.** `commit_panel` borders are
+  `Rgb(180,0,0)` bold and the title is `Rgb(220,160,0)`, split into separate spans
+  (`render_ratatui.rs:328–342`). `commit_panel_uses_blood_red_border_and_yellow_title`
+  asserts real `TestBackend` cell `fg` styles, not a returned string — a genuine test.
+- **Interrupt core: green-but-subtly-wrong on the load-bearing seam (the M2 target).** The
+  `tokio::select! { biased; key = read_key(stdin) => …; res = …recv(&mut rx)… => … }` builds a
+  **fresh** `recv` future inside the select every iteration, so any keypress (or the 80 ms
+  spinner tick) drops an in-flight `recv` — and `recv` is `read_line` over a `BufReader`
+  (`ipc_client.rs:53`), which consumes partial bytes before returning `Pending`. Dropping it
+  loses those bytes → next `recv` parses a fragment → `Connection error`. This violates the
+  AC "first ESC/Ctrl+C warns **and streaming continues**" and "ignore all other keys while
+  streaming." The executor's Notes assert `biased` "prevents the daemon branch from being
+  silently dropped … retains its internal state" — a **hallucinated API guarantee** (`biased`
+  fixes poll order only; `select!` drops un-taken branch futures). All `cargo test` green
+  because every test drives the synchronous `InterruptState` helper / `commit_panel` colors;
+  **none drives the `select!`/`recv` integration**, so the defect is invisible to the suite.
+- **Calibration (lean spec on design-discovery work — the M2 probe):** Another clean data
+  point for the M2 thesis. The lean spec *named the exact risk* in Pre-flight ("confirm the
+  real tokio primitive … that it does not drop the un-selected branch's progress") and the
+  executor still (a) reached for the wrong concurrency shape (recreated future inside the
+  select) and (b) self-justified it with an invented `biased` guarantee — the recurring
+  "wrong seam + confident wrong reasoning" ceiling, now reproduced on a *tokio* seam rather
+  than a *ratatui* one (so the discriminator is task shape — design-discovery — not the
+  specific API). The color half (mechanical, fully pinned) landed perfectly first try,
+  mirroring 04–06. The "no automated test drives the seam" repeat of the phase-10 lesson is
+  also present: the executor tested the pieces it could reach synchronously and left the
+  integration to manual E2E that was not run. Re-dispatch with bug-phase-11-1's fix pinned
+  (hold/pin the `recv` future across iterations; drive the spinner from a separate timer).
+  **Failure classes:** `wrong_seam`, `correctness`, `false_completion`, `missing_tests`.
