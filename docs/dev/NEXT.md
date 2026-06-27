@@ -1,21 +1,19 @@
 # NEXT
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
-Status `in-progress` — phases 01–12 are `done`. The remaining work is the C5 split sweep
-(phases 13–15).
+Status `in-progress` — phases 01–13 are `done`. The remaining work is the tail of the C5 split
+sweep (phases 14–15).
 
-**Active phase:** **phase-13 — split-types** is **drafted and ready to dispatch**
-(`docs/dev/milestones/M2-tui-renderer/phase-13-split-types.md`, status `todo`). A verbatim
-move split of `ai/types.rs` (1413 lines) into `types/` : `mod` (re-exports only), `wire`
-(`ToolCall`/`ToolResult`/`Message`/`TokenBreakdown` + custom deserializer), `pending`
-(`PendingCall` + its impl), `events` (`AiEvent`). Specced **NORMAL** (mechanical split — the
-04–06/08/09/12 pattern that cleared first try). Even simpler than phase 12: the file uses **no**
-`super::`/`crate::` paths so there is no `super:: → super::super::` re-pathing, and every item
-is already `pub` so there are **no visibility bumps** — only two internal sibling imports
-(`pending`→`wire::ToolCall`, `events`→`wire::TokenBreakdown`) and the `mod.rs` re-exports.
-`pending.rs` is authorized to land ~900 lines (single cohesive enum + impl, the `defs.rs`-style
-exception). Sorted-multiset line diff is the fidelity gate. Dispatch via
-`/rexymcp:dispatch phase-13`.
+**Active phase:** none drafted. **phase-14 — split-background** is next; draft it via
+`/rexymcp:architect next`. It splits `daemon/background.rs` (1369) into `background/` :
+`helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC).
+
+phase-13 — split-types is `done` (**approved_first_try**, 2026-06-27). Verbatim move split of
+`ai/types.rs` (1413) into `types/{mod,wire,pending,events}.rs`. Fidelity diff: 12 additions,
+zero deletions/changes — all authorized (mod.rs decls + re-exports, two sibling
+`use super::wire::…` imports, the second test-module wrapper). `pending.rs` landed 925 lines
+(within the authorized single-cohesive-enum exception). **Fifth consecutive clean mechanical C5
+split** (04/05/06/12/13) — reinforces that NORMAL spec density clears verbatim splits first try.
 
 phase-12 — split-file-ops is `done` (**approved_first_try**, 2026-06-27). Verbatim
 move-and-re-path split of `daemon/executor/file_ops.rs` (1475) into `file_ops/{mod,read,write,

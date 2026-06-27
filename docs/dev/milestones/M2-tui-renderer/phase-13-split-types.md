@@ -1,7 +1,7 @@
 # Phase 13: split-types
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** none (independent C5 cleanup; touches only `src/ai/types.rs`)
 **Estimated diff:** ~1413 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
@@ -320,3 +320,48 @@ grep 'use super::wire::TokenBreakdown' src/ai/types/events.rs → line 1 ✓
 **End-to-end verification:** N/A — phase ships no new runtime-loadable artifact (pure internal module reorganization). The `cargo test` pass + multiset-diff fidelity check are the verification.
 
 **Notes for review:** None — mechanical split, no adaptations needed.
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP executor)
+- **Scope deviations:** none
+- **Calibration:** NORMAL spec density cleared first try — fifth consecutive clean mechanical
+  C5 split (04/05/06/12/13). Confirms the interim M2 finding: verbatim move-and-re-path splits
+  do not need front-loading; the spec fully determines the shape.
+
+**Independent re-run (reviewer, in repo root, separate invocations):**
+
+- `cargo fmt --all -- --check`: clean (exit 0)
+- `cargo build` (forced rebuild via `touch`): `Finished` — zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean (exit 0)
+- `cargo test`: 814 lib passed / 0 failed; 27 integration passed / 0 failed / 2 ignored
+
+**DoD verification:**
+
+- **Files:** `src/ai/types.rs` deleted; `src/ai/types/{mod,wire,pending,events}.rs` present
+  (7 / 277 / 925 / 216 lines). `pending.rs` at 925 is within the authorized ~900 single-cohesive-
+  enum exception (`defs.rs`-style); not split into a spurious fourth submodule.
+- **`ai/mod.rs` unchanged:** `git diff HEAD~1 src/ai/mod.rs` empty.
+- **mod.rs** matches the spec byte-for-byte (3 private `mod` decls + 3 `pub use` re-export lines).
+- **Sibling imports** correct and minimal: `pending.rs` → `use super::wire::ToolCall;`,
+  `events.rs` → `use super::wire::TokenBreakdown;`.
+- **Fidelity (reviewer re-run, `HEAD~1` flat file vs new dir):** before 1306 / after 1318 non-
+  blank-non-comment sorted lines; diff is **12 additions, zero deletions, zero changes**. All 12
+  are authorized: `}` + `#[cfg(test)]` + `mod tests {` + `use super::*;` (the single original test
+  module became two — wire + pending), the 3 `mod` decls + 3 `pub use` re-exports in mod.rs, and
+  the 2 sibling `use super::wire::…` imports. No logic, visibility, string, or assertion line
+  appeared, disappeared, or changed.
+- **Test placement** exact per §Test placement: wire 10, pending 13, events 0 = 23 total,
+  matching the old flat file's 23. All pass under their original names.
+- **No forbidden idioms** in the new files (no TODO/FIXME/dbg!/println!/#[allow]/unsafe; no
+  unwrap/expect/panic in production paths — only in test modules).
+
+**Deep-review axes (M2 directive):**
+
+1. **Spec conformance** — full; stayed inside boundaries, no scope creep, no deps added,
+   `ai/mod.rs` and consumers untouched.
+2. **Reasoning quality** — N/A for a mechanical move; the fidelity diff proves verbatim transfer.
+3. **Code & test quality** — clean idiomatic module layout matching the prior C5 splits; tests
+   relocated verbatim (assertions unchanged, proven by the multiset diff), all green.
