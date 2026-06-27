@@ -1,7 +1,7 @@
 # Phase 15: split-knowledge
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** todo
+**Status:** review
 **Depends on:** none (independent C5 cleanup; touches only `src/daemon/executor/knowledge.rs` and the new `knowledge/` directory)
 **Estimated diff:** ~1341 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
