@@ -1,7 +1,7 @@
 # Bug 1 on phase-10: three core input behaviors are green-but-inert on a real terminal
 
 **Severity:** blocker
-**Status:** open
+**Status:** resolved
 **Filed:** 2026-06-26
 
 ## What's wrong

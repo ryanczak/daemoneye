@@ -1,7 +1,7 @@
 # Phase 10: input-editor
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-05 (done — `cli/input/editor`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -384,3 +384,52 @@ Not performed — requires interactive tmux session with `daemoneye chat` which 
 - The `AsyncStdin::from_raw_fd` constructor is `#[cfg(test)]` so it is not available in production builds.
 - The `Key` enum now derives `Debug` and `PartialEq` — these are only used in test code but are harmless in production and needed for `assert_eq!` assertions.
 - All 10 new tests use `pipe2(O_NONBLOCK)` + `from_raw_fd` to inject bytes into `read_key` without touching `/dev/tty`.
+
+### Review verdict — 2026-06-26 (approved)
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-phase-10-1, bug-phase-10-2)
+- **Bugs filed:** 2 (both now resolved)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none (stayed in `tty.rs` / `editor.rs` / `render_ratatui.rs` /
+  `chat.rs`; no banned deps; `from_raw_fd` is `#[cfg(test)]`-gated).
+- **Independent re-run:** `cargo fmt --all --check` ✓ · `cargo build` ✓ (0 warnings) ·
+  `cargo clippy --all-targets --all-features -- -D warnings` ✓ · `cargo test` ✓
+  (804 lib + 27 integration, 2 ignored). The 10 new tty seam tests ran 5× with no flake.
+- **Spot-check (tests are real):** mutated the `ESC[200~` paste-start match in production
+  `read_key`; `read_key_bracketed_paste_single_line` **FAILED** as expected, then passed
+  again after restore. The seam tests genuinely exercise the production parser, not a fake.
+- **Why this closes the two-bounce thread:** bug-phase-10-1 fixed the *code* at the seam
+  (real `ESC[200~`/`ESC[201~` protocol, `ESC`+CR→`Key::CtrlJ`, `Paragraph::scroll`,
+  whitespace-preserving wrap); bug-phase-10-2 required the seam itself be *tested*. The
+  re-dispatch added an `AsyncStdin::from_raw_fd` pipe-injection seam and 10 hermetic
+  `#[tokio::test]`s driving the real `read_key` over real byte streams — including
+  `\x1b[200~a\nb\x1b[201~` → single `Key::Paste("a\nb")` (no mid-paste `Enter`) and
+  `\x1b\r` → `Key::CtrlJ` while bare `\r` → `Key::Enter`. Both bug-10-2 verification
+  items are now met. The original "green-but-inert" pattern is resolved at the
+  automatable level: the tty seam (real parser) and the render seam (TestBackend cursor/
+  scroll/wrap) are both exercised.
+- **Outstanding — manual PE acceptance (not an executor task):** the live interactive
+  tmux E2E from the phase doc's "End-to-end verification" section was not run. The
+  reviewer is a headless background job and the only attached tmux session is the user's
+  live working session; starting a daemon (which installs hooks + pipe-pane logging on
+  the user's sessions) and driving `send-keys` there would be intrusive, and a detached
+  session blocks the renderer's `session_attached` wait. Both bug docs designate this a
+  manual PE step. Confidence it passes is high: `EnableBracketedPaste` is emitted on
+  renderer creation and the parser is proven against the exact standard byte sequences.
+  Recommended one-time manual confirmation by the PE in a live `daemoneye chat`:
+  type a line wider than the box (expect word-wrap + visible cursor), `send-keys` a
+  `\x1b[200~`…`\x1b[201~` block (expect multi-line wrapped input, no submit), Alt+Enter
+  (expect a new line), and a tall body (expect internal scroll).
+- **Calibration (lean spec on design-discovery work — the M2 probe):** This is the
+  clearest data point yet for the M2 thesis. The lean, design-discovery spec took the
+  full predicted ladder: rung-0 self-declared completion with green-but-inert behavior
+  (bounce 1) → rung-1 "name the load-bearing seam" produced correct *production* fixes
+  but still no seam test (bounce 2) → rung-2 "name the seam test construction" (spell out
+  `pipe2` + `from_raw_fd`) finally produced real seam coverage. Takeaway for the fold:
+  on this shape the executor fixes code at a named seam but does **not** generalize
+  "...and test that seam" until the test construction is itemized as concretely as the
+  code change. Front-loading the seam-test recipe (or pairing every "wrong-seam" risk
+  with a "here's the hermetic test that proves it" line) would likely collapse this from
+  three rungs to one. **Failure classes across the thread:** `false_completion`,
+  `wrong_seam`, `missing_tests`, `correctness` — all now resolved.

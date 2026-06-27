@@ -1,7 +1,7 @@
 # Bug 2 on phase-10: code fixes landed but the load-bearing tty seam is still untested
 
 **Severity:** major
-**Status:** open
+**Status:** resolved
 **Filed:** 2026-06-26
 
 ## What's wrong
@@ -93,5 +93,3 @@ Tests must be `#[tokio::test]`, hermetic (a pipe, no real tty), and deterministi
       `send-keys` a bracketed-paste block, `capture-pane -p` shows wrapped multi-line input
       without submit; Alt+Enter adds a line; a tall body scrolls. *(Still outstanding;
       not an executor task.)*
-</content>
-</invoke>
