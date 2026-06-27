@@ -1,7 +1,7 @@
 # Phase 12: split-file-ops
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** none (independent C5 cleanup; touches only `daemon/executor/file_ops.rs`)
 **Estimated diff:** ~1500 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
@@ -309,3 +309,42 @@ Permitted differences: added `mod read; mod write; mod ops;` and `pub(super) use
 - `EditArgs` and `run_edit_file` needed `pub` (not just `pub(super)`) because `pub(super) use` in `mod.rs` re-exports them to `executor` level where `executor/mod.rs` call sites access them as `file_ops::EditArgs` and `file_ops::run_edit_file`. The original flat file also had `pub(super)` on these, but Rust resolves `file_ops.rs` as a sibling of `executor/mod.rs` where `pub(super)` = visible in `executor`. After the split, `pub(super)` in `write.rs` means visible in `file_ops` only, so `pub` was needed for the re-export to work. This is the correct visibility for the new module depth.
 - `run_read_file` similarly needed `pub` for the same re-export reason.
 - The `include_str!("file_ops.rs")` references in the three source-inspection tests were updated to `include_str!("ops.rs")` since the code they verify (Perl/Python create commands, `cp -n`) now lives in `ops.rs`.
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-FP8)
+- **Scope deviations:** one, justified. `EditArgs` / `run_edit_file` / `run_read_file`
+  were bumped from `pub(super)` to `pub` (not among the six §Visibility bumps). This is
+  **required**, not gratuitous: the phase doc's own prescribed re-export mechanism
+  (`pub(super) use write::{EditArgs, run_edit_file}; pub(super) use read::run_read_file;`)
+  re-exports at `executor`-level visibility, which is broader than a `pub(super)` source
+  item (visible only within `file_ops`) — Rust rejects that with E0364. The items must be
+  visible to `executor` for the re-export to compile. Because `file_ops`, `read`, `write`,
+  and `ops` are all private modules, `pub` here widens *declared* visibility only, not real
+  reachability — nothing escapes `file_ops` except via the explicit re-exports. The executor
+  flagged this in its Notes-for-review. The phase doc's §Spec item 1 should have prescribed
+  this broadening; the spec was internally slightly inconsistent and the executor resolved it
+  correctly.
+- **Verification (independent re-run):** `cargo fmt --all -- --check` PASS; `cargo clippy
+  --all-targets --all-features -- -D warnings` PASS; `cargo test file_ops` 15/15 PASS (same
+  names as before the split). Fidelity multiset diff (old flat file vs `cat file_ops/*.rs`):
+  every line difference is `super::`→`super::super::` re-pathing, the four shared-helper
+  `super::`-prefix call qualifications, the cross-sibling `super::ops::`/`super::write::`
+  qualifications, the six `pub(super)` bumps, the three `pub` re-export-source bumps, the
+  `mod {read,write,ops,tests}` declarations, the `pub(super) use` re-exports, per-file import
+  partitioning (`use crate::ipc::{Request, Response}` split; `Duration`→`std::time::Duration`;
+  `ToolCallOutcome` brought into scope by `use`), the `include_str!("file_ops.rs")`→`("ops.rs")`
+  source-self-reference re-path, and rustfmt reflow of two longer match arms into blocks. No
+  logic, string literal, or test assertion appeared, disappeared, or changed. `executor/mod.rs`
+  diff across the split commit is empty; the three `file_ops::{run_read_file, run_edit_file,
+  EditArgs}` call sites are byte-for-byte intact. Old `file_ops.rs` deleted; new `file_ops/`
+  holds `mod.rs` (57), `read.rs` (491), `write.rs` (193), `ops.rs` (747) — all < 800. The 3
+  `unsafe` blocks (test-helper `set_var`), the `TODO(M2)`, and the
+  `#[allow(clippy::too_many_arguments)]` are all pre-existing verbatim content (identical
+  counts before/after), not introduced by this phase.
+- **Calibration:** none. Fourth clean mechanical C5 split (04–06/08/09 pattern) — confirms
+  NORMAL spec density clears first try for verbatim move-and-re-path work. One spec-density
+  note for the M2 retrospective: pin the re-export-source visibility broadening explicitly in
+  future split specs so it is an authorized bump rather than a documented deviation.
