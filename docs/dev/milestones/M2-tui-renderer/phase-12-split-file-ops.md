@@ -1,7 +1,7 @@
 # Phase 12: split-file-ops
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (independent C5 cleanup; touches only `daemon/executor/file_ops.rs`)
 **Estimated diff:** ~1500 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
@@ -274,3 +274,38 @@ check are the verification. State this line in the completion Update Log and pas
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-06-27 06:34 (started)
+
+**Executor:** rexyMCP executor
+
+Split `file_ops.rs` (1475 lines) into `file_ops/{mod,read,write,ops}.rs`. Created submodule directory, moved code verbatim with only module-path re-pathing (`super::` → `super::super::`) and visibility changes (`pub(super)` on 6 cross-sibling items; `pub` on `run_read_file`, `run_edit_file`, `EditArgs` for re-export). Deleted old flat file.
+
+### Update — 2026-06-27 06:35 (complete)
+
+**Executor:** rexyMCP executor
+
+**Verification commands:**
+```
+cargo clippy --all-targets --all-features -- -D warnings: PASS
+cargo test file_ops: 15 passed (all original tests, same names)
+cargo fmt --all: PASS
+```
+
+**Fidelity diff output:**
+```
+diff /tmp/file_ops_before.txt /tmp/file_ops_after.txt
+```
+Permitted differences: added `mod read; mod write; mod ops;` and `pub(super) use …` re-export lines in `mod.rs`; `super::` → `super::super::` re-pathing in imports; `to_hex`/`sq_escape`/`resolve_path_for_guard`/`remote_run_and_capture` calls prefixed with `super::` in submodules; cross-sibling calls via `super::ops::` and `super::write::`; six `pub(super)` visibility bumps; `pub` on `run_read_file`, `run_edit_file`, `EditArgs` for re-export through `mod.rs`; `include_str!("file_ops.rs")` → `include_str!("ops.rs")` in tests. No logic, string, or test-assertion line changed.
+
+**End-to-end verification:** N/A — phase ships no new runtime-loadable artifact (pure internal module reorganization). The behavior is identical; the `cargo test` pass + the multiset-diff fidelity check are the verification.
+
+**Files changed:**
+- Created: `src/daemon/executor/file_ops/mod.rs`, `read.rs`, `write.rs`, `ops.rs`
+- Deleted: `src/daemon/executor/file_ops.rs`
+- Modified: phase doc status + update log
+
+**Notes for review:**
+- `EditArgs` and `run_edit_file` needed `pub` (not just `pub(super)`) because `pub(super) use` in `mod.rs` re-exports them to `executor` level where `executor/mod.rs` call sites access them as `file_ops::EditArgs` and `file_ops::run_edit_file`. The original flat file also had `pub(super)` on these, but Rust resolves `file_ops.rs` as a sibling of `executor/mod.rs` where `pub(super)` = visible in `executor`. After the split, `pub(super)` in `write.rs` means visible in `file_ops` only, so `pub` was needed for the re-export to work. This is the correct visibility for the new module depth.
+- `run_read_file` similarly needed `pub` for the same re-export reason.
+- The `include_str!("file_ops.rs")` references in the three source-inspection tests were updated to `include_str!("ops.rs")` since the code they verify (Perl/Python create commands, `cp -n`) now lives in `ops.rs`.
