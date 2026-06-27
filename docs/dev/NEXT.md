@@ -1,14 +1,16 @@
 # NEXT
 
-**Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
-Status `in-progress` — phases 01–14 are `done`. The remaining work is the final entry of the C5
-split sweep (phase 15 — split-knowledge).
+**Active milestone:** none. **M2 — TUI Renderer Overhaul is complete** (2026-06-27; all 16 phases
+`done`). See its retrospective in `docs/dev/milestones/M2-tui-renderer/README.md`.
 
-**Active phase:** phase 15 — split-knowledge
-(`docs/dev/milestones/M2-tui-renderer/phase-15-split-knowledge.md`), status `todo`, **drafted and
-ready to dispatch** via `/rexymcp:dispatch phase-15-split-knowledge`. This is the **last in-scope
-M2 phase**: when it lands and is approved, M2 closes and the milestone retrospective + the deferred
-WORKFLOW.md front-loading fold come due (human gate).
+**Active phase:** none. The next milestone must be kicked off explicitly by the principal engineer.
+
+**Now due (human gate):** the **WORKFLOW.md front-loading fold**. M2's calibration dataset (16 phases:
+6 design-discovery with 7 bounces + 3 escalations; 10 mechanical splits, 9 first-try) is decisive —
+the proposed fold is to make front-loading **task-shape-conditional** (front-load design-discovery
+phases; keep normal density + multiset-diff fidelity for mechanical splits). It was on hold pending
+M2 close (PE 2026-06-26); the hold is now lifted. Evidence base: the M2 README retrospective. Per
+STANDARDS §5 this needs PE sign-off before editing WORKFLOW.md.
 
 Phase 15 is a verbatim move-and-re-path split of `daemon/executor/knowledge.rs` (1341) into
 `knowledge/{mod,artifacts,memory,pane,ghost,agents}.rs`. **Shaped like phase 12 (`file_ops`), not

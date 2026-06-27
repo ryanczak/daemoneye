@@ -1,7 +1,7 @@
 # Phase 15: split-knowledge
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** none (independent C5 cleanup; touches only `src/daemon/executor/knowledge.rs` and the new `knowledge/` directory)
 **Estimated diff:** ~1341 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
@@ -433,3 +433,55 @@ verification. State this line in the completion Update Log and paste the fidelit
 **End-to-end verification:** N/A — phase ships no new runtime-loadable artifact (pure internal module reorganization). The behavior is identical; the `cargo test` pass + the multiset-diff fidelity check are the verification.
 
 **Notes for review:** The `webhook_alert_to_event_log` integration test failure is pre-existing (present on the unmodified tree). The two `// TODO(M2): consolidate params into a struct` comments were moved verbatim as authorized.
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** NORMAL spec density cleared first try. Seventh consecutive
+  clean mechanical C5 split (04/05/06/12/13/14/15) — fully reinforces the
+  task-shape-conditional fold candidate (mechanical splits need no front-loading).
+
+**Independent re-run (reviewer):** `cargo fmt --all --check` ✓, `cargo build`
+zero warnings ✓, `cargo clippy --all-targets --all-features -- -D warnings` ✓,
+`cargo test` 814 unit + 27 integration passed, 0 failed, 2 ignored ✓. The
+`webhook_alert_to_event_log` flake the executor saw **passed** in the reviewer
+re-run — confirming it is the known pre-existing parallel-HOME flake (no
+`TEST_HOME_LOCK`, flagged in phase-14's verdict), not a regression from this phase.
+
+**Fidelity diff (sorted multiset, non-blank/non-comment, trimmed):** before 1217
+lines, after 1241 (+24). Every diff line is authorized:
+
+1. **Re-export + `mod` lines in `mod.rs`** (#1): `mod {agents,artifacts,ghost,memory,pane};`
+   and the five `pub(super) use …::{…};` blocks (with their `};` closers and member lines).
+2. **Cross-module imports** (#2): `use super::{ArtifactCtx, track_artifact};` ×3
+   (artifacts/memory/agents).
+3. **`super::` → `super::super::` re-pathing** (#3): the two `use` lines
+   (`ToolCallOutcome`, `USER_PROMPT_TIMEOUT`) replaced by `super::super::…` forms,
+   and the 4 `super::super::foreground::is_shell_prompt` call sites in `watch_pane`.
+4. **Per-file import partitioning** (#4): the original grouped top-level `use` lines
+   split into per-file subsets, with the expected duplication where an import is needed
+   in more than one submodule (`log_event` ×4, `SessionStore` ×3, `mask_sensitive` ×2,
+   `send_response_split` ×2, `Arc` ×2, etc.). This duplication is the source of the +24
+   net line delta.
+5. **23 `pub(super)` → `pub` bumps** (#5) on the re-exported leaf functions.
+
+Two authorized rustfmt reflows noted: `close_bg_window` and `list_panes` had their
+short multi-line signatures collapsed onto a single line (their param lines `cache`,
+`chat_pane`, `pane_id`, `session_id`, `sessions` and the `) -> String {` closers
+reappear inline in the one-line signatures) — rendering-only, per the §Acceptance
+rustfmt-reflow allowance. **No logic line, string literal, or `format!` template
+appeared, disappeared, or changed.**
+
+**`mod.rs` / `foreground.rs` unchanged:** `git diff e9d4316~1 e9d4316 -- src/daemon/executor/mod.rs src/daemon/executor/foreground.rs` is empty. ✓
+
+**File sizes:** mod.rs 49, artifacts.rs 357, memory.rs 217, pane.rs 366, ghost.rs 97,
+agents.rs 278 — all match the spec estimates and are well under 800. ✓
+
+**DoD:** no `unwrap`/`expect`/`panic!`/`unsafe`/`dbg!`/`println!` in the new files;
+the only TODO/`#[allow]` lines are the two grandfathered pre-existing ones moved
+verbatim as authorized. ✓
+
+This closes the M2 C5 split sweep and is the **last in-scope M2 phase** — M2 is complete.

@@ -7,7 +7,7 @@ tmux window switches and making the transcript real terminal scrollback. Along t
 way, split the three oversized `cli/` files (`render.rs`, `input.rs`,
 `commands/mod.rs`) into focused modules (closes the bulk of code-issue C5).
 
-**Status:** in-progress
+**Status:** complete (2026-06-27)
 
 **Depends on:** M1 (complete)
 
@@ -64,7 +64,7 @@ insertion" note). Statuses mirror the phase-doc frontmatter.
 | 12 | split-file-ops — split `daemon/executor/file_ops.rs` (1475) into `file_ops/` : `read` (`run_read_file` + helpers), `write` (`EditArgs`, edit-command builder, response wait), `ops` (`run_edit`/`create`/`delete`/`copy`) ([phase-12-split-file-ops.md](phase-12-split-file-ops.md)) | done |
 | 13 | split-types — split `ai/types.rs` (1413) into `types/` : `wire` (`ToolCall`/`ToolResult`/`Message`/`TokenBreakdown`), `pending` (`PendingCall`), `events` (`AiEvent`) ([phase-13-split-types.md](phase-13-split-types.md)) | done |
 | 14 | split-background — split `daemon/background.rs` (1369) into `background/` : `helpers`, `run` (`run_background_in_window`), `respawn`, `gc` (completion notify + GC) ([phase-14-split-background.md](phase-14-split-background.md)) | done |
-| 15 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` ([phase-15-split-knowledge.md](phase-15-split-knowledge.md)) | review |
+| 15 | split-knowledge — split `daemon/executor/knowledge.rs` (1341) into `knowledge/` : `artifacts` (scripts/runbooks CRUD), `memory`, `pane` (`list_panes`/`watch_pane`/bg-window), `ghost`, `agents` ([phase-15-split-knowledge.md](phase-15-split-knowledge.md)) | done |
 
 ## Notes
 
@@ -362,3 +362,82 @@ extract whose shape the spec fully determines):
 This fold is **not yet applied** to WORKFLOW.md — per STANDARDS §5 and the skill's §9,
 it needs principal-engineer sign-off before editing WORKFLOW.md. **On hold** (PE
 2026-06-26): defer the fold until M2 actually closes; more phases remain.
+
+## Milestone retrospective (2026-06-27, M2 complete — all 16 phases done)
+
+M2 closed with phase 15 (split-knowledge) approved_first_try. All exit criteria are
+met: the DECSTBM scroll-region path is gone (deleted in phase 03), the chat transcript
+commits to native scrollback via ratatui `insert_before` with only the input box +
+status bar in the fixed inline viewport, the window-switch corruption is fixed and
+verified end-to-end via tmux `capture-pane`, and every oversized file in the original
+C5 scope is split toward the ~600-line target. Only `ratatui` + `crossterm` were added.
+
+### Final outcome ledger (executor: Qwen/Qwen3.6-27B-FP8, every phase)
+
+| Phase | Kind | Verdict | Bounces/Escalation |
+|---|---|---|---|
+| 01 render-core | rewrite | approved_after_2 | 2 review bounces |
+| 02a streaming | rewrite | approved_after_1 | 1 bounce (green-but-inert: tokens → stdout) |
+| 02b tools-and-default | rewrite | approved_after_2 | 2 bounces (raw/cooked approval; masking regression) |
+| 03 retire-legacy-and-verify | rewrite + E2E | escalated | architect takeover after 2 hard_fails |
+| 04 split-render | mechanical | approved_first_try | none |
+| 05 split-input | mechanical | approved_first_try | none |
+| 06 split-commands | mechanical | approved_first_try | none |
+| 07 split-tools | mechanical | approved_first_try | none |
+| 08 split-server | mechanical | approved_first_try | none |
+| 09 split-config | mechanical | approved_after_1 | 1 bounce (bug-09-1: 6 dropped doc-comment lines) |
+| 10 input-editor | design-discovery | approved_after_2 | 2 bounces (green-but-inert: wrong tty/render seams) |
+| 11 interrupt-and-colors | design-discovery | escalated | takeover (tokio-concurrency seam); color half clean |
+| 12 split-file-ops | mechanical | approved_first_try | none |
+| 13 split-types | mechanical | approved_first_try | none |
+| 14 split-background | mechanical | approved_first_try | none |
+| 15 split-knowledge | mechanical | approved_first_try | none |
+
+### What the calibration experiment proved (the milestone's payload)
+
+The spec-density probe ran across 16 phases of two distinct shapes. The result is
+unambiguous and **confirms the task-shape discriminator, not model size**:
+
+- **Design-discovery work (01/02a/02b/03, 10, 11): lean specs failed every time.**
+  7 review bounces + 3 escalations across 6 design-heavy phases. The ceiling was
+  identical at every failure: the executor reached for the **wrong load-bearing seam**
+  (the legacy renderer integration path, plain-text commit, the wrong tty/render seam,
+  a droppable read future) that a lean "what + acceptance + boundaries" spec named but
+  did not pin. The "green-but-inert" trap fired literally and repeatedly (02a streamed
+  to stdout and passed its own check; 02b self-declared an E2E it never ran; phase 10
+  shipped correct-looking-but-untested seams). Two phases (03, 11) required full
+  architect takeover.
+- **Mechanical splits (04–09, 12–15): normal specs cleared first try, 9 of 10.** Ten
+  verbatim move-and-re-path splits; the single bounce (09, six dropped doc-comment
+  lines) was a fidelity slip the sorted-multiset line-diff gate caught immediately, and
+  the same gate verified every other split byte-for-byte. Front-loading here would have
+  been wasted effort — the spec already fully determined the shape.
+
+The discriminator is **task shape** (design-discovery vs. mechanical), not model tier.
+At 27B, lean discovery specs on design-heavy work cost ~2 bounces or a takeover;
+mechanical work whose shape the spec fully determines is reliable with normal density.
+Scorecard corroboration held throughout: `size=s` escalation 0.08 vs `size=l` 0.59;
+`kind=refactor` approved_first_try 0.83 but escalation 0.45 (the rewrite-shaped
+refactors drag it).
+
+A NORMAL-density refinement also fell out of the mechanical run and was folded into the
+later split specs: **C5 split specs should partition mid-file `use` statements too, not
+just the top-of-file block** (phase-14 calibration), and **re-export visibility must be
+pinned explicitly** (`pub(super) use` of a `pub(super)` item is E0364 — phase-12 → -13
+fold). With those in place, splits 12–15 were a clean four-in-a-row.
+
+### Fold decision (now due — human gate)
+
+The trend is now decisive (well past WORKFLOW's "two is a trend, three is a fix"):
+**make WORKFLOW.md's front-loading default task-shape-conditional.**
+
+- **Design-discovery phase →** front-load the load-bearing constraint (rung 2 "API
+  sketch" or rung 3 "worked example" in the first dispatch). Do not make the executor
+  discover the architecture seam.
+- **Mechanical phase →** normal specs suffice; keep the byte-for-byte move +
+  sorted-multiset-diff fidelity idiom (it caught every fidelity slip in 04–15).
+
+This fold is **still not applied** to WORKFLOW.md — per STANDARDS §5 it needs
+principal-engineer sign-off (it was explicitly on hold pending M2 close, PE 2026-06-26).
+**M2 has now closed**, so the hold is lifted and the fold is ready for the PE to approve
+or amend. The M2 retrospective dataset above is the evidence base for it.
