@@ -4,9 +4,13 @@
 Status `in-progress` — phases 01–11 are `done`. The remaining work is the C5 split sweep
 (phases 12–15).
 
-**Active phase:** **none currently dispatched.** Next up is **phase-12 — split-file-ops**
-(split `daemon/executor/file_ops.rs`, 1475 lines). Draft on demand via
-`/rexymcp:architect next`.
+**Active phase:** **phase-12 — split-file-ops** is **drafted and ready to dispatch**
+(`docs/dev/milestones/M2-tui-renderer/phase-12-split-file-ops.md`, status `todo`). A verbatim
+move-and-re-path split of `daemon/executor/file_ops.rs` (1475 lines) into `file_ops/` :
+`mod` (shared helpers + re-exports), `read`, `write`, `ops`. Specced **NORMAL** (mechanical
+split — the 04–06/08/09 pattern that cleared first try): layout, symbol placement, the six
+`pub(super)` visibility bumps, and the `super:: → super::super::` re-pathing are all pinned;
+sorted-multiset line diff is the fidelity gate. Dispatch via `/rexymcp:dispatch phase-12`.
 
 phase-11 — interrupt-and-colors is `done` (**escalated — architect takeover**, 2026-06-27).
 Two-press ESC/Ctrl+C interrupt of a streaming turn + blood-red/deep-yellow `commit_panel`
