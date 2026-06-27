@@ -1,7 +1,7 @@
 # Phase 12: split-file-ops
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress
+**Status:** review
 **Depends on:** none (independent C5 cleanup; touches only `daemon/executor/file_ops.rs`)
 **Estimated diff:** ~1500 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
