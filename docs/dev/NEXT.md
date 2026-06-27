@@ -1,20 +1,25 @@
 # NEXT
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
-Status `in-progress` — phases 01–13 are `done`. The remaining work is the tail of the C5 split
-sweep (phases 14–15).
+Status `in-progress` — phases 01–14 are `done`. The remaining work is the final entry of the C5
+split sweep (phase 15 — split-knowledge).
 
-**Active phase:** **phase-14 — split-background** (`docs/dev/milestones/M2-tui-renderer/phase-14-split-background.md`),
-status `todo`, **drafted and ready to dispatch** via `/rexymcp:dispatch phase-14-split-background`.
-It splits `daemon/background.rs` (1369) into `background/` : `helpers` (shared
-`shell_exit_var`/`trim_large_output`/`capture_and_archive`/`BgJobInfo`/`notify_session`/
-`BG_COMMAND_MAP`), `run` (`run_background_in_window`), `respawn` (`respawn_background_in_pane`),
-`gc` (`OwnedJobInfo`/`notify_job_completion`/`plan_gc_actions`/`gc_bg_windows`). NORMAL spec
-density (mechanical split). **Shaped like phase 12, not 13:** no `super::` re-pathing (the file is
-all `crate::`-absolute), but four `pub(super)` helper bumps ARE required because the shared helpers
-move into a sibling `helpers.rs` used by `run`/`respawn`. The phase-12 calibration note (pin
-re-export-source visibility explicitly) is honored: all six re-exported names are already `pub`,
-so the `pub use` re-exports widen nothing — pinned in §Spec item 1.
+**Active phase:** none currently dispatchable — phase 15 (split-knowledge) is the last in-scope
+M2 phase but its full phase doc is **not yet drafted**. Draft + select it via
+`/rexymcp:architect next`.
+
+phase-14 — split-background is `done` (**approved_first_try**, 2026-06-27). Verbatim
+move-and-re-path split of `daemon/background.rs` (1369) into `background/{mod,helpers,run,respawn,
+gc}.rs`. Fidelity diff clean — only authorized lines (four `pub(super)` bumps + `BgJobInfo`'s six
+fields, per-file `use`-line partitioning, `mod`/`pub use` in `mod.rs`, the `use super::helpers::{…}`
+cross-sibling imports in run/respawn, and the one→two test-module split). Two benign deviations,
+both authorized by the §Re-pathing compiler-convergence clause: `std::sync::Mutex` needed in
+run/respawn too (BG_COMMAND_MAP closure — spec table only listed helpers), and the gc
+`HashMap/HashSet` import is function-scoped (correctly preserved; executor's note misworded it as
+"test module"). **Sixth consecutive clean mechanical C5 split** (04/05/06/12/13/14). Calibration
+folded into the phase verdict: C5 split specs should partition **mid-file** `use` statements too,
+not just the top-of-file block. Surfaced (not a regression): `webhook_alert_to_event_log` is a
+pre-existing parallel-HOME flaky test (no `TEST_HOME_LOCK`) — flagged for a future fix.
 
 phase-13 — split-types is `done` (**approved_first_try**, 2026-06-27). Verbatim move split of
 `ai/types.rs` (1413) into `types/{mod,wire,pending,events}.rs`. Fidelity diff: 12 additions,
@@ -54,16 +59,16 @@ recommended one-time manual PE confirmation (see the phase doc's approved Review
 phase-09 — split-config is `done` (approved_after_1, 2026-06-26; bug-09-1 dropped
 6 doc-comment lines in the verbatim split, fixed).
 
-The C5 split sweep continues at **phase 13** (split-types): split every remaining
+The C5 split sweep finishes at **phase 15** (split-knowledge): split every remaining
 source file over 1000 lines, biggest first, toward a ~600-line target. Order:
-12 `daemon/executor/file_ops.rs` ✓ → 13 `ai/types.rs` (drafted) → 14 `daemon/background.rs` →
-15 `daemon/executor/knowledge.rs`. Phases 14–15 are drafted as rows in the M2 README
-phase table; full phase docs are drafted on demand via `/rexymcp:architect next`.
+12 `daemon/executor/file_ops.rs` ✓ → 13 `ai/types.rs` ✓ → 14 `daemon/background.rs` ✓ →
+15 `daemon/executor/knowledge.rs` (drafted as a row in the M2 README phase table; full phase
+doc drafted on demand via `/rexymcp:architect next`).
 
-Phase order so far (01–12 all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
+Phase order so far (01–14 all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
 05 split-input ✓ → 06 split-commands ✓ → 07 split-tools ✓ → 08 split-server ✓ →
 09 split-config ✓ → 10 input-editor ✓ → 11 interrupt-and-colors ✓ → 12 split-file-ops ✓ →
-**13 split-types (next to dispatch)**.
+13 split-types ✓ → 14 split-background ✓ → **15 split-knowledge (next to draft)**.
 
 **Deferred (until M2 closes):** the calibration fold into WORKFLOW.md (make front-loading
 task-shape-conditional) — drafted in the M2 README "Interim calibration findings", on

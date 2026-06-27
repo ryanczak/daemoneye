@@ -1,7 +1,7 @@
 # Phase 14: split-background
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** none (independent C5 cleanup; touches only `src/daemon/background.rs`)
 **Estimated diff:** ~1369 lines moved (mechanical; net behavior change = 0)
 **Tags:** language=rust, kind=refactor, size=l
@@ -388,3 +388,49 @@ No logic line, string literal, or test-assertion line appears, disappears, or ch
 - Deleted: `src/daemon/background.rs`
 
 **Notes for review:** Removed `use std::collections::{HashMap, HashSet};` from the gc test module — it was unused (the tests use `std::collections::HashMap` fully-qualified and never reference `HashSet`). This was caught by `cargo clippy -D warnings`.
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (rexyMCP)
+- **Scope deviations:** Two, both benign and authorized by the §Re-pathing
+  compiler-convergence clause ("do not omit [an import] a file does use"):
+  1. **`use std::sync::Mutex;` appears 3× (helpers + run + respawn), not 1×.**
+     `run.rs:87` and `respawn.rs:35` both call `Mutex::new(...)` in the
+     `BG_COMMAND_MAP.get_or_init` closure, so they genuinely need the import.
+     The spec's import-partition table listed `std::sync::Mutex` for `helpers`
+     only — an architect oversight (it was a mid-file import at old line 237,
+     and the table tracked only the top-level lines 1–13). The compiler/clippy
+     gate forced the correct convergence. No fidelity impact (a `use` line
+     duplicated across files that use it is authorized partitioning).
+  2. **Executor's "removed HashMap/HashSet from gc test module" note is
+     misworded.** The old line-1078 `use std::collections::{HashMap, HashSet};`
+     is **function-scoped** inside `gc_bg_windows` (uses both unqualified at
+     lines 177/178/206), not a test-module import. It is correctly **preserved**
+     verbatim in `gc.rs:160`; the fidelity diff shows it neither added nor
+     removed. The gc *tests* use `std::collections::HashMap` fully-qualified, as
+     in the original. Net code effect: correct.
+- **Fidelity:** sorted-multiset line diff (parent `8af7027` flat file vs the
+  five split files) contains only authorized lines — the four `pub(super)`
+  bumps + `BgJobInfo`'s six fields, per-file `use`-line partitioning, the
+  `mod …;` + `pub use …;` lines in `mod.rs`, the `use super::helpers::{…}`
+  cross-sibling imports in `run.rs`/`respawn.rs`, and the one→two test-module
+  wrapper split. No logic line, string literal, or test-assertion changed.
+- **Independent command re-run:** `cargo fmt --all --check`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings` all clean. The 12
+  relocated unit tests (4 `trim_*` in `helpers.rs`, 8 `gc_*` in `gc.rs`) pass.
+- **Pre-existing flaky test (not a regression, not blocking):** the full
+  `cargo test` run intermittently fails `webhook_alert_to_event_log`
+  (`tests/integration.rs:709`) under parallel load — it reads the HOME-global
+  `events_path()` without acquiring `TEST_HOME_LOCK`, so it races other
+  HOME-mutating tests. It passes in isolation and is entirely unrelated to this
+  phase (which touches only `daemon/background/`). Flagged for a future
+  test-isolation fix; out of scope here.
+- **Calibration:** C5 split specs should run the per-file import-partition
+  analysis over **mid-file `use` statements too**, not just the top-of-file
+  import block — this phase's only spec inaccuracy (the `Mutex` partition) came
+  from a mid-file import (old line 237) the table omitted. Sixth consecutive
+  clean mechanical C5 split (04/05/06/12/13/14); reinforces that NORMAL spec
+  density clears verbatim splits first try, and that the compiler-convergence
+  clause reliably absorbs minor import-table gaps.
