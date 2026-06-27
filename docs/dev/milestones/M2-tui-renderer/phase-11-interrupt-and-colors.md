@@ -1,7 +1,7 @@
 # Phase 11: interrupt-and-colors
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-11-1, bug-phase-11-2)
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-10 (done — input editor)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -410,3 +410,42 @@ No recv() calls inside any select! arm — the future is pinned and polled by &m
 - `StreamOutcome::Msg(Box<Response>)` boxes the `Response` to satisfy clippy's `large_enum_variant` lint (`Response` is ~736 bytes).
 - `src/daemon/**` and `src/ipc.rs` are unchanged — no new IPC variant.
 - The abort mechanism still relies on breaking from the loop (which drops `rx`), causing the daemon's `send_response_split` to fail with a broken pipe.
+
+### Review verdict — 2026-06-27 (bounce 2)
+
+- **Verdict:** bounced (filed bug-phase-11-2)
+- **Bounces:** 2 (bug-phase-11-1, bug-phase-11-2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Bug filed:** bug-phase-11-2 (major) — `stream_phase` returns for `Warn`/`Tick`, dropping `daemon_recv` as a local variable; `recv`/`read_line` may have already moved bytes from the `BufReader`'s fill buffer into its local `line` String, which is lost on return.
+- **Independent re-run:** `cargo fmt --all --check` ✓ · `cargo build` ✓ (0 warnings) ·
+  `cargo clippy --all-targets --all-features -- -D warnings` ✓ · `cargo test` ✓ (815 lib +
+  27 integration, 2 ignored). All prior tests still pass.
+- **Scope deviations:** `parse_approval_decision` renamed → `parse_approval_response` (private
+  function, 8 call sites updated, outside the bug fix scope but harmless and the name is
+  better). Leave the rename; do not revert it.
+- **What improved vs. bounce 1:** the `select!` now polls `daemon_recv` by `&mut` reference,
+  so the future is NOT dropped within a single select iteration when another branch wins.
+  The color recolor remains correct. The `InterruptState` helper and its 6 unit tests are
+  correct. Progress is real.
+- **Where the same failure class recurs:** `stream_phase` still **returns** for `Warn`
+  (line 654) and `Tick` (line 670). Returning drops the local `daemon_recv`. If `read_line`
+  had partially consumed the fill buffer into `line` before returning `Pending`, those bytes
+  are lost with the dropped future. The next `recv(rx)` call reads only the tail of the JSON
+  line and `serde_json::from_str` fails. This violates AC "first interrupt press warns and
+  streaming continues." The executor's Note again asserts "no bytes were consumed" — the
+  same hallucinated guarantee as bounce 1 (the within-`select!` borrow is not the same as
+  the function-return drop).
+- **Tests:** the 4 new `stream_phase_tests` all call `InterruptState::feed()` directly —
+  identical in effect to the existing `interrupt.rs` tests. None drives `stream_phase` or
+  the `recv`/BufReader seam. The integration test required by bug-phase-11-1's verification
+  ("keypress during streaming does not drop a daemon message") is still absent.
+- **Fix pinned in bug-phase-11-2:** `stream_phase` must handle `Warn` and `Tick` via
+  callbacks (closures passed by `&mut impl FnMut()`) and `continue` the internal loop —
+  never returning until it has `Msg`, `Interrupted`, or `Error`. `daemon_recv` stays alive
+  (pinned) for the full call duration.
+- **Calibration (M2 probe — bounce 2):** The `select!` level was fixed correctly; the
+  function-return level was not. The executor identified the right structure (pin outside
+  select, poll by `&mut`) but reasoned about the "by-reference poll doesn't drop" property
+  and stopped there, not continuing the analysis to the function-return case. Same
+  "confident wrong API reasoning + no seam test" pattern, one abstraction level higher.
+  **Failure classes:** `wrong_seam`, `correctness`, `false_completion`, `missing_tests`.
