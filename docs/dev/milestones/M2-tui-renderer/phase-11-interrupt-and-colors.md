@@ -1,7 +1,7 @@
 # Phase 11: interrupt-and-colors
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced — see bug-phase-11-1, bug-phase-11-2)
+**Status:** done (architect takeover after hard_fail — see Review verdict 2026-06-27)
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-10 (done — input editor)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -449,3 +449,107 @@ No recv() calls inside any select! arm — the future is pinned and polled by &m
   and stopped there, not continuing the analysis to the function-return case. Same
   "confident wrong API reasoning + no seam test" pattern, one abstraction level higher.
   **Failure classes:** `wrong_seam`, `correctness`, `false_completion`, `missing_tests`.
+
+### Update — 2026-06-27 (hard_fail on 3rd dispatch)
+
+The third dispatch (attempting bug-phase-11-2's callback fix) `hard_fail`ed:
+`IdenticalToolCallRepetition` (6 consecutive identical `bash` calls). The executor
+corrupted `stream.rs` with a dangling `}` (`unexpected closing delimiter` at line 621)
+while incrementally patching the closure refactor, then looped a `python3` brace-counter
+until the governor fired. No clean artifact produced; working tree reverted.
+
+### Update — 2026-06-27 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** Two prior refined re-dispatches (bug-phase-11-1, bug-phase-11-2) already
+targeted the same `wrong_seam`/`false_completion` failure class; the hard_fail was a
+mechanical file-corruption + governor loop (not a spec gap a tighter spec would close), and
+the fix was already fully specified in bug-phase-11-2 — so per the escalate decision table
+(*repeated same-class failure after refinement → takeover*) the architect implemented it
+directly.
+
+### Update — 2026-06-27 (architect takeover — complete)
+
+**Summary:** Implemented the bug-phase-11-2 fix with a cleaner shape than the bug doc's
+callback sketch. Rather than keeping a long-lived `recv` future alive across the warn/tick
+returns (which ran into a loop-lifetime borrow-checker wall: a stored future holding
+`&mut rx` cannot be recreated inside the loop), I moved the **partial-read state out of the
+future** entirely:
+
+- New `recv_line(rx, buf)` reads one newline-delimited `Response` via
+  `read_until(b'\n', &mut buf)` into a **caller-owned** `buf: Vec<u8>`. `read_until` appends
+  consumed bytes to `buf` *before* awaiting more, so dropping the future (on an interrupt
+  key or spinner tick winning the `select!`) leaves the partial bytes in `buf`; the next
+  call continues and reassembles the full line. `buf` is cleared on a complete message.
+- `select_stream` is now a concrete (non-generic) fn taking `&mut rx` + `&mut buf`; it
+  creates a fresh `recv_line` future each `select!` iteration, which is now safe because the
+  partial state lives in `buf`, not the future. No stored future, so no loop-lifetime borrow
+  problem.
+- The caller owns `line_buf: Vec<u8>` for the whole turn; no per-message future recreation
+  dance.
+
+**Commands (all clean):**
+
+```
+cargo fmt --all --check          → OK
+cargo build                      → Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings → Finished, 0 warnings
+cargo test                       → 814 passed; 0 failed (lib) · 27 passed; 2 ignored (integration)
+```
+
+**Seam tests (the missing regression guard, now present):**
+
+- `recv_line_preserves_partial_bytes_across_a_dropped_read` — over a real `UnixStream::pair`,
+  writes half a serialized `Response` (no newline), times out `recv_line` to force a drop,
+  asserts `!buf.is_empty()` (partial bytes survived), then writes the rest + `\n` and asserts
+  the next `recv_line` reassembles `Response::Token("hello")` intact and clears `buf`.
+  **Spot-checked real:** mutating `recv_line` back to a local-`String` `read_line` (the
+  bug-11-x behavior) makes this test FAIL at the `!buf.is_empty()` assertion; restored → pass.
+- `select_stream_first_interrupt_press_warns` — pipe-injected `Ctrl+C`, idle daemon →
+  `StreamOutcome::Warn`, state armed, `buf` untouched.
+- `select_stream_delivers_a_full_daemon_message` — idle keyboard, full daemon line →
+  `StreamOutcome::Msg(Response::Token("hi"))`.
+
+**End-to-end:** The interactive tmux E2E (type past box width; ESC once → warn + stream
+continues; ESC twice → abort; tall body) remains a manual PE confirmation per phase-10
+precedent — not run in this headless takeover.
+
+**Files changed (takeover):** `src/cli/commands/stream.rs` — replaced the bounce-2
+`stream_phase`/stored-future approach with `recv_line` + buffer-owning `select_stream`;
+removed the now-unused `recv` import; replaced the 4 trivial `stream_phase_tests` (which only
+re-tested `InterruptState`) with 3 real seam tests. The `commit_panel` color recolor and the
+`InterruptState` module are unchanged from the executor's earlier (correct) work.
+
+### Review verdict — 2026-06-27 (final)
+
+- **Verdict:** escalated (architect takeover)
+- **Bounces:** 2 review bounces (bug-phase-11-1, bug-phase-11-2) + 1 hard_fail (governor:
+  IdenticalToolCallRepetition) before takeover
+- **Bugs filed:** 2 (both resolved)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (dispatches 1–3) → **Claude (direct)** for the final fix
+- **Scope deviations:** none new. Stayed in `stream.rs` (+ the executor's prior
+  `interrupt.rs`/`render_ratatui.rs` work); no banned deps; `src/daemon/**` and `src/ipc.rs`
+  untouched (socket-close abort mechanism, as the spec named). The executor's earlier
+  `parse_approval_decision → parse_approval_response` rename is retained (harmless, better name).
+- **Independent command set:** `cargo fmt --all --check` ✓ · `cargo build` ✓ (0 warnings) ·
+  `cargo clippy --all-targets --all-features -- -D warnings` ✓ · `cargo test` ✓ (814 lib +
+  27 integration, 2 ignored).
+- **Both bugs closed:** bug-11-1 (interrupt drops the in-flight read) and bug-11-2
+  (`stream_phase` returns drop the future) are resolved by the same root-cause fix — the
+  partial-read state no longer lives in the droppable future. The regression guard both bugs'
+  verification demanded now exists and is mutation-verified.
+- **Calibration (M2 probe — the full thread):** This phase is the milestone's richest
+  single-seam ceiling trace. A lean, design-discovery spec on a tokio-concurrency seam took
+  **rung-0 → bounce → bounce → hard_fail → takeover** — the full predicted ladder for this
+  shape. The executor's recurring failure mode was *confident-but-wrong concurrency reasoning*
+  about future-drop semantics (`biased` "prevents drop"; `&mut`-poll "no bytes consumed"),
+  reproduced at three successive abstraction levels, each time with **no test driving the
+  seam**. The color half (fully pinned, mechanical) landed first try every dispatch — the same
+  task-shape split seen in 04–06 vs 01–03. **Takeaway for the deferred fold:** on a
+  design-discovery seam at this model tier, the load-bearing constraint (here: "the partial
+  read must not live in a droppable future; prove it with a seam test") must be *pinned in the
+  first dispatch*, not discovered — lean discovery cost 2 bounces + 1 hard_fail + a takeover.
+  This is the third strong M2 data point (with phase-10) that the front-loading default should
+  become **task-shape-conditional**; folded into the still-deferred M2 retrospective.
+  **Failure classes across the thread:** `wrong_seam`, `correctness`, `false_completion`,
+  `missing_tests` — all resolved.

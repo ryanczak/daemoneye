@@ -1,7 +1,7 @@
 # Bug 2 on phase-11: `stream_phase` drops `daemon_recv` on `Warn`/`Tick` returns, still losing partial bytes
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (architect takeover, 2026-06-27)
 **Filed:** 2026-06-27
 
 ## What's wrong

@@ -15,7 +15,7 @@ use crate::ipc::{Request, Response};
 
 use super::approval::SessionApproval;
 use super::interrupt::{InterruptAction, InterruptState};
-use super::ipc_client::{connect, recv, send_request};
+use super::ipc_client::{connect, send_request};
 
 /// Outcome of the inner streaming loop (daemon message or user interrupt).
 #[derive(Debug)]
@@ -149,28 +149,33 @@ pub(super) async fn ask_with_session_ratatui(
     let mut md = MarkdownRenderer::new();
     let render_width = chat_width.map(|w| w - 2).unwrap_or(80).max(20);
 
+    // Accumulator for a partially-read daemon line. Owned by the caller (not by
+    // the read future), so an interrupted/timed-out read leaves its bytes here
+    // and the next read completes the message — no daemon message is ever lost
+    // when a keypress or spinner tick interrupts an in-flight read
+    // (the bug-phase-11-1 / bug-phase-11-2 failure mode).
+    let mut line_buf: Vec<u8> = Vec::new();
+
     loop {
-        // Phase 1 — waiting for first content: poll with short timeout for spinner.
-        let outcome = if !response_started {
-            stream_phase(
-                stdin,
-                &mut rx,
-                &mut interrupt_state,
-                std::time::Duration::from_millis(80), // spinner tick
-                None,                                 // no overall timeout
-            )
-            .await
+        // Phase 1 animates a spinner (80 ms tick, no overall timeout); phase 2
+        // streams with a 120 s overall timeout and no spinner tick.
+        let (tick_interval, overall_timeout) = if !response_started {
+            (std::time::Duration::from_millis(80), None)
         } else {
-            // Phase 2 — streaming: no spinner tick, 120s overall timeout.
-            stream_phase(
-                stdin,
-                &mut rx,
-                &mut interrupt_state,
-                std::time::Duration::MAX, // no spinner tick
+            (
+                std::time::Duration::MAX,
                 Some(std::time::Duration::from_secs(120)),
             )
-            .await
         };
+        let outcome = select_stream(
+            stdin,
+            &mut rx,
+            &mut line_buf,
+            &mut interrupt_state,
+            tick_interval,
+            overall_timeout,
+        )
+        .await;
 
         match outcome {
             StreamOutcome::Interrupted => {
@@ -222,7 +227,7 @@ pub(super) async fn ask_with_session_ratatui(
                 let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
                 continue;
             }
-            StreamOutcome::Msg(ref _msg) => {
+            StreamOutcome::Msg(_) => {
                 // fall through to Response handling below
             }
         }
@@ -618,29 +623,51 @@ pub(super) async fn ask_with_session_ratatui(
     Ok(())
 }
 
-/// Stream phase — race keyboard input and daemon `recv` without dropping
-/// the in-flight `recv` future.
+/// Read one newline-delimited `Response`, accumulating bytes into the
+/// **caller-owned** `buf`.
 ///
-/// The daemon-read future is created once per message and **pinned** across
-/// loop iterations so a keypress or spinner tick never discards partially-
-/// buffered bytes.  The spinner/timer is a separate, freely-recreatable
-/// branch.
+/// `read_until` appends consumed bytes to `buf` *before* awaiting more, so if
+/// this future is dropped mid-line (an interrupt key or spinner tick won the
+/// `select!`), the partial bytes remain in `buf` and the next call continues
+/// where it left off. This is what makes interrupting a streaming read
+/// non-destructive (the bug-phase-11-1 / bug-phase-11-2 failure mode was a
+/// dropped read that stranded bytes inside the future's own local buffer).
+///
+/// On a complete line, `buf` is cleared and the parsed `Response` returned.
+async fn recv_line(
+    rx: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    buf: &mut Vec<u8>,
+) -> anyhow::Result<Response> {
+    use tokio::io::AsyncBufReadExt;
+    let n = rx.read_until(b'\n', buf).await?;
+    if n == 0 {
+        anyhow::bail!("Daemon closed connection unexpectedly.");
+    }
+    let line = std::str::from_utf8(buf)?.trim();
+    let response: Response = serde_json::from_str(line)?;
+    buf.clear();
+    Ok(response)
+}
+
+/// Race keyboard input against a daemon read whose partial state lives in the
+/// caller-owned `buf` (see [`recv_line`]).
+///
+/// Returning `Warn` or `Tick` drops the in-flight `recv_line` future, but the
+/// bytes it already read are preserved in `buf`, so the caller can re-enter
+/// without losing a daemon message. Only `Msg`/`Error`/`Interrupted` end the
+/// read for good.
 ///
 /// `tick_interval` controls the spinner animation rate (80 ms for phase 1,
-/// `Duration::MAX` to disable for phase 2).
-/// `overall_timeout` is an optional total timeout for the daemon response
-/// (120 s for phase 2, `None` for phase 1).
-async fn stream_phase(
+/// `Duration::MAX` to disable for phase 2). `overall_timeout` is an optional
+/// total timeout for the daemon response (120 s for phase 2, `None` for phase 1).
+async fn select_stream(
     stdin: &AsyncStdin,
     rx: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    buf: &mut Vec<u8>,
     interrupt_state: &mut InterruptState,
     tick_interval: std::time::Duration,
     overall_timeout: Option<std::time::Duration>,
 ) -> StreamOutcome {
-    // Create the first daemon-read future and pin it.
-    let mut daemon_recv = Box::pin(recv(rx));
-
-    // Optional overall timeout handle.
     let mut timeout_fut = overall_timeout.map(|d| Box::pin(tokio::time::sleep(d)));
 
     loop {
@@ -648,8 +675,7 @@ async fn stream_phase(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
-                        let action = interrupt_state.feed(&key);
-                        match action {
+                        match interrupt_state.feed(&key) {
                             InterruptAction::Ignore => continue,
                             InterruptAction::Warn => return StreamOutcome::Warn,
                             InterruptAction::Abort => return StreamOutcome::Interrupted,
@@ -657,11 +683,11 @@ async fn stream_phase(
                     }
                     continue;
                 }
-                res = &mut daemon_recv => {
-                    match res {
-                        Ok(response) => return StreamOutcome::Msg(Box::new(response)),
-                        Err(e) => return StreamOutcome::Error(e.to_string()),
-                    }
+                res = recv_line(rx, buf) => {
+                    return match res {
+                        Ok(response) => StreamOutcome::Msg(Box::new(response)),
+                        Err(e) => StreamOutcome::Error(e.to_string()),
+                    };
                 }
                 _ = to => {
                     return StreamOutcome::Error("Daemon stopped responding (120 s timeout)".to_string());
@@ -674,8 +700,7 @@ async fn stream_phase(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
-                        let action = interrupt_state.feed(&key);
-                        match action {
+                        match interrupt_state.feed(&key) {
                             InterruptAction::Ignore => continue,
                             InterruptAction::Warn => return StreamOutcome::Warn,
                             InterruptAction::Abort => return StreamOutcome::Interrupted,
@@ -683,11 +708,11 @@ async fn stream_phase(
                     }
                     continue;
                 }
-                res = &mut daemon_recv => {
-                    match res {
-                        Ok(response) => return StreamOutcome::Msg(Box::new(response)),
-                        Err(e) => return StreamOutcome::Error(e.to_string()),
-                    }
+                res = recv_line(rx, buf) => {
+                    return match res {
+                        Ok(response) => StreamOutcome::Msg(Box::new(response)),
+                        Err(e) => StreamOutcome::Error(e.to_string()),
+                    };
                 }
                 _ = tokio::time::sleep(tick_interval), if tick_interval != std::time::Duration::MAX => {
                     return StreamOutcome::Tick;
@@ -1173,70 +1198,155 @@ mod tests {
 }
 
 #[cfg(test)]
-mod stream_phase_tests {
+mod stream_seam_tests {
     use super::*;
-    use crate::cli::input::Key;
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    use tokio::net::UnixStream;
 
-    /// Verify that `InterruptState` correctly handles the two-press pattern
-    /// when driven through the same sequence `stream_phase` would use.
-    #[test]
-    fn interrupt_state_two_press_via_stream_phase_path() {
-        let mut state = InterruptState::new();
-
-        // First interrupt key → Warn
-        assert_eq!(state.feed(&Key::CtrlC), InterruptAction::Warn);
-        assert!(state.is_armed());
-
-        // Second interrupt key → Abort
-        assert_eq!(state.feed(&Key::Char('\x1b')), InterruptAction::Abort);
-        assert!(!state.is_armed());
+    /// A pipe-backed `AsyncStdin` plus the write end (as a `File`) to feed bytes.
+    fn make_pipe_stdin() -> (AsyncStdin, std::fs::File) {
+        let mut fds: [libc::c_int; 2] = [-1, -1];
+        let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK) };
+        assert_eq!(ret, 0, "pipe2 failed: {}", std::io::Error::last_os_error());
+        let stdin = AsyncStdin::from_raw_fd(fds[0]).expect("from_raw_fd");
+        let write_file = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+        (stdin, write_file)
     }
 
-    /// Verify that non-interrupt keys are true no-ops (the key property
-    /// that distinguishes the fix from the bug: a non-interrupt keypress
-    /// must not affect the state machine, and in the fixed code the recv
-    /// future is not dropped).
-    #[test]
-    fn non_interrupt_key_is_true_noop() {
-        let mut state = InterruptState::new();
-        assert_eq!(state.feed(&Key::Char('x')), InterruptAction::Ignore);
-        assert!(!state.is_armed());
-
-        // After arming, non-interrupt keys still no-op
-        state.feed(&Key::CtrlC);
-        assert!(state.is_armed());
-        assert_eq!(state.feed(&Key::Enter), InterruptAction::Ignore);
-        assert!(state.is_armed()); // still armed
+    async fn write_bytes(file: &std::fs::File, bytes: &[u8]) {
+        let fd = file.as_raw_fd();
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            let n = unsafe {
+                libc::write(
+                    fd,
+                    remaining.as_ptr() as *const libc::c_void,
+                    remaining.len(),
+                )
+            };
+            if n > 0 {
+                remaining = &remaining[n as usize..];
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
-    /// Verify that the armed state resets between turns, so the next turn's
-    /// first press warns again (does not immediately abort).
-    #[test]
-    fn armed_state_resets_between_turns_via_stream_phase_path() {
-        let mut state = InterruptState::new();
-        state.feed(&Key::CtrlC); // arm
-        assert!(state.is_armed());
+    /// The regression guard for bug-phase-11-1 / bug-phase-11-2: a daemon read
+    /// that is interrupted (dropped) mid-line must NOT lose the partial bytes —
+    /// the next read completes the same message intact.
+    #[tokio::test]
+    async fn recv_line_preserves_partial_bytes_across_a_dropped_read() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let (read_half, _write_half) = client.into_split();
+        let mut rx = BufReader::new(read_half);
+        let (_srv_r, mut srv_w) = server.into_split();
 
-        // Turn completes — reset
-        state.reset();
-        assert!(!state.is_armed());
+        // The full wire line is one serialized Response + '\n'.
+        let wire = serde_json::to_string(&Response::Token("hello".to_string())).unwrap();
+        let first_half = &wire[..wire.len() / 2];
+        let second_half = &wire[wire.len() / 2..];
 
-        // Next turn's first press warns again
-        assert_eq!(state.feed(&Key::Char('\x1b')), InterruptAction::Warn);
+        let mut buf: Vec<u8> = Vec::new();
+
+        // Send only the first half — no newline yet.
+        use tokio::io::AsyncWriteExt;
+        srv_w.write_all(first_half.as_bytes()).await.unwrap();
+
+        // Drive recv_line until it has consumed the partial bytes, then drop it
+        // by timing out — exactly what a Warn/Tick return does in select_stream.
+        let dropped = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            recv_line(&mut rx, &mut buf),
+        )
+        .await;
+        assert!(
+            dropped.is_err(),
+            "read should still be pending (no newline yet)"
+        );
+        assert!(
+            !buf.is_empty(),
+            "partial bytes must survive the dropped read, got empty buf"
+        );
+
+        // Now send the rest + newline; the next read must complete the message.
+        srv_w.write_all(second_half.as_bytes()).await.unwrap();
+        srv_w.write_all(b"\n").await.unwrap();
+
+        let msg = recv_line(&mut rx, &mut buf).await.expect("recv_line ok");
+        match msg {
+            Response::Token(t) => assert_eq!(t, "hello", "message reassembled intact"),
+            other => panic!("expected Token, got {other:?}"),
+        }
+        assert!(buf.is_empty(), "buf cleared after a complete line");
     }
 
-    /// Verify that StreamOutcome::Warn is distinct from StreamOutcome::Interrupted
-    /// — the first press returns Warn (not Interrupted), so the caller can show
-    /// a warning and keep the recv future alive.
-    #[test]
-    fn warn_is_distinct_from_interrupted() {
+    /// With the daemon idle (read pending) and an interrupt key queued,
+    /// `select_stream` returns `Warn` on the first press without touching the
+    /// stream — and the buffer is untouched.
+    #[tokio::test]
+    async fn select_stream_first_interrupt_press_warns() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let (read_half, _w) = client.into_split();
+        let mut rx = BufReader::new(read_half);
+        let mut buf: Vec<u8> = Vec::new();
         let mut state = InterruptState::new();
-        let action = state.feed(&Key::CtrlC);
-        assert_eq!(action, InterruptAction::Warn);
-        // stream_phase returns StreamOutcome::Warn for this, which the caller
-        // handles by drawing the warning and continuing the outer loop.
-        // The recv future is NOT dropped because the key branch just returns
-        // from stream_phase; the next call to stream_phase recreates the recv
-        // future from the same rx (which is fine since no bytes were consumed).
+
+        let (stdin, wf) = make_pipe_stdin();
+        write_bytes(&wf, &[0x03]).await; // Ctrl+C
+
+        let outcome = select_stream(
+            &stdin,
+            &mut rx,
+            &mut buf,
+            &mut state,
+            std::time::Duration::MAX, // no spinner tick
+            Some(std::time::Duration::from_secs(120)),
+        )
+        .await;
+
+        assert!(matches!(outcome, StreamOutcome::Warn), "got {outcome:?}");
+        assert!(state.is_armed());
+        assert!(buf.is_empty());
+    }
+
+    /// With the keyboard idle and a full daemon line ready, `select_stream`
+    /// returns the parsed `Msg`.
+    #[tokio::test]
+    async fn select_stream_delivers_a_full_daemon_message() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let (read_half, _w) = client.into_split();
+        let mut rx = BufReader::new(read_half);
+        let (_srv_r, mut srv_w) = server.into_split();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut state = InterruptState::new();
+
+        let wire = serde_json::to_string(&Response::Token("hi".to_string())).unwrap();
+        use tokio::io::AsyncWriteExt;
+        srv_w.write_all(wire.as_bytes()).await.unwrap();
+        srv_w.write_all(b"\n").await.unwrap();
+
+        // stdin write end stays open with no bytes → read_key parks forever, so
+        // only the daemon-read branch can fire.
+        let (stdin, _wf) = make_pipe_stdin();
+
+        let outcome = select_stream(
+            &stdin,
+            &mut rx,
+            &mut buf,
+            &mut state,
+            std::time::Duration::MAX,
+            Some(std::time::Duration::from_secs(120)),
+        )
+        .await;
+
+        match outcome {
+            StreamOutcome::Msg(m) => match *m {
+                Response::Token(t) => assert_eq!(t, "hi"),
+                other => panic!("expected Token, got {other:?}"),
+            },
+            other => panic!("expected Msg, got {other:?}"),
+        }
     }
 }

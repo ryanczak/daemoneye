@@ -1,7 +1,7 @@
 # Bug 1 on phase-11: streaming interrupt drops the daemon `recv` future on every keypress/spinner tick, corrupting the stream
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (architect takeover, 2026-06-27)
 **Filed:** 2026-06-27
 
 ## What's wrong

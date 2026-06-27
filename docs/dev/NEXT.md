@@ -1,18 +1,26 @@
 # NEXT
 
 **Active milestone:** M2 — TUI Renderer Overhaul (`docs/dev/milestones/M2-tui-renderer/`).
-Status `in-progress` — phases 01–10 are `done`; phase-10 was approved on review
-(`approved_after_2`, 2026-06-26; bug-phase-10-1 + bug-phase-10-2 both resolved). More
-phases remain before the milestone closes (one more TUI input/UX fix, then the rest of
-the C5 split sweep).
+Status `in-progress` — phases 01–11 are `done`. The remaining work is the C5 split sweep
+(phases 12–15).
 
-**Active phase:** **phase-11 — interrupt-and-colors** is **drafted and ready to
-dispatch** (`docs/dev/milestones/M2-tui-renderer/phase-11-interrupt-and-colors.md`,
-status `todo`). Two-press ESC/Ctrl+C interrupt of a streaming agent turn + blood-red
-border / deep-yellow title recolor of `commit_panel`. The second of the two TUI input/UX
-fix phases inserted ahead of the remaining C5 splits. Specced **LEAN** per the M2
-calibration protocol (interrupt core is design-discovery; the color recolor is the one
-pinned add). Dispatch via `/rexymcp:dispatch phase-11`.
+**Active phase:** **none currently dispatched.** Next up is **phase-12 — split-file-ops**
+(split `daemon/executor/file_ops.rs`, 1475 lines). Draft on demand via
+`/rexymcp:architect next`.
+
+phase-11 — interrupt-and-colors is `done` (**escalated — architect takeover**, 2026-06-27).
+Two-press ESC/Ctrl+C interrupt of a streaming turn + blood-red/deep-yellow `commit_panel`
+recolor. Took the full M2 calibration ladder on the interrupt (tokio-concurrency) seam:
+rung-0 → bounce (bug-11-1: recreated the read future inside `select!`) → bounce (bug-11-2:
+held the future but returned-and-dropped it on warn/tick) → hard_fail (governor:
+IdenticalToolCallRepetition while patching the callback fix) → takeover. The takeover fix
+moved partial-read state out of the droppable future into a caller-owned `Vec<u8>`
+(`recv_line` via `read_until`), making interruption non-destructive, and added the
+mutation-verified seam regression test both bugs demanded. The color half landed first try
+every dispatch. Live-terminal interactive E2E remains a recommended one-time manual PE
+confirmation (see the phase doc's final Review verdict). **Third strong M2 data point that
+front-loading should become task-shape-conditional** — folded into the still-deferred M2
+retrospective.
 
 phase-10 — input-editor is `done`: a visible cursor + word-wrap + multi-line input +
 multi-line paste + internal scroll in the ratatui input box. Took the full M2 calibration
@@ -23,10 +31,6 @@ recommended one-time manual PE confirmation (see the phase doc's approved Review
 
 phase-09 — split-config is `done` (approved_after_1, 2026-06-26; bug-09-1 dropped
 6 doc-comment lines in the verbatim split, fixed).
-
-**Next after phase 10:** phase-11 — interrupt-and-colors (two-press ESC/Ctrl+C
-agent interrupt + blood-red/deep-yellow `commit_panel` recolor). Draft on demand
-via `/rexymcp:architect next`.
 
 The C5 split sweep resumes at **phase 12** (split-file-ops): split every remaining
 source file over 1000 lines, biggest first, toward a ~600-line target. Order:
