@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::ipc::{Request, Response};
 
 use super::approval::SessionApproval;
+use super::interrupt::{InterruptAction, InterruptState};
 use super::ipc_client::{connect, recv, send_request};
 
 // ── AI conversation ─────────────────────────────────────────────────────────
@@ -126,6 +127,9 @@ pub(super) async fn ask_with_session_ratatui(
     let mut spin = verb_offset * TICKS_PER_VERB;
     let mut response_started = false;
 
+    // Interrupt state machine for this turn.
+    let mut interrupt_state = InterruptState::new();
+
     // Markdown renderer for streaming — feeds tokens and produces styled lines.
     let mut md = MarkdownRenderer::new();
     let render_width = chat_width.map(|w| w - 2).unwrap_or(80).max(20);
@@ -133,48 +137,146 @@ pub(super) async fn ask_with_session_ratatui(
     loop {
         // Phase 1 — waiting for first content: poll with short timeout for spinner.
         let msg = if !response_started {
-            loop {
-                let result =
-                    tokio::time::timeout(std::time::Duration::from_millis(80), recv(&mut rx)).await;
-                match result {
-                    Err(_timeout) => {
-                        let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
-                        let dot_period = 18;
-                        let pos = (spin % TICKS_PER_VERB) % dot_period;
-                        let dot_count = if pos < 10 {
-                            pos + 1
-                        } else {
-                            dot_period - pos + 1
-                        };
-                        let sb = StatusBarState {
-                            session_id: session_id.unwrap_or(""),
-                            approval_hint: &approval.hint(),
-                            model,
-                            prompt_tokens: *prompt_tokens,
-                            context_window,
-                            daemon_up: false,
-                            tools_total: 0,
-                            cost_usd: 0.0,
-                            has_untracked: false,
-                        };
-                        let _ = renderer.draw_spinner(
-                            SPINNER[spin % SPINNER.len()],
-                            verb,
-                            dot_count,
-                            &sb,
-                        );
-                        spin = spin.wrapping_add(1);
-                    }
-                    Ok(r) => break r?,
-                }
-            }
-        } else {
-            // Phase 2 — streaming: 120s timeout per message.
+            let phase1_result: Option<Result<Response, anyhow::Error>> = loop {
+                tokio::select! {
+                    biased;
 
-            tokio::time::timeout(std::time::Duration::from_secs(120), recv(&mut rx))
-                .await
-                .map_err(|_| anyhow::anyhow!("Daemon stopped responding (120 s timeout)"))?
-                .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
+                    // Keyboard input takes priority so interrupt is responsive.
+                    key = read_key(stdin) => {
+                        if let Some(key) = key {
+                            let action = interrupt_state.feed(&key);
+                            match action {
+                                InterruptAction::Ignore => continue,
+                                InterruptAction::Warn => {
+                                    let sb = StatusBarState {
+                                        session_id: session_id.unwrap_or(""),
+                                        approval_hint: &approval.hint(),
+                                        model,
+                                        prompt_tokens: *prompt_tokens,
+                                        context_window,
+                                        daemon_up: false,
+                                        tools_total: 0,
+                                        cost_usd: 0.0,
+                                        has_untracked: false,
+                                    };
+                                    let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
+                                    continue;
+                                }
+                                InterruptAction::Abort => {
+                                    break Some(Err(anyhow::anyhow!("interrupted")));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Daemon message with short timeout for spinner animation.
+                    res = tokio::time::timeout(std::time::Duration::from_millis(80), recv(&mut rx)) => {
+                        match res {
+                            Err(_timeout) => {
+                                let verb = VERBS[(spin / TICKS_PER_VERB) % VERBS.len()];
+                                let dot_period = 18;
+                                let pos = (spin % TICKS_PER_VERB) % dot_period;
+                                let dot_count = if pos < 10 {
+                                    pos + 1
+                                } else {
+                                    dot_period - pos + 1
+                                };
+                                let sb = StatusBarState {
+                                    session_id: session_id.unwrap_or(""),
+                                    approval_hint: &approval.hint(),
+                                    model,
+                                    prompt_tokens: *prompt_tokens,
+                                    context_window,
+                                    daemon_up: false,
+                                    tools_total: 0,
+                                    cost_usd: 0.0,
+                                    has_untracked: false,
+                                };
+                                let _ = renderer.draw_spinner(
+                                    SPINNER[spin % SPINNER.len()],
+                                    verb,
+                                    dot_count,
+                                    &sb,
+                                );
+                                spin = spin.wrapping_add(1);
+                            }
+                            Ok(r) => {
+                                break Some(r);
+                            }
+                        }
+                    }
+                }
+            };
+            let phase1_res =
+                phase1_result.unwrap_or_else(|| Err(anyhow::anyhow!("unexpected end of phase 1")));
+            if let Err(ref e) = phase1_res
+                && e.to_string() == "interrupted"
+            {
+                let _ = renderer.commit_panel("result", &["⊘ interrupted".to_string()], true);
+                interrupt_state.reset();
+                break;
+            }
+            phase1_res.map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
+        } else {
+            // Phase 2 — streaming: poll with interrupt support.
+            let phase2_result: Option<Result<Response, anyhow::Error>> = loop {
+                tokio::select! {
+                    biased;
+
+                    // Keyboard input takes priority so interrupt is responsive.
+                    key = read_key(stdin) => {
+                        if let Some(key) = key {
+                            let action = interrupt_state.feed(&key);
+                            match action {
+                                InterruptAction::Ignore => continue,
+                                InterruptAction::Warn => {
+                                    // Redraw current live region with warning
+                                    let sb = StatusBarState {
+                                        session_id: session_id.unwrap_or(""),
+                                        approval_hint: &approval.hint(),
+                                        model,
+                                        prompt_tokens: *prompt_tokens,
+                                        context_window,
+                                        daemon_up: false,
+                                        tools_total: 0,
+                                        cost_usd: 0.0,
+                                        has_untracked: false,
+                                    };
+                                    let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
+                                    continue;
+                                }
+                                InterruptAction::Abort => {
+                                    break Some(Err(anyhow::anyhow!("interrupted")));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Daemon message with 120s timeout.
+                    res = tokio::time::timeout(std::time::Duration::from_secs(120), recv(&mut rx)) => {
+                        match res {
+                            Err(_timeout) => {
+                                break Some(Err(anyhow::anyhow!("Daemon stopped responding (120 s timeout)")));
+                            }
+                            Ok(r) => {
+                                break Some(r);
+                            }
+                        }
+                    }
+                }
+            };
+            let phase2_res =
+                phase2_result.unwrap_or_else(|| Err(anyhow::anyhow!("unexpected end of phase 2")));
+            if let Err(ref e) = phase2_res
+                && e.to_string() == "interrupted"
+            {
+                let _ = renderer.commit_panel("result", &["⊘ interrupted".to_string()], true);
+                interrupt_state.reset();
+                break;
+            }
+            phase2_res.map_err(|e| anyhow::anyhow!("Connection error: {}", e))?
         };
 
         match msg {
@@ -531,10 +633,11 @@ pub(super) async fn ask_with_session_ratatui(
         *approval = SessionApproval::from_config(&cfg.approvals);
     }
 
+    // Turn completed normally — reset interrupt state for next turn.
+    interrupt_state.reset();
+
     Ok(())
 }
-
-// ── Ratatui interactive approval primitives ──────────────────────────────────
 
 // ── Ratatui interactive approval primitives ──────────────────────────────────
 

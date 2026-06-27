@@ -6,10 +6,13 @@ Status `in-progress` — phases 01–10 are `done`; phase-10 was approved on rev
 phases remain before the milestone closes (one more TUI input/UX fix, then the rest of
 the C5 split sweep).
 
-**Active phase:** **none currently dispatched.** Next up is **phase-11 —
-interrupt-and-colors** (two-press ESC/Ctrl+C agent interrupt + blood-red/deep-yellow
-`commit_panel` recolor), the second of the two TUI input/UX fix phases inserted ahead of
-the remaining C5 splits. Draft on demand via `/rexymcp:architect next`.
+**Active phase:** **phase-11 — interrupt-and-colors** is **drafted and ready to
+dispatch** (`docs/dev/milestones/M2-tui-renderer/phase-11-interrupt-and-colors.md`,
+status `todo`). Two-press ESC/Ctrl+C interrupt of a streaming agent turn + blood-red
+border / deep-yellow title recolor of `commit_panel`. The second of the two TUI input/UX
+fix phases inserted ahead of the remaining C5 splits. Specced **LEAN** per the M2
+calibration protocol (interrupt core is design-discovery; the color recolor is the one
+pinned add). Dispatch via `/rexymcp:dispatch phase-11`.
 
 phase-10 — input-editor is `done`: a visible cursor + word-wrap + multi-line input +
 multi-line paste + internal scroll in the ratatui input box. Took the full M2 calibration

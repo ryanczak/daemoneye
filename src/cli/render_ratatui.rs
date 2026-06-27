@@ -325,16 +325,27 @@ impl<B: Backend> RatatuiRenderer<B> {
         let title_len = title.chars().count();
         let fill = inner.saturating_sub(title_len + 4);
 
+        let border_color = Color::Rgb(180, 0, 0);
+        let title_color = Color::Rgb(220, 160, 0);
+
         let border_style = Style::default()
-            .fg(Color::Blue)
+            .fg(border_color)
             .add_modifier(Modifier::BOLD);
-        let top_border = format!("╭─ {} {}─╮", title, "─".repeat(fill));
+        let title_style = Style::default()
+            .fg(title_color)
+            .add_modifier(Modifier::BOLD);
+
+        let top_border_spans: Vec<Span<'static>> = vec![
+            Span::styled("╭─ ".to_string(), border_style),
+            Span::styled(title.to_string(), title_style),
+            Span::styled(format!(" {}─╮", "─".repeat(fill)), border_style),
+        ];
         let bottom_border = format!("╰{}╯", "─".repeat(inner));
 
         let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Top border
-        lines.push(Line::from(Span::styled(top_border, border_style)));
+        lines.push(Line::from(top_border_spans));
 
         // Body lines
         let body_style = if dim_body {
@@ -1031,6 +1042,76 @@ mod tests {
         assert!(
             all_text.contains("line 9"),
             "cursor line 'line 9' should be visible after scroll, got: {}",
+            all_text
+        );
+    }
+    /// Test that `commit_panel` renders with blood-red borders and deep-yellow title.
+    #[test]
+    fn commit_panel_uses_blood_red_border_and_yellow_title() {
+        let mut renderer = make_test_renderer();
+
+        // Draw the live region first so the viewport is active.
+        let input = InputLine::new();
+        let status = StatusBarState {
+            session_id: "test-session",
+            approval_hint: "",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: false,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+        renderer.draw(&input, &status).unwrap();
+
+        // Commit a panel with a known title.
+        renderer
+            .commit_panel("Output", &["some output line".to_string()], false)
+            .unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+
+        // Collect all cells from buffer + scrollback.
+        let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
+
+        // Find border cells — corner/edge glyphs should have blood-red fg.
+        let border_glyphs = ["╭", "╮", "╰", "╯", "─"];
+        let border_cells: Vec<_> = all_cells
+            .iter()
+            .filter(|c| border_glyphs.iter().any(|g| c.symbol() == *g))
+            .collect();
+
+        // Verify border cells have blood-red color.
+        let border_color = Color::Rgb(180, 0, 0);
+        for cell in &border_cells {
+            assert_eq!(
+                cell.style().fg,
+                Some(border_color),
+                "border cell '{}' should have blood-red fg, got {:?}",
+                cell.symbol(),
+                cell.style().fg
+            );
+        }
+
+        // Verify at least some title cells have deep-yellow color.
+        let title_color = Color::Rgb(220, 160, 0);
+        let yellow_title_cells: Vec<_> = all_cells
+            .iter()
+            .filter(|c| c.style().fg == Some(title_color))
+            .collect();
+        assert!(
+            !yellow_title_cells.is_empty(),
+            "expected some cells with deep-yellow title color, found none"
+        );
+
+        // Verify the title text is present.
+        let all_text: String = all_cells.iter().flat_map(|c| c.symbol().chars()).collect();
+        assert!(
+            all_text.contains("Output"),
+            "panel title 'Output' should be present, got: {}",
             all_text
         );
     }
