@@ -1,7 +1,7 @@
 # Phase 10: input-editor
 
 **Milestone:** M2 — TUI Renderer Overhaul
-**Status:** in-progress (bounced again — see bug-phase-10-2)
+**Status:** review
 **Depends on:** phase-03 (done — ratatui is the only render path), phase-05 (done — `cli/input/editor`)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -333,3 +333,54 @@ Not performed — requires interactive tmux session with `daemoneye chat` which 
   `false_completion` (re-ticked AC boxes + flipped to review without the required seam
   tests or a completion log entry). Re-dispatch with bug-phase-10-2's seam-test
   construction pinned (it spells out the `pipe2` + `from_raw_fd` injection seam).
+
+### Update — 2026-06-26 23:50 (complete)
+
+**Summary:** Added the load-bearing seam tests that were missing from the previous re-dispatch. Created an `AsyncStdin::from_raw_fd` constructor (#[cfg(test)]) to inject a pipe instead of `/dev/tty`, then wrote 10 hermetic `#[tokio::test]` tests that drive `read_key` over real byte streams: bare CR/LF → `Key::Enter`, ESC+CR/LF → `Key::CtrlJ`, bracketed paste `ESC[200~...ESC[201~` → `Key::Paste` (single-line, multi-line, and verifying no `Enter` mid-paste), plus backspace, arrow-up, and char tests. Added `#[derive(Debug, PartialEq)]` to `Key` to enable assertions.
+
+**Acceptance criteria:** all ticked above.
+
+**Commands:**
+
+```
+cargo fmt --all
+(no output — clean)
+
+cargo build 2>&1 | tail -20
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.9s
+
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.1s
+
+cargo test 2>&1 | tail -30
+test result: ok. 804 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+```
+
+**End-to-end verification:**
+
+Not performed — requires interactive tmux session with `daemoneye chat` which cannot be automated in this headless executor. The E2E section specifies launching in an attached tmux pane and using `capture-pane`, which requires a live terminal.
+
+**Files changed:**
+- `src/cli/input/tty.rs` — added `AsyncStdin::from_raw_fd` (#[cfg(test)]), added `#[derive(Debug, PartialEq)]` to `Key`, added 10 hermetic `#[tokio::test]` tests exercising `read_key` over pipe-injected byte streams: `read_key_bare_cr_yields_enter`, `read_key_bare_lf_yields_enter`, `read_key_alt_enter_yields_ctrlj`, `read_key_alt_enter_lf_yields_ctrlj`, `read_key_bracketed_paste_single_line`, `read_key_bracketed_paste_multiline`, `read_key_bracketed_paste_no_enter_mid_paste`, `read_key_backspace`, `read_key_arrow_up`, `read_key_char`
+
+**New tests:**
+- `read_key_bare_cr_yields_enter` in `src/cli/input/tty.rs`
+- `read_key_bare_lf_yields_enter` in `src/cli/input/tty.rs`
+- `read_key_alt_enter_yields_ctrlj` in `src/cli/input/tty.rs`
+- `read_key_alt_enter_lf_yields_ctrlj` in `src/cli/input/tty.rs`
+- `read_key_bracketed_paste_single_line` in `src/cli/input/tty.rs`
+- `read_key_bracketed_paste_multiline` in `src/cli/input/tty.rs`
+- `read_key_bracketed_paste_no_enter_mid_paste` in `src/cli/input/tty.rs`
+- `read_key_backspace` in `src/cli/input/tty.rs`
+- `read_key_arrow_up` in `src/cli/input/tty.rs`
+- `read_key_char` in `src/cli/input/tty.rs`
+
+**Commits:**
+- (to be committed)
+
+**Notes for review:**
+- Grep verification: `read_key` found in tty.rs at lines 375, 383, 392, 405, 422, 439, 456, 469, 477, 485 (10 test call sites); `read_bracketed_paste` found at line 264 (function definition).
+- The `AsyncStdin::from_raw_fd` constructor is `#[cfg(test)]` so it is not available in production builds.
+- The `Key` enum now derives `Debug` and `PartialEq` — these are only used in test code but are harmless in production and needed for `assert_eq!` assertions.
+- All 10 new tests use `pipe2(O_NONBLOCK)` + `from_raw_fd` to inject bytes into `read_key` without touching `/dev/tty`.

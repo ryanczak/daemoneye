@@ -45,6 +45,14 @@ impl AsyncStdin {
         Ok(Self(tokio::io::unix::AsyncFd::new(TtyFd(fd))?))
     }
 
+    /// Construct from an already-open non-blocking fd.
+    ///
+    /// Used in tests to inject a pipe instead of `/dev/tty`.
+    #[cfg(test)]
+    pub(crate) fn from_raw_fd(fd: std::os::unix::io::RawFd) -> anyhow::Result<Self> {
+        Ok(Self(tokio::io::unix::AsyncFd::new(TtyFd(fd))?))
+    }
+
     /// Read one raw byte from the terminal asynchronously.
     pub async fn read_byte(&self) -> Option<u8> {
         let mut buf = [0u8; 1];
@@ -81,6 +89,7 @@ impl AsyncStdin {
 }
 
 /// Parsed key event from raw-mode terminal input.
+#[derive(Debug, PartialEq)]
 pub enum Key {
     Char(char),
     Backspace,
@@ -310,5 +319,170 @@ async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
                 return String::from_utf8_lossy(&paste_buf).to_string();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+
+    /// Create a pipe and return an AsyncStdin reading from the read end.
+    fn make_pipe_stdin() -> (AsyncStdin, std::fs::File) {
+        // pipe2 with O_NONBLOCK on both ends
+        let mut fds: [libc::c_int; 2] = [-1, -1];
+        let ret = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_NONBLOCK) };
+        assert_eq!(ret, 0, "pipe2 failed: {}", std::io::Error::last_os_error());
+
+        let read_end = fds[0];
+        let write_end = fds[1];
+
+        let stdin = AsyncStdin::from_raw_fd(read_end).expect("from_raw_fd");
+
+        // Wrap the write end in a File for easy writing
+        let write_file = unsafe { std::fs::File::from_raw_fd(write_end) };
+        (stdin, write_file)
+    }
+
+    /// Write bytes into the write file and wait a bit for them to be available.
+    async fn write_bytes(file: &std::fs::File, bytes: &[u8]) {
+        let fd = file.as_raw_fd();
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            let n = unsafe {
+                libc::write(
+                    fd,
+                    remaining.as_ptr() as *const libc::c_void,
+                    remaining.len(),
+                )
+            };
+            if n > 0 {
+                remaining = &remaining[n as usize..];
+            } else {
+                // EAGAIN is fine, just loop
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
+        // Give the async reader time to see the data
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+
+    #[tokio::test]
+    async fn read_key_bare_cr_yields_enter() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // Write a bare CR
+        write_bytes(&write_file, b"\r").await;
+        let key = read_key(&stdin).await;
+        assert_eq!(key, Some(Key::Enter), "bare CR should yield Enter");
+    }
+
+    #[tokio::test]
+    async fn read_key_bare_lf_yields_enter() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"\n").await;
+        let key = read_key(&stdin).await;
+        assert_eq!(key, Some(Key::Enter), "bare LF should yield Enter");
+    }
+
+    #[tokio::test]
+    async fn read_key_alt_enter_yields_ctrlj() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // Alt+Enter: ESC followed by CR
+        write_bytes(&write_file, &[0x1b, b'\r']).await;
+        let key = read_key(&stdin).await;
+        assert_eq!(
+            key,
+            Some(Key::CtrlJ),
+            "Alt+Enter (ESC CR) should yield CtrlJ"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_alt_enter_lf_yields_ctrlj() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // Alt+Enter: ESC followed by LF
+        write_bytes(&write_file, &[0x1b, b'\n']).await;
+        let key = read_key(&stdin).await;
+        assert_eq!(
+            key,
+            Some(Key::CtrlJ),
+            "Alt+Enter (ESC LF) should yield CtrlJ"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_bracketed_paste_single_line() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // ESC[200~ hello ESC[201~
+        let payload: Vec<u8> = vec![
+            0x1b, b'[', b'2', b'0', b'0', b'~', b'h', b'e', b'l', b'l', b'o', 0x1b, b'[', b'2',
+            b'0', b'1', b'~',
+        ];
+        write_bytes(&write_file, &payload).await;
+        let key = read_key(&stdin).await;
+        assert!(
+            matches!(&key, Some(Key::Paste(s)) if s == "hello"),
+            "bracketed paste should yield Paste(\"hello\"), got: {:?}",
+            key
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_bracketed_paste_multiline() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // ESC[200~ line1\nline2 ESC[201~
+        let payload: Vec<u8> = vec![
+            0x1b, b'[', b'2', b'0', b'0', b'~', b'l', b'i', b'n', b'e', b'1', b'\n', b'l', b'i',
+            b'n', b'e', b'2', 0x1b, b'[', b'2', b'0', b'1', b'~',
+        ];
+        write_bytes(&write_file, &payload).await;
+        let key = read_key(&stdin).await;
+        assert!(
+            matches!(&key, Some(Key::Paste(s)) if s == "line1\nline2"),
+            "multiline bracketed paste should yield Paste(\"line1\\nline2\"), got: {:?}",
+            key
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_bracketed_paste_no_enter_mid_paste() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // ESC[200~ a\nb ESC[201~ — the \n inside should NOT produce Key::Enter
+        let payload: Vec<u8> = vec![
+            0x1b, b'[', b'2', b'0', b'0', b'~', b'a', b'\n', b'b', 0x1b, b'[', b'2', b'0', b'1',
+            b'~',
+        ];
+        write_bytes(&write_file, &payload).await;
+        let key = read_key(&stdin).await;
+        // Should be a single Paste, not Enter
+        assert!(
+            matches!(&key, Some(Key::Paste(s)) if s == "a\nb"),
+            "paste with embedded newline should yield single Paste, got: {:?}",
+            key
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_backspace() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"\x7f").await;
+        let key = read_key(&stdin).await;
+        assert_eq!(key, Some(Key::Backspace));
+    }
+
+    #[tokio::test]
+    async fn read_key_arrow_up() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, &[0x1b, b'[', b'A']).await;
+        let key = read_key(&stdin).await;
+        assert_eq!(key, Some(Key::Up));
+    }
+
+    #[tokio::test]
+    async fn read_key_char() {
+        let (stdin, write_file) = make_pipe_stdin();
+        write_bytes(&write_file, b"x").await;
+        let key = read_key(&stdin).await;
+        assert_eq!(key, Some(Key::Char('x')));
     }
 }
