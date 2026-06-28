@@ -734,6 +734,19 @@ async fn select_stream(
 
 // ── Ratatui interactive approval primitives ──────────────────────────────────
 
+/// Build the canonical approval-prompt string shared by every approval flow.
+/// Option order is fixed: [Y]es, [A]pprove for <label>, [N]o, then the
+/// redirect affordance only where the flow supports it. Keeping all flows on
+/// this one builder is what prevents the prompts from drifting apart again.
+fn build_approval_prompt(session_label: &str, supports_redirect: bool) -> String {
+    let redirect = if supports_redirect {
+        "or type a message "
+    } else {
+        ""
+    };
+    format!("  Approve? [Y]es  [A]pprove for {session_label}  [N]o  {redirect}› ")
+}
+
 /// Parse a user response to a Y/N/A prompt.
 fn parse_approval_response(input: &str) -> (bool, bool, Option<String>) {
     let trimmed = input.trim();
@@ -873,10 +886,7 @@ pub(super) async fn prompt_tool_call_ratatui(
     }
 
     let session_label = if is_sudo { "sudo session" } else { "session" };
-    let prompt_text = format!(
-        "  Approve? [Y]es  [N]o  [A]pprove for {}  or type a message › ",
-        session_label
-    );
+    let prompt_text = build_approval_prompt(session_label, true);
     let (approved, is_session, user_msg) =
         prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
@@ -1020,17 +1030,12 @@ where
         return true;
     }
 
-    let has_a = !all_approved;
-    let prompt_text = if has_a {
-        "  Approve? [Y]es  [A]pprove for session  [N]o  › ".to_string()
-    } else {
-        "  Approve? [Y]es  [N]o  › ".to_string()
-    };
+    let prompt_text = build_approval_prompt("session", false);
     let (approved, is_session, _user_msg) =
         prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
     if approved {
-        if is_session && has_a {
+        if is_session {
             insert_for_session(approval, name);
             let _ = renderer.commit(&format!(
                 "  ✓ approved — edits to '{}' auto-approved for this session\n",
@@ -1108,11 +1113,7 @@ pub(super) async fn prompt_edit_file_ratatui(
         return (true, None);
     }
 
-    let prompt_text = if all_approved {
-        "  Approve? [Y]es  [N]o  › ".to_string()
-    } else {
-        "  Approve? [Y]es  [A]pprove for session  [N]o  or type a message › ".to_string()
-    };
+    let prompt_text = build_approval_prompt("session", true);
     let (approved, is_session, user_msg) =
         prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
 
@@ -1204,6 +1205,30 @@ mod tests {
         assert!(!approved);
         assert!(!is_session);
         assert_eq!(msg, Some("Fix the path please".to_string()));
+    }
+
+    #[test]
+    fn build_approval_prompt_session_with_redirect() {
+        assert_eq!(
+            build_approval_prompt("session", true),
+            "  Approve? [Y]es  [A]pprove for session  [N]o  or type a message › "
+        );
+    }
+
+    #[test]
+    fn build_approval_prompt_sudo_session_with_redirect() {
+        assert_eq!(
+            build_approval_prompt("sudo session", true),
+            "  Approve? [Y]es  [A]pprove for sudo session  [N]o  or type a message › "
+        );
+    }
+
+    #[test]
+    fn build_approval_prompt_session_without_redirect() {
+        assert_eq!(
+            build_approval_prompt("session", false),
+            "  Approve? [Y]es  [A]pprove for session  [N]o  › "
+        );
     }
 }
 

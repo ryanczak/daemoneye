@@ -56,7 +56,7 @@ clarity, test coverage) — without regressing any shipped behavior.
 | #  | Phase | Theme | Status |
 |----|-------|-------|--------|
 | 01 | fix-test-hermeticity ([phase-01-fix-test-hermeticity.md](phase-01-fix-test-hermeticity.md)) — fix the racy `webhook_alert_to_event_log` + restore `HOME` in the 5 leak tests | bug | done |
-| 02 | approval-prompt-consistency ([phase-02-approval-prompt-consistency.md](phase-02-approval-prompt-consistency.md)) — one prompt format + option order across the tool / runbook / `edit_file` approval flows | ux | todo |
+| 02 | approval-prompt-consistency ([phase-02-approval-prompt-consistency.md](phase-02-approval-prompt-consistency.md)) — one prompt format + option order across the tool / runbook / `edit_file` approval flows | ux | review |
 | 03 | split-utils — split `daemon/utils.rs` (1007, grab-bag) into cohesive submodules (shell-escape / sudo / event-log / output / response) | maint | todo |
 | 04 | error-message-quality — kill the `render_error` `{:?}` debug-dump leak; map unexpected `Response` variants to friendly text; standardize empty-state phrasing | ux | todo |
 | 05 | consolidate-leaf-params — resolve the low-blast `TODO(M2)` markers via param structs (`memory`, `session_store`, `knowledge/{agents,memory}`, `file_ops/ops`) | maint | todo |

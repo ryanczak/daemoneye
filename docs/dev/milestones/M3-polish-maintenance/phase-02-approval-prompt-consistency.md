@@ -1,7 +1,7 @@
 # Phase 02: Approval-prompt consistency
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** todo
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~80 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -251,3 +251,43 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-06-28 05:48 (started)
+
+**Executor:** headless executor
+
+Started implementing approval-prompt consistency refactor.
+
+### Update — 2026-06-28 05:50 (complete)
+
+**Executor:** headless executor
+
+**Summary:** Added `build_approval_prompt` shared builder and routed all three approval-prompt call sites through it.
+
+**Changes:**
+- Added `build_approval_prompt(session_label: &str, supports_redirect: bool) -> String` in `stream.rs` (~line 737)
+- `prompt_tool_call_ratatui`: replaced inline `format!` with `build_approval_prompt(session_label, true)` — this is the only user-visible change (N/A option swap)
+- `prompt_write_ratatui`: replaced `has_a` conditional with `build_approval_prompt("session", false)`, simplified `is_session && has_a` guard to `is_session`
+- `prompt_edit_file_ratatui`: replaced `if all_approved` conditional with `build_approval_prompt("session", true)`
+- Added 3 unit tests: `build_approval_prompt_session_with_redirect`, `build_approval_prompt_sudo_session_with_redirect`, `build_approval_prompt_session_without_redirect`
+
+**Verification commands:**
+```
+cargo fmt --all        → passed
+cargo build            → passed, zero warnings
+cargo clippy --all-targets --all-features -- -D warnings → passed
+cargo test             → 27 passed, 0 failed, 2 ignored
+```
+
+**Grep verification** (`grep -nE 'Approve\? \[Y\]es' src/cli/commands/stream.rs`):
+```
+747:    format!("  Approve? [Y]es  [A]pprove for {session_label}  [N]o  {redirect}› ")
+1214:            "  Approve? [Y]es  [A]pprove for session  [N]o  or type a message › "
+1222:            "  Approve? [Y]es  [A]pprove for sudo session  [N]o  or type a message › "
+1230:            "  Approve? [Y]es  [A]pprove for session  [N]o  › "
+```
+Line 747 is inside `build_approval_prompt`; lines 1214/1222/1230 are test assertions. No inline prompt literals remain in call sites.
+
+**End-to-end verification:** Declared N/A — interactive terminal render cannot be exercised headlessly. Unit tests pin the exact bytes. Grep confirms the literal only exists in the builder and tests.
+
+**Files changed:** `src/cli/commands/stream.rs`, `docs/dev/milestones/M3-polish-maintenance/phase-02-approval-prompt-consistency.md`, `docs/dev/milestones/M3-polish-maintenance/README.md`
