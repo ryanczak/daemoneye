@@ -1,7 +1,7 @@
 # Phase 03: Split `daemon/utils.rs` into cohesive submodules
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~120 lines (net near-zero: code moves, no logic changes)
 **Tags:** language=rust, kind=refactor, size=m
@@ -313,3 +313,11 @@ src/daemon/utils/response.rs:pub async fn send_response_split<W>(tx: &mut W, res
 $ grep -r "pub fn daemon_hostname" src/daemon/utils/
 src/daemon/utils/host.rs:pub fn daemon_hostname() -> String {
 ```
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen3.6-27B-PrismaAURA
+- **Scope deviations:** none — all 22 items partitioned exactly per the spec table; 59 tests relocated verbatim (43 shell + 5 sudo + 11 output); zero consumer edits; `daemon/mod.rs` untouched; build/clippy/fmt/test all clean on independent re-run.
+- **Calibration:** architect line estimate was low — drafted "~300 lines/file" but `shell.rs` landed at 506 because co-located tests move with their functions. One-off; note for future split specs: size estimates must include relocated test volume, not just code. No fold (single occurrence).
