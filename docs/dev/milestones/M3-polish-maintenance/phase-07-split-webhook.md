@@ -1,7 +1,7 @@
 # Phase 07: Split `webhook.rs` into cohesive submodules
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~90 lines of net new plumbing (a `webhook/mod.rs`, per-file
 import blocks, one visibility bump). The bulk of the change is **verbatim code
@@ -373,3 +373,13 @@ directory module unchanged.)
 **End-to-end verification:** N/A — pure internal module reorganization.
 
 **Notes for review:** Removed `use crate::config::Config` from `process.rs` since `Config` is accessed through `WebhookState.config` (already re-exported via `super::*`), not referenced directly. This is a compiler-observed unused import, not a spec-pinned import.
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-PrismaAURA (rexyMCP)
+- **Scope deviations:** none — the one compiler-observed `use crate::config::Config` drop in `process.rs` is within the spec's "the compiler is the authority" allowance for the per-submodule import blocks (Task 3).
+- **Calibration:** none
+
+**Independent re-run:** `cargo fmt --all -- --check` clean; `cargo build` zero warnings; `cargo clippy --all-targets --all-features -- -D warnings` passes; `cargo test` 825 lib + 27 integration passed, 0 failed. Webhook test set 38 functions (35 `#[test]`) — identical to pre-split count at `b040651`, none dropped. Spot-checks `alertmanager_parses_single_alert` (parse), `severity_rank_ordering` + `evaluate_api_error_with_partial_response_uses_content` (process), `auth_wrong_token_denies` (server) each match their new submodule and pass. `git diff src/lib.rs` empty; commit `d8aba17` touches only `src/webhook/*` (+ the `webhook.rs`→`process.rs` rename) and docs — no consumer edits. `pub(crate) fn as_str` confirmed at `parse.rs:34`. Two `unwrap()` in `server.rs` are both inside `#[cfg(test)] mod tests` (exempt).
