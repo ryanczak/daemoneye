@@ -1,7 +1,7 @@
 # Phase 05: Consolidate leaf params
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (error-message-quality, done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -308,3 +308,21 @@ Starting phase 05: consolidate 5 leaf-param `TODO(M2)` markers into borrow-struc
 **End-to-end verification:** N/A — pure internal signature refactor, no runtime-loadable artifact. Existing test suites (`memory_tests.rs`, `session_store_tests.rs`, integration tests) passed after mechanical call-site rewrites, proving behavior preservation.
 
 **Notes for review:** None.
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independent re-run of the full command set passed (`cargo fmt --all -- --check`,
+`cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`,
+`cargo test` — 825 unit + 27 integration, 0 failed). All five acceptance criteria
+verified: `grep -rn "TODO(M2)" src/` returns exactly the two orchestration markers
+(`stream.rs:43`, `server/ask.rs:20`); `too_many_arguments` is gone from all five
+target files; all five pinned structs present. The two pre-existing
+`UpdateMemoryArgs`/`CreateAgentArgs` in `src/ai/tools/args.rs` are unrelated
+tool-arg parsers in a separate module — no clash. Pure refactor, behavior preserved
+by the unchanged `memory_tests.rs`/`session_store_tests.rs` suites.
