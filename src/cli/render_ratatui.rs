@@ -1099,20 +1099,27 @@ mod tests {
         // Collect all cells from buffer + scrollback.
         let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
 
-        // Find border cells — corner/edge glyphs should have blood-red fg.
-        let border_glyphs = ["╭", "╮", "╰", "╯", "─"];
-        let border_cells: Vec<_> = all_cells
-            .iter()
-            .filter(|c| border_glyphs.iter().any(|g| c.symbol() == *g))
-            .collect();
-
-        // Verify border cells have blood-red color.
+        // Find the panel's border cells. With the `scrolling-regions` feature
+        // the live input box (a gray-bordered block) is no longer cleared by
+        // `insert_before`, so its gray `─` cells coexist with the panel's. We
+        // therefore assert that the panel contributes blood-red border cells —
+        // its rounded corners are unique to the panel — rather than that *every*
+        // border glyph on screen is blood-red.
         let border_color = Color::Rgb(180, 0, 0);
-        for cell in &border_cells {
+        let panel_corner_glyphs = ["╭", "╮", "╰", "╯"];
+        let panel_border_cells: Vec<_> = all_cells
+            .iter()
+            .filter(|c| panel_corner_glyphs.iter().any(|g| c.symbol() == *g))
+            .collect();
+        assert!(
+            !panel_border_cells.is_empty(),
+            "expected panel corner border cells, found none"
+        );
+        for cell in &panel_border_cells {
             assert_eq!(
                 cell.style().fg,
                 Some(border_color),
-                "border cell '{}' should have blood-red fg, got {:?}",
+                "panel border cell '{}' should have blood-red fg, got {:?}",
                 cell.symbol(),
                 cell.style().fg
             );
