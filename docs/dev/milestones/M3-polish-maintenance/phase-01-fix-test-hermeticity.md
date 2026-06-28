@@ -1,7 +1,7 @@
 # Phase 01: Fix test hermeticity (parallel-HOME race)
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -315,3 +315,17 @@ Started implementing Phase 01: Fix test hermeticity (parallel-HOME race).
 **New tests:** None — phase repairs existing tests; regression verified via the concurrency soak in End-to-end verification.
 
 **Notes for review:** No adaptations needed; the spec matched the code exactly.
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-PrismaAURA)
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independently re-ran fmt/build/clippy/test (all green) plus a 15× integration
+concurrency soak under `--test-threads=16` (15/15 `27 passed; 0 failed`). Verified
+all six tests capture+restore `HOME`, `webhook_alert_to_event_log` is a sync
+`#[test]` driving the async call via `rt.block_on` (no `await_holding_lock`), and
+the `g4_*`/`g5_*`/`g6_*` tests are untouched in commit `c52608f`.
