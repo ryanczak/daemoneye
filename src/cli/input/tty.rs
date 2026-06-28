@@ -109,6 +109,10 @@ pub enum Key {
     CtrlU,
     CtrlC,
     CtrlD,
+    /// Terminal focus-in report (`ESC [ I`) — this tmux pane regained focus.
+    FocusGained,
+    /// Terminal focus-out report (`ESC [ O`) — this tmux pane lost focus.
+    FocusLost,
     /// A pasted block of text (bracketed paste).
     Paste(String),
 }
@@ -177,6 +181,9 @@ pub async fn read_key(stdin: &AsyncStdin) -> Option<Key> {
                         Ok(Some(b'D')) => Key::Left,
                         Ok(Some(b'H')) => Key::Home,
                         Ok(Some(b'F')) => Key::End,
+                        // Focus reporting (DEC private mode 1004): ESC[I / ESC[O.
+                        Ok(Some(b'I')) => Key::FocusGained,
+                        Ok(Some(b'O')) => Key::FocusLost,
                         Ok(Some(b'3')) => {
                             // \x1b[3~ = Delete
                             let _ = timeout(Duration::from_millis(30), stdin.read_byte()).await;

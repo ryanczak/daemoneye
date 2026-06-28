@@ -1,0 +1,517 @@
+//! Slash-command handling for the interactive chat loop.
+//!
+//! Each command here maps to a single daemon request/response round-trip (via
+//! [`request_once`]) or to a purely client-side state change, and renders its
+//! result into scrollback through the ratatui renderer. The chat loop redraws
+//! the live region after `handle_slash` returns.
+//!
+//! Commands handled directly in `chat.rs` (and therefore *not* here): `/exit`,
+//! `/quit`, `/help`, `/clear`, `/new` — they only touch chat-loop state.
+
+use crate::cli::render_ratatui::RatatuiRendererStdout;
+use crate::config::{Config, prompts_dir};
+use crate::ipc::{Request, Response};
+
+use super::approval::SessionApproval;
+use super::ipc_client::request_once;
+
+/// Outcome of attempting to handle a slash command.
+pub(super) enum SlashOutcome {
+    /// The command was recognized and handled; redraw and continue.
+    Handled,
+    /// The input was not a recognized slash command.
+    NotACommand,
+}
+
+/// Mutable chat-loop state a slash command may read or update.
+pub(super) struct SlashCtx<'a> {
+    pub(super) renderer: &'a mut RatatuiRendererStdout,
+    pub(super) session_id: &'a str,
+    pub(super) approval: &'a mut SessionApproval,
+    pub(super) model: &'a mut String,
+    pub(super) context_window: &'a mut u32,
+    pub(super) current_prompt: &'a mut Option<String>,
+    pub(super) target_pane: &'a mut Option<String>,
+}
+
+/// Whether `cmd` looks like a command token (`/word`) rather than a path or
+/// prose fragment that merely starts with a slash (e.g. `/etc/passwd`).
+pub(super) fn is_command_shaped(cmd: &str) -> bool {
+    cmd.len() > 1
+        && cmd.starts_with('/')
+        && cmd[1..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Dispatch a slash command. Returns [`SlashOutcome::NotACommand`] when the
+/// first token is not one of the recognized commands so the caller can decide
+/// whether to reject it (command-shaped) or send it to the LLM (prose).
+pub(super) async fn handle_slash(ctx: SlashCtx<'_>, query: &str) -> SlashOutcome {
+    let q = query.trim();
+    let (cmd, rest) = match q.split_once(char::is_whitespace) {
+        Some((c, r)) => (c, r.trim()),
+        None => (q, ""),
+    };
+
+    match cmd {
+        "/refresh" => cmd_refresh(ctx.renderer).await,
+        "/model" | "/models" => cmd_model(ctx, rest).await,
+        "/pane" | "/panes" => cmd_pane(ctx, rest).await,
+        "/approvals" | "/approval" => cmd_approvals(ctx, rest),
+        "/prompt" => cmd_prompt(ctx, rest),
+        "/limits" => cmd_limits(ctx.renderer, ctx.session_id).await,
+        "/session" | "/sessions" => cmd_session(ctx, rest).await,
+        _ => return SlashOutcome::NotACommand,
+    }
+    SlashOutcome::Handled
+}
+
+/// Commit a single dim note line to scrollback.
+fn note(r: &mut RatatuiRendererStdout, msg: &str) {
+    let _ = r.commit(&format!("  {msg}\n"));
+}
+
+fn render_error(r: &mut RatatuiRendererStdout, resp: Response) {
+    match resp {
+        Response::Error(e) => note(r, &format!("✗ {e}")),
+        other => note(r, &format!("✗ unexpected response: {other:?}")),
+    }
+}
+
+// ── /refresh ─────────────────────────────────────────────────────────────────
+
+async fn cmd_refresh(r: &mut RatatuiRendererStdout) {
+    match request_once(Request::Refresh).await {
+        Ok(Response::Ok) => note(r, "✓ system context refreshed"),
+        Ok(other) => render_error(r, other),
+        Err(e) => note(r, &format!("✗ {e}")),
+    }
+}
+
+// ── /model ───────────────────────────────────────────────────────────────────
+
+async fn cmd_model(ctx: SlashCtx<'_>, rest: &str) {
+    if rest.is_empty() {
+        // List configured models, marking the active one.
+        match request_once(Request::ListModels {
+            session_id: ctx.session_id.to_string(),
+        })
+        .await
+        {
+            Ok(Response::ModelList { models, active }) => {
+                let mut body = Vec::new();
+                for (key, model_id) in &models {
+                    let marker = if key == &active { "●" } else { " " };
+                    body.push(format!("{marker} {key:<12} {model_id}"));
+                }
+                body.push(String::new());
+                body.push("switch with: /model <name>".to_string());
+                let _ = ctx.renderer.commit_panel("models", &body, false);
+            }
+            Ok(other) => render_error(ctx.renderer, other),
+            Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+        }
+        return;
+    }
+
+    // Switch the session's active model on the daemon.
+    match request_once(Request::SetModel {
+        session_id: ctx.session_id.to_string(),
+        model: rest.to_string(),
+    })
+    .await
+    {
+        Ok(Response::ModelChanged { model }) => {
+            let cfg = Config::load().unwrap_or_default();
+            let entry = cfg.resolve_model(Some(&model));
+            *ctx.model = entry.model.clone();
+            *ctx.context_window = entry.context_window();
+            note(ctx.renderer, &format!("✓ model switched to {model}"));
+        }
+        Ok(other) => render_error(ctx.renderer, other),
+        Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+    }
+}
+
+// ── /pane ────────────────────────────────────────────────────────────────────
+
+async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
+    if rest.is_empty() {
+        match request_once(Request::ListPanesForSession {
+            session_id: ctx.session_id.to_string(),
+        })
+        .await
+        {
+            Ok(Response::PaneList { panes }) => {
+                if panes.is_empty() {
+                    note(ctx.renderer, "no targetable panes in this session");
+                    return;
+                }
+                let mut body = Vec::new();
+                for (i, (id, cmd, window, idx, is_target)) in panes.iter().enumerate() {
+                    let marker = if *is_target { "●" } else { " " };
+                    body.push(format!(
+                        "{marker} [{}] {id}  {window}:{idx}  {cmd}",
+                        i + 1
+                    ));
+                }
+                body.push(String::new());
+                body.push("pin with: /pane <number|%id>".to_string());
+                let _ = ctx.renderer.commit_panel("panes", &body, false);
+            }
+            Ok(other) => render_error(ctx.renderer, other),
+            Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+        }
+        return;
+    }
+
+    // Resolve the argument to a concrete pane id (`%N`).
+    let pane_id = if rest.starts_with('%') {
+        rest.to_string()
+    } else if let Ok(n) = rest.parse::<usize>() {
+        match request_once(Request::ListPanesForSession {
+            session_id: ctx.session_id.to_string(),
+        })
+        .await
+        {
+            Ok(Response::PaneList { panes }) => match panes.get(n.saturating_sub(1)) {
+                Some((id, ..)) => id.clone(),
+                None => {
+                    note(ctx.renderer, &format!("no pane #{n} (run /pane to list)"));
+                    return;
+                }
+            },
+            Ok(other) => {
+                render_error(ctx.renderer, other);
+                return;
+            }
+            Err(e) => {
+                note(ctx.renderer, &format!("✗ {e}"));
+                return;
+            }
+        }
+    } else {
+        note(ctx.renderer, "usage: /pane [<number>|%<id>]");
+        return;
+    };
+
+    match request_once(Request::SetPane {
+        session_id: ctx.session_id.to_string(),
+        pane_id,
+    })
+    .await
+    {
+        Ok(Response::PaneChanged {
+            pane_id,
+            description,
+        }) => {
+            *ctx.target_pane = Some(pane_id);
+            note(
+                ctx.renderer,
+                &format!("✓ foreground target pinned to {description}"),
+            );
+        }
+        Ok(other) => render_error(ctx.renderer, other),
+        Err(e) => note(ctx.renderer, &format!("✗ {e}")),
+    }
+}
+
+// ── /approvals ───────────────────────────────────────────────────────────────
+
+fn cmd_approvals(ctx: SlashCtx<'_>, rest: &str) {
+    match rest {
+        "" | "list" | "show" => {
+            let body = vec![
+                format!("commands : {}", on_off(ctx.approval.regular)),
+                format!("sudo     : {}", on_off(ctx.approval.sudo)),
+                format!("scripts  : {}", scope(ctx.approval.scripts_all, ctx.approval.scripts.len())),
+                format!("runbooks : {}", scope(ctx.approval.runbooks_all, ctx.approval.runbooks.len())),
+                format!("files    : {}", scope(ctx.approval.file_edits_all, ctx.approval.file_edits.len())),
+                String::new(),
+                "change with: /approvals on|off|revoke".to_string(),
+            ];
+            let _ = ctx.renderer.commit_panel("approvals", &body, false);
+        }
+        "on" | "auto" => {
+            ctx.approval.regular = true;
+            note(ctx.renderer, "✓ commands auto-approved for this session");
+        }
+        "off" | "manual" | "gated" => {
+            ctx.approval.regular = false;
+            note(ctx.renderer, "✓ commands now require approval");
+        }
+        "revoke" | "reset" => {
+            *ctx.approval = SessionApproval::from_config(&crate::config::ApprovalsConfig::default());
+            ctx.approval.regular = false;
+            note(ctx.renderer, "✓ all session approvals revoked");
+        }
+        other => note(ctx.renderer, &format!("unknown: /approvals {other} (try on|off|revoke)")),
+    }
+}
+
+fn on_off(b: bool) -> &'static str {
+    if b { "auto" } else { "gated" }
+}
+
+fn scope(all: bool, count: usize) -> String {
+    if all {
+        "all".to_string()
+    } else if count > 0 {
+        format!("{count} approved")
+    } else {
+        "gated".to_string()
+    }
+}
+
+// ── /prompt ──────────────────────────────────────────────────────────────────
+
+fn cmd_prompt(ctx: SlashCtx<'_>, rest: &str) {
+    if rest.is_empty() {
+        let mut body = Vec::new();
+        let active = ctx.current_prompt.as_deref().unwrap_or("(daemon default)");
+        body.push(format!("active: {active}"));
+        body.push(String::new());
+        match std::fs::read_dir(prompts_dir()) {
+            Ok(entries) => {
+                let mut names: Vec<String> = entries
+                    .filter_map(|e| e.ok())
+                    .filter_map(|e| {
+                        let p = e.path();
+                        if p.extension().and_then(|s| s.to_str()) == Some("toml") {
+                            p.file_stem().and_then(|s| s.to_str()).map(String::from)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                names.sort();
+                if names.is_empty() {
+                    body.push("(no prompt files found)".to_string());
+                } else {
+                    for n in names {
+                        let marker = if ctx.current_prompt.as_deref() == Some(n.as_str()) {
+                            "●"
+                        } else {
+                            " "
+                        };
+                        body.push(format!("{marker} {n}"));
+                    }
+                }
+            }
+            Err(e) => body.push(format!("(cannot read prompts dir: {e})")),
+        }
+        body.push(String::new());
+        body.push("switch with: /prompt <name>  ·  reset: /prompt default".to_string());
+        let _ = ctx.renderer.commit_panel("prompts", &body, false);
+        return;
+    }
+
+    if rest == "default" || rest == "none" {
+        *ctx.current_prompt = None;
+        note(ctx.renderer, "✓ using the daemon default prompt");
+        return;
+    }
+
+    let path = prompts_dir().join(format!("{rest}.toml"));
+    if !path.exists() {
+        note(
+            ctx.renderer,
+            &format!("✗ no prompt '{rest}' in {} (run /prompt to list)", prompts_dir().display()),
+        );
+        return;
+    }
+    *ctx.current_prompt = Some(rest.to_string());
+    note(ctx.renderer, &format!("✓ system prompt set to '{rest}'"));
+}
+
+// ── /limits ──────────────────────────────────────────────────────────────────
+
+async fn cmd_limits(r: &mut RatatuiRendererStdout, session_id: &str) {
+    match request_once(Request::QueryLimits {
+        session_id: session_id.to_string(),
+    })
+    .await
+    {
+        Ok(Response::LimitsInfo {
+            limits,
+            turn_count,
+            tool_calls_this_session,
+            history_len,
+        }) => {
+            let cap = |n: usize| if n == 0 { "∞".to_string() } else { n.to_string() };
+            let cap_u = |n: u32| if n == 0 { "∞".to_string() } else { n.to_string() };
+            let mut body = vec![
+                format!("turns this session     : {turn_count} / {}", cap(limits.max_turns)),
+                format!("tool calls this session: {tool_calls_this_session} / {}", cap(limits.max_tool_calls_per_session)),
+                format!("history messages       : {history_len} / {}", cap(limits.max_history)),
+                String::new(),
+                format!("per-tool batch cap     : {}", cap_u(limits.per_tool_batch)),
+                format!("tool calls per turn    : {}", cap_u(limits.total_tool_calls_per_turn)),
+                format!("tool result chars      : {}", cap(limits.tool_result_chars)),
+            ];
+            if !limits.per_tool_overrides.is_empty() {
+                body.push(String::new());
+                body.push("per-tool overrides:".to_string());
+                for (tool, n) in &limits.per_tool_overrides {
+                    body.push(format!("  {tool:<22} {}", cap_u(*n)));
+                }
+            }
+            let _ = r.commit_panel("limits", &body, false);
+        }
+        Ok(other) => render_error(r, other),
+        Err(e) => note(r, &format!("✗ {e}")),
+    }
+}
+
+// ── /session ─────────────────────────────────────────────────────────────────
+
+async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
+    let (sub, args) = match rest.split_once(char::is_whitespace) {
+        Some((s, a)) => (s, a.trim()),
+        None => (rest, ""),
+    };
+    let r = ctx.renderer;
+    let sid = ctx.session_id.to_string();
+
+    match sub {
+        "" | "help" => {
+            let body = vec![
+                "/session list".to_string(),
+                "/session save <name> [description] [--force]".to_string(),
+                "/session load <name> [--force]".to_string(),
+                "/session delete <name>".to_string(),
+                "/session rename <old> <new>".to_string(),
+            ];
+            let _ = r.commit_panel("session", &body, false);
+        }
+        "list" | "ls" => match request_once(Request::ListSavedSessions).await {
+            Ok(Response::SavedSessionList { sessions }) => {
+                if sessions.is_empty() {
+                    note(r, "no saved sessions yet (save with /session save <name>)");
+                    return;
+                }
+                let mut body = Vec::new();
+                for s in &sessions {
+                    body.push(format!(
+                        "{:<20} {} turns · {} msgs · updated {}",
+                        s.name, s.turn_count, s.message_count, s.last_updated
+                    ));
+                    if !s.description.is_empty() {
+                        body.push(format!("    {}", s.description));
+                    }
+                }
+                let _ = r.commit_panel("saved sessions", &body, false);
+            }
+            Ok(other) => render_error(r, other),
+            Err(e) => note(r, &format!("✗ {e}")),
+        },
+        "save" => {
+            let force = args.split_whitespace().any(|t| t == "--force");
+            let cleaned: Vec<&str> = args.split_whitespace().filter(|t| *t != "--force").collect();
+            let Some((name, desc_parts)) = cleaned.split_first() else {
+                note(r, "usage: /session save <name> [description] [--force]");
+                return;
+            };
+            let description = desc_parts.join(" ");
+            match request_once(Request::SaveSession {
+                session_id: sid,
+                name: name.to_string(),
+                description,
+                force,
+            })
+            .await
+            {
+                Ok(Response::SessionSaved { name }) => note(r, &format!("✓ session saved as '{name}'")),
+                Ok(other) => render_error(r, other),
+                Err(e) => note(r, &format!("✗ {e}")),
+            }
+        }
+        "load" | "resume" => {
+            let force = args.split_whitespace().any(|t| t == "--force");
+            let name = args
+                .split_whitespace()
+                .find(|t| *t != "--force")
+                .unwrap_or("");
+            if name.is_empty() {
+                note(r, "usage: /session load <name> [--force]");
+                return;
+            }
+            match request_once(Request::LoadSession {
+                session_id: sid,
+                name: name.to_string(),
+                force,
+            })
+            .await
+            {
+                Ok(Response::SessionLoaded {
+                    name,
+                    message_count,
+                    banner,
+                    ..
+                }) => {
+                    note(r, &format!("✓ loaded '{name}' ({message_count} messages)"));
+                    if !banner.is_empty() {
+                        let _ = r.commit(&format!("{banner}\n"));
+                    }
+                }
+                Ok(other) => render_error(r, other),
+                Err(e) => note(r, &format!("✗ {e}")),
+            }
+        }
+        "delete" | "rm" => {
+            if args.is_empty() {
+                note(r, "usage: /session delete <name>");
+                return;
+            }
+            match request_once(Request::DeleteSavedSession {
+                name: args.to_string(),
+            })
+            .await
+            {
+                Ok(Response::Ok) => note(r, &format!("✓ deleted session '{args}'")),
+                Ok(other) => render_error(r, other),
+                Err(e) => note(r, &format!("✗ {e}")),
+            }
+        }
+        "rename" | "mv" => {
+            let parts: Vec<&str> = args.split_whitespace().collect();
+            if parts.len() != 2 {
+                note(r, "usage: /session rename <old> <new>");
+                return;
+            }
+            match request_once(Request::RenameSavedSession {
+                old_name: parts[0].to_string(),
+                new_name: parts[1].to_string(),
+            })
+            .await
+            {
+                Ok(Response::Ok) => note(r, &format!("✓ renamed '{}' → '{}'", parts[0], parts[1])),
+                Ok(other) => render_error(r, other),
+                Err(e) => note(r, &format!("✗ {e}")),
+            }
+        }
+        other => note(r, &format!("unknown: /session {other} (try list|save|load|delete|rename)")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_shaped_accepts_plain_commands() {
+        assert!(is_command_shaped("/pane"));
+        assert!(is_command_shaped("/session"));
+        assert!(is_command_shaped("/model"));
+        assert!(is_command_shaped("/a-b_c"));
+    }
+
+    #[test]
+    fn command_shaped_rejects_paths_and_prose() {
+        assert!(!is_command_shaped("/etc/passwd"));
+        assert!(!is_command_shaped("/"));
+        assert!(!is_command_shaped("/path/to/file"));
+        assert!(!is_command_shaped("not a command"));
+    }
+}

@@ -9,6 +9,7 @@ mod ipc_client;
 mod lifecycle;
 mod pane;
 mod setup;
+mod slash;
 mod stream;
 
 pub use ask::run_ask;

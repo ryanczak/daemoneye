@@ -156,16 +156,23 @@ pub(super) async fn ask_with_session_ratatui(
     // (the bug-phase-11-1 / bug-phase-11-2 failure mode).
     let mut line_buf: Vec<u8> = Vec::new();
 
+    // Timestamp of the most recent daemon message. In phase 2 the 120 s overall
+    // timeout is measured from this instant (reset on every message, including
+    // KeepAlive) rather than per-loop-iteration, so the spinner can keep ticking
+    // between tokens without defeating the timeout.
+    let mut last_msg_at = std::time::Instant::now();
+
     loop {
-        // Phase 1 animates a spinner (80 ms tick, no overall timeout); phase 2
-        // streams with a 120 s overall timeout and no spinner tick.
+        // Both phases animate a spinner on an 80 ms tick so a mid-stream pause
+        // (e.g. a tool round-trip or a slow model) never looks frozen. Phase 1
+        // (before the first content) has no overall timeout; phase 2 keeps a
+        // 120 s deadline measured from the last message via `last_msg_at`.
         let (tick_interval, overall_timeout) = if !response_started {
             (std::time::Duration::from_millis(80), None)
         } else {
-            (
-                std::time::Duration::MAX,
-                Some(std::time::Duration::from_secs(120)),
-            )
+            let remaining =
+                std::time::Duration::from_secs(120).saturating_sub(last_msg_at.elapsed());
+            (std::time::Duration::from_millis(80), Some(remaining))
         };
         let outcome = select_stream(
             stdin,
@@ -236,6 +243,8 @@ pub(super) async fn ask_with_session_ratatui(
             StreamOutcome::Msg(m) => *m,
             _ => unreachable!(),
         };
+        // A real daemon message arrived — reset the phase-2 timeout deadline.
+        last_msg_at = std::time::Instant::now();
 
         // Handle the message
 
@@ -280,8 +289,9 @@ pub(super) async fn ask_with_session_ratatui(
             Response::Token(t) => {
                 if !response_started {
                     response_started = true;
-                    // Spinner disappears — first token arrived. The live region
-                    // will be redrawn normally after the turn completes.
+                    // First token arrived — switch to phase 2. The spinner keeps
+                    // animating in the live region on any pause between tokens;
+                    // the live region is redrawn normally after the turn completes.
                 }
                 // Stream token through markdown renderer, committing completed
                 // styled lines to scrollback via the renderer.

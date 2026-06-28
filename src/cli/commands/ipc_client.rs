@@ -59,3 +59,16 @@ pub async fn recv(rx: &mut BufReader<OwnedReadHalf>) -> Result<Response> {
     let response: Response = serde_json::from_str(line.trim())?;
     Ok(response)
 }
+
+/// Send a single request, read a single response, then drop the connection.
+///
+/// Used by the synchronous slash commands (`/refresh`, `/model`, `/pane`,
+/// `/limits`, `/session …`) which each map to one request/response round-trip
+/// — unlike `Request::Ask`, which streams many responses on one connection.
+pub(super) async fn request_once(req: Request) -> Result<Response> {
+    let stream = connect().await?;
+    let (rx, mut tx) = stream.into_split();
+    let mut rx = BufReader::new(rx);
+    send_request(&mut tx, req).await?;
+    recv(&mut rx).await
+}

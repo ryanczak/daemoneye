@@ -10,6 +10,7 @@ use crate::config::Config;
 use super::approval::SessionApproval;
 use super::ipc_client::new_session_id;
 use super::pane::resolve_target_pane;
+use super::slash;
 use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, ask_with_session_ratatui};
 
 pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
@@ -120,6 +121,16 @@ pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<(
             chat_width = terminal_width();
         } // stable for SETTLE_MS — proceed
     }
+    // Ask tmux to forward focus events to applications (DEC mode 1004) so the
+    // chat process is notified (ESC[I) when the user switches back to this pane
+    // and can re-pin the input box to the bottom.  Best-effort; harmless if tmux
+    // is absent or the option is already set.
+    if pane_id_opt.is_some() {
+        let _ = std::process::Command::new("tmux")
+            .args(["set", "-g", "focus-events", "on"])
+            .output();
+    }
+
     // Ratatui path: create the inline-viewport renderer (enters raw mode
     // internally).
     let renderer = match RatatuiRendererStdout::new(start_time) {
@@ -222,10 +233,10 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         mut renderer,
         mut chat_width,
         mut session_id,
-        current_prompt,
+        mut current_prompt,
         approval,
         tmux_session,
-        target_pane,
+        mut target_pane,
     } = ctx;
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
@@ -347,11 +358,13 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     // Help text for /help command.
     let help_text = [
         "Commands:",
-        "  /help     show this list        /exit     quit",
-        "  /clear    reset session         /refresh  resync context",
-        "  /model    list or switch model  /pane     list or pin target pane",
-        "  /approvals list approvals       /prompt   switch system prompt",
-        "  /limits   show active limits    /session  save/load sessions",
+        "  /help      show this list           /exit      quit",
+        "  /clear     reset session            /refresh   resync host context",
+        "  /model     list or switch model     /pane      list or pin target pane",
+        "  /approvals list/on/off/revoke       /prompt    list or switch system prompt",
+        "  /limits    show active limits       /session   save/load/list/delete/rename",
+        "",
+        "Up/Down navigate the input; at the top/bottom edge they recall history.",
         "",
     ]
     .join("\n");
@@ -405,73 +418,13 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             );
             continue;
         }
-        if query == "/clear" {
-            let _ = renderer.commit("\n");
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
-            continue;
-        }
-        if query == "/new" {
+        if query == "/clear" || query == "/new" {
+            // Start a fresh conversation: new session id, reset counters.
             session_id = uuid::Uuid::new_v4().to_string();
             prompt_tokens = 0;
             cost_usd = 0.0;
             has_untracked = false;
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
-            continue;
-        }
-        if query.starts_with("/model ") {
-            let new_model = query["model ".len()..].trim().to_string();
-            if let Ok(cfg) = Config::load() {
-                let m = cfg.resolve_model(Some(&new_model));
-                model = m.model.clone();
-                context_window = m.context_window();
-            }
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
-            continue;
-        }
-        if query.starts_with("/approval ") {
-            let sub = query["approval ".len()..].trim();
-            match sub {
-                "on" | "auto" => {
-                    approval.regular = true;
-                }
-                "off" | "manual" => {
-                    approval.regular = false;
-                }
-                _ => {}
-            }
+            let _ = renderer.commit("  ✓ started a fresh session\n");
             redraw(
                 &mut renderer,
                 input_state,
@@ -487,6 +440,64 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             continue;
         }
 
+        // All other slash commands map to a daemon round-trip or client-side
+        // state change.  Command-shaped tokens that aren't recognized are
+        // rejected (not sent to the LLM); prose that merely starts with '/'
+        // (e.g. a path) falls through to the model.
+        if query.starts_with('/') {
+            let outcome = slash::handle_slash(
+                slash::SlashCtx {
+                    renderer: &mut renderer,
+                    session_id: &session_id,
+                    approval: &mut *approval,
+                    model: &mut model,
+                    context_window: &mut context_window,
+                    current_prompt: &mut current_prompt,
+                    target_pane: &mut target_pane,
+                },
+                &query,
+            )
+            .await;
+            match outcome {
+                slash::SlashOutcome::Handled => {
+                    redraw(
+                        &mut renderer,
+                        input_state,
+                        &session_id,
+                        approval,
+                        &model,
+                        prompt_tokens,
+                        context_window,
+                        daemon_up,
+                        cost_usd,
+                        has_untracked,
+                    );
+                    continue;
+                }
+                slash::SlashOutcome::NotACommand => {
+                    let first = query.split_whitespace().next().unwrap_or("");
+                    if slash::is_command_shaped(first) {
+                        let _ = renderer
+                            .commit(&format!("  ✗ unknown command: {first} (try /help)\n"));
+                        redraw(
+                            &mut renderer,
+                            input_state,
+                            &session_id,
+                            approval,
+                            &model,
+                            prompt_tokens,
+                            context_window,
+                            daemon_up,
+                            cost_usd,
+                            has_untracked,
+                        );
+                        continue;
+                    }
+                    // Prose starting with '/': fall through to the LLM.
+                }
+            }
+        }
+
         // ── Send the user query ─────────────────────────────────────────
         {
             let cw = chat_width;
@@ -494,7 +505,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             match ask_with_session_ratatui(
                 QueryArgs {
                     query,
-                    prompt_override: None,
+                    prompt_override: current_prompt.as_deref(),
                 },
                 Some(&session_id),
                 approval,
@@ -631,23 +642,35 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                     Key::Left => { state.current_line_mut().move_left(); }
                     Key::Right => { state.current_line_mut().move_right(); }
                     Key::Up => {
-                        if !state.has_history() || state.current_line().as_str().contains('\n') {
-                            // If buffer has newlines or no history, move cursor up in buffer
-                            let content_width = chat_width.saturating_sub(2);
-                            state.current_line_mut().move_up(content_width);
+                        // Move the cursor up within the buffer; only recall the
+                        // previous history entry when already on the first row.
+                        let content_width = chat_width.saturating_sub(2);
+                        if state.current_line().cursor_on_first_visual_row(content_width) {
+                            if state.has_history() {
+                                state.history_up();
+                            }
                         } else {
-                            state.history_up();
+                            state.current_line_mut().move_up(content_width);
                         }
                     }
                     Key::Down => {
-                        if !state.has_history() || state.current_line().as_str().contains('\n') {
-                            // If buffer has newlines or no history, move cursor down in buffer
-                            let content_width = chat_width.saturating_sub(2);
-                            state.current_line_mut().move_down(content_width);
+                        // Move the cursor down within the buffer; only recall the
+                        // next history entry when already on the last row.
+                        let content_width = chat_width.saturating_sub(2);
+                        if state.current_line().cursor_on_last_visual_row(content_width) {
+                            if state.has_history() {
+                                state.history_down();
+                            }
                         } else {
-                            state.history_down();
+                            state.current_line_mut().move_down(content_width);
                         }
                     }
+                    Key::FocusGained => {
+                        // Returning to this tmux pane: re-pin the input box to the
+                        // bottom in case the terminal was repainted while away.
+                        renderer.reanchor();
+                    }
+                    Key::FocusLost => {}
                     Key::Home => { state.current_line_mut().move_home(); }
                     Key::End => { state.current_line_mut().move_end(); }
                     Key::CtrlA => { state.current_line_mut().move_home(); }

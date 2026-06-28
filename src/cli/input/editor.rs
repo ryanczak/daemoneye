@@ -127,6 +127,19 @@ impl InputLine {
         self.cursor = new_pos;
     }
 
+    /// Whether the cursor is on the first visual row of the wrapped display.
+    /// Used to decide whether Up should move within the buffer or recall history.
+    pub fn cursor_on_first_visual_row(&self, width: usize) -> bool {
+        self.cursor_visual_pos(width).0 == 0
+    }
+
+    /// Whether the cursor is on the last visual row of the wrapped display.
+    /// Used to decide whether Down should move within the buffer or recall history.
+    pub fn cursor_on_last_visual_row(&self, width: usize) -> bool {
+        let (row, _) = self.cursor_visual_pos(width);
+        row + 1 >= self.visual_lines(width).len()
+    }
+
     /// Kill from cursor to end of line.
     pub fn kill_to_end(&mut self) {
         let mut end = self.cursor;
@@ -380,6 +393,7 @@ impl InputState {
         }
         self.history_idx = None;
         self.saved = String::new();
+        self.current = InputLine::new();
     }
 
     pub fn current_line(&self) -> &InputLine {
@@ -629,6 +643,46 @@ mod tests {
         let (row, col) = line.cursor_visual_pos(10);
         assert_eq!(row, v.len() - 1);
         assert_eq!(col, v.last().unwrap().len());
+    }
+
+    #[test]
+    fn cursor_row_helpers_single_line() {
+        let mut line = InputLine::new();
+        line.insert_str("hello");
+        // Single visual row: cursor is on both the first and last row.
+        assert!(line.cursor_on_first_visual_row(40));
+        assert!(line.cursor_on_last_visual_row(40));
+    }
+
+    #[test]
+    fn cursor_row_helpers_multiline_middle() {
+        let mut line = InputLine::new();
+        line.insert_str("one\ntwo\nthree");
+        // Cursor at end → last row, not first.
+        assert!(!line.cursor_on_first_visual_row(40));
+        assert!(line.cursor_on_last_visual_row(40));
+        // Move to the very start → first row, not last.
+        for _ in 0..line.cursor_pos() {
+            line.move_left();
+        }
+        assert!(line.cursor_on_first_visual_row(40));
+        assert!(!line.cursor_on_last_visual_row(40));
+        // Move down one visual line → neither first nor last row.
+        line.move_down(40);
+        assert!(!line.cursor_on_first_visual_row(40));
+        assert!(!line.cursor_on_last_visual_row(40));
+    }
+
+    #[test]
+    fn push_history_clears_current_line() {
+        let mut state = InputState::new();
+        state.current_line_mut().insert_str("a query");
+        state.push_history("a query".to_string());
+        assert!(
+            state.current_line().is_empty(),
+            "current line should be empty after submit"
+        );
+        assert!(state.has_history());
     }
 
     #[test]

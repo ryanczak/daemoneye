@@ -146,10 +146,13 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
     pub fn new(start_time: std::time::Instant) -> std::io::Result<Self> {
         crossterm::terminal::enable_raw_mode()?;
         // Enable bracketed paste so pasted multi-line blocks are delivered as
-        // a single paste event rather than individual keypresses.
-        use crossterm::event::EnableBracketedPaste;
+        // a single paste event rather than individual keypresses.  Enable focus
+        // reporting (DEC mode 1004) so the terminal emits ESC[I / ESC[O when this
+        // tmux pane is re-focused — the cue used to re-pin the input box to the
+        // bottom after a pane switch (see `reanchor`).
+        use crossterm::event::{EnableBracketedPaste, EnableFocusChange};
         use crossterm::execute;
-        let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+        let _ = execute!(std::io::stdout(), EnableBracketedPaste, EnableFocusChange);
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
         let terminal = Terminal::with_options(
             backend,
@@ -376,9 +379,28 @@ impl<B: Backend> RatatuiRenderer<B> {
         })
     }
 
+    /// Re-pin the inline viewport to the bottom of the terminal.
+    ///
+    /// When a tmux pane is switched away from and back (or detached and
+    /// re-attached), tmux repaints the pane and ratatui's cached viewport
+    /// origin can go stale — the input box ends up drawn at the *top* of the
+    /// pane with the history below it. `Terminal::resize` recomputes the inline
+    /// viewport origin from the live cursor position, re-anchoring it to the
+    /// bottom rows. It is safe to call when the size is unchanged (the normal
+    /// `autoresize` path would otherwise skip the recompute).
+    pub fn reanchor(&mut self) {
+        if let Ok(size) = self.terminal.size() {
+            let area = Rect::new(0, 0, size.width, size.height);
+            let _ = self.terminal.resize(area);
+        }
+    }
+
     /// Restore the terminal to its original state (exit raw mode, show
     /// cursor, clear inline viewport rows).
     pub fn restore(&mut self) {
+        use crossterm::event::{DisableBracketedPaste, DisableFocusChange};
+        use crossterm::execute;
+        let _ = execute!(std::io::stdout(), DisableFocusChange, DisableBracketedPaste);
         let _ = ratatui::try_restore();
     }
 }
