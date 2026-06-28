@@ -163,8 +163,14 @@ pub async fn run_scheduled_job(
             // Pure alert: no command to run.
             store.mark_done(&job.id, true, None);
             let msg = format!("Watchdog alert: {}", job.name);
-            if let Some(ref tx) = notify_tx {
-                let _ = tx.send(Response::SystemMsg(msg.clone()));
+            if let Some(ref tx) = notify_tx
+                && let Err(e) = tx.send(Response::SystemMsg(msg.clone()))
+            {
+                log::debug!(
+                    "scheduled job '{}': dropped notification (no receiver): {}",
+                    job.name,
+                    e
+                );
             }
             fire_notification(&job.name, &msg, &config);
             return;
@@ -190,8 +196,14 @@ pub async fn run_scheduled_job(
             Err(e) => {
                 let msg = format!("Scheduled job '{}' failed: {}", job.name, e);
                 store.mark_done(&job.id, false, Some(msg.clone()));
-                if let Some(ref tx) = notify_tx {
-                    let _ = tx.send(Response::SystemMsg(msg));
+                if let Some(ref tx) = notify_tx
+                    && let Err(e) = tx.send(Response::SystemMsg(msg))
+                {
+                    log::debug!(
+                        "scheduled job '{}': dropped notification (no receiver): {}",
+                        job.name,
+                        e
+                    );
                 }
                 return;
             }
@@ -209,8 +221,14 @@ pub async fn run_scheduled_job(
                 job.name, e
             );
             store.mark_done(&job.id, false, Some(e.to_string()));
-            if let Some(ref tx) = notify_tx {
-                let _ = tx.send(Response::SystemMsg(msg));
+            if let Some(ref tx) = notify_tx
+                && let Err(e) = tx.send(Response::SystemMsg(msg))
+            {
+                log::debug!(
+                    "scheduled job '{}': dropped notification (no receiver): {}",
+                    job.name,
+                    e
+                );
             }
             return;
         }
@@ -247,8 +265,14 @@ pub async fn run_scheduled_job(
     if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
         let msg = format!("Scheduled job '{}': failed to send keys: {}", job.name, e);
         store.mark_done(&job.id, false, Some(e.to_string()));
-        if let Some(ref tx) = notify_tx {
-            let _ = tx.send(Response::SystemMsg(msg));
+        if let Some(ref tx) = notify_tx
+            && let Err(e) = tx.send(Response::SystemMsg(msg))
+        {
+            log::debug!(
+                "scheduled job '{}': dropped notification (no receiver): {}",
+                job.name,
+                e
+            );
         }
         return;
     }
@@ -325,8 +349,14 @@ pub async fn run_scheduled_job(
         );
         if should_act {
             let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
-            if let Some(ref tx) = notify_tx {
-                let _ = tx.send(Response::SystemMsg(msg.clone()));
+            if let Some(ref tx) = notify_tx
+                && let Err(e) = tx.send(Response::SystemMsg(msg.clone()))
+            {
+                log::debug!(
+                    "scheduled job '{}': dropped notification (no receiver): {}",
+                    job.name,
+                    e
+                );
             }
             fire_notification(&job.name, &msg, &config);
         }

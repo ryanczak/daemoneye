@@ -86,9 +86,7 @@ pub fn assemble_turn_relevant_memory(
         let score = overlap as f64 / all_tags.len().max(1) as f64;
         let eff = crate::memory::review::effective_confidence(info);
         let combined = score * eff;
-        candidate_keys.entry(info.key.clone()).or_insert(0.0);
-        // INVARIANT: key was just inserted via .or_insert(0.0) on the preceding line
-        *candidate_keys.get_mut(&info.key).unwrap() = combined;
+        *candidate_keys.entry(info.key.clone()).or_insert(0.0) = combined;
     }
 
     // Relates_to candidates get base score

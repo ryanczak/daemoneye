@@ -6,24 +6,31 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-05 — consolidate-leaf-params** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-05-consolidate-leaf-params.md`. Dispatch it
-with `/rexymcp:dispatch phase-05`.
+**Active phase:** **phase-06 — error-hardening** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-06-error-hardening.md`. Dispatch it
+with `/rexymcp:dispatch phase-06`.
 
-Phase-05 scope (maint, `memory.rs` + `session_store.rs` + `executor/file_ops/ops.rs` +
-`executor/knowledge/{memory,agents}.rs` + dispatch sites): resolve 5 of the 7 `TODO(M2):
-consolidate params into a struct` markers (the low-blast leaf functions) by introducing a
-per-function borrow-struct following the existing `EditArgs<'a>` idiom — `UpdateMemoryArgs`,
-`SaveSessionArgs`, `RunEditArgs`, `UpdateMemoryRequest`, `CreateAgentArgs` — and deleting each
-`#[allow(clippy::too_many_arguments)]` + TODO. Pure refactor, no behavior change; correctness
-held by the existing `session_store_tests.rs`/`memory_tests.rs` suites. Wide-blast on
-`save_session` (17 call sites) handled one-function-at-a-time with grep-verified site lists.
-The 2 orchestration markers (`server/ask.rs`, `stream.rs`) are deferred to phase-09. ~300 lines.
+Phase-06 scope (bug, `daemon/memory_prompt.rs` + `ai/mod.rs` + `daemon/scheduled.rs`):
+three behavior-preserving hardening edits the M3 survey found — (1) rewrite the
+`memory_prompt.rs:91` `get_mut(...).unwrap()` as an Entry-API assignment; (2) convert the
+four `ai/mod.rs` circuit-breaker `unwrap_or_else(|e| e.into_inner())` lock sites to the
+documented `.unwrap_or_log()` invariant (adds ERROR-on-poison logging); (3) make the five
+`daemon/scheduled.rs` swallowed `notify_tx` sends `log::debug!` on a dropped receiver instead
+of `let _ =`. The `tmux`/`ai` "risky unwrap" audit came back clean — the remaining unwraps are
+invariant-proven (compile-time regexes, capture group 0, default reqwest client) and are pinned
+as must-NOT-touch in the doc. No new tests (equivalence rewrites; existing circuit-breaker
+tests cover the lock sites). ~40 lines.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-05 — consolidate-leaf-params is `done`** (approved_first_try, 2026-06-28).
+Introduced per-function borrow-structs (`UpdateMemoryArgs`, `SaveSessionArgs`, `RunEditArgs`,
+`UpdateMemoryRequest`, `CreateAgentArgs`) resolving 5 of the 7 `TODO(M2)` markers and deleting
+their `#[allow(clippy::too_many_arguments)]` suppressions. Executor commit `822ba7f`; review
+approval `e89255e`.
 
 **M3 phase-04 — error-message-quality is `done`** (approved_first_try, 2026-06-28). Killed the
 `render_error` `{:?}` debug-dump leak via an exhaustive `Response::kind()` label method + a pure

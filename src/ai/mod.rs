@@ -3,6 +3,7 @@ pub mod filter;
 pub mod tools;
 pub mod types;
 
+use crate::util::UnpoisonExt;
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::OnceLock;
@@ -42,7 +43,7 @@ impl CircuitBreaker {
 
     #[cfg(test)]
     fn state_str(&self) -> &'static str {
-        let open_until = *self.open_until.lock().unwrap_or_else(|e| e.into_inner());
+        let open_until = *self.open_until.lock().unwrap_or_log();
         match open_until {
             None => "closed",
             Some(t) if t > Instant::now() => "open",
@@ -51,7 +52,7 @@ impl CircuitBreaker {
     }
 
     fn allow(&self) -> bool {
-        let open_until = *self.open_until.lock().unwrap_or_else(|e| e.into_inner());
+        let open_until = *self.open_until.lock().unwrap_or_log();
         match open_until {
             None => true,
             Some(t) => Instant::now() >= t, // half-open: allow one probe
@@ -60,11 +61,7 @@ impl CircuitBreaker {
 
     fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Relaxed);
-        let prev = self
-            .open_until
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        let prev = self.open_until.lock().unwrap_or_log().take();
         if prev.is_some() {
             log::info!("AI circuit breaker CLOSED — backend responded successfully.");
         }
@@ -74,7 +71,7 @@ impl CircuitBreaker {
         let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
         if failures >= CB_FAILURE_THRESHOLD {
             let cooldown_until = Instant::now() + CB_COOLDOWN;
-            *self.open_until.lock().unwrap_or_else(|e| e.into_inner()) = Some(cooldown_until);
+            *self.open_until.lock().unwrap_or_log() = Some(cooldown_until);
             log::warn!(
                 "AI circuit breaker OPEN after {} consecutive failures — \
                  cooling down for {}s before allowing a probe.",
