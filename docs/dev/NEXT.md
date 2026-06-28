@@ -6,22 +6,26 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-02 — approval-prompt-consistency** (`todo`, drafted 2026-06-27). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-02-approval-prompt-consistency.md`. Dispatch it
-with `/rexymcp:dispatch phase-02`.
+**Active phase:** **phase-03 — split-utils** (`todo`, drafted 2026-06-27). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-03-split-utils.md`. Dispatch it
+with `/rexymcp:dispatch phase-03`.
 
-Phase-02 scope (UX, `src/cli/commands/stream.rs`): the three interactive approval prompts
-(terminal-command, runbook write, `edit_file`) render with inconsistent option order — tool-call
-uses `[Y]es [N]o [A]pprove`, the other two use `[Y]es [A]pprove [N]o`. The fix adds a single shared
-`build_approval_prompt()` builder and routes all three call sites through it, canonicalizing on
-`[Y]es [A]pprove for <label> [N]o` (+ optional "or type a message" where redirect is supported).
-Only the tool-call prompt's visible order changes; the runbook and `edit_file` prompts render
-byte-identical output. `parse_approval_response` (the input side, already consistent) is untouched.
+Phase-03 scope (maintenance, `src/daemon/utils.rs`): split the 1007-line grab-bag into a
+`daemon/utils/` directory of six cohesive submodules (`host` / `shell` / `sudo` / `event_log` /
+`output` / `response`) using the M2 C5-split idiom. Pure mechanical move — every item is already
+`pub` and there are no boundary-crossing internal calls, so `pub use <submod>::*;` in `mod.rs`
+preserves every `crate::daemon::utils::<name>` path with zero consumer edits. Tests relocate
+verbatim to per-submodule `#[cfg(test)]` blocks. No logic, signature, or behavior change.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-02 — approval-prompt-consistency is `done`** (approved_first_try, 2026-06-27).
+Unified the three interactive approval prompts through a shared `build_approval_prompt()`
+builder, canonicalizing on `[Y]es [A]pprove for <label> [N]o`. Executor commit `d4097a6`;
+review approval `5726f15`.
 
 **M3 phase-01 — fix-test-hermeticity is `done`** (approved_first_try, 2026-06-27). Converted the
 racy `webhook_alert_to_event_log` to a sync `#[test]` driving its one async call via `rt.block_on`
