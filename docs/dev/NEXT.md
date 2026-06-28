@@ -6,25 +6,32 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-06 — error-hardening** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-06-error-hardening.md`. Dispatch it
-with `/rexymcp:dispatch phase-06`.
+**Active phase:** **phase-07 — split-webhook** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-07-split-webhook.md`. Dispatch it
+with `/rexymcp:dispatch phase-07`.
 
-Phase-06 scope (bug, `daemon/memory_prompt.rs` + `ai/mod.rs` + `daemon/scheduled.rs`):
-three behavior-preserving hardening edits the M3 survey found — (1) rewrite the
-`memory_prompt.rs:91` `get_mut(...).unwrap()` as an Entry-API assignment; (2) convert the
-four `ai/mod.rs` circuit-breaker `unwrap_or_else(|e| e.into_inner())` lock sites to the
-documented `.unwrap_or_log()` invariant (adds ERROR-on-poison logging); (3) make the five
-`daemon/scheduled.rs` swallowed `notify_tx` sends `log::debug!` on a dropped receiver instead
-of `let _ =`. The `tmux`/`ai` "risky unwrap" audit came back clean — the remaining unwraps are
-invariant-proven (compile-time regexes, capture group 0, default reqwest client) and are pinned
-as must-NOT-touch in the doc. No new tests (equivalence rewrites; existing circuit-breaker
-tests cover the lock sites). ~40 lines.
+Phase-07 scope (maint, `src/webhook.rs` → `src/webhook/`): split the 1210-line
+`webhook.rs` grab-bag into a directory module with three cohesive submodules —
+`parse.rs` (Alertmanager/Grafana/generic payload parsing + `InternalAlert`/`AlertStatus`),
+`process.rs` (dedup, masking, session injection, tmux notify, watchdog/ghost trigger,
+runbook AI analysis), `server.rs` (Axum router, auth, `handle_webhook`, `start`,
+`WebhookState`). Near-pure verbatim relocation via the M2 C5-split idiom: `mod.rs` glob
+re-exports keep every `crate::webhook::<name>` path resolving (3 external consumers:
+`start`, `inject_ghost_event`, `evaluate_watchdog_response`). The **only** non-move edit is
+widening `AlertStatus::as_str` `fn` → `pub(crate) fn` (called by `process_alert` across the
+new boundary). Tests relocate verbatim, each test references only same-module items. No new
+tests. ~90 lines of net plumbing.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-06 — error-hardening is `done`** (approved_first_try, 2026-06-28). Three
+behavior-preserving hardening edits: `memory_prompt.rs` double-lookup → single Entry-API
+expression; four `ai/mod.rs` circuit-breaker lock sites → documented `.unwrap_or_log()`
+invariant (ERROR-on-poison logging); five `daemon/scheduled.rs` swallowed `notify_tx` sends →
+`log::debug!` on dropped receiver. Executor commit `e7a1658`; review approval `b040651`.
 
 **M3 phase-05 — consolidate-leaf-params is `done`** (approved_first_try, 2026-06-28).
 Introduced per-function borrow-structs (`UpdateMemoryArgs`, `SaveSessionArgs`, `RunEditArgs`,
