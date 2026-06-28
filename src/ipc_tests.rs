@@ -870,6 +870,16 @@ fn response_tool_finished_failed_no_detail_roundtrip() {
 }
 
 #[test]
+fn response_kind_labels_variants() {
+    assert_eq!(Response::Ok.kind(), "Ok");
+    assert_eq!(Response::Error("e".into()).kind(), "Error");
+    assert_eq!(
+        Response::ModelChanged { model: "m".into() }.kind(),
+        "ModelChanged"
+    );
+}
+
+#[test]
 fn response_tool_finished_backward_compat_no_detail_field() {
     // Old daemons that omit the `detail` field should deserialize with detail=None.
     let json = r#"{"ToolFinished":{"id":"tf_3","ok":true,"elapsed_ms":100}}"#;

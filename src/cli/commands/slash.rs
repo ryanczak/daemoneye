@@ -72,11 +72,18 @@ fn note(r: &mut RatatuiRendererStdout, msg: &str) {
     let _ = r.commit(&format!("  {msg}\n"));
 }
 
-fn render_error(r: &mut RatatuiRendererStdout, resp: Response) {
+/// The scrollback line for a non-success daemon reply. `Error` carries a
+/// human message; any other variant is a protocol mismatch we name but do
+/// not debug-dump.
+fn error_line(resp: &Response) -> String {
     match resp {
-        Response::Error(e) => note(r, &format!("✗ {e}")),
-        other => note(r, &format!("✗ unexpected response: {other:?}")),
+        Response::Error(e) => format!("✗ {e}"),
+        other => format!("✗ unexpected reply from daemon ({})", other.kind()),
     }
+}
+
+fn render_error(r: &mut RatatuiRendererStdout, resp: Response) {
+    note(r, &error_line(&resp));
 }
 
 // ── /refresh ─────────────────────────────────────────────────────────────────
@@ -297,7 +304,7 @@ fn cmd_prompt(ctx: SlashCtx<'_>, rest: &str) {
                     .collect();
                 names.sort();
                 if names.is_empty() {
-                    body.push("(no prompt files found)".to_string());
+                    body.push("no prompt files found".to_string());
                 } else {
                     for n in names {
                         let marker = if ctx.current_prompt.as_deref() == Some(n.as_str()) {
@@ -425,7 +432,10 @@ async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
         "list" | "ls" => match request_once(Request::ListSavedSessions).await {
             Ok(Response::SavedSessionList { sessions }) => {
                 if sessions.is_empty() {
-                    note(r, "no saved sessions yet (save with /session save <name>)");
+                    note(
+                        r,
+                        "no saved sessions yet — save one with /session save <name>",
+                    );
                     return;
                 }
                 let mut body = Vec::new();
@@ -558,5 +568,30 @@ mod tests {
         assert!(!is_command_shaped("/"));
         assert!(!is_command_shaped("/path/to/file"));
         assert!(!is_command_shaped("not a command"));
+    }
+
+    #[test]
+    fn error_line_passes_through_daemon_error() {
+        assert_eq!(error_line(&Response::Error("boom".into())), "✗ boom");
+    }
+
+    #[test]
+    fn error_line_names_unexpected_variant_without_dump() {
+        let resp = Response::ToolCallPrompt {
+            id: "x".into(),
+            command: "rm -rf /secret".into(),
+            background: false,
+            target_pane: None,
+        };
+        let line = error_line(&resp);
+        assert!(line.contains("ToolCallPrompt"), "should name variant");
+        assert!(
+            !line.contains("rm -rf /secret"),
+            "should not leak field value"
+        );
+        assert!(
+            !line.contains('{'),
+            "should not contain debug-struct braces"
+        );
     }
 }

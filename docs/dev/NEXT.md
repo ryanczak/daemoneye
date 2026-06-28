@@ -6,21 +6,26 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-03 — split-utils** (`todo`, drafted 2026-06-27). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-03-split-utils.md`. Dispatch it
-with `/rexymcp:dispatch phase-03`.
+**Active phase:** **phase-04 — error-message-quality** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-04-error-message-quality.md`. Dispatch it
+with `/rexymcp:dispatch phase-04`.
 
-Phase-03 scope (maintenance, `src/daemon/utils.rs`): split the 1007-line grab-bag into a
-`daemon/utils/` directory of six cohesive submodules (`host` / `shell` / `sudo` / `event_log` /
-`output` / `response`) using the M2 C5-split idiom. Pure mechanical move — every item is already
-`pub` and there are no boundary-crossing internal calls, so `pub use <submod>::*;` in `mod.rs`
-preserves every `crate::daemon::utils::<name>` path with zero consumer edits. Tests relocate
-verbatim to per-submodule `#[cfg(test)]` blocks. No logic, signature, or behavior change.
+Phase-04 scope (ux, `src/cli/commands/slash.rs` + `src/ipc.rs`): kill the user-facing `{:?}`
+debug-dump leak in `render_error` (slash.rs:78) — add an exhaustive `Response::kind()` label
+method in `ipc.rs`, extract a pure `error_line()` formatter that prints `unexpected reply from
+daemon (<Kind>)` instead of the whole struct, and normalize the three slash-command empty-state
+messages (`/pane`, `/session list`, `/prompt`) onto one phrasing convention. Mechanical UX fix,
+no protocol or behavior change beyond the rendered strings. ~90 lines.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-03 — split-utils is `done`** (approved_first_try, 2026-06-28). Split the 1007-line
+`src/daemon/utils.rs` grab-bag into a `daemon/utils/` directory of cohesive submodules with
+`pub use <submod>::*;` re-exports preserving every `crate::daemon::utils::<name>` path. Executor
+commit `bc4b76f`; review approval `4a69f1e`.
 
 **M3 phase-02 — approval-prompt-consistency is `done`** (approved_first_try, 2026-06-27).
 Unified the three interactive approval prompts through a shared `build_approval_prompt()`

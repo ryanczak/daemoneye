@@ -636,6 +636,47 @@ pub enum Response {
     },
 }
 
+impl Response {
+    /// A stable, human-readable label for this variant — its PascalCase
+    /// name. Used in user-facing "unexpected reply" messages instead of a
+    /// `{:?}` debug dump, which would leak internal field values.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Response::Ok => "Ok",
+            Response::Error(_) => "Error",
+            Response::SessionInfo { .. } => "SessionInfo",
+            Response::Token(_) => "Token",
+            Response::SystemMsg(_) => "SystemMsg",
+            Response::ToolCallPrompt { .. } => "ToolCallPrompt",
+            Response::CredentialPrompt { .. } => "CredentialPrompt",
+            Response::ToolResult(_) => "ToolResult",
+            Response::ToolStarted { .. } => "ToolStarted",
+            Response::ToolFinished { .. } => "ToolFinished",
+            Response::PaneSelectPrompt { .. } => "PaneSelectPrompt",
+            Response::ScriptDeletePrompt { .. } => "ScriptDeletePrompt",
+            Response::ScriptWritePrompt { .. } => "ScriptWritePrompt",
+            Response::ScheduleWritePrompt { .. } => "ScheduleWritePrompt",
+            Response::ScheduleList { .. } => "ScheduleList",
+            Response::ScriptList { .. } => "ScriptList",
+            Response::RunbookWritePrompt { .. } => "RunbookWritePrompt",
+            Response::RunbookDeletePrompt { .. } => "RunbookDeletePrompt",
+            Response::RunbookList { .. } => "RunbookList",
+            Response::EditFilePrompt { .. } => "EditFilePrompt",
+            Response::UsageUpdate { .. } => "UsageUpdate",
+            Response::KeepAlive => "KeepAlive",
+            Response::ModelChanged { .. } => "ModelChanged",
+            Response::ModelList { .. } => "ModelList",
+            Response::PaneChanged { .. } => "PaneChanged",
+            Response::PaneList { .. } => "PaneList",
+            Response::DaemonStatus { .. } => "DaemonStatus",
+            Response::SessionSaved { .. } => "SessionSaved",
+            Response::SessionLoaded { .. } => "SessionLoaded",
+            Response::SavedSessionList { .. } => "SavedSessionList",
+            Response::LimitsInfo { .. } => "LimitsInfo",
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "ipc_tests.rs"]
 mod tests;
