@@ -1,7 +1,7 @@
 # Phase 02: Approval-prompt consistency
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~80 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -291,3 +291,11 @@ Line 747 is inside `build_approval_prompt`; lines 1214/1222/1230 are test assert
 **End-to-end verification:** Declared N/A — interactive terminal render cannot be exercised headlessly. Unit tests pin the exact bytes. Grep confirms the literal only exists in the builder and tests.
 
 **Files changed:** `src/cli/commands/stream.rs`, `docs/dev/milestones/M3-polish-maintenance/phase-02-approval-prompt-consistency.md`, `docs/dev/milestones/M3-polish-maintenance/README.md`
+
+### Review verdict — 2026-06-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-PrismaAURA (rexyMCP)
+- **Scope deviations:** none — all five Spec tasks landed verbatim; `parse_approval_response` untouched; `has_a` fully removed; `all_approved` still read in `prompt_edit_file_ratatui` (no unused-variable warning).
+- **Calibration:** none. Clean mechanical UX refactor with exact-byte test pinning — NORMAL spec density cleared first try. Independent re-run: `cargo fmt`/`build`/`clippy`/`test` all green (822 unit + 27 integration). Grep confirms the `Approve? [Y]es` literal lives only in `build_approval_prompt` (747) + the 3 test assertions.
