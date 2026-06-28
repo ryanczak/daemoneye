@@ -1,7 +1,7 @@
 # Phase 06: error-hardening
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~40 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -260,3 +260,11 @@ Grep verification:
 - `feat: harden error handling — Entry API, unwrap_or_log, logged notify sends`
 
 **Notes for review:** None.
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-PrismaAURA
+- **Scope deviations:** none
+- **Calibration:** none
