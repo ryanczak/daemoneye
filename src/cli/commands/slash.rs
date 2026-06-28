@@ -151,10 +151,7 @@ async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
                 let mut body = Vec::new();
                 for (i, (id, cmd, window, idx, is_target)) in panes.iter().enumerate() {
                     let marker = if *is_target { "●" } else { " " };
-                    body.push(format!(
-                        "{marker} [{}] {id}  {window}:{idx}  {cmd}",
-                        i + 1
-                    ));
+                    body.push(format!("{marker} [{}] {id}  {window}:{idx}  {cmd}", i + 1));
                 }
                 body.push(String::new());
                 body.push("pin with: /pane <number|%id>".to_string());
@@ -225,9 +222,18 @@ fn cmd_approvals(ctx: SlashCtx<'_>, rest: &str) {
             let body = vec![
                 format!("commands : {}", on_off(ctx.approval.regular)),
                 format!("sudo     : {}", on_off(ctx.approval.sudo)),
-                format!("scripts  : {}", scope(ctx.approval.scripts_all, ctx.approval.scripts.len())),
-                format!("runbooks : {}", scope(ctx.approval.runbooks_all, ctx.approval.runbooks.len())),
-                format!("files    : {}", scope(ctx.approval.file_edits_all, ctx.approval.file_edits.len())),
+                format!(
+                    "scripts  : {}",
+                    scope(ctx.approval.scripts_all, ctx.approval.scripts.len())
+                ),
+                format!(
+                    "runbooks : {}",
+                    scope(ctx.approval.runbooks_all, ctx.approval.runbooks.len())
+                ),
+                format!(
+                    "files    : {}",
+                    scope(ctx.approval.file_edits_all, ctx.approval.file_edits.len())
+                ),
                 String::new(),
                 "change with: /approvals on|off|revoke".to_string(),
             ];
@@ -242,11 +248,15 @@ fn cmd_approvals(ctx: SlashCtx<'_>, rest: &str) {
             note(ctx.renderer, "✓ commands now require approval");
         }
         "revoke" | "reset" => {
-            *ctx.approval = SessionApproval::from_config(&crate::config::ApprovalsConfig::default());
+            *ctx.approval =
+                SessionApproval::from_config(&crate::config::ApprovalsConfig::default());
             ctx.approval.regular = false;
             note(ctx.renderer, "✓ all session approvals revoked");
         }
-        other => note(ctx.renderer, &format!("unknown: /approvals {other} (try on|off|revoke)")),
+        other => note(
+            ctx.renderer,
+            &format!("unknown: /approvals {other} (try on|off|revoke)"),
+        ),
     }
 }
 
@@ -317,7 +327,10 @@ fn cmd_prompt(ctx: SlashCtx<'_>, rest: &str) {
     if !path.exists() {
         note(
             ctx.renderer,
-            &format!("✗ no prompt '{rest}' in {} (run /prompt to list)", prompts_dir().display()),
+            &format!(
+                "✗ no prompt '{rest}' in {} (run /prompt to list)",
+                prompts_dir().display()
+            ),
         );
         return;
     }
@@ -339,15 +352,39 @@ async fn cmd_limits(r: &mut RatatuiRendererStdout, session_id: &str) {
             tool_calls_this_session,
             history_len,
         }) => {
-            let cap = |n: usize| if n == 0 { "∞".to_string() } else { n.to_string() };
-            let cap_u = |n: u32| if n == 0 { "∞".to_string() } else { n.to_string() };
+            let cap = |n: usize| {
+                if n == 0 {
+                    "∞".to_string()
+                } else {
+                    n.to_string()
+                }
+            };
+            let cap_u = |n: u32| {
+                if n == 0 {
+                    "∞".to_string()
+                } else {
+                    n.to_string()
+                }
+            };
             let mut body = vec![
-                format!("turns this session     : {turn_count} / {}", cap(limits.max_turns)),
-                format!("tool calls this session: {tool_calls_this_session} / {}", cap(limits.max_tool_calls_per_session)),
-                format!("history messages       : {history_len} / {}", cap(limits.max_history)),
+                format!(
+                    "turns this session     : {turn_count} / {}",
+                    cap(limits.max_turns)
+                ),
+                format!(
+                    "tool calls this session: {tool_calls_this_session} / {}",
+                    cap(limits.max_tool_calls_per_session)
+                ),
+                format!(
+                    "history messages       : {history_len} / {}",
+                    cap(limits.max_history)
+                ),
                 String::new(),
                 format!("per-tool batch cap     : {}", cap_u(limits.per_tool_batch)),
-                format!("tool calls per turn    : {}", cap_u(limits.total_tool_calls_per_turn)),
+                format!(
+                    "tool calls per turn    : {}",
+                    cap_u(limits.total_tool_calls_per_turn)
+                ),
                 format!("tool result chars      : {}", cap(limits.tool_result_chars)),
             ];
             if !limits.per_tool_overrides.is_empty() {
@@ -408,7 +445,10 @@ async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
         },
         "save" => {
             let force = args.split_whitespace().any(|t| t == "--force");
-            let cleaned: Vec<&str> = args.split_whitespace().filter(|t| *t != "--force").collect();
+            let cleaned: Vec<&str> = args
+                .split_whitespace()
+                .filter(|t| *t != "--force")
+                .collect();
             let Some((name, desc_parts)) = cleaned.split_first() else {
                 note(r, "usage: /session save <name> [description] [--force]");
                 return;
@@ -422,7 +462,9 @@ async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
             })
             .await
             {
-                Ok(Response::SessionSaved { name }) => note(r, &format!("✓ session saved as '{name}'")),
+                Ok(Response::SessionSaved { name }) => {
+                    note(r, &format!("✓ session saved as '{name}'"))
+                }
                 Ok(other) => render_error(r, other),
                 Err(e) => note(r, &format!("✗ {e}")),
             }
@@ -491,7 +533,10 @@ async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
                 Err(e) => note(r, &format!("✗ {e}")),
             }
         }
-        other => note(r, &format!("unknown: /session {other} (try list|save|load|delete|rename)")),
+        other => note(
+            r,
+            &format!("unknown: /session {other} (try list|save|load|delete|rename)"),
+        ),
     }
 }
 

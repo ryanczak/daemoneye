@@ -477,8 +477,8 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 slash::SlashOutcome::NotACommand => {
                     let first = query.split_whitespace().next().unwrap_or("");
                     if slash::is_command_shaped(first) {
-                        let _ = renderer
-                            .commit(&format!("  ✗ unknown command: {first} (try /help)\n"));
+                        let _ =
+                            renderer.commit(&format!("  ✗ unknown command: {first} (try /help)\n"));
                         redraw(
                             &mut renderer,
                             input_state,

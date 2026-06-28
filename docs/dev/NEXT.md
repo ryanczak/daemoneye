@@ -1,92 +1,36 @@
 # NEXT
 
-**Active milestone:** none. **M2 — TUI Renderer Overhaul is complete** (2026-06-27; all 16 phases
-`done`). See its retrospective in `docs/dev/milestones/M2-tui-renderer/README.md`.
+**Active milestone:** **M3 — Polish & Maintenance** (kicked off 2026-06-27). Goal: pay
+down post-M2 debt — correctness/hermeticity bugs, user-facing rough edges, and codebase
+health — with no behavior regressions. Open design scope (breaking wire/format/architecture
+changes flagged per-phase for PE sign-off). See
+`docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** none. The next milestone must be kicked off explicitly by the principal engineer.
+**Active phase:** **phase-02 — approval-prompt-consistency** (`todo`, drafted 2026-06-27). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-02-approval-prompt-consistency.md`. Dispatch it
+with `/rexymcp:dispatch phase-02`.
 
-**Now due (human gate):** the **WORKFLOW.md front-loading fold**. M2's calibration dataset (16 phases:
-6 design-discovery with 7 bounces + 3 escalations; 10 mechanical splits, 9 first-try) is decisive —
-the proposed fold is to make front-loading **task-shape-conditional** (front-load design-discovery
-phases; keep normal density + multiset-diff fidelity for mechanical splits). It was on hold pending
-M2 close (PE 2026-06-26); the hold is now lifted. Evidence base: the M2 README retrospective. Per
-STANDARDS §5 this needs PE sign-off before editing WORKFLOW.md.
+Phase-02 scope (UX, `src/cli/commands/stream.rs`): the three interactive approval prompts
+(terminal-command, runbook write, `edit_file`) render with inconsistent option order — tool-call
+uses `[Y]es [N]o [A]pprove`, the other two use `[Y]es [A]pprove [N]o`. The fix adds a single shared
+`build_approval_prompt()` builder and routes all three call sites through it, canonicalizing on
+`[Y]es [A]pprove for <label> [N]o` (+ optional "or type a message" where redirect is supported).
+Only the tool-call prompt's visible order changes; the runbook and `edit_file` prompts render
+byte-identical output. `parse_approval_response` (the input side, already consistent) is untouched.
 
-Phase 15 is a verbatim move-and-re-path split of `daemon/executor/knowledge.rs` (1341) into
-`knowledge/{mod,artifacts,memory,pane,ghost,agents}.rs`. **Shaped like phase 12 (`file_ops`), not
-phase 14 (`background`):** it needs (a) `super::` → `super::super::` re-pathing of `ToolCallOutcome`
-/ `USER_PROMPT_TIMEOUT` + the 4 `super::foreground::is_shell_prompt` call sites, and (b) the
-phase-12 E0364 fix — bump the 23 consumer-facing leaf fns `pub(super)` → `pub` so the `pub(super) use`
-re-exports in `mod.rs` compile. Shared `ArtifactCtx` (`pub(super)`) + `track_artifact` (private) live
-in `mod.rs` (file_ops idiom). **No test module exists in the file** — zero test relocation. NORMAL
-spec density; fully pinned (item→submodule table, visibility list, import-partition table incl.
-mid-file/function-body imports per the phase-14 calibration fold).
+The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
+demand via `/rexymcp:architect next` after each prior phase is approved.
 
-phase-14 — split-background is `done` (**approved_first_try**, 2026-06-27). Verbatim
-move-and-re-path split of `daemon/background.rs` (1369) into `background/{mod,helpers,run,respawn,
-gc}.rs`. Fidelity diff clean — only authorized lines (four `pub(super)` bumps + `BgJobInfo`'s six
-fields, per-file `use`-line partitioning, `mod`/`pub use` in `mod.rs`, the `use super::helpers::{…}`
-cross-sibling imports in run/respawn, and the one→two test-module split). Two benign deviations,
-both authorized by the §Re-pathing compiler-convergence clause: `std::sync::Mutex` needed in
-run/respawn too (BG_COMMAND_MAP closure — spec table only listed helpers), and the gc
-`HashMap/HashSet` import is function-scoped (correctly preserved; executor's note misworded it as
-"test module"). **Sixth consecutive clean mechanical C5 split** (04/05/06/12/13/14). Calibration
-folded into the phase verdict: C5 split specs should partition **mid-file** `use` statements too,
-not just the top-of-file block. Surfaced (not a regression): `webhook_alert_to_event_log` is a
-pre-existing parallel-HOME flaky test (no `TEST_HOME_LOCK`) — flagged for a future fix.
+---
 
-phase-13 — split-types is `done` (**approved_first_try**, 2026-06-27). Verbatim move split of
-`ai/types.rs` (1413) into `types/{mod,wire,pending,events}.rs`. Fidelity diff: 12 additions,
-zero deletions/changes — all authorized (mod.rs decls + re-exports, two sibling
-`use super::wire::…` imports, the second test-module wrapper). `pending.rs` landed 925 lines
-(within the authorized single-cohesive-enum exception). **Fifth consecutive clean mechanical C5
-split** (04/05/06/12/13) — reinforces that NORMAL spec density clears verbatim splits first try.
+**M3 phase-01 — fix-test-hermeticity is `done`** (approved_first_try, 2026-06-27). Converted the
+racy `webhook_alert_to_event_log` to a sync `#[test]` driving its one async call via `rt.block_on`
+(holds `TEST_HOME_LOCK` for the whole body, restores `HOME`), and added `HOME` capture/restore to
+the five leak tests. Executor commit `c52608f`; review approval `ce7c650`. 15× concurrency soak clean.
 
-phase-12 — split-file-ops is `done` (**approved_first_try**, 2026-06-27). Verbatim
-move-and-re-path split of `daemon/executor/file_ops.rs` (1475) into `file_ops/{mod,read,write,
-ops}.rs`. One justified scope note: `EditArgs`/`run_edit_file`/`run_read_file` needed `pub`
-(not the spec's `pub(super)`) for the `pub(super) use` re-export to compile (E0364) — folded
-forward into phase-13's spec, which pins re-export visibility explicitly. **Fourth clean
-mechanical C5 split** — confirms NORMAL spec density clears first try for verbatim splits.
+**M2 — TUI Renderer Overhaul is complete** (2026-06-27; all 16 phases `done`). Retrospective in
+`docs/dev/milestones/M2-tui-renderer/README.md`. The M2 calibration fold (front-loading made
+task-shape-conditional + milestone-gate clarification) landed in WORKFLOW.md (commit `70e9712`).
 
-phase-11 — interrupt-and-colors is `done` (**escalated — architect takeover**, 2026-06-27).
-Two-press ESC/Ctrl+C interrupt of a streaming turn + blood-red/deep-yellow `commit_panel`
-recolor. Took the full M2 calibration ladder on the interrupt (tokio-concurrency) seam:
-rung-0 → bounce (bug-11-1: recreated the read future inside `select!`) → bounce (bug-11-2:
-held the future but returned-and-dropped it on warn/tick) → hard_fail (governor:
-IdenticalToolCallRepetition while patching the callback fix) → takeover. The takeover fix
-moved partial-read state out of the droppable future into a caller-owned `Vec<u8>`
-(`recv_line` via `read_until`), making interruption non-destructive, and added the
-mutation-verified seam regression test both bugs demanded. The color half landed first try
-every dispatch. Live-terminal interactive E2E remains a recommended one-time manual PE
-confirmation (see the phase doc's final Review verdict). **Third strong M2 data point that
-front-loading should become task-shape-conditional** — folded into the still-deferred M2
-retrospective.
-
-phase-10 — input-editor is `done`: a visible cursor + word-wrap + multi-line input +
-multi-line paste + internal scroll in the ratatui input box. Took the full M2 calibration
-ladder — two bounces (green-but-inert: first the wrong tty/render seams, then correct
-code but the seam still untested) before a third dispatch added hermetic `read_key` seam
-tests over a pipe-injected `from_raw_fd`. The live-terminal interactive E2E remains a
-recommended one-time manual PE confirmation (see the phase doc's approved Review verdict).
-
-phase-09 — split-config is `done` (approved_after_1, 2026-06-26; bug-09-1 dropped
-6 doc-comment lines in the verbatim split, fixed).
-
-The C5 split sweep finishes at **phase 15** (split-knowledge): split every remaining
-source file over 1000 lines, biggest first, toward a ~600-line target. Order:
-12 `daemon/executor/file_ops.rs` ✓ → 13 `ai/types.rs` ✓ → 14 `daemon/background.rs` ✓ →
-15 `daemon/executor/knowledge.rs` (drafted as a row in the M2 README phase table; full phase
-doc drafted on demand via `/rexymcp:architect next`).
-
-Phase order so far (01–14 all done): 01 ✓ → 02a ✓ → 02b ✓ → 03 ✓ → 04 split-render ✓ →
-05 split-input ✓ → 06 split-commands ✓ → 07 split-tools ✓ → 08 split-server ✓ →
-09 split-config ✓ → 10 input-editor ✓ → 11 interrupt-and-colors ✓ → 12 split-file-ops ✓ →
-13 split-types ✓ → 14 split-background ✓ → **15 split-knowledge (next to draft)**.
-
-**Deferred (until M2 closes):** the calibration fold into WORKFLOW.md (make front-loading
-task-shape-conditional) — drafted in the M2 README "Interim calibration findings", on
-hold per PE 2026-06-26.
-
-M1 (Agent Tooling Improvements) is **complete** — all eleven phases `done`; see its
-retrospective in `docs/dev/milestones/M1-agent-tooling/README.md`.
+**M1 — Agent Tooling Improvements is complete** — all eleven phases `done`; retrospective in
+`docs/dev/milestones/M1-agent-tooling/README.md`.
