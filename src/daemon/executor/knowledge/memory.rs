@@ -40,20 +40,32 @@ pub fn add_memory(
     }
 }
 
-// TODO(M2): consolidate params into a struct
-#[allow(clippy::too_many_arguments)]
+pub struct UpdateMemoryRequest<'a> {
+    pub key: &'a str,
+    pub category: &'a str,
+    pub body: Option<&'a str>,
+    pub append: bool,
+    pub tags: Option<&'a [String]>,
+    pub summary: Option<&'a str>,
+    pub relates_to: Option<&'a [String]>,
+    pub expires: Option<&'a str>,
+}
+
 pub fn update_memory(
-    key: &str,
-    category: &str,
-    body: Option<&str>,
-    append: bool,
-    tags: Option<&[String]>,
-    summary: Option<&str>,
-    relates_to: Option<&[String]>,
-    expires: Option<&str>,
+    req: UpdateMemoryRequest<'_>,
     session_id: Option<&str>,
     namespaces: &[&str],
 ) -> String {
+    let UpdateMemoryRequest {
+        key,
+        category,
+        body,
+        append,
+        tags,
+        summary,
+        relates_to,
+        expires,
+    } = req;
     let Some(cat) = crate::memory::MemoryCategory::from_str(category) else {
         return format!(
             "Error: invalid category '{}'. Must be 'session', 'knowledge', or 'incident'.",
@@ -61,9 +73,17 @@ pub fn update_memory(
         );
     };
     let namespace = namespaces.first().copied().unwrap_or("global");
-    match crate::memory::update_memory(
-        key, cat, body, append, tags, summary, relates_to, expires, namespace,
-    ) {
+    match crate::memory::update_memory(crate::memory::UpdateMemoryArgs {
+        key,
+        category: cat,
+        body,
+        append,
+        tags,
+        summary,
+        relates_to,
+        expires,
+        namespace,
+    }) {
         Ok(()) => {
             log_event(
                 "memory_write",

@@ -203,7 +203,7 @@ fn schedule_store_persistence() {
 #[test]
 fn session_jsonl_round_trip() {
     use daemoneye::ai::Message;
-    use daemoneye::session_store::{load_session_messages, save_session};
+    use daemoneye::session_store::{SaveSessionArgs, load_session_messages, save_session};
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
@@ -236,16 +236,16 @@ fn session_jsonl_round_trip() {
             turn: None,
         },
     ];
-    save_session(
-        "integ-test-sess",
-        None,
-        "integration test",
-        &messages,
-        2,
-        "default",
-        &[],
-        false,
-    )
+    save_session(SaveSessionArgs {
+        name: "integ-test-sess",
+        current_saved_name: None,
+        description: "integration test",
+        messages: &messages,
+        turn_count: 2,
+        model: "default",
+        artifacts: &[],
+        force: false,
+    })
     .unwrap();
 
     let loaded = load_session_messages("integ-test-sess", 0).unwrap();
@@ -264,7 +264,7 @@ fn session_jsonl_round_trip() {
 #[test]
 fn session_index_persistence() {
     use daemoneye::ai::Message;
-    use daemoneye::session_store::{list_sessions, save_session};
+    use daemoneye::session_store::{SaveSessionArgs, list_sessions, save_session};
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
@@ -281,16 +281,16 @@ fn session_index_persistence() {
         tool_results: None,
         turn: None,
     }];
-    save_session(
-        "integ-index-test",
-        None,
-        "index test",
-        &messages,
-        1,
-        "default",
-        &[],
-        false,
-    )
+    save_session(SaveSessionArgs {
+        name: "integ-index-test",
+        current_saved_name: None,
+        description: "index test",
+        messages: &messages,
+        turn_count: 1,
+        model: "default",
+        artifacts: &[],
+        force: false,
+    })
     .unwrap();
 
     let sessions = list_sessions();

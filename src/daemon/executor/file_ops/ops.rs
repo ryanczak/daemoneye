@@ -6,14 +6,16 @@ use crate::ipc::Response;
 // operation = "edit"
 // ---------------------------------------------------------------------------
 
-// TODO(M2): consolidate params into a struct
-#[allow(clippy::too_many_arguments)]
+pub(super) struct RunEditArgs<'a> {
+    pub id: &'a str,
+    pub path: &'a str,
+    pub old_string: &'a str,
+    pub new_string: &'a str,
+    pub target_pane: Option<&'a str>,
+}
+
 pub(super) async fn run_edit<W, R>(
-    id: &str,
-    path: &str,
-    old_string: &str,
-    new_string: &str,
-    target_pane: Option<&str>,
+    args: RunEditArgs<'_>,
     session_id: Option<&str>,
     tx: &mut W,
     rx: &mut R,
@@ -22,6 +24,13 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let RunEditArgs {
+        id,
+        path,
+        old_string,
+        new_string,
+        target_pane,
+    } = args;
     // ── Remote path ───────────────────────────────────────────────────────
     if let Some(pane) = target_pane {
         send_response_split(

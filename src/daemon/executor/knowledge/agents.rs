@@ -8,18 +8,20 @@ use crate::ipc::{Request, Response};
 // Agents
 // ---------------------------------------------------------------------------
 
-// TODO(M2): consolidate params into a struct
-#[allow(clippy::too_many_arguments)]
+pub struct CreateAgentArgs<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub description: &'a str,
+    pub prompt: &'a str,
+    pub model: Option<&'a str>,
+    pub memory_namespace: &'a str,
+    pub max_turns: Option<u32>,
+    pub auto_approve_read_only: bool,
+    pub auto_approve_scripts: &'a [String],
+}
+
 pub async fn create_agent<W, R>(
-    id: &str,
-    name: &str,
-    description: &str,
-    prompt: &str,
-    model: Option<&str>,
-    memory_namespace: &str,
-    max_turns: Option<u32>,
-    auto_approve_read_only: bool,
-    auto_approve_scripts: &[String],
+    args: CreateAgentArgs<'_>,
     artifact_ctx: &ArtifactCtx<'_>,
     tx: &mut W,
     rx: &mut R,
@@ -28,6 +30,17 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let CreateAgentArgs {
+        id,
+        name,
+        description,
+        prompt,
+        model,
+        memory_namespace,
+        max_turns,
+        auto_approve_read_only,
+        auto_approve_scripts,
+    } = args;
     if artifact_ctx.is_ghost {
         return Ok(ToolCallOutcome::Result(
             "Error: cannot create agents in a Ghost Shell (requires user approval).".to_string(),

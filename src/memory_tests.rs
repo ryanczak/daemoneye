@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::UpdateMemoryArgs;
 use crate::util::UnpoisonExt;
 use std::env;
 
@@ -254,17 +255,17 @@ fn update_memory_creates_new_entry() {
     let tmp = temp_home();
     with_home(&tmp, || {
         let tags = vec!["foo".to_string()];
-        update_memory(
-            "new-key",
-            MemoryCategory::Knowledge,
-            Some("initial body"),
-            false,
-            Some(&tags),
-            Some("A summary"),
-            None,
-            None,
-            "global",
-        )
+        update_memory(UpdateMemoryArgs {
+            key: "new-key",
+            category: MemoryCategory::Knowledge,
+            body: Some("initial body"),
+            append: false,
+            tags: Some(&tags),
+            summary: Some("A summary"),
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
         .unwrap();
         let raw = read_memory("new-key", MemoryCategory::Knowledge, "global").unwrap();
         assert!(raw.contains("initial body"));
@@ -288,17 +289,17 @@ fn update_memory_partial_update_preserves_other_fields() {
         )
         .unwrap();
         // Update only summary.
-        update_memory(
-            "existing",
-            MemoryCategory::Knowledge,
-            None,
-            false,
-            None,
-            Some("new summary"),
-            None,
-            None,
-            "global",
-        )
+        update_memory(UpdateMemoryArgs {
+            key: "existing",
+            category: MemoryCategory::Knowledge,
+            body: None,
+            append: false,
+            tags: None,
+            summary: Some("new summary"),
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
         .unwrap();
         let raw = read_memory("existing", MemoryCategory::Knowledge, "global").unwrap();
         // Tags and relates_to preserved.
@@ -331,17 +332,17 @@ fn update_memory_append_mode() {
             "global",
         )
         .unwrap();
-        update_memory(
-            "append-key",
-            MemoryCategory::Session,
-            Some("Second line"),
-            true,
-            None,
-            None,
-            None,
-            None,
-            "global",
-        )
+        update_memory(UpdateMemoryArgs {
+            key: "append-key",
+            category: MemoryCategory::Session,
+            body: Some("Second line"),
+            append: true,
+            tags: None,
+            summary: None,
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
         .unwrap();
         let raw = read_memory("append-key", MemoryCategory::Session, "global").unwrap();
         assert!(raw.contains("First line"), "original body missing: {raw}");
@@ -354,17 +355,17 @@ fn update_memory_replace_body() {
     let tmp = temp_home();
     with_home(&tmp, || {
         add_memory("replace-key", "Old body", MemoryCategory::Session, "global").unwrap();
-        update_memory(
-            "replace-key",
-            MemoryCategory::Session,
-            Some("New body"),
-            false,
-            None,
-            None,
-            None,
-            None,
-            "global",
-        )
+        update_memory(UpdateMemoryArgs {
+            key: "replace-key",
+            category: MemoryCategory::Session,
+            body: Some("New body"),
+            append: false,
+            tags: None,
+            summary: None,
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
         .unwrap();
         let raw = read_memory("replace-key", MemoryCategory::Session, "global").unwrap();
         assert!(!raw.contains("Old body"), "old body should be gone: {raw}");
@@ -376,17 +377,17 @@ fn update_memory_replace_body() {
 fn update_memory_sets_updated_timestamp() {
     let tmp = temp_home();
     with_home(&tmp, || {
-        update_memory(
-            "ts-key",
-            MemoryCategory::Knowledge,
-            Some("body"),
-            false,
-            None,
-            None,
-            None,
-            None,
-            "global",
-        )
+        update_memory(UpdateMemoryArgs {
+            key: "ts-key",
+            category: MemoryCategory::Knowledge,
+            body: Some("body"),
+            append: false,
+            tags: None,
+            summary: None,
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
         .unwrap();
         let infos = list_memories_with_tags(Some(MemoryCategory::Knowledge), &["global"]).unwrap();
         let info = infos

@@ -59,7 +59,7 @@ clarity, test coverage) — without regressing any shipped behavior.
 | 02 | approval-prompt-consistency ([phase-02-approval-prompt-consistency.md](phase-02-approval-prompt-consistency.md)) — one prompt format + option order across the tool / runbook / `edit_file` approval flows | ux | done |
 | 03 | split-utils — split `daemon/utils.rs` (1007, grab-bag) into cohesive submodules (shell-escape / sudo / event-log / output / response) | maint | done |
 | 04 | error-message-quality ([phase-04-error-message-quality.md](phase-04-error-message-quality.md)) — kill the `render_error` `{:?}` debug-dump leak via `Response::kind()`; standardize the three slash-command empty-state messages | ux | done |
-| 05 | consolidate-leaf-params — resolve the low-blast `TODO(M2)` markers via param structs (`memory`, `session_store`, `knowledge/{agents,memory}`, `file_ops/ops`) | maint | todo |
+| 05 | consolidate-leaf-params ([phase-05-consolidate-leaf-params.md](phase-05-consolidate-leaf-params.md)) — resolve the low-blast `TODO(M2)` markers via param structs (`memory`, `session_store`, `knowledge/{agents,memory}`, `file_ops/ops`) | maint | review |
 | 06 | error-hardening — audit swallowed `Result`s (`daemon/scheduled.rs` sends), `memory_prompt.rs` unwrap → Entry API, risky production unwraps in `tmux`/`ai` hot paths | bug | todo |
 | 07 | split-webhook — split `webhook.rs` (1210) into payload-parsing vs HTTP-handler/dedup submodules | maint | todo |
 | 08 | help-and-truncation — ellipsis markers on silent truncation (status bar / panel / committed text); `/help` completeness (aliases, document redirect + tool-output cap) | ux | todo |

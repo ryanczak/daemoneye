@@ -266,19 +266,30 @@ fn validate_memory_key(key: &str) -> Result<()> {
 /// If the entry does not exist, a new one is created.
 /// `updated` timestamp is always set to the current UTC time.
 /// `namespace` controls which namespace directory to write to.
-// TODO(M2): consolidate params into a struct
-#[allow(clippy::too_many_arguments)]
-pub fn update_memory(
-    key: &str,
-    category: MemoryCategory,
-    body: Option<&str>,
-    append: bool,
-    tags: Option<&[String]>,
-    summary: Option<&str>,
-    relates_to: Option<&[String]>,
-    expires: Option<&str>,
-    namespace: &str,
-) -> Result<()> {
+pub struct UpdateMemoryArgs<'a> {
+    pub key: &'a str,
+    pub category: MemoryCategory,
+    pub body: Option<&'a str>,
+    pub append: bool,
+    pub tags: Option<&'a [String]>,
+    pub summary: Option<&'a str>,
+    pub relates_to: Option<&'a [String]>,
+    pub expires: Option<&'a str>,
+    pub namespace: &'a str,
+}
+
+pub fn update_memory(args: UpdateMemoryArgs<'_>) -> Result<()> {
+    let UpdateMemoryArgs {
+        key,
+        category,
+        body,
+        append,
+        tags,
+        summary,
+        relates_to,
+        expires,
+        namespace,
+    } = args;
     validate_memory_key(key)?;
     let dir = memory_dir_for_namespace(namespace, &category);
     std::fs::create_dir_all(&dir)

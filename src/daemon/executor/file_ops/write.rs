@@ -86,7 +86,19 @@ where
                     )),
                 };
             let new = new_string.unwrap_or("");
-            super::ops::run_edit(id, path, old, new, target_pane, session_id, tx, rx).await
+            super::ops::run_edit(
+                super::ops::RunEditArgs {
+                    id,
+                    path,
+                    old_string: old,
+                    new_string: new,
+                    target_pane,
+                },
+                session_id,
+                tx,
+                rx,
+            )
+            .await
         }
     }
 }

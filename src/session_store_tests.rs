@@ -1,4 +1,5 @@
 use super::*;
+use crate::session_store::SaveSessionArgs;
 
 fn with_temp_home<F: FnOnce()>(f: F) {
     let _guard = crate::TEST_HOME_LOCK.lock().unwrap();
@@ -95,16 +96,16 @@ fn name_leading_hyphen_rejected() {
 fn save_and_load_round_trip() {
     with_temp_home(|| {
         let msgs = fake_messages(4);
-        save_session(
-            "test-session",
-            None,
-            "a test",
-            &msgs,
-            2,
-            "default",
-            &[],
-            false,
-        )
+        save_session(SaveSessionArgs {
+            name: "test-session",
+            current_saved_name: None,
+            description: "a test",
+            messages: &msgs,
+            turn_count: 2,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
         .expect("save");
         assert!(session_exists("test-session"));
 
@@ -123,7 +124,17 @@ fn save_and_load_round_trip() {
 fn load_messages_max_count_truncates() {
     with_temp_home(|| {
         let msgs = fake_messages(10);
-        save_session("trunc", None, "", &msgs, 5, "default", &[], false).expect("save");
+        save_session(SaveSessionArgs {
+            name: "trunc",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 5,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("save");
         let loaded = load_session_messages("trunc", 3).expect("load");
         assert_eq!(loaded.len(), 3);
         // Should be the last 3 messages.
@@ -135,8 +146,27 @@ fn load_messages_max_count_truncates() {
 fn collision_rejected_without_force() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("clash", None, "", &msgs, 1, "default", &[], false).expect("first save");
-        let result = save_session("clash", None, "", &msgs, 1, "default", &[], false);
+        save_session(SaveSessionArgs {
+            name: "clash",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("first save");
+        let result = save_session(SaveSessionArgs {
+            name: "clash",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        });
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("already exists"));
     });
@@ -146,10 +176,28 @@ fn collision_rejected_without_force() {
 fn collision_allowed_with_force() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("force-test", None, "v1", &msgs, 1, "default", &[], false)
-            .expect("first save");
-        save_session("force-test", None, "v2", &msgs, 1, "default", &[], true)
-            .expect("forced overwrite");
+        save_session(SaveSessionArgs {
+            name: "force-test",
+            current_saved_name: None,
+            description: "v1",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("first save");
+        save_session(SaveSessionArgs {
+            name: "force-test",
+            current_saved_name: None,
+            description: "v2",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: true,
+        })
+        .expect("forced overwrite");
         let meta = load_session_meta("force-test").expect("meta");
         assert_eq!(meta.description, "v2");
     });
@@ -159,18 +207,28 @@ fn collision_allowed_with_force() {
 fn update_in_place_allowed() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("mywork", None, "v1", &msgs, 1, "default", &[], false).expect("first save");
+        save_session(SaveSessionArgs {
+            name: "mywork",
+            current_saved_name: None,
+            description: "v1",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("first save");
         // Same session name as current_saved_name — should succeed without force.
-        save_session(
-            "mywork",
-            Some("mywork"),
-            "v2",
-            &msgs,
-            2,
-            "default",
-            &[],
-            false,
-        )
+        save_session(SaveSessionArgs {
+            name: "mywork",
+            current_saved_name: Some("mywork"),
+            description: "v2",
+            messages: &msgs,
+            turn_count: 2,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
         .expect("update in place");
         let meta = load_session_meta("mywork").expect("meta");
         assert_eq!(meta.description, "v2");
@@ -182,9 +240,29 @@ fn update_in_place_allowed() {
 fn list_returns_newest_first() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("aaa", None, "", &msgs, 1, "default", &[], false).expect("a");
+        save_session(SaveSessionArgs {
+            name: "aaa",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("a");
         std::thread::sleep(std::time::Duration::from_millis(10));
-        save_session("bbb", None, "", &msgs, 1, "default", &[], false).expect("b");
+        save_session(SaveSessionArgs {
+            name: "bbb",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("b");
         let list = list_sessions();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].0, "bbb");
@@ -196,7 +274,17 @@ fn list_returns_newest_first() {
 fn delete_removes_dir_and_index() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("del-me", None, "", &msgs, 1, "default", &[], false).expect("save");
+        save_session(SaveSessionArgs {
+            name: "del-me",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("save");
         assert!(session_exists("del-me"));
         delete_session("del-me").expect("delete");
         assert!(!session_exists("del-me"));
@@ -215,7 +303,17 @@ fn delete_nonexistent_errors() {
 fn rename_updates_dir_and_index() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("before", None, "desc", &msgs, 1, "default", &[], false).expect("save");
+        save_session(SaveSessionArgs {
+            name: "before",
+            current_saved_name: None,
+            description: "desc",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("save");
         rename_session("before", "after").expect("rename");
         assert!(!session_exists("before"));
         assert!(session_exists("after"));
@@ -236,8 +334,28 @@ fn rename_nonexistent_errors() {
 fn rename_to_existing_errors() {
     with_temp_home(|| {
         let msgs = fake_messages(2);
-        save_session("a", None, "", &msgs, 1, "default", &[], false).expect("save a");
-        save_session("b", None, "", &msgs, 1, "default", &[], false).expect("save b");
+        save_session(SaveSessionArgs {
+            name: "a",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("save a");
+        save_session(SaveSessionArgs {
+            name: "b",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 1,
+            model: "default",
+            artifacts: &[],
+            force: false,
+        })
+        .expect("save b");
         assert!(rename_session("a", "b").is_err());
     });
 }
@@ -258,7 +376,17 @@ fn artifacts_round_trip() {
                 at_turn: 7,
             },
         ];
-        save_session("art-test", None, "", &msgs, 8, "default", &artifacts, false).expect("save");
+        save_session(SaveSessionArgs {
+            name: "art-test",
+            current_saved_name: None,
+            description: "",
+            messages: &msgs,
+            turn_count: 8,
+            model: "default",
+            artifacts: &artifacts,
+            force: false,
+        })
+        .expect("save");
         let meta = load_session_meta("art-test").expect("meta");
         assert_eq!(meta.artifacts_created.len(), 2);
         assert_eq!(meta.artifacts_created[0].name, "nginx-root-cause");

@@ -513,16 +513,16 @@ where
         (Vec::new(), 0, None, "default".to_string(), Vec::new())
     };
 
-    match crate::session_store::save_session(
-        &name,
-        current_saved.as_deref(),
-        &description,
-        &msgs,
+    match crate::session_store::save_session(crate::session_store::SaveSessionArgs {
+        name: &name,
+        current_saved_name: current_saved.as_deref(),
+        description: &description,
+        messages: &msgs,
         turn_count,
-        &model_name,
-        &artifacts,
+        model: &model_name,
+        artifacts: &artifacts,
         force,
-    ) {
+    }) {
         Ok(()) => {
             if current_saved.is_none() && !artifacts.is_empty() {
                 let errs = crate::session_store::backfill_session_origin(&artifacts, &name);

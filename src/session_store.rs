@@ -170,18 +170,28 @@ fn save_index(index: &HashMap<String, IndexEntry>) -> Result<()> {
 ///
 /// If `name` is already in the index AND `current_saved_name != Some(name)`, returns an error
 /// unless `force` is true.  Use `force` only when the user explicitly passes `--force`.
-// TODO(M2): consolidate params into a struct
-#[allow(clippy::too_many_arguments)]
-pub fn save_session(
-    name: &str,
-    current_saved_name: Option<&str>,
-    description: &str,
-    messages: &[Message],
-    turn_count: usize,
-    model: &str,
-    artifacts: &[ArtifactRef],
-    force: bool,
-) -> Result<()> {
+pub struct SaveSessionArgs<'a> {
+    pub name: &'a str,
+    pub current_saved_name: Option<&'a str>,
+    pub description: &'a str,
+    pub messages: &'a [Message],
+    pub turn_count: usize,
+    pub model: &'a str,
+    pub artifacts: &'a [ArtifactRef],
+    pub force: bool,
+}
+
+pub fn save_session(args: SaveSessionArgs<'_>) -> Result<()> {
+    let SaveSessionArgs {
+        name,
+        current_saved_name,
+        description,
+        messages,
+        turn_count,
+        model,
+        artifacts,
+        force,
+    } = args;
     validate_session_name(name).map_err(|e| anyhow::anyhow!(e))?;
 
     let mut index = load_index();

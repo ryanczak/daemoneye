@@ -5,7 +5,7 @@ mod memory;
 mod pane;
 
 pub(super) use agents::{
-    await_agent_result, create_agent, delete_agent, list_agents_tool, read_agent,
+    CreateAgentArgs, await_agent_result, create_agent, delete_agent, list_agents_tool, read_agent,
 };
 pub(super) use artifacts::{
     delete_runbook, delete_script, list_runbooks, list_scripts, read_runbook, read_script,
@@ -13,7 +13,8 @@ pub(super) use artifacts::{
 };
 pub(super) use ghost::spawn_ghost;
 pub(super) use memory::{
-    add_memory, delete_memory, list_memories, read_memory, search_repository, update_memory,
+    UpdateMemoryRequest, add_memory, delete_memory, list_memories, read_memory, search_repository,
+    update_memory,
 };
 pub(super) use pane::{close_bg_window, list_panes, watch_pane};
 

@@ -469,16 +469,16 @@ fn run_session_import(id: &str, name: &str, desc: Option<&str>, force: bool) -> 
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
     let turn_count = messages.iter().filter(|m| m.role == "user").count();
-    session_store::save_session(
+    session_store::save_session(session_store::SaveSessionArgs {
         name,
-        None,
-        desc.unwrap_or(""),
-        &messages,
+        current_saved_name: None,
+        description: desc.unwrap_or(""),
+        messages: &messages,
         turn_count,
-        "default",
-        &[],
+        model: "default",
+        artifacts: &[],
         force,
-    )?;
+    })?;
     println!(
         "Imported {} message(s) ({} turns) from session '{}' → saved as '{}'",
         messages.len(),

@@ -6,21 +6,29 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-04 — error-message-quality** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-04-error-message-quality.md`. Dispatch it
-with `/rexymcp:dispatch phase-04`.
+**Active phase:** **phase-05 — consolidate-leaf-params** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-05-consolidate-leaf-params.md`. Dispatch it
+with `/rexymcp:dispatch phase-05`.
 
-Phase-04 scope (ux, `src/cli/commands/slash.rs` + `src/ipc.rs`): kill the user-facing `{:?}`
-debug-dump leak in `render_error` (slash.rs:78) — add an exhaustive `Response::kind()` label
-method in `ipc.rs`, extract a pure `error_line()` formatter that prints `unexpected reply from
-daemon (<Kind>)` instead of the whole struct, and normalize the three slash-command empty-state
-messages (`/pane`, `/session list`, `/prompt`) onto one phrasing convention. Mechanical UX fix,
-no protocol or behavior change beyond the rendered strings. ~90 lines.
+Phase-05 scope (maint, `memory.rs` + `session_store.rs` + `executor/file_ops/ops.rs` +
+`executor/knowledge/{memory,agents}.rs` + dispatch sites): resolve 5 of the 7 `TODO(M2):
+consolidate params into a struct` markers (the low-blast leaf functions) by introducing a
+per-function borrow-struct following the existing `EditArgs<'a>` idiom — `UpdateMemoryArgs`,
+`SaveSessionArgs`, `RunEditArgs`, `UpdateMemoryRequest`, `CreateAgentArgs` — and deleting each
+`#[allow(clippy::too_many_arguments)]` + TODO. Pure refactor, no behavior change; correctness
+held by the existing `session_store_tests.rs`/`memory_tests.rs` suites. Wide-blast on
+`save_session` (17 call sites) handled one-function-at-a-time with grep-verified site lists.
+The 2 orchestration markers (`server/ask.rs`, `stream.rs`) are deferred to phase-09. ~300 lines.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-04 — error-message-quality is `done`** (approved_first_try, 2026-06-28). Killed the
+`render_error` `{:?}` debug-dump leak via an exhaustive `Response::kind()` label method + a pure
+`error_line()` formatter (`unexpected reply from daemon (<Kind>)`), and normalized the
+`/session list` + `/prompt` empty-state strings. Executor commit `77ee226`; review approval `1b9d22f`.
 
 **M3 phase-03 — split-utils is `done`** (approved_first_try, 2026-06-28). Split the 1007-line
 `src/daemon/utils.rs` grab-bag into a `daemon/utils/` directory of cohesive submodules with
