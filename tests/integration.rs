@@ -207,6 +207,7 @@ fn session_jsonl_round_trip() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
     }
@@ -252,6 +253,11 @@ fn session_jsonl_round_trip() {
     assert_eq!(loaded[0].role, "user");
     assert_eq!(loaded[0].content, "hello");
     assert_eq!(loaded[2].content, "bye");
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
 }
 
 /// Verify that save_session() creates an index entry visible to list_sessions().
@@ -262,6 +268,7 @@ fn session_index_persistence() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
     }
@@ -288,6 +295,11 @@ fn session_index_persistence() {
 
     let sessions = list_sessions();
     assert!(sessions.iter().any(|(name, _)| name == "integ-index-test"));
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +314,7 @@ fn event_log_entry_format() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
     }
@@ -320,6 +333,11 @@ fn event_log_entry_format() {
     assert_eq!(last["event"], "webhook_alert");
     assert_eq!(last["alert_name"], "HighCPU");
     assert!(last["ts"].is_string());
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
 }
 
 /// Verify that a CostRecord round-trips through events.jsonl correctly.
@@ -331,6 +349,7 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
     }
@@ -380,6 +399,11 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
     assert_eq!(last["tokens"]["cache_read_tokens"], 5000);
     assert_eq!(last["tokens"]["cache_write_tokens"], 1000);
     assert_eq!(last["pricing_source"], "UserConfig");
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
 }
 
 /// Verify that multiple log_event() calls append correctly and are readable
@@ -390,6 +414,7 @@ fn event_log_append_read() {
 
     let home = temp_daemoneye_home();
     let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
     }
@@ -423,6 +448,11 @@ fn event_log_append_read() {
     assert_eq!(ours.len(), 3);
     assert_eq!(ours[0]["event"], "webhook_alert");
     assert_eq!(ours[2]["event"], "ghost_completed");
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -645,24 +675,20 @@ model = "test"
 ///
 /// This exercises the same code path as the HTTP webhook handler without
 /// needing to bind a TCP port or start the full daemon.
-#[tokio::test(flavor = "current_thread")]
-async fn webhook_alert_to_event_log() {
+#[test]
+fn webhook_alert_to_event_log() {
     use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
 
-    // Initialise masking filter (safe — OnceLock, idempotent).
     daemoneye::ai::filter::init_masking(&[]);
 
-    // Isolate HOME so events_path resolves to a temp directory.
     let tmp = tempfile::tempdir().expect("create tempdir");
-    {
-        let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
-        unsafe {
-            std::env::set_var("HOME", tmp.path().to_str().unwrap());
-        }
+    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
     }
     daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
 
-    // Parse a synthetic Alertmanager payload.
     let body = serde_json::json!({
         "status": "firing",
         "alerts": [{
@@ -685,9 +711,6 @@ async fn webhook_alert_to_event_log() {
     assert_eq!(alert.severity, "critical");
     assert_eq!(alert.source, "alertmanager");
 
-    // Build minimal WebhookState — only the config and dedup/rate-limit
-    // maps are exercised by this path; sessions/cache/schedule_store are
-    // default since we only care about the log_event side effect.
     let config = daemoneye::config::Config::default();
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
@@ -701,10 +724,12 @@ async fn webhook_alert_to_event_log() {
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    // Process the alert through the pipeline.
-    process_alert(alert.clone(), state).await;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alert.clone(), state));
 
-    // Assert events.jsonl contains the webhook_alert entry.
     let path = daemoneye::config::events_path();
     let content = fs::read_to_string(&path).expect("read events.jsonl");
     let lines: Vec<&str> = content.lines().collect();
@@ -714,6 +739,11 @@ async fn webhook_alert_to_event_log() {
     assert_eq!(last["alert_name"], "HighCPU");
     assert_eq!(last["severity"], "critical");
     assert!(last["ts"].is_string());
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
 }
 
 // ── G1 Named Agents ──────────────────────────────────────────────────────────
