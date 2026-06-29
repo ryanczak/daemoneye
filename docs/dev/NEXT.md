@@ -6,17 +6,19 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-08 — help-and-truncation** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-08-help-and-truncation.md`. Dispatch it
-with `/rexymcp:dispatch phase-08`.
+**Active phase:** **phase-09 — consolidate-loop-ctx** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-09-consolidate-loop-ctx.md`. Dispatch it
+with `/rexymcp:dispatch phase-09`.
 
-Phase-08 scope (ux, `src/cli/render_ratatui.rs` + `src/cli/commands/chat.rs`): add `…`
-markers to three silent-truncation render paths (status-bar session id ×3, panel body
-lines, committed scrollback) via two pure char-count helpers (`truncate_with_ellipsis`,
-`short_session`); and complete `/help` by extracting the text to a testable
-`const HELP_TEXT` and documenting the recognized aliases, the approval-prompt message
-redirect, and the 10-line tool-output cap. Char-count truncation is preserved (no
-unicode-width dep). ~110 lines incl. ~5 unit tests. No protocol/format change.
+Phase-09 scope (maint, `src/daemon/server/ask.rs` + `src/daemon/server/mod.rs` +
+`src/daemon/stream.rs`): consolidate the two remaining high-arity orchestration
+signatures via borrow-structs (the phase-05 idiom) — `AskRequest`/`AskContext` for
+`handle_ask`, `ConversationLoopCtx` for `run_conversation_loop` — keeping `tx`/`rx` as
+separate generic params and each field's existing ownership. Deletes the two
+`#[allow(clippy::too_many_arguments)]` + two `TODO(M2)` lines, closing the milestone's
+"7 `TODO(M2)` markers resolved" exit criterion (phase-05 cleared the other 5). Pure
+behavior-preserving refactor; the clippy gate with the suppressions removed is the proof.
+~90 lines, no new tests (pure plumbing), no protocol/format change.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
