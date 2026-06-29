@@ -1,7 +1,7 @@
 # Phase 08: Ellipsis markers on truncation + complete `/help`
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~110 lines (two small pure helpers + 5 call-site edits, one
 help-text extraction, ~5 unit tests).
@@ -377,3 +377,23 @@ Pre-flight that no protocol/format change is implied. No STANDARDS §5 files.)
 - The truncation helpers are exercised by the real render paths (`commit`, `commit_panel`, the status bar), which now route through them. The inline TUI viewport cannot be driven for visual diffing in a headless run; verification is the pure-helper unit tests plus reading the five call sites.
 
 **Notes for review:** None — all changes are additive and behavior-preserving for the non-truncated/common case.
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-PrismaAURA)
+- **Scope deviations:** none
+- **Calibration:** Initial dispatch hard-failed before any work — the model
+  emitted `update_task` with null arguments, which vLLM rejected as a 400 on the
+  next request (`Can only get item pairs from a mapping`). Disabling
+  `task_tracking` in `rexymcp.toml` resolved it; the re-dispatch completed clean
+  in 70 turns. Not a code-quality lesson; an executor/endpoint interaction note.
+- **Review checks:** independent re-run clean — `cargo fmt --all` (clean),
+  `cargo build` (zero warnings), `cargo clippy --all-targets --all-features -D warnings`
+  (clean), `cargo test` (831 unit + 27 integration passed). Five edited call sites
+  verified by grep (three `short_session`, two `truncate_with_ellipsis`); the two
+  remaining `chars().take` hits are the helper internals. All `.unwrap()` in the
+  touched files are within `#[cfg(test)]`. HELP_TEXT contains all eight pinned
+  tokens. The six new tests pin real behavior (overflow test asserts exact
+  `"hello w…"` + char count 8).
