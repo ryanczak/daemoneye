@@ -40,31 +40,50 @@ const APPROVAL_GATED: &[&str] = &[
 /// - Tool execution (foreground, background, ghost spawn)
 /// - Response persistence (in-memory and on-disk)
 /// - Auto-name suggestion for unnamed sessions
-// TODO(M2): consolidate params into a struct
-#[allow(clippy::too_many_arguments)]
+pub struct ConversationLoopCtx<'a> {
+    pub session_id: Option<String>,
+    pub session_name: &'a str,
+    pub chat_pane: Option<String>,
+    pub messages: Vec<Message>,
+    pub sys_prompt: String,
+    pub session_active_model: Option<String>,
+    pub is_ghost_session: bool,
+    pub this_turn_count: usize,
+    pub post_trim_len: usize,
+    pub needs_compaction: bool,
+    pub config: &'a Config,
+    pub cache: Arc<SessionCache>,
+    pub sessions: SessionStore,
+    pub schedule_store: Arc<ScheduleStore>,
+    pub cost_attribution: CostAttribution,
+}
+
 pub async fn run_conversation_loop<W, R>(
+    ctx: ConversationLoopCtx<'_>,
     tx: &mut W,
     rx: &mut R,
-    session_id: Option<String>,
-    session_name: &str,
-    chat_pane: Option<String>,
-    mut messages: Vec<Message>,
-    sys_prompt: String,
-    session_active_model: Option<String>,
-    is_ghost_session: bool,
-    this_turn_count: usize,
-    post_trim_len: usize,
-    needs_compaction: bool,
-    config: &Config,
-    cache: Arc<SessionCache>,
-    sessions: SessionStore,
-    schedule_store: Arc<ScheduleStore>,
-    cost_attribution: CostAttribution,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
     R: AsyncBufRead + Unpin,
 {
+    let ConversationLoopCtx {
+        session_id,
+        session_name,
+        chat_pane,
+        mut messages,
+        sys_prompt,
+        session_active_model,
+        is_ghost_session,
+        this_turn_count,
+        post_trim_len,
+        needs_compaction,
+        config,
+        cache,
+        sessions,
+        schedule_store,
+        cost_attribution,
+    } = ctx;
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 

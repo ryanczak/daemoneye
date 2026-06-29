@@ -16,29 +16,52 @@ use std::time::Instant;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 // ── Ask handler ──────────────────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-// TODO(M2): consolidate params into a struct
+pub(super) struct AskRequest {
+    pub query: String,
+    pub client_pane: Option<String>,
+    pub session_id: Option<String>,
+    pub chat_pane: Option<String>,
+    pub prompt_override: Option<String>,
+    pub chat_width: Option<usize>,
+    pub client_tmux_session: Option<String>,
+    pub client_target_pane: Option<String>,
+}
+
+pub(super) struct AskContext<'a> {
+    pub cache: Arc<SessionCache>,
+    pub sessions: &'a SessionStore,
+    pub schedule_store: Arc<ScheduleStore>,
+    pub bg_session: Arc<std::sync::Mutex<String>>,
+    pub config: &'a Config,
+}
+
 pub(super) async fn handle_ask<W, R>(
-    initial_query: String,
-    client_pane: Option<String>,
-    session_id: Option<String>,
-    chat_pane: Option<String>,
-    prompt_override: Option<String>,
-    chat_width: Option<usize>,
-    client_tmux_session: Option<String>,
-    client_target_pane: Option<String>,
+    req: AskRequest,
+    ctx: AskContext<'_>,
     tx: &mut W,
     rx: &mut R,
-    cache: Arc<SessionCache>,
-    sessions: &SessionStore,
-    schedule_store: Arc<ScheduleStore>,
-    bg_session: Arc<std::sync::Mutex<String>>,
-    config: &Config,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin,
     R: AsyncBufRead + Unpin,
 {
+    let AskRequest {
+        query: initial_query,
+        client_pane,
+        session_id,
+        chat_pane,
+        prompt_override,
+        chat_width,
+        client_tmux_session,
+        client_target_pane,
+    } = req;
+    let AskContext {
+        cache,
+        sessions,
+        schedule_store,
+        bg_session,
+        config,
+    } = ctx;
     // Derive the tmux session name: prefer what the client told us, fall back
     // to whatever the daemon adopted at startup.
     let session_name: String = client_tmux_session
@@ -562,11 +585,9 @@ where
     }
 
     // ── Conversation loop ─────────────────────────────────────────────────────
-    stream::run_conversation_loop(
-        tx,
-        rx,
+    let ctx = stream::ConversationLoopCtx {
         session_id,
-        &session_name,
+        session_name: &session_name,
         chat_pane,
         messages,
         sys_prompt,
@@ -577,9 +598,9 @@ where
         needs_compaction,
         config,
         cache,
-        Arc::clone(sessions),
+        sessions: Arc::clone(sessions),
         schedule_store,
         cost_attribution,
-    )
-    .await
+    };
+    stream::run_conversation_loop(ctx, tx, rx).await
 }

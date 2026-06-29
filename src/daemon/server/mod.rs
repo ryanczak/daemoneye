@@ -220,24 +220,24 @@ pub async fn handle_client(
             target_pane,
             model: _ask_model,
         } => {
-            handle_ask(
+            let req = ask::AskRequest {
                 query,
-                tmux_pane,
+                client_pane: tmux_pane,
                 session_id,
                 chat_pane,
-                prompt,
+                prompt_override: prompt,
                 chat_width,
-                tmux_session,
-                target_pane,
-                &mut tx,
-                &mut rx,
+                client_tmux_session: tmux_session,
+                client_target_pane: target_pane,
+            };
+            let ctx = ask::AskContext {
                 cache,
-                &sessions,
+                sessions: &sessions,
                 schedule_store,
                 bg_session,
-                &config,
-            )
-            .await?;
+                config: &config,
+            };
+            handle_ask(req, ctx, &mut tx, &mut rx).await?;
             return Ok(());
         }
         _ => {}

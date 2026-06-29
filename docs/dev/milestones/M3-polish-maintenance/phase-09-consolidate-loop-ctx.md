@@ -1,7 +1,7 @@
 # Phase 09: Consolidate the two high-arity orchestration signatures
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** todo
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~90 lines (three param structs + two signature rewrites +
 two call-site rewrites; deletes two `#[allow]` + two `TODO(M2)` lines).
@@ -335,3 +335,32 @@ files touched.)
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-06-29 00:45 (started)
+
+**Executor:** rexyMCP executor
+
+Implementing the two param-struct consolidations: `AskRequest` + `AskContext` for `handle_ask`, and `ConversationLoopCtx` for `run_conversation_loop`. Behavior-preserving refactor.
+
+### Update — 2026-06-29 00:50 (complete)
+
+**Summary:** Added `AskRequest`, `AskContext<'a>`, and `ConversationLoopCtx<'a>` param structs, rewrote `handle_ask` and `run_conversation_loop` signatures, updated both call sites, and deleted the two `#[allow(clippy::too_many_arguments)]` + two `// TODO(M2)` markers.
+
+**Files changed:**
+- `src/daemon/server/ask.rs` — added `AskRequest` + `AskContext<'a>` structs, rewrote `handle_ask` signature, destructure at top, rewrote `run_conversation_loop` call site to use `ConversationLoopCtx`.
+- `src/daemon/stream.rs` — added `ConversationLoopCtx<'a>` struct, rewrote `run_conversation_loop` signature, destructure at top.
+- `src/daemon/server/mod.rs` — rewrote `Request::Ask` arm to construct `AskRequest` + `AskContext` and call `handle_ask`.
+
+**Verification:**
+- `grep -rn "TODO(M2)" src/` → zero matches (exit 1).
+- `grep -rn "too_many_arguments" src/daemon/server/ask.rs src/daemon/stream.rs` → zero matches (exit 1).
+- `cargo build` — succeeded, zero new warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — passed (with both suppressions removed).
+- `cargo fmt --all` — clean.
+- `cargo test` — 27 passed, 0 failed, 2 ignored (unchanged count).
+
+**End-to-end verification:** N/A — pure internal signature refactor, no runtime-loadable artifact.
+
+**Notes for review:** None. Straightforward refactor matching the phase-05 idiom.
+
+**Commits:** 1 (`refactor: consolidate high-arity orchestration signatures into param structs`)
