@@ -1,7 +1,7 @@
 # Phase 09: Consolidate the two high-arity orchestration signatures
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~90 lines (three param structs + two signature rewrites +
 two call-site rewrites; deletes two `#[allow]` + two `TODO(M2)` lines).
@@ -364,3 +364,23 @@ Implementing the two param-struct consolidations: `AskRequest` + `AskContext` fo
 **Notes for review:** None. Straightforward refactor matching the phase-05 idiom.
 
 **Commits:** 1 (`refactor: consolidate high-arity orchestration signatures into param structs`)
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-PrismaAURA)
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independent re-run of the command set (`cargo fmt --all`, `cargo build`, `cargo
+clippy --all-targets --all-features -- -D warnings`, `cargo test`) all clean: 831
+unit + 27 integration passing, 2 ignored. `grep -rn "TODO(M2)" src/` → zero;
+`grep -rn "too_many_arguments" src/daemon/server/ask.rs src/daemon/stream.rs` →
+zero (both suppressions deleted, not relocated — the clippy gate passing with them
+gone is the proof the consolidation dropped each function under threshold). The two
+`too_many_arguments` allows in `cli/commands/stream.rs` are correctly left untouched
+(out of scope, not `TODO(M2)` markers). Three new structs are pure plumbing
+(STANDARDS §3.2 test-exempt); `mut messages` mutability and per-field ownership
+preserved; no debug/unwrap/expect/panic added. Closes the milestone's "7 `TODO(M2)`
+markers resolved" exit criterion.
