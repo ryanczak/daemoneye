@@ -52,10 +52,17 @@ The daemon lifecycle and client↔daemon wire protocol.
   serialized as newline-delimited JSON over a Unix domain socket
   (`~/.daemoneye/var/run/daemoneye.sock`, resolved via
   `config::default_socket_path()`). IPC payloads are capped (1 MiB).
-- **`src/cli/`** — the client side: terminal rendering (`render.rs`), readline
-  input (`input.rs`), streaming display (`stream`), session-level approval
+- **`src/cli/`** — the client side: terminal rendering (`render.rs` +
+  `render_ratatui.rs` + the `markdown` submodule), readline input
+  (`input/{tty,editor}`), streaming display (`stream`), session-level approval
   state, and the `chat` / `ask` / `notify` / `status` commands. Slash commands
-  (`/model`, `/session`) are parsed here.
+  (`/model`, `/session`) are parsed in the `commands/chat` submodule. The chat UI
+  uses a **`ratatui` inline viewport** (M2): the transcript commits to native
+  terminal scrollback via `Terminal::insert_before`, and only the input box +
+  status bar occupy a fixed bottom region. There is no DECSTBM scroll region — the
+  previous absolutely-positioned-chrome path (which corrupted on tmux window
+  switches) was removed. The input box is a full multi-line editor (visible cursor,
+  word-wrap, multi-line paste); a two-press ESC / Ctrl+C interrupts a streaming turn.
 
 ### 1.2 Orchestration layer (`src/daemon/`)
 
@@ -309,12 +316,39 @@ speculation.
 - **Webhook ingestion** — Alertmanager/Grafana/generic parsers, rate limiting,
   AI auto-analysis.
 
+### Shipped under rexyMCP (M1–M3)
+
+Three milestones have been delivered through the architect/executor workflow.
+Each has a retrospective in its `docs/dev/milestones/M<n>-<slug>/README.md`.
+
+- **M1 — Agent Tooling Improvements** (11 phases, complete 2026-06-23). Full
+  operator parity on local + SSH-connected remote hosts under the §2.4 model:
+  remote `read_file`/`edit_file`, streamed (no-remote-disk) remote script
+  execution with a sudo-only materialize exception, and the interactive-pane
+  analogue. Security hardening interleaved per subsystem (SSH escaping, sudoers
+  quoting, script-name allowlist, symlink/canonicalization guards, namespace
+  ACL). Foreground completion correctness (the `DE_EXIT` latch + non-zero exit
+  surfacing). **On-demand tool loading** — the core/deferred `TOOLS` split and the
+  `load_tools` tool described in §1.3.
+- **M2 — TUI Renderer Overhaul** (16 phases, complete 2026-06-27). Replaced the
+  DECSTBM scroll-region chat renderer with the `ratatui` inline-viewport model
+  described in §1.1 (committed scrollback + fixed bottom region), fixing
+  window-switch transcript corruption; added the multi-line input editor and the
+  two-press streaming interrupt. Also split the ten remaining >1000-line files
+  into cohesive submodule directories (code-issue C5).
+- **M3 — Polish & Maintenance** (10 phases, complete 2026-06-28). Correctness and
+  hermeticity fixes (`TEST_HOME_LOCK` discipline), UX papercuts (one approval-prompt
+  format, no `{:?}` error leak, ellipsis truncation markers, completed `/help`),
+  and codebase health (the `daemon/utils.rs` + `webhook.rs` splits, the 7
+  `TODO(M2)` signature consolidations, and first-ever unit coverage for the
+  `executor/knowledge/` handlers). No behavior regressions.
+
 ### Next milestone — to be defined
 
-`docs/dev/NEXT.md` currently points at **none**. A pre-rexyMCP roadmap already
-exists in [`ROADMAP.md`](ROADMAP.md) (Phases B–F with numbered R/I
-opportunities) and serves as a reference baseline — not a commitment. The next
-milestone README is written under `docs/dev/milestones/M<n>-<slug>/` once its
-goal, scope, and non-scope are re-agreed with the principal engineer. Run
-`/rexymcp:architect` to scope it, then `/rexymcp:architect next` to draft the
-first phase.
+`docs/dev/NEXT.md` is at a **milestone boundary** (M3 closed; M4 not yet scoped) —
+a human gate. A pre-rexyMCP roadmap already exists in [`ROADMAP.md`](ROADMAP.md)
+(Phases B–F with numbered R/I opportunities) and serves as a reference baseline —
+not a commitment. The next milestone README is written under
+`docs/dev/milestones/M<n>-<slug>/` once its goal, scope, and non-scope are
+re-agreed with the principal engineer. Run `/rexymcp:architect` to scope it, then
+`/rexymcp:architect next` to draft the first phase.

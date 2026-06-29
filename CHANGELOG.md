@@ -4,6 +4,42 @@ All notable changes to DaemonEye are documented here.
 
 ## [Unreleased]
 
+### M3 — Polish & Maintenance (10 phases, complete 2026-06-28)
+
+Post-M2 debt paydown — correctness/hermeticity bugs, user-facing rough edges, and codebase health — with no behavior regressions.
+
+- **Consistent approval prompt** — the tool, runbook, and `edit_file` approval flows now share one builder and one canonical format/option order: `[Y]es [A]pprove for <label> [N]o`.
+- **Cleaner error messages** — the client no longer prints a `{:?}` debug dump of an internal enum on an unexpected daemon reply (now `unexpected reply from daemon (<Kind>)` via an exhaustive `Response::kind()` label); `/session list` and `/prompt` empty-state strings standardized.
+- **Ellipsis truncation markers** — silently truncated output (status bar, panels, committed text) now shows an explicit `…` marker; the `/help` text was completed (aliases, document redirect, tool-output cap).
+- **Test hermeticity** — every test that mutates `HOME`/env now holds `TEST_HOME_LOCK` and restores `HOME`; the racy `webhook_alert_to_event_log` test was made deterministic. `cargo test` is green across repeated parallel runs.
+- **Signature consolidation** — the 7 `TODO(M2): consolidate params into a struct` markers were resolved via borrow/param structs (`AskRequest`/`AskContext`, `ConversationLoopCtx`, and five leaf-function arg structs); all `#[allow(clippy::too_many_arguments)]` suppressions removed, none re-added.
+- **Module cohesion** — the `daemon/utils.rs` (1007) and `webhook.rs` (1210) grab-bags were split into cohesive submodule directories (glob re-exports keep every existing path resolving; zero consumer edits).
+- **Error hardening** — `memory_prompt.rs` double-lookup → single Entry-API expression; `ai/mod.rs` circuit-breaker lock sites documented as `.unwrap_or_log()` (ERROR-on-poison); `daemon/scheduled.rs` swallowed `notify_tx` sends now `log::debug!` on a dropped receiver.
+- **Test coverage** — the four `executor/knowledge/` handler modules (`agents`, `artifacts`, `memory`, `pane`) gained their first unit tests (21 hermetic tests; previously zero coverage).
+
+### M2 — TUI Renderer Overhaul (16 phases, complete 2026-06-27)
+
+Replaced the chat client's DECSTBM scroll-region + absolutely-positioned-chrome rendering with a committed-scrollback + fixed inline-viewport model built on `ratatui`.
+
+- **Chat transcript now commits to native terminal scrollback** (via ratatui `insert_before`) — history is clean and selectable in tmux copy-mode; only the input box + status bar live in a fixed inline viewport at the bottom.
+- **Fixed chat-history corruption on tmux window switches** — root cause was a DECSTBM scroll region (`\x1b[…r`) reset on a no-resize pane repaint. The entire DECSTBM scroll-region + absolute-CUP chrome path was deleted; window-switch integrity is verified end-to-end via tmux `capture-pane`.
+- **Multi-line input editor** — visible cursor, word-wrap, multi-line editing, and multi-line paste (the input box was previously a single-line buffer with no cursor that submitted a pasted block at its first newline).
+- **Two-press ESC / Ctrl+C** interrupts a streaming agent turn (first press warns, second aborts).
+- **Recolored committed command-output panels** — blood-red border / deep-yellow title.
+- `ratatui` and `crossterm` were the only new dependencies.
+- **Internal:** the oversized-file cleanup (code-issue C5) split ten >1000-line files into focused submodule directories — `cli/render` → `cli/markdown`; `cli/input` → `{tty,editor}`; `cli/commands` → `chat`; and `ai/tools`, `daemon/server`, `config`, `daemon/executor/file_ops`, `ai/types`, `daemon/background`, `daemon/executor/knowledge`.
+
+### M1 — Agent Tooling Improvements (11 phases, complete 2026-06-23)
+
+Gave agents full operator agency on both the local daemon host and SSH-connected remote hosts, under one principle: the daemon host stores all managed artifacts; remotes are execution targets, never storage targets.
+
+- **Remote/SSH operator parity** — `read_file` and `edit_file` (all operations) work against a remote SSH/mosh pane as well as the local daemon host. Daemon-host scripts run on a remote host via a **streamed, no-remote-disk** mechanism by default (hex-decoded content piped to the remote interpreter's stdin), materialized to a sudoers-authorized path only when `sudo` is required. Interactive remote script execution streams a daemon-host script into a remote *user* pane.
+- **On-demand tool loading** — the `TOOLS` set is split into **core** (rendered into every request) and **deferred** groups; the model pulls a deferred group into the session via a new `load_tools` tool, so rarely-used tool schemas no longer ship on every request. Keeps per-request context small.
+- **Security hardening** (interleaved into the phase touching each subsystem) — SSH command escaping; sudoers-path quoting; a strict `[A-Za-z0-9._-]` script-name allowlist; symlink/canonicalization guards so the credential blocklist and `~/.daemoneye/` write-block cannot be bypassed; memory/search namespace ACL enforced server-side from the agent's own config.
+- **Foreground completion correctness** — a `DE_EXIT_<pane>` shell-hook latch is the primary local completion signal (more reliable than PID-return); real non-zero exit codes are now surfaced to the AI instead of a fabricated `0`.
+- **Pane-targeting & cleanup safety** — the chat pane is excluded from command targets; the stale-pane guard queries tmux directly instead of the ≤2 s-stale cache; a cancelled sudo password prompt sends `C-c` to leave the pane on a clean shell; `watch_pane` cleans up its hook even on task abort.
+- **Tool schema & prompt fixes** — JSON-schema `enum` constraints on `edit_file.operation` / `search_repository.kind` / `add_memory.category`; `sre.toml` documents the remote-execution model and approval/ghost rules. Plus an error-suppression audit and a tmux-surface refactor (buffer calls centralized; native `tmux wait-for` at the one daemon-host-local read site).
+
 ### Added
 - **Named session persistence** — conversation history can now be saved, loaded, and resumed across daemon restarts
   - `/session save [name]` — saves current conversation to `~/.daemoneye/var/sessions/<name>/`

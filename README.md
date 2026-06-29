@@ -73,10 +73,10 @@ Expose an optional HTTP endpoint (default port 9393) to receive alerts from Prom
 
 The AI doesn't just suggest — it acts. Every proposed action goes through an explicit approval prompt before anything runs.
 
-**Terminal commands** show a three-option prompt:
+**Terminal commands** show a three-option prompt, `[Y]es [A]pprove for <label> [N]o` — one consistent format and option order shared across the command, script/runbook, and `edit_file` approval flows:
 
-- **`[y]es`** — Approve a single execution.
-- **`[A]pprove for session`** — Trust the AI for this command class for the rest of the session.
+- **`[Y]es`** — Approve a single execution.
+- **`[A]pprove for <label>`** — Trust the AI for this command class for the rest of the session.
 - **`[N]o`** — Reject, or type a message to redirect the AI mid-stream.
 
 **Script and runbook writes** show an ANSI diff before asking for approval:
@@ -116,6 +116,22 @@ ghost_commands = false # explicitly tell ghost shells they may run investigation
 ```
 
 When a class flag is `true`, approval is pre-granted for the entire class at session start — the `[A]pprove for session` prompt is suppressed since it would be redundant. Ctrl+C or `/approvals revoke` resets all flags back to the config defaults.
+
+---
+
+### 🖥️ Terminal-Native Chat Interface
+
+The chat client is built on a `ratatui` inline viewport that treats your terminal the way a good CLI tool should.
+
+- **Real scrollback** — The conversation transcript is committed to your terminal's native scrollback. Scroll up in tmux copy-mode and the whole history is there, clean and selectable; only the input box and status bar occupy a small fixed region at the bottom.
+- **Survives window switches** — Switching tmux windows away from and back to the chat pane mid-conversation leaves the transcript and chrome intact. (Earlier versions used a DECSTBM scroll region that a no-resize pane repaint would reset, dragging the status bar up into the history; that path is gone.)
+- **Multi-line input editor** — Visible cursor, word-wrap, multi-line editing, and multi-line paste. A pasted block lands whole instead of submitting at its first newline.
+- **Two-press interrupt** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort the turn.
+- **Color-coded panels** — Committed command-output panels use a blood-red border and deep-yellow title so executed actions stand out in the scrollback.
+
+### 🧰 On-Demand Tool Loading
+
+DaemonEye's AI tools are split into a **core** set (sent with every request) and **deferred** groups that are omitted by default to keep each request's context small. When the model needs a rarely-used capability it pulls the group in with a single `load_tools` call, and those tool schemas appear on subsequent turns. This is a context-budget optimization and is independent of the `ToolPolicy` / `GhostPolicy` gates, which restrict tools at execution time.
 
 ---
 
@@ -948,17 +964,17 @@ tmux list-windows | grep de-incident
 src/
 ├── main.rs              # CLI entry point — parses subcommands
 ├── ipc.rs               # Request/Response enums — the full wire protocol; GhostConfig struct
-├── config.rs            # ~/.daemoneye/etc/config.toml parsing; prompt loading; directory helpers
+├── config/              # config.toml parsing (types / load / seeds); prompt loading; directory helpers
 ├── cost.rs              # compute_cost(); CostAttribution; CostRecord; built-in pricing rates
 ├── daemon/
 │   ├── mod.rs           # Daemon entry point; supervise() task supervisor; hook installation
-│   ├── server.rs        # IPC dispatch + handle_ask orchestrator; build_catchup_brief()
+│   ├── server/          # IPC dispatch (handlers) + handle_ask orchestrator (ask) + build_catchup_brief() (catchup)
 │   ├── hook.rs          # 9 IPC hook notification handlers (NotifyActivity, NotifyComplete, etc.)
 │   ├── auto_name.rs     # Session auto-naming + diff summary
 │   ├── prompt.rs        # Prompt assembly via PromptCtx (first-turn and subsequent-turn)
 │   ├── stream.rs        # AI event streaming loop; tool execution; response persistence; ai_cost emission
 │   ├── executor/        # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
-│   ├── background.rs    # run_background_in_window(); notify_job_completion(); GC lifecycle
+│   ├── background/      # run_background_in_window(); respawn; notify_job_completion(); GC lifecycle
 │   ├── briefing.rs      # generate_and_save_briefing(); read_briefing(); clear_briefing()
 │   ├── digest.rs        # Session digest: structured compaction of conversation history
 │   ├── ghost.rs         # GhostManager::start_session(); check_ghost_capacity()
@@ -967,17 +983,21 @@ src/
 │   ├── session.rs       # SessionStore, SessionEntry (cost fields, detach timestamps)
 │   ├── scheduled.rs     # Scheduled job execution
 │   ├── stats.rs         # compute_cost_today(); ghost shell counters; COST_TODAY_CACHE
-│   └── utils.rs         # sum_cost_between(); event logger; normalize_output helpers
+│   └── utils/           # sum_cost_between(); event logger; shell-escape; sudo; normalize_output helpers
 ├── agents/
 │   ├── mod.rs           # AgentConfig CRUD; apply_agent_to_ghost_config()
 │   ├── policy.rs        # ToolPolicy — permits(); format_tool_restriction_block()
 │   └── mailbox.rs       # write_mailbox(); read_mailbox(); MailboxResult
 ├── cli/                 # IPC client: chat interface, terminal rendering, subcommands
+│   ├── render_ratatui.rs # ratatui inline-viewport renderer (committed scrollback + fixed bottom region)
+│   ├── markdown/        # markdown rendering + syntax highlighting (split from render.rs)
+│   ├── input/           # termios/AsyncStdin (tty) + multi-line InputLine editor (editor)
 │   └── commands/
+│       ├── chat.rs      # run_chat_inner + the ratatui chat loop + slash-command handling
 │       └── costs.rs     # aggregate_costs(reader, since, until, group_by, agent_filter)
 ├── scheduler.rs         # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn
 ├── runbook.rs           # Runbook markdown loader (frontmatter parser, CRUD); watchdog prompt builder
-├── webhook.rs           # HTTP alert ingestion (axum); parse_payload(); evaluate_watchdog_response()
+├── webhook/             # HTTP alert ingestion (axum): parse / process / server submodules; evaluate_watchdog_response()
 ├── memory/
 │   ├── mod.rs           # Persistent memory CRUD; namespace-aware add/read/delete/list
 │   ├── index.rs         # FTS5 index (namespace column); BM25 search with grep fallback
@@ -991,8 +1011,8 @@ src/
 │   └── session.rs       # Session-level helpers: other_sessions_context(); client_dimensions()
 └── ai/
     ├── mod.rs           # AiClient trait; send_with_retry(); CircuitBreaker
-    ├── types.rs         # PendingCall / AiEvent enums; TokenBreakdown; Message; AiUsage
-    ├── tools.rs         # Tool definitions (all 3 backends share TOOLS slice); dispatch_tool_event()
+    ├── types/           # PendingCall / AiEvent enums; wire types; TokenBreakdown; Message; AiUsage
+    ├── tools/           # Tool definitions (schema / defs / args / dispatch); core + deferred TOOLS; dispatch_tool_event()
     ├── backends/        # Per-provider SSE streaming: anthropic.rs, openai.rs, gemini.rs
     └── filter.rs        # Regex-based sensitive-data masking; init_masking()
 ```
