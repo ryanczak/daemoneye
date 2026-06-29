@@ -1,7 +1,7 @@
 # Phase 10: knowledge-tests
 
 **Milestone:** M3 — Polish & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-09 (done)
 **Estimated diff:** ~320 lines (all new test code)
 **Tags:** language=rust, kind=test, size=m
@@ -439,3 +439,21 @@ cargo test --lib -- knowledge → 22 passed, 0 failed
 - End-to-end verification: N/A — phase ships only `#[cfg(test)]` code.
 
 **Commit:** One commit covering all test additions and doc updates.
+
+### Review verdict — 2026-06-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** rexyMCP executor (Qwen/Qwen3.6-27B-PrismaAURA)
+- **Scope deviations:** none — pure `#[cfg(test)]` addition, no production code touched
+- **Calibration:** none
+
+Independent re-run clean: `cargo fmt --all` (check) ✓, `cargo build` zero warnings ✓,
+`cargo clippy --all-targets --all-features -- -D warnings` ✓ (no `await_holding_lock`),
+`cargo test` 852 passed / 0 failed / 2 ignored ✓. `cargo test --lib knowledge` → 21 new
+tests pass. All four files now carry a `#[cfg(test)] mod tests` block; the shared `testutil`
+module lives in `mod.rs`. The only `unsafe` is the spec-mandated `env::set_var` HOME idiom
+inside `#[cfg(test)]` (constraint A). `unwrap`/`expect` are test-exempt per STANDARDS §1.
+Spot-checked `list_panes_excludes_chat_pane` and the `close_bg_window` exact-string asserts —
+genuine, would fail on a broken handler. Closes the M3 exit criterion for
+`executor/knowledge/` handler coverage.
