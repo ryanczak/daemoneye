@@ -6,26 +6,28 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-07 — split-webhook** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-07-split-webhook.md`. Dispatch it
-with `/rexymcp:dispatch phase-07`.
+**Active phase:** **phase-08 — help-and-truncation** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-08-help-and-truncation.md`. Dispatch it
+with `/rexymcp:dispatch phase-08`.
 
-Phase-07 scope (maint, `src/webhook.rs` → `src/webhook/`): split the 1210-line
-`webhook.rs` grab-bag into a directory module with three cohesive submodules —
-`parse.rs` (Alertmanager/Grafana/generic payload parsing + `InternalAlert`/`AlertStatus`),
-`process.rs` (dedup, masking, session injection, tmux notify, watchdog/ghost trigger,
-runbook AI analysis), `server.rs` (Axum router, auth, `handle_webhook`, `start`,
-`WebhookState`). Near-pure verbatim relocation via the M2 C5-split idiom: `mod.rs` glob
-re-exports keep every `crate::webhook::<name>` path resolving (3 external consumers:
-`start`, `inject_ghost_event`, `evaluate_watchdog_response`). The **only** non-move edit is
-widening `AlertStatus::as_str` `fn` → `pub(crate) fn` (called by `process_alert` across the
-new boundary). Tests relocate verbatim, each test references only same-module items. No new
-tests. ~90 lines of net plumbing.
+Phase-08 scope (ux, `src/cli/render_ratatui.rs` + `src/cli/commands/chat.rs`): add `…`
+markers to three silent-truncation render paths (status-bar session id ×3, panel body
+lines, committed scrollback) via two pure char-count helpers (`truncate_with_ellipsis`,
+`short_session`); and complete `/help` by extracting the text to a testable
+`const HELP_TEXT` and documenting the recognized aliases, the approval-prompt message
+redirect, and the 10-line tool-output cap. Char-count truncation is preserved (no
+unicode-width dep). ~110 lines incl. ~5 unit tests. No protocol/format change.
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-07 — split-webhook is `done`** (approved_first_try, 2026-06-28). Split the
+1210-line `webhook.rs` grab-bag into a `webhook/` directory module with three cohesive
+submodules (`parse` / `process` / `server`) via the M2 C5-split idiom; glob re-exports keep
+every `crate::webhook::<name>` path resolving, zero consumer edits. Only non-move edit:
+`AlertStatus::as_str` `fn` → `pub(crate) fn`. Executor commit `d8aba17`; review approval `e125eae`.
 
 **M3 phase-06 — error-hardening is `done`** (approved_first_try, 2026-06-28). Three
 behavior-preserving hardening edits: `memory_prompt.rs` double-lookup → single Entry-API

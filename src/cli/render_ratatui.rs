@@ -179,7 +179,7 @@ impl<B: Backend> RatatuiRenderer<B> {
                 if y >= area.height {
                     break;
                 }
-                let text: String = line.chars().take(area.width as usize).collect();
+                let text = truncate_with_ellipsis(line, area.width as usize);
                 buf.set_string(area.x, area.y + y, &text, Style::default());
             }
         })
@@ -357,7 +357,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             Style::default()
         };
         for line in body {
-            let truncated: String = line.chars().take(inner.saturating_sub(2)).collect();
+            let truncated = truncate_with_ellipsis(line, inner.saturating_sub(2));
             lines.push(Line::from(Span::styled(
                 format!("  {}", truncated),
                 body_style,
@@ -457,7 +457,7 @@ fn render_live_region(
     let uptime = fmt_uptime(start_time.elapsed());
     let status_text = format!(
         " session:{} · {} · up {} ",
-        &session_id[..8.min(session_id.len())],
+        short_session(session_id),
         model,
         uptime,
     );
@@ -528,7 +528,7 @@ fn render_prompt_region(
     let uptime = fmt_uptime(start_time.elapsed());
     let status_text = format!(
         " session:{} · {} · up {} ",
-        &session_id[..8.min(session_id.len())],
+        short_session(session_id),
         model,
         uptime,
     );
@@ -564,7 +564,7 @@ fn render_spinner_region(
     let uptime = fmt_uptime(start_time.elapsed());
     let status_text = format!(
         " session:{} · {} · up {} ",
-        &session_id[..8.min(session_id.len())],
+        short_session(session_id),
         model,
         uptime,
     );
@@ -575,6 +575,31 @@ fn render_spinner_region(
     );
     let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
     frame.render_widget(status_para, chunks[1]);
+}
+
+/// Clip `s` to at most `max` characters, marking truncation with a trailing '…'.
+/// Returns `s` unchanged when it already fits. The '…' counts toward `max`, so a
+/// truncated result is exactly `max` chars wide.
+fn truncate_with_ellipsis(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else if max == 0 {
+        String::new()
+    } else {
+        let kept: String = s.chars().take(max - 1).collect();
+        format!("{kept}…")
+    }
+}
+
+/// Abbreviate a session id for the status bar: the first 8 chars followed by '…'
+/// when longer, otherwise the id unchanged.
+fn short_session(id: &str) -> String {
+    if id.chars().count() <= 8 {
+        id.to_string()
+    } else {
+        let head: String = id.chars().take(8).collect();
+        format!("{head}…")
+    }
 }
 
 fn fmt_uptime(elapsed: std::time::Duration) -> String {
@@ -1143,5 +1168,42 @@ mod tests {
             "panel title 'Output' should be present, got: {}",
             all_text
         );
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_leaves_short_string_unchanged() {
+        assert_eq!(truncate_with_ellipsis("hello", 10), "hello");
+        assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
+        assert!(!truncate_with_ellipsis("hello", 10).contains('…'));
+        assert!(!truncate_with_ellipsis("hello", 5).contains('…'));
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_marks_overflow() {
+        let result = truncate_with_ellipsis("hello world", 8);
+        assert_eq!(result.chars().count(), 8);
+        assert!(result.ends_with('…'));
+        assert_eq!(result, "hello w…");
+    }
+
+    #[test]
+    fn truncate_with_ellipsis_zero_max_is_empty() {
+        assert_eq!(truncate_with_ellipsis("hello", 0), "");
+    }
+
+    #[test]
+    fn short_session_marks_long_id() {
+        let result = short_session("abcdef12-3456-7890-abcd-ef1234567890");
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 9); // 8 chars + ellipsis
+        assert!(result.starts_with("abcdef12"));
+    }
+
+    #[test]
+    fn short_session_leaves_short_id_unchanged() {
+        assert_eq!(short_session("short"), "short");
+        assert_eq!(short_session("abcdef12"), "abcdef12");
+        assert!(!short_session("short").contains('…'));
+        assert!(!short_session("abcdef12").contains('…'));
     }
 }

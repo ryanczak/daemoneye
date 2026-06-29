@@ -13,6 +13,22 @@ use super::pane::resolve_target_pane;
 use super::slash;
 use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, ask_with_session_ratatui};
 
+const HELP_TEXT: &str = "\
+Commands:
+  /help      show this list           /exit      quit
+  /clear     reset session            /refresh   resync host context
+  /model     list or switch model     /pane      list or pin target pane
+  /approvals list/on/off/revoke       /prompt    list or switch system prompt
+  /limits    show active limits       /session   save/load/list/delete/rename
+
+Aliases: /models /panes /sessions /approval /new /quit (and help, ? open help).
+
+At a tool-approval prompt, type a message instead of Y/A/N to redirect the agent.
+Tool output is capped at 10 lines on screen (… N more lines); full output is kept in history.
+
+Up/Down navigate the input; at the top/bottom edge they recall history.
+";
+
 pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<()> {
     // ── Managed-session auto-attach ────────────────────────────────────────────
     // When the daemon is configured with a managed tmux session and `daemoneye chat`
@@ -356,18 +372,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     );
 
     // Help text for /help command.
-    let help_text = [
-        "Commands:",
-        "  /help      show this list           /exit      quit",
-        "  /clear     reset session            /refresh   resync host context",
-        "  /model     list or switch model     /pane      list or pin target pane",
-        "  /approvals list/on/off/revoke       /prompt    list or switch system prompt",
-        "  /limits    show active limits       /session   save/load/list/delete/rename",
-        "",
-        "Up/Down navigate the input; at the top/bottom edge they recall history.",
-        "",
-    ]
-    .join("\n");
+    let help_text = HELP_TEXT;
 
     loop {
         // Read input using the existing key handler but render via ratatui.
@@ -402,7 +407,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             break;
         }
         if query == "/help" || query == "help" || query == "?" || query == "/?" {
-            let _ = renderer.commit(&help_text);
+            let _ = renderer.commit(help_text);
             let _ = renderer.commit("\n");
             redraw(
                 &mut renderer,
@@ -806,4 +811,37 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
     lines.push(Line::raw(""));
 
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HELP_TEXT;
+
+    #[test]
+    fn help_text_documents_aliases_and_behaviors() {
+        // Aliases
+        for alias in [
+            "/models",
+            "/panes",
+            "/sessions",
+            "/approval",
+            "/new",
+            "/quit",
+        ] {
+            assert!(
+                HELP_TEXT.contains(alias),
+                "HELP_TEXT must contain alias '{alias}'"
+            );
+        }
+        // Approval-prompt redirect
+        assert!(
+            HELP_TEXT.contains("redirect"),
+            "HELP_TEXT must document redirect behavior"
+        );
+        // Tool-output cap
+        assert!(
+            HELP_TEXT.contains("10 lines"),
+            "HELP_TEXT must document the 10-line tool-output cap"
+        );
+    }
 }
