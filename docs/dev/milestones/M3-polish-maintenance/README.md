@@ -4,7 +4,7 @@
 user-facing rough edges, and improve codebase health (module cohesion, signature
 clarity, test coverage) — without regressing any shipped behavior.
 
-**Status:** planning
+**Status:** done
 
 **Depends on:** M2 (TUI Renderer Overhaul) — complete.
 
@@ -118,6 +118,56 @@ Surfaced by the survey, deferred unless a committed phase reveals the need:
   mutate wide-blast types; if a multi-site mutation is unavoidable, the phase doc
   carries a grep-verified ordered site list with build-after-each-site instructions.
 
-### Retrospective
+### Retrospective (2026-06-28)
 
-_(Filled in at milestone close.)_
+**Outcome: 10/10 phases `done`, all `approved_first_try`. Zero bounces, zero bug
+reports filed, zero review-stage escalations across the milestone.** Executor:
+`Qwen/Qwen3.6-27B-PrismaAURA` (the FP8 → PrismaAURA model swap recorded in
+`rexymcp.toml` carried through M3 cleanly — no regression in first-try rate vs. M2).
+
+**All seven exit criteria met:**
+
+1. No known flaky tests; every `HOME`/env-mutating test holds `TEST_HOME_LOCK` —
+   phase-01 (fix-test-hermeticity), reconfirmed by phase-10's `with_home` idiom.
+2. One consistent tool-call approval format + option order — phase-02
+   (`build_approval_prompt()`, canonical `[Y]es [A]pprove for <label> [N]o`).
+3. No user-facing error path prints a `{:?}` debug dump — phase-04
+   (`Response::kind()` + `error_line()`).
+4. No >~1000-line low-cohesion grab-bag remains — phase-03 split `daemon/utils.rs`
+   (1007), phase-07 split `webhook.rs` (1210). The other large files are
+   deliberately-whole cohesive units (recorded in Survey basis above).
+5. All 7 `TODO(M2): consolidate params into a struct` markers resolved — phase-05
+   (5 leaf params) + phase-09 (the 2 high-arity orchestration signatures).
+6. `executor/knowledge/` artifact + agent + memory + pane handlers now have
+   unit-test coverage — phase-10 (21 hermetic tests, four prior-zero-coverage modules).
+7. `clippy --all-targets --all-features -- -D warnings` stays clean; every
+   `too_many_arguments` suppression removed by M3 is gone, none re-added —
+   phases 05/09.
+
+**Theme balance (as planned, readiness-ordered):** bugs led (01, 06), UX next
+(02, 04, 08), maintenance/design carried the deepest backlog (03, 05, 07, 09, 10).
+
+**Calibration — no new folds.** M3 was an all-mechanical-to-moderate milestone
+(splits, param structs, error-hardening, a test-only phase). Every phase *confirmed*
+folds already in WORKFLOW.md rather than revealing a new pattern:
+
+- The **C5-split idiom** (partition `use` per-submodule, glob re-exports, the
+  E0364 `pub(super)`→`pub` bump) cleared phases 03 and 07 first-try, exactly as
+  the M2 fold predicted for verbatim splits.
+- **Front-load by task shape, not by default**: M3 carried no design-discovery
+  phases, so specs ran at normal-to-light density; the one front-loaded phase (10)
+  pre-injected a known *project* idiom (the `block_on`-inside-`with_home` async-test
+  pattern that dodges `await_holding_lock`, the phase-01 trap), not a new
+  workflow-general lesson.
+- **Prefer additive shapes**: the param-struct phases (05, 09) used borrow-structs
+  that kept the build green at every step — no multi-site mutation cascade.
+
+Per WORKFLOW.md §Calibration, one milestone confirming existing folds is not
+grounds to change the docs. **No edits to STANDARDS.md or WORKFLOW.md this
+milestone.** The M2 calibration experiment (lean-spec / task-shape discriminator)
+is now effectively settled: M3's 10-for-10 first-try run on maintenance-shaped
+work is consistent with "mechanical phases clear first-try under normal specs."
+
+**Carry-in for M4:** none blocking. The two survey candidates held out of M3 (the
+error-result/response-builder helper ~74 sites; the executor approval-gate
+extraction) remain deferred and available if an M4 phase reveals the need.

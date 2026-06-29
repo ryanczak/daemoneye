@@ -1,29 +1,19 @@
 # NEXT
 
-**Active milestone:** **M3 — Polish & Maintenance** (kicked off 2026-06-27). Goal: pay
-down post-M2 debt — correctness/hermeticity bugs, user-facing rough edges, and codebase
-health — with no behavior regressions. Open design scope (breaking wire/format/architecture
-changes flagged per-phase for PE sign-off). See
-`docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
+**Active phase: none — milestone boundary (human gate).**
 
-**Active phase:** **phase-10 — knowledge-tests** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-10-knowledge-tests.md`. Dispatch it
-with `/rexymcp:dispatch phase-10`. **This is the final M3 phase** — on approval, M3
-reaches a milestone boundary (human gate: `/rexymcp:architect` to write the retrospective
-and close the milestone).
+**M3 — Polish & Maintenance is complete** (2026-06-28; all 10 phases `done`,
+all `approved_first_try`, zero bounces, zero bug reports). Retrospective in
+`docs/dev/milestones/M3-polish-maintenance/README.md` § Retrospective. All seven
+M3 exit criteria met; no STANDARDS.md / WORKFLOW.md folds this milestone (M3 was
+all maintenance-shaped work that confirmed existing folds rather than revealing
+new patterns).
 
-Phase-10 scope (maint/test, `src/daemon/executor/knowledge/{agents,artifacts,memory,pane}.rs`
-+ optional `mod.rs` testutil): add the first unit-test coverage to the four knowledge
-handler modules (zero today), closing the M3 exit criterion "the `executor/knowledge/`
-artifact + agent + memory + pane handlers have unit-test coverage." Pure test addition —
-no production code changes. Front-loads the three bounce-risks: the `TEST_HOME_LOCK`+`HOME`
-idiom, the async-handler `block_on`-inside-`with_home` pattern (avoids `await_holding_lock`,
-the phase-01 trap), and worked `ArtifactCtx`/`PaneState`/`SessionStore` constructors.
-~320 lines, all `#[cfg(test)]`, no protocol/format change. `watch_pane`/`spawn_ghost`
-excluded (not hermetically testable).
-
-The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
-demand via `/rexymcp:architect next` after each prior phase is approved.
+**Next:** M4 has not been scoped. Starting it is a human decision — kick it off with
+`/rexymcp:architect` (survey + design + milestone README), then draft phase-01 via
+`/rexymcp:architect next`. Two survey candidates held out of M3 remain available if an
+M4 phase reveals the need: the error-result/response-builder helper (~74 sites) and the
+executor approval-gate extraction (`executor/mod.rs` → `executor/approval.rs`).
 
 ---
 
