@@ -6,24 +6,38 @@ health — with no behavior regressions. Open design scope (breaking wire/format
 changes flagged per-phase for PE sign-off). See
 `docs/dev/milestones/M3-polish-maintenance/README.md` for the phase plan and survey basis.
 
-**Active phase:** **phase-09 — consolidate-loop-ctx** (`todo`, drafted 2026-06-28). Doc:
-`docs/dev/milestones/M3-polish-maintenance/phase-09-consolidate-loop-ctx.md`. Dispatch it
-with `/rexymcp:dispatch phase-09`.
+**Active phase:** **phase-10 — knowledge-tests** (`todo`, drafted 2026-06-28). Doc:
+`docs/dev/milestones/M3-polish-maintenance/phase-10-knowledge-tests.md`. Dispatch it
+with `/rexymcp:dispatch phase-10`. **This is the final M3 phase** — on approval, M3
+reaches a milestone boundary (human gate: `/rexymcp:architect` to write the retrospective
+and close the milestone).
 
-Phase-09 scope (maint, `src/daemon/server/ask.rs` + `src/daemon/server/mod.rs` +
-`src/daemon/stream.rs`): consolidate the two remaining high-arity orchestration
-signatures via borrow-structs (the phase-05 idiom) — `AskRequest`/`AskContext` for
-`handle_ask`, `ConversationLoopCtx` for `run_conversation_loop` — keeping `tx`/`rx` as
-separate generic params and each field's existing ownership. Deletes the two
-`#[allow(clippy::too_many_arguments)]` + two `TODO(M2)` lines, closing the milestone's
-"7 `TODO(M2)` markers resolved" exit criterion (phase-05 cleared the other 5). Pure
-behavior-preserving refactor; the clippy gate with the suppressions removed is the proof.
-~90 lines, no new tests (pure plumbing), no protocol/format change.
+Phase-10 scope (maint/test, `src/daemon/executor/knowledge/{agents,artifacts,memory,pane}.rs`
++ optional `mod.rs` testutil): add the first unit-test coverage to the four knowledge
+handler modules (zero today), closing the M3 exit criterion "the `executor/knowledge/`
+artifact + agent + memory + pane handlers have unit-test coverage." Pure test addition —
+no production code changes. Front-loads the three bounce-risks: the `TEST_HOME_LOCK`+`HOME`
+idiom, the async-handler `block_on`-inside-`with_home` pattern (avoids `await_holding_lock`,
+the phase-01 trap), and worked `ArtifactCtx`/`PaneState`/`SessionStore` constructors.
+~320 lines, all `#[cfg(test)]`, no protocol/format change. `watch_pane`/`spawn_ghost`
+excluded (not hermetically testable).
 
 The remaining M3 phases are recorded as `todo` rows in the M3 README phase table and are drafted on
 demand via `/rexymcp:architect next` after each prior phase is approved.
 
 ---
+
+**M3 phase-09 — consolidate-loop-ctx is `done`** (approved_first_try, 2026-06-28).
+Consolidated the two remaining high-arity orchestration signatures via borrow-structs
+(`AskRequest`/`AskContext` for `handle_ask`, `ConversationLoopCtx` for
+`run_conversation_loop`), deleting the last two `#[allow(clippy::too_many_arguments)]`
+suppressions + two `TODO(M2)` markers — clearing the "7 `TODO(M2)` markers resolved" exit
+criterion. Executor commit `7edabde`; review approval `67a4d78`.
+
+**M3 phase-08 — help-and-truncation is `done`** (approved_first_try, 2026-06-28). Added
+ellipsis truncation markers on silent truncation (status bar / panel / committed text) and
+completed the `/help` text (aliases, document redirect + tool-output cap). Executor commit
+`66b6654`.
 
 **M3 phase-07 — split-webhook is `done`** (approved_first_try, 2026-06-28). Split the
 1210-line `webhook.rs` grab-bag into a `webhook/` directory module with three cohesive

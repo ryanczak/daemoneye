@@ -355,3 +355,115 @@ where
         count
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testutil::{TmpHome, with_home};
+    use super::*;
+
+    #[test]
+    fn read_script_missing_reports_error() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let out = read_script("nonexistent-script");
+            assert!(
+                out.starts_with("Error reading script 'nonexistent-script':"),
+                "got: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn write_then_read_script_round_trips() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            scripts::write_script("test-script", "#!/bin/sh\necho hello").unwrap();
+            let out = read_script("test-script");
+            assert!(out.contains("echo hello"), "got: {out}");
+        });
+    }
+
+    #[test]
+    fn read_runbook_missing_reports_error() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let out = read_runbook("nonexistent-runbook");
+            assert!(
+                out.starts_with("Error reading runbook 'nonexistent-runbook':"),
+                "got: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn list_scripts_reports_zero_for_empty_store() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt.block_on(async {
+                let mut sink = tokio::io::sink();
+                list_scripts(&mut sink).await.unwrap()
+            });
+            match out {
+                ToolCallOutcome::Result(s) => {
+                    assert!(s.contains("0 script(s)"), "got: {s}")
+                }
+                ToolCallOutcome::UserMessage(_) => {
+                    panic!("unexpected UserMessage outcome")
+                }
+                ToolCallOutcome::SpawnGhostSession { .. } => {
+                    panic!("unexpected SpawnGhostSession outcome")
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn list_runbooks_reports_zero_for_empty_store() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt.block_on(async {
+                let mut sink = tokio::io::sink();
+                list_runbooks(&mut sink).await.unwrap()
+            });
+            match out {
+                ToolCallOutcome::Result(s) => {
+                    assert!(s.contains("0 runbook(s)"), "got: {s}")
+                }
+                ToolCallOutcome::UserMessage(_) => {
+                    panic!("unexpected UserMessage outcome")
+                }
+                ToolCallOutcome::SpawnGhostSession { .. } => {
+                    panic!("unexpected SpawnGhostSession outcome")
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn delete_script_refuses_in_ghost_shell() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let out = rt.block_on(async {
+            let mut tx = tokio::io::sink();
+            let mut rx = tokio::io::BufReader::new(tokio::io::empty());
+            delete_script("id1", "some-script", true, None, &mut tx, &mut rx)
+                .await
+                .unwrap()
+        });
+        match out {
+            ToolCallOutcome::Result(s) => {
+                assert!(
+                    s.contains("cannot delete scripts in a Ghost Shell"),
+                    "got: {s}"
+                )
+            }
+            ToolCallOutcome::UserMessage(_) => {
+                panic!("unexpected UserMessage outcome")
+            }
+            ToolCallOutcome::SpawnGhostSession { .. } => {
+                panic!("unexpected SpawnGhostSession outcome")
+            }
+        }
+    }
+}

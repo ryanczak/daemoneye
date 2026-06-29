@@ -64,7 +64,7 @@ clarity, test coverage) — without regressing any shipped behavior.
 | 07 | split-webhook ([phase-07-split-webhook.md](phase-07-split-webhook.md)) — split `webhook.rs` (1210) into `parse` / `process` / `server` submodules | maint | done |
 | 08 | help-and-truncation — ellipsis markers on silent truncation (status bar / panel / committed text); `/help` completeness (aliases, document redirect + tool-output cap) | ux | done |
 | 09 | consolidate-loop-ctx ([phase-09-consolidate-loop-ctx.md](phase-09-consolidate-loop-ctx.md)) — `ConversationLoopCtx` + `AskRequest`/`AskContext` for the two high-arity orchestration fns (`run_conversation_loop`, `handle_ask`); resolves the final 2 `TODO(M2)` markers | maint | done |
-| 10 | knowledge-tests — add unit tests to `executor/knowledge/{agents,artifacts,memory,pane}.rs` (zero coverage today) | maint | todo |
+| 10 | knowledge-tests — add unit tests to `executor/knowledge/{agents,artifacts,memory,pane}.rs` (zero coverage today) | maint | review |
 
 ## Notes
 

@@ -235,3 +235,123 @@ pub fn search_repository(query: &str, kind: &str, namespaces: &[&str]) -> String
     let results = crate::search::search_repository_with_namespaces(query, kind, 2, namespaces);
     crate::search::format_results(&results)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testutil::{TmpHome, with_home};
+    use super::*;
+
+    fn make_ctx() -> ArtifactCtx<'static> {
+        let store: &'static crate::daemon::session::SessionStore = Box::leak(Box::new(
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        ));
+        let ns: &[&str] = &["global"];
+        ArtifactCtx {
+            session_id: None,
+            sessions: store,
+            saved_name: None,
+            turn_count: 0,
+            is_ghost: false,
+            namespaces: ns,
+        }
+    }
+
+    #[test]
+    fn add_memory_rejects_invalid_category() {
+        let ctx = make_ctx();
+        let out = add_memory("k", "v", "bogus", &ctx);
+        assert!(
+            out.starts_with("Error: invalid category 'bogus'."),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn add_memory_rejects_empty_value() {
+        let ctx = make_ctx();
+        let out = add_memory("k", "   ", "knowledge", &ctx);
+        assert_eq!(out, "Error: memory value cannot be empty.");
+    }
+
+    #[test]
+    fn add_then_read_memory_round_trips() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let ctx = make_ctx();
+            let out = add_memory("mykey", "myvalue", "knowledge", &ctx);
+            assert_eq!(out, "Memory 'mykey' stored in knowledge (global)");
+
+            let read = read_memory("mykey", "knowledge", &["global"]);
+            assert!(
+                read.contains("myvalue"),
+                "expected read to contain 'myvalue', got: {read}"
+            );
+        });
+    }
+
+    #[test]
+    fn read_memory_not_found_reports_namespaces() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let out = read_memory("nonexistent", "session", &["global"]);
+            assert!(
+                out.starts_with("Error reading memory 'nonexistent': not found in namespaces:"),
+                "got: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn delete_memory_rejects_invalid_category() {
+        let out = delete_memory("k", "bogus", None, &["global"]);
+        assert!(
+            out.starts_with("Error: invalid category 'bogus'."),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn update_memory_rejects_invalid_category() {
+        let out = update_memory(
+            UpdateMemoryRequest {
+                key: "k",
+                category: "bogus",
+                body: None,
+                append: false,
+                tags: None,
+                summary: None,
+                relates_to: None,
+                expires: None,
+            },
+            None,
+            &["global"],
+        );
+        assert!(
+            out.starts_with("Error: invalid category 'bogus'."),
+            "got: {out}"
+        );
+    }
+
+    #[test]
+    fn list_memories_empty_reports_none() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt.block_on(async {
+                let mut sink = tokio::io::sink();
+                list_memories(None, &["global"], &mut sink).await.unwrap()
+            });
+            match out {
+                ToolCallOutcome::Result(s) => {
+                    assert_eq!(s, "No memory entries found.", "got: {s}")
+                }
+                ToolCallOutcome::UserMessage(_) => {
+                    panic!("unexpected UserMessage outcome")
+                }
+                ToolCallOutcome::SpawnGhostSession { .. } => {
+                    panic!("unexpected SpawnGhostSession outcome")
+                }
+            }
+        });
+    }
+}

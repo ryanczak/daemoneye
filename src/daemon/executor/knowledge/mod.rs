@@ -48,3 +48,51 @@ fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
             });
     }
 }
+
+// ---------------------------------------------------------------------------
+// Shared test utilities (test-only)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+pub(crate) mod testutil {
+    use crate::util::UnpoisonExt;
+
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    pub struct TmpHome(std::path::PathBuf);
+
+    impl TmpHome {
+        pub fn new() -> Self {
+            let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let p = std::env::temp_dir().join(format!("de_know_test_{}_{}", std::process::id(), n));
+            std::fs::create_dir_all(&p).unwrap();
+            TmpHome(p)
+        }
+        pub fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TmpHome {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    pub fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
+        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let old = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        f();
+        match old {
+            Some(v) => unsafe {
+                std::env::set_var("HOME", v);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+    }
+}

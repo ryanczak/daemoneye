@@ -289,3 +289,94 @@ pub async fn await_agent_result(
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::testutil::{TmpHome, with_home};
+    use super::*;
+
+    #[test]
+    fn read_agent_missing_reports_error() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let out = read_agent("nonexistent-agent");
+            assert!(
+                out.starts_with("Error reading agent 'nonexistent-agent':"),
+                "got: {out}"
+            );
+        });
+    }
+
+    #[test]
+    fn save_then_read_agent_round_trips() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            crate::agents::save_agent(&crate::agents::AgentConfig {
+                name: "test-agent".to_string(),
+                description: "A test agent".to_string(),
+                prompt: "You are a test agent".to_string(),
+                model: None,
+                memory_namespace: "test-agent".to_string(),
+                max_turns: None,
+                auto_approve_read_only: false,
+                auto_approve_scripts: Vec::new(),
+                read_namespaces: Vec::new(),
+                tools: None,
+            })
+            .unwrap();
+
+            let out = read_agent("test-agent");
+            assert!(out.starts_with("Agent: test-agent\n"), "got: {out}");
+            assert!(out.contains("A test agent"), "got: {out}");
+        });
+    }
+
+    #[test]
+    fn list_agents_tool_empty_reports_none() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt.block_on(async {
+                let mut sink = tokio::io::sink();
+                list_agents_tool(&mut sink).await.unwrap()
+            });
+            match out {
+                ToolCallOutcome::Result(s) => {
+                    assert!(s.contains("No agents defined"), "got: {s}")
+                }
+                ToolCallOutcome::UserMessage(_) => {
+                    panic!("unexpected UserMessage outcome")
+                }
+                ToolCallOutcome::SpawnGhostSession { .. } => {
+                    panic!("unexpected SpawnGhostSession outcome")
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn delete_agent_refuses_in_ghost_shell() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let out = rt.block_on(async {
+            let mut tx = tokio::io::sink();
+            let mut rx = tokio::io::BufReader::new(tokio::io::empty());
+            delete_agent("id1", "some-agent", true, None, &mut tx, &mut rx)
+                .await
+                .unwrap()
+        });
+        match out {
+            ToolCallOutcome::Result(s) => {
+                assert!(
+                    s.contains("cannot delete agents in a Ghost Shell"),
+                    "got: {s}"
+                )
+            }
+            ToolCallOutcome::UserMessage(_) => {
+                panic!("unexpected UserMessage outcome")
+            }
+            ToolCallOutcome::SpawnGhostSession { .. } => {
+                panic!("unexpected SpawnGhostSession outcome")
+            }
+        }
+    }
+}

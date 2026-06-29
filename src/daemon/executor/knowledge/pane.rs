@@ -364,3 +364,80 @@ pub fn watch_pane(
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tmux::cache::{PaneState, SessionCache};
+    use crate::util::UnpoisonExt;
+
+    fn pane(cmd: &str, window: &str, idx: usize) -> PaneState {
+        PaneState {
+            buffer: String::new(),
+            summary: String::new(),
+            current_cmd: cmd.to_string(),
+            current_path: "/home/user".to_string(),
+            pane_title: String::new(),
+            last_updated: std::time::Instant::now(),
+            scroll_position: 0,
+            history_size: 0,
+            in_copy_mode: false,
+            synchronized: false,
+            window_name: window.to_string(),
+            dead: false,
+            dead_status: None,
+            last_activity: 0,
+            start_cmd: String::new(),
+            pane_index: idx,
+            shell_pid: 0,
+        }
+    }
+
+    #[test]
+    fn close_bg_window_no_session() {
+        let store: SessionStore =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        assert_eq!(
+            close_bg_window("%1", None, &store),
+            "No active session — cannot close background window."
+        );
+    }
+
+    #[test]
+    fn close_bg_window_unknown_session() {
+        let store: SessionStore =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        assert_eq!(
+            close_bg_window("%1", Some("missing-sid"), &store),
+            "Session 'missing-sid' not found."
+        );
+    }
+
+    #[test]
+    fn list_panes_excludes_chat_pane() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            p.insert("%1".to_string(), pane("bash", "main", 0));
+            p.insert("%2".to_string(), pane("vim", "edit", 1));
+        }
+        let out = list_panes(&cache, Some("%1"));
+        assert!(!out.contains("%1"), "chat pane must be excluded: {out}");
+        assert!(out.contains("%2"), "non-chat pane must be listed: {out}");
+        assert!(out.contains("idx:1"));
+    }
+
+    #[test]
+    fn list_panes_empty_when_only_chat_pane() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            p.insert("%1".to_string(), pane("bash", "main", 0));
+        }
+        let out = list_panes(&cache, Some("%1"));
+        assert!(
+            out.contains("No targetable panes found in session 'sess'"),
+            "got: {out}"
+        );
+    }
+}
