@@ -1,19 +1,31 @@
 # NEXT
 
-**Active phase: none — milestone boundary (human gate).**
+**Active phase:**
+[`docs/dev/milestones/M4-context-management/phase-01-events-rotation.md`](milestones/M4-context-management/phase-01-events-rotation.md)
+— **todo**, awaiting `/rexymcp:dispatch phase-01-events-rotation`.
+
+**M4 — Context Management Overhaul is scoped** (2026-07-07, PE sign-off). The
+design is `docs/design/context-management.md` (failure catalog D1–D15 + target
+architecture); the milestone README with all ten phase rows is
+`docs/dev/milestones/M4-context-management/README.md`. All ten phase docs were
+drafted at kick-off by explicit PE request — **re-verify each doc's Current
+state section against the working tree before dispatching it** (earlier phases
+move its anchors; each doc carries a Pre-flight step for this).
+
+Phase order: 01 events-rotation → 02 token-estimation → 03 budget-compaction →
+04 append-only-archive → 05 epoch-records → 06 ledger-rollups →
+07 recall-context → 08 async-compaction → 09 session-meta-persistence →
+10 ghost-and-memory.
+
+---
 
 **M3 — Polish & Maintenance is complete** (2026-06-28; all 10 phases `done`,
 all `approved_first_try`, zero bounces, zero bug reports). Retrospective in
 `docs/dev/milestones/M3-polish-maintenance/README.md` § Retrospective. All seven
 M3 exit criteria met; no STANDARDS.md / WORKFLOW.md folds this milestone (M3 was
 all maintenance-shaped work that confirmed existing folds rather than revealing
-new patterns).
-
-**Next:** M4 has not been scoped. Starting it is a human decision — kick it off with
-`/rexymcp:architect` (survey + design + milestone README), then draft phase-01 via
-`/rexymcp:architect next`. Two survey candidates held out of M3 remain available if an
-M4 phase reveals the need: the error-result/response-builder helper (~74 sites) and the
-executor approval-gate extraction (`executor/mod.rs` → `executor/approval.rs`).
+new patterns). The two M3 survey holdovers (error-result/response-builder
+helper ~74 sites; executor approval-gate extraction) remain deferred.
 
 ---
 

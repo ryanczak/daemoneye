@@ -343,12 +343,20 @@ Each has a retrospective in its `docs/dev/milestones/M<n>-<slug>/README.md`.
   `TODO(M2)` signature consolidations, and first-ever unit coverage for the
   `executor/knowledge/` handlers). No behavior regressions.
 
-### Next milestone — to be defined
+### Active milestone — M4 Context Management Overhaul
 
-`docs/dev/NEXT.md` is at a **milestone boundary** (M3 closed; M4 not yet scoped) —
-a human gate. A pre-rexyMCP roadmap already exists in [`ROADMAP.md`](ROADMAP.md)
-(Phases B–F with numbered R/I opportunities) and serves as a reference baseline —
-not a commitment. The next milestone README is written under
-`docs/dev/milestones/M<n>-<slug>/` once its goal, scope, and non-scope are
-re-agreed with the principal engineer. Run `/rexymcp:architect` to scope it, then
-`/rexymcp:architect next` to draft the first phase.
+Scoped 2026-07-07 (PE sign-off). Design doc:
+[`docs/design/context-management.md`](design/context-management.md); milestone
+README: `docs/dev/milestones/M4-context-management/README.md` (ten phases).
+Goal: survive hundreds-of-days daemon uptimes and thousands-of-turns sessions —
+event-log rotation, token-budgeted compaction with hysteresis, an append-only
+per-session archive, an epoch/chapter summary chain (O(log turns) in-context
+representation), a `recall_context` tool over the archive, asynchronous
+compaction, session-meta persistence across restarts, and ghost-session
+coverage. The pre-rexyMCP [`ROADMAP.md`](ROADMAP.md) remains a reference
+baseline, not a commitment.
+
+One correction recorded during M4 scoping: the FTS5 memory index described in
+§1.4 / "Knowledge system" is currently a **stub** (`src/memory/index.rs`
+returns empty; real search is the grep scan in `src/search.rs`). Un-stubbing
+it is future work noted in the M4 design doc §8.
