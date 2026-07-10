@@ -1,7 +1,7 @@
 # Phase 01: Event-log rotation and segment-aware readers
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** review
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~500 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -379,4 +379,36 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** aa4cb46fe3fcccf4d7c24efca883b28425d3001d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-09
+
+- **Verdict:** bounced
+- **Gates re-run independently:** `cargo fmt --all` (clean), `cargo build`
+  (clean, zero warnings), `cargo clippy --all-targets --all-features -- -D
+  warnings` (clean), `cargo test` (860 unit + 27 integration passed, 2
+  ignored, 0 failed) — all reproduced by the reviewer, matching the
+  executor's reported gate output.
+- **Bugs filed:**
+  - `bugs/bug-01-1.md` (major) — `run_costs` doesn't re-sort merged groups
+    across segments; `--by agent`/`provider`/`model`/`session` output can be
+    in the wrong order once more than one segment contributes to a group.
+    Reproduced against the real `target/debug/daemoneye` binary.
+  - `bugs/bug-01-2.md` (major) — the completion Update Log is missing the
+    phase doc's own required "End-to-end verification" section; no quoted
+    output from running the real binary against real fixtures exists for
+    either of the two scenarios the phase doc names.
+  - `bugs/bug-01-3.md` (minor) — `search_events_in_segments` can return the
+    oldest, not newest, lines within an over-cap segment (regression vs. the
+    pre-phase "last N lines" contract); zero test coverage for the migrated
+    function.
+- **Executor:** Claude executor (server-authored completion bookkeeping).
+- **Scope deviations:** none — the diff stays within the phase's Spec and
+  Out-of-scope boundaries; the defects are correctness/process gaps within
+  the implemented scope, not scope creep.
+- **Calibration:** none folded yet; see bug reports for the specific
+  regressions. The `run_costs` multi-segment merge (bug-01-1) is a case
+  where a per-site migration correctly preserved each site's *local*
+  behavior but missed a global invariant (the merged output's sort order)
+  that only manifests when spanning more than one segment — worth watching
+  for in future multi-segment-merge phases (03+).
 
