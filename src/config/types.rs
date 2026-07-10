@@ -30,6 +30,8 @@ pub struct Config {
     pub limits: LimitsConfig,
     #[serde(default)]
     pub sessions: SessionsConfig,
+    #[serde(default)]
+    pub events: EventsConfig,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             approvals: ApprovalsConfig::default(),
             limits: LimitsConfig::default(),
             sessions: SessionsConfig::default(),
+            events: EventsConfig::default(),
         }
     }
 }
@@ -73,6 +76,27 @@ fn default_auto_name_turn_threshold() -> usize {
 
 fn default_load_recent_turns() -> usize {
     10
+}
+
+/// Event log rotation and retention configuration (`[events]` in config.toml).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct EventsConfig {
+    /// Delete dated event segments older than this many days.
+    /// 0 = keep forever. The legacy `var/events.jsonl` is never deleted.
+    #[serde(default = "default_events_retention_days")]
+    pub retention_days: u32,
+}
+
+fn default_events_retention_days() -> u32 {
+    90
+}
+
+impl Default for EventsConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: default_events_retention_days(),
+        }
+    }
 }
 
 impl Default for SessionsConfig {

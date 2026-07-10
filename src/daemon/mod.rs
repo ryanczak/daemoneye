@@ -685,6 +685,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         move || {
             let sessions_cleanup = Arc::clone(&sessions_cleanup_sup);
             async move {
+                let mut sweep_counter = 0u32;
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
                     let now = Instant::now();
@@ -697,6 +698,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             true
                         }
                     });
+
+                    sweep_counter = sweep_counter.wrapping_add(1);
+                    if sweep_counter.is_multiple_of(60) {
+                        let retention_days = startup_config.events.retention_days;
+                        crate::daemon::utils::sweep_event_segments(retention_days);
+                    }
                 }
             }
         },

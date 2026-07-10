@@ -454,7 +454,7 @@ pub fn compute_cost_today() -> CostTodayResult {
         };
     }
 
-    // Scan events.jsonl for today's ai_cost events.
+    // Scan event segments for today's ai_cost events.
     let today_start = chrono::Utc::now()
         .date_naive()
         .and_hms_opt(0, 0, 0)
@@ -468,29 +468,13 @@ pub fn compute_cost_today() -> CostTodayResult {
     let mut by_provider: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     let mut by_agent: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
 
-    let events_path = crate::config::events_path();
-    if let Ok(file) = std::fs::File::open(&events_path) {
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(file);
-        for line in reader.lines() {
-            let Ok(line) = line else { continue };
-            let Ok(value): Result<serde_json::Value, _> = serde_json::from_str(&line) else {
-                continue;
-            };
+    crate::daemon::utils::for_each_event_between(
+        Some(today_start),
+        Some(today_end),
+        &mut |value| {
             // Only process ai_cost events.
             if value.get("event").and_then(|v| v.as_str()) != Some("ai_cost") {
-                continue;
-            }
-            // Parse timestamp and check if it falls within today.
-            let Some(ts_str) = value.get("ts").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_str) else {
-                continue;
-            };
-            let ts_utc = ts.with_timezone(&chrono::Utc);
-            if ts_utc < today_start || ts_utc >= today_end {
-                continue;
+                return;
             }
             // Extract cost.
             let cost = value
@@ -511,8 +495,8 @@ pub fn compute_cost_today() -> CostTodayResult {
             if let Some(agent) = value.get("agent_name").and_then(|v| v.as_str()) {
                 *by_agent.entry(agent.to_string()).or_insert(0.0) += cost;
             }
-        }
-    }
+        },
+    );
 
     let mut session_costs: Vec<(String, f64)> = by_session.into_iter().collect();
     session_costs.sort_by(|a, b| a.0.cmp(&b.0));

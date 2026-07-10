@@ -82,14 +82,9 @@ pub fn search_repository_with_namespaces(
         search_dir(dir, kind_label, &query_lower, context_lines, &mut results);
     }
 
-    // Search events.jsonl if requested
+    // Search event segments if requested
     if (kind == "events" || kind == "all") && results.len() < MAX_RESULTS {
-        search_events(
-            &crate::config::events_path(),
-            &query_lower,
-            context_lines,
-            &mut results,
-        );
+        search_events_in_segments(&query_lower, context_lines, &mut results);
     }
 
     results
@@ -175,44 +170,72 @@ fn search_dir(
     }
 }
 
-fn search_events(
-    events_path: &PathBuf,
+fn search_events_in_segments(
     query_lower: &str,
     context_lines: usize,
     results: &mut Vec<SearchResult>,
 ) {
-    if !events_path.exists() {
-        return;
-    }
-    let content = match std::fs::read_to_string(events_path) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let all_lines: Vec<&str> = content.lines().collect();
-    let start = all_lines.len().saturating_sub(EVENTS_TAIL_LINES);
-    let lines = &all_lines[start..];
+    // Collect all segment paths newest-first, then collect lines up to cap.
+    let mut all_paths = crate::daemon::utils::event_segment_paths_between(None, None);
+    all_paths.reverse();
 
-    for (i, line) in lines.iter().enumerate() {
+    // Collect lines with their source segment info (newest-first order).
+    let mut collected: Vec<(String, usize, String)> = Vec::new(); // (readable, line_num, segment_name)
+    let mut global_line_num: usize = 0;
+
+    for path in &all_paths {
+        let Ok(file) = std::fs::File::open(path) else {
+            continue;
+        };
+        let reader = std::io::BufReader::new(file);
+        let segment_name = path
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+
+        use std::io::BufRead;
+        for line_result in reader.lines() {
+            let Ok(line) = line_result else { continue };
+            let Ok(_value): Result<serde_json::Value, _> = serde_json::from_str(&line) else {
+                continue;
+            };
+            let readable = json_to_readable(&line);
+            global_line_num += 1;
+            collected.push((readable, global_line_num, segment_name.clone()));
+
+            if collected.len() >= EVENTS_TAIL_LINES {
+                break;
+            }
+        }
+        if collected.len() >= EVENTS_TAIL_LINES {
+            break;
+        }
+    }
+
+    // Restore oldest-first order for display.
+    collected.reverse();
+
+    // Now search oldest-first.
+    let all_lines: Vec<(String, usize, String)> = collected;
+    for (i, (readable, line_num, seg_name)) in all_lines.iter().enumerate() {
         if results.len() >= MAX_RESULTS {
             break;
         }
-        // Convert JSON line to readable form for matching
-        let readable = json_to_readable(line);
         if readable.to_lowercase().contains(query_lower) {
             let before_start = i.saturating_sub(context_lines);
-            let after_end = (i + context_lines + 1).min(lines.len());
+            let after_end = (i + context_lines + 1).min(all_lines.len());
             results.push(SearchResult {
                 kind: "events".to_string(),
-                name: "events.jsonl".to_string(),
-                line_number: start + i + 1,
-                matched_line: readable,
-                context_before: lines[before_start..i]
+                name: seg_name.clone(),
+                line_number: *line_num,
+                matched_line: readable.clone(),
+                context_before: all_lines[before_start..i]
                     .iter()
-                    .map(|l| json_to_readable(l))
+                    .map(|(r, _, _)| r.clone())
                     .collect(),
-                context_after: lines[i + 1..after_end]
+                context_after: all_lines[i + 1..after_end]
                     .iter()
-                    .map(|l| json_to_readable(l))
+                    .map(|(r, _, _)| r.clone())
                     .collect(),
             });
         }

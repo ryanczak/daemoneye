@@ -215,7 +215,7 @@ pub fn aggregate_costs(
     }
 }
 
-/// CLI entry point — opens `events.jsonl`, aggregates, and renders.
+/// CLI entry point — reads event segments, aggregates, and renders.
 pub fn run_costs(
     since: Option<String>,
     until: Option<String>,
@@ -223,8 +223,6 @@ pub fn run_costs(
     agent_filter: Option<String>,
     json: bool,
 ) -> Result<()> {
-    let events_path = crate::config::events_path();
-
     let now = Utc::now();
     let since_dt = match &since {
         Some(s) => parse_date_bound(s, true)
@@ -241,7 +239,10 @@ pub fn run_costs(
         None => now,
     };
 
-    if !events_path.exists() {
+    let segments =
+        crate::daemon::utils::event_segment_paths_between(Some(since_dt), Some(until_dt));
+
+    if segments.is_empty() {
         let summary = CostSummary::default();
         if json {
             let json_str = serde_json::to_string_pretty(&summary)?;
@@ -252,17 +253,43 @@ pub fn run_costs(
         return Ok(());
     }
 
-    let file = std::fs::File::open(&events_path)
-        .with_context(|| format!("Failed to open {}", events_path.display()))?;
-    let reader = std::io::BufReader::new(file);
+    // Build a multi-file reader that concatenates all segments.
+    let readers: Vec<std::io::BufReader<std::fs::File>> = segments
+        .iter()
+        .filter_map(|p| std::fs::File::open(p).ok().map(std::io::BufReader::new))
+        .collect();
 
-    let summary = aggregate_costs(
-        reader,
-        since_dt,
-        until_dt,
-        group_by,
-        agent_filter.as_deref(),
-    );
+    let mut summary = CostSummary::default();
+    for reader in readers {
+        let seg_summary = aggregate_costs(
+            reader,
+            since_dt,
+            until_dt,
+            group_by,
+            agent_filter.as_deref(),
+        );
+        summary.total_calls += seg_summary.total_calls;
+        summary.total_input_tokens += seg_summary.total_input_tokens;
+        summary.total_output_tokens += seg_summary.total_output_tokens;
+        summary.total_cache_tokens += seg_summary.total_cache_tokens;
+        summary.total_cost_usd += seg_summary.total_cost_usd;
+        summary.untracked_calls += seg_summary.untracked_calls;
+        summary.untracked_tokens += seg_summary.untracked_tokens;
+
+        // Merge groups by key
+        for seg_group in seg_summary.groups {
+            if let Some(existing) = summary.groups.iter_mut().find(|g| g.key == seg_group.key) {
+                existing.calls += seg_group.calls;
+                existing.input_tokens += seg_group.input_tokens;
+                existing.output_tokens += seg_group.output_tokens;
+                existing.cache_tokens += seg_group.cache_tokens;
+                existing.total_cost_usd += seg_group.total_cost_usd;
+                existing.untracked_calls += seg_group.untracked_calls;
+            } else {
+                summary.groups.push(seg_group);
+            }
+        }
+    }
 
     if json {
         let json_str = serde_json::to_string_pretty(&summary)?;

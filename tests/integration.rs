@@ -326,7 +326,7 @@ fn event_log_entry_format() {
     });
     log_event("webhook_alert", fields);
 
-    let path = daemoneye::config::events_path();
+    let path = daemoneye::config::current_event_segment_path();
     let content = fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
     let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
@@ -381,7 +381,7 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
 
     log_event("ai_cost", serde_json::to_value(&record).unwrap());
 
-    let path = daemoneye::config::events_path();
+    let path = daemoneye::config::current_event_segment_path();
     let content = fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
     let last: serde_json::Value =
@@ -430,7 +430,7 @@ fn event_log_append_read() {
         serde_json::json!({ "session_id": "gs-1" }),
     );
 
-    let path = daemoneye::config::events_path();
+    let path = daemoneye::config::current_event_segment_path();
     let content = fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = content.lines().collect();
 
@@ -730,8 +730,8 @@ fn webhook_alert_to_event_log() {
         .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
-    let path = daemoneye::config::events_path();
-    let content = fs::read_to_string(&path).expect("read events.jsonl");
+    let path = daemoneye::config::current_event_segment_path();
+    let content = fs::read_to_string(&path).expect("read event segment");
     let lines: Vec<&str> = content.lines().collect();
     let last: serde_json::Value =
         serde_json::from_str(lines.last().expect("at least one line")).expect("parse last line");

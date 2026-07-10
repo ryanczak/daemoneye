@@ -64,6 +64,19 @@ pub fn events_path() -> PathBuf {
     var_log_dir().join("events.jsonl")
 }
 
+/// Directory holding dated event segments (`events-YYYYMMDD.jsonl`).
+pub fn events_dir() -> PathBuf {
+    var_log_dir().join("events")
+}
+
+/// The segment file that `log_event` writes to right now (today, UTC).
+pub fn current_event_segment_path() -> PathBuf {
+    events_dir().join(format!(
+        "events-{}.jsonl",
+        chrono::Utc::now().format("%Y%m%d")
+    ))
+}
+
 /// Directory where user prompt TOML files are stored: `~/.daemoneye/etc/prompts/`.
 pub fn prompts_dir() -> PathBuf {
     etc_dir().join("prompts")

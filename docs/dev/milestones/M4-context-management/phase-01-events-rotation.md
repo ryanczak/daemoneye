@@ -1,7 +1,7 @@
 # Phase 01: Event-log rotation and segment-aware readers
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~500 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -261,3 +261,7 @@ None. (No new dependencies — `chrono` is already in the tree.)
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-07 17:35 (progress)
+
+**Executor:** Claude executor. Starting phase 01: event-log rotation and segment-aware readers. Implementing segment path helpers, streaming reader, writer switch, reader migrations, retention sweep, and tests.

@@ -57,31 +57,12 @@ struct EventTally {
     ghost_completions: u32,
 }
 
-/// Scan `events.jsonl` for events belonging to this session (or global events
+/// Scan event segments for events belonging to this session (or global events
 /// like webhook alerts) that occurred after `since`.
 fn tally_events(session_id: &str, since: DateTime<Utc>) -> EventTally {
     let mut t = EventTally::default();
-    let path = crate::config::events_path();
-    let text = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) => {
-            log::debug!("digest: could not read events.jsonl: {}", e);
-            return t;
-        }
-    };
 
-    let since_str = since.to_rfc3339();
-
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        // Skip events older than session start.
-        let ts = v.get("ts").and_then(|t| t.as_str()).unwrap_or("");
-        if ts < since_str.as_str() {
-            continue;
-        }
-
+    crate::daemon::utils::for_each_event_between(Some(since), None, &mut |v| {
         let event = v.get("event").and_then(|e| e.as_str()).unwrap_or("");
         let ev_session = v.get("session").and_then(|s| s.as_str()).unwrap_or("");
         // Also check session_id field (used by ghost events).
@@ -139,7 +120,7 @@ fn tally_events(session_id: &str, since: DateTime<Utc>) -> EventTally {
             }
             _ => {}
         }
-    }
+    });
 
     t
 }
@@ -684,6 +665,7 @@ pub fn elide_old_tool_results(messages: &mut [Message]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     fn make_msg(role: &str, content: &str) -> Message {
         Message {
@@ -882,6 +864,49 @@ mod tests {
             messages[1].tool_results.as_ref().unwrap()[0].content.len(),
             ELIDE_THRESHOLD_CHARS + 500
         );
+    }
+
+    #[test]
+    fn tally_events_reads_dated_segments() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        let seg = events_dir.join("events-20240115.jsonl");
+        let since = chrono::NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        // Write a job_complete event with exit_code 0
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&seg)
+            .unwrap();
+        let record = serde_json::json!({
+            "ts": "2024-01-15T12:00:00+00:00",
+            "event": "job_complete",
+            "session": "test-session",
+            "exit_code": 0,
+            "job_name": "my-job"
+        });
+        writeln!(file, "{}", record).unwrap();
+
+        let tally = tally_events("test-session", since);
+        assert_eq!(tally.commands_ok, 1);
+
+        if let Some(h) = saved_home {
+            unsafe { std::env::set_var("HOME", h) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
     }
 
     #[test]
