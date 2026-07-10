@@ -1,8 +1,16 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-01-events-rotation.md`](milestones/M4-context-management/phase-01-events-rotation.md)
-— **todo**, awaiting `/rexymcp:dispatch phase-01-events-rotation`.
+[`docs/dev/milestones/M4-context-management/phase-02-token-estimation.md`](milestones/M4-context-management/phase-02-token-estimation.md)
+— **todo**, awaiting `/rexymcp:dispatch phase-02-token-estimation`.
+
+**M4 phase-01 — events-rotation is `done`** (2026-07-09, escalated → session
+takeover after 1 bounce). Executor implemented the phase + bug fixes but looped
+on the bug-01-3 test verification (120+ turns grepping test stdout); the
+architect finished it in the main loop — extracted `aggregate_over_range()` for
+a real cost-sort test (bug-01-1), corrected the search-tail test query (bug-01-3),
+and ran both real-binary E2E scenarios (bug-01-2). All three bugs `verified`;
+gates green (862 unit + 27 integration). Commit pending.
 
 **M4 — Context Management Overhaul is scoped** (2026-07-07, PE sign-off). The
 design is `docs/design/context-management.md` (failure catalog D1–D15 + target

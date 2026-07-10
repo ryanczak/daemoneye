@@ -175,15 +175,26 @@ fn search_events_in_segments(
     context_lines: usize,
     results: &mut Vec<SearchResult>,
 ) {
-    // Collect all segment paths newest-first, then collect lines up to cap.
-    let mut all_paths = crate::daemon::utils::event_segment_paths_between(None, None);
-    all_paths.reverse();
+    // Collect the last EVENTS_TAIL_LINES event lines across all segments.
+    // We iterate segments newest-first and within each segment we need the
+    // true tail (newest lines), not the head. For the newest segment this
+    // matters: if it alone exceeds the cap, we want its most recent lines.
+    //
+    // Strategy: read each segment's valid lines into a buffer, then take
+    // only the tail portion needed to fill our remaining cap.
+    let all_paths = crate::daemon::utils::event_segment_paths_between(None, None);
 
-    // Collect lines with their source segment info (newest-first order).
+    // Collect lines newest-first, up to cap.
     let mut collected: Vec<(String, usize, String)> = Vec::new(); // (readable, line_num, segment_name)
     let mut global_line_num: usize = 0;
 
-    for path in &all_paths {
+    let mut reversed_paths = all_paths;
+    reversed_paths.reverse();
+
+    for path in &reversed_paths {
+        if collected.len() >= EVENTS_TAIL_LINES {
+            break;
+        }
         let Ok(file) = std::fs::File::open(path) else {
             continue;
         };
@@ -193,6 +204,8 @@ fn search_events_in_segments(
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_else(|| path.display().to_string());
 
+        // Read all valid lines from this segment first.
+        let mut segment_lines: Vec<(String, String)> = Vec::new(); // (readable, raw_json)
         use std::io::BufRead;
         for line_result in reader.lines() {
             let Ok(line) = line_result else { continue };
@@ -200,15 +213,15 @@ fn search_events_in_segments(
                 continue;
             };
             let readable = json_to_readable(&line);
-            global_line_num += 1;
-            collected.push((readable, global_line_num, segment_name.clone()));
-
-            if collected.len() >= EVENTS_TAIL_LINES {
-                break;
-            }
+            segment_lines.push((readable, line));
         }
-        if collected.len() >= EVENTS_TAIL_LINES {
-            break;
+
+        // Take only the tail of this segment's lines that we still need.
+        let remaining = EVENTS_TAIL_LINES - collected.len();
+        let start = segment_lines.len().saturating_sub(remaining);
+        for (readable, _raw) in &segment_lines[start..] {
+            global_line_num += 1;
+            collected.push((readable.clone(), global_line_num, segment_name.clone()));
         }
     }
 
@@ -418,5 +431,60 @@ mod tests {
             let results = search_repository("contains_needle", "runbooks", 0);
             assert!(!results.is_empty());
         });
+    }
+
+    #[test]
+    fn search_events_returns_tail_not_head_when_segment_exceeds_cap() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().unwrap();
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let seg = events_dir.join("events-20260101.jsonl");
+
+        let mut lines = Vec::new();
+        // Write 10,001 lines: the first 6 have a unique "EARLY_IDX" marker,
+        // the rest are generic (no unique marker).
+        for i in 0..EVENTS_TAIL_LINES {
+            let ts = format!("2026-01-01T00:00:{:02}Z", i % 60);
+            let line = format!(
+                r#"{{"event":"test","ts":"{}","agent_name":"agent","provider":"anthropic","model":"claude","tokens":{{"input_tokens":1,"output_tokens":1,"cache_read_tokens":0,"cache_write_tokens":0}},"cost":{{"total_cost_usd":0.01}},"pricing_source":"BuiltinDefault","idx":{}}}"#,
+                ts, i
+            );
+            lines.push(line);
+        }
+        // 5 tail lines — these are the most recent
+        for i in 0..5 {
+            let ts = format!("2026-01-01T01:00:{:02}Z", i);
+            let line = format!(
+                r#"{{"event":"test","ts":"{}","agent_name":"agent","provider":"anthropic","model":"claude","tokens":{{"input_tokens":1,"output_tokens":1,"cache_read_tokens":0,"cache_write_tokens":0}},"cost":{{"total_cost_usd":0.01}},"pricing_source":"BuiltinDefault","idx":{}}}"#,
+                ts,
+                EVENTS_TAIL_LINES + i
+            );
+            lines.push(line);
+        }
+
+        std::fs::write(&seg, lines.join("\n") + "\n").unwrap();
+
+        // Search for a high index that only exists in the tail. `search_events`
+        // matches against the `json_to_readable` form, which renders fields as
+        // `key=value` (e.g. `idx=10003`) — not raw JSON — so the query must use
+        // that form.
+        let results = search_repository(&format!("idx={}", EVENTS_TAIL_LINES + 3), "events", 0);
+        assert!(
+            !results.is_empty(),
+            "idx={} should be found in the tail of the segment",
+            EVENTS_TAIL_LINES + 3
+        );
+
+        // idx=0 is the very first line, outside the last-EVENTS_TAIL_LINES tail
+        // window — it must NOT be surfaced (this is the tail-not-head guarantee).
+        let results = search_repository("idx=0", "events", 0);
+        assert!(
+            results.is_empty(),
+            "idx=0 should not appear — only the last EVENTS_TAIL_LINES lines are searched"
+        );
     }
 }

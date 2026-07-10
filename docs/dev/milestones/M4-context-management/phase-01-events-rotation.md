@@ -1,7 +1,7 @@
 # Phase 01: Event-log rotation and segment-aware readers
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~500 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -412,3 +412,85 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   that only manifests when spanning more than one segment — worth watching
   for in future multi-segment-merge phases (03+).
 
+
+### Update — 2026-07-09 (complete, session takeover)
+
+**Summary:** Phase completed via `/rexymcp:auto` session takeover after the
+executor looped on the bug-01-3 test verification (120+ turns oscillating
+`grep "should"` / `grep "should not"` on the same test — the governor's
+identical-call limit never fired because the grep patterns alternated). The
+executor's *fix logic* for bug-01-1 (`costs.rs`) and bug-01-3 (`search.rs`) was
+sound and left on disk; the architect finished the phase in the main loop:
+
+- **bug-01-1** — factored `run_costs`'s segment aggregation + merge + re-sort
+  into a private, unit-testable `aggregate_over_range()` helper; rewrote
+  `cli_costs_multi_segment_groups_re_sorted_by_cost` to exercise it against real
+  on-disk segments instead of a re-implementation.
+- **bug-01-3** — kept the executor's true-tail extraction fix; the executor's
+  test queried the raw-JSON form `"idx":N` but `search_events` matches the
+  `json_to_readable` `key=value` rendering, so the query was corrected to `idx=N`
+  (this mismatch is exactly what the executor looped on). Test now passes.
+- **bug-01-2** — ran both real-binary E2E scenarios (below) and recorded them.
+
+All three bugs marked `verified`.
+
+**Acceptance criteria:** all met.
+
+**Commands (re-run in main loop):**
+
+```
+cargo fmt --all                                        # clean
+cargo build                                            # Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings   # clean
+cargo test                                             # 862 unit + 27 integration passed; 0 failed; 2 ignored
+```
+
+**End-to-end verification (real `target/debug/daemoneye` binary):**
+
+Scenario 1 — write path (daemon writes today's dated segment; legacy file never created):
+
+```
+$ HOME=$tmp ANTHROPIC_API_KEY=<dummy> target/debug/daemoneye daemon && target/debug/daemoneye ping
+Daemon is running.
+$ ls $HOME/.daemoneye/var/log/events/
+events-20260710.jsonl
+$ head -1 $HOME/.daemoneye/var/log/events/events-20260710.jsonl
+{"event":"daemon_start","pid":150167,"session":"daemoneye","socket":".../daemoneye.sock","ts":"2026-07-10T02:18:46.352595561+00:00","version":"0.9.9"}
+$ ls $HOME/.daemoneye/var/log/events.jsonl
+ls: cannot access '.../events.jsonl': No such file or directory   # legacy never written
+```
+
+Scenario 2 — read path (`costs` aggregates legacy + dated segment):
+
+```
+$ # legacy var/log/events.jsonl = $1.25 ; dated var/log/events/events-<today>.jsonl = $2.50
+$ HOME=$tmp target/debug/daemoneye costs --since 2019-01-01 --json
+{ "groups": [ {"key":"2026-05-01",...,"total_cost_usd":1.25}, {"key":"2026-07-10",...,"total_cost_usd":2.5} ],
+  "total_calls": 2, "total_cost_usd": 3.75, ... }
+```
+
+(Note: the phase doc's E2E prose named `var/events*`; the implemented paths are
+under `var/log/` via `var_log_dir()`, which is what was verified.)
+
+**Files changed (takeover):**
+- `src/cli/commands/costs.rs` — extracted `aggregate_over_range()`; bug-01-1 fix + real-path test.
+- `src/search.rs` — bug-01-3 true-tail fix + corrected test query.
+
+**New tests:**
+- `cli_costs_multi_segment_groups_re_sorted_by_cost` in `src/cli/commands/costs.rs`
+- `search_events_returns_tail_not_head_when_segment_exceeds_cap` in `src/search.rs`
+
+### Review verdict — 2026-07-09
+
+- **Verdict:** escalated (session takeover after 1 bounce; completed by architect)
+- **Bounces:** 1 (bugs: bug-01-1, bug-01-2 — major; bug-01-3 — minor; all now verified)
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (implementation + bug fixes); architect main loop (Opus 4.8) finished after executor verification loop
+- **Scope deviations:** none — takeover stayed within the phase Spec; the only
+  structural change was extracting `aggregate_over_range()` for testability.
+- **Calibration:** executor grep-loop pathology — the executor spent 120+ turns
+  re-running one test and grepping its stdout for an assertion string, alternating
+  the grep pattern each turn so the governor's identical-call threshold (6) never
+  fired. Root cause was a query-format mismatch it couldn't diagnose from grep
+  output. Candidate fold (WORKFLOW.md / governor): detect near-identical
+  verify-only tool calls (same test, varying grep) as a loop signal. **Deferred to
+  the human — WORKFLOW.md / governor changes are a human gate.**

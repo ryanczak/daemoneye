@@ -72,7 +72,7 @@ context loss, compaction off the interactive hot path.
 
 | #  | Phase | Theme | Status |
 |----|-------|-------|--------|
-| 01 | events-rotation ([phase-01-events-rotation.md](phase-01-events-rotation.md)) — dated event segments, shared streaming readers, retention sweep | hygiene | in-progress |
+| 01 | events-rotation ([phase-01-events-rotation.md](phase-01-events-rotation.md)) — dated event segments, shared streaming readers, retention sweep | hygiene | done |
 | 02 | token-estimation ([phase-02-token-estimation.md](phase-02-token-estimation.md)) — `context/estimate.rs`, per-session calibration, restart blind-spot fix | signal | todo |
 | 03 | budget-compaction ([phase-03-budget-compaction.md](phase-03-budget-compaction.md)) — `[compaction]` config, token-budget cut + hysteresis, synthesized boundaries, `[BUDGET]` rewording | core | todo |
 | 04 | append-only-archive ([phase-04-append-only-archive.md](phase-04-append-only-archive.md)) — `<id>.archive.jsonl`, honest elision placeholders, retention | core | todo |

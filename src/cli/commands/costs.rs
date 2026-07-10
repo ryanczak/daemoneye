@@ -215,6 +215,66 @@ pub fn aggregate_costs(
     }
 }
 
+/// Aggregate `ai_cost` events across every segment overlapping
+/// `[since_dt, until_dt)`, merging per-segment group summaries by key and
+/// re-sorting the merged groups into the documented order (ascending key for
+/// `Day`, descending cost otherwise). Factored out of `run_costs` so the
+/// merge+sort behavior is unit-testable against real on-disk segments.
+fn aggregate_over_range(
+    since_dt: chrono::DateTime<Utc>,
+    until_dt: chrono::DateTime<Utc>,
+    group_by: GroupBy,
+    agent_filter: Option<&str>,
+) -> CostSummary {
+    let segments =
+        crate::daemon::utils::event_segment_paths_between(Some(since_dt), Some(until_dt));
+
+    let mut summary = CostSummary::default();
+    for path in &segments {
+        let Ok(file) = std::fs::File::open(path) else {
+            continue;
+        };
+        let reader = std::io::BufReader::new(file);
+        let seg_summary = aggregate_costs(reader, since_dt, until_dt, group_by, agent_filter);
+        summary.total_calls += seg_summary.total_calls;
+        summary.total_input_tokens += seg_summary.total_input_tokens;
+        summary.total_output_tokens += seg_summary.total_output_tokens;
+        summary.total_cache_tokens += seg_summary.total_cache_tokens;
+        summary.total_cost_usd += seg_summary.total_cost_usd;
+        summary.untracked_calls += seg_summary.untracked_calls;
+        summary.untracked_tokens += seg_summary.untracked_tokens;
+
+        // Merge groups by key.
+        for seg_group in seg_summary.groups {
+            if let Some(existing) = summary.groups.iter_mut().find(|g| g.key == seg_group.key) {
+                existing.calls += seg_group.calls;
+                existing.input_tokens += seg_group.input_tokens;
+                existing.output_tokens += seg_group.output_tokens;
+                existing.cache_tokens += seg_group.cache_tokens;
+                existing.total_cost_usd += seg_group.total_cost_usd;
+                existing.untracked_calls += seg_group.untracked_calls;
+            } else {
+                summary.groups.push(seg_group);
+            }
+        }
+    }
+
+    // Re-sort merged groups to match the documented order (descending cost
+    // for non-Day groupings, ascending key for Day). The per-segment sort
+    // from `aggregate_costs` only guarantees ordering within each segment;
+    // merging can disrupt that.
+    match group_by {
+        GroupBy::Day => summary.groups.sort_by(|a, b| a.key.cmp(&b.key)),
+        _ => summary.groups.sort_by(|a, b| {
+            b.total_cost_usd
+                .partial_cmp(&a.total_cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }),
+    }
+
+    summary
+}
+
 /// CLI entry point — reads event segments, aggregates, and renders.
 pub fn run_costs(
     since: Option<String>,
@@ -239,57 +299,7 @@ pub fn run_costs(
         None => now,
     };
 
-    let segments =
-        crate::daemon::utils::event_segment_paths_between(Some(since_dt), Some(until_dt));
-
-    if segments.is_empty() {
-        let summary = CostSummary::default();
-        if json {
-            let json_str = serde_json::to_string_pretty(&summary)?;
-            println!("{json_str}");
-        } else {
-            print_human(&summary, &since_dt, &until_dt, group_by)?;
-        }
-        return Ok(());
-    }
-
-    // Build a multi-file reader that concatenates all segments.
-    let readers: Vec<std::io::BufReader<std::fs::File>> = segments
-        .iter()
-        .filter_map(|p| std::fs::File::open(p).ok().map(std::io::BufReader::new))
-        .collect();
-
-    let mut summary = CostSummary::default();
-    for reader in readers {
-        let seg_summary = aggregate_costs(
-            reader,
-            since_dt,
-            until_dt,
-            group_by,
-            agent_filter.as_deref(),
-        );
-        summary.total_calls += seg_summary.total_calls;
-        summary.total_input_tokens += seg_summary.total_input_tokens;
-        summary.total_output_tokens += seg_summary.total_output_tokens;
-        summary.total_cache_tokens += seg_summary.total_cache_tokens;
-        summary.total_cost_usd += seg_summary.total_cost_usd;
-        summary.untracked_calls += seg_summary.untracked_calls;
-        summary.untracked_tokens += seg_summary.untracked_tokens;
-
-        // Merge groups by key
-        for seg_group in seg_summary.groups {
-            if let Some(existing) = summary.groups.iter_mut().find(|g| g.key == seg_group.key) {
-                existing.calls += seg_group.calls;
-                existing.input_tokens += seg_group.input_tokens;
-                existing.output_tokens += seg_group.output_tokens;
-                existing.cache_tokens += seg_group.cache_tokens;
-                existing.total_cost_usd += seg_group.total_cost_usd;
-                existing.untracked_calls += seg_group.untracked_calls;
-            } else {
-                summary.groups.push(seg_group);
-            }
-        }
-    }
+    let summary = aggregate_over_range(since_dt, until_dt, group_by, agent_filter.as_deref());
 
     if json {
         let json_str = serde_json::to_string_pretty(&summary)?;
@@ -753,5 +763,60 @@ mod tests {
 
         let result = run_costs(None, None, GroupBy::Day, None, true);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cli_costs_multi_segment_groups_re_sorted_by_cost() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().unwrap();
+
+        // Two dated segments: seg1 has "high"=$100 and "low"=$1;
+        // seg2 has "low"=$200. Merged: "low"=$201 must sort before "high"=$100,
+        // even though "high" appeared first (in the earlier segment). This pins
+        // the bug-01-1 fix: without the post-merge re-sort, "high" would keep
+        // its earlier-segment lead position and break descending-cost order.
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+
+        let seg1 = events_dir.join("events-20260101.jsonl");
+        let seg2 = events_dir.join("events-20260102.jsonl");
+
+        let lines1 = concat!(
+            r#"{"event":"ai_cost","ts":"2026-01-01T10:00:00Z","agent_name":"high","provider":"anthropic","model":"claude-sonnet-4-6","tokens":{"input_tokens":1000,"output_tokens":500,"cache_read_tokens":0,"cache_write_tokens":0},"cost":{"total_cost_usd":100.0},"pricing_source":"BuiltinDefault"}"#,
+            "\n",
+            r#"{"event":"ai_cost","ts":"2026-01-01T11:00:00Z","agent_name":"low","provider":"anthropic","model":"claude-sonnet-4-6","tokens":{"input_tokens":1000,"output_tokens":500,"cache_read_tokens":0,"cache_write_tokens":0},"cost":{"total_cost_usd":1.0},"pricing_source":"BuiltinDefault"}"#,
+            "\n",
+        );
+        let lines2 = concat!(
+            r#"{"event":"ai_cost","ts":"2026-01-02T10:00:00Z","agent_name":"low","provider":"anthropic","model":"claude-sonnet-4-6","tokens":{"input_tokens":1000,"output_tokens":500,"cache_read_tokens":0,"cache_write_tokens":0},"cost":{"total_cost_usd":200.0},"pricing_source":"BuiltinDefault"}"#,
+            "\n",
+        );
+
+        std::fs::write(&seg1, lines1).unwrap();
+        std::fs::write(&seg2, lines2).unwrap();
+
+        let since_dt = NaiveDate::from_ymd_opt(2026, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let until_dt = NaiveDate::from_ymd_opt(2026, 1, 3)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        // Exercise the real code path run_costs uses (reads segments from disk,
+        // merges by key, re-sorts) — not a re-implementation of it.
+        let summary = aggregate_over_range(since_dt, until_dt, GroupBy::Agent, None);
+
+        // "low" ($201) must come before "high" ($100).
+        assert_eq!(summary.groups.len(), 2);
+        assert_eq!(summary.groups[0].key, "low");
+        assert!((summary.groups[0].total_cost_usd - 201.0).abs() < 1e-10);
+        assert_eq!(summary.groups[1].key, "high");
+        assert!((summary.groups[1].total_cost_usd - 100.0).abs() < 1e-10);
     }
 }
