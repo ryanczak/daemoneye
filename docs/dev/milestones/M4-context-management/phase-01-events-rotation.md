@@ -1,7 +1,7 @@
 # Phase 01: Event-log rotation and segment-aware readers
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~500 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -265,3 +265,118 @@ None. (No new dependencies — `chrono` is already in the tree.)
 ### Update — 2026-07-07 17:35 (progress)
 
 **Executor:** Claude executor. Starting phase 01: event-log rotation and segment-aware readers. Implementing segment path helpers, streaming reader, writer switch, reader migrations, retention sweep, and tests.
+### Update — ts=1783646972515 (complete, server-authored)
+
+**Summary:** All 887 tests pass, build is clean, clippy is clean, and the working tree is committed.
+
+**Summary:** Fixed a bug in `segment_date_from_path` where the `file_stem()` call had already stripped the `.jsonl` extension, causing the `ends_with(".jsonl")` check to fail for all dated segments. This caused `event_segment_paths_between` to return only the legacy file (count=1) instead of the expected 3 files (legacy + 2 dated segments). The fix removes the unnecessary `ends_with(".jsonl")` check since `file_stem()` already strips the extension. All 8 event_log tests, all 860 unit tests, and all 27 integration tests pass. The phase's acceptance criteria are met: `log_event` writes to dated segments, all readers use the shared streaming helpers, the retention sweep is wired into the session-cleanup task, and no production code path writes to the legacy `events_path()`.
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+rrence ... ok
+test webhook::process::tests::ghost_trigger_whitespace_trimmed ... ok
+test webhook::process::tests::ghost_trigger_yes_detected ... ok
+test webhook::process::tests::severity_rank_case_insensitive ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test cli::commands::stream::stream_seam_tests::recv_line_preserves_partial_bytes_across_a_dropped_read ... ok
+
+test result: ok. 860 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test event_log_append_read ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test g4_briefing_masking_applied ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+- `src/daemon/utils/event_log.rs` — +2 -2
+- `tests/integration.rs` — +5 -5
+
+**Commit:** aa4cb46fe3fcccf4d7c24efca883b28425d3001d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
