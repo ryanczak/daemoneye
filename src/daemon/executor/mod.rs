@@ -1104,6 +1104,7 @@ mod tests {
             cost_usd: 0.0,
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
+            token_scale: 1.5,
         };
         let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
         store

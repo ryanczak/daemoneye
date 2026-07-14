@@ -105,11 +105,15 @@ pub token_scale: f64,
 ```
 
 Initialize `token_scale: 1.5` at **every** `SessionEntry` construction site —
-grep-verified list to update (build after each):
+grep-verified list to update (build after each), 7 sites total:
 `src/daemon/server/ask.rs` (the `or_insert_with` at ~line 106),
-`src/daemon/ghost.rs` (ghost entry construction), and the test constructors
-in `src/daemon/session.rs` (`mod tests`, 4 sites). If other constructors
-exist, the compiler will find them — that is expected; fix each.
+`src/daemon/ghost.rs` (ghost entry construction, ~line 220),
+`src/daemon/executor/mod.rs` (the ghost test constructor at ~line 1075), and
+the four test constructors in `src/daemon/session.rs` `mod tests` (~lines 496,
+532, 578, 626). `SessionEntry` has **no** `#[derive(Serialize/Deserialize)]`
+(in-memory only), so there is no `#[serde(default)]` shortcut — each site must
+set the field explicitly. If another constructor exists, the compiler will
+find it — fix each.
 
 ### 3. Calibration update — in `src/daemon/stream.rs`
 

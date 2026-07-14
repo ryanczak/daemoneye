@@ -98,6 +98,11 @@ pub struct SessionEntry {
     pub cost_by_agent: HashMap<String, f64>,
     /// Whether any AI call in this session had Unknown pricing.
     pub has_untracked_cost: bool,
+    /// Multiplier mapping estimated history tokens to observed prompt tokens
+    /// (absorbs system prompt, tool schemas, provider framing). EMA-smoothed;
+    /// clamped to [0.5, 4.0]. Starts at 1.5 (history is typically smaller than
+    /// the full prompt).
+    pub token_scale: f64,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -522,6 +527,7 @@ mod tests {
             loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
+            token_scale: 1.5,
         };
         assert!(!entry.auto_name_suggested);
         assert!(entry.saved_name.is_none());
@@ -558,6 +564,7 @@ mod tests {
             loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
+            token_scale: 1.5,
         };
 
         // Simulate three turns of cost accumulation.
@@ -604,6 +611,7 @@ mod tests {
             loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
+            token_scale: 1.5,
         };
 
         // Simulate /agent switch mid-flow.
@@ -652,6 +660,7 @@ mod tests {
             loaded_tools: HashSet::new(),
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
+            token_scale: 1.5,
         };
 
         // Known pricing call.

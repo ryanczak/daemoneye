@@ -663,6 +663,9 @@ where
                                 entry.last_prompt_tokens = usage.input_tokens
                                     + usage.cache_read_tokens
                                     + usage.cache_write_tokens;
+                                crate::daemon::context::estimate::update_token_scale(
+                                    entry, &messages,
+                                );
                                 entry.dirty = true;
                                 if chat_pane.is_some() {
                                     entry.chat_pane = chat_pane.clone();
@@ -792,6 +795,7 @@ where
                     {
                         entry.last_prompt_tokens =
                             usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
+                        crate::daemon::context::estimate::update_token_scale(entry, &messages);
                     }
 
                     // Push one assistant message listing all tool calls.

@@ -132,6 +132,7 @@ where
                 cost_usd: 0.0,
                 cost_by_agent: std::collections::HashMap::new(),
                 has_untracked_cost: false,
+                token_scale: 1.5,
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
@@ -233,10 +234,29 @@ where
 
     // Read last prompt token count up front — it drives the compaction decision
     // below and is also used later for the [BUDGET] line.
-    let last_prompt_tokens = session_id
-        .as_ref()
-        .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.last_prompt_tokens))
-        .unwrap_or(0);
+    // If last_prompt_tokens is 0 (post-restart blind spot), substitute the
+    // calibrated estimate.
+    let (last_prompt_tokens, _effective_prompt_tokens) = if let Some(ref id) = session_id {
+        if let Ok(guard) = sessions.lock() {
+            if let Some(entry) = guard.get(id.as_str()) {
+                let lpt = entry.last_prompt_tokens;
+                let ts = entry.token_scale;
+                if lpt > 0 {
+                    (lpt, lpt)
+                } else {
+                    let est = crate::daemon::context::estimate::estimate_history_tokens(&messages);
+                    let scaled = (est as f64 * ts).min(u32::MAX as f64) as u32;
+                    (0, scaled)
+                }
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        }
+    } else {
+        (0, 0)
+    };
 
     // Token-pressure-driven compaction.
     //

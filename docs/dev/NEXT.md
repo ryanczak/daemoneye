@@ -2,15 +2,25 @@
 
 **Active phase:**
 [`docs/dev/milestones/M4-context-management/phase-02-token-estimation.md`](milestones/M4-context-management/phase-02-token-estimation.md)
-— **todo**, awaiting `/rexymcp:dispatch phase-02-token-estimation`.
+— **todo**, re-validated 2026-07-13, ready for
+`/rexymcp:dispatch phase-02-token-estimation`.
+
+**Phase-02 re-validation (2026-07-13).** Current-state anchors re-checked
+against the working tree after phase-01 landed — all hold: `Message`
+`wire.rs:20`, `SessionEntry` `session.rs:21` / `last_prompt_tokens` `:34`,
+`stream.rs` calibration sites `663`/`793`, `server/ask.rs` compaction read
+`236` + `token_pct` `256` + `PromptCtx` pass-through `505` + `or_insert_with`
+`106`; no `daemon/context/` module yet. One fix: the Spec §2 construction-site
+list gained a 7th site (`executor/mod.rs:1075`, a ghost test constructor) and a
+note that `SessionEntry` has no serde derive (no `#[serde(default)]` shortcut).
 
 **M4 phase-01 — events-rotation is `done`** (2026-07-09, escalated → session
-takeover after 1 bounce). Executor implemented the phase + bug fixes but looped
-on the bug-01-3 test verification (120+ turns grepping test stdout); the
-architect finished it in the main loop — extracted `aggregate_over_range()` for
-a real cost-sort test (bug-01-1), corrected the search-tail test query (bug-01-3),
-and ran both real-binary E2E scenarios (bug-01-2). All three bugs `verified`;
-gates green (862 unit + 27 integration). Commit pending.
+takeover after 1 bounce; committed `3d74880`). Executor implemented the phase +
+bug fixes but looped on the bug-01-3 test verification (120+ turns grepping test
+stdout); the architect finished it in the main loop — extracted
+`aggregate_over_range()` for a real cost-sort test (bug-01-1), corrected the
+search-tail test query (bug-01-3), and ran both real-binary E2E scenarios
+(bug-01-2). All three bugs `verified`; gates green (862 unit + 27 integration).
 
 **M4 — Context Management Overhaul is scoped** (2026-07-07, PE sign-off). The
 design is `docs/design/context-management.md` (failure catalog D1–D15 + target
