@@ -34,13 +34,13 @@ Read before starting:
 
 ## Current state
 
-- Session persistence lives in `src/daemon/session.rs`:
-  - `session_file(id)` (`:147`) → `sessions_dir().join("{id}.jsonl")`
-    (`sessions_dir()` = `var/log/sessions/`, `src/config/load.rs:73`).
-  - `append_session_message(id, msg)` (`:180`) — the hot path, one append
-    per message.
-  - `write_session_file(id, messages)` (`:156`) — atomic full rewrite
-    (tmp + fsync + rename), called from `src/daemon/stream.rs:671-677`:
+- Session persistence lives in `src/daemon/session.rs` (line numbers
+  re-validated 2026-07-14):
+  - `session_file(id)` (`:152`) → `sessions_dir().join("{id}.jsonl")`.
+  - `append_session_message(id, msg)` (`:185`) — the hot path, one append
+    per message; **7 production callers** (see Spec §2).
+  - `write_session_file(id, messages)` (`:161`) — atomic full rewrite
+    (tmp + fsync + rename), called from `src/daemon/stream.rs:674-678`:
 
     ```rust
     if needs_compaction {
@@ -90,14 +90,37 @@ Failure handling mirrors `append_session_message`: WARN + non-fatal.
 
 ### 2. Wire the write paths
 
-Grep-verified call sites of `append_session_message` — at each, add an
-`append_archive_message` call with the same args (build after each site):
+**Re-validated 2026-07-14: the drafted "1 production site" count was WRONG —
+`grep -rn "append_session_message" src/` shows SEVEN production call sites**
+(`stream.rs:678`, `webhook/process.rs:151`, `background/helpers.rs:194`,
+`ghost.rs:213/468/966`, `executor/knowledge/pane.rs:330`). Every one of them
+appends a real conversation message that MUST be archived (D1). Wiring seven
+sites by hand is fragile and a future eighth caller would silently break the
+invariant.
 
-1. `src/daemon/stream.rs` (~line 675, the per-turn append loop).
-2. Any other production call site `grep -rn "append_session_message" src/`
-   reveals (the drafted-time count is 1 production site + tests; re-verify).
+**Therefore: call `append_archive_message` from INSIDE `append_session_message`**,
+so every current and future caller archives automatically. Do NOT edit the seven
+call sites individually. `append_archive_message` stays a separate, unit-testable
+`pub fn` (the acceptance criteria exercise it directly), but its production caller
+is `append_session_message` alone.
 
-In the `needs_compaction` branch (`stream.rs:671`), before
+**Ordering gotcha (pin this):** `append_session_message` must call
+`append_archive_message(msg)` **BEFORE** it appends `msg` to the working file.
+Reason: `append_archive_message` seeds a missing archive by copying the *current*
+working file. If the working file were written first, the seed copy would already
+contain `msg` and the subsequent archive-append would write it a **second time**
+(duplicate). Archive-first ordering means: new session's first message → neither
+file exists → no seed, one archive append; pre-existing working file, no archive →
+seed copies the prior N messages, then appends the new one → archive has N+1,
+matching the working file. Pin `archive_appends_survive_compaction_rewrite` to
+assert no duplicates (archive length == messages appended, not 2×).
+
+This is correct precisely because the synthetic digest message is pushed via
+`write_session_file` (the compaction rewrite), NOT `append_session_message`, so
+folding the archive into `append_session_message` archives exactly the real
+messages and never the derived digest.
+
+In the `needs_compaction` branch (`stream.rs:674`), before
 `write_session_file`, **no extra work is needed** — every message being
 dropped was already archived when it was first appended. Add a comment
 stating this invariant at the call site:
@@ -128,14 +151,14 @@ output retrievable from the session archive.]
 tool does not exist until phase 07 (phase 07 owns that wording change);
 naming a nonexistent tool would make the model emit invalid calls.
 
-Also update `trim_history`'s placeholder (`src/daemon/session.rs:249-259`)
+Also update `trim_history`'s placeholder (`src/daemon/session.rs:257`)
 from "trimmed to fit the context window" to append: `"Earlier messages are
 preserved in the session archive."`
 
 ### 4. Retention — config + sweep
 
-- Add to `SessionsConfig` (`src/config/types.rs:56`, follow the
-  `load_recent_turns` field pattern with a serde default fn):
+- Add to `SessionsConfig` (`src/config/types.rs:62`, follow the
+  `load_recent_turns` field pattern at `:72` with a serde default fn):
 
   ```rust
   /// Delete session archive files whose mtime is older than this many
@@ -144,8 +167,8 @@ preserved in the session archive."`
   pub archive_retention_days: u32,
   ```
 
-- In the `session-cleanup` supervised task (`src/daemon/mod.rs`, ~line 680;
-  phase 01 added the event sweep in the same place), add
+- In the `session-cleanup` supervised task (`src/daemon/mod.rs`, ~line 684;
+  phase 01 added `sweep_event_segments` at ~line 706 in the same task), add
   `sweep_session_archives(retention_days)` in `session.rs`: delete
   `*.archive.jsonl` files under `sessions_dir()` with mtime older than the
   cutoff; skip archives whose session id is currently in the in-memory
