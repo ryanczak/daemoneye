@@ -1,7 +1,7 @@
 # Phase 04: Append-only session archive
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (parallel-safe with phases 01–03)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -237,6 +237,8 @@ None.
 
 ## Update Log
 
-(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+### Update — 2026-07-14 17:00 (started)
 
-<!-- entries appended below this line -->
+**Executor:** `executor`
+
+Started implementing append-only session archive (phase 04).
