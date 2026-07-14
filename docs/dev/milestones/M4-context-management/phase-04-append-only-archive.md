@@ -1,7 +1,7 @@
 # Phase 04: Append-only session archive
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress
+**Status:** review
 **Depends on:** none (parallel-safe with phases 01–03)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -242,3 +242,137 @@ None.
 **Executor:** `executor`
 
 Started implementing append-only session archive (phase 04).
+### Update — ts=1784050283769 (complete, server-authored)
+
+**Summary:** All tasks for phase 04 are complete. Here's the summary:
+
+**What was built:**
+1. **`archive_file()` and `append_archive_message()`** in `src/daemon/session.rs` — append-only archive at `var/log/sessions/<id>.archive.jsonl`, seeded from the working file on first write to capture pre-archive history.
+2. **Wired archive into `append_session_message()`** — all 7 production callers automatically archive. Archive-first ordering prevents duplicates during seed copy. Added the archive invariant comment at the `write_session_file` call site in `stream.rs`.
+3. **Honest elision placeholders** — updated `elide_old_tool_results` and `trim_history` to reference the session archive and turn number instead of the misleading `events.jsonl` claim.
+4. **Retention** — added `archive_retention_days` to `SessionsConfig`, implemented `sweep_session_archives()` in `src/daemon/utils/mod.rs`, and wired it into the session-cleanup supervisor task.
+
+**Verification:**
+- `cargo build` — clean
+- `cargo clippy --all-targets --all-features -- -D warnings` — clean
+- `cargo test` — all 879 tests pass (including 4 new archive tests + 1 sweep test)
+- `grep "See events.jsonl for full output" src/` — 0 matches (negative criterion met)
+- `grep "archive_file" src/` — only append/read/copy/delete-by-retention uses (no write+truncate)
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.96s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test cli::commands::stream::stream_seam_tests::recv_line_preserves_partial_bytes_across_a_dropped_read ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test memory::tests::memory_without_frontmatter_has_no_tags ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test memory::tests::write_agent_invisible_to_global ... ok
+
+test result: ok. 880 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test event_log_append_read ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.42s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+- `docs/dev/milestones/M4-context-management/phase-04-append-only-archive.md` — +5 -3
+- `src/config/types.rs` — +5 -0
+- `src/daemon/digest.rs` — +13 -3
+- `src/daemon/mod.rs` — +12 -0
+- `src/daemon/session.rs` — +196 -1
+- `src/daemon/stream.rs` — +3 -0
+- `src/daemon/utils/mod.rs` — +125 -0
+- `src/session_store_tests.rs` — +1 -0
+
+**Commit:** 6e1730808fdc74e855b312a3356377ca87f37f57
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
