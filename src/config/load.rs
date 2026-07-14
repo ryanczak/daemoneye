@@ -126,9 +126,10 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let cfg: Config =
+        let mut cfg: Config =
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         cfg.validate_pricing();
+        cfg.validate_compaction();
         Ok(cfg)
     }
 
@@ -150,6 +151,25 @@ impl Config {
                     entry.model
                 );
             }
+        }
+    }
+
+    /// Validate compaction thresholds. Warns if `target_pct >= compact_at_pct`
+    /// (hysteresis would be lost) and falls back to defaults for the pair so the
+    /// compactor always frees a positive margin.
+    pub fn validate_compaction(&mut self) {
+        if self.compaction.target_pct >= self.compaction.compact_at_pct {
+            let defaults = CompactionConfig::default();
+            log::warn!(
+                "[compaction] target_pct ({}) >= compact_at_pct ({}): hysteresis is lost. \
+                 Falling back to defaults target_pct={}, compact_at_pct={}.",
+                self.compaction.target_pct,
+                self.compaction.compact_at_pct,
+                defaults.target_pct,
+                defaults.compact_at_pct,
+            );
+            self.compaction.target_pct = defaults.target_pct;
+            self.compaction.compact_at_pct = defaults.compact_at_pct;
         }
     }
 

@@ -412,6 +412,36 @@ mod tests {
     }
 
     #[test]
+    fn compaction_config_defaults_and_validation() {
+        // A partial [compaction] section: only compact_at_pct set; the rest
+        // must default.
+        let toml_src = r#"
+            [models.default]
+            provider = "anthropic"
+            api_key  = "sk-ant-test"
+            model    = "claude-sonnet-4-6"
+
+            [compaction]
+            compact_at_pct = 70
+        "#;
+        let cfg: Config = toml::from_str(toml_src).unwrap();
+        assert_eq!(cfg.compaction.compact_at_pct, 70);
+        assert_eq!(cfg.compaction.elide_at_pct, 50);
+        assert_eq!(cfg.compaction.target_pct, 40);
+        assert_eq!(cfg.compaction.emergency_pct, 85);
+
+        // An invalid pair (target_pct >= compact_at_pct) must warn and fall back
+        // to defaults for the pair so hysteresis is preserved.
+        let mut bad = Config::default();
+        bad.compaction.target_pct = 80;
+        bad.compaction.compact_at_pct = 60;
+        bad.validate_compaction();
+        let d = CompactionConfig::default();
+        assert_eq!(bad.compaction.target_pct, d.target_pct);
+        assert_eq!(bad.compaction.compact_at_pct, d.compact_at_pct);
+    }
+
+    #[test]
     fn config_migration_old_toml_without_limits_section_matches_constants() {
         // A config.toml that predates [limits] must parse cleanly and produce
         // exactly the same numeric constants that were previously hardcoded.

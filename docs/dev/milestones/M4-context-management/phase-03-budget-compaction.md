@@ -1,7 +1,7 @@
 # Phase 03: Token-budget compaction with hysteresis
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** done
 **Depends on:** phase-02 (token estimation)
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -329,3 +329,78 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-14 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** Executor hard_fail after 352 turns (oscillation governor). Root
+cause from the session log: the executor **reverted its own `digest.rs` work**
+via `git checkout HEAD -- src/daemon/digest.rs` / `git stash` (despite an
+explicit runtime "do not revert your own work" guard), leaving the core
+deliverable (§2/§4/§5) absent while the dependent plumbing (§1 config, §3
+ask.rs, §6 prompt.rs) landed — a non-compiling tree. Not a spec gap (refined
+re-dispatch's premise fails) and the wall would recur on resume (the guard was
+already ignored), so takeover per escalate §2 criterion 2. Executor scorecard
+data point (hard_fail) is preserved; architect completes digest.rs + fixes 3
+plumbing deviations (validate_compaction fallback, hardcoded token_scale=1.0,
+dead `_history_pct`).
+
+### Update — 2026-07-14 (complete, architect takeover)
+
+**Summary:** Architect completed the phase after the executor hard_fail. The
+executor's plumbing (§1 `CompactionConfig`, §3 ask.rs decision rewrite, §6
+`[BUDGET]` rewording) was correct and kept. The architect implemented the
+missing `digest.rs` core (§2 `planned_tail_start_by_budget` + shared
+`raw_budget_cut`; §4 `synthesized_tail_start` + `repair_tail_head`; §5
+`elide_old_tool_results(aggressive)` with UTF-8-safe `soft_truncate`; 3-arg
+pure-cutter `compact_with_digest`) and fixed 3 plumbing deviations: (a)
+`validate_compaction` now takes `&mut self` and actually falls back to defaults
+for the pair (was warn-only); (b) ask.rs threads the session's calibrated
+`token_scale` (phase 02) into the budget instead of a hardcoded `1.0`; (c)
+removed the dead `_history_pct` in prompt.rs.
+
+**Acceptance criteria:** all met. Hysteresis (`budget_cut_respects_target`),
+anti-thrash (`no_rethrash_after_compaction`), orphan-safety across all paths
+(shared `assert_no_orphan_tool_results` helper reused by clean +
+`synthesized_boundary_repairs_orphans`), the negative case
+(`synthesized_boundary_keeps_paired_assistant_head`), `[compaction]` round-trip
++ fallback (`compaction_config_defaults_and_validation`), UTF-8-safe truncation
+(`elide_truncation_is_utf8_safe`), and no `NEAR LIMIT` wrap-up for interactive
+sessions (prompt.rs rewording).
+
+**Commands:**
+
+```
+cargo fmt --all            → clean
+cargo build                → Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings → clean
+cargo test                 → 875 passed; 0 failed (unit) + 27 passed (integration)
+```
+
+**End-to-end verification:** Started the real binary with a temp-HOME
+`etc/config.toml` carrying an invalid `[compaction]` pair
+(`target_pct=80`, `compact_at_pct=60`). The daemon logged:
+
+```
+WARN  [compaction] target_pct (80) >= compact_at_pct (60): hysteresis is lost. Falling back to defaults target_pct=40, compact_at_pct=60.
+```
+
+A valid partial config (`compact_at_pct = 70` only) parsed with the other
+fields defaulted and produced no compaction warning. Compaction firing on a
+live >60%-full session is unit-pinned (per the phase doc's E2E §2) and exercised
+in phase 08's E2E.
+
+**Files changed:**
+- `src/daemon/digest.rs` — budget planners, synthesized boundary, repair, graduated elision, pure-cutter; tests
+- `src/daemon/server/ask.rs` — decision block (executor) + token_scale threading (architect)
+- `src/config/types.rs` — `CompactionConfig` (executor)
+- `src/config/load.rs` — `validate_compaction` fallback (architect fix)
+- `src/daemon/prompt.rs` — `[BUDGET]` rewording (executor) + dead-binding removal (architect)
+
+### Review verdict — 2026-07-14
+
+- **Verdict:** escalated
+- **Bounces:** 1 hard_fail (executor git-reverted its own `digest.rs`); no bug docs — resolved by takeover
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (hard_fail) → completed by Claude (direct, session takeover)
+- **Scope deviations:** none vs spec; architect corrected 3 executor plumbing deviations during takeover (see completion entry)
+- **Calibration:** executor self-reverted uncommitted work via `git checkout`/`git stash` despite a runtime guard — 2nd occurrence of the Qwen "verify/git-thrash loop" pathology (phase-01 was the 1st). One more and it warrants a WORKFLOW fold (e.g. a runtime hard-block on `git checkout`/`stash`/`reset` of the executor's own uncommitted work).

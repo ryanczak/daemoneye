@@ -29,6 +29,8 @@ pub struct Config {
     #[serde(default)]
     pub limits: LimitsConfig,
     #[serde(default)]
+    pub compaction: CompactionConfig,
+    #[serde(default)]
     pub sessions: SessionsConfig,
     #[serde(default)]
     pub events: EventsConfig,
@@ -48,6 +50,7 @@ impl Default for Config {
             digest: DigestConfig::default(),
             approvals: ApprovalsConfig::default(),
             limits: LimitsConfig::default(),
+            compaction: CompactionConfig::default(),
             sessions: SessionsConfig::default(),
             events: EventsConfig::default(),
         }
@@ -125,6 +128,52 @@ pub struct DigestConfig {
     /// and are willing to pay for one additional small-model call per digest.
     #[serde(default)]
     pub narrative_enabled: bool,
+}
+
+/// Compaction budget and threshold configuration.
+///
+/// Controls token-pressure-driven compaction: when to elide, when to compact,
+/// and what the post-compaction target should be.  The `emergency_pct` field
+/// is parsed now but consumed in phase 08 (async emergency compaction).
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct CompactionConfig {
+    /// Elide oversized old tool_results at this % of the context window.
+    #[serde(default = "default_elide_at_pct")]
+    pub elide_at_pct: u32,
+    /// Build a digest and cut the working set at this %.
+    #[serde(default = "default_compact_at_pct")]
+    pub compact_at_pct: u32,
+    /// Post-compaction working-set target as % of the context window.
+    #[serde(default = "default_target_pct")]
+    pub target_pct: u32,
+    /// Synchronous emergency compaction threshold (consumed in phase 08;
+    /// parsed now so configs written today keep working).
+    #[serde(default = "default_emergency_pct")]
+    pub emergency_pct: u32,
+}
+
+fn default_elide_at_pct() -> u32 {
+    50
+}
+fn default_compact_at_pct() -> u32 {
+    60
+}
+fn default_target_pct() -> u32 {
+    40
+}
+fn default_emergency_pct() -> u32 {
+    85
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            elide_at_pct: default_elide_at_pct(),
+            compact_at_pct: default_compact_at_pct(),
+            target_pct: default_target_pct(),
+            emergency_pct: default_emergency_pct(),
+        }
+    }
 }
 
 /// Default approval state for each action class at the start of every chat session.

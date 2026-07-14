@@ -236,39 +236,45 @@ where
     // below and is also used later for the [BUDGET] line.
     // If last_prompt_tokens is 0 (post-restart blind spot), substitute the
     // calibrated estimate.
-    let effective_prompt_tokens: u32 = if let Some(ref id) = session_id {
+    // Also capture the session's calibrated token_scale (phase 02) so the
+    // budget-based cut below plans against real per-session calibration rather
+    // than a hardcoded 1.0. Defaults to 1.5 (the SessionEntry initial value)
+    // when there is no entry.
+    let (effective_prompt_tokens, session_token_scale): (u32, f64) = if let Some(ref id) =
+        session_id
+    {
         if let Ok(guard) = sessions.lock() {
             if let Some(entry) = guard.get(id.as_str()) {
                 let lpt = entry.last_prompt_tokens;
+                let scale = entry.token_scale;
                 if lpt > 0 {
-                    lpt
+                    (lpt, scale)
                 } else {
                     let est = crate::daemon::context::estimate::estimate_history_tokens(&messages);
-                    let scale = entry.token_scale;
-                    (est as f64 * scale).min(u32::MAX as f64) as u32
+                    ((est as f64 * scale).min(u32::MAX as f64) as u32, scale)
                 }
             } else {
-                0
+                (0, 1.5)
             }
         } else {
-            0
+            (0, 1.5)
         }
     } else {
-        0
+        (0, 1.5)
     };
 
     // Token-pressure-driven compaction.
     //
-    // ELISION_PCT (50%) — elide oversized tool_results in old messages; cheap,
+    // Compaction config drives thresholds:
+    //   elide_at_pct (50%) — elide oversized tool_results in old messages; cheap,
     //   preserves turn structure.
-    // DIGEST_PCT  (60%) — build a structured digest and drop old messages.
+    //   compact_at_pct (60%) — build a structured digest and drop old messages.
+    //   target_pct (40%) — post-compaction working-set target.
     // Safety net — if we hit MAX_HISTORY regardless of token info, still digest.
     //
     // All paths require `messages.len() >= DIGEST_THRESHOLD` so a token-heavy
     // first turn (huge system context + memory) doesn't trigger compaction
     // before any real history exists.
-    const ELISION_PCT: u32 = 50;
-    const DIGEST_PCT: u32 = 60;
     let context_window = config
         .resolve_model(session_active_model.as_deref())
         .context_window();
@@ -282,31 +288,50 @@ where
     let at_safety_cap = history_cap.is_some_and(|cap| messages.len() >= cap);
     use crate::daemon::digest::DIGEST_THRESHOLD;
     let above_floor = messages.len() >= DIGEST_THRESHOLD;
-    let should_digest = above_floor && (token_pct >= DIGEST_PCT || at_safety_cap);
-    let should_elide_only = !should_digest && above_floor && token_pct >= ELISION_PCT;
+    let should_digest =
+        above_floor && (token_pct >= config.compaction.compact_at_pct || at_safety_cap);
+    let should_elide_only =
+        !should_digest && above_floor && token_pct >= config.compaction.elide_at_pct;
 
     if should_digest {
         // Elide first — it's cheap and gives the digest pass smaller tool
-        // outputs to reason about.
-        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages);
+        // outputs to reason about. Use aggressive elision before digesting.
+        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, true);
         let started_at = session_id
             .as_ref()
             .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.started_at));
         if let Some(since) = started_at {
-            // Hybrid digest (task #4): when enabled in config, ask a cheap
-            // model to turn the about-to-be-dropped turns into a short
-            // narrative before we replace them with the structured tally.
-            // Uses the `digest` model entry if configured, otherwise falls
-            // back to `default`.  Best-effort — if the call fails or times
-            // out, the structured digest still fires.  Disabled by default
-            // because it costs one extra API call per compaction pass.
-            let narrative = if config.digest.narrative_enabled
-                && let Some(tail_start) = crate::daemon::digest::planned_tail_start(&messages)
-                && tail_start > 1
-            {
-                let slice = &messages[1..tail_start];
-                let model_entry = config.resolve_model(Some("digest"));
-                crate::daemon::digest::build_narrative_summary(slice, model_entry).await
+            // Budget-based compaction: compute the target budget and plan the
+            // cut against the session's calibrated token_scale (phase 02).
+            let budget = (context_window as u64 * config.compaction.target_pct as u64) / 100;
+
+            // Try clean boundary first, fall back to synthesized boundary.
+            let tail_start = crate::daemon::digest::planned_tail_start_by_budget(
+                &messages,
+                budget,
+                session_token_scale,
+            )
+            .or_else(|| {
+                crate::daemon::digest::synthesized_tail_start(
+                    &messages,
+                    budget,
+                    session_token_scale,
+                )
+            });
+
+            let narrative = if config.digest.narrative_enabled {
+                // For narrative, use the budget-based tail_start if available.
+                if let Some(ts) = tail_start {
+                    if ts > 1 {
+                        let slice = &messages[1..ts];
+                        let model_entry = config.resolve_model(Some("digest"));
+                        crate::daemon::digest::build_narrative_summary(slice, model_entry).await
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -317,15 +342,31 @@ where
                 messages.len(),
                 narrative.as_deref(),
             );
-            messages = crate::daemon::digest::compact_with_digest(messages, &digest);
-            log::info!(
-                "Compaction (digest): tokens {}% — elided {} chars, narrative={}, compacted {} → {} messages",
-                token_pct,
-                elided,
-                if has_narrative { "yes" } else { "no" },
-                pre_trim_len,
-                messages.len()
-            );
+
+            match tail_start {
+                Some(ts) => {
+                    messages = crate::daemon::digest::compact_with_digest(messages, &digest, ts);
+                    // Repair the tail head for any orphan tool_results.
+                    if 2 < messages.len() {
+                        let tail = &mut messages[2..];
+                        crate::daemon::digest::repair_tail_head(tail);
+                    }
+                    log::info!(
+                        "Compaction (digest): tokens {}% — elided {} chars, narrative={}, compacted {} → {} messages",
+                        token_pct,
+                        elided,
+                        if has_narrative { "yes" } else { "no" },
+                        pre_trim_len,
+                        messages.len()
+                    );
+                }
+                None => {
+                    log::info!(
+                        "Compaction: tokens {}% — no viable tail start found, keeping history as-is",
+                        token_pct
+                    );
+                }
+            }
         } else {
             messages = trim_history(messages, history_cap);
             log::info!(
@@ -337,7 +378,7 @@ where
             );
         }
     } else if should_elide_only {
-        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages);
+        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, false);
         if elided > 0 {
             log::info!(
                 "Compaction (elide only): tokens {}% — elided {} chars from old tool results",

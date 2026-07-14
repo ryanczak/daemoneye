@@ -17,6 +17,7 @@
 //! structured digest still fires.
 
 use crate::ai::Message;
+use crate::daemon::context::estimate::estimate_message_tokens;
 use crate::daemon::utils::log_event;
 use chrono::{DateTime, Utc};
 use std::path::Path;
@@ -39,6 +40,11 @@ const ELIDE_THRESHOLD_CHARS: usize = 3000;
 /// Number of most-recent messages left untouched during elision — the model
 /// still sees full tool output for the current investigation thread.
 const ELISION_TAIL_KEEP: usize = 8;
+
+/// Minimum number of messages the budget planner must keep in the tail, even
+/// when a single message exceeds the whole budget. Guarantees the model always
+/// retains recent context after a compaction pass.
+const MIN_TAIL_MESSAGES: usize = 4;
 
 // ── Event tallies ────────────────────────────────────────────────────
 
@@ -598,19 +604,110 @@ pub fn planned_tail_start(messages: &[Message]) -> Option<usize> {
     crate::daemon::session::next_clean_turn_start(messages, raw_tail_start)
 }
 
-/// Replace old messages with a digest, keeping the first message (system context)
-/// and a tail of recent messages.
+/// Plan the compaction cut so the *kept* tail fits within `budget_tokens`
+/// estimated tokens (post-scale). Walks backward from the end accumulating
+/// `estimate_message_tokens * token_scale`, stops before exceeding the budget,
+/// then advances to the next clean turn boundary so no orphan tool_result is
+/// created.
 ///
-/// Layout: `[first_message] [digest_as_assistant] [tail…]`
-///
-/// The tail starts at an even index (user turn) to preserve role alternation.
-pub fn compact_with_digest(messages: Vec<Message>, digest: &str) -> Vec<Message> {
-    let Some(tail_start) = planned_tail_start(&messages) else {
-        if messages.len() > TAIL_KEEP + 2 {
-            log::warn!("compact_with_digest: no clean turn boundary found — skipping compaction");
+/// Guarantees: keeps at least `MIN_TAIL_MESSAGES`, leaves the two head slots
+/// (`[first, digest]`), and drops at least one message. Returns `None` when the
+/// history is too short or the only clean boundary would keep ≤ 1 message
+/// (the caller then falls through to [`synthesized_tail_start`]).
+pub fn planned_tail_start_by_budget(
+    messages: &[Message],
+    budget_tokens: u64,
+    token_scale: f64,
+) -> Option<usize> {
+    let raw = raw_budget_cut(messages, budget_tokens, token_scale)?;
+    let boundary = crate::daemon::session::next_clean_turn_start(messages, raw)?;
+    // A boundary that keeps ≤ 1 message (or nothing) means we failed to drop a
+    // meaningful span at a clean point — let the synthesized path handle it.
+    if boundary >= messages.len().saturating_sub(1) {
+        return None;
+    }
+    Some(boundary)
+}
+
+/// Last-resort cut when no clean turn boundary exists in the budget region:
+/// return the raw budget index directly (which may orphan a leading
+/// tool_result). The caller repairs the tail head via [`repair_tail_head`]
+/// after the cut instead of skipping compaction.
+pub fn synthesized_tail_start(
+    messages: &[Message],
+    budget_tokens: u64,
+    token_scale: f64,
+) -> Option<usize> {
+    raw_budget_cut(messages, budget_tokens, token_scale)
+}
+
+/// Shared backward walk: the first-kept index whose tail fits `budget_tokens`,
+/// clamped so the tail keeps at least `MIN_TAIL_MESSAGES`, the two head slots
+/// are preserved (index ≥ 2), and at least one message is dropped.
+fn raw_budget_cut(messages: &[Message], budget_tokens: u64, token_scale: f64) -> Option<usize> {
+    let len = messages.len();
+    if len <= MIN_TAIL_MESSAGES + 2 {
+        return None;
+    }
+    let mut sum = 0u64;
+    let mut cut = len;
+    let mut i = len;
+    while i > 2 {
+        let idx = i - 1;
+        let est = (estimate_message_tokens(&messages[idx]) as f64 * token_scale) as u64;
+        let kept = len - idx;
+        // Include this message if it still fits the budget, or if we have not
+        // yet reached the minimum tail (the floor overrides the budget).
+        if sum.saturating_add(est) > budget_tokens && kept > MIN_TAIL_MESSAGES {
+            break;
         }
+        sum = sum.saturating_add(est);
+        cut = idx;
+        i = idx;
+    }
+    if cut < 2 || cut >= len.saturating_sub(1) {
+        return None;
+    }
+    Some(cut)
+}
+
+/// Repair the head of a compacted tail so no `tool_results` message is orphaned
+/// from its (now-dropped) producing `tool_calls`. Strips `tool_results` from
+/// each leading `user` message that carries them, substituting a placeholder
+/// when the message would otherwise be empty. Stops at the first message that
+/// is not a `user`-with-results — a leading `assistant` with `tool_calls` is
+/// kept intact because its results follow inside the tail (pairing preserved).
+pub fn repair_tail_head(tail: &mut [Message]) {
+    for msg in tail.iter_mut() {
+        let is_orphan_user =
+            msg.role == "user" && msg.tool_results.as_ref().is_some_and(|v| !v.is_empty());
+        if !is_orphan_user {
+            break;
+        }
+        msg.tool_results = None;
+        if msg.content.is_empty() {
+            msg.content = "[tool results from a compacted turn were elided]".to_string();
+        }
+    }
+}
+
+/// Replace old messages with a digest, keeping the first message (system context)
+/// and the tail from `tail_start` onward.
+///
+/// Layout: `[first_message] [digest_as_assistant] [messages[tail_start..]]`
+///
+/// `tail_start` is chosen by the caller via [`planned_tail_start_by_budget`]
+/// (clean boundary) or [`synthesized_tail_start`] (raw, repaired afterward), so
+/// the planner and the compactor can never disagree. Returns `messages`
+/// unchanged when `tail_start` is not a feasible cut (`< 2` or `>= len`).
+pub fn compact_with_digest(
+    messages: Vec<Message>,
+    digest: &str,
+    tail_start: usize,
+) -> Vec<Message> {
+    if tail_start < 2 || tail_start >= messages.len() {
         return messages;
-    };
+    }
 
     let first = messages[0].clone();
     let digest_msg = Message {
@@ -636,7 +733,14 @@ pub fn compact_with_digest(messages: Vec<Message>, digest: &str) -> Vec<Message>
 /// The most recent `ELISION_TAIL_KEEP` messages are left untouched so the
 /// active investigation thread keeps its full fidelity.  Returns the number
 /// of characters removed so callers can log the savings.
-pub fn elide_old_tool_results(messages: &mut [Message]) -> usize {
+///
+/// `aggressive` selects the replacement strategy for an oversized result:
+/// - `false` (the ≥ `elide_at_pct` path): soft head+tail truncation — keep the
+///   first 1000 and last 500 chars around a truncation marker, so the model
+///   still sees the shape of the output.
+/// - `true` (the ≥ `compact_at_pct` path, run before digesting): full
+///   placeholder, maximizing the freed budget.
+pub fn elide_old_tool_results(messages: &mut [Message], aggressive: bool) -> usize {
     if messages.len() <= ELISION_TAIL_KEEP + 1 {
         return 0;
     }
@@ -649,17 +753,66 @@ pub fn elide_old_tool_results(messages: &mut [Message]) -> usize {
         for r in results.iter_mut() {
             if r.content.len() > ELIDE_THRESHOLD_CHARS {
                 let orig_len = r.content.len();
-                let replacement = format!(
-                    "[elided: tool `{}` produced {} chars; outside live context window. \
-                     See events.jsonl for full output.]",
-                    r.tool_name, orig_len
-                );
+                let replacement = if aggressive {
+                    format!(
+                        "[elided: tool `{}` produced {} chars; outside live context window. \
+                         See events.jsonl for full output.]",
+                        r.tool_name, orig_len
+                    )
+                } else {
+                    soft_truncate(&r.content, 1000, 500)
+                };
                 removed += orig_len.saturating_sub(replacement.len());
                 r.content = replacement;
             }
         }
     }
     removed
+}
+
+/// Truncate `s` to its first `head` and last `tail` bytes joined by a marker,
+/// snapping both split points to UTF-8 char boundaries so multi-byte content
+/// never panics. Returns `s` unchanged when it is already within `head + tail`.
+fn soft_truncate(s: &str, head: usize, tail: usize) -> String {
+    let total = s.len();
+    if total <= head + tail {
+        return s.to_string();
+    }
+    let head_end = floor_char_boundary(s, head);
+    let tail_start = ceil_char_boundary(s, total - tail);
+    let removed = tail_start.saturating_sub(head_end);
+    format!(
+        "{}[… {} chars truncated …]{}",
+        &s[..head_end],
+        removed,
+        &s[tail_start..]
+    )
+}
+
+/// Largest char boundary `<= index` (stable-Rust equivalent of the unstable
+/// `str::floor_char_boundary`).
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char boundary `>= index` (stable-Rust equivalent of the unstable
+/// `str::ceil_char_boundary`).
+fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
 }
 
 #[cfg(test)]
@@ -706,7 +859,7 @@ mod tests {
             }
         }
 
-        let removed = elide_old_tool_results(&mut messages);
+        let removed = elide_old_tool_results(&mut messages, true);
 
         assert!(removed > 0, "expected some chars to be elided");
         // Tail is last 8 messages — their tool_results should still contain the big content.
@@ -746,7 +899,7 @@ mod tests {
             })
             .collect();
 
-        let removed = elide_old_tool_results(&mut messages);
+        let removed = elide_old_tool_results(&mut messages, true);
         assert_eq!(removed, 0);
         for msg in &messages {
             if let Some(results) = &msg.tool_results {
@@ -757,18 +910,86 @@ mod tests {
         }
     }
 
+    /// Shared checker: assert that every `tool_results` message in `msgs` has
+    /// its producing `tool_calls` present in a preceding message. Used to prove
+    /// no compaction path (clean boundary, synthesized boundary, repair) leaves
+    /// an orphan the provider backends would reject.
+    fn assert_no_orphan_tool_results(msgs: &[Message]) {
+        for (i, m) in msgs.iter().enumerate() {
+            if let Some(results) = &m.tool_results {
+                for r in results {
+                    let found = msgs[..i].iter().rev().any(|prev| {
+                        prev.tool_calls
+                            .as_ref()
+                            .is_some_and(|calls| calls.iter().any(|c| c.id == r.tool_call_id))
+                    });
+                    assert!(
+                        found,
+                        "orphan tool_result at idx {}: call_id={}",
+                        i, r.tool_call_id
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn compact_skips_orphan_tool_result_at_boundary() {
         use crate::ai::ToolResult;
         use crate::ai::types::ToolCall;
-        // Build 34 messages where the natural tail boundary would land on a
-        // user message carrying a tool_result — i.e. orphaning it from the
-        // assistant tool_call that produced it.
-        let mut messages: Vec<Message> = Vec::new();
-        messages.push(make_msg("user", "first")); // idx 0
-        for i in 1..34 {
+        // Repeating 3-unit history [assistant(call), user(result), user(clean)]
+        // so clean user boundaries exist at indices 0, 3, 6, … The budget
+        // planner must advance to a clean boundary and NOT orphan a result.
+        let mut messages: Vec<Message> = vec![make_msg("user", "first")]; // idx 0 (clean)
+        for j in 0..12 {
+            messages.push(Message {
+                role: "assistant".to_string(),
+                content: String::new(),
+                tool_calls: Some(vec![ToolCall {
+                    id: format!("tc-{}", j),
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                    thought_signature: None,
+                }]),
+                tool_results: None,
+                turn: None,
+            });
+            messages.push(Message {
+                role: "user".to_string(),
+                content: String::new(),
+                tool_calls: None,
+                tool_results: Some(vec![ToolResult {
+                    tool_call_id: format!("tc-{}", j),
+                    tool_name: "read_file".to_string(),
+                    content: "ok".to_string(),
+                }]),
+                turn: None,
+            });
+            messages.push(make_msg("user", &format!("clean-{}", j)));
+        }
+
+        let original_len = messages.len();
+        let ts =
+            planned_tail_start_by_budget(&messages, 100, 1.0).expect("clean boundary should exist");
+        // The clean planner must land on a user turn without tool_results.
+        assert_eq!(messages[ts].role, "user");
+        assert!(messages[ts].tool_results.is_none());
+        let result = compact_with_digest(messages, "digest", ts);
+        assert!(result.len() < original_len, "should have compacted");
+        assert_no_orphan_tool_results(&result);
+    }
+
+    #[test]
+    fn synthesized_boundary_repairs_orphans() {
+        use crate::ai::ToolResult;
+        use crate::ai::types::ToolCall;
+        // Pathological history: every user message carries a tool_result (paired
+        // with the preceding assistant's tool_call), so no clean boundary exists.
+        // The old code SKIPPED compaction; now the synthesized boundary + repair
+        // compacts it and strips whichever result is orphaned by the cut.
+        let mut messages: Vec<Message> = vec![make_msg("user", "first")];
+        for i in 1..30 {
             if i % 2 == 1 {
-                // assistant with tool_call
                 messages.push(Message {
                     role: "assistant".to_string(),
                     content: String::new(),
@@ -781,57 +1002,6 @@ mod tests {
                     tool_results: None,
                     turn: None,
                 });
-            } else {
-                // user with tool_result
-                messages.push(Message {
-                    role: "user".to_string(),
-                    content: String::new(),
-                    tool_calls: None,
-                    tool_results: Some(vec![ToolResult {
-                        tool_call_id: format!("tc-{}", i - 1),
-                        tool_name: "read_file".to_string(),
-                        content: "ok".to_string(),
-                    }]),
-                    turn: None,
-                });
-            }
-        }
-
-        let result = compact_with_digest(messages.clone(), "digest");
-        // Every tool_result in the result must have its corresponding tool_call
-        // present in the preceding assistant message.
-        for (i, m) in result.iter().enumerate() {
-            if let Some(results) = &m.tool_results {
-                for r in results {
-                    let mut found = false;
-                    for prev in result[..i].iter().rev() {
-                        if let Some(calls) = &prev.tool_calls
-                            && calls.iter().any(|c| c.id == r.tool_call_id)
-                        {
-                            found = true;
-                            break;
-                        }
-                    }
-                    assert!(
-                        found,
-                        "orphan tool_result at idx {}: call_id={}",
-                        i, r.tool_call_id
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn compact_skipped_when_no_clean_boundary() {
-        use crate::ai::ToolResult;
-        // Construct a pathological history: every user message carries a
-        // tool_result. There is no clean boundary past raw_tail_start so
-        // compaction should return the history unchanged.
-        let mut messages: Vec<Message> = vec![make_msg("user", "first")];
-        for i in 1..30 {
-            if i % 2 == 1 {
-                messages.push(make_msg("assistant", "tool call turn"));
             } else {
                 messages.push(Message {
                     role: "user".to_string(),
@@ -847,8 +1017,67 @@ mod tests {
             }
         }
         let original_len = messages.len();
-        let result = compact_with_digest(messages, "digest");
-        assert_eq!(result.len(), original_len);
+
+        // No clean boundary → planner returns None; synthesized returns a cut.
+        assert!(planned_tail_start_by_budget(&messages, 100, 1.0).is_none());
+        let ts =
+            synthesized_tail_start(&messages, 100, 1.0).expect("synthesized boundary should exist");
+        let mut result = compact_with_digest(messages, "digest", ts);
+        assert!(result.len() < original_len, "should have compacted");
+
+        // Repair the tail head (result[2..]) — any leading orphan user result
+        // is stripped and given the placeholder.
+        crate::daemon::digest::repair_tail_head(&mut result[2..]);
+        assert_no_orphan_tool_results(&result);
+        // The first tail message, if it was an orphan user, now carries the
+        // placeholder content and no tool_results.
+        let head = &result[2];
+        if head.role == "user" {
+            assert!(head.tool_results.is_none());
+            assert_eq!(
+                head.content,
+                "[tool results from a compacted turn were elided]"
+            );
+        }
+    }
+
+    #[test]
+    fn synthesized_boundary_keeps_paired_assistant_head() {
+        use crate::ai::ToolResult;
+        use crate::ai::types::ToolCall;
+        // Negative case: a tail whose head is an assistant with tool_calls whose
+        // results follow INSIDE the tail must NOT be stripped — pairing intact.
+        let mut tail: Vec<Message> = vec![
+            Message {
+                role: "assistant".to_string(),
+                content: "calling".to_string(),
+                tool_calls: Some(vec![ToolCall {
+                    id: "tc-keep".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                    thought_signature: None,
+                }]),
+                tool_results: None,
+                turn: None,
+            },
+            Message {
+                role: "user".to_string(),
+                content: String::new(),
+                tool_calls: None,
+                tool_results: Some(vec![ToolResult {
+                    tool_call_id: "tc-keep".to_string(),
+                    tool_name: "read_file".to_string(),
+                    content: "ok".to_string(),
+                }]),
+                turn: None,
+            },
+        ];
+        crate::daemon::digest::repair_tail_head(&mut tail);
+        // Assistant head untouched: still carries its tool_calls.
+        assert!(tail[0].tool_calls.is_some());
+        // Its paired result (inside the tail) is untouched.
+        assert!(tail[1].tool_results.is_some());
+        assert_no_orphan_tool_results(&tail);
     }
 
     #[test]
@@ -858,7 +1087,7 @@ mod tests {
             make_msg("user", "q"),
             msg_with_tool_result("read_file", &big),
         ];
-        let removed = elide_old_tool_results(&mut messages);
+        let removed = elide_old_tool_results(&mut messages, true);
         assert_eq!(removed, 0);
         assert_eq!(
             messages[1].tool_results.as_ref().unwrap()[0].content.len(),
@@ -919,7 +1148,8 @@ mod tests {
             })
             .collect();
 
-        let result = compact_with_digest(messages.clone(), "digest text");
+        // Cut at index 16 (a user turn) — reproduces the legacy TAIL_KEEP cut.
+        let result = compact_with_digest(messages.clone(), "digest text", 16);
 
         // First message preserved.
         assert_eq!(result[0].content, "msg-0");
@@ -928,19 +1158,28 @@ mod tests {
         assert_eq!(result[1].role, "assistant");
         // Tail starts on a user message (even index in original).
         assert_eq!(result[2].role, "user");
-        // Total should be 2 + TAIL_KEEP.
-        assert_eq!(result.len(), 2 + TAIL_KEEP);
+        assert_eq!(result[2].content, "msg-16");
+        // Total should be 2 (head + digest) + the kept tail (32 - 16).
+        assert_eq!(result.len(), 2 + (32 - 16));
         // Last message is the original last.
         assert_eq!(result.last().unwrap().content, "msg-31");
     }
 
     #[test]
-    fn compact_noop_when_too_few_messages() {
+    fn compact_noop_when_tail_start_infeasible() {
         let messages: Vec<Message> = (0..10)
             .map(|i| make_msg("user", &format!("msg-{}", i)))
             .collect();
-        let result = compact_with_digest(messages.clone(), "digest");
-        assert_eq!(result.len(), messages.len());
+        // tail_start < 2 leaves no room for [first, digest] — unchanged.
+        assert_eq!(
+            compact_with_digest(messages.clone(), "digest", 0).len(),
+            messages.len()
+        );
+        // tail_start >= len is out of range — unchanged.
+        assert_eq!(
+            compact_with_digest(messages.clone(), "digest", 99).len(),
+            messages.len()
+        );
     }
 
     #[test]
@@ -953,8 +1192,13 @@ mod tests {
             })
             .collect();
 
-        let result = compact_with_digest(messages, "digest");
-        // Index 2 in result should be the first tail message — must be a user turn.
+        // The budget planner must land the cut on a clean user turn.
+        let budget = 200; // small enough to force a real cut
+        let ts =
+            planned_tail_start_by_budget(&messages, budget, 1.0).expect("should plan a clean cut");
+        assert_eq!(messages[ts].role, "user", "planner must cut on a user turn");
+        let result = compact_with_digest(messages, "digest", ts);
+        // Index 2 in result is the first tail message — must be a user turn.
         assert_eq!(result[2].role, "user");
     }
 
@@ -1089,11 +1333,122 @@ mod tests {
             .collect();
 
         let tail_start = planned_tail_start(&messages).expect("should plan a cut");
-        let result = compact_with_digest(messages.clone(), "digest");
+        let result = compact_with_digest(messages.clone(), "digest", tail_start);
 
         // Tail length after compact should match: messages.len() - tail_start.
         assert_eq!(result.len(), 2 + (messages.len() - tail_start));
         // And the first tail message should be the same content.
         assert_eq!(result[2].content, messages[tail_start].content);
+    }
+
+    // ── Budget-cut + hysteresis (phase 03) ───────────────────────────────
+
+    fn uniform_history(n: usize, content_chars: usize) -> Vec<Message> {
+        (0..n)
+            .map(|i| {
+                let role = if i % 2 == 0 { "user" } else { "assistant" };
+                make_msg(role, &"x".repeat(content_chars))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn budget_cut_respects_target() {
+        // context_window 10_000, target 40% → budget 4000 tokens, scale 1.0.
+        // ~258-token messages (1000 chars) at ~65% pressure.
+        let messages = uniform_history(30, 1000);
+        let budget: u64 = 10_000 * 40 / 100;
+        let ts = planned_tail_start_by_budget(&messages, budget, 1.0).expect("should plan a cut");
+        let kept_tokens =
+            crate::daemon::context::estimate::estimate_history_tokens(&messages[ts..]);
+        let max_msg = estimate_message_tokens(&messages[ts]);
+        assert!(
+            kept_tokens <= budget + max_msg,
+            "kept tail {kept_tokens} exceeds budget {budget} + one message {max_msg}"
+        );
+    }
+
+    #[test]
+    fn budget_cut_keeps_min_tail() {
+        // Enormous messages, tiny budget: the floor must still keep MIN_TAIL.
+        let messages = uniform_history(10, 4000);
+        let ts = planned_tail_start_by_budget(&messages, 1, 1.0).expect("floor guarantees a cut");
+        assert!(
+            messages.len() - ts >= MIN_TAIL_MESSAGES,
+            "kept {} messages, expected >= {}",
+            messages.len() - ts,
+            MIN_TAIL_MESSAGES
+        );
+    }
+
+    #[test]
+    fn no_rethrash_after_compaction() {
+        // After compacting to target, a second decision with the same window
+        // must not want to compact again (token_pct below compact threshold).
+        let context_window: u64 = 10_000;
+        let messages = uniform_history(40, 1000);
+        let budget = context_window * 40 / 100;
+        let ts = planned_tail_start_by_budget(&messages, budget, 1.0).expect("should plan a cut");
+        let result = compact_with_digest(messages, "short digest", ts);
+        let result_tokens = crate::daemon::context::estimate::estimate_history_tokens(&result);
+        let token_pct = (result_tokens as f64 / context_window as f64 * 100.0) as u32;
+        assert!(
+            token_pct < 60,
+            "compacted working set at {token_pct}% still above the 60% compact threshold"
+        );
+    }
+
+    #[test]
+    fn elide_soft_truncates_head_tail() {
+        let big = format!(
+            "{}{}{}",
+            "A".repeat(1000),
+            "B".repeat(2000),
+            "C".repeat(500)
+        );
+        let mut messages = vec![msg_with_tool_result("read_file", &big)];
+        for _ in 0..11 {
+            messages.push(make_msg("assistant", "ack"));
+        }
+        let removed = elide_old_tool_results(&mut messages, false);
+        assert!(removed > 0);
+        let elided = &messages[0].tool_results.as_ref().unwrap()[0].content;
+        assert!(elided.starts_with(&"A".repeat(1000)), "head preserved");
+        assert!(elided.contains("chars truncated"), "marker present");
+        assert!(elided.ends_with(&"C".repeat(500)), "tail preserved");
+        assert!(elided.len() < big.len(), "content shrank");
+    }
+
+    #[test]
+    fn elide_aggressive_full_placeholder() {
+        let big = "Z".repeat(ELIDE_THRESHOLD_CHARS + 100);
+        let mut messages = vec![msg_with_tool_result("read_file", &big)];
+        for _ in 0..11 {
+            messages.push(make_msg("assistant", "ack"));
+        }
+        elide_old_tool_results(&mut messages, true);
+        let elided = &messages[0].tool_results.as_ref().unwrap()[0].content;
+        assert!(
+            elided.starts_with("[elided:"),
+            "aggressive uses full placeholder"
+        );
+    }
+
+    #[test]
+    fn elide_truncation_is_utf8_safe() {
+        // Multi-byte content: 2000 × 'é' (2 bytes each) = 4000 bytes > threshold.
+        // A byte-index slice at 1000/last-500 would land mid-char and panic if
+        // not snapped to a char boundary.
+        let big = "é".repeat(2000);
+        let mut messages = vec![msg_with_tool_result("read_file", &big)];
+        for _ in 0..11 {
+            messages.push(make_msg("assistant", "ack"));
+        }
+        // Must not panic.
+        let removed = elide_old_tool_results(&mut messages, false);
+        assert!(removed > 0);
+        // Result is a valid String by construction; assert the marker landed.
+        let elided = &messages[0].tool_results.as_ref().unwrap()[0].content;
+        assert!(elided.contains("chars truncated"));
     }
 }

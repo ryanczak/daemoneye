@@ -162,9 +162,6 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
     };
     let history_count = ctx.history_count + 1; // + the user turn about to be pushed
     let history_cap_budget = crate::config::LimitsConfig::cap_usize(ctx.config.limits.max_history);
-    let history_pct = history_cap_budget
-        .map(|cap| (history_count as f64 / cap as f64 * 100.0) as u32)
-        .unwrap_or(0);
 
     // Ghost sessions: resolve the effective turn cap.
     let ghost_turn_limit: Option<usize> = ctx.ghost_turn_limit;
@@ -190,13 +187,24 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         ));
     }
 
-    let max_pct = turn_pct.max(history_pct).max(token_pct);
-    let warning = if max_pct >= 75 {
-        " — NEAR LIMIT. Summarize progress, persist critical state to memory, and wrap up."
-    } else if max_pct >= 50 {
-        " — approaching budget; prefer concise responses and avoid redundant tool calls."
+    let warning = if let Some(_limit) = ctx.ghost_turn_limit {
+        // Ghost sessions: turn budget is real — keep the existing wrap-up wording.
+        let ghost_max_pct = turn_pct.max(token_pct);
+        if ghost_max_pct >= 75 {
+            " — NEAR LIMIT. Summarize progress, persist critical state to memory, and wrap up."
+        } else if ghost_max_pct >= 50 {
+            " — approaching budget; prefer concise responses and avoid redundant tool calls."
+        } else {
+            ""
+        }
     } else {
-        ""
+        // Interactive sessions: token pressure is the compactor's business, not
+        // the model's.  Note that compaction will handle token pressure automatically.
+        if token_pct >= 50 {
+            " — context compaction will run automatically"
+        } else {
+            ""
+        }
     };
     let budget_note = format!("[BUDGET] {}{}\n\n", parts.join(" · "), warning);
     let fg_target_line = ctx.default_target_pane

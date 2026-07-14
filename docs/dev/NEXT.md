@@ -1,11 +1,19 @@
 # NEXT
 
-**Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-03-budget-compaction.md`](milestones/M4-context-management/phase-03-budget-compaction.md)
-— **todo**, re-validated 2026-07-14 (anchors drifted ~15–25 lines after
-phases 01/02; symbols intact, `ask.rs` decision block now ~270–286, phase-02's
-`effective_prompt_tokens` already wired into `token_pct`). Activated by a
-`/rexymcp:auto` run over M4.
+**Active phase:** none pending — `/rexymcp:auto` run in progress over M4;
+phase-04-append-only-archive is next (draft/dispatch handled by the loop).
+
+**M4 phase-03 — budget-compaction is `done`** (2026-07-14, escalated → architect
+takeover). Executor hard_failed after 352 turns: it wrote the `digest.rs` core
+then **reverted it via `git checkout`/`git stash`** (despite a runtime guard),
+leaving a non-compiling tree with only the plumbing. Architect implemented
+`digest.rs` (§2 budget planner + `raw_budget_cut`, §4 `synthesized_tail_start` +
+`repair_tail_head`, §5 graduated UTF-8-safe elision, 3-arg pure-cutter
+`compact_with_digest`), fixed 3 executor plumbing deviations (`validate_compaction`
+fallback, hardcoded `token_scale=1.0` → real per-session scale, dead
+`_history_pct`), and verified E2E (real binary emits the `[compaction]` fallback
+warning). Gates green (875 unit + 27 integration). 2nd occurrence of the Qwen
+git-thrash pathology (phase-01 was 1st) — one more warrants a WORKFLOW fold.
 
 **M4 phase-02 — token-estimation is `done`** (2026-07-14, approved_after_1).
 Delivered `src/daemon/context/estimate.rs` (deterministic per-message estimate
