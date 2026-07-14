@@ -1,9 +1,19 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-05a-epoch-persistence.md`](milestones/M4-context-management/phase-05a-epoch-persistence.md)
-— **todo**, ready for `/rexymcp:dispatch phase-05a-epoch-persistence` (or resume
-`/rexymcp:auto`).
+[`docs/dev/milestones/M4-context-management/phase-05b-epoch-head.md`](milestones/M4-context-management/phase-05b-epoch-head.md)
+— **todo**, ready for `/rexymcp:dispatch phase-05b-epoch-head` (or resume
+`/rexymcp:auto`). **Re-verify 05b's Current-state anchors before dispatch** — it
+quotes the phase-03 takeover `should_digest` block and the digest.rs symbols it
+deletes; 05a did not move them (additive), but confirm.
+
+**M4 phase-05a — epoch-persistence is `done`** (2026-07-14, escalated → minimal
+architect takeover). Executor authored `src/daemon/context/epochs.rs` (+514,
+all functions + tests, correct) but verify-looped (`IdenticalToolCallRepetition`,
+6 bash calls) on a 1-line test-fixture bug (event ts 15:00 vs window
+`[00:00,01:00)`). Notably it did **not** git-revert this time — the split's
+additive 05a left the code intact for a trivial takeover (fixed the window; gates
+green, 884 unit + 27 integration). digest.rs untouched — additive contract held.
 
 **Phase-05 was re-split (2026-07-14, PE decision) into 05a + 05b.** At ~500
 lines it sat at the one-session limit and it deletes/replaces the phase-03

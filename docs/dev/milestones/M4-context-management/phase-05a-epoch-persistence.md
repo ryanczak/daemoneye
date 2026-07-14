@@ -1,7 +1,7 @@
 # Phase 05a: Epoch records — types, persistence, per-span tally
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** done
 **Depends on:** phase-01 (segment reader), phase-03 (budget cut), phase-04 (archive)
 **Estimated diff:** ~280 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -223,3 +223,58 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-14 (escalation)
+
+**Chosen lever:** session takeover (minimal)
+**Rationale:** Executor hard_failed via the verify-loop pathology
+(`IdenticalToolCallRepetition` on `bash` — 6 identical grep/test calls) but had
+already written complete, correct code (all 4 functions + 4 tests; builds clean;
+3/4 tests passing). The sole failure was a 1-line **test-fixture** bug in
+`tally_lists_capped_counts_exact`: it stamped events at ts 15:00:00 but set the
+window to `[00:00, 01:00)`, so no events matched (`commands_fail == 0`, not 15).
+No spec refinement applies (spec was fine; impl was correct), and a resume would
+spend a full executor run — with re-loop risk on this phase's tests — on a fix
+already fully diagnosed. Architect fixed the window (`until = since + 24h`) and
+completed.
+
+### Update — 2026-07-14 (complete, architect takeover)
+
+**Summary:** The local executor authored `src/daemon/context/epochs.rs` (+514):
+`EpochTally`/`EpochRecord`, `epochs_file`/`read_epochs`/`append_epoch` (append-
+only), `tally_span` (windowed, capped lists + exact counts), `scan_artifacts_span`
+(mtime `[since, until)` → flat tags) + `scan_dir_in_range` helper, and 4 tests —
+all matching the spec. Architect's only change: corrected the time window in the
+`tally_lists_capped_counts_exact` test fixture. Purely additive — `digest.rs`
+(`tally_events`/`scan_artifacts`/`build_session_digest`/`compact_with_digest`)
+is unchanged, confirming 05a's additive contract.
+
+**Acceptance criteria:** all met — serde round-trip, append-only (grep
+`epochs_file` shows no truncating writer), disjoint-span scoped tallies, cap-10
+with exact `commands_fail == 15`, `scan_artifacts_span` excludes mtime `>= until`,
+and the four digest.rs symbols unchanged.
+
+**Commands:**
+
+```
+cargo fmt --all            → clean
+cargo build                → Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings → clean
+cargo test                 → 884 passed; 0 failed (unit) + 27 passed (integration)
+```
+
+**End-to-end verification:** N/A per the phase doc — 05a ships no runtime-loadable
+artifact on its own (the epoch chain is written only from the compaction path,
+wired in 05b); the persistence functions are exercised by the hermetic FS tests.
+
+**Files changed:**
+- `src/daemon/context/epochs.rs` — new module (executor) + 1-line test-window fix (architect)
+- `src/daemon/context/mod.rs` — `pub mod epochs;` (executor)
+
+### Review verdict — 2026-07-14
+
+- **Verdict:** escalated
+- **Bounces:** 1 hard_fail (executor verify-loop on a self-authored test bug); no bug docs — resolved by minimal takeover
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (wrote the module) → Claude (direct) fixed the test fixture and completed
+- **Scope deviations:** none — additive contract honored; digest.rs untouched
+- **Calibration:** verify-loop pathology recurs (documented from earlier milestones; the identical-call governor caught it at 6 calls). Distinct from the git-thrash pattern. The split (05a additive) worked as intended: no git-revert this time, and the executor's code survived intact for a trivial takeover.
