@@ -1,7 +1,7 @@
 # Phase 02: Per-message token estimation with per-session calibration
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** none (parallel-safe with phase-01)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -471,4 +471,22 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** cb92cd39c5be074cb1b809a58e9d8ef9f43f1077
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-14
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-02-1 — major; `masked_diagnostic`, now fixed & verified)
+- **Executor:** AEON-7/Qwen3.6-27B-AEON
+- **Scope deviations:** none. The re-dispatch fix (`cb92cd3`) collapsed the
+  discarded tuple into a single `effective_prompt_tokens` consumed by both
+  `token_pct` (ask.rs:276) and `PromptCtx.last_prompt_tokens` (ask.rs:524);
+  the `_`-suppressed binding is gone. Independent gate re-run green
+  (fmt/clippy/867 unit + 27 integration). No new `unwrap` on the lock
+  (graceful `if let Ok`). Acceptance criterion 3 met via the pure helper as
+  the spec directs; the additional ask.rs-branch test suggested in bug-02-1's
+  "how to fix" was not required by the phase's own acceptance criteria, so its
+  absence is not bounce-worthy.
+- **Calibration:** none folded — the `masked_diagnostic` (compute-then-discard
+  behind a `_` that silences the unused lint) is now 1 occurrence; held for
+  recurrence, not yet a trend.
 

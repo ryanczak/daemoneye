@@ -1,18 +1,19 @@
 # NEXT
 
-**Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-02-token-estimation.md`](milestones/M4-context-management/phase-02-token-estimation.md)
-— **todo**, re-validated 2026-07-13, ready for
-`/rexymcp:dispatch phase-02-token-estimation`.
+**Active phase:** none pending — run `/rexymcp:architect next` to re-validate
+and activate **phase-03-budget-compaction** (the M4 phase order continues below).
 
-**Phase-02 re-validation (2026-07-13).** Current-state anchors re-checked
-against the working tree after phase-01 landed — all hold: `Message`
-`wire.rs:20`, `SessionEntry` `session.rs:21` / `last_prompt_tokens` `:34`,
-`stream.rs` calibration sites `663`/`793`, `server/ask.rs` compaction read
-`236` + `token_pct` `256` + `PromptCtx` pass-through `505` + `or_insert_with`
-`106`; no `daemon/context/` module yet. One fix: the Spec §2 construction-site
-list gained a 7th site (`executor/mod.rs:1075`, a ghost test constructor) and a
-note that `SessionEntry` has no serde derive (no `#[serde(default)]` shortcut).
+**M4 phase-02 — token-estimation is `done`** (2026-07-14, approved_after_1).
+Delivered `src/daemon/context/estimate.rs` (deterministic per-message estimate
+`chars/4 + 8 + 12·items`, `estimate_history_tokens`, EMA `update_token_scale`
+clamped to [0.5, 4.0]), `token_scale: f64` on `SessionEntry` (all 7 construction
+sites), calibration at both `stream.rs` write-back sites, and the post-restart
+blind-spot fix in `server/ask.rs`. Bounced once (bug-02-1, major
+`masked_diagnostic`): the first run computed `effective_prompt_tokens` but bound
+it to a `_`-suppressed variable and never consumed it, so the blind-spot fix was
+a no-op that passed clippy. Fix `cb92cd3` wired it into `token_pct` +
+`PromptCtx`; bug `verified`, gates green (867 unit + 27 integration). Consumer is
+phase 03.
 
 **M4 phase-01 — events-rotation is `done`** (2026-07-09, escalated → session
 takeover after 1 bounce; committed `3d74880`). Executor implemented the phase +
