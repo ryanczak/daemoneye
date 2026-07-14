@@ -755,9 +755,13 @@ pub fn elide_old_tool_results(messages: &mut [Message], aggressive: bool) -> usi
                 let orig_len = r.content.len();
                 let replacement = if aggressive {
                     format!(
-                        "[elided: tool `{}` produced {} chars; outside live context window. \
-                         See events.jsonl for full output.]",
-                        r.tool_name, orig_len
+                        "[elided: tool `{}` produced {} chars at turn {}; archived — \
+                         full output retrievable from the session archive.]",
+                        r.tool_name,
+                        orig_len,
+                        msg.turn
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "unknown".to_string())
                     )
                 } else {
                     soft_truncate(&r.content, 1000, 500)
@@ -1431,6 +1435,12 @@ mod tests {
         assert!(
             elided.starts_with("[elided:"),
             "aggressive uses full placeholder"
+        );
+        assert!(elided.contains("archived"), "placeholder mentions archive");
+        assert!(elided.contains("turn"), "placeholder mentions turn");
+        assert!(
+            !elided.contains("events.jsonl"),
+            "placeholder should no longer reference events.jsonl"
         );
     }
 

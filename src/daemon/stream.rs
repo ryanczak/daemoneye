@@ -672,6 +672,9 @@ where
                                 }
                             }
                             if needs_compaction {
+                                // Archive invariant: every message in the pre-compaction vec
+                                // was appended to the archive when first persisted, so the
+                                // rewrite below cannot lose history (see docs/design/context-management.md §3.1).
                                 write_session_file(id, &messages);
                             } else {
                                 for msg in &messages[post_trim_len..] {

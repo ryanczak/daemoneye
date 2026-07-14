@@ -71,6 +71,10 @@ pub struct SessionsConfig {
     /// Set to 0 to load the complete history (may exceed context window).  Default: 10.
     #[serde(default = "default_load_recent_turns")]
     pub load_recent_turns: usize,
+    /// Delete session archive files whose mtime is older than this many
+    /// days. 0 = keep forever (default).
+    #[serde(default)]
+    pub archive_retention_days: u32,
 }
 
 fn default_auto_name_turn_threshold() -> usize {
@@ -108,6 +112,7 @@ impl Default for SessionsConfig {
             auto_name_turn_threshold: default_auto_name_turn_threshold(),
             auto_name_enabled: true,
             load_recent_turns: default_load_recent_turns(),
+            archive_retention_days: 0,
         }
     }
 }

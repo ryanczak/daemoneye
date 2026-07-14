@@ -704,6 +704,18 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     if sweep_counter.is_multiple_of(60) {
                         let retention_days = startup_config.events.retention_days;
                         crate::daemon::utils::sweep_event_segments(retention_days);
+
+                        let archive_retention = startup_config.sessions.archive_retention_days;
+                        let active_ids: std::collections::HashSet<String> = sessions_cleanup
+                            .lock()
+                            .unwrap_or_log()
+                            .keys()
+                            .cloned()
+                            .collect();
+                        crate::daemon::utils::sweep_session_archives(
+                            archive_retention,
+                            &active_ids,
+                        );
                     }
                 }
             }

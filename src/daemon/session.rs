@@ -153,6 +153,13 @@ pub fn session_file(id: &str) -> std::path::PathBuf {
     crate::config::sessions_dir().join(format!("{}.jsonl", id))
 }
 
+/// Path to the append-only archive of every message this session has
+/// exchanged. NEVER rewritten or truncated by any code path — retention
+/// (config `[sessions] archive_retention_days`) deletes whole files only.
+pub fn archive_file(id: &str) -> std::path::PathBuf {
+    crate::config::sessions_dir().join(format!("{}.archive.jsonl", id))
+}
+
 /// Rewrite the entire session file with the current message history.
 /// Used after a `trim_history` compaction, when old entries have been dropped.
 /// Writes atomically: tmp file → fsync → rename, so a crash mid-write leaves
@@ -179,10 +186,48 @@ pub fn write_session_file(id: &str, messages: &[Message]) {
     }
 }
 
+/// Append one message to the session archive, seeding the archive from the
+/// working file on first use (so pre-archive history is captured).
+///
+/// Synthetic messages created *by* compaction (the digest message) are part
+/// of the working set but not the archive — that is correct (the archive holds
+/// what actually happened; digests are derived).
+pub fn append_archive_message(id: &str, msg: &crate::ai::Message) {
+    let archive_path = archive_file(id);
+    let working_path = session_file(id);
+
+    // Seed: if the archive doesn't exist but the working file does, copy it.
+    if !archive_path.exists() && working_path.exists() {
+        let _ = std::fs::copy(&working_path, &archive_path);
+    }
+
+    let line = serde_json::to_string(msg).unwrap_or_default();
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&archive_path)
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(line.as_bytes())?;
+            f.write_all(b"\n")
+        }) {
+        Ok(()) => {}
+        Err(e) => {
+            log::warn!("session archive append failed for session {}: {}", id, e);
+        }
+    }
+}
+
 /// Append a single message to the session file without rewriting earlier entries.
 /// This is the hot path — called once per new message during normal turns.
 /// Failures are logged at WARN and non-fatal.
 pub fn append_session_message(id: &str, msg: &Message) {
+    // Archive FIRST: if the archive doesn't exist yet, it seeds from the
+    // current working file (which does NOT yet contain `msg`). After seeding,
+    // `msg` is appended once. If we appended to the working file first, the
+    // seed copy would already contain `msg`, causing a duplicate.
+    append_archive_message(id, msg);
+
     use std::fs::OpenOptions;
     use std::io::Write;
     let path = session_file(id);
@@ -255,7 +300,7 @@ pub fn trim_history(messages: Vec<Message>, max_history: Option<usize>) -> Vec<M
         role: "assistant".to_string(),
         content: format!(
             "[{} earlier messages were trimmed to fit the context window. \
-             The conversation continues from a later point in the session.]",
+             Earlier messages are preserved in the session archive.]",
             dropped
         ),
         tool_calls: None,
@@ -676,5 +721,155 @@ mod tests {
         entry.cost_usd += 0.05;
         *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.05;
         assert!(entry.has_untracked_cost);
+    }
+
+    #[test]
+    fn archive_appends_survive_compaction_rewrite() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "archive-sim";
+
+        // Append 30 messages — each goes to both working file and archive
+        for i in 0..30 {
+            let msg = make_msg("user", &format!("msg {}", i));
+            append_session_message(id, &msg);
+        }
+
+        // Verify archive has 30 lines
+        let archive_path = archive_file(id);
+        let archive_content = std::fs::read_to_string(&archive_path).unwrap();
+        let archive_lines: Vec<&str> = archive_content.lines().collect();
+        assert_eq!(
+            archive_lines.len(),
+            30,
+            "archive should have exactly 30 messages"
+        );
+
+        // Simulate compaction: rewrite working file to only 5 messages
+        let msgs: Vec<Message> = (0..5)
+            .map(|i| make_msg("user", &format!("msg {}", i)))
+            .collect();
+        write_session_file(id, &msgs);
+
+        // Archive should still have 30 messages (not 5, not 35)
+        let archive_content = std::fs::read_to_string(&archive_path).unwrap();
+        let archive_lines: Vec<&str> = archive_content.lines().collect();
+        assert_eq!(
+            archive_lines.len(),
+            30,
+            "archive should still have 30 messages after working file compaction"
+        );
+
+        // First and last should match the original 30 messages
+        assert!(
+            archive_lines[0].contains("msg 0"),
+            "first archive line should be msg 0"
+        );
+        assert!(
+            archive_lines[29].contains("msg 29"),
+            "last archive line should be msg 29"
+        );
+
+        // No duplicates: archive length == messages appended, not 2x
+        assert_eq!(archive_lines.len(), 30);
+    }
+
+    #[test]
+    fn archive_seeds_from_existing_working_file() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "archive-seed";
+
+        // Pre-populate working file with 10 messages (no archive yet)
+        let working_path = session_file(id);
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&working_path)
+            .unwrap();
+        use std::io::Write;
+        for i in 0..10 {
+            let msg = make_msg("user", &format!("seed {}", i));
+            let line = serde_json::to_string(&msg).unwrap();
+            writeln!(file, "{}", line).unwrap();
+        }
+        drop(file);
+
+        // Verify no archive exists yet
+        assert!(!archive_file(id).exists());
+
+        // First append_archive_message should seed from working file + append new msg
+        let new_msg = make_msg("user", "new msg");
+        append_archive_message(id, &new_msg);
+
+        // Archive should have 11 messages (10 seeded + 1 new)
+        let archive_content = std::fs::read_to_string(archive_file(id)).unwrap();
+        let archive_lines: Vec<&str> = archive_content.lines().collect();
+        assert_eq!(
+            archive_lines.len(),
+            11,
+            "archive should have 10 seeded + 1 new = 11 messages"
+        );
+
+        // First line should be the first seeded message
+        assert!(
+            archive_lines[0].contains("seed 0"),
+            "first archive line should be the first seeded message"
+        );
+        // Last line should be the new message
+        assert!(
+            archive_lines[10].contains("new msg"),
+            "last archive line should be the new message"
+        );
+    }
+
+    #[test]
+    fn archive_seed_absent_working_file() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "archive-fresh";
+
+        // Neither file exists
+        assert!(!session_file(id).exists());
+        assert!(!archive_file(id).exists());
+
+        // Append one message
+        let msg = make_msg("user", "first");
+        append_archive_message(id, &msg);
+
+        // Archive should have exactly 1 message (no seed, just the append)
+        let archive_content = std::fs::read_to_string(archive_file(id)).unwrap();
+        let archive_lines: Vec<&str> = archive_content.lines().collect();
+        assert_eq!(
+            archive_lines.len(),
+            1,
+            "archive should have exactly 1 message when neither file existed"
+        );
+    }
+
+    #[test]
+    fn archive_file_path_is_correct() {
+        let path = archive_file("abc123");
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "abc123.archive.jsonl",
+            "archive file path should end with <id>.archive.jsonl"
+        );
     }
 }
