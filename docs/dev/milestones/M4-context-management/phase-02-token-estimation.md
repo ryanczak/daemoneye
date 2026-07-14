@@ -1,7 +1,7 @@
 # Phase 02: Per-message token estimation with per-session calibration
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress (bounced — see bug-02-1)
+**Status:** review
 **Depends on:** none (parallel-safe with phase-01)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -351,6 +351,124 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `src/daemon/stream.rs` — +4 -0
 
 **Commit:** dab93e1b3e8e318deb1ee5bc79b9365631849aa6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+### Update — ts=1784037682381 (complete, server-authored)
+
+**Summary:** Summary + Notes for review:
+
+**What was fixed:** The prior run's blind-spot fix (spec task 4) computed a calibrated `effective_prompt_tokens` but bound it to `_effective_prompt_tokens` (underscore-suppressed) and never wired it into `token_pct` or `PromptCtx.last_prompt_tokens`. The post-restart blind spot (D15/D10-partial) was effectively unfixed. This fix replaces the unused tuple binding with a single `effective_prompt_tokens` variable that is consumed in both the `token_pct` computation and the `PromptCtx` constructor.
+
+**Verification:** `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all`, and `cargo test` (867 passed) all pass clean. The fix is a single-file change to `src/daemon/server/ask.rs` — 9 insertions, 10 deletions.
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.60s
+
+
+LINT
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.42s
+
+
+TEST
+hook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test cli::commands::stream::stream_seam_tests::recv_line_preserves_partial_bytes_across_a_dropped_read ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test memory::tests::update_memory_replace_body ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 867 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test event_log_append_read ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test event_log_entry_format ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+- `src/daemon/server/ask.rs` — +9 -10
+
+**Commit:** cb92cd39c5be074cb1b809a58e9d8ef9f43f1077
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
