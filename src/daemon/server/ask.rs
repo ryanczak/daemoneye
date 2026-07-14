@@ -236,26 +236,25 @@ where
     // below and is also used later for the [BUDGET] line.
     // If last_prompt_tokens is 0 (post-restart blind spot), substitute the
     // calibrated estimate.
-    let (last_prompt_tokens, _effective_prompt_tokens) = if let Some(ref id) = session_id {
+    let effective_prompt_tokens: u32 = if let Some(ref id) = session_id {
         if let Ok(guard) = sessions.lock() {
             if let Some(entry) = guard.get(id.as_str()) {
                 let lpt = entry.last_prompt_tokens;
-                let ts = entry.token_scale;
                 if lpt > 0 {
-                    (lpt, lpt)
+                    lpt
                 } else {
                     let est = crate::daemon::context::estimate::estimate_history_tokens(&messages);
-                    let scaled = (est as f64 * ts).min(u32::MAX as f64) as u32;
-                    (0, scaled)
+                    let scale = entry.token_scale;
+                    (est as f64 * scale).min(u32::MAX as f64) as u32
                 }
             } else {
-                (0, 0)
+                0
             }
         } else {
-            (0, 0)
+            0
         }
     } else {
-        (0, 0)
+        0
     };
 
     // Token-pressure-driven compaction.
@@ -274,7 +273,7 @@ where
         .resolve_model(session_active_model.as_deref())
         .context_window();
     let token_pct = if context_window > 0 {
-        (last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
+        (effective_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
     } else {
         0
     };
@@ -522,7 +521,7 @@ where
         config,
         chat_width,
         safe_query: &safe_query,
-        last_prompt_tokens,
+        last_prompt_tokens: effective_prompt_tokens,
         history_count: messages.len(),
         this_turn_count,
         ghost_turn_limit,
