@@ -1,7 +1,7 @@
 # Phase 02: Per-message token estimation with per-session calibration
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-02-1)
 **Depends on:** none (parallel-safe with phase-01)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -210,6 +210,23 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Review verdict — 2026-07-13
+
+- **Verdict:** bounced
+- **Bounces:** 1 (bug-02-1 — major)
+- **Executor:** AEON-7/Qwen3.6-27B-AEON
+- **Scope deviations:** Spec task 4 (blind-spot fix) computed the calibrated
+  estimate but bound it to an underscore-suppressed `_effective_prompt_tokens`
+  and never wired it into `token_pct` or `PromptCtx` — the post-restart blind
+  spot (D15/D10-partial) is unfixed. Tasks 1–3 (formula, calibration EMA, both
+  stream.rs sites, all 7 construction sites) are correct; gates re-run green
+  (fmt/clippy/867+27 tests) but pass only because no test drives the ask.rs
+  branch.
+- **Calibration:** none yet — one occurrence. Watch for a recurrence of
+  "computed-then-discarded via `_`-prefix that silences the unused lint";
+  if it repeats, fold a spec-side note that pinned-value tasks must be
+  consumed, not just produced.
 ### Update — ts=1783989194405 (complete, server-authored)
 
 **Summary:** Summary + Notes for review:
