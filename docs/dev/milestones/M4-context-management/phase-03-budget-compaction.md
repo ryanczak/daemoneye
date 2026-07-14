@@ -40,9 +40,19 @@ Read before starting:
 or trim MUST preserve tool_call ↔ tool_result pairing — a `tool_results`
 message whose producing `tool_calls` assistant message was dropped is
 rejected by all three provider backends. Today this is guaranteed by
-`next_clean_turn_start` (`src/daemon/session.rs:202-212`) and, when it fails,
-by **skipping compaction entirely** (`src/daemon/digest.rs:626-631`). This
-phase keeps the invariant but replaces "skip" with "repair" — see Spec §4.
+`next_clean_turn_start` (`src/daemon/session.rs:207`) and, when it fails,
+by **skipping compaction entirely** (the `log::warn!(… no clean turn boundary
+found — skipping compaction)` branch in `compact_with_digest`,
+`src/daemon/digest.rs:610`). This phase keeps the invariant but replaces
+"skip" with "repair" — see Spec §4.
+
+**Anchor note (re-validated 2026-07-14 after phases 01/02 landed):** line
+numbers below drifted ~15–25 lines from draft time; every symbol still exists
+under the same name — navigate by symbol/quoted content, not line. The
+materially-moved one is the `ask.rs` decision block (now ~270–286). Phase 02
+already wired `effective_prompt_tokens` into `token_pct` (`ask.rs:276`), so
+Spec §3's "use `effective_prompt_tokens` for `token_pct`" is **already done** —
+§3 reduces to the const→config swap plus the budget-cut call.
 
 Key existing code:
 
@@ -55,7 +65,7 @@ Key existing code:
   const ELISION_TAIL_KEEP: usize = 8;
   ```
 
-- `src/daemon/digest.rs:612-618` — `planned_tail_start`:
+- `src/daemon/digest.rs:593-605` — `planned_tail_start`:
 
   ```rust
   pub fn planned_tail_start(messages: &[Message]) -> Option<usize> {
@@ -67,7 +77,9 @@ Key existing code:
   }
   ```
 
-- `src/daemon/server/ask.rs:251-267` — the decision block:
+- `src/daemon/server/ask.rs:270-286` — the decision block (`token_pct` at
+  :276 already consumes `effective_prompt_tokens`; narrative-slice
+  `planned_tail_start` call now at :304, `compact_with_digest` at :320):
 
   ```rust
   const ELISION_PCT: u32 = 50;
@@ -94,7 +106,7 @@ Key existing code:
 
 ### 1. `CompactionConfig` — in `src/config/types.rs`
 
-Follow the `DigestConfig` declaration pattern (`src/config/types.rs:96-104`)
+Follow the `DigestConfig` declaration pattern (`src/config/types.rs:120`)
 exactly:
 
 ```rust
@@ -254,7 +266,7 @@ Token pressure no longer produces "wrap up" advice for interactive sessions:
       whose `tool_call_id` lacks a preceding `tool_calls` entry — reuse the
       exhaustive checker loop from the existing
       `compact_skips_orphan_tool_result_at_boundary` test
-      (`src/daemon/digest.rs:779-841`) as a shared test helper.
+      (`src/daemon/digest.rs:761`) as a shared test helper.
 - [ ] The pathological all-tool-result history that today returns unchanged
       (`compact_skipped_when_no_clean_boundary` test) now **compacts** via
       the synthesized boundary and passes the orphan checker (this existing

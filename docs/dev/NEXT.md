@@ -1,7 +1,11 @@
 # NEXT
 
-**Active phase:** none pending — run `/rexymcp:architect next` to re-validate
-and activate **phase-03-budget-compaction** (the M4 phase order continues below).
+**Active phase:**
+[`docs/dev/milestones/M4-context-management/phase-03-budget-compaction.md`](milestones/M4-context-management/phase-03-budget-compaction.md)
+— **todo**, re-validated 2026-07-14 (anchors drifted ~15–25 lines after
+phases 01/02; symbols intact, `ask.rs` decision block now ~270–286, phase-02's
+`effective_prompt_tokens` already wired into `token_pct`). Activated by a
+`/rexymcp:auto` run over M4.
 
 **M4 phase-02 — token-estimation is `done`** (2026-07-14, approved_after_1).
 Delivered `src/daemon/context/estimate.rs` (deterministic per-message estimate
