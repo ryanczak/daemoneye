@@ -1,7 +1,27 @@
 # NEXT
 
-**Active phase:** none pending — `/rexymcp:auto` run in progress over M4;
-phase-04-append-only-archive is next (draft/dispatch handled by the loop).
+**Active phase:**
+[`docs/dev/milestones/M4-context-management/phase-05a-epoch-persistence.md`](milestones/M4-context-management/phase-05a-epoch-persistence.md)
+— **todo**, ready for `/rexymcp:dispatch phase-05a-epoch-persistence` (or resume
+`/rexymcp:auto`).
+
+**Phase-05 was re-split (2026-07-14, PE decision) into 05a + 05b.** At ~500
+lines it sat at the one-session limit and it deletes/replaces the phase-03
+compaction path — the exact digest-heavy shape the executor git-thrashed on
+twice. **05a** (`phase-05a-epoch-persistence.md`) is purely additive:
+`context/epochs.rs` types + append-only persistence + span-windowed
+`tally_span`/`scan_artifacts_span`, deleting/rewiring nothing (build stays green
+throughout). **05b** (`phase-05b-epoch-head.md`) does the risky rewire:
+`compact_with_epochs` regenerated head, `render_context_block`, keep-newest
+narrative, and retirement of `compact_with_digest`/`build_session_digest`. 05b's
+Current-state quotes the phase-03 takeover `should_digest` block verbatim so the
+executor rewires in place. The old `phase-05-epoch-records.md` is now a redirect
+stub.
+
+**M4 phase-04 — append-only-archive is `done`** (2026-07-14, approved_first_try,
+commit `0c02961`). Archive folded into `append_session_message` (all 7 callers
+automatic, archive-first ordering to avoid seed-duplicate); honest elision
+placeholders; `sweep_session_archives` retention.
 
 **M4 phase-03 — budget-compaction is `done`** (2026-07-14, escalated → architect
 takeover). Executor hard_failed after 352 turns: it wrote the `digest.rs` core
