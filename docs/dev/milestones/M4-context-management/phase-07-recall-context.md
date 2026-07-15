@@ -1,7 +1,7 @@
 # Phase 07: `recall_context` — retrieve archived turns
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress (refined re-dispatch after a no-progress stall — see Update Log)
+**Status:** done
 **Depends on:** phase-04 (archive), phase-05 (epoch turn ranges)
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -258,3 +258,77 @@ address the observed no-progress stall (governor threshold raised 20→40 for
 this project; a Notes-for-executor block instructing an early self-contained
 recall.rs write) — takeover would skip the model data point and the anti-pattern
 warns against it on a first failure.
+
+### Update — 2026-07-14 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** Second `NoProgressStall` (now at 40 turns, not 20) after the one
+refinement — the same failure class recurred, and the executor left a
+near-complete implementation (recall.rs + full plumbing) broken by a
+self-inflicted unclosed-delimiter in args.rs it couldn't hunt down. Resume would
+re-encounter the same thrash; the work is on disk and the blocker is a specific
+findable syntax error, so takeover is efficient.
+
+### Update — 2026-07-14 (complete, architect takeover)
+
+**Summary:** The executor's 2nd run left a near-complete implementation: §1
+`context/recall.rs` (engine + tests) and §2 plumbing (pending/events/args/defs/
+dispatch/stream/ghost/executor — both the stream and ghost `AiEvent` matches
+wired per §2.5) all landed and compiled. The takeover finished it:
+- Added the missing `PendingCall::RecallContext` arm to
+  `should_emit_tool_feedback()` (it fell through to `false`; the silent-tool
+  test caught it).
+- Completed the §3 wording updates the executor stalled before doing: the
+  `digest.rs` elision placeholder and the `epochs.rs` head line now name
+  `recall_context`, and `sre.toml` documents the tool (§2.7).
+- Fixed a byte/char index bug in `build_excerpt` (it found the match as a byte
+  offset then indexed a `Vec<char>` with it — a multibyte-unsafe window; the
+  spec pins char-safety) and added `build_excerpt_is_multibyte_safe`.
+- Gave the recall FS tests proper `TEST_HOME_LOCK` + temp-HOME isolation via an
+  RAII guard; they had no isolation and raced (failing in parallel) / wrote into
+  the real `~/.daemoneye`.
+- §3.3 ghost policies: no-op — `search_repository` appears only in policy
+  *tests*, not a hardcoded default allow-list, so `recall_context` (equally
+  read-only) needs no allow-list edit, exactly as the spec's conditional says.
+
+**Acceptance criteria:** all met, each with a passing test — query mode with
+turn attribution + archive-over-working-set (`recall_query_finds_archived_content`),
+range verbatim + legacy skip notice (`recall_range_returns_verbatim_and_skips_legacy`),
+no-args usage error (`recall_requires_query_or_range`), masking
+(`recall_masks_sensitive_output`), UTF-8-safe truncation
+(`recall_truncates_at_cap_utf8_safe`), bounded excerpt (`recall_excerpt_is_bounded`)
++ multibyte-safe (`build_excerpt_is_multibyte_safe`), silent-tool feedback flag
+(`should_emit_tool_feedback_silent_tools_true`), and three-provider render
+(`recall_context` in `TOOLS`; the render/count tests use `TOOLS.len()`).
+
+**Commands:**
+
+```
+cargo fmt --all --check    → clean
+cargo build                → Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings → clean
+cargo test                 → 893 passed; 0 failed (unit) + 27 passed (integration)
+```
+
+**End-to-end verification:** The recall engine is exercised over a **real
+archive file** by the hermetic FS tests (real tempdir `HOME`, real
+`archive_file` write + `recall` read): `recall_query_finds_archived_content`
+seeds a distinctive early-turn string into the archive and asserts recall returns
+it. Tool visibility to the model is verified by `recall_context` being present in
+`TOOLS` (defs.rs) — the render tests render `TOOLS` for all three providers. The
+phase doc's E2E allows this render-check substitution when no live model is
+configured.
+
+**Files changed:**
+- `src/daemon/context/recall.rs` — new engine (executor) + build_excerpt fix + test isolation (architect)
+- `src/ai/types/pending.rs` — RecallContext variant + arms (executor) + should_emit arm (architect)
+- `src/ai/types/events.rs`, `src/ai/tools/{args,defs,dispatch}.rs`, `src/daemon/{stream,ghost,executor/mod,context/mod}.rs` — plumbing (executor)
+- `src/daemon/digest.rs`, `src/daemon/context/epochs.rs`, `assets/prompts/sre.toml` — §3 wording + tool doc (architect)
+
+### Review verdict — 2026-07-14
+
+- **Verdict:** escalated
+- **Bounces:** 2 no-progress stalls (1st: 20 turns, zero edits; 2nd: 40 turns after a near-complete impl) → refined re-dispatch (governor threshold 20→40 + write-first guidance) → 2nd-failure takeover
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (engine + full plumbing, correct) → Claude (direct) completed §3 wording + fixed should_emit arm, build_excerpt byte/char bug, and recall-test HOME isolation
+- **Scope deviations:** executor's `recall()` uses `LimitsConfig::default()` (config isn't threaded into `execute_tool_call`; the default cap applies) — accepted, not worth a wide-blast-radius signature change.
+- **Calibration:** The new `NoProgressStall` governor **validated in the wild** — caught both stalls (at 20, then 40) instead of 167-529-turn runaways. But default 20 was too tight for a `size=l` ~7-file phase → raised to 40 per-project. The write-first refinement worked (2nd run wrote a near-complete impl). The executor's recurring test-isolation bug (HOME leak, seen phases 06 + 07) is a candidate STANDARDS fold if it appears a 3rd time.

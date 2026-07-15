@@ -79,7 +79,7 @@ context loss, compaction off the interactive hot path.
 | 05a | epoch-persistence ([phase-05a-epoch-persistence.md](phase-05a-epoch-persistence.md)) — `context/epochs.rs` types, append-only persistence, span-windowed tally/scan (additive) | core | done |
 | 05b | epoch-head ([phase-05b-epoch-head.md](phase-05b-epoch-head.md)) — `compact_with_epochs` regenerated head, keep-newest narrative, retire the digest path | core | done |
 | 06 | ledger-rollups ([phase-06-ledger-rollups.md](phase-06-ledger-rollups.md)) — session ledger + chapter rollups (O(log n) representation) | core | done |
-| 07 | recall-context ([phase-07-recall-context.md](phase-07-recall-context.md)) — the `recall_context` AI tool over the archive | core | in-progress |
+| 07 | recall-context ([phase-07-recall-context.md](phase-07-recall-context.md)) — the `recall_context` AI tool over the archive | core | done |
 | 08 | async-compaction ([phase-08-async-compaction.md](phase-08-async-compaction.md)) — background epoch build, staleness-checked swap, emergency path | core | todo |
 | 09 | session-meta-persistence ([phase-09-session-meta-persistence.md](phase-09-session-meta-persistence.md)) — `<id>.meta.json`, boundary-safe reload | hygiene | todo |
 | 10 | ghost-and-memory ([phase-10-ghost-and-memory.md](phase-10-ghost-and-memory.md)) — ghost working-set coverage; opt-in compaction→memory extraction | coverage | todo |

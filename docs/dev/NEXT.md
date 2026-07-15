@@ -1,10 +1,21 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-07-recall-context.md`](milestones/M4-context-management/phase-07-recall-context.md)
-— **todo**. Re-verify its Current-state anchors before dispatch (it adds the
-`recall_context` AI tool over the phase-04 archive; check the tool-registration
-checklist in CLAUDE.md and the archive read path landed by phase-04).
+[`docs/dev/milestones/M4-context-management/phase-08-async-compaction.md`](milestones/M4-context-management/phase-08-async-compaction.md)
+— **todo**. Re-verify its Current-state anchors before dispatch (it moves the
+epoch build off the interactive path — background build + staleness-checked swap
++ the >=85% emergency path; anchors are the `should_digest` block in
+`server/ask.rs` and the epoch build in `context/epochs.rs`, both heavily
+reworked by 03/05/06).
+
+**M4 phase-07 — recall-context is `done`** (2026-07-14, escalated → architect
+takeover after 2 no-progress stalls). New `recall_context` tool over the phase-04
+archive (query/range, char-safe excerpts, masked+truncated). The new rexyMCP
+`NoProgressStall` governor **validated in the wild** — caught both stalls (20,
+then 40 turns) instead of 167-529-turn runaways; threshold raised 20→40 for this
+project. Executor wrote a near-complete impl on the 2nd run; takeover finished §3
+wording + sre.toml, fixed the should_emit arm, a build_excerpt byte/char bug, and
+the recall tests' HOME isolation. Gates green (893 unit + 27 integration).
 
 **M4 phase-06 — ledger-rollups is `done`** (2026-07-14, escalated → architect
 takeover). Executor stopped by the human (`rexymcp stop`) at 167 turns
