@@ -476,7 +476,8 @@ pub fn compact_with_epochs(
         "[Session Context — regenerated at compaction; turns 1..{} summarized]\n\
          Environment: {} · Daemon host: {}\n\n\
          {}\n\n\
-         Older turns are preserved in the session archive.",
+         Older turns are preserved in the session archive — retrieve originals \
+         with recall_context(query, turn_start, turn_end).",
         turn_end, environment, host, rendered_context
     );
 

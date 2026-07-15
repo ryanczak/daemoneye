@@ -75,6 +75,7 @@ pub fn dispatch_tool_event(
         "read_memory" => dispatch::<ReadMemoryArgs>(id, args, ts),
         "list_memories" => dispatch::<ListMemoriesArgs>(id, args, ts),
         "search_repository" => dispatch::<SearchRepositoryArgs>(id, args, ts),
+        "recall_context" => dispatch::<RecallContextArgs>(id, args, ts),
         "close_background_window" => dispatch::<CloseBgWindowArgs>(id, args, ts),
         "spawn_ghost_shell" => dispatch::<SpawnGhostArgs>(id, args, ts),
         "create_agent" => dispatch::<CreateAgentArgs>(id, args, ts),

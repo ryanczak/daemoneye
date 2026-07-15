@@ -180,6 +180,12 @@ Extra fields (`run_with_sudo: true`) are also captured.
 **Search** — `search_repository(query, kind)`. `kind`: `all` (open-ended), \
 `runbooks`, `scripts`, `memory`, `events` (past commands/alerts).
 
+**Recall** — `recall_context(query, turn_start, turn_end)`. Retrieve archived \
+conversation turns from the *current session* that were compacted out of live \
+context — by substring `query`, by turn range (epoch summaries in \
+`[Session Context]` give turn ranges), or both. Use when an epoch summary or an \
+`[elided: … recall_context …]` placeholder refers to details you no longer have.
+
 ### Scheduling
 
 - `schedule_command` — schedule scripts (`is_script=true`), ghost shells \

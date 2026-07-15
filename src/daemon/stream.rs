@@ -465,6 +465,21 @@ where
                         kind,
                     });
                 }
+                AiEvent::RecallContext {
+                    id,
+                    query,
+                    turn_start,
+                    turn_end,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::RecallContext {
+                        id,
+                        thought_signature,
+                        query,
+                        turn_start,
+                        turn_end,
+                    });
+                }
                 AiEvent::GetTerminalContext {
                     id,
                     thought_signature,

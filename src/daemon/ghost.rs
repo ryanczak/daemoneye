@@ -583,6 +583,21 @@ async fn do_ghost_turn(
                             kind,
                         });
                     }
+                    AiEvent::RecallContext {
+                        id,
+                        thought_signature,
+                        query,
+                        turn_start,
+                        turn_end,
+                    } => {
+                        pending_calls.push(PendingCall::RecallContext {
+                            id,
+                            thought_signature,
+                            query,
+                            turn_start,
+                            turn_end,
+                        });
+                    }
                     AiEvent::ListMemories {
                         id,
                         thought_signature,

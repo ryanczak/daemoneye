@@ -354,8 +354,8 @@ pub fn elide_old_tool_results(messages: &mut [Message], aggressive: bool) -> usi
                 let orig_len = r.content.len();
                 let replacement = if aggressive {
                     format!(
-                        "[elided: tool `{}` produced {} chars at turn {}; archived — \
-                         full output retrievable from the session archive.]",
+                        "[elided: tool `{0}` produced {1} chars at turn {2}; archived — \
+                         retrieve the full output with recall_context (turn {2}).]",
                         r.tool_name,
                         orig_len,
                         msg.turn

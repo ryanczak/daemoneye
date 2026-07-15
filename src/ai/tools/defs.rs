@@ -569,6 +569,35 @@ pub static TOOLS: &[ToolDef] = &[
         deferred_group: None,
     },
     ToolDef {
+        name: "recall_context",
+        description: "Retrieve archived conversation turns from the current session that were \
+                      compacted out of the live context. Search by substring query, by turn \
+                      range (epoch summaries in [Session Context] give turn ranges), or both. \
+                      Use when you need details an epoch summary or an \"[elided: …]\" \
+                      placeholder refers to.",
+        params: &[
+            ParamDef {
+                name: "query",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional: substring to search for (case-insensitive).",
+            },
+            ParamDef {
+                name: "turn_start",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional: starting turn number (inclusive).",
+            },
+            ParamDef {
+                name: "turn_end",
+                ty: ParamTy::Int,
+                required: false,
+                description: "Optional: ending turn number (inclusive).",
+            },
+        ],
+        deferred_group: None,
+    },
+    ToolDef {
         name: "get_terminal_context",
         description: "Capture a fresh snapshot of the current tmux session: active pane contents, \
                       background panes, session topology, and environment variables. \

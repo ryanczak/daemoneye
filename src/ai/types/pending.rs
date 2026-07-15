@@ -159,6 +159,13 @@ pub enum PendingCall {
         query: String,
         kind: String,
     },
+    RecallContext {
+        id: String,
+        thought_signature: Option<String>,
+        query: Option<String>,
+        turn_start: Option<u32>,
+        turn_end: Option<u32>,
+    },
     GetTerminalContext {
         id: String,
         thought_signature: Option<String>,
@@ -395,6 +402,12 @@ impl PendingCall {
                 name: "search_repository".to_string(),
                 arguments: serde_json::json!({"query": query, "kind": kind}).to_string(),
             },
+            PendingCall::RecallContext { id, thought_signature, query, turn_start, turn_end } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "recall_context".to_string(),
+                arguments: serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end}).to_string(),
+            },
             PendingCall::GetTerminalContext { id, thought_signature } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
@@ -483,6 +496,7 @@ impl PendingCall {
             PendingCall::ReadMemory { id, .. } => id,
             PendingCall::ListMemories { id, .. } => id,
             PendingCall::SearchRepository { id, .. } => id,
+            PendingCall::RecallContext { id, .. } => id,
             PendingCall::GetTerminalContext { id, .. } => id,
             PendingCall::ListPanes { id, .. } => id,
             PendingCall::CloseBackgroundWindow { id, .. } => id,
@@ -512,6 +526,7 @@ impl PendingCall {
                 | PendingCall::ReadMemory { .. }
                 | PendingCall::ListMemories { .. }
                 | PendingCall::SearchRepository { .. }
+                | PendingCall::RecallContext { .. }
                 | PendingCall::GetTerminalContext { .. }
                 | PendingCall::ListPanes { .. }
                 | PendingCall::CloseBackgroundWindow { .. }
@@ -626,6 +641,7 @@ impl PendingCall {
             PendingCall::ReadMemory { .. } => "read_memory",
             PendingCall::ListMemories { .. } => "list_memories",
             PendingCall::SearchRepository { .. } => "search_repository",
+            PendingCall::RecallContext { .. } => "recall_context",
             PendingCall::GetTerminalContext { .. } => "get_terminal_context",
             PendingCall::ListPanes { .. } => "list_panes",
             PendingCall::CloseBackgroundWindow { .. } => "close_background_window",
@@ -725,6 +741,13 @@ mod tests {
                 thought_signature: None,
                 query: "alert".to_string(),
                 kind: "all".to_string(),
+            },
+            PendingCall::RecallContext {
+                id: "x".to_string(),
+                thought_signature: None,
+                query: None,
+                turn_start: None,
+                turn_end: None,
             },
             PendingCall::GetTerminalContext {
                 id: "x".to_string(),

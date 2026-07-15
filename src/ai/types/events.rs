@@ -152,6 +152,13 @@ pub enum AiEvent {
         kind: String,
         thought_signature: Option<String>,
     },
+    RecallContext {
+        id: String,
+        query: Option<String>,
+        turn_start: Option<u32>,
+        turn_end: Option<u32>,
+        thought_signature: Option<String>,
+    },
     GetTerminalContext {
         id: String,
         thought_signature: Option<String>,

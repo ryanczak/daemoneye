@@ -530,6 +530,38 @@ impl ToolArgs for SearchRepositoryArgs {
         }
     }
 }
+pub(super) struct RecallContextArgs {
+    pub query: Option<String>,
+    pub turn_start: Option<u32>,
+    pub turn_end: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct RecallContextDeserialize {
+    pub query: Option<String>,
+    pub turn_start: Option<u32>,
+    pub turn_end: Option<u32>,
+}
+
+impl ToolArgs for RecallContextArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        let deserialized: RecallContextDeserialize = serde_json::from_value(value).ok()?;
+        Some(Self {
+            query: deserialized.query,
+            turn_start: deserialized.turn_start,
+            turn_end: deserialized.turn_end,
+        })
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::RecallContext {
+            id: id.to_string(),
+            query: self.query,
+            turn_start: self.turn_start,
+            turn_end: self.turn_end,
+            thought_signature: ts,
+        }
+    }
+}
 
 impl ToolArgs for SpawnGhostArgs {
     fn from_value(value: Value) -> Option<Self> {

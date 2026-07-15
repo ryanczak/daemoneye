@@ -509,6 +509,29 @@ where
             knowledge::search_repository(query, kind, artifact_ctx.namespaces),
         )),
 
+        PendingCall::RecallContext {
+            query,
+            turn_start,
+            turn_end,
+            ..
+        } => {
+            let result = if let Some(sid) = session_id {
+                let args = crate::daemon::context::recall::RecallArgs {
+                    query: query.clone(),
+                    turn_start: *turn_start,
+                    turn_end: *turn_end,
+                };
+                let limits = crate::config::LimitsConfig::default();
+                match crate::daemon::context::recall::recall(sid, &args, &limits) {
+                    Ok(r) => r,
+                    Err(e) => format!("Error: {}", e),
+                }
+            } else {
+                "Error: recall_context requires a session".to_string()
+            };
+            Ok(ToolCallOutcome::Result(result))
+        }
+
         PendingCall::GetTerminalContext { .. } => {
             let target_pane: Option<String> = session_id
                 .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone());
