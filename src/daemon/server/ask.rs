@@ -369,6 +369,9 @@ where
                             "msgs": record.msg_count,
                         }),
                     );
+                    let _chain = crate::daemon::context::epochs::read_epochs(id);
+                    // Attempt chapter rollup before rendering.
+                    let _ = crate::daemon::context::epochs::maybe_rollup(id, config).await;
                     let chain = crate::daemon::context::epochs::read_epochs(id);
                     let env = config.context.environment.clone();
                     let host = crate::daemon::utils::daemon_hostname();

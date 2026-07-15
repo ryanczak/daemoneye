@@ -154,6 +154,64 @@ fn format_messages_for_narrative(messages: &[Message]) -> String {
     out
 }
 
+/// One-shot small-model call: system prompt + user text → trimmed response.
+/// 20 s timeout; None on any failure. This is the reusable core extracted
+/// from [`build_narrative_summary`].
+pub async fn summarize_once(
+    system: &str,
+    user_text: &str,
+    model_entry: &crate::config::ModelEntry,
+) -> Option<String> {
+    let client = crate::ai::make_client(
+        &model_entry.provider,
+        model_entry.resolve_api_key(),
+        model_entry.model.clone(),
+        model_entry.effective_base_url(),
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
+    let system_owned = system.to_string();
+    let user_msg = Message {
+        role: "user".to_string(),
+        content: user_text.to_string(),
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    };
+    let msgs = vec![user_msg];
+
+    let chat_fut = client.chat(&system_owned, msgs, tx, false, Vec::new());
+    let chat_result = tokio::time::timeout(NARRATIVE_TIMEOUT, chat_fut).await;
+
+    match chat_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            log::warn!("summarize_once: backend error ({}), skipping", e);
+            return None;
+        }
+        Err(_) => {
+            log::warn!(
+                "summarize_once: timed out after {}s",
+                NARRATIVE_TIMEOUT.as_secs()
+            );
+            return None;
+        }
+    }
+
+    let mut text = String::new();
+    while let Some(ev) = rx.recv().await {
+        if let crate::ai::AiEvent::Token(t) = ev {
+            text.push_str(&t);
+        }
+    }
+
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
 /// Generate a natural-language narrative of the messages about to be dropped.
 /// Returns `None` on any failure — callers must tolerate an absent narrative
 /// and fall back to the structured-only digest.
@@ -174,63 +232,7 @@ pub async fn build_narrative_summary(
         return None;
     }
 
-    let user_msg = Message {
-        role: "user".to_string(),
-        content: format!(
-            "Here is the conversation chunk to summarize:\n\n{}",
-            transcript
-        ),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    };
-
-    let client = crate::ai::make_client(
-        &model_entry.provider,
-        model_entry.resolve_api_key(),
-        model_entry.model.clone(),
-        model_entry.effective_base_url(),
-    );
-
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<crate::ai::AiEvent>();
-    let system = NARRATIVE_SYSTEM_PROMPT.to_string();
-    let msgs = vec![user_msg];
-
-    // Race the chat call against a timeout.  On success or failure we still
-    // drain the channel (via the receiver loop below) so no tokens are lost.
-    let chat_fut = client.chat(&system, msgs, tx, false, Vec::new());
-    let chat_result = tokio::time::timeout(NARRATIVE_TIMEOUT, chat_fut).await;
-
-    match chat_result {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => {
-            log::warn!(
-                "digest narrative: backend error ({}), skipping narrative",
-                e
-            );
-            return None;
-        }
-        Err(_) => {
-            log::warn!(
-                "digest narrative: timed out after {}s, skipping narrative",
-                NARRATIVE_TIMEOUT.as_secs()
-            );
-            return None;
-        }
-    }
-
-    let mut text = String::new();
-    while let Some(ev) = rx.recv().await {
-        if let crate::ai::AiEvent::Token(t) = ev {
-            text.push_str(&t);
-        }
-    }
-
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    Some(trimmed.to_string())
+    summarize_once(NARRATIVE_SYSTEM_PROMPT, &transcript, model_entry).await
 }
 
 // ── Message compaction ───────────────────────────────────────────────

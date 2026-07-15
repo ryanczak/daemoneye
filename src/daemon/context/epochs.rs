@@ -14,6 +14,9 @@ use std::path::PathBuf;
 /// paired `_count` field always carries the true total.
 pub const TALLY_LIST_CAP: usize = 10;
 
+/// Number of oldest uncovered epochs folded per rollup.
+const ROLLUP_FOLD: usize = 5;
+
 /// How many recent epochs to render in the context block.
 pub const RENDER_EPOCHS: usize = 8;
 
@@ -32,6 +35,28 @@ pub struct EpochTally {
     pub alerts: Vec<String>, // capped
     pub ghost_starts: u32,
     pub ghost_completions: u32,
+}
+
+impl EpochTally {
+    /// Element-wise merge: sum scalar fields, re-cap list fields at
+    /// `TALLY_LIST_CAP`. The `_count` fields always carry the exact total.
+    pub fn merge(&mut self, other: &EpochTally) {
+        self.commands_ok += other.commands_ok;
+        self.commands_fail += other.commands_fail;
+        self.files_edited_count += other.files_edited_count;
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
+        self.alerts_count += other.alerts_count;
+        self.ghost_starts += other.ghost_starts;
+        self.ghost_completions += other.ghost_completions;
+        // Merge lists, re-capping at TALLY_LIST_CAP.
+        self.failed_cmds.extend(other.failed_cmds.iter().cloned());
+        self.failed_cmds.truncate(TALLY_LIST_CAP);
+        self.files_edited.extend(other.files_edited.iter().cloned());
+        self.files_edited.truncate(TALLY_LIST_CAP);
+        self.alerts.extend(other.alerts.iter().cloned());
+        self.alerts.truncate(TALLY_LIST_CAP);
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -102,6 +127,138 @@ pub fn append_epoch(id: &str, rec: &EpochRecord) {
     }
 }
 
+// ── Chapter rollup ─────────────────────────────────────────────────
+
+/// An epoch is "uncovered" when kind == "epoch" and no chapter's `covers`
+/// range contains its seq.
+pub fn uncovered_epochs(all: &[EpochRecord]) -> Vec<&EpochRecord> {
+    let covered_ranges: Vec<_> = all
+        .iter()
+        .filter_map(|r| if r.kind == "chapter" { r.covers } else { None })
+        .collect();
+
+    all.iter()
+        .filter(|r| {
+            r.kind == "epoch"
+                && !covered_ranges
+                    .iter()
+                    .any(|(lo, hi)| r.seq >= *lo && r.seq <= *hi)
+        })
+        .collect()
+}
+
+/// Build a structured fallback narrative for a chapter from folded epochs.
+/// Takes the first line of each epoch's narrative (or its tally one-liner),
+/// joins with " · ", truncated to 500 chars at a char boundary.
+fn build_chapter_fallback(folded: &[&EpochRecord]) -> String {
+    let parts: Vec<String> = folded
+        .iter()
+        .map(|e| {
+            if let Some(ref n) = e.narrative {
+                n.lines().next().unwrap_or("").to_string()
+            } else {
+                format_tally_one_liner(&e.tally)
+            }
+        })
+        .collect();
+    let joined = parts.join(" · ");
+    let truncated = joined
+        .char_indices()
+        .find(|&(i, _)| i >= 500)
+        .map(|(i, _)| &joined[..i])
+        .unwrap_or(&joined);
+    truncated.to_string()
+}
+
+/// When uncovered count exceeds `rollup_after`, fold the ROLLUP_FOLD oldest
+/// uncovered epochs into one chapter record and append it. Returns the
+/// chapter record if one was created.
+pub async fn maybe_rollup(id: &str, config: &crate::config::Config) -> Option<EpochRecord> {
+    let all = read_epochs(id);
+    let uncovered = uncovered_epochs(&all);
+    let threshold = config.compaction.rollup_after;
+
+    if uncovered.len() <= threshold as usize {
+        return None;
+    }
+
+    let fold_count = ROLLUP_FOLD.min(uncovered.len());
+    let folded: Vec<&EpochRecord> = uncovered[..fold_count].to_vec();
+
+    let first = folded[0];
+    let last = folded[fold_count - 1];
+
+    // Compute union of spans and sum of tallies.
+    let turn_start = first.turn_start;
+    let turn_end = last.turn_end;
+    let ts_start = folded
+        .iter()
+        .map(|e| e.ts_start)
+        .min()
+        .unwrap_or(first.ts_start);
+    let ts_end = folded
+        .iter()
+        .map(|e| e.ts_end)
+        .max()
+        .unwrap_or(first.ts_end);
+    let msg_count: u32 = folded.iter().map(|e| e.msg_count).sum();
+    let mut tally = EpochTally::default();
+    for e in &folded {
+        tally.merge(&e.tally);
+    }
+
+    // Build chapter narrative.
+    let narrative = if config.digest.narrative_enabled {
+        let user_text = folded
+            .iter()
+            .map(|e| {
+                let content = if let Some(ref n) = e.narrative {
+                    n.lines()
+                        .next()
+                        .unwrap_or(&format_tally_one_liner(&e.tally))
+                        .to_string()
+                } else {
+                    format_tally_one_liner(&e.tally)
+                };
+                format!(
+                    "Epoch {} (turns {}–{}): {}",
+                    e.seq, e.turn_start, e.turn_end, content
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let model_entry =
+            config.resolve_model(config.models.contains_key("digest").then_some("digest"));
+        let system = "You are compacting an SRE assistant's session history. You will be shown 5 epoch summaries, each covering a span of conversation turns. Write ONE combined summary of at most 3 lines preserving: what was worked on, key outcomes/decisions, and anything still unresolved. Past tense, terse, no preamble.";
+        crate::daemon::digest::summarize_once(system, &user_text, model_entry)
+            .await
+            .or(Some(build_chapter_fallback(&folded)))
+    } else {
+        Some(build_chapter_fallback(&folded))
+    };
+
+    // Next seq.
+    let next_seq = all.last().map(|e| e.seq + 1).unwrap_or(1);
+
+    let chapter = EpochRecord {
+        seq: next_seq,
+        kind: "chapter".to_string(),
+        turn_start,
+        turn_end,
+        ts_start,
+        ts_end,
+        msg_count,
+        narrative,
+        tally,
+        artifacts: Vec::new(),
+        covers: Some((first.seq, last.seq)),
+    };
+
+    append_epoch(id, &chapter);
+    Some(chapter)
+}
+
 // ── Context block rendering ────────────────────────────────────────
 
 /// Format an EpochTally as a one-line summary (the tally one-liner).
@@ -152,12 +309,16 @@ fn format_tally_one_liner(t: &EpochTally) -> String {
     }
 }
 
-/// Render the epoch chain for the working-set head. The last RENDER_EPOCHS (8)
-/// epochs, newest last — each as "Epoch {seq} (turns {a}–{b}): {line}" where
-/// {line} is the narrative (trimmed to one paragraph) or, when absent, a tally
-/// one-liner. Older epochs collapse to a single line:
-/// "…{n} earlier epochs — chapter rollups arrive in a later phase."
-/// (Phase 06 replaces that line with ledger + chapters.)
+/// Render the epoch chain for the working-set head.
+///
+/// Layout:
+/// - Ledger line: summed tallies across chapters + uncovered epochs (covered
+///   epochs excluded to avoid double-counting).
+/// - Chapters section: all chapters, oldest-first.
+/// - Recent epochs: last 8 uncovered epochs, newest last.
+///
+/// The ledger is omitted when only one epoch exists (the epoch line already
+/// says it all). The chapters section is omitted when no chapters exist.
 pub fn render_context_block(epochs: &[EpochRecord]) -> String {
     let mut out = String::new();
 
@@ -165,33 +326,110 @@ pub fn render_context_block(epochs: &[EpochRecord]) -> String {
         return out;
     }
 
-    let total = epochs.len();
-    let recent_start = total.saturating_sub(RENDER_EPOCHS);
-    let recent = &epochs[recent_start..];
+    // Collect chapters (all of them) and uncovered epochs.
+    let chapters: Vec<&EpochRecord> = epochs.iter().filter(|r| r.kind == "chapter").collect();
 
-    if recent_start > 0 {
+    let uncovered = uncovered_epochs(epochs);
+
+    // Compute ledger totals from chapters + uncovered epochs (covered epochs
+    // are excluded to avoid double-counting).
+    let ledger_records: Vec<&EpochRecord> = chapters
+        .iter()
+        .copied()
+        .chain(uncovered.iter().copied())
+        .collect();
+
+    if !ledger_records.is_empty() {
+        let (
+            total_turns,
+            total_cmds_ok,
+            total_cmds_fail,
+            total_files,
+            total_alerts,
+            total_ghosts,
+            total_prompt,
+            total_completion,
+        ) = ledger_records.iter().fold(
+            (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u64, 0u64),
+            |(turns, cok, cfail, files, alerts, ghosts, pt, ct), e| {
+                (
+                    turns + e.turn_end - e.turn_start,
+                    cok + e.tally.commands_ok,
+                    cfail + e.tally.commands_fail,
+                    files + e.tally.files_edited_count,
+                    alerts + e.tally.alerts_count,
+                    ghosts + e.tally.ghost_starts,
+                    pt + e.tally.prompt_tokens,
+                    ct + e.tally.completion_tokens,
+                )
+            },
+        );
+
         out.push_str(&format!(
-            "…{} earlier epochs — chapter rollups arrive in a later phase.\n",
-            recent_start
+            "Session ledger: {} turns compacted across {} epochs — commands {} ok / {} failed \
+             · files edited {} · alerts {} · ghosts {} · ~{}k prompt / ~{}k completion tokens\n",
+            total_turns,
+            epochs.len(),
+            total_cmds_ok,
+            total_cmds_fail,
+            total_files,
+            total_alerts,
+            total_ghosts,
+            (total_prompt as f64 / 1000.0).ceil() as u64,
+            (total_completion as f64 / 1000.0).ceil() as u64,
         ));
     }
 
-    for e in recent {
-        let line = if let Some(ref n) = e.narrative {
-            // Take only the first paragraph (split on blank line)
-            n.split('\n')
-                .take_while(|l| !l.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ")
-                .trim()
-                .to_string()
-        } else {
-            format_tally_one_liner(&e.tally)
-        };
-        out.push_str(&format!(
-            "Epoch {} (turns {}–{}): {}\n",
-            e.seq, e.turn_start, e.turn_end, line
-        ));
+    // Render chapters oldest-first.
+    if !chapters.is_empty() {
+        out.push_str("Chapters:\n");
+        for c in &chapters {
+            let narrative = c
+                .narrative
+                .as_ref()
+                .map(|n| {
+                    n.split('\n')
+                        .take_while(|l| !l.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_else(|| format_tally_one_liner(&c.tally));
+            if let Some((lo, hi)) = c.covers {
+                out.push_str(&format!(
+                    "  Chapter {} (turns {}–{}): {}\n",
+                    c.seq, lo, hi, narrative
+                ));
+            }
+        }
+    }
+
+    // Render recent uncovered epochs (last RENDER_EPOCHS).
+    let recent_uncovered: Vec<&EpochRecord> = if uncovered.len() > RENDER_EPOCHS {
+        uncovered[uncovered.len() - RENDER_EPOCHS..].to_vec()
+    } else {
+        uncovered.to_vec()
+    };
+
+    if !recent_uncovered.is_empty() {
+        out.push_str("Recent epochs:\n");
+        for e in &recent_uncovered {
+            let line = if let Some(ref n) = e.narrative {
+                n.split('\n')
+                    .take_while(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim()
+                    .to_string()
+            } else {
+                format_tally_one_liner(&e.tally)
+            };
+            out.push_str(&format!(
+                "  Epoch {} (turns {}–{}): {}\n",
+                e.seq, e.turn_start, e.turn_end, line
+            ));
+        }
     }
 
     out
@@ -477,7 +715,42 @@ fn scan_dir_in_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::io::Write;
+
+    fn make_test_epoch(seq: u32) -> EpochRecord {
+        let ts = chrono::Utc::now();
+        EpochRecord {
+            seq,
+            kind: "epoch".to_string(),
+            turn_start: (seq - 1) * 5,
+            turn_end: seq * 5,
+            ts_start: ts,
+            ts_end: ts,
+            msg_count: 5,
+            narrative: Some(format!("narrative for epoch {}", seq)),
+            tally: EpochTally::default(),
+            artifacts: Vec::new(),
+            covers: None,
+        }
+    }
+
+    fn make_test_epoch_with_tally(seq: u32, tally: EpochTally) -> EpochRecord {
+        let ts = chrono::Utc::now();
+        EpochRecord {
+            seq,
+            kind: "epoch".to_string(),
+            turn_start: (seq - 1) * 5,
+            turn_end: seq * 5,
+            ts_start: ts,
+            ts_end: ts,
+            msg_count: 5,
+            narrative: Some(format!("narrative for epoch {}", seq)),
+            tally,
+            artifacts: Vec::new(),
+            covers: None,
+        }
+    }
 
     fn make_msg(role: &str, content: &str) -> Message {
         Message {
@@ -490,7 +763,9 @@ mod tests {
     }
 
     fn with_test_home<F: FnOnce()>(f: F) {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::TEST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe {
@@ -554,14 +829,16 @@ mod tests {
         }
 
         let rendered = render_context_block(&epochs);
-        // Should show 8 recent epochs + 1 "…4 earlier epochs" line.
-        assert!(rendered.contains("…4 earlier epochs"));
-        // Epochs 5-12 should be present. Match the trailing " (" so "Epoch 1"
-        // does not spuriously match "Epoch 12".
+        // Should have a ledger line.
+        assert!(rendered.contains("Session ledger:"));
+        // No chapters section since there are no chapters.
+        assert!(rendered.contains("Recent epochs:"));
+        // Should show only up to 8 recent epochs.
+        // Epochs 5-12 should be present.
         for i in 5..=12 {
             assert!(rendered.contains(&format!("Epoch {} (", i)));
         }
-        // Epochs 1-4 should be absent.
+        // Epochs 1-4 should be absent from the recent section.
         for i in 1..=4 {
             assert!(!rendered.contains(&format!("Epoch {} (", i)));
         }
@@ -763,5 +1040,363 @@ mod tests {
             assert_eq!(out.len(), 1);
             assert_eq!(out[0], "old");
         });
+    }
+
+    /// RAII test-home guard: holds the `TEST_HOME_LOCK`, points `HOME` at a
+    /// fresh tempdir, and **restores the original `HOME` on drop** so the env is
+    /// not leaked into subsequent tests.
+    struct TestHome {
+        tmp: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+        saved_home: Option<String>,
+    }
+
+    impl TestHome {
+        fn path(&self) -> &std::path::Path {
+            self.tmp.path()
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.saved_home {
+                    Some(h) => std::env::set_var("HOME", h),
+                    None => std::env::remove_var("HOME"),
+                }
+            }
+        }
+    }
+
+    fn setup_test_env() -> TestHome {
+        let lock = crate::TEST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let saved_home = std::env::var("HOME").ok();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+        TestHome {
+            tmp,
+            _lock: lock,
+            saved_home,
+        }
+    }
+
+    // ── Rollup and ledger tests ──────────────────────────────────
+
+    #[test]
+    fn tally_merge_sums_and_recaps() {
+        let mut t1 = EpochTally {
+            commands_ok: 5,
+            commands_fail: 2,
+            failed_cmds: vec![("cmd1".to_string(), 0), ("cmd2".to_string(), 1)],
+            files_edited_count: 3,
+            files_edited: vec!["f1".to_string(), "f2".to_string()],
+            prompt_tokens: 100,
+            completion_tokens: 200,
+            alerts_count: 1,
+            alerts: vec!["alert1".to_string()],
+            ghost_starts: 1,
+            ghost_completions: 1,
+        };
+        let t2 = EpochTally {
+            commands_ok: 3,
+            commands_fail: 1,
+            failed_cmds: vec![("cmd3".to_string(), 0)],
+            files_edited_count: 2,
+            files_edited: vec!["f3".to_string()],
+            prompt_tokens: 50,
+            completion_tokens: 150,
+            alerts_count: 2,
+            alerts: vec!["alert2".to_string()],
+            ghost_starts: 0,
+            ghost_completions: 2,
+        };
+        t1.merge(&t2);
+        assert_eq!(t1.commands_ok, 8);
+        assert_eq!(t1.commands_fail, 3);
+        assert_eq!(t1.files_edited_count, 5);
+        assert_eq!(t1.prompt_tokens, 150);
+        assert_eq!(t1.completion_tokens, 350);
+        assert_eq!(t1.alerts_count, 3);
+        assert_eq!(t1.ghost_starts, 1);
+        assert_eq!(t1.ghost_completions, 3);
+        // Lists merged and capped at TALLY_LIST_CAP.
+        assert_eq!(t1.failed_cmds.len(), 3);
+        assert_eq!(t1.files_edited.len(), 3);
+        assert_eq!(t1.alerts.len(), 2);
+    }
+
+    #[test]
+    fn rollup_triggers_only_above_threshold() {
+        let tmp = setup_test_env();
+        let id = "rollup_threshold_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 10 uncovered epochs — no rollup (threshold is "exceeds", not "reaches").
+        for i in 1..=10 {
+            let e = make_test_epoch(i);
+            append_epoch(id, &e);
+        }
+        let config = Config::default();
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config));
+        assert!(result.is_none(), "10 epochs should not trigger rollup");
+
+        // 11 uncovered epochs — one rollup.
+        let e11 = make_test_epoch(11);
+        append_epoch(id, &e11);
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config));
+        assert!(result.is_some(), "11 epochs should trigger rollup");
+        let chapter = result.unwrap();
+        assert_eq!(chapter.kind, "chapter");
+        assert_eq!(chapter.covers, Some((1, 5)));
+    }
+
+    #[test]
+    fn rollup_chapter_fields_union_and_sum() {
+        let tmp = setup_test_env();
+        let id = "rollup_fields_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 11 epochs with distinct tallies.
+        for i in 1..=11 {
+            let e = make_test_epoch_with_tally(
+                i,
+                EpochTally {
+                    commands_ok: i,
+                    commands_fail: i * 2,
+                    files_edited_count: i * 3,
+                    prompt_tokens: (i * 100) as u64,
+                    completion_tokens: (i * 200) as u64,
+                    ..Default::default()
+                },
+            );
+            append_epoch(id, &e);
+        }
+        let config = Config::default();
+        let chapter = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config))
+            .unwrap();
+
+        // Check union of spans. Helper sets turn_start=(seq-1)*5, turn_end=seq*5,
+        // so the chapter spans epoch 1's start (0) to epoch 5's end (25).
+        assert_eq!(chapter.turn_start, 0);
+        assert_eq!(chapter.turn_end, 25);
+
+        // Check sum of tallies (epochs 1-5).
+        let expected_ok: u32 = (1..=5).sum();
+        let expected_fail: u32 = (1..=5).map(|i| i * 2).sum();
+        let expected_files: u32 = (1..=5).map(|i| i * 3).sum();
+        assert_eq!(chapter.tally.commands_ok, expected_ok);
+        assert_eq!(chapter.tally.commands_fail, expected_fail);
+        assert_eq!(chapter.tally.files_edited_count, expected_files);
+    }
+
+    #[test]
+    fn rollup_folds_once_per_call() {
+        let tmp = setup_test_env();
+        let id = "rollup_once_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 30 uncovered epochs — one call produces exactly one chapter.
+        for i in 1..=30 {
+            let e = make_test_epoch(i);
+            append_epoch(id, &e);
+        }
+        let config = Config::default();
+        let chapter = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config))
+            .unwrap();
+
+        // Only the first 5 are folded.
+        assert_eq!(chapter.covers, Some((1, 5)));
+
+        // 25 uncovered remain + 1 chapter.
+        let all = read_epochs(id);
+        let uncovered = uncovered_epochs(&all);
+        assert_eq!(uncovered.len(), 25);
+    }
+
+    #[test]
+    fn ledger_excludes_covered_epochs() {
+        let tmp = setup_test_env();
+        let id = "ledger_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 11 epochs with known tallies.
+        for i in 1..=11 {
+            let e = make_test_epoch_with_tally(
+                i,
+                EpochTally {
+                    commands_ok: i,
+                    ..Default::default()
+                },
+            );
+            append_epoch(id, &e);
+        }
+
+        // Compute sum of all 11 epochs' tallies.
+        let all = read_epochs(id);
+        let total_ok: u32 = all.iter().map(|e| e.tally.commands_ok).sum();
+
+        // Do the rollup.
+        let config = Config::default();
+        let _chapter = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config))
+            .unwrap();
+
+        // Read fresh (includes the chapter).
+        let all_after = read_epochs(id);
+        let rendered = render_context_block(&all_after);
+
+        // The ledger's commands_ok should equal the sum of all original epochs.
+        // (Chapter covers 1-5, uncovered are 6-11; ledger sums chapter+uncovered.)
+        assert!(rendered.contains(&format!("commands {} ok", total_ok)));
+    }
+
+    #[test]
+    fn render_with_chapters_and_recent() {
+        let tmp = setup_test_env();
+        let id = "render_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 11 epochs → rollup.
+        for i in 1..=11 {
+            let e = make_test_epoch(i);
+            append_epoch(id, &e);
+        }
+        let config = Config::default();
+        let _chapter = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config))
+            .unwrap();
+
+        let all = read_epochs(id);
+        let rendered = render_context_block(&all);
+
+        // Should contain ledger.
+        assert!(rendered.contains("Session ledger:"));
+        // Should contain chapters section.
+        assert!(rendered.contains("Chapters:"));
+        assert!(rendered.contains("Chapter"));
+        // Should contain recent epochs section.
+        assert!(rendered.contains("Recent epochs:"));
+        // Covered epochs (1-5) should NOT appear in recent.
+        for i in 1..=5 {
+            assert!(
+                !rendered.contains(&format!("Epoch {} (", i)),
+                "Covered epoch {} should not appear in recent epochs",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn rollup_appends_never_rewrites() {
+        let tmp = setup_test_env();
+        let id = "append_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 11 epochs.
+        for i in 1..=11 {
+            let e = make_test_epoch(i);
+            append_epoch(id, &e);
+        }
+
+        // Read file content before rollup.
+        let file_path = var_dir.join(format!("{}.epochs.jsonl", id));
+        let before = std::fs::read_to_string(&file_path).unwrap();
+
+        // Do the rollup.
+        let config = Config::default();
+        let _chapter = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config))
+            .unwrap();
+
+        // Read file content after rollup.
+        let after = std::fs::read_to_string(&file_path).unwrap();
+
+        // Before should be a prefix of after (append-only).
+        assert!(
+            after.starts_with(&before),
+            "File content was not append-only"
+        );
+    }
+
+    #[test]
+    fn rollup_with_narrative_disabled_uses_fallback() {
+        let tmp = setup_test_env();
+        let id = "fallback_test";
+        let var_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&var_dir).unwrap();
+
+        // 11 epochs with narratives.
+        for i in 1..=11 {
+            let e = make_test_epoch(i);
+            append_epoch(id, &e);
+        }
+
+        // Config with narrative disabled.
+        let mut config = Config::default();
+        config.digest.narrative_enabled = false;
+
+        let chapter = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(maybe_rollup(id, &config))
+            .unwrap();
+        // Chapter narrative should be non-empty (structured fallback).
+        assert!(
+            chapter.narrative.is_some(),
+            "Fallback narrative should be non-empty"
+        );
+        let narr = chapter.narrative.unwrap();
+        assert!(!narr.is_empty());
+    }
+
+    #[test]
+    fn uncovered_epochs_filters_correctly() {
+        let epochs = vec![make_test_epoch(1), make_test_epoch(2), make_test_epoch(3)];
+        let uncovered = uncovered_epochs(&epochs);
+        assert_eq!(uncovered.len(), 3);
+
+        // Add a chapter covering 1-2.
+        let chapter = EpochRecord {
+            seq: 4,
+            kind: "chapter".to_string(),
+            turn_start: 0,
+            turn_end: 20,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 20,
+            narrative: None,
+            tally: EpochTally::default(),
+            artifacts: Vec::new(),
+            covers: Some((1, 2)),
+        };
+        let epochs = vec![
+            make_test_epoch(1),
+            make_test_epoch(2),
+            make_test_epoch(3),
+            chapter,
+        ];
+        let uncovered = uncovered_epochs(&epochs);
+        assert_eq!(uncovered.len(), 1);
+        assert_eq!(uncovered[0].seq, 3);
     }
 }

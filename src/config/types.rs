@@ -155,6 +155,12 @@ pub struct CompactionConfig {
     /// parsed now so configs written today keep working).
     #[serde(default = "default_emergency_pct")]
     pub emergency_pct: u32,
+    /// Number of uncovered epochs that triggers a chapter rollup.
+    /// When the count of uncovered epochs exceeds this value, the oldest
+    /// ROLLUP_FOLD (5) uncovered epochs are folded into one chapter record.
+    /// Default: 10.
+    #[serde(default = "default_rollup_after")]
+    pub rollup_after: u32,
 }
 
 fn default_elide_at_pct() -> u32 {
@@ -169,6 +175,9 @@ fn default_target_pct() -> u32 {
 fn default_emergency_pct() -> u32 {
     85
 }
+fn default_rollup_after() -> u32 {
+    10
+}
 
 impl Default for CompactionConfig {
     fn default() -> Self {
@@ -177,6 +186,7 @@ impl Default for CompactionConfig {
             compact_at_pct: default_compact_at_pct(),
             target_pct: default_target_pct(),
             emergency_pct: default_emergency_pct(),
+            rollup_after: default_rollup_after(),
         }
     }
 }
