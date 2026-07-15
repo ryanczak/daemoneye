@@ -1,10 +1,20 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-06-ledger-rollups.md`](milestones/M4-context-management/phase-06-ledger-rollups.md)
-— **todo**. Re-verify its Current-state anchors before dispatch (05a/05b landed
-the epoch chain — phase-06 builds the ledger + chapter rollups on it, replacing
-the "…N earlier epochs" hook line in `render_context_block`).
+[`docs/dev/milestones/M4-context-management/phase-07-recall-context.md`](milestones/M4-context-management/phase-07-recall-context.md)
+— **todo**. Re-verify its Current-state anchors before dispatch (it adds the
+`recall_context` AI tool over the phase-04 archive; check the tool-registration
+checklist in CLAUDE.md and the archive read path landed by phase-04).
+
+**M4 phase-06 — ledger-rollups is `done`** (2026-07-14, escalated → architect
+takeover). Executor stopped by the human (`rexymcp stop`) at 167 turns
+verify-looping — its implementation was complete and compiled
+(`maybe_rollup`/`uncovered_epochs`/`EpochTally::merge`/`summarize_once` extract/
+ledger render/`rollup_after` config); takeover fixed test-only defects (HOME-leak
+→ RAII guard, wrong turn_end assertion, poison-resilient `TEST_HOME_LOCK`, clippy
+nits) and restored a README the executor's edit tool corrupted. Gates green
+(883 unit + 27 integration). **3rd consecutive human-stopped verify-loop on an
+epoch phase** — reinforces filed FR-2.
 
 **M4 phase-05b — epoch-head is `done`** (2026-07-14, escalated → architect
 takeover). Executor was **stopped by the human (`rexymcp stop`) after 529 turns

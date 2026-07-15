@@ -1,7 +1,7 @@
 # Phase 06: Session ledger and chapter rollups
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** done
 **Depends on:** phase-05 (epoch records)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -200,3 +200,69 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-15 01:42 (started)
+
+**Executor:** executor
+**Progress:** Started phase 06. Implementing chapter rollups, ledger rendering, and summarizer extraction.
+
+### Update — 2026-07-14 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** Executor stopped by the human (`rexymcp stop`, `user_stop`) at 167
+turns for verify-looping — 3rd such stop this milestone. Its implementation was
+**complete and compiled** (`maybe_rollup`, `uncovered_epochs`, `EpochTally::merge`,
+`summarize_once` extraction, ledger rendering, `rollup_after` config); only
+test-only defects + a corrupted README remained. Resume ruled out (the loop was
+the reason for the stop); takeover salvages the correct implementation.
+
+### Update — 2026-07-14 (complete, architect takeover)
+
+**Summary:** Kept the executor's complete, correct implementation. Fixed
+test-only defects it left behind: (1) `setup_test_env` leaked `HOME` (set but
+never restored) — replaced with an RAII `TestHome` guard that restores `HOME` on
+drop; (2) a wrong assertion (`chapter.turn_end == 4`; actual 25 per the helper's
+`turn_end = seq*5` scheme); (3) `TEST_HOME_LOCK` acquisition made poison-resilient
+(`unwrap_or_else(PoisonError::into_inner)`) so one test panic no longer cascades
+across the suite; (4) clippy nits (tuple-destructure of the guard, redundant
+`u32→u32` casts, needless `mut`). Also restored `README.md`, which the executor's
+edit tool corrupted (prepended the phase-06 table row to every line).
+
+**Acceptance criteria:** all met, each with a passing test —
+`rollup_triggers_only_above_threshold` (11→chapter covering 1–5, then 6
+uncovered; 10→none, the negative case), `rollup_chapter_fields_union_and_sum`
+(chapter tally = element-wise sum), `ledger_excludes_covered_epochs` (no
+double-count), `rollup_with_narrative_disabled_uses_fallback` (structured
+fallback non-empty), `rollup_appends_never_rewrites` (append-only after rollup),
+`render_with_chapters_and_recent` (covered epochs absent from Recent, chapters
+oldest-first), `rollup_folds_once_per_call`, `tally_merge_sums_and_recaps`,
+`uncovered_epochs_filters_correctly`.
+
+**Commands:**
+
+```
+cargo fmt --all            → clean
+cargo build                → Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings → clean
+cargo test                 → 883 passed; 0 failed (unit) + 27 passed (integration)
+```
+
+**End-to-end verification:** The rollup + ledger path is exercised by hermetic FS
+tests (real tempdir HOME, real `append_epoch`, real `maybe_rollup` +
+`render_context_block`); `rollup_triggers_only_above_threshold` seeds 11 epochs,
+runs `maybe_rollup`, and asserts the appended chapter + uncovered count — the
+phase doc's E2E scenario, run as a unit test.
+
+**Files changed:**
+- `src/daemon/context/epochs.rs` — rollup + ledger + merge (executor) + test fixes (architect)
+- `src/daemon/digest.rs` — `summarize_once` extraction (executor)
+- `src/config/types.rs` — `rollup_after` field (executor)
+- `src/daemon/server/ask.rs` — `maybe_rollup` call in should_digest (executor)
+
+### Review verdict — 2026-07-14
+
+- **Verdict:** escalated
+- **Bounces:** 1 cancelled (user_stop after 167-turn verify-loop); no bug docs — resolved by takeover
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (complete, correct implementation) → Claude (direct) fixed test defects + restored corrupted README
+- **Scope deviations:** none in production; the takeover was test-only cleanup + a doc restore. The executor's edit tool corrupted README.md (a new failure flavor — not git-revert, not verify-loop, but a mangled multi-line edit).
+- **Calibration:** 3rd consecutive human `rexymcp stop` for verify-looping on an epoch phase (05b, 06). Reinforces filed FR-2 (broaden the loop governor). Additive-leaning phase-06 meant the production code survived intact — only tests + a doc needed fixing (much lighter takeover than 05b's digest.rs reconstruction).
