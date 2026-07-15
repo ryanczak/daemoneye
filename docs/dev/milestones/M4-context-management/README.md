@@ -77,7 +77,7 @@ context loss, compaction off the interactive hot path.
 | 03 | budget-compaction ([phase-03-budget-compaction.md](phase-03-budget-compaction.md)) — `[compaction]` config, token-budget cut + hysteresis, synthesized boundaries, `[BUDGET]` rewording | core | done |
 | 04 | append-only-archive ([phase-04-append-only-archive.md](phase-04-append-only-archive.md)) — `<id>.archive.jsonl`, honest elision placeholders, retention | core | done |
 | 05a | epoch-persistence ([phase-05a-epoch-persistence.md](phase-05a-epoch-persistence.md)) — `context/epochs.rs` types, append-only persistence, span-windowed tally/scan (additive) | core | done |
-| 05b | epoch-head ([phase-05b-epoch-head.md](phase-05b-epoch-head.md)) — `compact_with_epochs` regenerated head, keep-newest narrative, retire the digest path | core | todo |
+| 05b | epoch-head ([phase-05b-epoch-head.md](phase-05b-epoch-head.md)) — `compact_with_epochs` regenerated head, keep-newest narrative, retire the digest path | core | done |
 | 06 | ledger-rollups ([phase-06-ledger-rollups.md](phase-06-ledger-rollups.md)) — session ledger + chapter rollups (O(log n) representation) | core | todo |
 | 07 | recall-context ([phase-07-recall-context.md](phase-07-recall-context.md)) — the `recall_context` AI tool over the archive | core | todo |
 | 08 | async-compaction ([phase-08-async-compaction.md](phase-08-async-compaction.md)) — background epoch build, staleness-checked swap, emergency path | core | todo |

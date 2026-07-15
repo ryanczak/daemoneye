@@ -1,11 +1,20 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-05b-epoch-head.md`](milestones/M4-context-management/phase-05b-epoch-head.md)
-— **todo**, ready for `/rexymcp:dispatch phase-05b-epoch-head` (or resume
-`/rexymcp:auto`). **Re-verify 05b's Current-state anchors before dispatch** — it
-quotes the phase-03 takeover `should_digest` block and the digest.rs symbols it
-deletes; 05a did not move them (additive), but confirm.
+[`docs/dev/milestones/M4-context-management/phase-06-ledger-rollups.md`](milestones/M4-context-management/phase-06-ledger-rollups.md)
+— **todo**. Re-verify its Current-state anchors before dispatch (05a/05b landed
+the epoch chain — phase-06 builds the ledger + chapter rollups on it, replacing
+the "…N earlier epochs" hook line in `render_context_block`).
+
+**M4 phase-05b — epoch-head is `done`** (2026-07-14, escalated → architect
+takeover). Executor was **stopped by the human (`rexymcp stop`) after 529 turns
+of verify-looping**; its `epochs.rs` (`compact_with_epochs` regenerated head +
+`render_context_block`) and `ask.rs` (should_digest epoch-build rewire) were
+correct, but `digest.rs` was left garbled mid-edit. Architect reconstructed
+digest.rs from HEAD + reapplied the intended deletions (retired
+`build_session_digest`/`compact_with_digest`/`tally_events`/`scan_artifacts`;
+kept the narrative summarizer + budget planner; keep-newest narrative), fixed
+executor clippy/test bugs. Gates green (874 unit + 27 integration).
 
 **M4 phase-05a — epoch-persistence is `done`** (2026-07-14, escalated → minimal
 architect takeover). Executor authored `src/daemon/context/epochs.rs` (+514,

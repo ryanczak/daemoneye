@@ -1,7 +1,7 @@
 # Phase 05b: Epoch chain — regenerated head, keep-newest narrative, retire the digest
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** done
 **Depends on:** phase-05a (epoch persistence + `tally_span`/`scan_artifacts_span`)
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -296,3 +296,71 @@ false` → structured-only, no live model):
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-14 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** The executor was **stopped mid-edit** by the human (`rexymcp stop`,
+`user_stop`) after 529 turns of verify-looping. Its structural rewrite had mostly
+landed on disk (epochs.rs `compact_with_epochs`/`render_context_block` + ask.rs
+rewire were correct) but `digest.rs` was left garbled (missing closing brace,
+functions that should survive deleted, duplicate test). Resume was ruled out (the
+loop was the reason for the stop); the correct work was on disk, so takeover.
+
+### Update — 2026-07-14 (complete, architect takeover)
+
+**Summary:** Kept the executor's correct `epochs.rs` (`compact_with_epochs` +
+regenerated two-slot head, `render_context_block`, `format_tally_one_liner`,
+`first_turn_of`/`last_turn_of`) and `ask.rs` (the `should_digest` rewire building
+an `EpochRecord` per compaction, `epoch_created` telemetry, `compact_with_epochs`
++ `repair_tail_head`). Reconstructed the mangled `digest.rs`: restored the
+known-good HEAD version, reapplied the intended 05b deletions
+(`build_session_digest`, `compact_with_digest`, `tally_events`, `scan_artifacts`,
+`scan_dir_newer`, old `planned_tail_start`, `EventTally`/`ArtifactChanges`), kept
+the narrative summarizer + budget planner (`planned_tail_start_by_budget`,
+`synthesized_tail_start`, `build_narrative_summary`), rewrote
+`format_messages_for_narrative` to **keep-newest**, and migrated/removed the dead
+tests. Also fixed executor bugs: a broken pluralization (`if n==1 {"s"} else
+{"s"}`) and an `== false` in epochs.rs, plus two test-fixture bugs (a substring
+collision `"Epoch 1"` vs `"Epoch 12"`, and the narrative-truncation test flip).
+
+**Acceptance criteria:** met — epoch append/read round-trip, disjoint
+span-scoped tallies, `compact_with_epochs` head shape (`[Session Context]` user +
+`Continuing session` assistant, tail on a clean boundary, original msg0 absent =
+D7 fix), `render_context_block` caps at 8 + "…N earlier epochs" line, keep-newest
+narrative, and the retired-path negative greps (`Session Digest`,
+`compact_with_digest`, `build_session_digest`, `tally_events`, `scan_artifacts`
+all empty). Span-abut (`epoch2.ts_start == epoch1.ts_end`) is correct by
+construction in `ask.rs` (`span_start = prior.last().ts_end`) and its tally
+scoping is unit-tested; the inline epoch-build was not extracted to a
+`pub(crate) fn`, so there is no dedicated span-abut integration test (minor gap).
+
+**Commands:**
+
+```
+cargo fmt --all            → clean
+cargo build                → Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings → clean
+cargo test                 → 874 passed; 0 failed (unit) + 27 passed (integration)
+```
+
+**End-to-end verification:** The epoch persistence + rendering + compaction
+functions are exercised by hermetic FS tests (real tempdir HOME, real
+`append_epoch`/`read_epochs`, real `compact_with_epochs`). The full interactive
+compaction path (build epoch on a live >60%-full session) is integration-level;
+per the phase doc it is unit-pinned. The epoch-build was left inline in `ask.rs`
+rather than extracted, so the "invoke the epoch-build twice + cat epochs.jsonl"
+E2E was not run as a standalone harness — noted as a deviation.
+
+**Files changed:**
+- `src/daemon/context/epochs.rs` — compact_with_epochs, render_context_block, tally one-liner, turn helpers (executor) + clippy/test fixes (architect)
+- `src/daemon/digest.rs` — reduced to narrative + budget planner (architect reconstruction)
+- `src/daemon/server/ask.rs` — should_digest epoch-build rewire (executor)
+
+### Review verdict — 2026-07-14
+
+- **Verdict:** escalated
+- **Bounces:** 1 cancelled (user_stop after 529-turn verify-loop); no bug docs — resolved by takeover
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (epochs.rs + ask.rs rewire, correct) → Claude (direct) reconstructed digest.rs + fixed bugs
+- **Scope deviations:** epoch-build left inline in ask.rs (not extracted to a testable `pub(crate) fn`), so no standalone span-abut E2E; span-abut is correct-by-construction + tally-scoping unit-tested. Executor left digest.rs mid-edit/garbled (the cancellation artifact).
+- **Calibration:** 3rd executor failure on a digest-heavy compaction-path rewrite (01 git-thrash, 03 git-thrash, 05b verify-loop→stopped). The 05a/05b split contained the blast radius — the executor's epochs.rs + ask.rs work survived intact; only the delete-heavy digest.rs needed reconstruction. Reinforces: split delete-heavy rewrites away from additive work.
