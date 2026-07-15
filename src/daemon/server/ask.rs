@@ -321,9 +321,10 @@ where
 
             let narrative = if config.digest.narrative_enabled {
                 // For narrative, use the budget-based tail_start if available.
+                // Use the full dropped span (msg0 is no longer special — D7 fix).
                 if let Some(ts) = tail_start {
                     if ts > 1 {
-                        let slice = &messages[1..ts];
+                        let slice = &messages[..ts];
                         let model_entry = config.resolve_model(Some("digest"));
                         crate::daemon::digest::build_narrative_summary(slice, model_entry).await
                     } else {
@@ -335,27 +336,63 @@ where
             } else {
                 None
             };
-            let has_narrative = narrative.is_some();
-            let digest = crate::daemon::digest::build_session_digest(
-                session_id.as_deref().unwrap_or("-"),
-                since,
-                messages.len(),
-                narrative.as_deref(),
-            );
 
             match tail_start {
                 Some(ts) => {
-                    messages = crate::daemon::digest::compact_with_digest(messages, &digest, ts);
+                    let id = session_id.as_deref().unwrap_or("-");
+                    let prior = crate::daemon::context::epochs::read_epochs(id);
+                    let span_start = prior.last().map(|e| e.ts_end).unwrap_or(since);
+                    let span_end = chrono::Utc::now();
+                    let dropped = &messages[..ts];
+                    let record = crate::daemon::context::epochs::EpochRecord {
+                        seq: prior.last().map(|e| e.seq + 1).unwrap_or(1),
+                        kind: "epoch".into(),
+                        turn_start: crate::daemon::context::epochs::first_turn_of(dropped),
+                        turn_end: crate::daemon::context::epochs::last_turn_of(dropped),
+                        ts_start: span_start,
+                        ts_end: span_end,
+                        msg_count: dropped.len() as u32,
+                        narrative,
+                        tally: crate::daemon::context::epochs::tally_span(id, span_start, span_end),
+                        artifacts: crate::daemon::context::epochs::scan_artifacts_span(
+                            span_start, span_end,
+                        ),
+                        covers: None,
+                    };
+                    crate::daemon::context::epochs::append_epoch(id, &record);
+                    log_event(
+                        "epoch_created",
+                        serde_json::json!({
+                            "session": id,
+                            "seq": record.seq,
+                            "turns": [record.turn_start, record.turn_end],
+                            "msgs": record.msg_count,
+                        }),
+                    );
+                    let chain = crate::daemon::context::epochs::read_epochs(id);
+                    let env = config.context.environment.clone();
+                    let host = crate::daemon::utils::daemon_hostname();
+                    let rendered = crate::daemon::context::epochs::render_context_block(&chain);
+                    // Get the first turn of the tail for the assistant ack.
+                    let tail_first_turn = messages.get(ts).and_then(|m| m.turn).unwrap_or(0);
+                    messages = crate::daemon::context::epochs::compact_with_epochs(
+                        messages,
+                        &rendered,
+                        &env,
+                        &host,
+                        record.turn_end as usize,
+                        tail_first_turn,
+                        ts,
+                    );
                     // Repair the tail head for any orphan tool_results.
                     if 2 < messages.len() {
                         let tail = &mut messages[2..];
                         crate::daemon::digest::repair_tail_head(tail);
                     }
                     log::info!(
-                        "Compaction (digest): tokens {}% — elided {} chars, narrative={}, compacted {} → {} messages",
+                        "Compaction (epoch {}): tokens {}% — compacted {} → {} messages",
+                        record.seq,
                         token_pct,
-                        elided,
-                        if has_narrative { "yes" } else { "no" },
                         pre_trim_len,
                         messages.len()
                     );
@@ -625,7 +662,7 @@ where
         send_response_split(
             tx,
             Response::SystemMsg(format!(
-                "↩ Session history compacted ({} messages → {}) — full context preserved in digest",
+                "↩ Session history compacted ({} → {} messages) — older turns in the session archive",
                 pre_trim_len, post_trim_len
             )),
         )

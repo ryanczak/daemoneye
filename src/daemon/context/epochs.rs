@@ -1,9 +1,11 @@
-//! Epoch records — append-only persistence and span-windowed tally/scan.
+//! Epoch records — append-only persistence, span-windowed tally/scan, and
+//! epoch-chain compaction.
 //!
-//! This module delivers the append-only epoch persistence layer and the
-//! span-windowed tally/artifact-scan functions that phase 05b will call at
-//! compaction time.  Nothing in the compaction path changes yet — that is 05b.
+//! This module owns the append-only epoch persistence layer, the span-windowed
+//! tally/artifact-scan functions, and the epoch-chain compaction helpers
+//! (`compact_with_epochs`, `render_context_block`).
 
+use crate::ai::Message;
 use crate::config;
 use std::io::Write;
 use std::path::PathBuf;
@@ -11,6 +13,9 @@ use std::path::PathBuf;
 /// Cap on how many entries each list field of an EpochTally retains; the
 /// paired `_count` field always carries the true total.
 pub const TALLY_LIST_CAP: usize = 10;
+
+/// How many recent epochs to render in the context block.
+pub const RENDER_EPOCHS: usize = 8;
 
 /// Serializable per-span event tally. List fields are CAPPED at
 /// `TALLY_LIST_CAP` entries; `_count` fields carry the true totals.
@@ -95,6 +100,172 @@ pub fn append_epoch(id: &str, rec: &EpochRecord) {
     } else {
         log::warn!("Failed to open epoch file {} for append", path.display());
     }
+}
+
+// ── Context block rendering ────────────────────────────────────────
+
+/// Format an EpochTally as a one-line summary (the tally one-liner).
+fn format_tally_one_liner(t: &EpochTally) -> String {
+    let total_cmds = t.commands_ok + t.commands_fail;
+    let parts: Vec<String> = [
+        if total_cmds > 0 {
+            if t.commands_fail > 0 {
+                format!("{} cmds ({} failed)", total_cmds, t.commands_fail)
+            } else {
+                format!("{} cmds", total_cmds)
+            }
+        } else {
+            String::new()
+        },
+        if t.files_edited_count > 0 {
+            format!("{} files edited", t.files_edited_count)
+        } else {
+            String::new()
+        },
+        if t.alerts_count > 0 {
+            format!(
+                "{} alert{}",
+                t.alerts_count,
+                if t.alerts_count == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        },
+        if t.ghost_starts > 0 {
+            format!(
+                "{} ghost start{}",
+                t.ghost_starts,
+                if t.ghost_starts == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        },
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect();
+
+    if parts.is_empty() {
+        "no events".to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+/// Render the epoch chain for the working-set head. The last RENDER_EPOCHS (8)
+/// epochs, newest last — each as "Epoch {seq} (turns {a}–{b}): {line}" where
+/// {line} is the narrative (trimmed to one paragraph) or, when absent, a tally
+/// one-liner. Older epochs collapse to a single line:
+/// "…{n} earlier epochs — chapter rollups arrive in a later phase."
+/// (Phase 06 replaces that line with ledger + chapters.)
+pub fn render_context_block(epochs: &[EpochRecord]) -> String {
+    let mut out = String::new();
+
+    if epochs.is_empty() {
+        return out;
+    }
+
+    let total = epochs.len();
+    let recent_start = total.saturating_sub(RENDER_EPOCHS);
+    let recent = &epochs[recent_start..];
+
+    if recent_start > 0 {
+        out.push_str(&format!(
+            "…{} earlier epochs — chapter rollups arrive in a later phase.\n",
+            recent_start
+        ));
+    }
+
+    for e in recent {
+        let line = if let Some(ref n) = e.narrative {
+            // Take only the first paragraph (split on blank line)
+            n.split('\n')
+                .take_while(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string()
+        } else {
+            format_tally_one_liner(&e.tally)
+        };
+        out.push_str(&format!(
+            "Epoch {} (turns {}–{}): {}\n",
+            e.seq, e.turn_start, e.turn_end, line
+        ));
+    }
+
+    out
+}
+
+// ── Compaction helpers ─────────────────────────────────────────────
+
+/// Return the minimum turn number in a message slice, or 0 if empty.
+pub fn first_turn_of(msgs: &[Message]) -> u32 {
+    msgs.iter()
+        .filter_map(|m| m.turn)
+        .min()
+        .map(|v| v as u32)
+        .unwrap_or(0)
+}
+
+/// Return the maximum turn number in a message slice, or 0 if empty.
+pub fn last_turn_of(msgs: &[Message]) -> u32 {
+    msgs.iter()
+        .filter_map(|m| m.turn)
+        .max()
+        .map(|v| v as u32)
+        .unwrap_or(0)
+}
+
+/// Layout: [synthetic user "[Session Context] …", synthetic assistant ack,
+/// messages[tail_start..]]. `tail_start` MUST already be a clean/repaired
+/// boundary (phase-03 planner). Returns `messages` unchanged when `tail_start`
+/// is infeasible (`< 2` or `>= len`) — same guard as the legacy compactor.
+pub fn compact_with_epochs(
+    messages: Vec<Message>,
+    rendered_context: &str,
+    environment: &str,
+    host: &str,
+    turn_end: usize,
+    tail_first_turn: usize,
+    tail_start: usize,
+) -> Vec<Message> {
+    if tail_start < 2 || tail_start >= messages.len() {
+        return messages;
+    }
+
+    let slot0_content = format!(
+        "[Session Context — regenerated at compaction; turns 1..{} summarized]\n\
+         Environment: {} · Daemon host: {}\n\n\
+         {}\n\n\
+         Older turns are preserved in the session archive.",
+        turn_end, environment, host, rendered_context
+    );
+
+    let slot0 = Message {
+        role: "user".to_string(),
+        content: slot0_content,
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    };
+
+    let slot1 = Message {
+        role: "assistant".to_string(),
+        content: format!(
+            "Continuing session — the context above covers everything before turn {}.",
+            tail_first_turn
+        ),
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    };
+
+    let mut result = Vec::with_capacity(2 + messages.len() - tail_start);
+    result.push(slot0);
+    result.push(slot1);
+    result.extend_from_slice(&messages[tail_start..]);
+    result
 }
 
 /// Tally events for one session in the half-open window `[since, until)`.
@@ -308,6 +479,16 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    fn make_msg(role: &str, content: &str) -> Message {
+        Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: None,
+        }
+    }
+
     fn with_test_home<F: FnOnce()>(f: F) {
         let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
@@ -325,6 +506,94 @@ mod tests {
                 std::env::remove_var("HOME");
             }
         }
+    }
+
+    #[test]
+    fn compact_with_epochs_head_shape() {
+        // Build 32 messages: alternating user/assistant.
+        let messages: Vec<crate::ai::Message> = (0..32)
+            .map(|i| {
+                let role = if i % 2 == 0 { "user" } else { "assistant" };
+                make_msg(role, &format!("msg-{}", i))
+            })
+            .collect();
+
+        let result = compact_with_epochs(messages, "context", "env", "host", 0, 0, 16);
+
+        // First slot is synthetic user with [Session Context] header.
+        assert_eq!(result[0].role, "user");
+        assert!(result[0].content.contains("[Session Context"));
+        // Second slot is synthetic assistant ack.
+        assert_eq!(result[1].role, "assistant");
+        assert!(result[1].content.contains("Continuing session"));
+        // Tail starts at the clean boundary (index 16 = user).
+        assert_eq!(result[2].role, "user");
+        assert_eq!(result[2].content, "msg-16");
+        // Original msg0 is absent from the working set (D7 fix).
+        assert!(!result.iter().any(|m| m.content == "msg-0"));
+    }
+
+    #[test]
+    fn render_context_block_caps_at_eight() {
+        // Build 12 epoch records.
+        let mut epochs = Vec::new();
+        for i in 1..=12 {
+            epochs.push(EpochRecord {
+                seq: i,
+                kind: "epoch".to_string(),
+                turn_start: (i - 1) * 10,
+                turn_end: i * 10,
+                ts_start: chrono::Utc::now(),
+                ts_end: chrono::Utc::now(),
+                msg_count: 10,
+                narrative: Some(format!("narrative for epoch {}", i)),
+                tally: EpochTally::default(),
+                artifacts: Vec::new(),
+                covers: None,
+            });
+        }
+
+        let rendered = render_context_block(&epochs);
+        // Should show 8 recent epochs + 1 "…4 earlier epochs" line.
+        assert!(rendered.contains("…4 earlier epochs"));
+        // Epochs 5-12 should be present. Match the trailing " (" so "Epoch 1"
+        // does not spuriously match "Epoch 12".
+        for i in 5..=12 {
+            assert!(rendered.contains(&format!("Epoch {} (", i)));
+        }
+        // Epochs 1-4 should be absent.
+        for i in 1..=4 {
+            assert!(!rendered.contains(&format!("Epoch {} (", i)));
+        }
+    }
+
+    #[test]
+    fn render_context_block_uses_tally_one_liner_when_no_narrative() {
+        let epochs = vec![EpochRecord {
+            seq: 1,
+            kind: "epoch".to_string(),
+            turn_start: 0,
+            turn_end: 10,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 10,
+            narrative: None,
+            tally: EpochTally {
+                commands_ok: 5,
+                commands_fail: 2,
+                files_edited_count: 3,
+                alerts_count: 1,
+                ghost_starts: 0,
+                ..Default::default()
+            },
+            artifacts: Vec::new(),
+            covers: None,
+        }];
+
+        let rendered = render_context_block(&epochs);
+        assert!(rendered.contains("7 cmds (2 failed)"));
+        assert!(rendered.contains("3 files edited"));
+        assert!(rendered.contains("1 alert"));
     }
 
     #[test]

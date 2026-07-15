@@ -1,36 +1,27 @@
-//! Session digest: structured compaction of conversation history.
+//! Session compaction helpers: narrative summarization and budget-based tail
+//! planning.
 //!
 //! Compaction is driven by prompt-token pressure in [`crate::daemon::server`].
 //! When tokens cross the elision threshold, [`elide_old_tool_results`] condenses
-//! oversized tool outputs in older turns.  When pressure crosses the digest
-//! threshold, [`build_session_digest`] scans `events.jsonl` and the filesystem
-//! to produce a compact `[Session Digest]` block that replaces the oldest
-//! messages via [`compact_with_digest`].  [`DIGEST_THRESHOLD`] is the minimum
-//! message count required before either pass may fire — a small floor so very
-//! short sessions with token-heavy first turns don't compact prematurely.
+//! oversized tool outputs in older turns.  When pressure crosses the compaction
+//! threshold, the server builds an epoch record and regenerates the working-set
+//! head via [`crate::daemon::context::epochs`]; the narrative that feeds each
+//! epoch comes from [`build_narrative_summary`] here, and the cut point from
+//! [`planned_tail_start_by_budget`] / [`synthesized_tail_start`].
+//! [`DIGEST_THRESHOLD`] is the minimum message count before compaction may fire.
 //!
-//! The digest is *hybrid*: [`build_narrative_summary`] calls a cheap model (the
-//! optional `digest` config entry, falling back to `default`) to turn the
-//! about-to-be-dropped turns into a short natural-language narrative capturing
-//! causal threads.  That narrative is prepended to the deterministic structured
-//! tally.  The narrative step is best-effort — if it times out or errors, the
-//! structured digest still fires.
+//! [`build_narrative_summary`] calls a cheap model (the optional `digest` config
+//! entry, falling back to `default`) to turn the about-to-be-dropped turns into
+//! a short natural-language narrative capturing causal threads.  Best-effort — if
+//! it times out or errors, the structured epoch tally still fires.
 
 use crate::ai::Message;
 use crate::daemon::context::estimate::estimate_message_tokens;
-use crate::daemon::utils::log_event;
-use chrono::{DateTime, Utc};
-use std::path::Path;
 use std::time::Duration;
 
 /// Minimum number of in-memory messages required before token-pressure-triggered
-/// compaction may fire.  Must exceed `TAIL_KEEP + 2` so the digest has
-/// something to compact.
+/// compaction may fire.
 pub const DIGEST_THRESHOLD: usize = 20;
-
-/// How many recent messages to keep after compaction.
-/// Result layout: [first_message, digest_message, ...tail].
-const TAIL_KEEP: usize = 16;
 
 /// Tool results larger than this many characters are replaced with a short
 /// placeholder during elision.  Roughly ~750 tokens at 4 chars/token; short
@@ -45,216 +36,6 @@ const ELISION_TAIL_KEEP: usize = 8;
 /// when a single message exceeds the whole budget. Guarantees the model always
 /// retains recent context after a compaction pass.
 const MIN_TAIL_MESSAGES: usize = 4;
-
-// ── Event tallies ────────────────────────────────────────────────────
-
-#[derive(Default)]
-struct EventTally {
-    commands_ok: u32,
-    commands_fail: u32,
-    failed_cmds: Vec<(String, i32)>, // (cmd snippet, exit_code)
-    files_edited: Vec<String>,
-    prompt_tokens: u64,
-    completion_tokens: u64,
-    bg_windows_created: u32,
-    bg_windows_closed: u32,
-    alerts_received: Vec<String>,
-    ghost_starts: u32,
-    ghost_completions: u32,
-}
-
-/// Scan event segments for events belonging to this session (or global events
-/// like webhook alerts) that occurred after `since`.
-fn tally_events(session_id: &str, since: DateTime<Utc>) -> EventTally {
-    let mut t = EventTally::default();
-
-    crate::daemon::utils::for_each_event_between(Some(since), None, &mut |v| {
-        let event = v.get("event").and_then(|e| e.as_str()).unwrap_or("");
-        let ev_session = v.get("session").and_then(|s| s.as_str()).unwrap_or("");
-        // Also check session_id field (used by ghost events).
-        let ev_session_id = v.get("session_id").and_then(|s| s.as_str()).unwrap_or("");
-
-        let belongs = ev_session == session_id
-            || ev_session_id == session_id
-            || ev_session == "-"
-            || ev_session.is_empty();
-
-        match event {
-            "ai_turn" if belongs => {
-                t.prompt_tokens += v.get("prompt_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                t.completion_tokens += v
-                    .get("completion_tokens")
-                    .and_then(|n| n.as_u64())
-                    .unwrap_or(0);
-            }
-            "job_complete" if belongs => {
-                let code = v.get("exit_code").and_then(|n| n.as_i64()).unwrap_or(-1) as i32;
-                if code == 0 {
-                    t.commands_ok += 1;
-                } else {
-                    t.commands_fail += 1;
-                    let name = v
-                        .get("job_name")
-                        .and_then(|s| s.as_str())
-                        .unwrap_or("?")
-                        .to_string();
-                    t.failed_cmds.push((name, code));
-                }
-            }
-            "job_start" if belongs => {
-                t.bg_windows_created += 1;
-            }
-            "gc_window" if belongs => {
-                t.bg_windows_closed += 1;
-            }
-            "file_edit" if belongs => {
-                if let Some(p) = v.get("path").and_then(|s| s.as_str()) {
-                    t.files_edited.push(p.to_string());
-                }
-            }
-            "webhook_alert" => {
-                // Global events — always relevant.
-                if let Some(name) = v.get("alert_name").and_then(|s| s.as_str()) {
-                    t.alerts_received.push(name.to_string());
-                }
-            }
-            "ghost_start" if belongs => {
-                t.ghost_starts += 1;
-            }
-            "ghost_complete" if belongs => {
-                t.ghost_completions += 1;
-            }
-            _ => {}
-        }
-    });
-
-    t
-}
-
-// ── Artifact scanning ────────────────────────────────────────────────
-
-struct ArtifactChanges {
-    runbooks: Vec<String>,
-    scripts: Vec<String>,
-    memories: Vec<(String, String)>,  // (key, category)
-    schedules: Vec<(String, String)>, // (name, kind description)
-}
-
-/// Scan the filesystem for artifacts created or modified since `since`.
-fn scan_artifacts(since: DateTime<Utc>) -> ArtifactChanges {
-    let since_systime: std::time::SystemTime = since.into();
-    let mut changes = ArtifactChanges {
-        runbooks: Vec::new(),
-        scripts: Vec::new(),
-        memories: Vec::new(),
-        schedules: Vec::new(),
-    };
-
-    // Runbooks
-    scan_dir_newer(
-        &crate::runbook::runbooks_dir(),
-        since_systime,
-        &["md"],
-        &mut changes.runbooks,
-    );
-
-    // Scripts (any extension)
-    scan_dir_newer(
-        &crate::scripts::scripts_dir(),
-        since_systime,
-        &[],
-        &mut changes.scripts,
-    );
-
-    // Memories (three category subdirs)
-    for (category, dir_name) in &[
-        ("session", "session"),
-        ("knowledge", "knowledge"),
-        ("incident", "incidents"),
-    ] {
-        let dir = crate::config::config_dir().join("memory").join(dir_name);
-        let mut keys = Vec::new();
-        scan_dir_newer(&dir, since_systime, &["md"], &mut keys);
-        for key in keys {
-            changes.memories.push((key, category.to_string()));
-        }
-    }
-
-    // Schedules — check created_at field in schedules.json.
-    if let Ok(text) = std::fs::read_to_string(crate::config::Config::schedules_path())
-        && let Ok(jobs) = serde_json::from_str::<Vec<serde_json::Value>>(&text)
-    {
-        for job in &jobs {
-            let created = job
-                .get("created_at")
-                .and_then(|s| s.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|d| d.with_timezone(&Utc));
-            if let Some(created_at) = created
-                && created_at >= since
-            {
-                let name = job
-                    .get("name")
-                    .and_then(|s| s.as_str())
-                    .unwrap_or("?")
-                    .to_string();
-                let kind = job
-                    .get("kind")
-                    .and_then(|k| k.get("type"))
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("?")
-                    .to_string();
-                changes.schedules.push((name, kind));
-            }
-        }
-    }
-
-    changes
-}
-
-/// List files in `dir` whose mtime is >= `since`, collecting stem names.
-/// If `extensions` is non-empty, only files with a matching extension are included.
-fn scan_dir_newer(
-    dir: &Path,
-    since: std::time::SystemTime,
-    extensions: &[&str],
-    out: &mut Vec<String>,
-) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        if !meta.is_file() {
-            continue;
-        }
-        let Ok(mtime) = meta.modified() else {
-            continue;
-        };
-        if mtime < since {
-            continue;
-        }
-        if !extensions.is_empty() {
-            let path = entry.path();
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !extensions.contains(&ext) {
-                continue;
-            }
-        }
-        let name = entry
-            .path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        if !name.is_empty() {
-            out.push(name);
-        }
-    }
-    out.sort();
-}
 
 // ── Narrative summary (hybrid digest) ────────────────────────────────
 
@@ -297,49 +78,78 @@ Rules:
 /// narrative model.  Tool results are shortened aggressively — the narrative
 /// step cares about the *arc* of the investigation, not raw bytes.
 fn format_messages_for_narrative(messages: &[Message]) -> String {
-    let mut out = String::new();
-    for m in messages {
+    fn format_one(m: &Message) -> String {
+        let mut s = String::new();
         match m.role.as_str() {
             "user" if m.tool_results.is_some() => {
                 if let Some(results) = &m.tool_results {
                     for r in results {
                         let preview = if r.content.len() > 400 {
-                            format!("{}…", &r.content[..400])
+                            format!("{}…", &r.content[..floor_char_boundary(&r.content, 400)])
                         } else {
                             r.content.clone()
                         };
-                        out.push_str(&format!("[tool_result {}] {}\n", r.tool_name, preview));
+                        s.push_str(&format!("[tool_result {}] {}\n", r.tool_name, preview));
                     }
                 }
             }
             "user" if !m.content.is_empty() => {
-                out.push_str("USER: ");
-                out.push_str(&m.content);
-                out.push('\n');
+                s.push_str("USER: ");
+                s.push_str(&m.content);
+                s.push('\n');
             }
             "assistant" => {
                 if !m.content.is_empty() {
-                    out.push_str("ASSISTANT: ");
-                    out.push_str(&m.content);
-                    out.push('\n');
+                    s.push_str("ASSISTANT: ");
+                    s.push_str(&m.content);
+                    s.push('\n');
                 }
                 if let Some(calls) = &m.tool_calls {
                     for c in calls {
                         let arg_preview = if c.arguments.len() > 200 {
-                            format!("{}…", &c.arguments[..200])
+                            format!(
+                                "{}…",
+                                &c.arguments[..floor_char_boundary(&c.arguments, 200)]
+                            )
                         } else {
                             c.arguments.clone()
                         };
-                        out.push_str(&format!("[tool_call {}] {}\n", c.name, arg_preview));
+                        s.push_str(&format!("[tool_call {}] {}\n", c.name, arg_preview));
                     }
                 }
             }
             _ => {}
         }
-        if out.len() >= NARRATIVE_INPUT_CHAR_BUDGET {
-            out.push_str("\n[…truncated to fit summarizer budget…]\n");
+        s
+    }
+
+    // Keep the NEWEST messages that fit the budget: walk backward accumulating
+    // formatted chunks, stop before exceeding the budget (but always keep at
+    // least one), then emit in chronological order with a leading marker when
+    // older turns were dropped from the summarizer input.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    let mut truncated = false;
+    for m in messages.iter().rev() {
+        let chunk = format_one(m);
+        if chunk.is_empty() {
+            continue;
+        }
+        if total + chunk.len() > NARRATIVE_INPUT_CHAR_BUDGET && !chunks.is_empty() {
+            truncated = true;
             break;
         }
+        total += chunk.len();
+        chunks.push(chunk);
+    }
+    chunks.reverse();
+
+    let mut out = String::new();
+    if truncated {
+        out.push_str("[…older dropped turns omitted from summarizer input…]\n");
+    }
+    for c in chunks {
+        out.push_str(&c);
     }
     out
 }
@@ -423,186 +233,7 @@ pub async fn build_narrative_summary(
     Some(trimmed.to_string())
 }
 
-// ── Digest formatting ────────────────────────────────────────────────
-
-/// Build the `[Session Digest]` text block from event tallies and artifact scans.
-///
-/// If `narrative` is `Some`, it is prepended as the first section after the
-/// header — the narrative is the human-readable story, the tally is the
-/// authoritative numbers.  Pass `None` to emit the structured-only digest.
-pub fn build_session_digest(
-    session_id: &str,
-    since: DateTime<Utc>,
-    message_count: usize,
-    narrative: Option<&str>,
-) -> String {
-    log_event(
-        "session_digest_start",
-        serde_json::json!({
-            "session": session_id,
-            "message_count": message_count,
-            "since": since.to_rfc3339(),
-        }),
-    );
-
-    let tally = tally_events(session_id, since);
-
-    log_event(
-        "session_digest_events_scanned",
-        serde_json::json!({
-            "session": session_id,
-            "commands_ok": tally.commands_ok,
-            "commands_fail": tally.commands_fail,
-            "files_edited": tally.files_edited.len(),
-            "alerts": tally.alerts_received.len(),
-            "ghosts": tally.ghost_starts,
-        }),
-    );
-
-    let artifacts = scan_artifacts(since);
-
-    let artifact_count = artifacts.runbooks.len()
-        + artifacts.scripts.len()
-        + artifacts.memories.len()
-        + artifacts.schedules.len();
-
-    log_event(
-        "session_digest_artifacts_found",
-        serde_json::json!({
-            "session": session_id,
-            "runbooks": artifacts.runbooks.len(),
-            "scripts": artifacts.scripts.len(),
-            "memories": artifacts.memories.len(),
-            "schedules": artifacts.schedules.len(),
-        }),
-    );
-
-    let mut out = format!(
-        "[Session Digest — {} messages compacted]\n\n",
-        message_count
-    );
-
-    if let Some(narrative) = narrative {
-        let trimmed = narrative.trim();
-        if !trimmed.is_empty() {
-            out.push_str("Narrative:\n");
-            out.push_str(trimmed);
-            out.push_str("\n\n");
-        }
-    }
-
-    // Commands summary
-    let total_cmds = tally.commands_ok + tally.commands_fail;
-    if total_cmds > 0 {
-        out.push_str(&format!(
-            "Commands executed: {} ({} succeeded, {} failed)\n",
-            total_cmds, tally.commands_ok, tally.commands_fail
-        ));
-        for (name, code) in &tally.failed_cmds {
-            out.push_str(&format!("  Failed: {} (exit {})\n", name, code));
-        }
-    }
-
-    // Files edited
-    if !tally.files_edited.is_empty() {
-        out.push_str(&format!(
-            "Files edited: {} ({})\n",
-            tally.files_edited.len(),
-            tally.files_edited.join(", ")
-        ));
-    }
-
-    // Token usage
-    if tally.prompt_tokens > 0 {
-        out.push_str(&format!(
-            "Token usage: ~{}k prompt / ~{}k completion\n",
-            tally.prompt_tokens / 1000,
-            tally.completion_tokens / 1000,
-        ));
-    }
-
-    // Background windows
-    if tally.bg_windows_created > 0 {
-        let active = tally
-            .bg_windows_created
-            .saturating_sub(tally.bg_windows_closed);
-        out.push_str(&format!(
-            "Background windows: {} created, {} closed, {} may still be active\n",
-            tally.bg_windows_created, tally.bg_windows_closed, active
-        ));
-    }
-
-    // Alerts
-    if !tally.alerts_received.is_empty() {
-        out.push_str(&format!(
-            "Alerts received: {} ({})\n",
-            tally.alerts_received.len(),
-            tally.alerts_received.join(", ")
-        ));
-    }
-
-    // Ghost shells
-    if tally.ghost_starts > 0 {
-        out.push_str(&format!(
-            "Ghost shells: {} started, {} completed\n",
-            tally.ghost_starts, tally.ghost_completions
-        ));
-    }
-
-    // Artifacts
-    if artifact_count > 0 {
-        out.push_str("\nArtifacts created/modified this session:\n");
-        for name in &artifacts.runbooks {
-            out.push_str(&format!("  Runbook: {}\n", name));
-        }
-        for name in &artifacts.scripts {
-            out.push_str(&format!("  Script: {}\n", name));
-        }
-        for (key, cat) in &artifacts.memories {
-            out.push_str(&format!("  Memory: {} [{}]\n", key, cat));
-        }
-    }
-
-    // Schedule changes
-    if !artifacts.schedules.is_empty() {
-        out.push_str("\nSchedule changes:\n");
-        for (name, kind) in &artifacts.schedules {
-            out.push_str(&format!("  Added: \"{}\" ({})\n", name, kind));
-        }
-    }
-
-    let digest_len = out.len();
-
-    log_event(
-        "session_digest_complete",
-        serde_json::json!({
-            "session": session_id,
-            "digest_bytes": digest_len,
-            "artifact_count": artifact_count,
-        }),
-    );
-
-    out
-}
-
 // ── Message compaction ───────────────────────────────────────────────
-
-/// Predict where [`compact_with_digest`] will cut the message vec.
-///
-/// Returns the index of the first message in the preserved tail (i.e. the
-/// boundary between "dropped" and "kept") when compaction is feasible, or
-/// `None` when the history is too short or lacks a clean turn boundary.
-///
-/// Useful for callers (e.g. the server's compaction block) that need to know
-/// which messages are about to be dropped so they can feed that slice to
-/// [`build_narrative_summary`] before the digest is built.
-pub fn planned_tail_start(messages: &[Message]) -> Option<usize> {
-    if messages.len() <= TAIL_KEEP + 2 {
-        return None;
-    }
-    let raw_tail_start = messages.len().saturating_sub(TAIL_KEEP);
-    crate::daemon::session::next_clean_turn_start(messages, raw_tail_start)
-}
 
 /// Plan the compaction cut so the *kept* tail fits within `budget_tokens`
 /// estimated tokens (post-scale). Walks backward from the end accumulating
@@ -689,40 +320,6 @@ pub fn repair_tail_head(tail: &mut [Message]) {
             msg.content = "[tool results from a compacted turn were elided]".to_string();
         }
     }
-}
-
-/// Replace old messages with a digest, keeping the first message (system context)
-/// and the tail from `tail_start` onward.
-///
-/// Layout: `[first_message] [digest_as_assistant] [messages[tail_start..]]`
-///
-/// `tail_start` is chosen by the caller via [`planned_tail_start_by_budget`]
-/// (clean boundary) or [`synthesized_tail_start`] (raw, repaired afterward), so
-/// the planner and the compactor can never disagree. Returns `messages`
-/// unchanged when `tail_start` is not a feasible cut (`< 2` or `>= len`).
-pub fn compact_with_digest(
-    messages: Vec<Message>,
-    digest: &str,
-    tail_start: usize,
-) -> Vec<Message> {
-    if tail_start < 2 || tail_start >= messages.len() {
-        return messages;
-    }
-
-    let first = messages[0].clone();
-    let digest_msg = Message {
-        role: "assistant".to_string(),
-        content: digest.to_string(),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    };
-
-    let mut result = Vec::with_capacity(2 + messages.len() - tail_start);
-    result.push(first);
-    result.push(digest_msg);
-    result.extend_from_slice(&messages[tail_start..]);
-    result
 }
 
 /// Replace oversized tool_results in older messages with a short placeholder.
@@ -822,7 +419,6 @@ fn ceil_char_boundary(s: &str, index: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     fn make_msg(role: &str, content: &str) -> Message {
         Message {
@@ -938,114 +534,6 @@ mod tests {
     }
 
     #[test]
-    fn compact_skips_orphan_tool_result_at_boundary() {
-        use crate::ai::ToolResult;
-        use crate::ai::types::ToolCall;
-        // Repeating 3-unit history [assistant(call), user(result), user(clean)]
-        // so clean user boundaries exist at indices 0, 3, 6, … The budget
-        // planner must advance to a clean boundary and NOT orphan a result.
-        let mut messages: Vec<Message> = vec![make_msg("user", "first")]; // idx 0 (clean)
-        for j in 0..12 {
-            messages.push(Message {
-                role: "assistant".to_string(),
-                content: String::new(),
-                tool_calls: Some(vec![ToolCall {
-                    id: format!("tc-{}", j),
-                    name: "read_file".to_string(),
-                    arguments: "{}".to_string(),
-                    thought_signature: None,
-                }]),
-                tool_results: None,
-                turn: None,
-            });
-            messages.push(Message {
-                role: "user".to_string(),
-                content: String::new(),
-                tool_calls: None,
-                tool_results: Some(vec![ToolResult {
-                    tool_call_id: format!("tc-{}", j),
-                    tool_name: "read_file".to_string(),
-                    content: "ok".to_string(),
-                }]),
-                turn: None,
-            });
-            messages.push(make_msg("user", &format!("clean-{}", j)));
-        }
-
-        let original_len = messages.len();
-        let ts =
-            planned_tail_start_by_budget(&messages, 100, 1.0).expect("clean boundary should exist");
-        // The clean planner must land on a user turn without tool_results.
-        assert_eq!(messages[ts].role, "user");
-        assert!(messages[ts].tool_results.is_none());
-        let result = compact_with_digest(messages, "digest", ts);
-        assert!(result.len() < original_len, "should have compacted");
-        assert_no_orphan_tool_results(&result);
-    }
-
-    #[test]
-    fn synthesized_boundary_repairs_orphans() {
-        use crate::ai::ToolResult;
-        use crate::ai::types::ToolCall;
-        // Pathological history: every user message carries a tool_result (paired
-        // with the preceding assistant's tool_call), so no clean boundary exists.
-        // The old code SKIPPED compaction; now the synthesized boundary + repair
-        // compacts it and strips whichever result is orphaned by the cut.
-        let mut messages: Vec<Message> = vec![make_msg("user", "first")];
-        for i in 1..30 {
-            if i % 2 == 1 {
-                messages.push(Message {
-                    role: "assistant".to_string(),
-                    content: String::new(),
-                    tool_calls: Some(vec![ToolCall {
-                        id: format!("tc-{}", i),
-                        name: "read_file".to_string(),
-                        arguments: "{}".to_string(),
-                        thought_signature: None,
-                    }]),
-                    tool_results: None,
-                    turn: None,
-                });
-            } else {
-                messages.push(Message {
-                    role: "user".to_string(),
-                    content: String::new(),
-                    tool_calls: None,
-                    tool_results: Some(vec![ToolResult {
-                        tool_call_id: format!("tc-{}", i - 1),
-                        tool_name: "read_file".to_string(),
-                        content: "ok".to_string(),
-                    }]),
-                    turn: None,
-                });
-            }
-        }
-        let original_len = messages.len();
-
-        // No clean boundary → planner returns None; synthesized returns a cut.
-        assert!(planned_tail_start_by_budget(&messages, 100, 1.0).is_none());
-        let ts =
-            synthesized_tail_start(&messages, 100, 1.0).expect("synthesized boundary should exist");
-        let mut result = compact_with_digest(messages, "digest", ts);
-        assert!(result.len() < original_len, "should have compacted");
-
-        // Repair the tail head (result[2..]) — any leading orphan user result
-        // is stripped and given the placeholder.
-        crate::daemon::digest::repair_tail_head(&mut result[2..]);
-        assert_no_orphan_tool_results(&result);
-        // The first tail message, if it was an orphan user, now carries the
-        // placeholder content and no tool_results.
-        let head = &result[2];
-        if head.role == "user" {
-            assert!(head.tool_results.is_none());
-            assert_eq!(
-                head.content,
-                "[tool results from a compacted turn were elided]"
-            );
-        }
-    }
-
-    #[test]
     fn synthesized_boundary_keeps_paired_assistant_head() {
         use crate::ai::ToolResult;
         use crate::ai::types::ToolCall;
@@ -1100,141 +588,13 @@ mod tests {
     }
 
     #[test]
-    fn tally_events_reads_dated_segments() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let saved_home = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-
-        let events_dir = crate::config::events_dir();
-        let _ = std::fs::create_dir_all(&events_dir);
-
-        let seg = events_dir.join("events-20240115.jsonl");
-        let since = chrono::NaiveDate::from_ymd_opt(2024, 1, 15)
-            .unwrap()
-            .and_hms_opt(0, 0, 0)
-            .unwrap()
-            .and_utc();
-
-        // Write a job_complete event with exit_code 0
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&seg)
-            .unwrap();
-        let record = serde_json::json!({
-            "ts": "2024-01-15T12:00:00+00:00",
-            "event": "job_complete",
-            "session": "test-session",
-            "exit_code": 0,
-            "job_name": "my-job"
-        });
-        writeln!(file, "{}", record).unwrap();
-
-        let tally = tally_events("test-session", since);
-        assert_eq!(tally.commands_ok, 1);
-
-        if let Some(h) = saved_home {
-            unsafe { std::env::set_var("HOME", h) };
-        } else {
-            unsafe { std::env::remove_var("HOME") };
-        }
-    }
-
-    #[test]
-    fn compact_preserves_first_and_tail() {
-        // Build 32 messages: alternating user/assistant.
-        let messages: Vec<Message> = (0..32)
-            .map(|i| {
-                let role = if i % 2 == 0 { "user" } else { "assistant" };
-                make_msg(role, &format!("msg-{}", i))
-            })
-            .collect();
-
-        // Cut at index 16 (a user turn) — reproduces the legacy TAIL_KEEP cut.
-        let result = compact_with_digest(messages.clone(), "digest text", 16);
-
-        // First message preserved.
-        assert_eq!(result[0].content, "msg-0");
-        // Second is the digest.
-        assert_eq!(result[1].content, "digest text");
-        assert_eq!(result[1].role, "assistant");
-        // Tail starts on a user message (even index in original).
-        assert_eq!(result[2].role, "user");
-        assert_eq!(result[2].content, "msg-16");
-        // Total should be 2 (head + digest) + the kept tail (32 - 16).
-        assert_eq!(result.len(), 2 + (32 - 16));
-        // Last message is the original last.
-        assert_eq!(result.last().unwrap().content, "msg-31");
-    }
-
-    #[test]
-    fn compact_noop_when_tail_start_infeasible() {
-        let messages: Vec<Message> = (0..10)
-            .map(|i| make_msg("user", &format!("msg-{}", i)))
-            .collect();
-        // tail_start < 2 leaves no room for [first, digest] — unchanged.
-        assert_eq!(
-            compact_with_digest(messages.clone(), "digest", 0).len(),
-            messages.len()
-        );
-        // tail_start >= len is out of range — unchanged.
-        assert_eq!(
-            compact_with_digest(messages.clone(), "digest", 99).len(),
-            messages.len()
-        );
-    }
-
-    #[test]
-    fn compact_tail_starts_on_user_turn() {
-        // 34 messages: user at even indices, assistant at odd.
-        let messages: Vec<Message> = (0..34)
-            .map(|i| {
-                let role = if i % 2 == 0 { "user" } else { "assistant" };
-                make_msg(role, &format!("msg-{}", i))
-            })
-            .collect();
-
-        // The budget planner must land the cut on a clean user turn.
-        let budget = 200; // small enough to force a real cut
-        let ts =
-            planned_tail_start_by_budget(&messages, budget, 1.0).expect("should plan a clean cut");
-        assert_eq!(messages[ts].role, "user", "planner must cut on a user turn");
-        let result = compact_with_digest(messages, "digest", ts);
-        // Index 2 in result is the first tail message — must be a user turn.
-        assert_eq!(result[2].role, "user");
-    }
-
-    #[test]
     fn digest_threshold_value() {
-        // Sanity check: threshold is between TAIL_KEEP and MAX_HISTORY.
+        // Sanity check: the compaction floor leaves room for a tail and stays
+        // below the hard history cap.
         const {
-            assert!(DIGEST_THRESHOLD > TAIL_KEEP + 2);
+            assert!(DIGEST_THRESHOLD > MIN_TAIL_MESSAGES + 2);
             assert!(DIGEST_THRESHOLD < crate::daemon::session::MAX_HISTORY);
         }
-    }
-
-    #[test]
-    fn scan_dir_newer_filters_by_mtime() {
-        let dir = tempfile::tempdir().unwrap();
-
-        // Create a file with current time (should be included).
-        let new_file = dir.path().join("new-item.md");
-        std::fs::write(&new_file, "content").unwrap();
-
-        // Create a file and backdate it (should be excluded).
-        let old_file = dir.path().join("old-item.md");
-        std::fs::write(&old_file, "content").unwrap();
-        let old_time = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        filetime::set_file_mtime(&old_file, filetime::FileTime::from_system_time(old_time))
-            .unwrap();
-
-        let since = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
-        let mut names = Vec::new();
-        scan_dir_newer(dir.path(), since, &["md"], &mut names);
-
-        assert_eq!(names, vec!["new-item".to_string()]);
     }
 
     // ── Narrative plumbing ───────────────────────────────────────────────
@@ -1275,74 +635,17 @@ mod tests {
     }
 
     #[test]
-    fn format_messages_for_narrative_truncates_at_budget() {
-        let big = "X".repeat(NARRATIVE_INPUT_CHAR_BUDGET);
-        let msgs: Vec<Message> = (0..5).map(|_| make_msg("user", &big)).collect();
-        let out = format_messages_for_narrative(&msgs);
-        assert!(out.contains("[…truncated to fit summarizer budget…]"));
-        // Should be roughly one full message + truncation marker, not all five.
-        assert!(out.len() < 3 * NARRATIVE_INPUT_CHAR_BUDGET);
-    }
-
-    #[test]
-    fn build_session_digest_includes_narrative_when_provided() {
-        // No events.jsonl means only narrative + header are present.
-        let digest = build_session_digest(
-            "nonexistent-session",
-            Utc::now() - chrono::Duration::hours(1),
-            42,
-            Some("The user was debugging a slow query.  We identified the index was missing."),
-        );
-        assert!(digest.starts_with("[Session Digest"));
-        assert!(digest.contains("Narrative:"));
-        assert!(digest.contains("debugging a slow query"));
-    }
-
-    #[test]
-    fn build_session_digest_omits_narrative_section_when_none() {
-        let digest = build_session_digest(
-            "nonexistent-session",
-            Utc::now() - chrono::Duration::hours(1),
-            42,
-            None,
-        );
-        assert!(!digest.contains("Narrative:"));
-    }
-
-    #[test]
-    fn build_session_digest_omits_narrative_when_empty_string() {
-        let digest = build_session_digest(
-            "nonexistent-session",
-            Utc::now() - chrono::Duration::hours(1),
-            42,
-            Some("   \n  \t"),
-        );
-        assert!(!digest.contains("Narrative:"));
-    }
-
-    #[test]
-    fn planned_tail_start_returns_none_for_short_history() {
-        let msgs: Vec<Message> = (0..5).map(|i| make_msg("user", &i.to_string())).collect();
-        assert!(planned_tail_start(&msgs).is_none());
-    }
-
-    #[test]
-    fn planned_tail_start_matches_compact_with_digest_boundary() {
-        // 40 messages, clean alternation: user, assistant, user, ...
-        let messages: Vec<Message> = (0..40)
-            .map(|i| {
-                let role = if i % 2 == 0 { "user" } else { "assistant" };
-                make_msg(role, &format!("msg-{}", i))
-            })
+    fn narrative_input_keeps_newest() {
+        // 5 messages each ~40% of the budget → only the newest ~2 fit. The
+        // keep-newest policy must retain the LAST message and drop the FIRST.
+        let chunk = "Y".repeat(NARRATIVE_INPUT_CHAR_BUDGET * 40 / 100);
+        let msgs: Vec<Message> = (0..5)
+            .map(|i| make_msg("user", &format!("MSG{i} {chunk}")))
             .collect();
-
-        let tail_start = planned_tail_start(&messages).expect("should plan a cut");
-        let result = compact_with_digest(messages.clone(), "digest", tail_start);
-
-        // Tail length after compact should match: messages.len() - tail_start.
-        assert_eq!(result.len(), 2 + (messages.len() - tail_start));
-        // And the first tail message should be the same content.
-        assert_eq!(result[2].content, messages[tail_start].content);
+        let out = format_messages_for_narrative(&msgs);
+        assert!(out.contains("MSG4"), "newest message must be retained");
+        assert!(!out.contains("MSG0"), "oldest message must be dropped");
+        assert!(out.contains("[…older dropped turns omitted from summarizer input…]"));
     }
 
     // ── Budget-cut + hysteresis (phase 03) ───────────────────────────────
@@ -1382,23 +685,6 @@ mod tests {
             "kept {} messages, expected >= {}",
             messages.len() - ts,
             MIN_TAIL_MESSAGES
-        );
-    }
-
-    #[test]
-    fn no_rethrash_after_compaction() {
-        // After compacting to target, a second decision with the same window
-        // must not want to compact again (token_pct below compact threshold).
-        let context_window: u64 = 10_000;
-        let messages = uniform_history(40, 1000);
-        let budget = context_window * 40 / 100;
-        let ts = planned_tail_start_by_budget(&messages, budget, 1.0).expect("should plan a cut");
-        let result = compact_with_digest(messages, "short digest", ts);
-        let result_tokens = crate::daemon::context::estimate::estimate_history_tokens(&result);
-        let token_pct = (result_tokens as f64 / context_window as f64 * 100.0) as u32;
-        assert!(
-            token_pct < 60,
-            "compacted working set at {token_pct}% still above the 60% compact threshold"
         );
     }
 
