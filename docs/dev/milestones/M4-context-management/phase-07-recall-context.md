@@ -1,7 +1,7 @@
 # Phase 07: `recall_context` — retrieve archived turns
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** in-progress (refined re-dispatch after a no-progress stall — see Update Log)
 **Depends on:** phase-04 (archive), phase-05 (epoch turn ranges)
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -226,3 +226,35 @@ None. (No new dependencies — grep scan, not FTS5.)
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-14
+
+The prior run hard-failed on a **no-progress stall**: 20 tool calls, all
+read-only, **zero edits** — it read the entire §2 plumbing surface
+(`pending.rs`, `events.rs`, `defs.rs`, `args.rs`, `stream.rs`,
+`executor/mod.rs`, `filter.rs`, `session.rs`, some repeatedly) before writing
+a single line. Refinement for this attempt:
+
+**Write §1 (`src/daemon/context/recall.rs`) FIRST, before reading the §2
+plumbing surface.** The recall engine is self-contained — it depends only on
+`crate::daemon::session::archive_file(id)` (a `BufReader` line stream over the
+archive JSONL), `crate::ai::filter::mask_sensitive`, and
+`crate::config::LimitsConfig` (for `tool_result_chars`). You can implement and
+unit-test it (the `recall_*` tests in the Test plan) as a standalone module
+**without touching any of the tool-plumbing files.** Get `recall.rs` compiling
+green with its tests, *then* do §2 by mirroring `search_repository` one file at
+a time (build after each site). This front-loads a real edit and keeps each step
+small instead of holding the whole 7-file surface in context at once.
+
+(Calibration context: the governor's no-progress threshold was also raised
+20 → 40 for this project, so you have more room — but do not rely on it; make an
+early edit.)
+
+### Update — 2026-07-14 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** First failure, thorough spec, and two concrete refinements
+address the observed no-progress stall (governor threshold raised 20→40 for
+this project; a Notes-for-executor block instructing an early self-contained
+recall.rs write) — takeover would skip the model data point and the anti-pattern
+warns against it on a first failure.
