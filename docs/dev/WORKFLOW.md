@@ -658,6 +658,57 @@ google/gemma-4-12b hit the same ruff formatting verifier halt. Spec
 instruction pre-injected in phase-03 — still failed, confirming the fix
 must be runtime-side.)*
 
+### Executor self-sabotage on delete-heavy rewrites is a runtime concern
+
+Two distinct executor pathologies recur on phases that **rewrite a load-bearing
+path** — deleting and replacing existing functions rather than adding new ones.
+Both are runtime (tool-loop) failures, not spec gaps, so — like post-write
+formatting — the durable fix is runtime-side, not a spec instruction.
+
+**1. Git-thrash: the executor reverts its own uncommitted work.** Mid-phase, the
+executor runs `git checkout`/`git stash`/`git reset` on files it just wrote,
+discarding a correct implementation, then loops in confusion because its diff
+"disappeared." A spec instruction cannot prevent this (the executor is not
+reading the spec at the moment it decides to run git), and the existing runtime
+guard is **advisory and incomplete**: it prints "Do not revert your own work" for
+`git checkout <file>` but does not *block* it, and does not cover
+`git checkout HEAD -- <file>` or `git stash`, both of which the executor used to
+wipe its work anyway.
+
+**2. Verify-loop: the executor re-runs the same read-only check indefinitely.**
+Chasing a test/grep result, the executor issues near-identical
+`grep`/`cargo test` calls with no file writes between them, making no progress.
+The identical-call/oscillation governor catches the *exactly*-identical case
+(6 identical calls → hard_fail) but misses near-identical variants — one such
+loop ran 529 turns until a human `rexymcp stop`ped it.
+
+**The runtime fixes (feature requests against rexyMCP):**
+- **Hard-block, don't warn**, any `git checkout|restore|reset|stash` that would
+  discard the executor's *own* uncommitted changes from this run — covering the
+  `HEAD -- <path>`, bare-`<path>`, and `stash` forms. Better still: auto-create a
+  throwaway checkpoint commit before allowing it, so nothing is ever lost.
+- **Broaden the loop governor**: normalize whitespace/argument ordering before the
+  identical-call comparison, and trip on *N consecutive read-only calls
+  (`grep`/`git status`/`cargo test`) with zero intervening file writes* — the
+  signature of a verify-loop that makes no progress.
+
+**Until the runtime lands these, the architect mitigation (proven twice):**
+- **Split delete-heavy rewrites away from additive work.** A phase that both adds
+  a new module *and* rips out an old path is where the executor thrashes. Split
+  it: an additive phase (new module/functions, nothing deleted) followed by a
+  rewire phase (delete + wire). The additive half never triggers the pathology,
+  and when the rewire half fails, the additive code is already safely on disk.
+- **Prefer takeover over resume/re-dispatch when the executor loops and correct
+  code is already on disk** — resume just re-enters the same loop. Salvage the
+  intact files; reconstruct only the mangled one (restore from HEAD, reapply the
+  intended deletions).
+
+*(Folded from M4: git-thrash on phase-01 and phase-03; verify-loop on phase-05a
+(governor-caught) and phase-05b (evaded the governor, human-stopped at 529
+turns). All Qwen3.6-27B-AEON. The 05a/05b split contained the blast radius both
+times — the executor's additive files survived; only the delete-heavy file
+needed architect reconstruction.)*
+
 ### Validation features depend on the target toolchain — verify availability at design time
 
 Validation features (a verifier that runs the project's checker, code-intelligence

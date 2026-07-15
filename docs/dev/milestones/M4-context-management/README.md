@@ -123,3 +123,29 @@ Two survey corrections folded into scope:
 - Cross-session recall.
 - The two M3 survey holdovers (error-result/response-builder helper ~74
   sites; executor approval-gate extraction) remain deferred.
+
+### rexyMCP runtime feature requests — HIGH PRIORITY, address after M4 closes
+
+Filed 2026-07-14 from the M4 executor-pathology calibration fold (WORKFLOW.md
+§ "Executor self-sabotage on delete-heavy rewrites is a runtime concern").
+These are **rexyMCP-product** changes (not DaemonEye code); M4 caused 3 phase
+takeovers because of them (phases 01, 03, 05b).
+
+1. **FR-1 — Hard-block the executor from reverting its own uncommitted work.**
+   The current guard only *warns* on `git checkout <file>` and misses
+   `git checkout HEAD -- <file>` and `git stash`, which the executor used to
+   wipe correct work on phases 01 and 03. Fix: deny (not warn) any
+   `git checkout|restore|reset|stash` that would discard the executor's own
+   uncommitted changes from the current run — covering the `HEAD -- <path>`,
+   bare-`<path>`, and `stash` forms. Ideal: auto-create a throwaway checkpoint
+   commit before allowing it, so nothing is ever lost. **Severity: high** — this
+   is the single biggest cause of M4 executor hard_fails.
+
+2. **FR-2 — Broaden the loop governor to catch near-identical verify-loops.**
+   The identical-call/oscillation governor caught the exactly-identical case on
+   phase-05a (6 calls) but MISSED phase-05b, which looped 529 turns until a human
+   `rexymcp stop`. Fix: normalize whitespace/argument ordering before the
+   identical-call comparison, and trip on *N consecutive read-only calls
+   (`grep`/`git status`/`cargo test`) with zero intervening file writes*.
+   **Severity: high** — without it, verify-loops burn a full run and require
+   human intervention to stop.
