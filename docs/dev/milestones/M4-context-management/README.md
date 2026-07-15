@@ -124,7 +124,14 @@ Two survey corrections folded into scope:
 - The two M3 survey holdovers (error-result/response-builder helper ~74
   sites; executor approval-gate extraction) remain deferred.
 
-### rexyMCP runtime feature requests — HIGH PRIORITY, address after M4 closes
+### rexyMCP runtime feature requests — IMPLEMENTED 2026-07-14 (ahead of schedule, PE request)
+
+Both landed on rexyMCP master before resuming M4: **FR-1** = `a9399a0`
+(`git stash` guard), **FR-2** = `2a405a7` (no-progress read-only stall detector,
+`[governor] read_only_stall_threshold`, default 20). Requires a `rexymcp serve`
+rebuild + restart to take effect for future dispatches. Original spec below.
+
+#### (original) rexyMCP runtime feature requests
 
 Filed 2026-07-14 from the M4 executor-pathology calibration fold (WORKFLOW.md
 § "Executor self-sabotage on delete-heavy rewrites is a runtime concern").
