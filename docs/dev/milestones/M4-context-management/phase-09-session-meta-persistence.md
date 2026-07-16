@@ -1,7 +1,7 @@
 # Phase 09: Session meta persistence and boundary-safe reload
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** review
+**Status:** in-progress (bounced — see bug-09-1)
 **Depends on:** phase-02 (token_scale exists)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -439,4 +439,23 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9b9dc93d3e4200124f392fba16104656a11c3a3f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-16
+
+- **Verdict:** bounced (bug-09-1, major)
+- **Bounces:** 1
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (resume/continue_phase)
+- **Scope deviations:** none — §1–4 correct and complete; §5 correctly a no-op.
+- **What failed:** the two §4 boundary-safe-reload tests
+  (`read_session_file_lands_on_clean_boundary`,
+  `read_session_file_repairs_when_no_boundary`) are **vacuous** — their
+  fixtures use `make_msg` (no `tool_results` field), so `assert_no_orphan_tool_results`
+  is trivially true and the repair branch is never entered. Mutation-verified:
+  gutting `read_session_file`'s boundary body to a raw slice leaves both tests
+  passing. Two acceptance criteria are therefore unverified. See bug-09-1.
+- **Independent gate re-run:** fmt / build / clippy `-D warnings` / test all
+  green (905 unit + 27 integration) — the defect is coverage, not correctness;
+  the §4 production code is correct.
+- **Calibration:** 2nd fake-test occurrence by this executor (cf. the
+  digest-path test thrash) — hold for a 3rd before any STANDARDS fold.
 
