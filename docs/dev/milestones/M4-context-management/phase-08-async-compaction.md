@@ -1,7 +1,8 @@
 # Phase 08: Asynchronous compaction with emergency fallback
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** done (architect takeover — executor hard_failed twice on the ask.rs
+rewire; architect finished the last mile).
 **Depends on:** phase-05 (epoch build), phase-06 (rollups)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=l
@@ -228,3 +229,73 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-15 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** Two consecutive `hard_fail`s, both `NoProgressStall` on the
+`ask.rs` step-2 rewire — the documented Qwen git-thrash/orient-paralysis
+pathology that already forced takeover on phases 03/05b/06; the executor left
+a near-complete tree (one missing struct field from building), so takeover is
+a cheap last-mile finish and resume would only re-drop it onto the wall it
+failed twice.
+
+### Update — 2026-07-15 (architect takeover — complete)
+
+**Executor:** Claude (direct)
+**Verdict:** escalated
+
+The executor's two runs left a near-complete scaffold: `background.rs` (+408),
+the `SessionEntry` fields, the `ConversationLoopCtx` thread, and the config
+narrative-default flip were all on disk and correct. Run 1 self-reverted
+`ask.rs` (via `git show HEAD:… > /tmp && cp`) after a bad edit and thrashed;
+run 2 could not orient on the partial tree. Architect finished the last mile:
+
+- **`ask.rs` step-2 ladder** — reconstructed the reverted rewire. Fixed four
+  defects the self-revert left: (1) `wants_background_compaction` was never
+  declared/set/threaded (the E0063 build break); (2) the safety-cap arm was
+  gated on `is_compact` so the `max_history` net was defeated when token info
+  is absent — restored to `(is_emergency || at_safety_cap) && above_floor`;
+  (3) the 50 % soft-elide branch was dropped and `is_elide` left unused
+  (clippy `-D warnings` break) — restored; (4) `needs_compaction` no longer
+  forced persistence for the in-place elision branches — re-added via
+  `did_inline_elide`. Added the `pending_compaction_notice` drain + SystemMsg
+  at the top of the turn.
+- **`stream.rs` spawn site** — the executor held the `sessions` lock while
+  calling `spawn_compaction`, which re-locks the same non-reentrant
+  `std::sync::Mutex` → **deadlock**. Dropped the redundant lock (spawn_compaction
+  guards `is_ghost`/in-flight internally).
+- **`background.rs`** — converted all four lock sites to the `.unwrap_or_log()`
+  invariant; removed the diverging `let _swap_result = { … }` block; gated the
+  narrative model call on `narrative_enabled` (the executor called it
+  unconditionally) via a new pure `epoch_narrative_allowed(is_emergency, flag)`
+  helper; **fixed the idempotency guard** — it compared `turn_end` against the
+  *whole snapshot's* last turn (never true, so it never fired and would
+  double-create epochs) → now compares against the dropped span's last turn,
+  computed after `tail_start`.
+- **Tests** — the executor shipped 3 of the 7 required. Added the missing four:
+  `background_swap_applies_when_unchanged`, `epoch_build_idempotent_after_discard`,
+  `swap_discards_on_evicted_entry`, `emergency_path_skips_narrative_with_flag_on`.
+- **Collateral hermeticity fix** — the new HOME-mutating tests exposed a
+  pre-existing gap: `recall::recall_truncates_at_cap_utf8_safe` touched
+  `~/.daemoneye` without holding `TEST_HOME_LOCK` (the lone recall test missing
+  the `TestHome` guard). Added the guard; suite is now deterministic (3× clean).
+
+**Gates (all green):**
+
+```
+running 7 tests
+test daemon::context::background::tests::emergency_path_skips_narrative_with_flag_on ... ok
+test daemon::context::background::tests::notice_delivered_next_turn ... ok
+test daemon::context::background::tests::background_swap_discards_on_new_turn ... ok
+test daemon::context::background::tests::spawn_is_noop_when_in_flight ... ok
+test daemon::context::background::tests::epoch_build_idempotent_after_discard ... ok
+test daemon::context::background::tests::swap_discards_on_evicted_entry ... ok
+test daemon::context::background::tests::background_swap_applies_when_unchanged ... ok
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 893 filtered out
+```
+
+`cargo clippy --all-targets --all-features -- -D warnings` → clean (the
+`await_holding_lock` lint, part of `-D warnings`, stays green — all `.await`s
+in `run_compaction` occur before the swap guard is taken). Full suite: 900 unit
++ 27 integration passing, 3 consecutive clean runs.

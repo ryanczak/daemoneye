@@ -1,12 +1,33 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-08-async-compaction.md`](milestones/M4-context-management/phase-08-async-compaction.md)
-— **todo**. Re-verify its Current-state anchors before dispatch (it moves the
-epoch build off the interactive path — background build + staleness-checked swap
-+ the >=85% emergency path; anchors are the `should_digest` block in
-`server/ask.rs` and the epoch build in `context/epochs.rs`, both heavily
-reworked by 03/05/06).
+[`docs/dev/milestones/M4-context-management/phase-09-session-meta-persistence.md`](milestones/M4-context-management/phase-09-session-meta-persistence.md)
+— **todo**. Re-verify its Current-state anchors before dispatch (phases 05–08
+reworked the session/compaction path; phase-08 added
+`context/background.rs`, two `SessionEntry` fields
+`compaction_in_flight`/`pending_compaction_notice`, and the
+`wants_background_compaction` thread through `ConversationLoopCtx`).
+
+**M4 phase-08 — async-compaction is `done`** (2026-07-15, escalated → architect
+takeover after **two** `hard_fail`s, both `NoProgressStall` on the `ask.rs`
+step-2 rewire — the documented Qwen git-thrash/orient-paralysis pathology).
+Run 1 self-reverted `ask.rs` and thrashed; run 2 (dispatched on the partial
+tree, per PE choice) burned 40 turns reading with zero edits. The executor's
+scaffold was near-complete (`background.rs` +408, the `SessionEntry` fields,
+the ctx thread, the narrative-default flip all correct — tree was one struct
+field from building). Architect finished the last mile: reconstructed the
+`ask.rs` threshold ladder (fixing a defeated safety-cap net, a dropped 50 %
+elide branch, and a persistence-flag regression), fixed a **stream.rs
+self-deadlock** (held the `sessions` lock across `spawn_compaction`, which
+re-locks), corrected the `background.rs` idempotency guard (compared against
+the whole snapshot's last turn → never fired), converted lock sites to
+`.unwrap_or_log()`, gated the narrative call on `narrative_enabled`, and wrote
+the 4 missing tests (executor shipped 3/7). Also fixed a pre-existing recall
+test HOME-isolation gap the new tests exposed. Gates green (900 unit + 27
+integration, 3× deterministic). Every epoch/compaction-path phase (03, 05a,
+05b, 06, 07, 08) has now needed architect takeover — the compaction-path
+rewire shape reliably defeats this executor (04, a pure archive add, was the
+lone `approved_first_try` in this stretch).
 
 **M4 phase-07 — recall-context is `done`** (2026-07-14, escalated → architect
 takeover after 2 no-progress stalls). New `recall_context` tool over the phase-04
