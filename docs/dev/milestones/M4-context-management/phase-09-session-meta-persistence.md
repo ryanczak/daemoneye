@@ -1,7 +1,7 @@
 # Phase 09: Session meta persistence and boundary-safe reload
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02 (token_scale exists)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -322,3 +322,121 @@ deletion site, do NOT add `.meta.json` deletion anywhere, and do NOT write a
 `cargo test`, fix any failures in the §1–4 code, and complete.
 
 <!-- entries appended below this line -->
+### Update — ts=1784243491281 (complete, server-authored)
+
+**Summary:** All verification passes. Here's the summary:
+
+**Summary + Notes for review:**
+
+All 5 spec tasks are complete. Tasks 1-4 were already implemented by the prior executor run (SessionMeta type + atomic IO in `session.rs`, end-of-turn meta persistence in `stream.rs` with ghost exclusion, entry-recreation seeding in `ask.rs`, and boundary-safe reload in `read_session_file`). Task 5 (cleanup coupling) is a confirmed no-op — there is no ephemeral session-file deletion path to couple with. I added the required test suite: `meta_roundtrip`, `meta_corrupt_returns_none`, `entry_recreation_seeds_from_meta`, `read_session_file_lands_on_clean_boundary`, and `read_session_file_repairs_when_no_boundary`. All 5 new tests pass, and the full test suite (27 integration + 38 session unit tests) passes clean. `cargo fmt`, `cargo clippy`, and `cargo build` all pass with zero warnings. The phase doc status remains `in-progress` as required.
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.81s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+
+test webhook::process::tests::severity_rank_case_insensitive ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test sys_context::tests::compact_memory_excludes_header_row ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 905 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ghost_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+- `src/daemon/session.rs` — +202 -3
+
+**Commit:** 9b9dc93d3e4200124f392fba16104656a11c3a3f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
