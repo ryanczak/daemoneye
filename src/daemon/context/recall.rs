@@ -457,6 +457,7 @@ mod tests {
 
     #[test]
     fn recall_truncates_at_cap_utf8_safe() {
+        let _home = TestHome::new();
         let id = "test_truncate";
         // Create a message with multi-byte UTF-8 content at the truncation boundary
         let content = "🦀".repeat(1000); // Each 🦀 is 4 bytes

@@ -1128,6 +1128,8 @@ mod tests {
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
             token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
         let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
         store

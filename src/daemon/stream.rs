@@ -51,6 +51,7 @@ pub struct ConversationLoopCtx<'a> {
     pub this_turn_count: usize,
     pub post_trim_len: usize,
     pub needs_compaction: bool,
+    pub wants_background_compaction: bool,
     pub config: &'a Config,
     pub cache: Arc<SessionCache>,
     pub sessions: SessionStore,
@@ -78,6 +79,7 @@ where
         this_turn_count,
         post_trim_len,
         needs_compaction,
+        wants_background_compaction,
         config,
         cache,
         sessions,
@@ -695,6 +697,18 @@ where
                                 for msg in &messages[post_trim_len..] {
                                     append_session_message(id, msg);
                                 }
+                            }
+                            // Spawn background compaction if the turn signaled it.
+                            // spawn_compaction takes the lock itself (snapshot) and
+                            // no-ops on ghost / already-in-flight sessions, so we
+                            // must NOT hold the lock here — std::sync::Mutex is not
+                            // reentrant and re-locking would deadlock.
+                            if wants_background_compaction {
+                                crate::daemon::context::background::spawn_compaction(
+                                    id.clone(),
+                                    sessions.clone(),
+                                    Arc::new(config.clone()),
+                                );
                             }
                         }
                         // Auto-name suggestion: fires once when the turn count hits

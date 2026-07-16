@@ -122,17 +122,30 @@ impl Default for SessionsConfig {
 /// The structured digest (event tallies + artifact scans) always runs when
 /// token pressure crosses the digest threshold.  The optional *narrative*
 /// step calls a cheap AI model to turn the about-to-be-dropped turns into a
-/// short natural-language summary; it is off by default because it costs an
-/// extra API call per compaction.
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+/// short natural-language summary.  With async compaction (phase 08), the
+/// narrative cost is per-epoch and off the interactive path, so it defaults
+/// to `true`.
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct DigestConfig {
     /// When true, each digest pass calls the `[models.digest]` entry (falling
     /// back to `[models.default]`) to generate a narrative summary of the
     /// compacted turns; the narrative is prepended to the structured tally.
-    /// Default: false.  Enable when you want richer post-compaction context
-    /// and are willing to pay for one additional small-model call per digest.
-    #[serde(default)]
+    /// Default: true (cost is per-epoch and off the interactive path as of
+    /// phase 08).
+    #[serde(default = "default_narrative_enabled")]
     pub narrative_enabled: bool,
+}
+
+fn default_narrative_enabled() -> bool {
+    true
+}
+
+impl Default for DigestConfig {
+    fn default() -> Self {
+        Self {
+            narrative_enabled: default_narrative_enabled(),
+        }
+    }
 }
 
 /// Compaction budget and threshold configuration.

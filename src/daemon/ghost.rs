@@ -247,6 +247,8 @@ impl GhostManager {
             cost_by_agent: std::collections::HashMap::new(),
             has_untracked_cost: false,
             token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
 
         {

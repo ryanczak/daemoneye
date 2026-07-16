@@ -103,6 +103,12 @@ pub struct SessionEntry {
     /// clamped to [0.5, 4.0]. Starts at 1.5 (history is typically smaller than
     /// the full prompt).
     pub token_scale: f64,
+    /// True while a background compaction task for this session is running.
+    /// Prevents duplicate spawns; cleared by the task on completion/discard.
+    pub compaction_in_flight: bool,
+    /// Notice queued by a completed background compaction, delivered as a
+    /// SystemMsg at the start of the next turn.
+    pub pending_compaction_notice: Option<String>,
 }
 
 /// Thread-safe, shared session store passed to every client handler.
@@ -573,6 +579,8 @@ mod tests {
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
             token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
         assert!(!entry.auto_name_suggested);
         assert!(entry.saved_name.is_none());
@@ -610,6 +618,8 @@ mod tests {
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
             token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
 
         // Simulate three turns of cost accumulation.
@@ -657,6 +667,8 @@ mod tests {
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
             token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
 
         // Simulate /agent switch mid-flow.
@@ -706,6 +718,8 @@ mod tests {
             cost_by_agent: HashMap::new(),
             has_untracked_cost: false,
             token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
 
         // Known pricing call.

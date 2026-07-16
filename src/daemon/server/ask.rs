@@ -133,6 +133,8 @@ where
                 cost_by_agent: std::collections::HashMap::new(),
                 has_untracked_cost: false,
                 token_scale: 1.5,
+                compaction_in_flight: false,
+                pending_compaction_notice: None,
             });
             entry.chat_pane = chat_pane.clone();
             entry.tmux_session = session_name.clone();
@@ -268,7 +270,10 @@ where
     // Compaction config drives thresholds:
     //   elide_at_pct (50%) — elide oversized tool_results in old messages; cheap,
     //   preserves turn structure.
-    //   compact_at_pct (60%) — build a structured digest and drop old messages.
+    //   compact_at_pct (60%) — aggressive elision NOW (cheap, sync); defer the
+    //   epoch build to a background task (phase 08).
+    //   emergency_pct (85%) — synchronous structured-only compaction (no
+    //   narrative call) when pressure is extreme.
     //   target_pct (40%) — post-compaction working-set target.
     // Safety net — if we hit MAX_HISTORY regardless of token info, still digest.
     //
@@ -288,14 +293,23 @@ where
     let at_safety_cap = history_cap.is_some_and(|cap| messages.len() >= cap);
     use crate::daemon::digest::DIGEST_THRESHOLD;
     let above_floor = messages.len() >= DIGEST_THRESHOLD;
-    let should_digest =
-        above_floor && (token_pct >= config.compaction.compact_at_pct || at_safety_cap);
-    let should_elide_only =
-        !should_digest && above_floor && token_pct >= config.compaction.elide_at_pct;
 
-    if should_digest {
-        // Elide first — it's cheap and gives the digest pass smaller tool
-        // outputs to reason about. Use aggressive elision before digesting.
+    // Decision ladder: emergency > compact > elide. The max_history safety cap
+    // always takes the synchronous path — it exists precisely for when token
+    // info is absent (token_pct == 0), so it must not be gated on a token
+    // threshold.
+    let is_emergency = token_pct >= config.compaction.emergency_pct;
+    let is_compact = token_pct >= config.compaction.compact_at_pct;
+    let is_elide = token_pct >= config.compaction.elide_at_pct;
+    // Set when the compact threshold triggers cheap sync elision but defers the
+    // epoch build to the post-turn background task (phase 08). Threaded through
+    // ConversationLoopCtx; the loop spawns the compaction after the turn ends.
+    let mut wants_background_compaction = false;
+
+    if (is_emergency || at_safety_cap) && above_floor {
+        // Emergency/safety-cap path: synchronous structured-only compaction.
+        // No narrative call — this is the backstop when pressure is extreme.
+        // Aggressive elision first.
         let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, true);
         let started_at = session_id
             .as_ref()
@@ -319,24 +333,6 @@ where
                 )
             });
 
-            let narrative = if config.digest.narrative_enabled {
-                // For narrative, use the budget-based tail_start if available.
-                // Use the full dropped span (msg0 is no longer special — D7 fix).
-                if let Some(ts) = tail_start {
-                    if ts > 1 {
-                        let slice = &messages[..ts];
-                        let model_entry = config.resolve_model(Some("digest"));
-                        crate::daemon::digest::build_narrative_summary(slice, model_entry).await
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
             match tail_start {
                 Some(ts) => {
                     let id = session_id.as_deref().unwrap_or("-");
@@ -352,7 +348,10 @@ where
                         ts_start: span_start,
                         ts_end: span_end,
                         msg_count: dropped.len() as u32,
-                        narrative,
+                        // Emergency: structured-only, no narrative — even when
+                        // narrative_enabled = true. See background.rs
+                        // `epoch_narrative_allowed` for the shared invariant.
+                        narrative: None,
                         tally: crate::daemon::context::epochs::tally_span(id, span_start, span_end),
                         artifacts: crate::daemon::context::epochs::scan_artifacts_span(
                             span_start, span_end,
@@ -393,7 +392,7 @@ where
                         crate::daemon::digest::repair_tail_head(tail);
                     }
                     log::info!(
-                        "Compaction (epoch {}): tokens {}% — compacted {} → {} messages",
+                        "Emergency compaction (epoch {}): tokens {}% — compacted {} → {} messages",
                         record.seq,
                         token_pct,
                         pre_trim_len,
@@ -402,7 +401,7 @@ where
                 }
                 None => {
                     log::info!(
-                        "Compaction: tokens {}% — no viable tail start found, keeping history as-is",
+                        "Emergency compaction: tokens {}% — no viable tail start found, keeping history as-is",
                         token_pct
                     );
                 }
@@ -410,14 +409,28 @@ where
         } else {
             messages = trim_history(messages, history_cap);
             log::info!(
-                "Compaction (trim): tokens {}% — elided {} chars, no started_at, trimmed {} → {} messages",
+                "Emergency compaction (trim): tokens {}% — elided {} chars, no started_at, trimmed {} → {} messages",
                 token_pct,
                 elided,
                 pre_trim_len,
                 messages.len()
             );
         }
-    } else if should_elide_only {
+    } else if is_compact && above_floor {
+        // Compact threshold reached: aggressive elision NOW (cheap, sync) and
+        // defer the epoch build to the post-turn background task. History is
+        // NOT cut here — the background task owns that.
+        let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, true);
+        wants_background_compaction = true;
+        if elided > 0 {
+            log::info!(
+                "Compaction (compact/elide): tokens {}% — elided {} chars; epoch build deferred to background",
+                token_pct,
+                elided
+            );
+        }
+    } else if is_elide && above_floor {
+        // Soft elision only — cheap, preserves turn structure (unchanged).
         let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, false);
         if elided > 0 {
             log::info!(
@@ -427,14 +440,17 @@ where
             );
         }
     } else if history_cap.is_some_and(|cap| messages.len() > cap) {
-        // Final safety trim — should be unreachable given the digest path above
+        // Final safety trim — should be unreachable given the sync path above
         // also fires at the cap, but keep it as a guard.
         messages = trim_history(messages, history_cap);
     }
-    // If the message vec shrank the on-disk file must be fully rewritten to
-    // remove the stale entries.  Otherwise we can append-only at the end of
-    // each turn.
-    let needs_compaction = messages.len() < pre_trim_len || should_elide_only;
+    // If the message vec shrank, OR we elided tool-result content in place, the
+    // on-disk file must be fully rewritten to remove/replace the stale entries.
+    // The compact and elide branches mutate content without changing len, so
+    // key off entering either branch as well as a length shrink.
+    let did_inline_elide =
+        (is_compact || is_elide) && above_floor && !is_emergency && !at_safety_cap;
+    let needs_compaction = messages.len() < pre_trim_len || did_inline_elide;
     let post_trim_len = messages.len();
 
     let is_first_turn = messages.is_empty();
@@ -672,6 +688,20 @@ where
         .await?;
     }
 
+    // Phase 08: deliver any notice queued by a completed background compaction
+    // task. Drained here at the top of the turn's response, alongside the
+    // existing compaction notice above.
+    let pending_notice: Option<String> = session_id.as_ref().and_then(|id| {
+        sessions
+            .lock()
+            .unwrap_or_log()
+            .get_mut(id)
+            .and_then(|e| e.pending_compaction_notice.take())
+    });
+    if let Some(notice) = pending_notice {
+        send_response_split(tx, Response::SystemMsg(notice)).await?;
+    }
+
     // N15: send catch-up brief as a SystemMsg immediately after SessionInfo so
     // it appears before any streaming tokens from the AI.
     if let Some(ref brief) = catchup_brief {
@@ -696,6 +726,7 @@ where
         this_turn_count,
         post_trim_len,
         needs_compaction,
+        wants_background_compaction,
         config,
         cache,
         sessions: Arc::clone(sessions),

@@ -392,7 +392,7 @@ mod tests {
             ..LimitsConfig::default()
         };
         let digest = DigestConfig {
-            narrative_enabled: false,
+            narrative_enabled: true,
         };
         limits.validate(&digest); // must not panic
     }

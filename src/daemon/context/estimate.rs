@@ -129,6 +129,8 @@ mod tests {
             cost_usd: 0.0,
             cost_by_agent: std::collections::HashMap::new(),
             has_untracked_cost: false,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
 
         // Feed a constant observed/estimated ratio of 2.0 repeatedly.
@@ -207,6 +209,8 @@ mod tests {
             cost_usd: 0.0,
             cost_by_agent: std::collections::HashMap::new(),
             has_untracked_cost: false,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
         };
 
         let original_scale = entry.token_scale;
