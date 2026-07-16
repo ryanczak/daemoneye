@@ -32,29 +32,46 @@ Read before starting:
 
 ## Current state
 
+*(Anchors re-verified 2026-07-16 against the post-phase-08 tree; line numbers
+current as of this draft — re-grep by symbol if 05–08 follow-ups have landed.)*
+
 - Entry recreation: the `or_insert_with` in `src/daemon/server/ask.rs:106`
-  builds a fresh `SessionEntry` with `started_at: chrono::Utc::now()`,
-  `turn_count: 0`, `last_prompt_tokens: 0`, `token_scale: 1.5` (phase 02),
-  `saved_name: None`, `tool_calls_this_session: 0` — losing all of these
-  when the daemon restarted or the 30-minute eviction
-  (`src/daemon/mod.rs:~680`) fired, even though the message history itself
-  survives on disk.
+  builds a fresh `SessionEntry` with `started_at: chrono::Utc::now()` (line
+  121), `turn_count: 0` (122), `last_prompt_tokens: 0`, `token_scale: 1.5`
+  (135, phase 02), `saved_name: None`, `tool_calls_this_session: 0` — losing
+  all of these when the daemon restarted or the 30-minute eviction
+  (`src/daemon/mod.rs:681`, `store.retain(...)` at 694, 1800 s at 695) fired,
+  even though the message history itself survives on disk.
+- Two fields added by phase 08 —
+  `compaction_in_flight: bool` and `pending_compaction_notice: Option<String>`
+  (`session.rs:106-112`) — are **transient** and MUST NOT be persisted or
+  seeded (see the gotcha in the Spec). A fresh recreated entry keeps them at
+  `false` / `None`.
 - Disk reload: `read_session_file(id, max_history)`
-  (`src/daemon/session.rs:270-283`) tail-slices with
-  `msgs[msgs.len() - cap..]` — no boundary check; the slice can start on a
-  user message carrying `tool_results` whose tool_call is gone (provider
-  400s).
-- `next_clean_turn_start(messages, start)` (`session.rs:202`) is the
+  (`src/daemon/session.rs:326`) tail-slices with `msgs[msgs.len() - cap..]`
+  (line 336) — no boundary check; the slice can start on a user message
+  carrying `tool_results` whose tool_call is gone (provider 400s).
+- `next_clean_turn_start(messages, start)` (`session.rs:258`) is the
   existing boundary finder.
-- Atomic-write idiom: `write_session_file` (`session.rs:156-175`) — tmp
-  file → `sync_all` → rename; copy this shape for the meta write.
-- End-of-turn write-back: `src/daemon/stream.rs` (~657-678) is where
-  per-turn state (tokens, scale, dirty) is already updated under the store
-  lock — the natural place to also persist meta.
-- Epoch span-start derivation (phase 05) reads
-  `epochs.last().ts_end` and only falls back to `started_at` for the first
-  epoch — so meta persistence of `started_at` matters mainly for
-  first-epoch spans and the `/costs`-style displays.
+- Atomic-write idiom: `write_session_file` (`session.rs:174`) — tmp file →
+  `sync_all` → rename; and `session_file(id)` (`session.rs:158`) is the path
+  helper. Copy this shape for the meta write.
+- End-of-turn write-back: `src/daemon/stream.rs` (~678-700) is where per-turn
+  state is updated under the store lock — `entry.last_prompt_tokens =` (680),
+  `entry.dirty = true` (686), then `write_session_file(id, …)` (695) /
+  `append_session_message` (698). Phase 08 added a `spawn_compaction(…)` call
+  right after this block (~703); `is_ghost_session` is already in scope here
+  (used at ~720). This is the natural place to also persist meta.
+- Epoch span-start derivation (phase 05) reads `epochs.last().ts_end` and only
+  falls back to `started_at` for the first epoch — so meta persistence of
+  `started_at` matters mainly for first-epoch spans and the `/costs`-style
+  displays.
+- **Ghost sessions use one-shot ids** — `format!("ghost-{}-{}", alert_name,
+  uuid::Uuid::new_v4().simple())` (`ghost.rs:187`), inserted via `insert`
+  (256), never `or_insert_with`. A ghost id is never reused or recreated, so
+  meta persistence is meaningless for them (write-only orphan files). This is
+  resolved here, not a re-verify for the executor: **ghosts are excluded**
+  (Spec §2/§3).
 
 ## Spec
 
@@ -82,35 +99,114 @@ pub fn read_session_meta(id: &str) -> Option<SessionMeta>; // None on absent/cor
 Corrupt/partial JSON → `None` + WARN (never panic; never block session
 creation).
 
+**Worked example — mirror the atomic-write shape of `write_session_file`**
+(`session.rs:174`), swapping JSONL-append for a single JSON blob:
+
+```rust
+pub fn meta_file(id: &str) -> std::path::PathBuf {
+    crate::config::sessions_dir().join(format!("{}.meta.json", id))
+}
+
+pub fn write_session_meta(id: &str, meta: &SessionMeta) {
+    use std::io::Write;
+    let path = meta_file(id);
+    let tmp_path = path.with_extension("json.tmp");
+    let result: std::io::Result<()> = (|| {
+        let mut f = std::fs::File::create(&tmp_path)?;
+        let json = serde_json::to_string_pretty(meta)
+            .map_err(std::io::Error::other)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp_path, &path)?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        log::warn!("Failed to write session meta {}: {}", path.display(), e);
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+}
+
+pub fn read_session_meta(id: &str) -> Option<SessionMeta> {
+    let text = std::fs::read_to_string(meta_file(id)).ok()?;
+    match serde_json::from_str(&text) {
+        Ok(meta) => Some(meta),
+        Err(e) => {
+            log::warn!("Corrupt session meta for {}: {} — using fresh defaults", id, e);
+            None
+        }
+    }
+}
+```
+
 ### 2. Persist at end of turn — `src/daemon/stream.rs`
 
 In the end-of-turn write-back block (where `entry.last_prompt_tokens` /
 `token_scale` / `dirty` are updated under the lock), build a `SessionMeta`
-from the entry and, **after releasing the lock**, call
-`write_session_meta`. One write per turn; ghost sessions included (their
-continuity matters for the same reasons).
+from the entry and, **after releasing the lock**, call `write_session_meta`.
+One write per turn.
+
+**Exclude ghost sessions** — gate the meta write on `!is_ghost_session` (the
+bool already in scope at this site; see Current state). Ghost ids are one-shot
+UUIDs that are never recreated, so a ghost meta file would be write-only and
+accumulate as an orphan. (This is the opposite of phase 08's background-
+compaction spawn, which is also skipped for ghosts — same reasoning.)
+
+**Gotcha — do NOT round-trip the phase-08 transient fields.** `SessionMeta`
+deliberately omits `compaction_in_flight` and `pending_compaction_notice`. If
+you persisted `compaction_in_flight` and a restart happened mid-compaction, the
+recreated entry would carry `compaction_in_flight = true` forever and
+`spawn_compaction` would refuse to ever run again for that session (it early-
+returns when the flag is set). Persist only the six fields named in §1.
 
 ### 3. Load at entry recreation — `src/daemon/server/ask.rs`
 
 In the `or_insert_with` path: attempt `read_session_meta(id)` first; when
 `Some(meta)`, seed the new entry's `started_at`, `turn_count`,
 `last_prompt_tokens`, `token_scale`, `tool_calls_this_session`,
-`saved_name` from it (all other fields keep their fresh defaults). The
-closure passed to `or_insert_with` can do the read directly — it only runs
-on a miss.
+`saved_name` from it (all other fields keep their fresh defaults —
+**including** `compaction_in_flight: false` / `pending_compaction_notice:
+None`, which are never seeded). The closure passed to `or_insert_with` can do
+the read directly — it only runs on a miss.
 
-Mirror the same seeding at the **ghost** entry-construction site
-(`src/daemon/ghost.rs`) if the ghost path can recreate an entry for an
-existing session id (re-verify; if ghost sessions are always fresh ids,
-note that in the completion log and skip).
+**Ghost entry construction is out of scope — resolved, do not touch.** The
+ghost site (`ghost.rs:187`+) builds its entry with a fresh one-shot UUID id
+via `insert`, never `or_insert_with`, so it never reloads from meta. No
+seeding there; do not add a `read_session_meta` call to `ghost.rs`.
 
 ### 4. Boundary-safe reload — `read_session_file`
 
-Replace the bare tail slice: after slicing to the last `cap` messages,
-advance the slice start with `next_clean_turn_start(&msgs, slice_start)`;
-if `None` (no clean boundary in the tail at all), apply phase 03's
-`repair_tail_head` to the sliced vec instead of returning it raw. Return
-type/signature unchanged. The result must always pass the orphan checker.
+Replace the bare tail slice (`session.rs:336`,
+`msgs[msgs.len() - cap..].to_vec()`): the slice starts at
+`slice_start = msgs.len() - cap`; advance it with
+`next_clean_turn_start(&msgs, slice_start)` (`session.rs:258`, returns the
+first `user`-without-`tool_results` index at/after `slice_start`) and slice
+from there. If it returns `None` (no clean boundary anywhere in the tail),
+slice at `slice_start` as before, then apply `repair_tail_head`
+(`crate::daemon::digest::repair_tail_head`, `digest.rs:313` — strips orphaned
+leading `tool_results` in place) to the sliced `&mut [Message]` instead of
+returning it raw. Return type/signature unchanged.
+
+**Orphan invariant + test helper.** The result must contain no `tool_results`
+message whose producing `tool_calls` is absent. There is no *exported* orphan
+checker — `digest.rs`'s `assert_no_orphan_tool_results` is private to its test
+module. Replicate this exact assertion as a local test helper in `session.rs`:
+
+```rust
+fn assert_no_orphan_tool_results(msgs: &[Message]) {
+    for (i, m) in msgs.iter().enumerate() {
+        if let Some(results) = &m.tool_results {
+            for r in results {
+                let found = msgs[..i].iter().rev().any(|prev| {
+                    prev.tool_calls.as_ref().is_some_and(|calls| {
+                        calls.iter().any(|c| c.id == r.tool_call_id)
+                    })
+                });
+                assert!(found, "orphan tool_result at idx {}: call_id={}", i, r.tool_call_id);
+            }
+        }
+    }
+}
+```
 
 ### 5. Cleanup coupling
 
@@ -128,8 +224,9 @@ session's meta is tiny and its working file may still exist).
 - [ ] Corrupt meta file → entry creation succeeds with fresh defaults +
       WARN (**negative case**).
 - [ ] Reload of a history whose natural tail slice starts on a
-      tool_results message produces an orphan-free vec (phase 03's shared
-      orphan checker — test below).
+      tool_results message produces an orphan-free vec (assert via the
+      `assert_no_orphan_tool_results` helper replicated in Spec §4 — test
+      below).
 - [ ] A reload where NO clean boundary exists in the tail is repaired, not
       returned raw (**negative case** for the fallback).
 - [ ] `turn_count` shown to the client (`SessionInfo.turn_count`) continues
@@ -166,6 +263,12 @@ None.
 
 - Do NOT persist the full `SessionEntry` (bg_windows, approval state, pane
   prefs all have their own lifecycles).
+- Do NOT persist `compaction_in_flight` / `pending_compaction_notice` — they
+  are per-run transient state (see the Spec §2 gotcha).
+- Do NOT write or read meta for ghost sessions — their one-shot UUID ids are
+  never recreated (Current state / Spec §2). No `ghost.rs` edit is needed; a
+  test for this is not required (it is enforced by the `!is_ghost_session`
+  gate, which the reload/round-trip tests already cover for the positive path).
 - Do NOT change the 30-minute eviction policy itself.
 - Do NOT migrate the named-session store (`src/session_store.rs`) — it has
   its own `meta.toml`; this phase is the *ephemeral* session layer.

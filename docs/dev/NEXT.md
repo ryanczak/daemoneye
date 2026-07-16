@@ -2,11 +2,15 @@
 
 **Active phase:**
 [`docs/dev/milestones/M4-context-management/phase-09-session-meta-persistence.md`](milestones/M4-context-management/phase-09-session-meta-persistence.md)
-— **todo**. Re-verify its Current-state anchors before dispatch (phases 05–08
-reworked the session/compaction path; phase-08 added
-`context/background.rs`, two `SessionEntry` fields
-`compaction_in_flight`/`pending_compaction_notice`, and the
-`wants_background_compaction` thread through `ConversationLoopCtx`).
+— **todo, dispatch-ready** (anchors re-verified & refined 2026-07-16 by
+`/rexymcp:architect next`). Current-state line numbers refreshed for the
+post-phase-08 tree; resolved the drafted-ahead ambiguities: **ghosts are
+excluded** from meta (one-shot UUID ids, `ghost.rs:187` — never recreated),
+added a **transient-field gotcha** (never persist `compaction_in_flight` /
+`pending_compaction_notice` — a persisted `true` would permanently block
+background compaction after restart), and pre-injected worked examples for the
+atomic meta write + the orphan-checker test helper (`digest.rs`'s is private).
+Dispatch via `/rexymcp:dispatch phase-09`.
 
 **M4 phase-08 — async-compaction is `done`** (2026-07-15, escalated → architect
 takeover after **two** `hard_fail`s, both `NoProgressStall` on the `ask.rs`
