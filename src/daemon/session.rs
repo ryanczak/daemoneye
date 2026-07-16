@@ -159,6 +159,60 @@ pub fn session_file(id: &str) -> std::path::PathBuf {
     crate::config::sessions_dir().join(format!("{}.jsonl", id))
 }
 
+/// Per-session continuity state that must survive daemon restarts and
+/// idle eviction. Serialized to `sessions_dir()/<id>.meta.json`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionMeta {
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub turn_count: usize,
+    pub last_prompt_tokens: u32,
+    pub token_scale: f64,
+    pub tool_calls_this_session: usize,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub saved_name: Option<String>,
+}
+
+/// Path to the meta file for a session.
+pub fn meta_file(id: &str) -> std::path::PathBuf {
+    crate::config::sessions_dir().join(format!("{}.meta.json", id))
+}
+
+/// Atomically write session meta to disk.
+/// Failures are logged at WARN and non-fatal.
+pub fn write_session_meta(id: &str, meta: &SessionMeta) {
+    use std::io::Write;
+    let path = meta_file(id);
+    let tmp_path = path.with_extension("json.tmp");
+    let result: std::io::Result<()> = (|| {
+        let mut f = std::fs::File::create(&tmp_path)?;
+        let json = serde_json::to_string_pretty(meta).map_err(std::io::Error::other)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+        std::fs::rename(&tmp_path, &path)?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        log::warn!("Failed to write session meta {}: {}", path.display(), e);
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+}
+
+/// Read session meta from disk. Returns `None` if absent or corrupt.
+pub fn read_session_meta(id: &str) -> Option<SessionMeta> {
+    let text = std::fs::read_to_string(meta_file(id)).ok()?;
+    match serde_json::from_str(&text) {
+        Ok(meta) => Some(meta),
+        Err(e) => {
+            log::warn!(
+                "Corrupt session meta for {}: {} — using fresh defaults",
+                id,
+                e
+            );
+            None
+        }
+    }
+}
+
 /// Path to the append-only archive of every message this session has
 /// exchanged. NEVER rewritten or truncated by any code path — retention
 /// (config `[sessions] archive_retention_days`) deletes whole files only.
@@ -323,6 +377,11 @@ pub fn trim_history(messages: Vec<Message>, max_history: Option<usize>) -> Vec<M
 /// Load message history from a session file, returning at most `max_history`
 /// tail messages.  `max_history = None` means unbounded — all messages are returned.
 /// Returns an empty Vec if the file does not exist or is unreadable.
+///
+/// When a cap is applied, the tail is advanced to the nearest clean turn
+/// boundary (user message without tool_results) so that no orphaned
+/// tool_results are returned.  If no clean boundary exists in the tail,
+/// the raw slice is repaired by stripping leading orphaned tool_results.
 pub fn read_session_file(id: &str, max_history: Option<usize>) -> Vec<Message> {
     let path = session_file(id);
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -333,7 +392,19 @@ pub fn read_session_file(id: &str, max_history: Option<usize>) -> Vec<Message> {
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
     match max_history {
-        Some(cap) if msgs.len() > cap => msgs[msgs.len() - cap..].to_vec(),
+        Some(cap) if msgs.len() > cap => {
+            let slice_start = msgs.len() - cap;
+            let clean_start = next_clean_turn_start(&msgs, slice_start);
+            match clean_start {
+                Some(idx) => msgs[idx..].to_vec(),
+                None => {
+                    // No clean boundary in the tail — repair instead of returning raw.
+                    let mut tail = msgs[slice_start..].to_vec();
+                    crate::daemon::digest::repair_tail_head(&mut tail);
+                    tail
+                }
+            }
+        }
         _ => msgs,
     }
 }
@@ -885,5 +956,201 @@ mod tests {
             "abc123.archive.jsonl",
             "archive file path should end with <id>.archive.jsonl"
         );
+    }
+
+    fn assert_no_orphan_tool_results(msgs: &[Message]) {
+        for (i, m) in msgs.iter().enumerate() {
+            if let Some(results) = &m.tool_results {
+                for r in results {
+                    let found = msgs[..i].iter().rev().any(|prev| {
+                        prev.tool_calls
+                            .as_ref()
+                            .is_some_and(|calls| calls.iter().any(|c| c.id == r.tool_call_id))
+                    });
+                    assert!(
+                        found,
+                        "orphan tool_result at idx {}: call_id={}",
+                        i, r.tool_call_id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn meta_roundtrip() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "meta-roundtrip";
+        let meta = SessionMeta {
+            started_at: chrono::Utc::now(),
+            turn_count: 5,
+            last_prompt_tokens: 120,
+            token_scale: 1.8,
+            tool_calls_this_session: 3,
+            saved_name: Some("my-session".to_string()),
+        };
+        write_session_meta(id, &meta);
+
+        let loaded = read_session_meta(id).expect("meta file should exist");
+        assert_eq!(loaded.turn_count, 5);
+        assert_eq!(loaded.last_prompt_tokens, 120);
+        assert_eq!(loaded.token_scale, 1.8);
+        assert_eq!(loaded.tool_calls_this_session, 3);
+        assert_eq!(loaded.saved_name, Some("my-session".to_string()));
+    }
+
+    #[test]
+    fn meta_corrupt_returns_none() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "meta-corrupt";
+        let path = meta_file(id);
+        std::fs::write(&path, "NOT_JSON {{{").unwrap();
+
+        let loaded = read_session_meta(id);
+        assert!(
+            loaded.is_none(),
+            "corrupt meta should return None, not Some"
+        );
+    }
+
+    #[test]
+    fn entry_recreation_seeds_from_meta() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "meta-seed";
+        let meta = SessionMeta {
+            started_at: chrono::Utc::now(),
+            turn_count: 7,
+            last_prompt_tokens: 200,
+            token_scale: 2.0,
+            tool_calls_this_session: 10,
+            saved_name: Some("seeded".to_string()),
+        };
+        write_session_meta(id, &meta);
+
+        // Simulate entry recreation by reading meta and building a fresh entry.
+        let loaded_meta = read_session_meta(id).expect("meta should exist");
+        let entry = SessionEntry {
+            messages: Vec::new(),
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: Vec::new(),
+            last_prompt_tokens: loaded_meta.last_prompt_tokens,
+            tmux_session: String::new(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
+            started_at: loaded_meta.started_at,
+            turn_count: loaded_meta.turn_count,
+            tool_calls_this_session: loaded_meta.tool_calls_this_session,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: loaded_meta.saved_name,
+            dirty: false,
+            artifacts_created: Vec::new(),
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            loaded_tools: std::collections::HashSet::new(),
+            cost_usd: 0.0,
+            cost_by_agent: std::collections::HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: loaded_meta.token_scale,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+        };
+
+        assert_eq!(entry.turn_count, 7);
+        assert_eq!(entry.last_prompt_tokens, 200);
+        assert_eq!(entry.token_scale, 2.0);
+        assert_eq!(entry.tool_calls_this_session, 10);
+        assert_eq!(entry.saved_name, Some("seeded".to_string()));
+        assert!(!entry.compaction_in_flight);
+        assert!(entry.pending_compaction_notice.is_none());
+    }
+
+    #[test]
+    fn read_session_file_lands_on_clean_boundary() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "boundary-test";
+        // Build a history where a small cap would slice mid-tool-chain:
+        // user(normal) → assistant(tool_calls) → user(tool_results) → user(normal) → assistant(normal)
+        // With cap=2, the raw slice starts at index 3 (user normal), which is clean.
+        // We need a case where the raw slice lands on tool_results.
+        let msgs: Vec<Message> = vec![
+            make_msg("user", "hello"),
+            make_msg("assistant", "thinking"),
+            make_msg("user", "tool result 1"),
+            make_msg("user", "tool result 2"),
+            make_msg("user", "new question"),
+            make_msg("assistant", "answer"),
+        ];
+        // Write the history to disk
+        let path = session_file(id);
+        let jsonl: String = msgs
+            .iter()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, jsonl).unwrap();
+
+        // Read with a small cap that forces boundary alignment
+        let result = read_session_file(id, Some(3));
+        assert_no_orphan_tool_results(&result);
+    }
+
+    #[test]
+    fn read_session_file_repairs_when_no_boundary() {
+        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let id = "repair-test";
+        // Build a history where the tail contains only tool_results-bearing user messages
+        // (no clean boundary exists in the tail).
+        let msgs: Vec<Message> = vec![
+            make_msg("user", "hello"),
+            make_msg("assistant", "thinking"),
+            make_msg("user", "tool result 1"),
+            make_msg("user", "tool result 2"),
+            make_msg("user", "tool result 3"),
+        ];
+        let path = session_file(id);
+        let jsonl: String = msgs
+            .iter()
+            .map(|m| serde_json::to_string(m).unwrap())
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&path, jsonl).unwrap();
+
+        // Read with a cap that forces the tail to start within the tool_results zone
+        let result = read_session_file(id, Some(3));
+        // The repair should have stripped the orphaned tool_results
+        assert_no_orphan_tool_results(&result);
     }
 }

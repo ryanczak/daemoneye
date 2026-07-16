@@ -698,6 +698,23 @@ where
                                     append_session_message(id, msg);
                                 }
                             }
+                            // Persist session meta so restarts/eviction don't lose continuity state.
+                            // Skipped for ghost sessions — their one-shot UUID ids are never
+                            // recreated, so a ghost meta file would be a write-only orphan.
+                            if !is_ghost_session
+                                && let Ok(store) = sessions.lock()
+                                && let Some(entry) = store.get(id)
+                            {
+                                let meta = crate::daemon::session::SessionMeta {
+                                    started_at: entry.started_at,
+                                    turn_count: entry.turn_count,
+                                    last_prompt_tokens: entry.last_prompt_tokens,
+                                    token_scale: entry.token_scale,
+                                    tool_calls_this_session: entry.tool_calls_this_session,
+                                    saved_name: entry.saved_name.clone(),
+                                };
+                                crate::daemon::session::write_session_meta(id, &meta);
+                            }
                             // Spawn background compaction if the turn signaled it.
                             // spawn_compaction takes the lock itself (snapshot) and
                             // no-ops on ghost / already-in-flight sessions, so we

@@ -1,7 +1,7 @@
 # Phase 09: Session meta persistence and boundary-safe reload
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (token_scale exists)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -208,13 +208,27 @@ fn assert_no_orphan_tool_results(msgs: &[Message]) {
 }
 ```
 
-### 5. Cleanup coupling
+### 5. Cleanup coupling — NONE (corrected 2026-07-16; the drafted premise was wrong)
 
-Where session artifacts are deleted (`/session delete`,
-`delete_saved_session`, and any eviction-time file cleanup — grep
-`session_file(` for deletion sites), delete the sibling `.meta.json` too.
-Retention: the phase-04 archive sweep does NOT touch meta files (a
-session's meta is tiny and its working file may still exist).
+**There is no ephemeral session-file deletion path in the codebase, so there is
+nothing to couple. Do NOT add or search for one.** Verified:
+
+- The only production `remove_file`/`remove_dir_all` of a session artifact is
+  `session_store.rs:311` inside `delete_session` — the **named** session store
+  (`var/sessions/<name>/`, triggered by `/session delete <name>`). That store is
+  explicitly **out of scope** for this phase (it has its own `meta.toml`).
+- Idle **eviction** (`mod.rs:694`, `store.retain(...)`) only drops the in-memory
+  entry (`cleanup_bg_windows()` then `false`) — it **does not** delete the
+  on-disk `<id>.jsonl`. The working file persisting is the whole point of D10.
+- `session.rs:581`/`:614` `remove_file` calls are **test code** (`mod tests`
+  begins at `session.rs:436`), not a runtime deletion site.
+
+So the ephemeral working file `<id>.jsonl` is never explicitly deleted; only the
+sibling `<id>.archive.jsonl` is retention-swept (phase 04). The `<id>.meta.json`
+therefore shares the working file's lifecycle — it lives alongside it and needs
+no deletion coupling. **This section is a no-op: implement nothing here.**
+(A future retention pass could sweep stale meta alongside archives, but that is
+out of scope — do not add it.)
 
 ## Acceptance criteria
 
@@ -232,7 +246,6 @@ session's meta is tiny and its working file may still exist).
 - [ ] `turn_count` shown to the client (`SessionInfo.turn_count`) continues
       across a simulated restart (state-level test: recreate entry from
       meta, assert the next increment yields `persisted + 1`).
-- [ ] Deleting a session removes its meta file.
 
 ## Test plan
 
@@ -245,7 +258,8 @@ FS tests take `TEST_HOME_LOCK` + temp HOME.
 - `read_session_file_lands_on_clean_boundary` — fixture history engineered
   so the raw slice starts mid-tool-chain; orphan checker green.
 - `read_session_file_repairs_when_no_boundary` — all-tool-result tail.
-- `delete_session_removes_meta`.
+- (No `delete_session_removes_meta` — §5 is a no-op; there is no ephemeral
+  session-delete to couple.)
 
 ## End-to-end verification
 
@@ -275,6 +289,36 @@ None.
 
 ## Update Log
 
-(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+<!-- entries appended below this line -->
+### Update — 2026-07-16 22:39 (started)
+
+**Executor:** rexyMCP executor
+**Progress:** Implementing session meta persistence (SessionMeta + IO), boundary-safe reload, cleanup coupling, and tests.
+
+### Update — 2026-07-16 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** Genuine `NoProgressStall` (the rexyMCP#2 governor fix is now
+live — this was a real 40-call read-only search loop, not a `patch_lines` false
+positive) on a **spec bug in §5**: the drafted "delete the sibling `.meta.json`
+at session-deletion sites" named a coupling that does not exist — ephemeral
+`<id>.jsonl` is never deleted (eviction drops only the in-memory entry; the sole
+session-delete is the out-of-scope named store). §1–4 are complete and compiling
+on disk, so resume preserves that work while the corrected §5 (now a no-op)
+closes the gap; a takeover would forfeit the telemetry point for a spec error
+that was mine, not the model's.
+
+### Notes for executor — 2026-07-16 (resume)
+
+§1–4 (SessionMeta type + IO, end-of-turn meta write, entry-recreation seeding,
+boundary-safe reload) are already implemented on disk and compile — do NOT
+re-derive them. The ONLY change from the prior run: **§5 is now a no-op.** There
+is no ephemeral session-file deletion path (verified: eviction at `mod.rs:694`
+deletes no file; the only session delete is the out-of-scope named store at
+`session_store.rs:311`; `session.rs:581/614` are test code). Do NOT search for a
+deletion site, do NOT add `.meta.json` deletion anywhere, and do NOT write a
+`delete_session_removes_meta` test. Mark the §5 task done, then finish: run
+`cargo fmt` / `cargo clippy --all-targets --all-features -- -D warnings` /
+`cargo test`, fix any failures in the §1–4 code, and complete.
 
 <!-- entries appended below this line -->
