@@ -439,7 +439,7 @@ impl SessionEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::Message;
+    use crate::ai::{Message, ToolResult};
 
     fn make_msg(role: &str, content: &str) -> Message {
         Message {
@@ -447,6 +447,16 @@ mod tests {
             content: content.to_string(),
             tool_calls: None,
             tool_results: None,
+            turn: None,
+        }
+    }
+
+    fn make_msg_with_tool_results(role: &str, content: &str, results: Vec<ToolResult>) -> Message {
+        Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: Some(results),
             turn: None,
         }
     }
@@ -1097,14 +1107,24 @@ mod tests {
 
         let id = "boundary-test";
         // Build a history where a small cap would slice mid-tool-chain:
-        // user(normal) → assistant(tool_calls) → user(tool_results) → user(normal) → assistant(normal)
-        // With cap=2, the raw slice starts at index 3 (user normal), which is clean.
-        // We need a case where the raw slice lands on tool_results.
+        // user → assistant(tool_calls) → user(tool_results) → user(tool_results) → user(clean) → assistant
+        // With cap=3, the raw slice starts at index 3 (user with tool_results).
+        // Boundary-safe reload should advance to index 4 (clean user).
+        let tool_result_1 = ToolResult {
+            tool_call_id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            content: "file content".to_string(),
+        };
+        let tool_result_2 = ToolResult {
+            tool_call_id: "call-2".to_string(),
+            tool_name: "bash".to_string(),
+            content: "output".to_string(),
+        };
         let msgs: Vec<Message> = vec![
             make_msg("user", "hello"),
             make_msg("assistant", "thinking"),
-            make_msg("user", "tool result 1"),
-            make_msg("user", "tool result 2"),
+            make_msg_with_tool_results("user", "result 1", vec![tool_result_1.clone()]),
+            make_msg_with_tool_results("user", "result 2", vec![tool_result_2.clone()]),
             make_msg("user", "new question"),
             make_msg("assistant", "answer"),
         ];
@@ -1120,6 +1140,12 @@ mod tests {
         // Read with a small cap that forces boundary alignment
         let result = read_session_file(id, Some(3));
         assert_no_orphan_tool_results(&result);
+        // Verify the boundary was actually advanced: the first message should
+        // be the clean user message (index 4), not the tool_results-bearing
+        // user message (index 3).
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].content, "new question");
+        assert!(result[0].tool_results.is_none());
     }
 
     #[test]
@@ -1133,12 +1159,27 @@ mod tests {
         let id = "repair-test";
         // Build a history where the tail contains only tool_results-bearing user messages
         // (no clean boundary exists in the tail).
+        let tool_result_1 = ToolResult {
+            tool_call_id: "call-3".to_string(),
+            tool_name: "read_file".to_string(),
+            content: "file content".to_string(),
+        };
+        let tool_result_2 = ToolResult {
+            tool_call_id: "call-4".to_string(),
+            tool_name: "bash".to_string(),
+            content: "output".to_string(),
+        };
+        let tool_result_3 = ToolResult {
+            tool_call_id: "call-5".to_string(),
+            tool_name: "search".to_string(),
+            content: "matches".to_string(),
+        };
         let msgs: Vec<Message> = vec![
             make_msg("user", "hello"),
             make_msg("assistant", "thinking"),
-            make_msg("user", "tool result 1"),
-            make_msg("user", "tool result 2"),
-            make_msg("user", "tool result 3"),
+            make_msg_with_tool_results("user", "result 1", vec![tool_result_1]),
+            make_msg_with_tool_results("user", "result 2", vec![tool_result_2]),
+            make_msg_with_tool_results("user", "result 3", vec![tool_result_3]),
         ];
         let path = session_file(id);
         let jsonl: String = msgs
@@ -1152,5 +1193,12 @@ mod tests {
         let result = read_session_file(id, Some(3));
         // The repair should have stripped the orphaned tool_results
         assert_no_orphan_tool_results(&result);
+        // Verify the repair actually happened: no message should have tool_results
+        for msg in &result {
+            assert!(
+                msg.tool_results.as_ref().is_none_or(Vec::is_empty),
+                "Expected repaired messages to have no tool_results"
+            );
+        }
     }
 }
