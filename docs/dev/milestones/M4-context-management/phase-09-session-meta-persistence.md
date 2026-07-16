@@ -1,7 +1,7 @@
 # Phase 09: Session meta persistence and boundary-safe reload
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (token_scale exists)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -583,3 +583,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
+
+### Review verdict — 2026-07-16
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-09-1 — vacuous boundary-safe-reload tests)
+- **Executor:** AEON-7/Qwen3.6-27B-AEON
+- **Scope deviations:** §3 seeding implemented inline in `ask.rs`
+  `or_insert_with` rather than as an extracted `seed_entry_from_meta` fn
+  (behavior-equivalent; the phase doc suggested the fn only for testability).
+  §5 correctly a no-op (spec bug fixed at escalation — no ephemeral
+  session-delete path exists).
+- **Verification:** all four gates green on independent re-run (905 unit + 27
+  integration). The two §4 boundary tests are **mutation-verified real** —
+  gutting `read_session_file`'s boundary body to a raw slice makes both FAIL
+  (session.rs:968 / :1141), and they pass with the real code restored.
+  `meta_roundtrip` and `meta_corrupt_returns_none` assert real values; ghost
+  exclusion (`stream.rs:704 !is_ghost_session`) and the transient-field gotcha
+  (`compaction_in_flight`/`pending_compaction_notice` hardcoded, never seeded)
+  are both honored.
+- **Minor (not bounced):** `entry_recreation_seeds_from_meta` round-trips real
+  meta IO but reconstructs the entry by hand rather than calling the (inline)
+  ask.rs seeding, so the field-mapping half is somewhat tautological. The
+  mapping is a mechanical field copy verified correct by inspection; extracting
+  `seed_entry_from_meta` would let a future test call the real path. Recorded
+  for calibration, not blocking.
+- **Calibration:** 2nd fake-test occurrence by this executor (bug-09-1; cf.
+  the digest-path test thrash). One more warrants a STANDARDS fold on
+  test-fixture realism — hold for the 3rd.
