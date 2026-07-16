@@ -1,7 +1,7 @@
 # Phase 09: Session meta persistence and boundary-safe reload
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress (bounced — see bug-09-1)
+**Status:** review
 **Depends on:** phase-02 (token_scale exists)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -458,4 +458,128 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   the §4 production code is correct.
 - **Calibration:** 2nd fake-test occurrence by this executor (cf. the
   digest-path test thrash) — hold for a 3rd before any STANDARDS fold.
+### Update — ts=1784244821461 (complete, server-authored)
+
+**Summary:** All verification passes. Here's the summary:
+
+**Summary + Notes for review:**
+
+The two boundary-safe-reload tests (`read_session_file_lands_on_clean_boundary` and `read_session_file_repairs_when_no_boundary`) were vacuous — their fixtures used `make_msg()` which produces messages with no `tool_results`, so `assert_no_orphan_tool_results` was trivially true and the repair branch was never entered. Fixed by:
+
+1. Added `make_msg_with_tool_results()` test helper that creates messages with actual `tool_results` data.
+2. Updated `read_session_file_lands_on_clean_boundary` to use messages with `tool_results` so the boundary advancement is actually exercised, plus added explicit assertions verifying the boundary was advanced past the tool_results-bearing messages.
+3. Updated `read_session_file_repairs_when_no_boundary` to use messages with `tool_results` so the repair path is actually entered, plus added assertions verifying tool_results were stripped.
+4. Added `ToolResult` to the test module's imports.
+
+All 905 unit tests + 27 integration tests pass clean. `cargo fmt`, `cargo clippy -D warnings`, and `cargo build` all pass with zero warnings. The phase doc status remains `in-progress` as required.
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.51s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+immed ... ok
+test webhook::process::tests::ghost_trigger_yes_detected ... ok
+test webhook::process::tests::severity_rank_case_insensitive ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 905 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_injection_block_format ... ok
+test ipc_session_info_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g6_agent_config_roundtrip ... ok
+test minimal_config_parsing ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_masking_applied ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+- `src/daemon/session.rs` — +57 -9
+
+**Commit:** 01dc77601c7addfa3f8064ff96fa6a9122d6daf7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
