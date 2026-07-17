@@ -1,7 +1,7 @@
 # Phase 10a: Ghost-session working-set compaction coverage
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** review
+**Status:** done
 **Depends on:** phase-03 (planner/elision), phase-05 (epochs), phase-08 (ladder shape)
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -433,3 +433,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
+### Review verdict — 2026-07-16
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** AEON-7/Qwen3.6-27B-AEON (rexyMCP)
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independently re-ran `cargo fmt --all -- --check`, `cargo build`, `cargo clippy
+--all-targets --all-features -- -D warnings`, and `cargo test` from a clean
+working tree — all pass (909 unit + 27 integration, 2 pre-existing ignored,
+unrelated to this phase). Confirmed via grep: no `.await` in
+`enforce_ghost_working_set` (it is fully synchronous); `maybe_rollup` appears
+only in a doc comment in `ghost_ws.rs`, never called; no
+`unwrap()`/`expect()`/`panic!()`/`#[allow]`/`#[ignore]` in the new production
+code (test-only `unsafe` for `HOME` env-var mutation matches the established
+codebase-wide `TestHome` pattern used elsewhere in `src/daemon/context/`).
+Mutation-tested `ghost_guard_noop_below_threshold` (flipped the early-return's
+`compacted` flag → test failed as expected) and
+`ghost_guard_compacts_structured_only` (flipped `narrative: None` to `Some` →
+test failed as expected), confirming both are real, non-vacuous tests. All 4
+named tests (`ghost_guard_noop_below_threshold`,
+`ghost_guard_compacts_structured_only`, `ghost_guard_output_orphan_free`,
+`ghost_guard_elide_only_tier`) exist, pass, and exercise the intended
+branches. Wiring in `ghost.rs` (lines 487-517) matches the spec's worked
+example: guard runs after the lock drops and before `tokio::spawn`, write-back
+covers both the in-memory store and `write_session_file`. Single conventional
+commit (`dc90295`). Diff scoped to exactly the three files the spec named.
