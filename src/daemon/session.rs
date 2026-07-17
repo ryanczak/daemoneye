@@ -19,7 +19,8 @@ pub struct BgWindowInfo {
 /// In-memory record of an active chat session.
 /// Evicted by the cleanup task after 30 minutes of inactivity.
 pub struct SessionEntry {
-    /// Full trimmed message history for this session (bounded to `MAX_HISTORY`).
+    /// Full message history for this session. Bounded by token-budget
+    /// compaction rather than a fixed message count.
     pub messages: Vec<Message>,
     /// Wall-clock time of the last `Ask` request; used to prune idle sessions.
     pub last_accessed: Instant,
@@ -113,11 +114,6 @@ pub struct SessionEntry {
 
 /// Thread-safe, shared session store passed to every client handler.
 pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
-
-/// Default maximum number of messages retained per session.
-/// The runtime value comes from `config.limits.max_history`; this constant
-/// exists as the canonical default and as a reference value in tests.
-pub const MAX_HISTORY: usize = 80;
 
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
@@ -321,11 +317,10 @@ pub fn next_clean_turn_start(messages: &[Message], start: usize) -> Option<usize
     None
 }
 
-/// Trim a message history Vec to at most `max_history` entries.
+/// Trim a message history Vec to at most `cap` entries.
 ///
-/// `max_history = None` means the history is unbounded — the function returns
-/// `messages` unchanged.  Pass `LimitsConfig::cap_usize(config.limits.max_history)`
-/// at call sites to honour the configured cap.
+/// `cap = None` means the history is unbounded — the function returns
+/// `messages` unchanged.
 ///
 /// Layout after trim: `[first_message] [placeholder] [tail…]`
 /// - `first_message` is the initial user turn (contains injected system context).
@@ -336,9 +331,9 @@ pub fn next_clean_turn_start(messages: &[Message], start: usize) -> Option<usize
 ///   alternation.  If no clean boundary exists within the target window, the
 ///   history is returned unchanged rather than risk an orphan tool_result.
 ///
-/// Returns `messages` unchanged when `messages.len() <= max_history` or `max_history` is `None`.
-pub fn trim_history(messages: Vec<Message>, max_history: Option<usize>) -> Vec<Message> {
-    let Some(cap) = max_history else {
+/// Returns `messages` unchanged when `messages.len() <= cap` or `cap` is `None`.
+pub fn trim_history(messages: Vec<Message>, cap: Option<usize>) -> Vec<Message> {
+    let Some(cap) = cap else {
         return messages; // unbounded
     };
     if messages.len() <= cap {
@@ -374,15 +369,15 @@ pub fn trim_history(messages: Vec<Message>, max_history: Option<usize>) -> Vec<M
     trimmed
 }
 
-/// Load message history from a session file, returning at most `max_history`
-/// tail messages.  `max_history = None` means unbounded — all messages are returned.
+/// Load message history from a session file, returning at most `cap`
+/// tail messages.  `cap = None` means unbounded — all messages are returned.
 /// Returns an empty Vec if the file does not exist or is unreadable.
 ///
 /// When a cap is applied, the tail is advanced to the nearest clean turn
 /// boundary (user message without tool_results) so that no orphaned
 /// tool_results are returned.  If no clean boundary exists in the tail,
 /// the raw slice is repaired by stripping leading orphaned tool_results.
-pub fn read_session_file(id: &str, max_history: Option<usize>) -> Vec<Message> {
+pub fn read_session_file(id: &str, cap: Option<usize>) -> Vec<Message> {
     let path = session_file(id);
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Vec::new();
@@ -391,7 +386,7 @@ pub fn read_session_file(id: &str, max_history: Option<usize>) -> Vec<Message> {
         .lines()
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect();
-    match max_history {
+    match cap {
         Some(cap) if msgs.len() > cap => {
             let slice_start = msgs.len() - cap;
             let clean_start = next_clean_turn_start(&msgs, slice_start);
@@ -441,6 +436,11 @@ mod tests {
     use super::*;
     use crate::ai::{Message, ToolResult};
 
+    /// Representative history cap used to exercise the `trim_history` bounded
+    /// path. `trim_history` takes the cap as an explicit argument, so these
+    /// tests only need a fixed sample value.
+    const CAP: usize = 80;
+
     fn make_msg(role: &str, content: &str) -> Message {
         Message {
             role: role.to_string(),
@@ -475,36 +475,36 @@ mod tests {
     #[test]
     fn trim_history_unchanged_when_under_limit() {
         let msgs = make_history(10);
-        let out = trim_history(msgs.clone(), Some(MAX_HISTORY));
+        let out = trim_history(msgs.clone(), Some(CAP));
         assert_eq!(out.len(), 10);
         assert_eq!(out[0].content, "msg 0");
     }
 
     #[test]
     fn trim_history_at_exact_limit_unchanged() {
-        let msgs = make_history(MAX_HISTORY);
-        let out = trim_history(msgs, Some(MAX_HISTORY));
-        assert_eq!(out.len(), MAX_HISTORY);
+        let msgs = make_history(CAP);
+        let out = trim_history(msgs, Some(CAP));
+        assert_eq!(out.len(), CAP);
     }
 
     #[test]
     fn trim_history_over_limit_bounded() {
-        let msgs = make_history(MAX_HISTORY + 10);
-        let out = trim_history(msgs, Some(MAX_HISTORY));
-        assert!(out.len() <= MAX_HISTORY);
+        let msgs = make_history(CAP + 10);
+        let out = trim_history(msgs, Some(CAP));
+        assert!(out.len() <= CAP);
     }
 
     #[test]
     fn trim_history_preserves_first_message() {
-        let msgs = make_history(MAX_HISTORY + 5);
-        let out = trim_history(msgs, Some(MAX_HISTORY));
+        let msgs = make_history(CAP + 5);
+        let out = trim_history(msgs, Some(CAP));
         assert_eq!(out[0].content, "msg 0");
     }
 
     #[test]
     fn trim_history_placeholder_is_assistant() {
-        let msgs = make_history(MAX_HISTORY + 5);
-        let out = trim_history(msgs, Some(MAX_HISTORY));
+        let msgs = make_history(CAP + 5);
+        let out = trim_history(msgs, Some(CAP));
         // position 1 is the placeholder
         assert_eq!(out[1].role, "assistant");
         assert!(out[1].content.contains("trimmed"));
@@ -514,14 +514,14 @@ mod tests {
     fn trim_history_tail_starts_on_user_turn() {
         // After [first, placeholder], the next message must be a user message
         // so the user→assistant alternation is valid.
-        let msgs = make_history(MAX_HISTORY + 5);
-        let out = trim_history(msgs, Some(MAX_HISTORY));
+        let msgs = make_history(CAP + 5);
+        let out = trim_history(msgs, Some(CAP));
         assert_eq!(out[2].role, "user", "tail must start on a user message");
     }
 
     #[test]
     fn trim_history_none_cap_returns_unchanged() {
-        let msgs = make_history(MAX_HISTORY + 20);
+        let msgs = make_history(CAP + 20);
         let len = msgs.len();
         let out = trim_history(msgs, None);
         assert_eq!(out.len(), len, "None cap must not trim anything");
@@ -531,7 +531,7 @@ mod tests {
     fn trim_history_exceed_by_one_custom_cap() {
         // cap+1 messages → trimmed to exactly cap.
         // Uses a small explicit cap to exercise the Some(n) path directly
-        // without relying on the MAX_HISTORY constant.
+        // without relying on the CAP constant.
         let cap: usize = 10;
         let msgs = make_history(cap + 1);
         let out = trim_history(msgs, Some(cap));
@@ -550,7 +550,7 @@ mod tests {
     fn trim_history_cap_one_returns_first_and_last() {
         // Degenerate cap: 1. trim_history must not produce an empty vec even at
         // extreme low values (first message + placeholder logic still applies).
-        let msgs = make_history(MAX_HISTORY);
+        let msgs = make_history(CAP);
         let out = trim_history(msgs, Some(1));
         // The implementation keeps first + placeholder + tail, so the result
         // may be more than 1; what matters is it does not panic or return empty.

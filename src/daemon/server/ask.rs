@@ -82,12 +82,7 @@ where
         .or_else(|| {
             session_id
                 .as_ref()
-                .map(|id| {
-                    read_session_file(
-                        id,
-                        crate::config::LimitsConfig::cap_usize(config.limits.max_history),
-                    )
-                })
+                .map(|id| read_session_file(id, None))
                 .filter(|v| !v.is_empty())
         })
         .unwrap_or_default();
@@ -297,7 +292,6 @@ where
     //   emergency_pct (85%) — synchronous structured-only compaction (no
     //   narrative call) when pressure is extreme.
     //   target_pct (40%) — post-compaction working-set target.
-    // Safety net — if we hit MAX_HISTORY regardless of token info, still digest.
     //
     // All paths require `messages.len() >= DIGEST_THRESHOLD` so a token-heavy
     // first turn (huge system context + memory) doesn't trigger compaction
@@ -311,15 +305,11 @@ where
         0
     };
     let pre_trim_len = messages.len();
-    let history_cap = crate::config::LimitsConfig::cap_usize(config.limits.max_history);
-    let at_safety_cap = history_cap.is_some_and(|cap| messages.len() >= cap);
     use crate::daemon::digest::DIGEST_THRESHOLD;
     let above_floor = messages.len() >= DIGEST_THRESHOLD;
 
-    // Decision ladder: emergency > compact > elide. The max_history safety cap
-    // always takes the synchronous path — it exists precisely for when token
-    // info is absent (token_pct == 0), so it must not be gated on a token
-    // threshold.
+    // Decision ladder: emergency > compact > elide. Compaction is driven purely
+    // by token pressure now that the message-count cap has been removed.
     let is_emergency = token_pct >= config.compaction.emergency_pct;
     let is_compact = token_pct >= config.compaction.compact_at_pct;
     let is_elide = token_pct >= config.compaction.elide_at_pct;
@@ -328,8 +318,8 @@ where
     // ConversationLoopCtx; the loop spawns the compaction after the turn ends.
     let mut wants_background_compaction = false;
 
-    if (is_emergency || at_safety_cap) && above_floor {
-        // Emergency/safety-cap path: synchronous structured-only compaction.
+    if is_emergency && above_floor {
+        // Emergency path: synchronous structured-only compaction.
         // No narrative call — this is the backstop when pressure is extreme.
         // Aggressive elision first.
         let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, true);
@@ -429,12 +419,10 @@ where
                 }
             }
         } else {
-            messages = trim_history(messages, history_cap);
             log::info!(
-                "Emergency compaction (trim): tokens {}% — elided {} chars, no started_at, trimmed {} → {} messages",
+                "Emergency compaction (elide): tokens {}% — elided {} chars, no session start recorded; keeping {} messages",
                 token_pct,
                 elided,
-                pre_trim_len,
                 messages.len()
             );
         }
@@ -461,17 +449,12 @@ where
                 elided
             );
         }
-    } else if history_cap.is_some_and(|cap| messages.len() > cap) {
-        // Final safety trim — should be unreachable given the sync path above
-        // also fires at the cap, but keep it as a guard.
-        messages = trim_history(messages, history_cap);
     }
     // If the message vec shrank, OR we elided tool-result content in place, the
     // on-disk file must be fully rewritten to remove/replace the stale entries.
     // The compact and elide branches mutate content without changing len, so
     // key off entering either branch as well as a length shrink.
-    let did_inline_elide =
-        (is_compact || is_elide) && above_floor && !is_emergency && !at_safety_cap;
+    let did_inline_elide = (is_compact || is_elide) && above_floor && !is_emergency;
     let needs_compaction = messages.len() < pre_trim_len || did_inline_elide;
     let post_trim_len = messages.len();
 

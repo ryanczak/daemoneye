@@ -521,7 +521,6 @@ pub async fn run_status() -> Result<()> {
                         "result chars",
                         fmt_unlimited_usize(limits.tool_result_chars),
                     );
-                    lims.kv("max history", fmt_unlimited_usize(limits.max_history));
                     lims.kv("max turns", fmt_unlimited_usize(limits.max_turns));
                     lims.kv(
                         "session tools",

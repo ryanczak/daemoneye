@@ -382,10 +382,7 @@ async fn cmd_limits(r: &mut RatatuiRendererStdout, session_id: &str) {
                     "tool calls this session: {tool_calls_this_session} / {}",
                     cap(limits.max_tool_calls_per_session)
                 ),
-                format!(
-                    "history messages       : {history_len} / {}",
-                    cap(limits.max_history)
-                ),
+                format!("history messages       : {history_len}"),
                 String::new(),
                 format!("per-tool batch cap     : {}", cap_u(limits.per_tool_batch)),
                 format!(

@@ -89,7 +89,6 @@ pub struct LimitsSummary {
     pub per_tool_batch: u32,
     pub total_tool_calls_per_turn: u32,
     pub tool_result_chars: usize,
-    pub max_history: usize,
     pub max_turns: usize,
     pub max_tool_calls_per_session: usize,
     /// Per-tool overrides sorted by tool name.  Each entry is `(tool_name, cap)`; 0 = uncapped.

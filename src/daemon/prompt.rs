@@ -161,7 +161,6 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         0
     };
     let history_count = ctx.history_count + 1; // + the user turn about to be pushed
-    let history_cap_budget = crate::config::LimitsConfig::cap_usize(ctx.config.limits.max_history);
 
     // Ghost sessions: resolve the effective turn cap.
     let ghost_turn_limit: Option<usize> = ctx.ghost_turn_limit;
@@ -174,10 +173,7 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
     if let Some(limit) = ghost_turn_limit {
         parts.push(format!("turn {}/{}", ctx.this_turn_count, limit));
     }
-    match history_cap_budget {
-        Some(cap) => parts.push(format!("history {}/{}", history_count, cap)),
-        None => parts.push(format!("history {} (no cap)", history_count)),
-    };
+    parts.push(format!("history {}", history_count));
     if context_window > 0 && ctx.last_prompt_tokens > 0 {
         parts.push(format!(
             "prompt {}k/{}k ({}%)",

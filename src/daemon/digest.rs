@@ -591,11 +591,9 @@ mod tests {
 
     #[test]
     fn digest_threshold_value() {
-        // Sanity check: the compaction floor leaves room for a tail and stays
-        // below the hard history cap.
+        // Sanity check: the compaction floor leaves room for a tail.
         const {
             assert!(DIGEST_THRESHOLD > MIN_TAIL_MESSAGES + 2);
-            assert!(DIGEST_THRESHOLD < crate::daemon::session::MAX_HISTORY);
         }
     }
 

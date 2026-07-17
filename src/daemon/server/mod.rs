@@ -44,7 +44,8 @@ use tokio::net::UnixStream;
 /// ## Session persistence
 /// Message history is stored both in the in-memory `sessions` map (fast lookup
 /// within the same daemon run) and in `~/.daemoneye/sessions/<id>.jsonl` (survives
-/// restarts). History is trimmed to `MAX_HISTORY` messages before each save.
+/// restarts). History is bounded by token-budget compaction, not a fixed
+/// message count.
 pub async fn handle_client(
     stream: UnixStream,
     cache: Arc<SessionCache>,

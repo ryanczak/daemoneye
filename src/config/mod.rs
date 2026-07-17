@@ -248,10 +248,6 @@ mod tests {
             "must match MAX_TOOL_RESULT_CHARS in server.rs"
         );
         assert_eq!(
-            limits.max_history, 80,
-            "must match MAX_HISTORY in session.rs"
-        );
-        assert_eq!(
             limits.total_tool_calls_per_turn, 0,
             "new field defaults to uncapped"
         );
@@ -268,7 +264,6 @@ mod tests {
         let cfg: Config = toml::from_str("").unwrap();
         assert_eq!(cfg.limits.per_tool_batch, 100);
         assert_eq!(cfg.limits.tool_result_chars, 16_000);
-        assert_eq!(cfg.limits.max_history, 80);
         assert_eq!(cfg.limits.total_tool_calls_per_turn, 0);
         assert_eq!(cfg.limits.max_turns, 0);
         assert_eq!(cfg.limits.max_tool_calls_per_session, 0);
@@ -281,7 +276,6 @@ mod tests {
             per_tool_batch            = 200
             total_tool_calls_per_turn = 50
             tool_result_chars         = 8000
-            max_history               = 40
             max_turns                 = 100
             max_tool_calls_per_session = 500
 
@@ -294,7 +288,6 @@ mod tests {
         assert_eq!(l.per_tool_batch, 200);
         assert_eq!(l.total_tool_calls_per_turn, 50);
         assert_eq!(l.tool_result_chars, 8000);
-        assert_eq!(l.max_history, 40);
         assert_eq!(l.max_turns, 100);
         assert_eq!(l.max_tool_calls_per_session, 500);
         assert_eq!(l.per_tool.get("read_file").copied(), Some(300));
@@ -305,10 +298,10 @@ mod tests {
     fn partial_limits_section_fills_remaining_defaults() {
         let toml = r#"
             [limits]
-            max_history = 40
+            max_turns = 40
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.limits.max_history, 40);
+        assert_eq!(cfg.limits.max_turns, 40);
         assert_eq!(cfg.limits.per_tool_batch, 100, "should still default");
         assert_eq!(cfg.limits.tool_result_chars, 16_000, "should still default");
     }
@@ -319,12 +312,10 @@ mod tests {
             [limits]
             per_tool_batch    = 0
             tool_result_chars = 0
-            max_history       = 0
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(LimitsConfig::cap_u32(cfg.limits.per_tool_batch).is_none());
         assert!(LimitsConfig::cap_usize(cfg.limits.tool_result_chars).is_none());
-        assert!(LimitsConfig::cap_usize(cfg.limits.max_history).is_none());
     }
 
     #[test]
@@ -379,36 +370,7 @@ mod tests {
             limits.per_tool.contains_key("run_terminal_command"),
             "precondition: entry must be present to trigger warning path"
         );
-        let digest = DigestConfig::default();
-        limits.validate(&digest); // must not panic
-    }
-
-    #[test]
-    fn validate_unbounded_history_no_narrative_does_not_panic() {
-        // The validate() call should warn but never panic when max_history = 0
-        // and digest.narrative_enabled = false (the footgun combo).
-        let limits = LimitsConfig {
-            max_history: 0,
-            ..LimitsConfig::default()
-        };
-        let digest = DigestConfig {
-            narrative_enabled: true,
-        };
-        limits.validate(&digest); // must not panic
-    }
-
-    #[test]
-    fn validate_narrative_enabled_suppresses_footgun_warning() {
-        // No warning should fire (or panic) when narrative_enabled is true, even
-        // with max_history = 0, because the narrative step provides compaction.
-        let limits = LimitsConfig {
-            max_history: 0,
-            ..LimitsConfig::default()
-        };
-        let digest = DigestConfig {
-            narrative_enabled: true,
-        };
-        limits.validate(&digest); // must not panic
+        limits.validate(); // must not panic
     }
 
     #[test]
@@ -459,10 +421,6 @@ mod tests {
         assert_eq!(
             cfg.limits.tool_result_chars, 16_000,
             "must match legacy MAX_TOOL_RESULT_CHARS = 16_000"
-        );
-        assert_eq!(
-            cfg.limits.max_history, 80,
-            "must match legacy MAX_HISTORY = 80"
         );
         assert_eq!(
             cfg.limits.total_tool_calls_per_turn, 0,

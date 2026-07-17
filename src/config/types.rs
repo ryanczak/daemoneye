@@ -348,15 +348,6 @@ pub struct LimitsConfig {
     #[serde(default = "default_tool_result_chars")]
     pub tool_result_chars: usize,
 
-    /// Maximum messages retained per session in memory and on disk.
-    /// When the session reaches this length, the digest compaction pass runs
-    /// regardless of token pressure.
-    /// Setting to 0 makes history unbounded but does NOT disable the digest —
-    /// compaction still fires on token pressure alone.
-    /// Default: 80.  Set to 0 for unbounded history.
-    #[serde(default = "default_max_history")]
-    pub max_history: usize,
-
     /// Maximum AI turns allowed per interactive chat session.
     /// Ghost shells use `[ghost] max_ghost_turns` instead — this field has
     /// no effect on ghost sessions.
@@ -383,9 +374,6 @@ fn default_per_tool_batch() -> u32 {
 fn default_tool_result_chars() -> usize {
     16_000
 }
-fn default_max_history() -> usize {
-    80
-}
 
 impl Default for LimitsConfig {
     fn default() -> Self {
@@ -393,7 +381,6 @@ impl Default for LimitsConfig {
             per_tool_batch: default_per_tool_batch(),
             total_tool_calls_per_turn: 0,
             tool_result_chars: default_tool_result_chars(),
-            max_history: default_max_history(),
             max_turns: 0,
             max_tool_calls_per_session: 0,
             per_tool: std::collections::HashMap::new(),
@@ -428,7 +415,7 @@ impl LimitsConfig {
 
     /// Emit warnings for configuration that is likely unintentional.
     /// Call once at daemon startup after the config is loaded.
-    pub fn validate(&self, digest: &DigestConfig) {
+    pub fn validate(&self) {
         // These tools are approval-gated: per_tool entries for them are silently
         // ignored at runtime, so surface the misconfiguration early.
         // Keep in sync with per_tool_limit() in src/daemon/server.rs.
@@ -450,16 +437,6 @@ impl LimitsConfig {
                      exempt from per-tool caps — this entry has no effect"
                 );
             }
-        }
-
-        // Warn about the footgun: unbounded history with no narrative digest means
-        // very long sessions accumulate context with no compaction of dropped turns.
-        if self.max_history == 0 && !digest.narrative_enabled {
-            log::warn!(
-                "[limits] max_history = 0 (unbounded) and digest.narrative_enabled = false: \
-                 long sessions will not compact narrative context. Consider enabling \
-                 digest.narrative_enabled or setting a max_history ceiling."
-            );
         }
     }
 }
