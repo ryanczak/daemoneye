@@ -82,7 +82,8 @@ context loss, compaction off the interactive hot path.
 | 07 | recall-context ([phase-07-recall-context.md](phase-07-recall-context.md)) — the `recall_context` AI tool over the archive | core | done |
 | 08 | async-compaction ([phase-08-async-compaction.md](phase-08-async-compaction.md)) — background epoch build, staleness-checked swap, emergency path | core | done |
 | 09 | session-meta-persistence ([phase-09-session-meta-persistence.md](phase-09-session-meta-persistence.md)) — `<id>.meta.json`, boundary-safe reload | hygiene | done |
-| 10 | ghost-and-memory ([phase-10-ghost-and-memory.md](phase-10-ghost-and-memory.md)) — ghost working-set coverage; opt-in compaction→memory extraction | coverage | todo |
+| 10a | ghost-coverage ([phase-10a-ghost-coverage.md](phase-10a-ghost-coverage.md)) — synchronous model-call-free ghost working-set guard (D13) | coverage | todo |
+| 10b | memory-extraction ([phase-10b-memory-extraction.md](phase-10b-memory-extraction.md)) — opt-in compaction→memory fact extraction | coverage | todo |
 
 ## Notes
 

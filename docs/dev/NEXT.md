@@ -1,16 +1,29 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-09-session-meta-persistence.md`](milestones/M4-context-management/phase-09-session-meta-persistence.md)
-— **todo, dispatch-ready** (anchors re-verified & refined 2026-07-16 by
-`/rexymcp:architect next`). Current-state line numbers refreshed for the
-post-phase-08 tree; resolved the drafted-ahead ambiguities: **ghosts are
-excluded** from meta (one-shot UUID ids, `ghost.rs:187` — never recreated),
-added a **transient-field gotcha** (never persist `compaction_in_flight` /
-`pending_compaction_notice` — a persisted `true` would permanently block
-background compaction after restart), and pre-injected worked examples for the
-atomic meta write + the orphan-checker test helper (`digest.rs`'s is private).
-Dispatch via `/rexymcp:dispatch phase-09`.
+[`docs/dev/milestones/M4-context-management/phase-10a-ghost-coverage.md`](milestones/M4-context-management/phase-10a-ghost-coverage.md)
+— **todo, dispatch-ready** (drafted 2026-07-16 by `/rexymcp:architect next`).
+**Phase-10 was split into 10a + 10b** (two independent subsystems — ghost-loop
+compaction vs. epoch-build memory extraction; mirrors 05a/05b). **10a**
+(active): a synchronous, **model-call-free** ghost working-set guard
+(`enforce_ghost_working_set` in a new `context/ghost_ws.rs` + `ghost.rs` loop
+wiring) — the ask.rs emergency path reduced to a pure fn, quoted verbatim as the
+worked example. Key correction found at draft time: the ghost path **skips
+`maybe_rollup`** (it makes a model call when `narrative_enabled` — now default —
+so including it would break model-call-free + force async). Dispatch via
+`/rexymcp:dispatch phase-10a`. **10b** (memory-extraction) is drafted but
+**marked not-yet-re-verified** — `/rexymcp:architect next` will re-validate its
+anchors after 10a lands (known issues flagged in its header:
+`format_messages_for_narrative` is private, `build_memory_namespaces`
+unconfirmed). **10a/10b are the last M4 phases — the second's approval triggers
+milestone close.**
+
+**M4 phase-09 — session-meta-persistence is `done`** (2026-07-16,
+approved_after_1, commit `f7e4df2`). `<id>.meta.json` continuity + boundary-safe
+reload. First M4 compaction/session-path phase to reach done WITHOUT takeover
+(resume+spec-fix, then one review bounce on vacuous boundary tests, bug-09-1) —
+after the rexyMCP#2 governor fix. Filed rexyMCP#3 (novelty-aware stall
+detection) as the follow-up.
 
 **M4 phase-08 — async-compaction is `done`** (2026-07-15, escalated → architect
 takeover after **two** `hard_fail`s, both `NoProgressStall` on the `ask.rs`
