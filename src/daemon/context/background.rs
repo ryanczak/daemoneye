@@ -190,6 +190,15 @@ async fn run_compaction(
         }),
     );
 
+    // Opt-in memory extraction from the dropped span.
+    let _ = epochs::extract_memories_from_epoch(
+        &snapshot.session_id,
+        &record,
+        &snapshot.messages[..tail_start],
+        config,
+    )
+    .await;
+
     // Attempt chapter rollup.
     let _ = epochs::maybe_rollup(&snapshot.session_id, config).await;
 

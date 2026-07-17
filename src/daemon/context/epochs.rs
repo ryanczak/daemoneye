@@ -713,6 +713,99 @@ fn scan_dir_in_range(
     }
 }
 
+/// Best-effort: never blocks or fails the epoch build. Returns the number of
+/// memories written (for the log).
+pub async fn extract_memories_from_epoch(
+    session_id: &str,
+    record: &EpochRecord,
+    dropped: &[Message],
+    config: &config::Config,
+) -> u32 {
+    if !config.compaction.extract_memories {
+        return 0;
+    }
+
+    let user_text = crate::daemon::digest::format_messages_for_narrative(dropped);
+    let model_entry = config.resolve_model(Some("digest"));
+    let system = "You extract durable operational knowledge from an SRE assistant's\
+        conversation. From the transcript chunk, output 0 to 3 facts that will\
+        still be true and useful weeks from now (host quirks, root causes,\
+        fixed configurations, learned procedures). Output STRICT JSON only:\
+        [{\"name\":\"kebab-case-slug\",\"content\":\"one to three sentences\"}] or [].\
+        No prose. Do NOT record transient state (current disk %, running PIDs),\
+        speculation, or anything already obvious from the runbooks.";
+
+    let summary = crate::daemon::digest::summarize_once(system, &user_text, model_entry).await;
+    let Some(summary) = summary else {
+        return 0;
+    };
+
+    let count = apply_extraction(&summary, session_id, record.seq);
+    if count > 0 {
+        crate::daemon::utils::log_event(
+            "memory_extracted",
+            serde_json::json!({"session": session_id, "epoch_seq": record.seq, "count": count}),
+        );
+    }
+    count
+}
+
+/// Parse strict JSON, write create-if-absent memories, return count written.
+fn apply_extraction(json: &str, _session_id: &str, _epoch_seq: u32) -> u32 {
+    let facts: Vec<ExtractedFact> = match serde_json::from_str(json) {
+        Ok(f) => f,
+        Err(e) => {
+            log::debug!("Memory extraction parse failure: {}", e);
+            return 0;
+        }
+    };
+    if facts.len() > 3 {
+        log::debug!(
+            "Memory extraction: {} facts (max 3), skipping all",
+            facts.len()
+        );
+        return 0;
+    }
+
+    let mut count = 0u32;
+    for fact in facts {
+        if fact.content.is_empty() {
+            continue;
+        }
+        if crate::memory::read_memory(
+            &fact.name,
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .is_ok()
+        {
+            continue;
+        }
+        let body = format!(
+            "---\nsource: \"compaction\"\ncreated: \"{}\"\n---\n{}\n",
+            chrono::Utc::now().to_rfc3339(),
+            fact.content.trim(),
+        );
+        if crate::memory::add_memory(
+            &fact.name,
+            &body,
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .is_ok()
+        {
+            count += 1;
+        }
+    }
+    count
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ExtractedFact {
+    name: String,
+    content: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1303,6 +1396,246 @@ mod tests {
                 "Covered epoch {} should not appear in recent epochs",
                 i
             );
+        }
+    }
+
+    #[test]
+    fn extract_parses_strict_json_and_writes() {
+        let _lock = crate::TEST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let json = r#"[{"name":"nginx-port","content":"Nginx listens on port 8080 on this host"},{"name":"dns-cache","content":"DNS cache TTL is 300 seconds"}]"#;
+        let count = apply_extraction(json, "test-session", 1);
+        assert_eq!(count, 2);
+
+        let dir = crate::memory::memory_dir_for_namespace(
+            "global",
+            &crate::memory::MemoryCategory::Knowledge,
+        );
+        assert!(
+            dir.join("nginx-port.md").exists(),
+            "nginx-port.md should exist"
+        );
+        assert!(
+            dir.join("dns-cache.md").exists(),
+            "dns-cache.md should exist"
+        );
+
+        let content = std::fs::read_to_string(dir.join("nginx-port.md")).unwrap();
+        assert!(
+            content.contains("source: \"compaction\""),
+            "nginx-port.md should contain source: \"compaction\" frontmatter"
+        );
+        assert!(
+            content.contains("Nginx listens on port 8080 on this host"),
+            "nginx-port.md should contain the fact content"
+        );
+
+        let content = std::fs::read_to_string(dir.join("dns-cache.md")).unwrap();
+        assert!(
+            content.contains("source: \"compaction\""),
+            "dns-cache.md should contain source: \"compaction\" frontmatter"
+        );
+        assert!(
+            content.contains("DNS cache TTL is 300 seconds"),
+            "dns-cache.md should contain the fact content"
+        );
+
+        // Frontmatter is a well-formed, closed block with a created stamp.
+        let raw = std::fs::read_to_string(dir.join("nginx-port.md")).unwrap();
+        assert!(
+            raw.starts_with("---\n"),
+            "should open with a frontmatter block"
+        );
+        assert!(
+            raw.matches("---\n").count() >= 2,
+            "frontmatter block should be closed"
+        );
+        assert!(
+            raw.contains("\ncreated: "),
+            "should stamp a created timestamp"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn extract_rejects_malformed_and_excess() {
+        let _lock = crate::TEST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        // Malformed JSON → 0
+        let count = apply_extraction("{bad json}", "test-session", 1);
+        assert_eq!(count, 0);
+
+        // 4-fact array → 0
+        let json = r#"[{"name":"a","content":"A"},{"name":"b","content":"B"},{"name":"c","content":"C"},{"name":"d","content":"D"}]"#;
+        let count = apply_extraction(json, "test-session", 2);
+        assert_eq!(count, 0);
+
+        // Verify nothing was written
+        let dir = crate::memory::memory_dir_for_namespace(
+            "global",
+            &crate::memory::MemoryCategory::Knowledge,
+        );
+        if dir.exists() {
+            let found = std::fs::read_dir(&dir).unwrap().next();
+            assert!(
+                found.is_none(),
+                "No files should be written for malformed/excess, but found: {}",
+                found
+                    .map(|e| e.unwrap().path().display().to_string())
+                    .unwrap_or_default()
+            );
+        }
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn extract_skips_existing_name() {
+        let _lock = crate::TEST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        // Pre-create one of the two names
+        crate::memory::add_memory(
+            "nginx-port",
+            "original content",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+        let original = std::fs::read_to_string(
+            crate::memory::memory_dir_for_namespace(
+                "global",
+                &crate::memory::MemoryCategory::Knowledge,
+            )
+            .join("nginx-port.md"),
+        )
+        .unwrap();
+
+        // Now extract with both names — nginx-port should be skipped
+        let json = r#"[{"name":"nginx-port","content":"Nginx listens on port 8080 on this host"},{"name":"dns-cache","content":"DNS cache TTL is 300 seconds"}]"#;
+        let count = apply_extraction(json, "test-session", 1);
+        assert_eq!(
+            count, 1,
+            "Only dns-cache should be written (nginx-port pre-exists)"
+        );
+
+        // Verify nginx-port file is unchanged
+        let current = std::fs::read_to_string(
+            crate::memory::memory_dir_for_namespace(
+                "global",
+                &crate::memory::MemoryCategory::Knowledge,
+            )
+            .join("nginx-port.md"),
+        )
+        .unwrap();
+        assert_eq!(
+            original, current,
+            "Pre-existing nginx-port.md should be unchanged"
+        );
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn extract_flag_off_writes_nothing() {
+        let _lock = crate::TEST_HOME_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        // Config with extract_memories = false (default)
+        let config = Config::default();
+        assert!(
+            !config.compaction.extract_memories,
+            "extract_memories should be false by default"
+        );
+
+        // Call extract_memories_from_epoch — should return 0 immediately
+        let record = make_test_epoch(1);
+        let result = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(extract_memories_from_epoch(
+                "test-session",
+                &record,
+                &[],
+                &config,
+            ));
+        assert_eq!(result, 0, "Should return 0 when flag is off");
+
+        // Verify no memory files were created
+        let dir = crate::memory::memory_dir_for_namespace(
+            "global",
+            &crate::memory::MemoryCategory::Knowledge,
+        );
+        if dir.exists() {
+            let found = std::fs::read_dir(&dir).unwrap().next();
+            assert!(
+                found.is_none(),
+                "No files should be written when flag is off, but found: {}",
+                found
+                    .map(|e| e.unwrap().path().display().to_string())
+                    .unwrap_or_default()
+            );
+        }
+
+        if let Some(h) = saved_home {
+            unsafe {
+                std::env::set_var("HOME", h);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
         }
     }
 

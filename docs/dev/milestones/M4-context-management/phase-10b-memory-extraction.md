@@ -1,7 +1,7 @@
 # Phase 10b: Opt-in compaction → memory extraction
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** done
 **Depends on:** phase-06 (`summarize_once`), phase-08 (async epoch build), phase-10a
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -264,3 +264,85 @@ not a STANDARDS §5 item.)
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-16 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the executor `hard_fail`ed on `LowNoveltyStall` (the rexyMCP#3
+novelty-aware governor, caught in the wild) after corrupting adjacent existing
+code while adding the +309-line `epochs.rs` block — the documented
+"self-sabotage on large rewrites" pathology every M4 epoch/compaction-path phase
+but 04/10a has hit. Correct code was already on disk (tasks 0/1 perfect, the
+extraction fn + tests largely written), so re-dispatch would only re-enter the
+brace-balance loop; takeover salvages the intact work and reconstructs the
+mangled spots (per WORKFLOW § "Executor self-sabotage on delete-heavy rewrites").
+
+### Update — 2026-07-16 (complete)
+
+**Summary:** Completed via architect session takeover. The executor's production
+code (`extract_memories_from_epoch` + `apply_extraction` + `ExtractedFact` in
+`epochs.rs`, the `CompactionConfig.extract_memories` flag, the
+`format_messages_for_narrative` → `pub(crate)` widening, and the `run_compaction`
+call site) was correct as written and matches the spec. Takeover fixed only the
+executor's mechanical corruption: (1) restored the deleted
+`fn rollup_appends_never_rewrites() {` signature (the unclosed-delimiter root
+cause); (2) removed a stray orphan `#[test]` + `}` pair injected at the new-test
+boundary; (3) removed a duplicate `epochs::append_epoch(...)` line in
+`background.rs`; (4) fixed three bugs in the executor's new tests — a private
+`parse_memory_frontmatter`/`created` round-trip (replaced with structural
+frontmatter assertions), an `std::env::var::var` typo, and a nonexistent
+`Config::load_default()` (→ `Config::default()`); (5) rewrote two
+`for … { panic! }` "assert-nothing-written" loops as `next().is_none()`
+assertions to clear clippy `never_loop`. No production-logic changes.
+
+**Acceptance criteria:** all met.
+
+**Commands:**
+
+```
+cargo fmt --all            # clean
+cargo build                # Finished, 0 warnings
+cargo clippy --all-targets --all-features -- -D warnings   # Finished, clean
+cargo test                 # 913 passed; 0 failed (unit) + 27 passed (integration)
+```
+
+**End-to-end verification:**
+
+```
+test daemon::context::epochs::tests::extract_parses_strict_json_and_writes ... ok
+test daemon::context::epochs::tests::extract_rejects_malformed_and_excess ... ok
+test daemon::context::epochs::tests::extract_skips_existing_name ... ok
+test daemon::context::epochs::tests::extract_flag_off_writes_nothing ... ok
+```
+
+`extract_parses_strict_json_and_writes` drives `apply_extraction` with a canned
+two-fact JSON and asserts two files under the global `knowledge` dir, each with a
+well-formed `---\nsource: "compaction"\ncreated: "…"\n---\n` frontmatter block and
+the fact body — the real-artifact check for this pure fn (no live daemon needed).
+
+**Files changed:**
+- `src/config/types.rs` — `extract_memories: bool` flag (+ Default).
+- `src/daemon/digest.rs` — `format_messages_for_narrative` → `pub(crate)`.
+- `src/daemon/context/epochs.rs` — `extract_memories_from_epoch` (async gate →
+  format → `summarize_once` → `apply_extraction`), `apply_extraction` (strict
+  parse, >3 skip, empty/dup skip, `source`-stamped body), `ExtractedFact`, 4 tests.
+- `src/daemon/context/background.rs` — extraction call after `append_epoch`.
+
+**New tests:**
+- `extract_parses_strict_json_and_writes`, `extract_rejects_malformed_and_excess`,
+  `extract_skips_existing_name`, `extract_flag_off_writes_nothing` — all in
+  `src/daemon/context/epochs.rs`.
+
+### Review verdict — 2026-07-16
+
+- **Verdict:** escalated
+- **Bounces:** 0 (hard_fail → session takeover; no bug filed)
+- **Executor:** Qwen3.6-27B-AEON (hard_fail: `LowNoveltyStall`) → Claude (direct, takeover)
+- **Scope deviations:** none — production code matches the spec; takeover fixed
+  only executor-introduced syntax corruption and test bugs.
+- **Calibration:** confirms the M4 pattern — every epoch/compaction-path phase
+  (03, 05a, 05b, 06, 07, 08, 10b) except 04 and 10a needed architect takeover;
+  the large-single-file-addition shape reliably stalls this executor. Already
+  folded (WORKFLOW § "Executor self-sabotage on delete-heavy rewrites"); no new
+  fold. Note: 10a (an ADDITIVE new file) sailed through first-try — reinforces
+  the "split additive from delete/rewrite" mitigation.

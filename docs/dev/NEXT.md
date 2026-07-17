@@ -1,18 +1,27 @@
 # NEXT
 
-**Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-10b-memory-extraction.md`](milestones/M4-context-management/phase-10b-memory-extraction.md)
-— **todo, dispatch-ready** (re-verified 2026-07-16 by `/rexymcp:auto` after 10a
-landed). Opt-in (off-by-default) memory extraction from the interactive **async**
-epoch build (`extract_memories_from_epoch` in `context/epochs.rs`, wired into
-`run_compaction` after `append_epoch`). **All four pre-split known issues
-resolved against HEAD:** `format_messages_for_narrative` (digest.rs:80) is made
-`pub(crate)`; there is no `build_memory_namespaces` — the global namespace is the
-literal `"global"`; the memory schema has **no `source` field**, so
-`source: "compaction"` is hand-written into the verbatim-written memory body (no
-schema change); dedup via `read_memory(...).is_ok()`. Dispatch via
-`/rexymcp:dispatch phase-10b`. **10b is the last M4 phase — its approval triggers
-milestone close (human gate).**
+**Active phase: NONE PENDING — M4 milestone-close gate (human).** All ten M4
+phases are `done`. `/rexymcp:auto` stopped at the milestone boundary (an absolute
+human gate): it does **not** write the retrospective, fold calibration, or set
+this pointer to "none". **Next human action:** run `/rexymcp:architect` to close
+M4 — write the retrospective in the milestone README, fold any calibration
+lessons into WORKFLOW.md (with sign-off), then set NEXT.md to "none" or point at
+M5 phase-01.
+
+**M4 phase-10b — memory-extraction is `done`** (2026-07-16, escalated → architect
+takeover; the LAST M4 phase). Opt-in (off-by-default) memory extraction from the
+interactive **async** epoch build (`extract_memories_from_epoch` in
+`context/epochs.rs`, wired into `run_compaction` after `append_epoch`; category
+`knowledge`, `source: "compaction"` stamped as a raw frontmatter line — no schema
+change). Executor `hard_fail`ed on `LowNoveltyStall` (rexyMCP#3 governor, in the
+wild) after corrupting adjacent existing code while adding the +309-line
+`epochs.rs` block — the documented large-addition self-sabotage pathology. Its
+production code (extraction fn, `apply_extraction`, config flag, call site) was
+correct as written; takeover restored a deleted test-fn signature, removed a
+stray `#[test]`/`}` pair + a duplicate `append_epoch` line, and fixed 3 test bugs
+(`env::var::var` typo, `Config::load_default`, private-fn round-trip). 913 unit +
+27 integration green. Every M4 epoch/compaction-path phase (03, 05a, 05b, 06, 07,
+08, 10b) except 04 and 10a needed takeover.
 
 **M4 phase-10a — ghost-coverage is `done`** (2026-07-16, approved_first_try,
 commit `06389f6`). Synchronous, model-call-free ghost working-set guard

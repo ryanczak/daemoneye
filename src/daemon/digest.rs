@@ -77,7 +77,7 @@ Rules:
 /// Serialize a slice of messages into the compact transcript fed to the
 /// narrative model.  Tool results are shortened aggressively — the narrative
 /// step cares about the *arc* of the investigation, not raw bytes.
-fn format_messages_for_narrative(messages: &[Message]) -> String {
+pub(crate) fn format_messages_for_narrative(messages: &[Message]) -> String {
     fn format_one(m: &Message) -> String {
         let mut s = String::new();
         match m.role.as_str() {

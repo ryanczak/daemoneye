@@ -174,6 +174,12 @@ pub struct CompactionConfig {
     /// Default: 10.
     #[serde(default = "default_rollup_after")]
     pub rollup_after: u32,
+    /// When true, each (interactive, async) epoch build asks the digest model to
+    /// propose 0–3 durable facts, written to persistent memory (category
+    /// "knowledge", source "compaction"). Off by default — one small-model call
+    /// per epoch, and it writes to shared memory.
+    #[serde(default)]
+    pub extract_memories: bool,
 }
 
 fn default_elide_at_pct() -> u32 {
@@ -200,6 +206,7 @@ impl Default for CompactionConfig {
             target_pct: default_target_pct(),
             emergency_pct: default_emergency_pct(),
             rollup_after: default_rollup_after(),
+            extract_memories: false,
         }
     }
 }
