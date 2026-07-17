@@ -7,7 +7,9 @@ use tokio::io::BufReader;
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, PricingSource, load_named_prompt};
 use crate::cost::{CostRecord, compute_cost};
-use crate::daemon::session::{SessionEntry, SessionStore, append_session_message};
+use crate::daemon::session::{
+    SessionEntry, SessionStore, append_session_message, write_session_file,
+};
 use crate::daemon::utils::daemon_hostname;
 use crate::runbook::Runbook;
 use crate::scheduler::ScheduleStore;
@@ -482,7 +484,7 @@ async fn do_ghost_turn(
             if wrap_up_turn { " (wrap-up)" } else { "" }
         );
 
-        let (chat_messages, loaded_tools) = {
+        let (messages, loaded_tools, token_scale, started_at) = {
             let store = sessions.lock().unwrap_or_log();
             let Some(entry) = store.get(session_id) else {
                 break;
@@ -490,8 +492,29 @@ async fn do_ghost_turn(
             (
                 entry.messages.clone(),
                 entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
+                entry.token_scale,
+                entry.started_at,
             )
         };
+
+        let (chat_messages, compacted) =
+            crate::daemon::context::ghost_ws::enforce_ghost_working_set(
+                session_id,
+                messages,
+                token_scale,
+                started_at,
+                model_entry.context_window(),
+                config,
+            );
+        if compacted {
+            {
+                let mut store = sessions.lock().unwrap_or_log();
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages = chat_messages.clone();
+                }
+            }
+            write_session_file(session_id, &chat_messages);
+        }
 
         let client_clone = Arc::clone(&client);
         let system_clone = system.clone();
