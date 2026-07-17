@@ -300,4 +300,10 @@ clippy run proving the synchronous helper has no `await_holding_lock` issue.
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
+### Update — 2026-07-17 00:00 (started)
+
+**Started by:** executor (phase-10a)
+
+Implemented `enforce_ghost_working_set` in `src/daemon/context/ghost_ws.rs` and wired it into the ghost turn loop in `src/daemon/ghost.rs`.
+
 <!-- entries appended below this line -->
