@@ -1,7 +1,7 @@
 # Phase 10a: Ghost-session working-set compaction coverage
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03 (planner/elision), phase-05 (epochs), phase-08 (ladder shape)
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=feature, size=m
