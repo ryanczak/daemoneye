@@ -1,7 +1,7 @@
 # Phase 10a: Ghost-session working-set compaction coverage
 
 **Milestone:** M4 — Context Management Overhaul
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-03 (planner/elision), phase-05 (epochs), phase-08 (ladder shape)
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -307,3 +307,129 @@ clippy run proving the synchronous helper has no `await_holding_lock` issue.
 Implemented `enforce_ghost_working_set` in `src/daemon/context/ghost_ws.rs` and wired it into the ghost turn loop in `src/daemon/ghost.rs`.
 
 <!-- entries appended below this line -->
+### Update — ts=1784247808554 (complete, server-authored)
+
+**Summary:** All verification commands passed. Here's the summary:
+
+**What was built:** Implemented the synchronous, model-call-free ghost working-set compaction guard (`enforce_ghost_working_set` in `src/daemon/context/ghost_ws.rs`) and wired it into the ghost turn loop in `ghost.rs`. The guard provides a three-tier ladder: below `elide_at_pct` → strict no-op; between `elide_at_pct` and `compact_at_pct` → soft elision only; above `compact_at_pct` → aggressive elision + structured-only epoch (narrative = None) + working-set compaction. When compaction occurs, the in-memory session store and the on-disk working file are both rewritten.
+
+**Deviation from spec:** The spec's worked example showed the compacted path returning `(messages, true)` when no viable cut exists but elision changed content. The implementation matches this behavior — aggressive elision runs before the budget cut attempt, so even if no viable tail_start is found, elision alone triggers a rewrite.
+
+**E2E verification:** All 4 unit tests pass (`ghost_guard_noop_below_threshold`, `ghost_guard_compacts_structured_only`, `ghost_guard_output_orphan_free`, `ghost_guard_elide_only_tier`). Clippy is clean with `-D warnings`. `cargo fmt` and `cargo test` both pass. The `maybe_rollup` grep confirms it appears only in a comment in `ghost_ws.rs` (not called). The `narrative: None` literal is present in the epoch record construction.
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.69s
+
+
+LINT
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.58s
+
+
+TEST
+g ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test sys_context::tests::compact_memory_excludes_header_row ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test memory::tests::memory_without_frontmatter_has_no_tags ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test memory::tests::update_memory_partial_update_preserves_other_fields ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 909 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.46s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test event_log_entry_format ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.61s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+- `docs/dev/milestones/M4-context-management/README.md` — +1 -1
+- `docs/dev/milestones/M4-context-management/phase-10a-ghost-coverage.md` — +7 -1
+- `src/daemon/context/ghost_ws.rs` — +315 -0
+- `src/daemon/context/mod.rs` — +1 -0
+- `src/daemon/ghost.rs` — +25 -2
+
+**Commit:** 464aec30218379de17b74f9c26eb484db9afcb81
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
