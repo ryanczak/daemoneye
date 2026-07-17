@@ -602,6 +602,20 @@ where
                     return Ok(());
                 }
                 AiEvent::Done(usage) => {
+                    // Token pressure is the sole driver of context compaction now
+                    // that the message-count cap has been removed. A provider that
+                    // reports no usage leaves the compactor blind for this turn, so
+                    // surface it — the prompt always contains a non-empty system
+                    // block, making a zero sum a reliable "usage missing" signal.
+                    if usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens == 0
+                    {
+                        log::warn!(
+                            "provider reported no token usage for model {} (session {}); \
+                             token-pressure compaction cannot run this turn",
+                            config.resolve_model(session_active_model.as_deref()).model,
+                            session_id.as_deref().unwrap_or("-"),
+                        );
+                    }
                     if pending_calls.is_empty() {
                         // No tool calls — this is the final answer.
                         if !full_response.is_empty() {
