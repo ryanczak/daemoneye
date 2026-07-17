@@ -1,22 +1,27 @@
 # NEXT
 
 **Active phase:**
-[`docs/dev/milestones/M4-context-management/phase-10a-ghost-coverage.md`](milestones/M4-context-management/phase-10a-ghost-coverage.md)
-— **todo, dispatch-ready** (drafted 2026-07-16 by `/rexymcp:architect next`).
-**Phase-10 was split into 10a + 10b** (two independent subsystems — ghost-loop
-compaction vs. epoch-build memory extraction; mirrors 05a/05b). **10a**
-(active): a synchronous, **model-call-free** ghost working-set guard
-(`enforce_ghost_working_set` in a new `context/ghost_ws.rs` + `ghost.rs` loop
-wiring) — the ask.rs emergency path reduced to a pure fn, quoted verbatim as the
-worked example. Key correction found at draft time: the ghost path **skips
-`maybe_rollup`** (it makes a model call when `narrative_enabled` — now default —
-so including it would break model-call-free + force async). Dispatch via
-`/rexymcp:dispatch phase-10a`. **10b** (memory-extraction) is drafted but
-**marked not-yet-re-verified** — `/rexymcp:architect next` will re-validate its
-anchors after 10a lands (known issues flagged in its header:
-`format_messages_for_narrative` is private, `build_memory_namespaces`
-unconfirmed). **10a/10b are the last M4 phases — the second's approval triggers
-milestone close.**
+[`docs/dev/milestones/M4-context-management/phase-10b-memory-extraction.md`](milestones/M4-context-management/phase-10b-memory-extraction.md)
+— **todo, dispatch-ready** (re-verified 2026-07-16 by `/rexymcp:auto` after 10a
+landed). Opt-in (off-by-default) memory extraction from the interactive **async**
+epoch build (`extract_memories_from_epoch` in `context/epochs.rs`, wired into
+`run_compaction` after `append_epoch`). **All four pre-split known issues
+resolved against HEAD:** `format_messages_for_narrative` (digest.rs:80) is made
+`pub(crate)`; there is no `build_memory_namespaces` — the global namespace is the
+literal `"global"`; the memory schema has **no `source` field**, so
+`source: "compaction"` is hand-written into the verbatim-written memory body (no
+schema change); dedup via `read_memory(...).is_ok()`. Dispatch via
+`/rexymcp:dispatch phase-10b`. **10b is the last M4 phase — its approval triggers
+milestone close (human gate).**
+
+**M4 phase-10a — ghost-coverage is `done`** (2026-07-16, approved_first_try,
+commit `06389f6`). Synchronous, model-call-free ghost working-set guard
+(`enforce_ghost_working_set` in new `context/ghost_ws.rs`, wired into the
+`ghost.rs` turn loop). **First M4 compaction/epoch-path phase to reach `done`
+WITHOUT architect takeover** — executor completed clean in 109 turns, no
+git-thrash, no verify-loop. Structured-only epochs (`narrative == None`), skips
+`maybe_rollup` (the one deliberate divergence from the interactive ladder, since
+rollup can make a model call). 909 unit + 27 integration tests green.
 
 **M4 phase-09 — session-meta-persistence is `done`** (2026-07-16,
 approved_after_1, commit `f7e4df2`). `<id>.meta.json` continuity + boundary-safe
