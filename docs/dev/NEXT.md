@@ -1,12 +1,19 @@
 # NEXT
 
-**Active phase: NONE PENDING — M4 milestone-close gate (human).** All ten M4
-phases are `done`. `/rexymcp:auto` stopped at the milestone boundary (an absolute
-human gate): it does **not** write the retrospective, fold calibration, or set
-this pointer to "none". **Next human action:** run `/rexymcp:architect` to close
-M4 — write the retrospective in the milestone README, fold any calibration
-lessons into WORKFLOW.md (with sign-off), then set NEXT.md to "none" or point at
-M5 phase-01.
+**Active phase: none.** M4 — Context Management Overhaul is **complete**
+(2026-07-16, all ten phases `done`, retrospective in
+`docs/dev/milestones/M4-context-management/README.md` § Retrospective). Gates
+green at close: 901 lib-unit + 27 integration passing, clippy clean.
+
+**No active milestone. Stopped at the M4 boundary by PE decision (2026-07-16).**
+
+- **Calibration:** the candidate fold (large additive blocks → executor
+  self-sabotage, from phase-10b) is **held for recurrence** per PE — one
+  occurrence is data, not a trend. Recorded in the M4 retrospective; fold only if
+  it recurs. No WORKFLOW.md change this milestone.
+- **M5:** not yet scoped. When ready, run `/rexymcp:architect` (no args) to
+  explore + design M5. Do **not** dispatch anything until M5 phase-01 is drafted
+  and this pointer names it.
 
 **M4 phase-10b — memory-extraction is `done`** (2026-07-16, escalated → architect
 takeover; the LAST M4 phase). Opt-in (off-by-default) memory extraction from the

@@ -5,38 +5,39 @@ daemon uptimes (hundreds of days) and very long chat sessions (thousands of
 turns): per-turn cost bounded regardless of session age, no irreversible
 context loss, compaction off the interactive hot path.
 
-**Status:** in-progress
+**Status:** complete (2026-07-16)
 
 **Depends on:** M3 (Polish & Maintenance) — complete.
 
 **Design:** [`docs/design/context-management.md`](../../../design/context-management.md)
 — the failure catalog (D1–D15) and target architecture every phase references.
 
-**Exit criteria:**
+**Exit criteria:** — all met (2026-07-16).
 
-- [ ] `events.jsonl` is rotated into dated segments with retention; no reader
-      loads the whole event history into memory (D4).
-- [ ] Compaction is token-budgeted with hysteresis: a compaction pass frees
+- [x] `events.jsonl` is rotated into dated segments with retention; no reader
+      loads the whole event history into memory (D4). — phase 01.
+- [x] Compaction is token-budgeted with hysteresis: a compaction pass frees
       at least `compact_at_pct − target_pct` of the context window, and a
       session held at high token pressure does not re-digest every turn (D8).
-- [ ] No code path rewrites or truncates a session archive file; every
+      — phase 03.
+- [x] No code path rewrites or truncates a session archive file; every
       message ever exchanged in a session is recoverable from
-      `<id>.archive.jsonl` until retention deletes the file (D1).
-- [ ] Dropped context is model-recoverable: the `recall_context` tool returns
+      `<id>.archive.jsonl` until retention deletes the file (D1). — phase 04.
+- [x] Dropped context is model-recoverable: the `recall_context` tool returns
       archived turns by query or turn range, and elision/epoch text names the
-      tool instead of claiming the data is in `events.jsonl` (D2).
-- [ ] Compacted history is represented as an append-only epoch chain with
+      tool instead of claiming the data is in `events.jsonl` (D2). — phase 07.
+- [x] Compacted history is represented as an append-only epoch chain with
       per-span tallies and chapter rollups — the in-context representation of
       a 1000+-turn session is O(log turns), not a single 15-line summary
-      (D3, D5).
-- [ ] The narrative/tally epoch build runs off the interactive path; a user
+      (D3, D5). — phases 05a/05b/06.
+- [x] The narrative/tally epoch build runs off the interactive path; a user
       turn is never blocked on the summarizer model except via the >= 85%
-      emergency path (D11).
-- [ ] Daemon restart or 30-minute eviction preserves `started_at`,
+      emergency path (D11). — phase 08.
+- [x] Daemon restart or 30-minute eviction preserves `started_at`,
       `turn_count`, token calibration, and reloads history at a clean turn
-      boundary (D10).
-- [ ] Ghost sessions get elision + structured compaction (D13).
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
+      boundary (D10). — phases 02/09.
+- [x] Ghost sessions get elision + structured compaction (D13). — phase 10a.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
       no `.unwrap()` on locks (`.unwrap_or_log()` per `src/util.rs`).
 
 ## Architecture references
@@ -86,6 +87,81 @@ context loss, compaction off the interactive hot path.
 | 10b | memory-extraction ([phase-10b-memory-extraction.md](phase-10b-memory-extraction.md)) — opt-in compaction→memory fact extraction | coverage | done |
 
 ## Notes
+
+### Retrospective (2026-07-16)
+
+**Outcome.** All ten phases (twelve docs after two mid-milestone splits) reached
+`done`; every M4 exit criterion is met. Final gates green: `cargo test` = 901
+lib-unit + 27 integration passing, 0 failures (2 ignored); clippy
+`--all-targets --all-features -- -D warnings` clean. Test count grew 862 → 901
+lib-unit across the milestone. Span: 2026-07-07 (scoping) → 2026-07-16 (phase-10b
+close), ~44 commits.
+
+**What shipped.** The compaction path was rebuilt end to end: dated event
+segments with retention + streaming readers (01); deterministic token estimation
+with per-session EMA calibration and a restart blind-spot fix (02); token-budgeted
+compaction with hysteresis and synthesized boundaries (03); an append-only
+`<id>.archive.jsonl` that no path ever rewrites (04); an append-only epoch chain
+with per-span tallies (05a/05b) and O(log n) chapter rollups (06); the
+`recall_context` tool over the archive (07); background async epoch build with a
+staleness-checked swap and a ≥85% emergency path (08); `<id>.meta.json` continuity
+across restart/eviction (09); a synchronous model-call-free ghost working-set
+guard (10a); and opt-in compaction→memory fact extraction (10b).
+
+**Verdicts.**
+
+| Phase | Verdict | Executor path |
+|---|---|---|
+| 01 events-rotation | done (1 bounce) | session takeover (verify-loop on bug re-check) |
+| 02 token-estimation | approved_after_1 | executor (bug-02-1: no-op blind-spot fix) |
+| 03 budget-compaction | done | architect takeover (git-thrash, 352 turns) |
+| 04 append-only-archive | approved_first_try | executor (pure additive) |
+| 05a epoch-persistence | done | minimal takeover (governor-caught verify-loop, 6 calls) |
+| 05b epoch-head | done | architect takeover (529-turn verify-loop, human-stopped) |
+| 06 ledger-rollups | done | architect takeover (167-turn verify-loop, human-stopped) |
+| 07 recall-context | done | architect takeover (2 no-progress stalls, governor-caught) |
+| 08 async-compaction | done | architect takeover (2 `NoProgressStall` hard_fails) |
+| 09 session-meta-persistence | approved_after_1 | executor resume + 1 review bounce (bug-09-1) |
+| 10a ghost-coverage | approved_first_try | executor (additive; first epoch-path clean run) |
+| 10b memory-extraction | done | architect takeover (`LowNoveltyStall` on +309-line block) |
+
+**The dominant pattern — confirmed, not new.** WORKFLOW.md § "Executor
+self-sabotage on delete-heavy rewrites is a runtime concern" (folded mid-milestone
+from phases 01/03/05a/05b) predicted the rest of the milestone exactly. **Every
+compaction/epoch-path phase that rewired a load-bearing path needed architect
+takeover** — 03, 05a, 05b, 06, 07, 08, 10b. The only clean runs were the two
+purely additive phases, 04 and 10a (`approved_first_try`), plus the two mechanical
+signal/hygiene phases 02 and 09 (`approved_after_1`). The task-shape thesis held:
+additive shape → executor succeeds; delete-and-rewire shape → executor thrashes or
+verify-loops.
+
+**Mitigations that worked.** (1) The 05a/05b and 10a/10b **additive-vs-rewire
+splits** contained blast radius every time — the additive half landed clean and
+survived on disk while the rewire half was salvaged by takeover; 10a was the first
+epoch-path phase to reach `done` with no takeover at all. (2) **Takeover over
+resume** when correct code was already on disk (resume just re-enters the loop) —
+proven repeatedly. Both are already in the WORKFLOW fold.
+
+**One genuinely new variant — candidate fold (held for sign-off).** Phase-10b was
+a *pure large addition* (+309 lines), not a delete-heavy rewrite, yet it still
+self-sabotaged — the executor corrupted adjacent existing code while inserting the
+block, and stalled on `LowNoveltyStall`. The existing fold is scoped to
+*delete-heavy* rewrites; a large *additive* block into an existing file is a
+distinct trigger the current fold text does not name. This is the milestone's one
+new data point and the candidate extension to the fold (see § Calibration below).
+
+**rexyMCP runtime co-evolution.** M4 drove four rexyMCP governor changes, all
+landed mid-milestone: FR-1 (`git stash`/`checkout HEAD --` hard-block, `a9399a0`),
+FR-2 (no-progress read-only stall detector, `2a405a7`), the rexyMCP#2 governor fix
+(unblocked phase-09's resume), and rexyMCP#3 (`LowNoveltyStall` novelty-aware
+detection, validated in the wild on 10b). The governors demonstrably shortened
+runaways: phase-05b's pre-governor 529-turn loop became phase-07's governor-caught
+20/40-turn stalls.
+
+**Calibration.** No new WORKFLOW.md fold landed this milestone without sign-off.
+One candidate (large-additive self-sabotage) is surfaced below for the PE to
+approve or decline. The existing delete-heavy fold is strongly reinforced (7 of 7
+predicted takeovers) but needs no text change.
 
 ### Survey basis (2026-07-07)
 
