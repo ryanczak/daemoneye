@@ -1,7 +1,7 @@
 # Phase 01: Spinner Row
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -750,3 +750,88 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e6fad483a503aeca49061b2677561f35f713f7ca
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification — 2026-07-25 (architect-performed, bug-01-1)
+
+Performed by the architect per the bug-01-1 amendment. Real `target/release/daemoneye`
+chat client, real daemon, isolated tmux server (`tmux -L de-e2e`, 100x20), captured with
+`tmux capture-pane -p`. Bottom 7 rows of the pane shown.
+
+**State 2 — streaming** (the automatic greeting turn):
+
+```
+                                                        ← reserved row, blank
+  (○) scrying..                                         ← frame + verb + dots, OUTSIDE the box
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ session:45bfe32f… · Qwen/Qwen3.6-27B-FP8 · up 12s
+```
+
+**States 1 and 3 — idle** (after the turn completed):
+
+```
+What would you like to work on?                         ← committed scrollback
+                                                        ← reserved row, BLANK
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ session:45bfe32f… · Qwen/Qwen3.6-27B-FP8 · up 29s
+```
+
+All three acceptance states confirmed against the real artifact:
+
+1. **Idle** — one blank row directly above the box's top border. ✓
+2. **Streaming** — that row carries the animated frame, the verb, and the dots
+   together (`  (○) scrying..`), entirely outside the border; the box itself is
+   empty. ✓
+3. **Stability** — the `┌` sits on the **same pane row** in both captures (row 3
+   of the bottom 7 in each). The box does not move when streaming starts or
+   stops. ✓
+
+This is the exit criterion that `TestBackend` could have agreed with while a real
+terminal disagreed. It agrees.
+
+**Incidental finding during this verification:** the first attempt failed because
+the running daemon was deadlocked — which turned out to be the M5 hang. Root cause
+is now identified and recorded in `docs/design/daemon-stalls.md` § 1.5c. The
+executor's 82-turn stall on the previous run was partly chasing that same wedge.
+
+### Review verdict — 2026-07-25
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (one review bounce → bug-01-1 + bug-01-2; one `hard_fail`
+  escalation → `NoProgressStall`)
+- **Bugs filed:** 2, both now closed
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Gates (reviewer re-run):** `cargo fmt --all --check` clean; `cargo build`
+  clean; `cargo clippy --all-targets --all-features -- -D warnings` exits zero;
+  `cargo test` 906 lib + 27 integration, 0 failed. Lib count held at exactly 906
+  as pinned — no scope creep.
+- **Mutation check:** verified independently, not taken on trust. Deleting
+  `frame.render_widget(prompt_para, prompt_rect)` makes
+  `prompt_region_at_height_four_does_not_lose_prompt` fail with the exact defect
+  it targets (box + status bar render, prompt text absent); restoring it passes.
+- **End-to-end:** performed by the architect against the real binary — see the
+  preceding entry. All three states confirmed.
+- **Scope deviations:** one, **approved**: `render_prompt_region` was
+  restructured beyond spec task 4. Required, not optional — task 4 contradicted
+  the test plan's `input_box_row_is_stable_across_draw_modes`, and the executor's
+  layout is the only one that satisfies the exit criterion. It also fixed a
+  latent defect (the old prompt-mode box was `Length(2)`, i.e. zero interior
+  rows, so typed input was invisible in prompt mode).
+- **Calibration:** two spec contradictions from the architect in one phase — task
+  4 vs the test plan, and bug-01-2's prescribed fix vs its own verification
+  (`render_live_region` takes no `prompt` parameter and cannot render one). Both
+  are the same failure: pinning an implementation that could not satisfy the
+  behavior stated elsewhere in the same doc. `WORKFLOW.md` § "Specs pin behavior,
+  not rendering" already covers it; this is two occurrences of failing to apply
+  it, not a new fold. A third warrants raising it with the PE.
+  Also: bug-01-1 asked the executor to drive an interactive TUI non-interactively
+  — infeasible work that cost an 82-turn `hard_fail`. Verification that requires
+  a live daemon and a human eye belongs to the architect, not the executor.
+  The `read_only_stall_threshold` 100 → 60 reset capped that run's loss at 82
+  turns; at 100 it would have run ~40 turns longer. The default is the better
+  value here.

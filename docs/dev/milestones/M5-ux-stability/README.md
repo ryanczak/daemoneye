@@ -5,7 +5,7 @@ from wedging: the user's own words appear in the history, the spinner stops
 squatting in the input box, and no code path can take the daemon global by
 blocking under a shared lock.
 
-**Status:** planning
+**Status:** in-progress
 
 **Depends on:** M4 (Context Management Overhaul) — complete 2026-07-16.
 
@@ -15,7 +15,7 @@ split) and the two TUI defect specs every phase references.
 
 **Exit criteria:**
 
-- [ ] The streaming spinner — animated frame, verb, and dot animation together
+- [x] The streaming spinner — animated frame, verb, and dot animation together
       — renders on a reserved one-row line above the input box's top border,
       outside it. The row is reserved (blank) when idle, so the box does not
       shift vertically when streaming starts or stops, in any of the three
@@ -52,7 +52,7 @@ split) and the two TUI defect specs every phase references.
 
 | #  | Phase                                                                  | Status |
 |----|------------------------------------------------------------------------|--------|
-| 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | review                                                                            |
+| 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | done (approved_after_2) |
 | 02 | echo-user-input ([phase-02-echo-user-input.md](phase-02-echo-user-input.md)) | todo   |
 | 03 | stall-instrumentation                                                   | todo   |
 | 04 | unlock-blocking-paths                                                   | todo   |
