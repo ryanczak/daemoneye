@@ -362,12 +362,12 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 
 <!-- entries appended below this line -->
 
-### Update — 2026-07-25 07:22 (started)
+### Update — 2026-07-25 08:14 (re-dispatch started)
 
 **Executor:** Claude (Sonnet 4.5)
 **Status:** in-progress
 
-Implemented the spinner-row reservation across all three live-region renderers. Added `SPINNER_ROWS`, `MIN_HEIGHT_FOR_SPINNER_ROW`, and `split_spinner_row()` helper. Updated `render_live_region`, `render_spinner_region`, and `render_prompt_region` to reserve the spinner row. Added four new tests: `spinner_renders_above_input_box_not_inside_it`, `input_box_row_is_stable_across_draw_modes`, `spinner_row_is_blank_when_idle`, `short_region_collasses_spinner_row`.
+Fixing bug-01-2 only (bug-01-1 reassigned to architect per amendment).
 
 ### Update — ts=1784964794081 (complete, server-authored)
 
