@@ -1,42 +1,48 @@
 # NEXT
 
-**Active phase: M5 phase-02 — cleanup-deadlock** (`todo`, drafted 2026-07-25).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-02-cleanup-deadlock.md`.
+**Active phase: none.** M5 phase-02 is `done`; the next phase (03
+echo-user-input) is **not yet drafted**. Draft it with
+`/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-02-cleanup-deadlock`.
+**M5 phase-02 — cleanup-deadlock is `done`** (2026-07-25, `approved_first_try`,
+70 turns, no bounce). **The daemon hang is fixed.** The re-entrant
+`SessionStore` acquisition in the `session-cleanup` supervisor is gone:
+`cleanup_pass()` in `src/daemon/session.rs` locks exactly once, returns evicted
+entries by value plus an active-id snapshot, and the supervisor runs the tmux
+teardown and both filesystem sweeps outside the lock.
 
-Fixes the **confirmed root cause of the daemon hang**: a re-entrant acquisition
-of the global `SessionStore` mutex in the `session-cleanup` supervisor
-(`src/daemon/mod.rs:693` and `:709`). The guard from the first lock is still
-alive at the second; `std::sync::Mutex` is not reentrant, so the task strands
-the lock and every session-touching path in the daemon blocks forever. Fires
-≈60 minutes after every start, deterministically. Evidence:
-`docs/design/daemon-stalls.md` § 1.5b–1.5c (live capture + gdb attribution).
+Verified by an accelerated before/after soak (cleanup interval temporarily 60 s
+→ 1 s so the sweep branch fires at ~60 s instead of ~60 min, both trees soaked
+identically):
 
-The phase extracts `cleanup_pass()` into `src/daemon/session.rs` — locks once,
-returns evicted entries by value plus an active-id snapshot — so the tmux
-teardown and the two filesystem sweeps run outside the critical section. Two
-tests, `try_lock`-based so a regression fails fast instead of hanging CI.
-Finish condition: `cargo test --lib` reports 908 (906 + exactly 2).
+- **pre-fix, 1 m 32 s:** 0 threads in `epoll_wait`, 33/33 `futex_wait`, accept
+  backlog 2 and climbing — the production wedge reproduced.
+- **fixed, 3 m 01 s (3 sweeps):** 1 thread in `epoll_wait`, backlog 0 — healthy.
 
-**⚠ The running daemon still has this bug.** Any daemon started before phase-02
-lands will deadlock about an hour in. Restarting buys another hour.
+The mutation check was also re-run by the reviewer rather than trusted:
+stranding the guard makes `cleanup_pass_releases_the_lock` fail immediately.
+
+**A daemon built from `master` is now safe to leave running.** Any binary built
+before commit `435382e` still wedges about an hour in.
+
+**One-line follow-up, deliberately not dispatched:**
+`cleanup_pass_evicts_idle_and_keeps_active` ends with
+`sessions.lock().unwrap()`, which would *hang* rather than fail if re-entrancy
+regressed. Switch it to `try_lock`; fold into whichever phase next touches
+`session.rs`.
 
 **M5 phase-01 — spinner-gutter is `done`** (2026-07-25, `approved_after_2`,
 commit `2753c93`). Spinner moved out of the input box onto a reserved one-row
 line above the top border, carrying frame + verb + dots together; the row stays
-reserved when idle so the box never moves. Two bounces: a review bounce
-(bug-01-1 E2E not performed, bug-01-2 prompt lost at height 4) and a `hard_fail`
-(`NoProgressStall`) caused by bug-01-1 asking the executor to drive an
-interactive TUI non-interactively. Both bugs closed; E2E performed by the
-architect with real `tmux capture-pane` snapshots in the phase doc.
+reserved when idle so the box never moves. Two bounces (bug-01-1 E2E not
+performed, bug-01-2 prompt lost at height 4), both closed; E2E performed by the
+architect with real `tmux capture-pane` snapshots.
 
-**Architect calibration from phase-01:** two spec contradictions in one phase
-(task 4 vs the test plan; bug-01-2's prescribed fix vs its own verification).
-Same failure both times — pinning an implementation that could not satisfy the
-behavior stated elsewhere in the same doc. Third occurrence warrants raising it
-with the PE. Also: verification needing a live daemon or a human eye belongs to
-the architect, not the executor.
+**Architect calibration from phase-01:** two spec contradictions in one phase —
+pinning an implementation that could not satisfy the behavior stated elsewhere
+in the same doc. Third occurrence warrants raising it with the PE. Also:
+verification needing a live daemon or a human eye belongs to the architect, not
+the executor. Phase-02 applied both lessons and landed `approved_first_try`.
 
 **M5 — UX & Stability is scoped** (2026-07-24, PE sign-off). Milestone README:
 `docs/dev/milestones/M5-ux-stability/README.md`. Design + hang evidence log:

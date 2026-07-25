@@ -1,7 +1,7 @@
 # Phase 02: Session-Cleanup Deadlock
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -476,3 +476,85 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 435382e50aaa267a451105855c3cc7134de05e51
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification — 2026-07-25 (architect-performed)
+
+The phase doc deferred this to the architect because the defect needs ~60 minutes
+of daemon uptime to manifest. Rather than wait, the reviewer built the daemon
+with the cleanup loop's sleep temporarily reduced from 60 s to 1 s, so the
+`sweep_counter % 60` branch — the one that took the second lock — fires at ~60
+seconds instead of ~60 minutes. Everything else was unchanged. Both the pre-fix
+and post-fix trees were soaked under the identical acceleration.
+
+**Before** (pre-fix `mod.rs` from `de3d050`, accelerated), at 1 m 32 s uptime:
+
+```
+threads with epoll_wait : 0          ← reactor gone
+thread wchan breakdown  : 33 futex_wait
+accept backlog (Recv-Q) : 2 and climbing   ← connections queued, never accepted
+CPU time                : 00:00:00
+```
+
+**After** (this phase's fix, same acceleration), at 3 m 01 s uptime — the sweep
+branch has fired three times:
+
+```
+threads with epoll_wait : 1          ← reactor alive and polling
+thread wchan breakdown  : 32 futex_wait, 1 __x64_sys_epoll_wait
+accept backlog (Recv-Q) : 0          ← accepting normally
+CPU time                : 00:00:00
+```
+
+The "before" column reproduces the production wedge exactly as captured in
+`docs/design/daemon-stalls.md` § 1.5b (reactor absent, all threads futex-parked,
+backlog growing, zero CPU). The "after" column is the healthy signature. The
+acceleration was reverted, the tree restored to a clean `git status`, and all
+gates re-run green afterward.
+
+Method note for future phases: compressing a time-triggered defect by shrinking
+its interval, and soaking **both** trees under the identical change, is what
+makes the "after" result meaningful. A healthy post-fix daemon alone would not
+have shown that the harness could catch the bug at all.
+
+### Review verdict — 2026-07-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (70 turns)
+- **Gates (reviewer re-run):** `cargo fmt --all --check` clean; `cargo build`
+  clean; `cargo clippy --all-targets --all-features -- -D warnings` exits zero;
+  `cargo test` 908 lib + 27 integration, 0 failed. Lib count is exactly the
+  pinned 908 (906 + 2) — no scope creep.
+- **Acceptance criteria:** all met. Verified independently that no `lock()` call
+  remains anywhere in the `session-cleanup` supervisor closure
+  (`mod.rs:683-725`); the only acquisition is the single one inside
+  `cleanup_pass`.
+- **Mutation check:** performed by the reviewer, not taken on trust. Adding
+  `std::mem::forget(store)` to strand the guard makes
+  `cleanup_pass_releases_the_lock` fail immediately with
+  `assertion failed: sessions.try_lock().is_ok()`. The `try_lock` formulation
+  works as designed — it fails fast instead of hanging.
+- **End-to-end:** accelerated before/after soak, recorded above. The pre-fix tree
+  reproduced the production wedge in 92 seconds; the fixed tree stayed healthy
+  through three sweep cycles.
+- **Scope deviations:** none. The eviction threshold, loop cadence, and sweep
+  cadence are unchanged, as spec task 3 required. The executor's summary notes
+  it built the test helper from the real `SessionEntry` definition rather than
+  the doc's abbreviated sketch — that is correct behavior, not a deviation; the
+  spec explicitly said to copy the literal from the existing test.
+- **Calibration:** none for the executor. The spec quoted the offending code
+  verbatim, wrote out the replacement, and pinned an inverted test count; the run
+  completed clean in 70 turns with no bounce. This is the third consecutive
+  clean-ish outcome for small, synchronous, fully-quoted phases and reinforces
+  the M4 note that this executor performs well on that shape.
+
+#### Follow-up noted, not blocking
+
+`cleanup_pass_evicts_idle_and_keeps_active` ends with
+`assert_eq!(sessions.lock().unwrap().len(), 1)`. Under the stranded-guard
+mutation that assertion **hangs** rather than failing, so a future re-entrancy
+regression would stall CI until timeout even though
+`cleanup_pass_releases_the_lock` fails fast in parallel. Changing that final
+assertion to a `try_lock`-based read would make the whole file fail-fast. One
+line; fold it into whichever phase next touches `session.rs` rather than
+spending a dispatch cycle on it.
