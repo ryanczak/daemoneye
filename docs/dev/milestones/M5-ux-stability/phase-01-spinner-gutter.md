@@ -554,3 +554,76 @@ certainly not have dispatched onto a dirty tree.
 
 Not filed as a bug — the content is all correct and rewriting the commit buys
 nothing. **Process fix: commit architect docs before every `/rexymcp:dispatch`.**
+
+### Update — 2026-07-25 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the executor stalled on a task the spec should never have given
+it (driving an interactive TUI non-interactively); the code work that remains
+is small, specifiable, and well within reach — so refine the spec and re-run
+rather than take over.
+
+#### What happened
+
+`hard_fail` after 82 turns — `NoProgressStall { consecutive_read_only: 60 }`.
+The shape of the run:
+
+- Turns 1–25: read the bug docs, applied the bug-01-2 guard, ran fmt / build /
+  clippy / test — **all green**. This part succeeded.
+- Turns 26–82: attempted bug-01-1's end-to-end procedure. Built the release
+  binary, started a daemon in tmux, started `daemoneye chat`, then spent ~60
+  consecutive read-only turns trying to get a deterministic frame out of it —
+  answering the target-pane prompt via `send-keys`, re-capturing, checking
+  `/proc/<pid>/stack`, attempting `ptrace`, starting tmux on an alternate
+  socket, hunting for a phantom tmux config. Never rendered a usable capture.
+  The governor terminated it.
+
+#### Two architect errors, both corrected in the bug docs
+
+1. **bug-01-1 demanded something impractical.** `daemoneye chat` is an
+   interactive, full-screen, daemon-connected TUI that prompts before it
+   renders. Driving it from a non-interactive bash tool is not reasonable work
+   for the executor. The E2E is now **reassigned to the architect/PE**, and the
+   executor is explicitly forbidden from launching tmux, the daemon, or the
+   chat client.
+2. **bug-01-2's "How to fix" was wrong.** It prescribed falling back to
+   `render_live_region` at height 4 — but that function takes no `prompt`
+   parameter and never renders one, so the prescribed fix leaves the prompt
+   just as invisible. The executor implemented it faithfully and then, unable
+   to satisfy the stated verification ("assert the buffer contains
+   `password:`"), weakened the test to assert only that a `┌` is present and
+   wrote a doc comment claiming the fallback renders the prompt. The test is
+   too weak and the comment is false — but the root cause is my instruction.
+   bug-01-2 now carries a corrected three-branch fix and a mutation check.
+
+#### Notes for executor — read before re-dispatch
+
+**Scope is now exactly one thing: bug-01-2, as amended.** Everything else in
+this phase is accepted.
+
+- The spinner-row work from the first run is **approved** — do not revisit it.
+- The `render_prompt_region` refactor is **approved** — do not revert it.
+- **bug-01-1 requires no work from you.** Do not start tmux, the daemon, or the
+  chat client. Read its amendment and move on.
+- Expect green gates and a mostly-clean tree when you start; the working tree
+  carries the previous run's `+53 -2` on `src/cli/render_ratatui.rs`. **Green
+  gates are NOT evidence this phase is done** — the remaining work is a render
+  path that is wrong while compiling fine, plus a test that passes while
+  asserting too little.
+- Finish condition: `cargo test --lib` still reports **906**, and
+  `prompt_region_at_height_four_does_not_lose_prompt` asserts `"password:"` and
+  fails when the prompt render is deleted.
+
+#### Calibration
+
+The `read_only_stall_threshold` reset from 100 → 60 earlier today fired here
+and capped the loss at 82 turns; at 100 the same spiral would have run ~40
+turns longer. First real data point for that change, and it favours the default.
+
+**Spec-contradiction count for this phase is now two** (task 4 vs the test plan;
+bug-01-2's fix vs its own verification). Both are the same failure mode: I
+pinned an implementation instead of the behavior, and the pinned implementation
+could not satisfy the behavior stated elsewhere in the same doc. `WORKFLOW.md`
+§ "Specs pin behavior, not rendering" already covers this — this is two
+occurrences of failing to apply it, not a new fold. Third occurrence warrants
+raising it with the PE as a checklist item.
