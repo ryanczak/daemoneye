@@ -1,35 +1,42 @@
 # NEXT
 
-**Active phase: M5 phase-01 — spinner-gutter** (`in-progress`, drafted
-2026-07-24, layout revised 2026-07-25 per PE, **bounced 2026-07-25**).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-01-spinner-gutter.md`.
+**Active phase: M5 phase-02 — cleanup-deadlock** (`todo`, drafted 2026-07-25).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-02-cleanup-deadlock.md`.
 
-Re-dispatch with `/rexymcp:dispatch phase-01-spinner-gutter`.
+Dispatch with `/rexymcp:dispatch phase-02-cleanup-deadlock`.
 
-**Open bugs:** `bugs/bug-01-1.md` (major — the prescribed end-to-end
-verification was never run; gate output and a grep of test source were reported
-as E2E evidence) and `bugs/bug-01-2.md` (minor — `render_prompt_region` draws
-the prompt into the zero-height spinner rect at region height exactly 4, so a
-password prompt renders with no prompt text). Gates were green at bounce (905
-unit + 27 integration); the production code is otherwise accepted.
+Fixes the **confirmed root cause of the daemon hang**: a re-entrant acquisition
+of the global `SessionStore` mutex in the `session-cleanup` supervisor
+(`src/daemon/mod.rs:693` and `:709`). The guard from the first lock is still
+alive at the second; `std::sync::Mutex` is not reentrant, so the task strands
+the lock and every session-touching path in the daemon blocks forever. Fires
+≈60 minutes after every start, deterministically. Evidence:
+`docs/design/daemon-stalls.md` § 1.5b–1.5c (live capture + gdb attribution).
 
-**Do not revert the `render_prompt_region` refactor** — the executor flagged it
-as a spec deviation, but spec task 4 contradicted the test plan and the
-deviation is the only layout that satisfies
-`input_box_row_is_stable_across_draw_modes`. Recorded as `spec_bug` (architect's
-fault). See the Notes-for-executor block in the phase doc.
+The phase extracts `cleanup_pass()` into `src/daemon/session.rs` — locks once,
+returns evicted entries by value plus an active-id snapshot — so the tmux
+teardown and the two filesystem sweeps run outside the critical section. Two
+tests, `try_lock`-based so a regression fails fast instead of hanging CI.
+Finish condition: `cargo test --lib` reports 908 (906 + exactly 2).
 
-Moves the streaming spinner out of the chat input box onto a reserved one-row
-line **above** the box's top border, carrying the frame, verb, and dot
-animation together. Single file (`src/cli/render_ratatui.rs`), ~150 lines, no
-new dependencies, no call-site edits. The load-bearing acceptance criterion is
-that the input box sits on the **same row** in all three live-region draw modes
-(normal / spinner / prompt) — pinned by
-`input_box_row_is_stable_across_draw_modes`.
+**⚠ The running daemon still has this bug.** Any daemon started before phase-02
+lands will deadlock about an hour in. Restarting buys another hour.
 
-The filename still says `spinner-gutter`; the gutter is now vertical (a
-reserved row) rather than a left-hand column. Left as-is so the dispatch
-identifier does not change mid-flight.
+**M5 phase-01 — spinner-gutter is `done`** (2026-07-25, `approved_after_2`,
+commit `2753c93`). Spinner moved out of the input box onto a reserved one-row
+line above the top border, carrying frame + verb + dots together; the row stays
+reserved when idle so the box never moves. Two bounces: a review bounce
+(bug-01-1 E2E not performed, bug-01-2 prompt lost at height 4) and a `hard_fail`
+(`NoProgressStall`) caused by bug-01-1 asking the executor to drive an
+interactive TUI non-interactively. Both bugs closed; E2E performed by the
+architect with real `tmux capture-pane` snapshots in the phase doc.
+
+**Architect calibration from phase-01:** two spec contradictions in one phase
+(task 4 vs the test plan; bug-01-2's prescribed fix vs its own verification).
+Same failure both times — pinning an implementation that could not satisfy the
+behavior stated elsewhere in the same doc. Third occurrence warrants raising it
+with the PE. Also: verification needing a live daemon or a human eye belongs to
+the architect, not the executor.
 
 **M5 — UX & Stability is scoped** (2026-07-24, PE sign-off). Milestone README:
 `docs/dev/milestones/M5-ux-stability/README.md`. Design + hang evidence log:
