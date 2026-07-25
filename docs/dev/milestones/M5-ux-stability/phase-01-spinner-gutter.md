@@ -1,7 +1,7 @@
 # Phase 01: Spinner Row
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -368,3 +368,129 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 **Status:** in-progress
 
 Implemented the spinner-row reservation across all three live-region renderers. Added `SPINNER_ROWS`, `MIN_HEIGHT_FOR_SPINNER_ROW`, and `split_spinner_row()` helper. Updated `render_live_region`, `render_spinner_region`, and `render_prompt_region` to reserve the spinner row. Added four new tests: `spinner_renders_above_input_box_not_inside_it`, `input_box_row_is_stable_across_draw_modes`, `spinner_row_is_blank_when_idle`, `short_region_collasses_spinner_row`.
+
+### Update — ts=1784964794081 (complete, server-authored)
+
+**Summary:** All verification commands pass. Here's the summary:
+
+**Summary + Notes for review:**
+
+Moved the streaming spinner out of the input box and into a dedicated one-row area immediately above the box's top border. Added `SPINNER_ROWS`, `MIN_HEIGHT_FOR_SPINNER_ROW`, and a shared `split_spinner_row()` helper that all three live-region renderers (`render_live_region`, `render_spinner_region`, `render_prompt_region`) now call first. The spinner row is blank when idle, shows the full spinner line (frame + verb + dots) during streaming, and renders the prompt text in prompt mode — keeping the input box at a stable vertical position across all modes. Short regions (<5 rows) collapse the spinner row to zero height automatically.
+
+**Deviation from spec:** `render_prompt_region` was refactored more significantly than spec task 4 described. The original code used a three-way vertical split (prompt rows / input box / status bar) with the prompt text rendered into the first chunk. I simplified it to use the same two-chunk pattern as the other modes — prompt text goes into the reserved spinner row, and the body splits into input box + status bar. This is cleaner and ensures the box corner row stays stable. All four new tests pass, along with all 905 existing tests.
+
+**E2E verification:** All 905 tests pass (905 lib + 27 bin, 0 failures). `cargo fmt`, `cargo build`, and `cargo clippy` all clean. The literal `"scrying"` appears in the test code at the expected locations (grep confirmed).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test memory::tests::memory_without_frontmatter_has_empty_metadata ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::backfill_idempotent ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test memory::tests::session_memory_block_respects_cap ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 905 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test ghost_config_parsing ... ok
+test event_log_entry_format ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-01-spinner-gutter.md` — +8 -1
+- `src/cli/render_ratatui.rs` — +252 -16
+
+**Commit:** 4aaf8c647375a381bfdf92bdc9f32ce4d3ebbfb4
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
