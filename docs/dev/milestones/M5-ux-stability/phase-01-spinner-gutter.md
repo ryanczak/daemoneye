@@ -1,7 +1,7 @@
 # Phase 01: Spinner Row
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress  <!-- bounced 2026-07-25: bug-01-1 (major), bug-01-2 (minor) -->
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -627,3 +627,126 @@ could not satisfy the behavior stated elsewhere in the same doc. `WORKFLOW.md`
 § "Specs pin behavior, not rendering" already covers this — this is two
 occurrences of failing to apply it, not a new fold. Third occurrence warrants
 raising it with the PE as a checklist item.
+
+### Update — ts=1784967700577 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Fixed bug-01-2: at region height 4, `render_prompt_region` now carves a one-row prompt strip from the top of the body rect instead of falling back to `render_live_region` (which has no prompt parameter and would leave the prompt invisible). At heights >= 5, the prompt still uses the reserved spinner row, keeping the input box stable. The test `prompt_region_at_height_four_does_not_lose_prompt` was strengthened to assert the buffer contains `"password:"` (not just a `┌` border character), and the false doc comment was removed. Mutation check confirmed: deleting the `frame.render_widget(prompt_para, prompt_rect)` line causes the test to fail as expected.
+
+Bug-01-1 requires no work per its amendment (reassigned to architect/PE).
+
+All gates green: `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` (906 lib + 27 integration, 0 failed). Working tree is clean.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ ok
+test webhook::process::tests::ghost_trigger_yes_detected ... ok
+test webhook::process::tests::severity_rank_case_insensitive ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+
+test result: ok. 906 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.31s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_ask_round_trip ... ok
+test event_log_entry_format ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/phase-01-spinner-gutter.md` — +2 -2
+- `src/cli/render_ratatui.rs` — +23 -14
+
+**Commit:** e6fad483a503aeca49061b2677561f35f713f7ca
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
