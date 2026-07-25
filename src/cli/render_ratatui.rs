@@ -118,6 +118,29 @@ fn color_from_256(idx: u8) -> Color {
 /// The number of rows the inline viewport occupies (input + status bar).
 const VIEWPORT_ROWS: u16 = 6;
 
+/// Rows reserved above the input box for the streaming spinner line. The row
+/// is always reserved — blank when idle — so the input box never moves
+/// vertically when streaming starts or stops.
+const SPINNER_ROWS: u16 = 1;
+
+/// Minimum live-region height at which the spinner row is reserved. Below
+/// this the row collapses so a very short region still gets a usable box.
+const MIN_HEIGHT_FOR_SPINNER_ROW: u16 = 5;
+
+/// Split a live-region area into (spinner_row, body). The spinner row is
+/// reserved in every draw mode; `body` is what the existing vertical layouts
+/// then split into input box and status bar. On a short region the spinner
+/// row is zero-height.
+fn split_spinner_row(area: Rect) -> (Rect, Rect) {
+    if area.height < MIN_HEIGHT_FOR_SPINNER_ROW {
+        let empty = Rect { height: 0, ..area };
+        return (empty, area);
+    }
+    let chunks =
+        Layout::vertical([Constraint::Length(SPINNER_ROWS), Constraint::Min(1)]).split(area);
+    (chunks[0], chunks[1])
+}
+
 /// Ratatui-based inline-viewport renderer.
 ///
 /// Owns a `Terminal<B>` with an inline viewport.  The viewport holds only the
@@ -415,7 +438,10 @@ fn render_live_region(
     start_time: std::time::Instant,
     cursor_pos: Option<(u16, u16)>, // (col, row) within content area (before scroll)
 ) {
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
+    let (spinner_rect, body) = split_spinner_row(area);
+    let _spinner_rect = spinner_rect; // reserved, blank in this mode
+
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
 
     // ── Input box ──────────────────────────────────────────────
     let content_area = chunks[0];
@@ -483,8 +509,10 @@ fn render_prompt_region(
     model: &str,
     start_time: std::time::Instant,
 ) {
+    let (spinner_rect, body) = split_spinner_row(area);
+
     // Reserve 1 row for status bar, 2 for input box, rest for prompt.
-    let total = area.height;
+    let total = body.height;
     if total < 4 {
         // Too small — fall back to normal input region.
         let it: ratatui::text::Text<'_> = input_text
@@ -494,21 +522,15 @@ fn render_prompt_region(
         render_live_region(frame, area, &it, session_id, model, start_time, None);
         return;
     }
-    let prompt_rows = total - 3; // 1 status + 2 input box
-    let chunks = Layout::vertical([
-        Constraint::Length(prompt_rows),
-        Constraint::Length(2), // input box
-        Constraint::Length(1), // status bar
-    ])
-    .split(area);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
 
-    // ── Prompt text ────────────────────────────────────────────
+    // ── Prompt text in the reserved spinner row ────────────────
     let prompt_line = Line::from(Span::styled(
         prompt,
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     ));
     let prompt_para = Paragraph::new(prompt_line);
-    frame.render_widget(prompt_para, chunks[0]);
+    frame.render_widget(prompt_para, spinner_rect);
 
     // ── Input box ──────────────────────────────────────────────
     let input_text_obj: ratatui::text::Text<'_> = input_text
@@ -522,7 +544,7 @@ fn render_prompt_region(
     let input_para = Paragraph::new(input_text_obj)
         .block(input_block)
         .wrap(Wrap { trim: false });
-    frame.render_widget(input_para, chunks[1]);
+    frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
     let uptime = fmt_uptime(start_time.elapsed());
@@ -538,7 +560,7 @@ fn render_prompt_region(
             .add_modifier(Modifier::DIM),
     );
     let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-    frame.render_widget(status_para, chunks[2]);
+    frame.render_widget(status_para, chunks[1]);
 }
 
 /// Render the live region with a spinner message replacing the input box content.
@@ -550,14 +572,19 @@ fn render_spinner_region(
     model: &str,
     start_time: std::time::Instant,
 ) {
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
+    let (spinner_rect, body) = split_spinner_row(area);
 
-    // ── Spinner line inside the input box ──────────────────────
+    // ── Spinner line in the reserved row ───────────────────────
+    let spinner_para = Paragraph::new(spinner_line);
+    frame.render_widget(spinner_para, spinner_rect);
+
+    // ── Empty bordered input box ───────────────────────────────
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new(spinner_line).block(input_block);
+    let input_para = Paragraph::new("").block(input_block);
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
@@ -1205,5 +1232,214 @@ mod tests {
         assert_eq!(short_session("abcdef12"), "abcdef12");
         assert!(!short_session("short").contains('…'));
         assert!(!short_session("abcdef12").contains('…'));
+    }
+
+    // ── Helpers for spinner-row tests ──────────────────────────
+
+    /// Find the y-coordinate of the row containing the first '┌' (top-left
+    /// corner of the input box).
+    fn corner_row(buf: &ratatui::buffer::Buffer) -> u16 {
+        let cols = buf.area.width;
+        for y in 0..buf.area.height {
+            for x in 0..cols {
+                if buf[(x, y)].symbol() == "┌" {
+                    return y;
+                }
+            }
+        }
+        panic!("no '┌' found in buffer");
+    }
+
+    /// Collect an entire row's symbols into a single String.
+    fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
+        let cols = buf.area.width;
+        let mut s = String::new();
+        for x in 0..cols {
+            s.push_str(buf[(x, y)].symbol());
+        }
+        s
+    }
+
+    #[test]
+    fn spinner_renders_above_input_box_not_inside_it() {
+        let mut renderer = make_test_renderer();
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        renderer.draw_spinner("(◉)", "scrying", 3, &status).unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let corner = corner_row(buf);
+
+        // The spinner row is at corner_row - 1.
+        let spinner_row = corner - 1;
+        let spinner_text = row_text(buf, spinner_row);
+        assert!(
+            spinner_text.contains("scrying"),
+            "spinner row should contain verb 'scrying', got: {:?}",
+            spinner_text
+        );
+        assert!(
+            spinner_text.contains("..."),
+            "spinner row should contain dots '...', got: {:?}",
+            spinner_text
+        );
+        assert!(
+            spinner_text.contains('◉'),
+            "spinner row should contain frame glyph '◉', got: {:?}",
+            spinner_text
+        );
+
+        // Negative: the rows at and below the box corner must NOT contain
+        // the verb — the spinner is outside the box.
+        for y in corner..buf.area.height {
+            let r = row_text(buf, y);
+            assert!(
+                !r.contains("scrying"),
+                "row {} (at or below box) must not contain 'scrying', got: {:?}",
+                y,
+                r
+            );
+        }
+    }
+
+    #[test]
+    fn input_box_row_is_stable_across_draw_modes() {
+        let mut renderer = make_test_renderer();
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        let mut input = InputLine::new();
+        input.insert('H');
+        input.insert('i');
+
+        // Draw in normal mode.
+        renderer.draw(&input, &status).unwrap();
+        let buf1 = renderer.terminal.backend().buffer();
+        let corner_draw = corner_row(buf1);
+
+        // Draw in spinner mode.
+        renderer.draw_spinner("(◉)", "scrying", 1, &status).unwrap();
+        let buf2 = renderer.terminal.backend().buffer();
+        let corner_spinner = corner_row(buf2);
+
+        // Draw in prompt mode.
+        renderer.draw_prompt("password:", &input, &status).unwrap();
+        let buf3 = renderer.terminal.backend().buffer();
+        let corner_prompt = corner_row(buf3);
+
+        assert_eq!(
+            corner_draw, corner_spinner,
+            "box corner row must be the same in draw and spinner modes"
+        );
+        assert_eq!(
+            corner_draw, corner_prompt,
+            "box corner row must be the same in draw and prompt modes"
+        );
+    }
+
+    #[test]
+    fn spinner_row_is_blank_when_idle() {
+        let mut renderer = make_test_renderer();
+
+        let mut input = InputLine::new();
+        input.insert('H');
+        input.insert('e');
+        input.insert('l');
+        input.insert('l');
+        input.insert('o');
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        renderer.draw(&input, &status).unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let corner = corner_row(buf);
+        let spinner_row = corner - 1;
+        let text = row_text(buf, spinner_row);
+
+        assert!(
+            text.chars().all(|c| c.is_whitespace()),
+            "spinner row above box should be all whitespace when idle, got: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn short_region_collapses_spinner_row() {
+        // Build a renderer with a viewport shorter than MIN_HEIGHT_FOR_SPINNER_ROW.
+        let backend = TestBackend::new(60, 10);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(4),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+        };
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        let input = InputLine::new();
+
+        // Neither call should panic.
+        renderer.draw(&input, &status).unwrap();
+        renderer.draw_spinner("(◉)", "scrying", 1, &status).unwrap();
+
+        // A box border should still be present.
+        let buf = renderer.terminal.backend().buffer();
+        let all_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            all_text.contains('┌'),
+            "short region should still render the input box border, got: {}",
+            all_text
+        );
     }
 }

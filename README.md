@@ -10,7 +10,7 @@ I wrote DaemonEye after discovering OpenClaw and being completely blown away by 
 
 ### 👻 Autonomous Ghost Shells
 
-When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem in a dedicated `de-incident-*` tmux window without a human present. When you next attach, a catch-up brief tells you what happened.
+When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem in dedicated `de-gs-bg-*` tmux windows on the daemon host without a human present. When you next attach, a catch-up brief tells you what happened.
 
 - **Unattended Remediation** — Runs pre-approved remediation scripts, monitors output, and escalates when something unexpected happens.
 - **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Two keys are required for every privilege escalation.
@@ -132,6 +132,32 @@ The chat client is built on a `ratatui` inline viewport that treats your termina
 ### 🧰 On-Demand Tool Loading
 
 DaemonEye's AI tools are split into a **core** set (sent with every request) and **deferred** groups that are omitted by default to keep each request's context small. When the model needs a rarely-used capability it pulls the group in with a single `load_tools` call, and those tool schemas appear on subsequent turns. This is a context-budget optimization and is independent of the `ToolPolicy` / `GhostPolicy` gates, which restrict tools at execution time.
+
+### 🧠 Context Management
+
+Long sessions don't get truncated at an arbitrary message count — DaemonEye manages the context window by **token pressure**, and nothing is ever lost: every message is archived before it can be dropped, and the AI can retrieve any of it on demand.
+
+**Token-pressure ladder.** After each turn the daemon estimates the working set's token usage as a percentage of the active model's context window, calibrating the estimate against the provider's reported usage with an exponential moving average (so a model whose tokenizer runs denser than the estimator is corrected within a couple of turns). Three thresholds, all configurable in `[compaction]`:
+
+| At | What happens |
+|---|---|
+| `elide_at_pct` (50 %) | Oversized *old* tool results are replaced with `[elided: tool X produced N chars at turn K; archived]` placeholders. Recent turns are untouched. |
+| `compact_at_pct` (60 %) | A background task summarises the older turns into an **epoch record** and cuts the working set back to `target_pct` (40 %). |
+| `emergency_pct` (85 %) | Synchronous compaction on the interactive path — structured tally only, never a model call, so the turn is never blocked. |
+
+**Compaction runs off the interactive path.** The normal (non-emergency) pass is a `tokio::spawn` that builds the epoch, calls the cheap `[models.digest]` model for a narrative summary, and swaps the compacted history in with a staleness check. Your turn returns at full speed; the context shrinks between turns.
+
+**Epochs, ledger, and chapters.** Each compaction appends an epoch record to `~/.daemoneye/var/log/sessions/<id>.epochs.jsonl` — a turn range, a narrative summary, and a structured tally (commands ok/failed, files edited, alerts, ghosts spawned, tokens). The compacted head is regenerated from the whole chain, so the AI always sees a running `Session ledger:` line plus the most recent epochs. Once uncovered epochs exceed `rollup_after` (10), the oldest five fold into a single **chapter** record, keeping the head from growing linearly with session length.
+
+**Append-only archive + `recall_context`.** Every message is written to `<id>.archive.jsonl` *before* it can be elided or compacted away. The `recall_context` tool retrieves originals by substring query, by turn range, or both — so when the model hits an `[elided: …]` placeholder or an epoch summary that's too coarse, it pulls the real text back rather than guessing. Retrieved excerpts are masked and truncated like any other tool result.
+
+**Sessions survive daemon restarts.** Per-session continuity state (turn counters, token calibration, epoch boundaries) is persisted to `<id>.meta.json`, so a restart mid-conversation resumes with the same compaction ladder rather than starting blind.
+
+**Ghost shells get a synchronous guard.** Autonomous sessions can't wait on a background task, so they run a model-call-free variant: aggressive elision, a structured-only epoch (no narrative), and a working-set cut — all synchronous, no network.
+
+**Optional memory extraction.** Set `extract_memories = true` in `[compaction]` and each epoch build additionally asks the digest model to propose up to three durable facts, written to persistent memory as `knowledge` entries stamped `source: compaction`. Off by default — it costs a small model call per epoch and writes to shared memory.
+
+**Retention.** Session archives are kept forever unless you set `[sessions] archive_retention_days`. The event log rotates into dated segments (`var/log/events/events-YYYYMMDD.jsonl`) with a 90-day default retention.
 
 ---
 
@@ -306,7 +332,14 @@ daemoneye setup
   var/
     log/
       daemon.log          ← daemon process log (tailed by `daemoneye logs`)
-      events.jsonl        ← structured event log (command history, AI turns, costs, lifecycle)
+      events.jsonl        ← legacy structured event log (read for history; never rotated or deleted)
+      events/
+        events-YYYYMMDD.jsonl  ← dated event segments (command history, AI turns, costs, lifecycle)
+      sessions/
+        <id>.jsonl        ← live working-set history for an ephemeral session
+        <id>.archive.jsonl ← append-only archive of every message (source for recall_context)
+        <id>.epochs.jsonl ← epoch + chapter records (compaction summaries and tallies)
+        <id>.meta.json    ← session continuity state (turn counters, token calibration)
       panes/              ← archived background-command output (one .log per job window)
       pipes/              ← pipe-pane capture logs (raw terminal output, runtime only)
     run/
@@ -482,13 +515,26 @@ prompt = "sre"
 # per_tool_batch            = 100    # max consecutive calls of one non-approval tool per turn (0 = unlimited)
 # total_tool_calls_per_turn = 0      # max total non-approval tool calls per turn (0 = unlimited)
 # tool_result_chars         = 16000  # max chars fed back to the AI per tool result (0 = unlimited)
-# max_history               = 80     # max messages kept in session history (0 = unlimited)
 # max_turns                 = 0      # max AI turns per chat session (0 = unlimited; ghosts use max_ghost_turns)
 # max_tool_calls_per_session = 0     # cumulative non-approval tool calls per session (0 = unlimited)
 #
 # [limits.per_tool]
 # read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
 # search_repository = 50
+
+# [compaction]
+# elide_at_pct     = 50     # elide oversized old tool results at this % of the context window
+# compact_at_pct   = 60     # build an epoch and cut the working set at this %
+# target_pct       = 40     # post-compaction working-set target
+# emergency_pct    = 85     # synchronous, model-call-free backstop
+# rollup_after     = 10     # fold the oldest 5 epochs into a chapter past this many uncovered
+# extract_memories = false  # opt-in: extract durable facts to memory on each epoch build
+
+# [digest]
+# narrative_enabled = true  # spend a [models.digest] call on a natural-language epoch summary
+
+# [events]
+# retention_days = 90       # delete dated event segments older than this (0 = keep forever)
 
 # [daemon]
 # tmux_session = "daemoneye"   # session the daemon creates/owns at startup
@@ -616,7 +662,6 @@ Controls how many tool calls the AI can make per turn and per session, and how m
 | `per_tool_batch` | integer | `100` | Maximum consecutive calls of a single non-approval tool within one AI turn. Approval-gated tools are always exempt. |
 | `total_tool_calls_per_turn` | integer | `0` | Hard cap on all non-approval tool calls within one turn. `0` = unlimited. |
 | `tool_result_chars` | integer | `16000` | Maximum characters of output fed back to the AI per tool result. Longer results are truncated. `0` = unlimited. |
-| `max_history` | integer | `80` | Maximum messages kept in session history. When the cap is hit the daemon runs a digest-and-compact pass. `0` = unlimited. |
 | `max_turns` | integer | `0` | Maximum AI turns per interactive chat session. Ghost shells use `ghost.max_ghost_turns` instead. `0` = unlimited. |
 | `max_tool_calls_per_session` | integer | `0` | Cumulative cap on non-approval tool calls across the entire session. `0` = unlimited. Reset with `/limits reset` in chat. |
 
@@ -629,6 +674,41 @@ search_repository = 25    # tighten search calls
 ```
 
 Use `/limits` in the chat pane to inspect the active values and live session counters. Use `/limits reset` to zero the per-session tool counter without ending the session.
+
+There is deliberately **no message-count cap** on session history. History length is governed entirely by token pressure — see `[compaction]` below.
+
+### `[compaction]` section
+
+Controls token-pressure-driven context management. All values are percentages of the active model's context window. See [Context Management](#-context-management) for how the ladder works.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `elide_at_pct` | integer | `50` | Replace oversized *old* tool results with `[elided: …]` placeholders at this pressure. The full text stays in the session archive. |
+| `compact_at_pct` | integer | `60` | Build an epoch record and cut the working set. Runs in the background, off the interactive path. |
+| `target_pct` | integer | `40` | Post-compaction working-set target. Must be below `compact_at_pct` or hysteresis is lost — the daemon logs a `[compaction]` warning and falls back to a safe default if it isn't. |
+| `emergency_pct` | integer | `85` | Synchronous compaction threshold. This path never makes a model call, so an interactive turn is never blocked on one. |
+| `rollup_after` | integer | `10` | When uncovered epochs exceed this count, the oldest five are folded into one chapter record. |
+| `extract_memories` | bool | `false` | Opt-in: ask the digest model to propose 0–3 durable facts per epoch and write them to persistent memory (category `knowledge`, `source: compaction`). |
+
+### `[digest]` section
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `narrative_enabled` | bool | `true` | Spend a `[models.digest]` call (falling back to `[models.default]`) on a natural-language summary of the compacted turns. Set `false` to keep only the structured tally. The emergency path ignores this and never calls a model. |
+
+Define a cheap model for this work with a `[models.digest]` block — it is also used for session auto-naming:
+
+```toml
+[models.digest]
+provider = "anthropic"
+model    = "claude-haiku-4-5-20251001"
+```
+
+### `[events]` section
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `retention_days` | integer | `90` | Delete dated event segments (`var/log/events/events-YYYYMMDD.jsonl`) older than this many days. `0` = keep forever. The legacy `var/log/events.jsonl` is never deleted. |
 
 ### `[daemon]` section
 
@@ -649,7 +729,8 @@ Controls named session persistence — saving and resuming conversation history 
 |---|---|---|---|
 | `auto_name_enabled` | bool | `true` | After `auto_name_turn_threshold` turns, prompt the user with an AI-suggested session name in the chat pane. |
 | `auto_name_turn_threshold` | integer | `10` | Number of user turns before an auto-name suggestion is offered. |
-| `load_recent_turns` | integer | `10` | Number of most-recent turns loaded when resuming a saved session with `/session load`. |
+| `load_recent_turns` | integer | `10` | Number of most-recent turns loaded when resuming a saved session with `/session load`. `0` loads the complete history (may exceed the context window). |
+| `archive_retention_days` | integer | `0` | Delete session archive files (`<id>.archive.jsonl`) whose mtime is older than this many days. `0` = keep forever. Archives belonging to active sessions are never swept. |
 
 **In-chat session commands** (type these in the chat pane):
 
@@ -669,7 +750,7 @@ Artifacts (runbooks, scripts, memories) created during a named session are tagge
 
 ## Ghost Shells & Autonomous Remediation
 
-Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell runs inside a dedicated `de-incident-*` tmux window on the daemon host, investigates the alert, and executes pre-approved remediation steps — all without a human present. Start, completion, and failure events appear in the next catch-up brief when you re-attach.
+Ghost Shells are unattended AI agents that DaemonEye can spawn automatically in response to incoming webhook alerts. When triggered, a ghost shell investigates the alert and executes pre-approved remediation steps — all without a human present. The ghost itself runs headless inside the daemon; each command it executes gets its own tmux window on the daemon host, created lazily and prefixed `de-gs-bg-*` (webhook- and interactively-triggered ghosts) or `de-gs-sj-*` (scheduler-triggered). Start, completion, and failure events appear in the next catch-up brief when you re-attach.
 
 ### How it works end-to-end
 
@@ -687,7 +768,7 @@ Watchdog AI analysis (reads runbook, emits GHOST_TRIGGER: YES|NO)
         │  YES + runbook has  enabled: true
         ▼
 GhostManager::start_session()
-  • Allocates de-incident-<name>-<ts> tmux window
+  • Ensures the host tmux session exists (command windows created lazily)
   • Loads ghost_config from runbook frontmatter
   • Applies named agent profile if runbook specifies agent: <name>
   • Injects prior briefing state as [Previous Session Summary] context
@@ -895,8 +976,9 @@ curl -s -X POST http://localhost:9393/webhook \
 Watch the ghost shell in real time:
 
 ```bash
-# In another pane — attach to the incident window
-tmux select-window -t de-incident-nginx-down-$(date +%s | head -c8 2>/dev/null || echo "")
+# In another pane — list the ghost's command windows and select one
+tmux list-windows -a | grep de-gs-
+tmux select-window -t <window-name>
 
 # Or just watch daemon.log
 daemoneye logs
@@ -929,10 +1011,10 @@ Cost (today)
   By provider: anthropic $0.47
 ```
 
-List the incident windows currently open:
+List the ghost command windows currently open:
 
 ```bash
-tmux list-windows | grep de-incident
+tmux list-windows -a | grep de-gs-
 ```
 
 ### Security considerations
@@ -976,11 +1058,17 @@ src/
 │   ├── executor/        # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
 │   ├── background/      # run_background_in_window(); respawn; notify_job_completion(); GC lifecycle
 │   ├── briefing.rs      # generate_and_save_briefing(); read_briefing(); clear_briefing()
-│   ├── digest.rs        # Session digest: structured compaction of conversation history
+│   ├── context/         # token-pressure context management
+│   │   ├── estimate.rs  # per-message token estimate; EMA calibration against provider usage
+│   │   ├── epochs.rs    # EpochRecord persistence; compact_with_epochs(); ledger/chapter render
+│   │   ├── background.rs # async (off-interactive-path) compaction; spawn_compaction()
+│   │   ├── recall.rs    # recall_context tool over the append-only session archive
+│   │   └── ghost_ws.rs  # synchronous, model-call-free working-set guard for ghost sessions
+│   ├── digest.rs        # budget planner; graduated elision; tail-boundary repair
 │   ├── ghost.rs         # GhostManager::start_session(); check_ghost_capacity()
 │   ├── policy.rs        # GhostPolicy — non-sudo always allowed; sudo requires auto_approve_scripts + sudoers
 │   ├── memory_prompt.rs # Tiered memory prompt: stable ambient block + dynamic turn-relevant block
-│   ├── session.rs       # SessionStore, SessionEntry (cost fields, detach timestamps)
+│   ├── session.rs       # SessionStore, SessionEntry (cost, detach timestamps, token calibration); <id>.meta.json
 │   ├── scheduled.rs     # Scheduled job execution
 │   ├── stats.rs         # compute_cost_today(); ghost shell counters; COST_TODAY_CACHE
 │   └── utils/           # sum_cost_between(); event logger; shell-escape; sudo; normalize_output helpers
@@ -1021,7 +1109,7 @@ src/
 
 ## Command Audit Log
 
-Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in `~/.daemoneye/var/log/events.jsonl`. AI cost records are written to the same file after each completed turn:
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in a dated segment under `~/.daemoneye/var/log/events/` (`events-YYYYMMDD.jsonl`, UTC). AI cost records are written to the same segment after each completed turn:
 
 ```
 [1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
@@ -1030,6 +1118,8 @@ Every command the AI proposes — whether approved, denied, or timed out — is 
 ```
 
 Fields for command records: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
+
+Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
 
 Control with `--command-log-file FILE` or `--no-command-log` on `daemoneye daemon`.
 
