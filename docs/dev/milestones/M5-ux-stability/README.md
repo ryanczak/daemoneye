@@ -25,8 +25,11 @@ split) and the two TUI defect specs every phase references.
       streams. Scrolling back through a finished conversation shows both
       sides.
 - [ ] No `SessionStore` critical section performs blocking work: no file I/O,
-      no subprocess spawn, and no `.await` while the guard is held. Enforced
-      by a test or lint, not only by review.
+      no subprocess spawn, no `.await`, **and no re-entrant re-acquisition**
+      while the guard is held. Enforced by a test or lint, not only by review.
+      (The re-entrancy clause was added 2026-07-25: the confirmed root cause of
+      the hang was a double-lock with no blocking work between the two
+      acquisitions, which no existing lint catches.)
 - [ ] Every tmux subprocess call made from an async context is either
       non-blocking (`tokio::process`) or off the runtime
       (`spawn_blocking`), and carries a timeout. A wedged tmux server
@@ -53,22 +56,22 @@ split) and the two TUI defect specs every phase references.
 | #  | Phase                                                                  | Status |
 |----|------------------------------------------------------------------------|--------|
 | 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | done (approved_after_2) |
-| 02 | echo-user-input ([phase-02-echo-user-input.md](phase-02-echo-user-input.md)) | todo   |
-| 03 | stall-instrumentation                                                   | todo   |
+| 02 | cleanup-deadlock ([phase-02-cleanup-deadlock.md](phase-02-cleanup-deadlock.md)) | todo |
+| 03 | echo-user-input                                                         | todo   |
 | 04 | unlock-blocking-paths                                                   | todo   |
 | 05 | tmux-call-hardening                                                     | todo   |
+| 06 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 
-Phases 03–05 are named but **not yet drafted** — phase 03's findings may
-change the shape of 04 and 05, and the PE chose "these three, then reassess"
-at kick-off. Draft each with `/rexymcp:architect next` when its predecessor
-is `done`.
+Phases 03–06 are named but **not yet drafted**. Draft each with
+`/rexymcp:architect next` when its predecessor is `done`.
 
-Ordering rationale: the two TUI phases are independent of the hang work and
-of each other, so they go first and give the milestone early value while the
-stall work is still being characterised. Within the hang work,
-instrumentation precedes fixes so the next wedge is attributable even if the
-first fix misses it — mechanisms A and B are both confirmed defects worth
-removing regardless of which one fired in the observed incidents.
+**Ordering was revised 2026-07-25** after the hang's root cause was found (see
+Notes). The deadlock fix jumps to phase 02 — it is a live production defect that
+takes the daemon down every hour, and it is small and fully specified.
+Instrumentation, originally phase 03, drops to phase 06 and is rescoped: its
+purpose was to make an unattributable wedge attributable, and this one is now
+attributed. What remains for it is narrower — a watchdog for *future* wedges —
+and it should only be drafted if phases 04–05 leave a real gap.
 
 ## Notes
 
@@ -93,3 +96,29 @@ small and quote the target call sites verbatim.
 self-sabotage) is still **held for recurrence** per PE decision at the M4
 boundary. If an M5 phase reproduces it, that is the third occurrence and the
 fold lands in `WORKFLOW.md`.
+
+**Root cause found, plan revised (2026-07-25).** During the phase-01 end-to-end
+check the architect hit a wedged daemon, captured its state, and the PE captured
+gdb stacks. The hang is a **re-entrant acquisition of the global `SessionStore`
+mutex** in the `session-cleanup` supervisor (`src/daemon/mod.rs:693` and `:709`)
+— the guard from the first lock is still alive at the second, and
+`std::sync::Mutex` is not reentrant. It fires ≈60 minutes after every daemon
+start, deterministically, independent of load. Full evidence in
+`docs/design/daemon-stalls.md` § 1.5b–1.5c.
+
+Three consequences for this milestone:
+
+1. The fix became **phase 02** and jumped ahead of the remaining UX work. A
+   defect that takes the daemon down hourly outranks a transcript improvement.
+2. **Instrumentation dropped from 03 to 06 and was rescoped.** Its original
+   justification — "make the next wedge attributable" — is largely spent now
+   that this wedge is attributed. Draft it only if 04–05 leave a real gap.
+3. The "no blocking work under the lock" exit criterion was **widened to include
+   re-entrancy**. The actual bug had *no* blocking work between the two
+   acquisitions; a criterion phrased only around I/O and subprocesses would have
+   declared this code compliant.
+
+Worth recording as a general lesson: `clippy::await_holding_lock` gave false
+comfort here. It targets guards held across suspension points, and this bug has
+no `.await` between the two locks — so the lint gate was green for the entire
+life of the defect.
