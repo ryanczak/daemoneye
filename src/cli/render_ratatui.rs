@@ -511,10 +511,8 @@ fn render_prompt_region(
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
 
-    // Reserve 1 row for status bar, 2 for input box, rest for prompt.
-    let total = body.height;
-    if total < 4 {
-        // Too small — fall back to normal input region.
+    if area.height < 4 {
+        // Genuinely too small for prompt + box + status — existing fallback.
         let it: ratatui::text::Text<'_> = input_text
             .split('\n')
             .map(|l| Line::from(Span::raw(l)))
@@ -522,15 +520,28 @@ fn render_prompt_region(
         render_live_region(frame, area, &it, session_id, model, start_time, None);
         return;
     }
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
 
-    // ── Prompt text in the reserved spinner row ────────────────
+    // Rows the prompt, box and status bar are drawn into. When the reserved
+    // spinner row exists (height >= MIN_HEIGHT_FOR_SPINNER_ROW) the prompt
+    // takes it and the box keeps its stable row. When it does not, carve a
+    // one-row prompt strip off the top of `body` instead — the box shifts, but
+    // at this size a visible prompt matters more than a stable box.
+    let (prompt_rect, rest) = if spinner_rect.height > 0 {
+        (spinner_rect, body)
+    } else {
+        let split = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(body);
+        (split[0], split[1])
+    };
+
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(rest);
+
+    // ── Prompt text ────────────────────────────────────────────
     let prompt_line = Line::from(Span::styled(
         prompt,
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     ));
     let prompt_para = Paragraph::new(prompt_line);
-    frame.render_widget(prompt_para, spinner_rect);
+    frame.render_widget(prompt_para, prompt_rect);
 
     // ── Input box ──────────────────────────────────────────────
     let input_text_obj: ratatui::text::Text<'_> = input_text
@@ -1439,6 +1450,55 @@ mod tests {
         assert!(
             all_text.contains('┌'),
             "short region should still render the input box border, got: {}",
+            all_text
+        );
+    }
+
+    /// Bug-01-2 regression test: at region height 4, the spinner row collapses
+    /// to zero height, so the prompt must be rendered into a one-row strip
+    /// carved from the top of the body instead.
+    #[test]
+    fn prompt_region_at_height_four_does_not_lose_prompt() {
+        // Build a renderer with a viewport shorter than MIN_HEIGHT_FOR_SPINNER_ROW.
+        let backend = TestBackend::new(60, 10);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(4),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+        };
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        let input = InputLine::new();
+
+        renderer.draw_prompt("password:", &input, &status).unwrap();
+
+        // The prompt text must be visible in the buffer.
+        let buf = renderer.terminal.backend().buffer();
+        let all_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            all_text.contains("password:"),
+            "prompt region at height 4 must render the prompt text, got: {}",
             all_text
         );
     }
