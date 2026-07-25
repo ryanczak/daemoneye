@@ -42,26 +42,36 @@ the architect, not the executor.
 `docs/dev/milestones/M5-ux-stability/README.md`. Design + hang evidence log:
 `docs/design/daemon-stalls.md`.
 
-Five phases named:
+Phase order (**revised 2026-07-25** once the hang was root-caused):
 
-01 spinner-gutter (**drafted**) → 02 echo-user-input → 03 stall-instrumentation
-→ 04 unlock-blocking-paths → 05 tmux-call-hardening
+01 spinner-gutter (**done**) → 02 cleanup-deadlock (**drafted**) →
+03 echo-user-input → 04 unlock-blocking-paths → 05 tmux-call-hardening →
+06 stall-instrumentation (rescoped, draft only if 04–05 leave a gap)
 
-Only 01 and 02 are fully specified in the design doc. **Phases 02–05 are not
-yet drafted** — draft each with `/rexymcp:architect next` when its predecessor
-is `done`. Phase 03's instrumentation findings may reshape 04 and 05, and the
-PE chose "these three items, then reassess" at kick-off.
+**Hang status: ROOT-CAUSED and drafted as phase 02.** A re-entrant acquisition
+of the global `SessionStore` mutex in the `session-cleanup` supervisor
+(`src/daemon/mod.rs:693` and `:709`) strands the lock ≈60 minutes after every
+daemon start. Confirmed by a live capture (33/33 threads futex-parked, reactor
+gone, zero CPU over 12 h, 9 connections queued unaccepted) plus PE-captured gdb
+stacks showing one task in `lock_contended` with **no thread holding the mutex**
+— the holder was the same task, one frame up. `docs/design/daemon-stalls.md`
+§ 1.5b–1.5c.
 
-**Hang status (item 3).** Two mechanisms are **confirmed by code reading** and
-both can wedge the whole daemon: (A) the global `SessionStore` mutex is held
-across per-session disk writes *and* a blocking, timeout-free `tmux
-display-message` subprocess per chat pane (`webhook/process.rs:148,161` —
-`inject_ghost_event` takes the lock twice); (B) 49 blocking
-`std::process::Command` tmux calls run on tokio worker threads with only 4
-sites anywhere using `tokio::process`/`spawn_blocking`. **Which one fired in
-the two observed 2026-07-24 restarts is NOT established** — no live wedge was
-captured, and the running daemon inspected at scoping time was idle-healthy.
-That is why instrumentation (03) precedes the fixes (04, 05).
+The two mechanisms found earlier by code reading are still real and still worth
+fixing — `webhook/process.rs:148,161` (disk writes and a timeout-free tmux
+subprocess under the global lock) and the 49 blocking `std::process::Command`
+tmux calls on tokio workers — they are simply not what fired. They are phases
+04 and 05.
+
+**⚠ This is the second re-entrant `sessions` lock found in this codebase.** The
+first was fixed during the M4 phase-08 takeover ("held the `sessions` lock
+across `spawn_compaction`, which re-locks" — see the M4 entry below). Two
+independent occurrences of the same defect class, neither catchable by
+`clippy::await_holding_lock`, means the codebase needs a structural answer, not
+just two point fixes. Candidates worth weighing when phase 04 is drafted: a
+`with_sessions(|store| …)` accessor that makes the guard's lifetime explicit and
+un-nestable, or a debug-build re-entrancy assertion. Flagging for PE decision —
+not folding into a phase unilaterally.
 
 - **Calibration:** the M4 candidate fold (large additive blocks → executor
   self-sabotage, from phase-10b) remains **held for recurrence** per PE. If an
