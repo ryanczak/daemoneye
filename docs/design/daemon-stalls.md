@@ -136,15 +136,78 @@ own but **cannot** explain symptom (2), so it is at most a contributing
 factor. It is worth fixing (an idle-read timeout gives a much better error
 than a 5-minute freeze) but it is not the root cause.
 
+### 1.5b LIVE CAPTURE — 2026-07-25, pid 205685
+
+A wedged daemon was caught in the act during the phase-01 review, while trying
+to run the chat client for an end-to-end check. This is the first live capture;
+§1.2's "no live wedge was captured" no longer holds.
+
+Observed state, daemon pid 205685, **12 h 25 m** after start:
+
+| Probe | Value | Reading |
+|---|---|---|
+| `connect()` to the socket | `ECONNREFUSED` | new clients cannot attach |
+| `ss -lx` | `u_str LISTEN 9 4096` | **9 connections queued, never accepted** |
+| established connections | 0 | nothing is being served |
+| threads in `epoll_wait` | **0** | the tokio reactor is not polling |
+| threads in `futex_wait` | **33 of 33** | every thread blocked on a lock |
+| CPU time consumed | **00:00:00** | fully blocked — not a livelock, not a spin |
+| last `daemon.log` line | 7 s after startup | wedged almost immediately |
+
+The same daemon had **one** thread in `epoll_wait` when probed earlier in the
+session (§1.2). By the time of this capture that thread was gone. A tokio
+runtime whose reactor thread is itself parked on a futex cannot accept, cannot
+time out, and cannot log — which is exactly what the queue depth of 9 and the
+12-hour logging silence show.
+
+**Zero CPU seconds over 12 hours is the decisive number.** It rules out a busy
+loop, a retry storm, and a slow-but-progressing operation. Every thread is
+waiting on a lock that will never be released. This is a deadlock, not a stall.
+
+The last line written before the silence was:
+
+```
+2026-07-25T06:20:33Z DEBUG starting new connection 'Some("brain")'
+```
+
+That is the **third consecutive restart** ending on that same line (§1.2 records
+the other two). The wedge therefore correlates with the first outbound AI HTTP
+connection, roughly 7 seconds after startup — not with sustained load, not with
+a rare alert, and not with anything the user did.
+
+**What this does and does not settle.** It confirms the failure *mode*
+(whole-runtime futex deadlock) and narrows the *trigger* (first AI request). It
+does **not** by itself name the lock. Stack capture was attempted and blocked:
+`ptrace_scope=1` permits attaching only to descendants, and no passwordless
+`sudo` is available, so `gdb -p` / `eu-stack` could not run against the live
+process. Naming the exact lock still needs either
+
+- `sudo gdb -p <pid> -batch -ex "thread apply all bt"` against a live wedge, or
+- the phase-03 in-process instrumentation, which is the reason that phase exists.
+
+**Consequence for the phase plan.** Mechanism C (SSE stall, §1.5) is now
+effectively excluded as the *primary* cause: a stalled HTTP read blocks one task,
+not the reactor thread, and would not park all 33 threads at zero CPU. The
+correlation with the first AI call points at what happens *around* that call —
+a lock acquired on the request path and held across it — which is mechanism A.
+Phase 03 should instrument with this specific shape in mind: log lock
+acquisition/release around the AI request path with holder identity, so the next
+wedge names its own culprit.
+
 ### 1.6 Conclusion and confidence
 
 - **Confirmed by code reading:** mechanisms A and B are both present and both
   can produce a daemon-wide wedge. Neither is speculative — the lock is held
   across blocking work at named lines, and the blocking-subprocess-in-async
   count is measured.
-- **Not confirmed:** which one actually fired in the two observed restarts.
-  No live wedge was captured, so attributing the specific incident would be a
-  guess.
+- **Confirmed by live capture (§1.5b, 2026-07-25):** the failure mode is a
+  whole-runtime deadlock — 33/33 threads parked on futexes, reactor gone, zero
+  CPU consumed, 9 connections queued unaccepted. The trigger correlates with the
+  first outbound AI request (three restarts, same final log line).
+- **Still not confirmed:** *which lock*. Stack capture was blocked by
+  `ptrace_scope=1` with no passwordless sudo. Mechanism C is now excluded as the
+  primary cause; A is the leading candidate, but "leading candidate" is not
+  "identified."
 
 This ordering drives the phase plan: **instrument first** (phase 03) so the
 next wedge identifies itself, then fix the confirmed hazards (phases 04–05)
