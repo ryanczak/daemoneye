@@ -175,24 +175,84 @@ the other two). The wedge therefore correlates with the first outbound AI HTTP
 connection, roughly 7 seconds after startup — not with sustained load, not with
 a rare alert, and not with anything the user did.
 
-**What this does and does not settle.** It confirms the failure *mode*
-(whole-runtime futex deadlock) and narrows the *trigger* (first AI request). It
-does **not** by itself name the lock. Stack capture was attempted and blocked:
-`ptrace_scope=1` permits attaching only to descendants, and no passwordless
-`sudo` is available, so `gdb -p` / `eu-stack` could not run against the live
-process. Naming the exact lock still needs either
+### 1.5c ROOT CAUSE — re-entrant lock in the session-cleanup sweep
 
-- `sudo gdb -p <pid> -batch -ex "thread apply all bt"` against a live wedge, or
-- the phase-03 in-process instrumentation, which is the reason that phase exists.
+The PE captured stacks with `sudo gdb -p 205685 -batch -ex "thread apply all
+bt 15"` (592 lines). Across all 33 threads there are exactly **two** frames of
+daemoneye code:
 
-**Consequence for the phase plan.** Mechanism C (SSE stall, §1.5) is now
-effectively excluded as the *primary* cause: a stalled HTTP read blocks one task,
-not the reactor thread, and would not park all 33 threads at zero CPU. The
-correlation with the first AI call points at what happens *around* that call —
-a lock acquired on the request path and held across it — which is mechanism A.
-Phase 03 should instrument with this specific shape in mind: log lock
-acquisition/release around the AI request path with holder identity, so the next
-wedge names its own culprit.
+```
+Thread 1  "daemoneye"      #5 daemoneye::main            → Runtime::block_on (normal)
+Thread 20 "tokio-rt-worker" #1 <std::sys::sync::mutex::futex::Mutex>::lock_contended
+                            #2 daemoneye::daemon::run_daemon::{{closure}}::{{closure}}::{{closure}}
+                            #3 tokio::runtime::task::harness::Harness<T,S>::poll
+```
+
+Every other thread is a parked worker in `Condvar::wait`. **No thread holds the
+mutex** — which is the tell. The holder is not another thread; it is the *same
+task*, one frame up its own stack.
+
+`src/daemon/mod.rs:683-723`, the `session-cleanup` supervisor:
+
+```rust
+loop {
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    let now = Instant::now();
+    let mut store = sessions_cleanup.lock().unwrap_or_log();   // ← 693: guard bound
+    store.retain(|_, v| { … });
+
+    sweep_counter = sweep_counter.wrapping_add(1);
+    if sweep_counter.is_multiple_of(60) {
+        …
+        let active_ids: std::collections::HashSet<String> = sessions_cleanup
+            .lock()                                            // ← 709: SAME mutex,
+            .unwrap_or_log()                                   //   SAME thread,
+            .keys().cloned().collect();                        //   guard still alive
+        …
+    }
+}                                                              // ← 720: `store` drops here
+```
+
+`store` is a `let` binding, not a temporary, and `MutexGuard` implements `Drop`,
+so it lives to the end of the loop body at line 720. Line 709 re-locks the same
+mutex while line 693's guard is still held. **`std::sync::Mutex` is not
+reentrant** — the second lock blocks forever, on a lock the same task will never
+release.
+
+Confirmed by inspection:
+
+- `sessions_cleanup_sup = Arc::clone(&sessions)` (`mod.rs:682`) — this is the
+  global `SessionStore`, the one every IPC handler locks.
+- There is **no `.await`** between the two locks. This is why
+  `clippy::await_holding_lock` never fired and the lint gate stayed green: that
+  lint targets guards held across suspension points, not a plain double-lock.
+
+**The trigger is uptime, not load, and not the AI.** `sweep_counter` increments
+once per 60-second iteration; the inner block runs when
+`sweep_counter % 60 == 0`, i.e. the 60th iteration — **≈60 minutes after daemon
+start, deterministically, every time.** Nothing the user does affects it. The
+earlier suspicion (§1.5b, since corrected) that the wedge correlated with the
+first outbound AI request was wrong: `starting new connection 'brain'` is simply
+the last thing an otherwise-idle daemon logs before the one-hour mark, and it
+appears in all three restart logs for that reason alone.
+
+Once the guard is stranded, **every** path that locks `sessions` blocks forever
+— which is precisely the three reported symptoms at once: a chat turn freezes
+mid-stream, new clients get nothing, and anything touching a tool call hangs.
+The 9 unaccepted connections and the 12 hours of zero CPU follow directly.
+
+**This is a mechanism-A defect** (§1.3) — a `SessionStore` critical section
+doing more than it should — but a purer form than the ones found by code
+reading: no blocking I/O, no subprocess, just the same lock taken twice. The
+milestone's exit criterion "no `SessionStore` critical section performs blocking
+work" must therefore be widened to include **re-entrant acquisition**, which no
+existing lint catches.
+
+**Consequence for the phase plan.** Mechanism C (SSE stall, §1.5) is excluded as
+the primary cause. Phase 03's original purpose — instrument so the next wedge
+identifies itself — is now partly spent: this wedge has been identified. The fix
+is a few lines (reuse the `store` guard already held, or scope it so it drops
+before the sweep). That should lead M5, ahead of the broader hardening work.
 
 ### 1.6 Conclusion and confidence
 
@@ -200,14 +260,18 @@ wedge names its own culprit.
   can produce a daemon-wide wedge. Neither is speculative — the lock is held
   across blocking work at named lines, and the blocking-subprocess-in-async
   count is measured.
-- **Confirmed by live capture (§1.5b, 2026-07-25):** the failure mode is a
-  whole-runtime deadlock — 33/33 threads parked on futexes, reactor gone, zero
-  CPU consumed, 9 connections queued unaccepted. The trigger correlates with the
-  first outbound AI request (three restarts, same final log line).
-- **Still not confirmed:** *which lock*. Stack capture was blocked by
-  `ptrace_scope=1` with no passwordless sudo. Mechanism C is now excluded as the
-  primary cause; A is the leading candidate, but "leading candidate" is not
-  "identified."
+- **ROOT CAUSE IDENTIFIED (§1.5c, 2026-07-25):** a re-entrant acquisition of the
+  global `SessionStore` mutex in the `session-cleanup` supervisor
+  (`src/daemon/mod.rs:693` and `:709`). The guard from 693 is still alive at 709;
+  `std::sync::Mutex` is not reentrant, so the task self-deadlocks and strands the
+  lock for every other path. Fires deterministically ≈60 minutes after daemon
+  start. Proven by gdb stacks (one task in `lock_contended`, no thread holding
+  the mutex) plus code inspection.
+- **Corrected:** the earlier reading that the wedge correlated with the first AI
+  request was wrong — that log line is coincidence, not cause.
+- **Unchanged:** mechanisms A and B remain real defects worth fixing (blocking
+  I/O and subprocess spawns under the same lock); they are simply not what fired
+  here. Mechanism C is excluded.
 
 This ordering drives the phase plan: **instrument first** (phase 03) so the
 next wedge identifies itself, then fix the confirmed hazards (phases 04–05)
