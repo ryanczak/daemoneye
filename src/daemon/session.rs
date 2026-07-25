@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::ai::Message;
+use crate::util::UnpoisonExt;
 
 /// Metadata for a background tmux window spawned during a chat session.
 pub struct BgWindowInfo {
@@ -377,6 +378,41 @@ impl SessionEntry {
             crate::tmux::stop_pipe_pane(pane_id);
         }
     }
+}
+
+/// One session-cleanup pass: evict sessions idle longer than `idle_after` and
+/// report which sessions remain.
+///
+/// The lock is acquired **once** and released before this returns. Evicted
+/// entries are handed back by value so the caller can run their teardown —
+/// which spawns tmux subprocesses — outside the critical section.
+///
+/// Do not add a second `sessions.lock()` to this function or to its caller's
+/// iteration. `std::sync::Mutex` is not reentrant; a second acquisition while
+/// the first guard is alive deadlocks the whole daemon, because every IPC
+/// handler locks this same store. See `docs/design/daemon-stalls.md` § 1.5c.
+pub fn cleanup_pass(
+    sessions: &SessionStore,
+    now: std::time::Instant,
+    idle_after: std::time::Duration,
+) -> (Vec<SessionEntry>, std::collections::HashSet<String>) {
+    let mut store = sessions.lock().unwrap_or_log();
+
+    let expired: Vec<String> = store
+        .iter()
+        .filter(|(_, v)| now.duration_since(v.last_accessed()) >= idle_after)
+        .map(|(k, _)| k.clone())
+        .collect();
+
+    let mut evicted = Vec::with_capacity(expired.len());
+    for key in expired {
+        if let Some(entry) = store.remove(&key) {
+            evicted.push(entry);
+        }
+    }
+
+    let active: std::collections::HashSet<String> = store.keys().cloned().collect();
+    (evicted, active)
 }
 
 #[cfg(test)]
@@ -1047,5 +1083,83 @@ mod tests {
                 "Expected repaired messages to have no tool_results"
             );
         }
+    }
+
+    fn entry_with(last_accessed: Instant) -> SessionEntry {
+        SessionEntry {
+            messages: vec![],
+            last_accessed,
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            cost_usd: 0.0,
+            loaded_tools: HashSet::new(),
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+        }
+    }
+
+    #[test]
+    fn cleanup_pass_releases_the_lock() {
+        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let idle = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(3600))
+            .unwrap_or(Instant::now());
+        sessions
+            .lock()
+            .unwrap()
+            .insert("s1".to_string(), entry_with(idle));
+
+        let now = Instant::now();
+        let (_evicted, _active) =
+            cleanup_pass(&sessions, now, std::time::Duration::from_secs(1800));
+
+        // Guard from cleanup_pass is dropped; try_lock must succeed.
+        assert!(sessions.try_lock().is_ok());
+    }
+
+    #[test]
+    fn cleanup_pass_evicts_idle_and_keeps_active() {
+        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let idle = Instant::now()
+            .checked_sub(std::time::Duration::from_secs(3600))
+            .unwrap_or(Instant::now());
+        let active = Instant::now();
+
+        let mut store = sessions.lock().unwrap();
+        store.insert("idle".to_string(), entry_with(idle));
+        store.insert("active".to_string(), entry_with(active));
+        drop(store);
+
+        let now = Instant::now();
+        let (evicted, active_ids) =
+            cleanup_pass(&sessions, now, std::time::Duration::from_secs(1800));
+
+        assert_eq!(evicted.len(), 1);
+        assert!(active_ids.contains("active"));
+        assert!(!active_ids.contains("idle"));
+        assert_eq!(sessions.lock().unwrap().len(), 1);
     }
 }

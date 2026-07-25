@@ -689,31 +689,27 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 let mut sweep_counter = 0u32;
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
-                    let now = Instant::now();
-                    let mut store = sessions_cleanup.lock().unwrap_or_log();
-                    store.retain(|_, v| {
-                        if now.duration_since(v.last_accessed()) >= Duration::from_secs(1800) {
-                            v.cleanup_bg_windows();
-                            false
-                        } else {
-                            true
-                        }
-                    });
+
+                    // Locked phase: evict and snapshot. The guard is released
+                    // when `cleanup_pass` returns.
+                    let (evicted, active_ids) = crate::daemon::session::cleanup_pass(
+                        &sessions_cleanup,
+                        Instant::now(),
+                        Duration::from_secs(1800),
+                    );
+
+                    // Unlocked phase: everything blocking happens out here.
+                    for entry in &evicted {
+                        entry.cleanup_bg_windows();
+                    }
 
                     sweep_counter = sweep_counter.wrapping_add(1);
                     if sweep_counter.is_multiple_of(60) {
-                        let retention_days = startup_config.events.retention_days;
-                        crate::daemon::utils::sweep_event_segments(retention_days);
-
-                        let archive_retention = startup_config.sessions.archive_retention_days;
-                        let active_ids: std::collections::HashSet<String> = sessions_cleanup
-                            .lock()
-                            .unwrap_or_log()
-                            .keys()
-                            .cloned()
-                            .collect();
+                        crate::daemon::utils::sweep_event_segments(
+                            startup_config.events.retention_days,
+                        );
                         crate::daemon::utils::sweep_session_archives(
-                            archive_retention,
+                            startup_config.sessions.archive_retention_days,
                             &active_ids,
                         );
                     }

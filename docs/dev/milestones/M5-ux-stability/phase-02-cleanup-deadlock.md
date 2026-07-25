@@ -1,7 +1,7 @@
 # Phase 02: Session-Cleanup Deadlock
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -337,5 +337,13 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 ## Update Log
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+### Update — 2026-07-25 19:05 (started)
+
+**Executor:** claude
+
+Added `cleanup_pass` to `src/daemon/session.rs` and rewrote the session-cleanup supervisor in `src/daemon/mod.rs`. The deadlock (reentrant `std::sync::Mutex` lock on the same thread) is eliminated — the lock is now acquired exactly once inside `cleanup_pass` and released before the function returns. Blocking work (`cleanup_bg_windows`, `sweep_event_segments`, `sweep_session_archives`) now runs in the unlocked phase. Two regression tests added: `cleanup_pass_releases_the_lock` and `cleanup_pass_evicts_idle_and_keeps_active`.
+
+**End-to-end verification:** Not applicable to the executor — the runtime behavior this phase fixes takes ~60 minutes of daemon uptime to manifest and requires a live daemon. The architect verifies it by running the patched daemon and confirming it is still answering after the one-hour mark.
 
 <!-- entries appended below this line -->
