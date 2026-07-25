@@ -1,7 +1,7 @@
 # Phase 01: Spinner Row
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** in-progress  <!-- bounced 2026-07-25: bug-01-1 (major), bug-01-2 (minor) -->
 **Depends on:** none
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -494,3 +494,63 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 4aaf8c647375a381bfdf92bdc9f32ce4d3ebbfb4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-07-25 (bounced)
+
+- **Verdict:** bounced
+- **Bugs filed:** `bugs/bug-01-1.md` (major — E2E verification not performed and
+  misreported), `bugs/bug-01-2.md` (minor — prompt invisible at region height 4)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Gates (reviewer re-run, all green):** `cargo fmt --all --check` clean;
+  `cargo build` clean; `cargo clippy --all-targets --all-features -- -D warnings`
+  exits zero; `cargo test` 905 unit + 27 integration passing, 0 failed.
+
+#### Notes for executor — read before re-dispatch
+
+**The `render_prompt_region` deviation is APPROVED. Do not revert it.** The
+executor flagged it as a deviation from spec task 4, and it was — but the
+deviation was *forced by this doc's own acceptance criteria*, not a mistake.
+
+Spec task 4 said to keep the three-way split and leave the spinner rect blank.
+The test plan simultaneously required `input_box_row_is_stable_across_draw_modes`
+— the box's top border on the same row in normal, spinner, **and** prompt mode.
+Those two requirements contradict each other: a prompt rendered above the box
+necessarily pushes the box down, so keeping the three-way split would have made
+the required test fail. Moving the prompt into the reserved row is the only
+layout that satisfies the exit criterion. Reading the contradiction and
+resolving it in favour of the acceptance criterion was the right call.
+
+Two consequences worth keeping:
+
+- It also fixes a latent defect. The old prompt-mode box was
+  `Constraint::Length(2)` — a bordered block two rows tall has **zero** interior
+  rows, so typed input was invisible in prompt mode. The new layout gives the
+  box two interior rows.
+- It is the direct cause of bug-01-2, which is a narrow edge case in the same
+  code, not a reason to undo the refactor. Fix it as bug-01-2 describes.
+
+**Architect calibration (my error, not the executor's):** spec task 4 pinned an
+implementation (the three-way split) that was incompatible with the behavior
+pinned in the test plan. Per `WORKFLOW.md` § "Specs pin behavior, not
+rendering", task 4 should have pinned only "the box's top row is identical in
+all three modes" and left the layout to the executor. Held as one occurrence.
+
+**Scope for the re-dispatch:** fix bug-01-1 and bug-01-2 only. Everything else
+in this phase is accepted as-is.
+
+#### Commit-hygiene warning (architect's fault, recorded for calibration)
+
+The executor's commit `4aaf8c6` ("fix: move streaming spinner out of input box
+into reserved row") also contains ~700 lines of unrelated architect docs — the
+project `README.md` rewrite, `docs/design/daemon-stalls.md`, `docs/dev/NEXT.md`,
+and the M5 milestone README and phase doc. That violates the DoD's "one
+conventional commit per logical change."
+
+The cause is upstream of the executor: those files were **uncommitted in the
+working tree when the phase was dispatched**, so Pre-flight step 4 ("confirm the
+repo is on a clean branch with no uncommitted changes") was already false at
+dispatch. The executor should arguably have stopped; the architect should
+certainly not have dispatched onto a dirty tree.
+
+Not filed as a bug — the content is all correct and rewriting the commit buys
+nothing. **Process fix: commit architect docs before every `/rexymcp:dispatch`.**

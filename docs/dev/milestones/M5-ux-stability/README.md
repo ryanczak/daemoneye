@@ -52,7 +52,7 @@ split) and the two TUI defect specs every phase references.
 
 | #  | Phase                                                                  | Status |
 |----|------------------------------------------------------------------------|--------|
-| 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | review      |
+| 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | in-progress (bounced: [bug-01-1](bugs/bug-01-1.md), [bug-01-2](bugs/bug-01-2.md)) |
 | 02 | echo-user-input ([phase-02-echo-user-input.md](phase-02-echo-user-input.md)) | todo   |
 | 03 | stall-instrumentation                                                   | todo   |
 | 04 | unlock-blocking-paths                                                   | todo   |
