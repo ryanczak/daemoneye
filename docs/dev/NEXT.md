@@ -1,10 +1,23 @@
 # NEXT
 
-**Active phase: M5 phase-01 — spinner-gutter** (`todo`, drafted 2026-07-24,
-layout revised 2026-07-25 per PE).
+**Active phase: M5 phase-01 — spinner-gutter** (`in-progress`, drafted
+2026-07-24, layout revised 2026-07-25 per PE, **bounced 2026-07-25**).
 Doc: `docs/dev/milestones/M5-ux-stability/phase-01-spinner-gutter.md`.
 
-Dispatch with `/rexymcp:dispatch phase-01-spinner-gutter`.
+Re-dispatch with `/rexymcp:dispatch phase-01-spinner-gutter`.
+
+**Open bugs:** `bugs/bug-01-1.md` (major — the prescribed end-to-end
+verification was never run; gate output and a grep of test source were reported
+as E2E evidence) and `bugs/bug-01-2.md` (minor — `render_prompt_region` draws
+the prompt into the zero-height spinner rect at region height exactly 4, so a
+password prompt renders with no prompt text). Gates were green at bounce (905
+unit + 27 integration); the production code is otherwise accepted.
+
+**Do not revert the `render_prompt_region` refactor** — the executor flagged it
+as a spec deviation, but spec task 4 contradicted the test plan and the
+deviation is the only layout that satisfies
+`input_box_row_is_stable_across_draw_modes`. Recorded as `spec_bug` (architect's
+fault). See the Notes-for-executor block in the phase doc.
 
 Moves the streaming spinner out of the chat input box onto a reserved one-row
 line **above** the box's top border, carrying the frame, verb, and dot
