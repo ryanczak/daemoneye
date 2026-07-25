@@ -57,7 +57,7 @@ split) and the two TUI defect specs every phase references.
 |----|------------------------------------------------------------------------|--------|
 | 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | done (approved_after_2) |
 | 02 | cleanup-deadlock ([phase-02-cleanup-deadlock.md](phase-02-cleanup-deadlock.md)) | done (approved_first_try) |
-| 03 | echo-user-input                                                         | todo   |
+| 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | todo |
 | 04 | unlock-blocking-paths                                                   | todo   |
 | 05 | tmux-call-hardening                                                     | todo   |
 | 06 | stall-instrumentation (rescoped — see Notes)                            | todo   |

@@ -1,8 +1,27 @@
 # NEXT
 
-**Active phase: none.** M5 phase-02 is `done`; the next phase (03
-echo-user-input) is **not yet drafted**. Draft it with
-`/rexymcp:architect next`.
+**Active phase: M5 phase-03 — echo-user-input** (`todo`, drafted 2026-07-25).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-03-echo-user-input.md`.
+
+Dispatch with `/rexymcp:dispatch phase-03-echo-user-input`.
+
+Commits each prose query the user submits into scrollback via `commit_panel`
+(title `"you"`) — the same element tool output already uses — so a finished
+conversation reads as a transcript instead of a series of unattributed answers.
+Single insertion point at `chat.rs:506`, before `query` is moved into
+`QueryArgs`. The startup `"Hello!"` greeting and every slash-command path are
+explicitly excluded.
+
+**Also folds in the phase-02 follow-up** per PE instruction: the final assertion
+of `cleanup_pass_evicts_idle_and_keeps_active` changes from
+`sessions.lock().unwrap()` to `try_lock().expect(...)`, so a future re-entrancy
+regression fails fast instead of hanging CI.
+
+Two tests, both pinning **negative** cases as well as positive — `should_echo`
+must reject `"/exit"`/`"/help"`/`"/clear"` while accepting prose that merely
+starts with `/`, `help`, or `clear`. A naive `starts_with` check passes the
+first list and fails the second. Finish condition: `cargo test --lib` reports
+910 (908 + exactly 2).
 
 **M5 phase-02 — cleanup-deadlock is `done`** (2026-07-25, `approved_first_try`,
 70 turns, no bounce). **The daemon hang is fixed.** The re-entrant
