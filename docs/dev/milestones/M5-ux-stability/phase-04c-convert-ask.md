@@ -1,7 +1,7 @@
 # Phase 04c: Convert `ask.rs` Lock Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04b (`handlers.rs` converted) — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -495,3 +495,86 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b05475955dc020f2b0fc79ee74b7f4a09fd74bd9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification
+
+> Not applicable — behavior-preserving refactor of internal lock acquisition.
+
+Recorded by the architect at review: the server-authored completion entry does
+not emit this heading, and the executor no longer owns the Update Log tail, so
+the phase doc's E2E instruction could not be satisfied by the executor. See the
+Calibration note in the verdict below.
+
+The architect-side exercise of the converted `ask` path against the real binary
+was **not** performed — see the verdict's Scope deviations.
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none in the code. One review obligation left open: the
+  phase doc's End-to-end section assigns the architect a real-binary exercise of
+  the converted `ask` path. Not performed — the running daemon is built from
+  `~/.cargo/bin/daemoneye` (17:59) which **predates** this commit (18:56), and
+  exercising the new code requires displacing a daemon the user had just asked to
+  be restarted. All eight of the phase's own acceptance criteria were verified
+  independently, and the failure mode this exercise guards against (a hang) is
+  also covered by the terminating `cargo test` run.
+- **Calibration:** the server-authored completion entry does not emit the
+  "End-to-end verification" heading that phase docs require, and the executor no
+  longer owns that section. Every future phase will hit this. **One occurrence —
+  data, not a fold.** If it recurs, the fix belongs in the server's completion
+  template, not in the phase docs. Do not restate the E2E instruction in phase
+  docs as a workaround.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 914 lib-unit passed / 0 failed; 27 integration passed / 2 ignored
+              run terminated normally (no hang)
+```
+
+**Acceptance criteria, re-verified:**
+
+| Criterion | Result |
+|---|---|
+| `sessions.lock()` in `ask.rs` | **0** ✓ |
+| `with_sessions(` in `ask.rs` | **11** ✓ (13 sites − the 3→1 collapse) |
+| `sessions.lock()` in `executor/mod.rs` | **10**, unchanged ✓ |
+| `pub type SessionStore` still an alias | `session.rs:117` ✓ |
+| `cargo test --lib` count | **914**, unchanged ✓ |
+
+**Spec conformance checked by reading the diff, not the summary:**
+
+- Spec 2's two must-preserve details both hold: `tool_policy`/`agent` are `None`
+  for non-ghost sessions (`if ghost { … } else { (None, None) }`), and
+  `parent_job_id` is read **regardless** of `is_ghost` — computed outside that
+  branch, with no ghost check added.
+- The `is_ghost_session` shadowing is preserved. `build_memory_namespaces`
+  receives the value bound before the collapse; `cost_attribution` receives the
+  shadowed one. Not unified.
+- `build_memory_namespaces` sits outside every `with_sessions` closure, so no
+  closure encloses its unconverted raw lock — the § 3.5 hazard is avoided and the
+  `ghost_turn_limit` closure ends before it.
+- `this_turn_count` correctly changed `.and_then` → `.map`: `with_sessions`
+  returns `usize` rather than `Option<usize>`, so `map` is required for the outer
+  type to stay `Option<usize>`. `unwrap_or(1)` and the entry-absent `1` are
+  unchanged.
+- `ghost_turn_limit`'s `?`-semantics verified independently, not just accepted
+  from the Update Log: the inner closure's return type is `Option<usize>`, so
+  `store.get(id)?` returns from the *closure*; `with_sessions` passes that
+  `Option` out and `and_then` flattens it. A session id absent from the store
+  still yields `None`, not the ceiling.
+- The poison-behavior change (`.ok()?` bail → `unwrap_or_log()` recover) was
+  **anticipated by the spec** at doc lines 98–101 and matches the `CLAUDE.md`
+  invariant. Not a deviation.
+- No forbidden idioms in the added lines: no `unwrap()`, `expect()`, `panic!`,
+  `dbg!`, `println!`, `unsafe`, `#[allow]`, `#[ignore]`, `TODO`/`FIXME`/`XXX`.
+- Scope held: three files touched — `ask.rs`, this phase doc, and the M5 README
+  phase row. `docs/architecture.md` untouched. One conventional commit
+  (`refactor(ask): …`) whose body explains *why*.
+- No new tests, as the Test plan required. The pinned 914 is the regression net.

@@ -1,9 +1,207 @@
 # NEXT
 
-**Active phase: M5 phase-04c — convert-ask** (`todo`, drafted 2026-07-25).
+**Active phase: M5 phase-04d — convert-executor-dispatch** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04d-convert-executor-dispatch.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04d-convert-executor-dispatch`.
+
+Converts the 10 `sessions.lock()` sites in `src/daemon/executor/mod.rs` and
+**fixes the mechanism-A defect the 04c hazard note pointed at**:
+`build_memory_namespaces` (`executor/mod.rs:88`) holds the global session lock
+across `crate::agents::load_agent()`, a config-file read. Task 1 hoists the read
+out while keeping the signature, so `ask.rs:566` — the other caller — gets the
+fix without being touched.
+
+Finish condition: **6 `with_sessions` calls for 10 former sites**, zero
+`sessions.lock()` left in the file, and 915 lib-unit tests (914 + one).
+
+The five sites at 130/150/169/205/207 are five separate acquisitions reading
+**the same entry** within ~80 lines at the top of `execute_tool_call`. They
+collapse into one `DispatchSnapshot` read — the same collapse 04b did at 166/173
+and 04c did at 579/590/600, but larger. The spec gives the exact target code,
+including the one subtlety that will bite a mechanical rewrite:
+`effective_parent_job_id` must stay `Some(sid)` **only when `ghost_config` is
+present**, because the original `.map(|gc| (gc.spawn_depth, Some(sid…)))` coupled
+both to `gc` being `Some`. Getting it wrong makes a non-ghost session report a
+parent job id.
+
+**⚠ One site cannot be converted mechanically.** `find_best_target_pane`
+(`executor/mod.rs:922`) holds the sessions guard across
+`cache.panes.read()` — a second lock inside the first — and contains
+`return Ok(dtp.clone())`. Wrapping that in a `with_sessions` closure makes the
+`return` exit the *closure*, not the function: either a compile error or silently
+changed control flow. The spec pins extract-then-act with the exact target code.
+Both defects die in the same rewrite.
+
+**Hazard discipline carried forward.** Per `daemon-stalls.md` § 3.5, task 6
+tabulates every store-touching callee in this file's region that 04d does **not**
+convert — `knowledge/mod.rs:38`, `knowledge/pane.rs:19,52`,
+`foreground.rs:170,199,232,885` — so no closure encloses a raw `.lock()`. The
+re-entrancy assertion cannot catch that shape; it hangs instead of panicking, so
+04d's acceptance criteria include "`cargo test` completes without hanging."
+
+**M5 phase-04c — convert-ask is `done`** (2026-07-26, `approved_first_try`, no
+bounces, commit `b054759`). All 13 `sessions.lock()` sites in `ask.rs` now go
+through `with_sessions` — 0 raw locks, 11 calls, with 579/590/600 collapsed into
+one acquisition. Gates re-run independently at review: fmt/build/clippy exit 0,
+914 lib-unit + 27 integration green, and **the run terminated** (the failure mode
+this milestone's conversion phases carry is a hang, not a red gate).
+
+Spec conformance was checked by reading the diff rather than the executor's
+summary. Both of spec 2's must-preserve details hold: `tool_policy`/`agent` are
+`None` for non-ghost sessions, and `parent_job_id` is read regardless of
+`is_ghost` with no ghost check added. The `is_ghost_session` shadowing survives —
+`build_memory_namespaces` gets the pre-collapse value, `cost_attribution` the
+shadowed one. `build_memory_namespaces` sits outside every closure, so the § 3.5
+hazard is avoided. `this_turn_count`'s `.and_then` → `.map` change is correct and
+required, since `with_sessions` returns `usize` rather than `Option<usize>`.
+
+The poison-semantics change (`.ok()?` bail → `unwrap_or_log()` recover) was
+anticipated by the spec at doc lines 98–101 and matches the `CLAUDE.md`
+invariant — not a deviation.
+
+**Two open items recorded in the 04c verdict, neither blocking:**
+
+1. **The architect-side real-binary exercise was not performed.** 04c's E2E
+   section assigns it to the architect. The running daemon is built from
+   `~/.cargo/bin/daemoneye` (17:59) which predates commit `b054759` (18:56), so
+   exercising the converted path means displacing a daemon that was just
+   restarted. Worth doing before 04d lands, since 04d touches the same dispatch
+   path.
+2. **Calibration (one occurrence — data, not a fold):** the server-authored
+   completion entry does not emit the "End-to-end verification" heading that
+   phase docs require, and the executor no longer owns the Update Log tail
+   (M27 phase-03). Every future phase hits this. If it recurs, the fix belongs in
+   the server's completion template — **not** in the phase docs, and not by
+   restating the instruction as a workaround.
+
+## The 04d tail is now five phases, not three
+
+A site-by-site survey replaced the earlier "04d×3, ~60 sites" estimate. Actual
+count is **65 production sites** in six groups; the newtype phase moved from
+**04e → 04j** (undrafted and unstarted, so the renumbering is free):
+
+| Phase | Files | Sites |
+|---|---|---|
+| 04d (drafted) | `executor/mod.rs` | 10 |
+| 04e | `executor/foreground.rs` + `executor/knowledge/*` | 8 |
+| 04f | `context/background.rs` | 13 |
+| 04g | `ghost.rs` + `briefing.rs` | 12 |
+| 04h | `background/{run,respawn,helpers,gc}.rs` | 9 |
+| 04i | `stream.rs` + `hook.rs` | 11 |
+| — | `webhook/process.rs` (2) belongs to **phase 05** | — |
+
+**`src/daemon/session.rs` contributes zero production sites**, despite four
+`sessions.lock()` greps: `:432` is `with_sessions`'s own acquisition (correct and
+permanent), `:443` is a doc comment, and `:1204`/`:1226` are tests. Nobody needs
+to re-derive this.
+
+**Sizing:** at 04b's measured ~6 turns/site plus fixed overhead, 04d's 10 sites
+plus the hoist and one test should land near 70–90 turns, against 95 for 04b's
+15 sites and 46/50/70 for the three `size=s` phases before it. Every remaining
+group is 8–13 sites, comfortably inside one session.
+
+---
+
+## Previously active: M5 phase-04c — convert-ask (`review`)
+
 Doc: `docs/dev/milestones/M5-ux-stability/phase-04c-convert-ask.md`.
 
-Dispatch with `/rexymcp:dispatch phase-04c-convert-ask`.
+---
+
+## Drafted 2026-07-26 and dispatchable now: M5 phases 08–11 (instance hardening)
+
+**Phase 08 — instance-lock is the one to dispatch first, and it does not depend
+on the 04x sequence.** Dispatch with `/rexymcp:dispatch phase-08-instance-lock`.
+
+These four phases came out of a live incident, not a survey. On 2026-07-25 two
+daemons ran concurrently against one `~/.daemoneye/` tree for ~64 s, served two
+different chat sessions, and the second unlinked the first's socket to bind its
+own. Design doc: `docs/design/daemon-instance.md` (§ 1 has the timeline).
+
+| Phase | Doc | Delivers |
+|---|---|---|
+| 08 instance-lock | `phase-08-instance-lock.md` | `flock` on `var/run/daemoneye.pid` acquired before every side effect; socket unlink licensed by ownership; identity-checked teardown |
+| 09 fatal-bind-honest-liveness | `phase-09-fatal-bind-honest-liveness.md` | webhook bind fatal at startup; `daemon_is_running` → `DaemonLiveness` 4-case enum; `ping`/`status` say "wedged" vs "dead" |
+| 10 lifecycle-observability | `phase-10-lifecycle-observability.md` | `pid` on every event record; logger-init failure surfaced; startup identity line |
+| 11 fork-readiness-handshake | `phase-11-fork-readiness-handshake.md` | parent reports the child's real startup outcome instead of unconditional success |
+
+**Dependencies:** 08 → none. 09 → 08 (reads the PID file it creates). 10 → 08
+(reports the lock outcome). 11 → 08 **and** 09 (relays the errors both add).
+So 08 can go at any time, and 09/10 are independent of each other.
+
+**Why this landed in M5 rather than a new milestone (PE decision, 2026-07-26):**
+it composes with the milestone's existing subject. A `SessionStore` deadlock —
+the confirmed defect phase 02 fixed — puts the daemon in exactly the state the
+old liveness probe misread: threads `futex`-parked, socket still listening,
+nothing answered. A stall invites a duplicate; the duplicate then shares the
+session store, `schedules.json`, and the memory index. Phase 08 is the
+blast-radius limiter for a failure mode M5 has already confirmed in production.
+
+**Three things found while drafting that the specs now pin explicitly:**
+
+1. **The existing guard fires too late to matter.** It sits at
+   `src/daemon/mod.rs:739`, but a duplicate reaching it has already deleted the
+   live daemon's `de-pipe-*.log` files, repointed all four global tmux hooks at
+   its own `current_exe()`, run a memory migration, emitted `daemon_start`, and
+   spawned three pollers — and `anyhow::bail!` restores none of it. **A duplicate
+   launch was destructive whether the guard worked or not.** Phase 08's central
+   task is therefore task 4 (ordering), not the lock itself. § 2.3 of the design
+   doc tabulates all seven side effects with line numbers.
+2. **A second duplicate signal was already there and swallowed.** The webhook
+   `TcpListener::bind` returns `EADDRINUSE` for a duplicate, but it sits inside
+   `supervise(...)`, which retries forever with backoff. Phase 09 task 6 splits
+   `webhook::start` into `bind` (eager, fatal) + `serve` (supervised), and the
+   spec spells out the `Option`-in-a-`Mutex` dance needed because `axum::serve`
+   consumes the listener — a supervisor that silently re-binds would recreate the
+   retry loop the task exists to delete.
+3. **`flock` rather than a bare PID file, and the reason is the same bug one
+   layer down.** The kernel releases a `flock` on process death including
+   `SIGKILL`, so there is no stale-lock recovery path. A PID file alone needs "is
+   that PID alive, is it really ours, was it recycled" guesswork — the same
+   inference-instead-of-invariant mistake that caused the incident. The PID is
+   written into the file as *diagnostic payload only*; § 2.1 forbids branching on
+   it, and phase 08's spec repeats the prohibition.
+
+**Two authorizations were granted at draft time**, both narrow and both stated in
+the phase docs' Authorizations sections rather than left to the executor:
+
+- Phase 08 may edit `Cargo.toml` **solely** to add `features = ["fs"]` to the
+  existing `nix = "0.31.1"` dependency. That enables `nix::fcntl::Flock`, a safe
+  RAII wrapper, which is what keeps phase 08 free of `unsafe`. The exact 0.31.1
+  API is quoted into the phase doc from the vendored source
+  (`nix-0.31.1/src/fcntl.rs:1038-1100`) because the executor cannot fetch docs —
+  including the non-obvious bits: `lock()` returns the `File` *back* on failure
+  (so the incumbent's PID is still readable for the error message), and matching
+  both `EAGAIN` and `EWOULDBLOCK` will not compile on Linux since they are the
+  same value.
+- Phase 11 may write `unsafe`, **only** the two blocks inside
+  `ready::create_pipe` wrapping `libc::pipe` and `OwnedFd::from_raw_fd`. Its
+  acceptance criteria pin `grep -c "unsafe" src/daemon/ready.rs` at exactly `2`.
+
+**Sizing note for review:** 08 ~260 lines, 09 ~210, 10 ~130, 11 ~220 — all
+mechanical against a complete design, the shape this executor handles cleanly
+(per the M4 retrospective). None involves a compaction-path rewire or a large
+additive block, the two documented self-sabotage triggers.
+
+**Also verified while drafting, so nobody re-derives it:** after phase 08 deletes
+the only call site, `daemon_is_running()` has zero callers but does **not** trip
+`dead_code` under `-D warnings`, because `src/lib.rs:10` has `pub mod daemon;`
+and the function is `pub`. Phase 08 says so explicitly so the executor does not
+add an `#[allow(dead_code)]` or invent a caller.
+
+**Deliberately out of scope of all four phases,** recorded in
+`daemon-instance.md` § 3 and § 5: file locking for `schedules.json`, the memory
+FTS5 index, and the session JSONL stores (single-instance enforcement is the
+fix); auto-restarting a wedged daemon (detection yes, action no); cross-host
+exclusion over NFS; and any conclusion about where the 2026-07-25 SIGTERM came
+from — it was almost certainly a human cleaning up the duplicate, and the bug is
+that the duplicate was possible at all.
+
+---
+
+## M5 lock-conversion sequence (04x) — unchanged
 
 Converts the 13 `sessions.lock()` sites in `src/daemon/server/ask.rs`. Unlike
 `handlers.rs` these are not uniform — seven are `sessions.lock().ok()?` chains

@@ -12,6 +12,10 @@ blocking under a shared lock.
 **Design:** [`docs/design/daemon-stalls.md`](../../../design/daemon-stalls.md)
 — the hang evidence log (mechanisms A/B/C, with the confirmed-vs-hypothesis
 split) and the two TUI defect specs every phase references.
+[`docs/design/daemon-instance.md`](../../../design/daemon-instance.md) — the
+process-lifecycle axis (instance ownership), driving phases 08–11. The two meet
+in `daemon-instance.md` § 1.3: a stalled daemon is what lets a second instance
+take the socket.
 
 **Exit criteria:**
 
@@ -38,6 +42,15 @@ split) and the two TUI defect specs every phase references.
       request goes unanswered beyond a threshold, `daemon.log` records what
       was holding it and where. A future wedge identifies itself without a
       live debugger.
+- [ ] Only one daemon can run per `$HOME`, enforced by an exclusive `flock`
+      acquired before any startup side effect. A second launch cannot unlink,
+      overwrite, or delete anything belonging to a running daemon — including its
+      socket, its pipe logs, and its global tmux hooks — whether or not the
+      running daemon is answering IPC. (Added 2026-07-26; see
+      `docs/design/daemon-instance.md` § 2.)
+- [ ] `daemoneye ping` / `status` distinguish "not running" from "alive but not
+      answering", and `daemoneye daemon` exits non-zero with the real reason when
+      the forked child fails to start.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
       `cargo test` green; no regression in the ~928 existing tests.
 
@@ -60,15 +73,51 @@ split) and the two TUI defect specs every phase references.
 | 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | done (approved_first_try) |
 | 04a | with-sessions-accessor ([phase-04a-with-sessions-accessor.md](phase-04a-with-sessions-accessor.md)) | done (approved_first_try) |
 | 04b | convert-handlers ([phase-04b-convert-handlers.md](phase-04b-convert-handlers.md)) | done (approved_first_try) |
-| 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | review      |
-| 04d | convert-tail (background.rs + ghost.rs + executor + stream, ~60 sites — likely splits further) | todo |
-| 04e | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)        | todo   |
+| 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | done (approved_first_try) |
+| 04d | convert-executor-dispatch ([phase-04d-convert-executor-dispatch.md](phase-04d-convert-executor-dispatch.md)) — `executor/mod.rs`, 10 sites + `load_agent` hoist | todo |
+| 04e | convert-executor-tail — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | todo |
+| 04f | convert-context-background — `context/background.rs`, 13 sites | todo |
+| 04g | convert-ghost — `ghost.rs` (11) + `briefing.rs` (1) = 12 sites | todo |
+| 04h | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
+| 04i | convert-stream-hooks — `stream.rs` (8) + `hook.rs` (3) = 11 sites | todo |
+| 04j | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)        | todo   |
 | 05 | unlock-blocking-paths (webhook/process.rs — mechanism A)                | todo   |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
+| 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
+| 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
+| 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
+| 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 03–06 are named but **not yet drafted**. Draft each with
+Phases 04e–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
+
+**The 04d tail was split into five phases (04d–04i) on 2026-07-26**, replacing
+the earlier "04d×3" estimate, after a site-by-site survey. The newtype phase
+moved from 04e to **04j** — it was undrafted and unstarted, so the renumbering
+costs nothing. Actual per-file counts, verified against the tree:
+
+| Group | Sites | Phase |
+|---|---|---|
+| `executor/mod.rs` | 10 | 04d |
+| `executor/foreground.rs` + `executor/knowledge/*` | 8 | 04e |
+| `context/background.rs` | 13 | 04f |
+| `ghost.rs` + `briefing.rs` | 12 | 04g |
+| `background/{run,respawn,helpers,gc}.rs` | 9 | 04h |
+| `stream.rs` + `hook.rs` | 11 | 04i |
+| `webhook/process.rs` | 2 | **phase 05** (mechanism A, not a conversion phase) |
+
+That is **65 production sites**, not the ~60 estimated. `src/daemon/session.rs`
+contributes **zero**: its four `sessions.lock()` greps are the accessor's own
+acquisition inside `with_sessions` (`session.rs:432`), a doc comment
+(`:443`), and two tests (`:1204`, `:1226`).
+
+**Phases 08–11 were added 2026-07-26** after a live incident (two daemons
+sharing one `~/.daemoneye` tree; one took the socket from the other). They are
+drafted and independent of the 04x lock-conversion sequence — 08 depends on
+nothing and can be dispatched at any time. Design:
+[`docs/design/daemon-instance.md`](../../../design/daemon-instance.md). See
+Notes § "Instance ownership (2026-07-26)".
 
 **Ordering was revised 2026-07-25** after the hang's root cause was found (see
 Notes). The deadlock fix jumps to phase 02 — it is a live production defect that
@@ -79,6 +128,50 @@ attributed. What remains for it is narrower — a watchdog for *future* wedges �
 and it should only be drafted if phases 04–05 leave a real gap.
 
 ## Notes
+
+**Instance ownership (2026-07-26) — phases 08–11 added mid-milestone.** A live
+incident: on 2026-07-25 two daemons ran concurrently against one
+`~/.daemoneye/` tree for ~64 seconds, serving two different chat sessions, and
+the second one unlinked the first's socket to bind its own. Full timeline and
+root cause in `docs/design/daemon-instance.md` § 1.
+
+The root cause is a design defect, not a coding slip: `daemon_is_running()`
+inferred liveness from *responsiveness* (a 2 s Ping timeout) and the caller then
+acted on that inference destructively. "Alive but busy" and "not running at all"
+were the same `false`. There was no PID file and no lock anywhere in the tree —
+the probe was the entire mutual-exclusion mechanism.
+
+**This composes with the milestone's existing subject.** A `SessionStore`
+deadlock — the confirmed defect phase 02 fixed, `daemon-stalls.md` § 1.5b — puts
+the daemon in exactly the state the probe misreads: every thread `futex`-parked,
+socket still listening, nothing answered. So a stall invites a second instance,
+and the second instance shares the session store, `schedules.json`, and the
+memory index with the first. The instance work is the blast-radius limiter for a
+failure mode already observed in production, which is why it belongs in M5
+rather than waiting for M6.
+
+Three findings from the code read that shaped the phase split:
+
+- **The existing guard, even when it fires, is too late.** It sits at
+  `mod.rs:739`, but a duplicate reaching it has already deleted the live
+  daemon's `de-pipe-*.log` files, repointed all four global tmux hooks at its
+  own binary, run a memory migration, and spawned three pollers — and
+  `anyhow::bail!` restores none of it. A duplicate launch was destructive
+  whether the guard worked or not. Hence phase 08's central task is *ordering*,
+  not just adding a lock.
+- **A second, unambiguous duplicate signal was already being swallowed.** The
+  webhook `TcpListener::bind` returns `EADDRINUSE` for a duplicate, but it lives
+  inside `supervise(...)`, which retries forever with backoff. Phase 09.
+- **`flock`, not a bare PID file.** The kernel releases a `flock` on process
+  death including `SIGKILL`, so there is no stale-lock recovery path. A PID file
+  alone needs "is that PID alive, is it really ours, was it recycled" guesswork —
+  the same class of inference that caused the incident.
+
+**Sizing:** 08 ~260 lines, 09 ~210, 10 ~130, 11 ~220. All four are mechanical
+against a fully-specified design, which is the shape this executor handles well
+(M4 retrospective). 08 is the only one that closes the hijack; 09–11 make the
+next occurrence diagnosable in minutes rather than the several hours the
+2026-07-25 forensics took.
 
 **Kick-off scoping (2026-07-24).** PE reported three opening items: spinner
 placement, missing user-input echo, and a daemon hang. Architect survey
