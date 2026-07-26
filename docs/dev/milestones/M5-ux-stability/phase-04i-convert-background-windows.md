@@ -1,7 +1,7 @@
 # Phase 04i: Convert `background/run.rs` + `background/respawn.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04h (`ghost.rs` converted) — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -491,3 +491,15 @@ think you need `unsafe` or a new dependency, **stop and report a blocker**.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 17:40 (started)
+
+**Executor:** Claude (sonnet)
+
+Converted all 7 `sessions.lock()` sites in `run.rs` (4) and `respawn.rs` (3) to `with_sessions(&sessions, |store| …)`. Removed the now-unused `UnpoisonExt` import from `run.rs`. All acceptance criteria verified: 0 raw locks in both files, 4 + 3 `with_sessions` calls, helpers.rs and gc.rs untouched (1 each), ghost.rs/context/background.rs/executor/mod.rs still at 0. `cargo build`, `cargo clippy`, `cargo fmt`, and `cargo test` (915 passed) all clean.
+
+**Reasoning checks:**
+1. **Receiver form:** All 7 calls use `with_sessions(&sessions, …)` with the ampersand because both `run.rs::run_bg_command` and `respawn.rs::respawn_bg_job` take `sessions: SessionStore` by value (not `&SessionStore`).
+2. **Task 5 polarity:** `respawn.rs` retry reset correctly assigns `w.exit_code = None` — marking the job as running again, not finished.
+
+**End-to-end verification:** Not applicable — phase ships no runtime-loadable artifact. Internal refactor of lock acquisition inside existing code paths; no CLI surface, no config key, no file the running binary loads.

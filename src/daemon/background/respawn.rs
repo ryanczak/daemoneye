@@ -1,7 +1,7 @@
 use super::helpers::{
     BG_COMMAND_MAP, BgJobInfo, capture_and_archive, notify_session, shell_exit_var,
 };
-use crate::daemon::session::{SessionStore, bg_done_subscribe, complete_subscribe};
+use crate::daemon::session::{SessionStore, bg_done_subscribe, complete_subscribe, with_sessions};
 use crate::daemon::utils::{log_event, shell_escape_arg};
 use crate::tmux;
 use std::sync::Mutex;
@@ -98,12 +98,14 @@ pub async fn respawn_background_in_pane(
     }
 
     // Reset exit_code in bg_windows so the session knows it's running again.
-    if let Some(ref sid) = session_id
-        && let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(sid)
-        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
-    {
-        w.exit_code = None;
+    if let Some(ref sid) = session_id {
+        with_sessions(&sessions, |store| {
+            if let Some(entry) = store.get_mut(sid)
+                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+            {
+                w.exit_code = None;
+            }
+        });
     }
 
     log_event(
@@ -159,12 +161,14 @@ pub async fn respawn_background_in_pane(
                 }),
             );
 
-            if let Some(ref sid) = session_id
-                && let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(sid)
-                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
-            {
-                w.exit_code = Some(exit_code);
+            if let Some(ref sid) = session_id {
+                with_sessions(&sessions, |store| {
+                    if let Some(entry) = store.get_mut(sid)
+                        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+                    {
+                        w.exit_code = Some(exit_code);
+                    }
+                });
             }
 
             if !pane_persists {
@@ -184,11 +188,12 @@ pub async fn respawn_background_in_pane(
                 if let Err(e) = tmux::kill_job_window(session, win_name) {
                     log::error!("Failed to GC retried bg window {}: {}", win_name, e);
                 }
-                if let Some(ref sid) = session_id
-                    && let Ok(mut store) = sessions.lock()
-                    && let Some(entry) = store.get_mut(sid)
-                {
-                    entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                if let Some(ref sid) = session_id {
+                    with_sessions(&sessions, |store| {
+                        if let Some(entry) = store.get_mut(sid) {
+                            entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                        }
+                    });
                 }
             }
 

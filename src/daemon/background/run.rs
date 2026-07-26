@@ -1,13 +1,14 @@
 use super::helpers::{
     BG_COMMAND_MAP, BgJobInfo, capture_and_archive, notify_session, shell_exit_var,
 };
-use crate::daemon::session::{BgWindowInfo, SessionStore, bg_done_subscribe, complete_subscribe};
+use crate::daemon::session::{
+    BgWindowInfo, SessionStore, bg_done_subscribe, complete_subscribe, with_sessions,
+};
 use crate::daemon::utils::{
     command_has_sudo, is_fingerprint_prompt, log_event, shell_escape_arg, sudo_auth_failed,
     wait_for_sudo_prompt_and_inject,
 };
 use crate::tmux;
-use crate::util::UnpoisonExt;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -44,11 +45,12 @@ pub async fn run_background_in_window(
         if sid.starts_with("ghost-") {
             // Use the prefix registered on the session entry so webhook-triggered,
             // scheduler-triggered and interactive ghost shells get distinct prefixes.
-            let store = sessions.lock().unwrap_or_log();
-            store
-                .get(sid.as_str())
-                .map(|e| e.ghost_bg_prefix)
-                .unwrap_or(crate::daemon::GS_BG_WINDOW_PREFIX)
+            with_sessions(&sessions, |store| {
+                store
+                    .get(sid.as_str())
+                    .map(|e| e.ghost_bg_prefix)
+                    .unwrap_or(crate::daemon::GS_BG_WINDOW_PREFIX)
+            })
         } else {
             crate::daemon::BG_WINDOW_PREFIX
         }
@@ -198,15 +200,16 @@ pub async fn run_background_in_window(
     }
 
     // Register in the session's bg_windows list (cap enforcement runs in executor).
-    if let Some(ref sid) = session_id
-        && let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(sid)
-    {
-        entry.bg_windows.push(BgWindowInfo {
-            pane_id: pane_id.clone(),
-            window_name: win_name.clone(),
-            tmux_session: session.to_string(),
-            exit_code: None,
+    if let Some(ref sid) = session_id {
+        with_sessions(&sessions, |store| {
+            if let Some(entry) = store.get_mut(sid) {
+                entry.bg_windows.push(BgWindowInfo {
+                    pane_id: pane_id.clone(),
+                    window_name: win_name.clone(),
+                    tmux_session: session.to_string(),
+                    exit_code: None,
+                });
+            }
         });
     }
 
@@ -267,12 +270,14 @@ pub async fn run_background_in_window(
             );
 
             // Update exit_code in bg_windows.
-            if let Some(ref sid) = session_id
-                && let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(sid)
-                && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
-            {
-                w.exit_code = Some(exit_code);
+            if let Some(ref sid) = session_id {
+                with_sessions(&sessions, |store| {
+                    if let Some(entry) = store.get_mut(sid)
+                        && let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id)
+                    {
+                        w.exit_code = Some(exit_code);
+                    }
+                });
             }
 
             if !pane_persists {
@@ -292,11 +297,12 @@ pub async fn run_background_in_window(
                 if let Err(e) = tmux::kill_job_window(session, &win_name) {
                     log::error!("Failed to GC dead bg window {}: {}", win_name, e);
                 }
-                if let Some(ref sid) = session_id
-                    && let Ok(mut store) = sessions.lock()
-                    && let Some(entry) = store.get_mut(sid)
-                {
-                    entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                if let Some(ref sid) = session_id {
+                    with_sessions(&sessions, |store| {
+                        if let Some(entry) = store.get_mut(sid) {
+                            entry.bg_windows.retain(|w| w.pane_id != pane_id);
+                        }
+                    });
                 }
             }
 
