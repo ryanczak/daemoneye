@@ -1,9 +1,95 @@
 # NEXT
 
-**No active phase.** 04h is `done` (`approved_first_try`) and **`ghost.rs` is
-fully converted**. The next conversion phase (04i — convert-background-windows,
-`background/*`, 9 sites) is **not yet drafted**. Draft it with
-`/rexymcp:architect next`.
+**Active phase: M5 phase-04i — convert-background-windows** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04i-convert-background-windows.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04i-convert-background-windows`.
+
+## `background/` was 9 sites; only 7 belong in a conversion phase
+
+Reading all nine found that **two are not conversions at all** — they are
+mechanism-A/B defects that need restructuring, and they have moved to **phase 05**
+(`unlock-blocking-paths`), whose stated purpose is exactly that. No renumbering was
+needed; phase 05's scope grew from 2 sites to 4.
+
+- **`helpers.rs::notify_session`** holds the guard from acquisition to the **end of
+  the function** — roughly 50 lines — spanning `related_knowledge_hints`,
+  `append_session_message` (**two file writes**), and a `tmux display-message`
+  **subprocess spawn**. All under the global session lock. Fixing it needs a
+  read phase → unlocked work phase → short write phase, not a wrap.
+- **`gc.rs::gc_bg_windows`** holds the guard across `tmux::kill_job_window` inside
+  a loop over **every session** — one subprocess per window, under the global lock.
+  `cleanup_pass` in `session.rs` is the established precedent for the fix shape
+  (collect under the lock, act outside).
+
+Both are squarely mechanism A + mechanism B, and phase 05 already owns that
+territory. Bundling them into a conversion phase would have mixed a mechanical
+7-site sweep with two restructures — the same mistake that made the ghost group
+need splitting.
+
+## 04i is the easiest phase of the 04x sequence
+
+7 sites: `run.rs` (4) + `respawn.rs` (3). A scoped read and six `let`-chains, none
+containing an early `return`, `break`, `.await`, or blocking work. `size=s`,
+~90 lines, 7 sites → 7 calls, no collapses.
+
+**The one thing that will bite a careless edit** is the receiver form. Both
+enclosing functions take `sessions: SessionStore` **by value**, so every call is
+`with_sessions(&sessions, …)` **with the ampersand** — unlike everywhere else in
+the daemon, where the parameter is `&SessionStore`. The previous phase hit exactly
+this mismatch when my snippet used the wrong convention, so 04i states it up front
+and uniformly: all seven take `&sessions`.
+
+Three of the seven are 4-element chains whose `.find(…)` must stay **inside** the
+closure, since it borrows `entry` and a `&mut` into the map cannot escape. Exact
+target code given for each.
+
+**`run.rs` loses its `UnpoisonExt` import** — it has exactly one `unwrap_or_log`
+(the site being converted) and no test module, so the outcome is deterministic:
+delete. `respawn.rs` never had the import and must not gain one. Task 8 also
+frames a surviving `unwrap_or_log` as evidence of a missed conversion rather than a
+reason to keep the import.
+
+## Criteria validated before pinning — and this time nothing was wrong
+
+Every pinned value was checked against the tree while drafting: run.rs 4, respawn.rs
+3, helpers.rs 1, gc.rs 1, ghost/background/executor 0, `with_sessions` 0/0,
+`UnpoisonExt` 1, and **no `#[cfg(test)]` module in either file** (so every hit is
+production). No corrections were needed — the first clean draft in four phases.
+
+**Two criteria are deliberately non-zero:** `helpers.rs` and `gc.rs` must each
+still print **1**. A zero there means the executor converted phase 05's
+restructure sites out of scope, which is the specific over-reach this split
+creates.
+
+## Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 4 clean confirmations).** 04i's draft needed
+   no correction at all.
+2. **Specs asserting test coverage (3rd occurrence, 3 clean confirmations).** 04i
+   goes further than "name no discriminator": it states that the `bg_windows`
+   registry updates these sites perform are **not** covered by the unit suite — a
+   pre-existing gap it neither widens nor closes — so a coverage claim here would
+   be not just unproven but false.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Riding on phase 05, which just grew.
+
+**All await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change made.**
+
+## Remaining
+
+04i (7) → 04j (`stream.rs` 9 + `hook.rs` 3 = 12) → **04k** (newtype + enforce) →
+05 (now **4** mechanism-A restructures) → 06 → 07, plus the independent 08–11
+instance-hardening set.
+
+**04k still needs re-scoping when drafted** — 13 `Arc::clone` sites, 13
+test-module acquisitions, the two unassigned `ask.rs` multi-line stragglers, and
+04f's coverage follow-up. It may need its own split.
+
+---
+
+## Superseded: the 04h completion note
 
 ---
 

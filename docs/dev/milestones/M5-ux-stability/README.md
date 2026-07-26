@@ -79,10 +79,10 @@ take the socket.
 | 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | done (approved_after_1) |
 | 04g | convert-ghost-exit-paths ([phase-04g-convert-ghost-exit-paths.md](phase-04g-convert-ghost-exit-paths.md)) — `write_mailbox_on_exit` (3) + `briefing.rs` (1) = 4 sites | done (approved_first_try) |
 | 04h | convert-ghost-turn-loop ([phase-04h-convert-ghost-turn-loop.md](phase-04h-convert-ghost-turn-loop.md)) — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | done (approved_first_try) |
-| 04i | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
+| 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | todo |
 | 04j | convert-stream-hooks — `stream.rs` (8 + 1 multi-line) + `hook.rs` (3) = 12 sites | todo |
 | 04k | sessionstore-newtype (enforce) — **re-scope when drafting; see Notes** | todo   |
-| 05 | unlock-blocking-paths (webhook/process.rs — mechanism A)                | todo   |
+| 05 | unlock-blocking-paths (mechanism A) — `webhook/process.rs` (2) + **`background/helpers.rs::notify_session` (1)** + **`background/gc.rs::gc_bg_windows` (1)** = 4 restructures | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
@@ -90,7 +90,7 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 04i–07 are named but **not yet drafted**. Draft each with
+Phases 04j–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
 **The 04d tail was split on 2026-07-26** — first into five phases (04d–04i),
@@ -126,7 +126,8 @@ doc carries a working one.
 | `executor/foreground.rs` + `executor/knowledge/*` | 8 | 0 | 04e — `done` |
 | `context/background.rs` | **4** (13 → 2 → 4) | **11** | 04f |
 | `ghost.rs` (11) + `briefing.rs` (1) | 12 | 0 | **04g** (4) + **04h** (8) |
-| `background/{run,respawn,helpers,gc}.rs` | 9 | 0 | 04i |
+| `background/{run,respawn}.rs` | 7 | 0 | 04i |
+| `background/{helpers,gc}.rs` — **not conversions** | 2 | 0 | **phase 05** |
 | `stream.rs` (8 + **1 multi-line** = 9) + `hook.rs` (3) | 12 | 0 | 04j |
 | `server/ask.rs` — **2 multi-line stragglers from 04c** | 2 | 0 | unassigned |
 | `webhook/process.rs` | 2 | 0 | **phase 05** (mechanism A, not a conversion phase) |
