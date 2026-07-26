@@ -1,7 +1,7 @@
 # Phase 05b: Get the Last Blocking Work Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05a (subprocess-under-lock restructures) — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -484,3 +484,7 @@ point first** and confirm you are not splitting a doc comment from its item.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 22:05 (started)
+
+**Executor:** Claude Sonnet 4.5 — implementing 3 restructures in `webhook/process.rs` and `daemon/stream.rs`.

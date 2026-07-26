@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
-use crate::daemon::session::{SessionStore, append_session_message};
+use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
 use super::*;
@@ -146,26 +146,28 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
 /// file and the in-memory entry (so it appears in the next AI turn regardless
 /// of whether the session was idle or active).
 pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
-    let guard = sessions.lock().unwrap_or_log();
-    for (sid, entry) in guard.iter() {
+    let ids: Vec<String> = with_sessions(sessions, |store| store.keys().cloned().collect());
+
+    // In-memory is intentionally NOT updated here — the next Ask request
+    // will re-read from disk when the in-memory history is stale.
+    // For sessions currently in flight this means the alert appears in the
+    // turn after the one already in progress, which is acceptable.
+    for sid in &ids {
         append_session_message(sid, msg);
-        // In-memory is intentionally NOT updated here — the next Ask request
-        // will re-read from disk when the in-memory history is stale.
-        // For sessions currently in flight this means the alert appears in the
-        // turn after the one already in progress, which is acceptable.
-        let _ = entry; // suppress unused-variable warning
     }
 }
 
 /// Send a one-line alert notification to every active chat pane.
 pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
-    let guard = sessions.lock().unwrap_or_log();
-    for entry in guard.values() {
-        if let Some(ref pane) = entry.chat_pane {
-            let _ = std::process::Command::new("tmux")
-                .args(["display-message", "-d", "8000", "-t", pane, msg])
-                .output();
-        }
+    let panes: Vec<String> = with_sessions(sessions, |store| {
+        store.values().filter_map(|e| e.chat_pane.clone()).collect()
+    });
+
+    // Unlocked phase: everything blocking happens out here.
+    for pane in &panes {
+        let _ = std::process::Command::new("tmux")
+            .args(["display-message", "-d", "8000", "-t", pane, msg])
+            .output();
     }
 }
 
