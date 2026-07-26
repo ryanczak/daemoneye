@@ -1,10 +1,97 @@
 # NEXT
 
-**Active phase: M5 phase-04j — convert-stream-hooks** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04j-convert-stream-hooks.md`.
+**No active phase.** 04j is `done` (`approved_first_try`). **The 04x conversion
+sweep is complete except for phase 05's six restructures.** Nothing is drafted;
+see "What to draft next" below — the ordering needs a decision before drafting.
 
-Dispatch with `/rexymcp:dispatch phase-04j-convert-stream-hooks`.
+---
+
+## M5 phase-04j — convert-stream-hooks is `done`
+
+(2026-07-26, `approved_first_try`, no bounces, 89 turns, commit `3e8466e`.)
+
+All 10 conversion sites done — `stream.rs` 8, `hook.rs` 2 — each file left with
+exactly the **1** raw acquisition phase 05 owns (`stream.rs:722`,
+`hook.rs:92`). Gates green, 915 tests unchanged, every criterion exact including
+all four non-zero ones and the `UnpoisonExt` asymmetry (deleted from `stream.rs`,
+kept in `hook.rs` for `bg_session`).
+
+Verified by reading rather than counting:
+
+- **Task 3's boundary is correct** — the persist closure closes with `});` on the
+  line immediately before `if needs_compaction {`, leaving `write_session_file`,
+  `append_session_message`, `stream.rs:722` and `spawn_compaction` outside.
+- **`spawn_compaction` is not inside any closure**, and its warning comment
+  survives verbatim, including the "`std::sync::Mutex` is not reentrant and
+  re-locking would deadlock" line. That comment is the institutional memory of a
+  confirmed production defect.
+- **Task 4's one-shot semantics are intact** — the flag assignment is inside the
+  closure, the threshold test is still `==`, and the `.await` is outside. Moving
+  the flag out would let two turns both suggest; loosening `==` would suggest
+  every turn after the threshold. Neither would fail a test.
+
+### The conversion sweep is done
+
+Converted across 04a–04j: `server/handlers.rs`, `server/ask.rs` (bar two
+multi-line stragglers), the whole `executor/` subtree, `context/background.rs`,
+`briefing.rs`, `ghost.rs`, `background/run.rs`, `background/respawn.rs`,
+`stream.rs`, `hook.rs`.
+
+**Still holding raw acquisitions — all six are phase 05's, all mechanism A/B:**
+
+| Site | Blocking work under the guard |
+|---|---|
+| `webhook/process.rs` (2) | disk writes + a timeout-free tmux subprocess |
+| `background/helpers.rs::notify_session` | 2 file writes **+** a `tmux display-message` subprocess |
+| `background/gc.rs::gc_bg_windows` | `kill_job_window` per window, looped over every session |
+| `stream.rs:722` | `write_session_meta` (file write) |
+| `hook.rs:92` | `cleanup_bg_windows()` → `kill_job_window` per window **+** `stop_pipe_pane` |
+
+Plus the two unassigned `ask.rs` multi-line stragglers (`:519`, `:686`), which are
+conversions rather than restructures.
+
+## ⚠ What to draft next — an ordering decision comes first
+
+The numbering currently implies **04k (newtype) → 05 (restructures)**, and that is
+**backwards**. 04k makes raw `.lock()` stop compiling, so it cannot land while six
+raw acquisitions remain. Three options, and this is a scoping call rather than
+something I should pick unilaterally:
+
+1. **Renumber: 05 before 04k.** Draft the six restructures first, then the newtype
+   closes the door behind them. Cleanest dependency order; costs one renumbering.
+2. **04k absorbs the six.** Makes the newtype phase enormous — 13 `Arc::clone`
+   sites, 13 test-module acquisitions, 2 `ask.rs` stragglers, 6 restructures, and
+   04f's coverage follow-up. Almost certainly too big for one session.
+3. **Split 05 first, then newtype.** Phase 05 is already 6 restructures sharing one
+   shape (`cleanup_pass` in `session.rs` is the worked example for four of them);
+   it may want to be two phases — the two tmux-subprocess ones and the rest.
+
+My recommendation is **option 1 with 05 split in two**: the subprocess-under-lock
+group (`helpers.rs`, `gc.rs`, `hook.rs:92`) shares the `cleanup_pass`
+collect-then-act shape, while `stream.rs:722` and `webhook/process.rs` are plainer
+file-write hoists. That also lets the two `ask.rs` stragglers ride along with
+whichever touches `ask.rs` next, or fold into the newtype phase where they will
+fail to compile if missed.
+
+### Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 7 clean confirmations).** Third draft running
+   with no pre-dispatch correction needed.
+2. **Specs asserting test coverage (3rd occurrence, 6 clean confirmations).** 04j
+   was the strongest instance: it stated that **none** of its ten sites is covered
+   by the unit suite, making a coverage claim impossible rather than unproven.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Still riding on phase 05.
+
+**All four await your sign-off.** Threads 1 and 2 now have substantial supporting
+data — seven and six clean confirmations respectively, against the four counting
+errors and three false coverage claims that motivated them. If you want either
+folded into `WORKFLOW.md`, this is a natural moment; the milestone's conversion
+work is finished and the next phases are a different shape.
+
+---
+
+## Superseded: the 04j dispatch note
 
 ## 12 sites, but only 10 are conversions
 

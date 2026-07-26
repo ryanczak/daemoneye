@@ -1,7 +1,7 @@
 # Phase 04j: Convert `stream.rs` + `hook.rs` — the Conversion Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04i (`background/run.rs` + `respawn.rs`) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -850,3 +850,81 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3e8466e553526a2d3fd73e32ce067766ec08596b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside existing code paths; no CLI surface, no config key.
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (89 turns)
+- **Scope deviations:** none. Only `stream.rs` and `hook.rs` touched, and each
+  retained exactly the one raw acquisition phase 05 owns.
+- **Calibration:** none.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit / 0 failed (unchanged); 27 integration / 2 ignored
+```
+
+**Acceptance criteria — all four non-zero ones held:**
+
+| Check | Result |
+|---|---|
+| `scan_locks.py` `stream.rs` / `hook.rs` | **1 / 1** ✓ — phase 05's sites left in place |
+| `with_sessions(` `stream.rs` / `hook.rs` | **8 / 2** ✓ |
+| `UnpoisonExt` `stream.rs` / `hook.rs` | **0 / 1** ✓ — the asymmetry, correct in both directions |
+| `helpers.rs` / `gc.rs` | **1 / 1** ✓ — also phase 05's, untouched |
+| `ghost.rs`, `background/run.rs`, `background/respawn.rs`, `context/background.rs`, `executor/mod.rs` | **0** each ✓ |
+| `spawn_compaction` occurrences | **2** ✓ (comment + call) |
+| `pub type SessionStore` still an alias | ✓ |
+| lib-unit tests | **915**, unchanged ✓ |
+
+**The remaining raw acquisitions are precisely the intended two:**
+`stream.rs:722` (the `write_session_meta` guard) and `hook.rs:92` (the
+`cleanup_bg_windows` retain). Both phase 05.
+
+**All twelve spec tasks implemented as written.** The four things a count cannot
+prove, each verified by reading:
+
+- **Task 3's boundary is correct.** The persist closure closes with `});` on the
+  line immediately before `if needs_compaction {` (`stream.rs:707-708`). Everything
+  downstream — `write_session_file`, `append_session_message`, `stream.rs:722`, and
+  `spawn_compaction` — is outside it.
+- **`spawn_compaction` is not inside any closure.** It sits at `stream.rs:740-746`
+  under `if wants_background_compaction {`, well after the closure closed. Had it
+  been enclosed, the re-entrancy assertion would now panic rather than hang
+  silently — but it was not enclosed at all.
+- **The `spawn_compaction` warning comment survives verbatim**, including the
+  "`std::sync::Mutex` is not reentrant and re-locking would deadlock" line. That
+  comment is the institutional memory of a confirmed production defect.
+- **Task 4's one-shot semantics are intact.**
+  `entry.auto_name_suggested = true;` is inside the closure before the `true`; the
+  threshold test is still `==`, not `>=`; all five conditions remain in order; and
+  `auto_name::suggest_session_name(..).await` is outside the closure. Moving the
+  flag out would let two turns both suggest; loosening `==` would suggest every
+  turn thereafter. Neither would fail a test.
+
+No forbidden idioms in the added lines.
+
+**Fifth consecutive phase where the corrected drafting practices held.** Criteria
+were validated against the tree before pinning (third draft running with no
+correction needed), the Pre-flight stated the `grep -c` 8 vs scan 9 discrepancy so
+it read as expected rather than stale, and the Test plan named no discriminating
+test — it stated that **none** of the ten sites is covered by the unit suite
+(`run_conversation_loop` needs a live AI client, tmux session and IPC peer;
+`hook.rs` has no test module), which made a coverage claim impossible rather than
+merely unproven. The Update Log made none.
+
+**Milestone position:** the 04x conversion sweep is now **complete except for
+phase 05's six restructures**. Converted: `handlers.rs`, `ask.rs` (bar two
+multi-line stragglers), the whole `executor/` subtree, `context/background.rs`,
+`briefing.rs`, `ghost.rs`, `background/run.rs`, `background/respawn.rs`,
+`stream.rs`, `hook.rs`.
