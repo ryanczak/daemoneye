@@ -1,8 +1,117 @@
 # NEXT
 
-**No active phase.** 04i is `done` (`approved_first_try`). The next conversion
-phase (04j — convert-stream-hooks, `stream.rs` 9 + `hook.rs` 3 = 12 sites) is
-**not yet drafted**. Draft it with `/rexymcp:architect next`.
+**Active phase: M5 phase-04j — convert-stream-hooks** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04j-convert-stream-hooks.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04j-convert-stream-hooks`.
+
+## 12 sites, but only 10 are conversions
+
+Reading all twelve found **two more mechanism-A/B defects**, moved to **phase 05**
+on the same principle applied to `background/`: restructures go with the phase whose
+purpose is removing blocking work from critical sections, not into a conversion
+sweep. No renumbering — phase 05 grows from 4 restructures to **6**.
+
+- **`stream.rs:719`** holds the guard across `write_session_meta` — a file write
+  inside the critical section. Needs the build-inside / write-outside hoist.
+- **`hook.rs:91`** is the more serious one. Its
+  `store.retain(|_, entry| { … entry.cleanup_bg_windows(); … })` calls a function
+  that spawns **one `tmux kill_job_window` per background window plus
+  `stop_pipe_pane`** — every one of them under the global session lock. **This is
+  the same defect class as the confirmed production hang** that opened this
+  milestone, and `cleanup_pass` in `session.rs` already models the fix (collect
+  under the lock, act outside). It has simply never been applied here.
+
+Phase 05 is now large enough that it should be **re-scoped or split when drafted** —
+six restructures, though they share one shape and one worked example.
+
+## What 04j does
+
+10 sites: `stream.rs` 8 + `hook.rs` 2. `size=m`, ~150 lines. Nine are mechanical;
+**one is not.**
+
+**`stream.rs:751`** is a six-element `let`-chain that is simultaneously a guard and
+a mutation — it decides whether to suggest a session name *and* sets
+`auto_name_suggested = true` so the suggestion fires exactly once. The spec pins
+three things: all five remaining conditions stay inside the closure in order, the
+flag assignment stays inside (setting it after would let two turns both suggest),
+and the threshold test stays `==` rather than `>=`.
+
+**`stream.rs:689` is the most consequential boundary in the phase.** Its closure
+must close before `if needs_compaction`, because everything after it —
+`write_session_file`, `append_session_message`, `stream.rs:719`, and
+`spawn_compaction` — must stay outside. `spawn_compaction` **re-locks the store**,
+and the code already carries a comment saying so; the spec requires keeping it
+verbatim. Worth noting: because `context/background.rs` was converted earlier, a
+closure enclosing it would now trip the re-entrancy **assertion** — a loud panic
+instead of the silent hang it used to be. Still a bug, just a louder one.
+
+**`stream.rs:896` is the multi-line site** `grep -c` cannot see. The Pre-flight
+makes the gap concrete: the scan prints **9** for `stream.rs` while `grep -c` prints
+**8**, and the doc says so explicitly so the discrepancy reads as expected rather
+than as a stale count.
+
+## Two asymmetries the spec calls out, either of which breaks the build if inverted
+
+1. **`UnpoisonExt`: delete from `stream.rs`, keep in `hook.rs`.** `stream.rs`'s only
+   `unwrap_or_log` is the site being converted. `hook.rs:116` uses it on
+   **`bg_session`** — a different mutex entirely — so deleting it there breaks the
+   build. Recent phases have all ended in "delete the import", which makes this the
+   easy mistake.
+2. **`hook.rs` defines its own local `SessionStore` type alias** rather than
+   importing the canonical one. It expands to the identical type, so
+   `with_sessions(&sessions, …)` type-checks unchanged. The spec explicitly forbids
+   replacing the alias — that is a separate cleanup and would widen the diff for no
+   behavioral gain.
+
+Both files pass `&sessions` with the ampersand: `stream.rs` destructures it by value
+out of `ConversationLoopCtx`, and all three `hook.rs` handlers take it by value.
+
+## Criteria validated before pinning — third clean draft running
+
+Every value checked against the tree: stream.rs 9, hook.rs 3, `grep -c` 8 (the gap),
+`with_sessions` 0/0, `UnpoisonExt` 1/1, `spawn_compaction` 2, helpers/gc 1 each,
+earlier phases 0. **No corrections needed.**
+
+**Four criteria are deliberately non-zero:** `stream.rs` → 1, `hook.rs` → 1,
+`helpers.rs` → 1, `gc.rs` → 1. All four are phase 05's sites. A zero anywhere means
+the executor converted a restructure out of scope — the specific over-reach these
+splits create, and the guard that has now caught nothing precisely because it is
+stated.
+
+One criterion is explicitly marked as unprovable by counting: `spawn_compaction`
+must appear twice **and not be inside a closure** — the doc says the count cannot
+show that and it must be read.
+
+## Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 6 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 5 clean confirmations).** 04j is
+   the strongest instance yet: it states that **none** of its ten sites is covered
+   by the unit suite — `run_conversation_loop` needs a live AI client, tmux session
+   and IPC peer, and `hook.rs` has no test module at all — so a coverage claim here
+   would be plainly false.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Riding on phase 05.
+
+**All await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change made.**
+
+## Remaining after 04j
+
+**04k** (newtype + enforce) → **05** (6 mechanism-A restructures, re-scope) → 06 →
+07, plus the independent 08–11 instance-hardening set.
+
+**04k still needs re-scoping** — 13 `Arc::clone` sites, 13 test-module acquisitions,
+the two unassigned `ask.rs` multi-line stragglers, and 04f's coverage follow-up.
+Note it will **not** compile until phase 05's six sites are also converted, since
+the newtype makes raw `.lock()` illegal — so **05 must land before 04k**, or 04k
+must absorb them. Decide that when drafting; the current numbering implies the wrong
+order.
+
+---
+
+## Superseded: the 04i completion note
 
 ---
 
