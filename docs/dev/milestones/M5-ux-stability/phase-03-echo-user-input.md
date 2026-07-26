@@ -1,7 +1,7 @@
 # Phase 03: Echo User Input to the Transcript
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (spinner row), phase-02 (cleanup deadlock) — both `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -421,3 +421,86 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e9b9c7f1c0571927d0e2893179b48b74534144ba
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification — 2026-07-25 (architect-performed)
+
+Real `target/release/daemoneye` chat client against a real daemon, isolated tmux
+server (`tmux -L de-e2e3`, 100x22), captured with `tmux capture-pane -p`.
+
+**1 — Startup greeting produces NO echo.** During the automatic `"Hello!"` turn
+the transcript shows the response and the spinner row, and no `you` panel:
+
+```
+  (○) scanning........
+┌──────────────────────────────────────────────────────────────────────────────┐
+```
+
+**2 — A typed prose query IS echoed, above the response:**
+
+```
+How can I help?
+╭─ you ────────────────────────────────────────────────────────────────────────╮
+  what is 2 plus 2
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+4. Always 4. 🔹
+```
+
+**3 — A slash command produces NO echo.** `╭─ you ─` panel count in scrollback
+was **1** before submitting `/pane` and **1** after; `/pane` rendered its own
+output panel instead:
+
+```
+    [3] %10  claude:1  rexymcp
+    [4] %1  ssh:0  ssh
+  pin with: /pane <number|%id>
+╰──────────────────────────────────────────────────────────────────────────────╯
+```
+
+The transcript now reads as a conversation. Counting panel borders rather than
+the word "you" matters here — the model's own prose contains that word, so a
+naive `grep -c "you"` reports false positives.
+
+Test daemon and tmux server were both torn down afterwards; the socket is gone
+and the tree is clean.
+
+### Review verdict — 2026-07-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (46 turns)
+- **Gates (reviewer re-run):** `cargo fmt --all --check` clean; `cargo build`
+  clean; `cargo clippy --all-targets --all-features -- -D warnings` exits zero;
+  `cargo test` 910 lib + 27 integration, 0 failed. Lib count is exactly the
+  pinned 910 — no scope creep.
+- **Mutation checks (both performed by the reviewer, not trusted):**
+  - Replacing `should_echo` with the naive `!query.starts_with('/')` makes
+    `echo_skips_client_only_commands` fail with `must not echo: exit`. The
+    implementation is an exact-match `matches!`, which is correct — bare `exit`,
+    `quit`, `help`, and `?` carry no slash, and prose like `/etc/hosts is
+    missing` does.
+  - Collapsing `echo_body` to `vec![query.to_string()]` makes
+    `echo_body_splits_multiline_query` fail.
+- **End-to-end:** performed by the architect against the real binary — see the
+  preceding entry. Greeting produces no panel, a typed query does, a slash
+  command does not.
+- **Scope deviations:** none. The greeting block at `chat.rs:326` is untouched,
+  `commit_panel` itself is unchanged, and `ask.rs` was not modified.
+- **Calibration:** none for the executor. Second consecutive
+  `approved_first_try` on a small, fully-quoted, synchronous phase (46 turns,
+  the shortest run of the milestone).
+
+#### Architect note — one imprecise acceptance criterion
+
+The criterion "`grep -n 'sessions.lock().unwrap()' src/daemon/session.rs`
+returns nothing inside `cleanup_pass_evicts_idle_and_keeps_active`" was too
+broad as written. The test still contains one such call at `session.rs:1151` —
+but it is *setup*, run before `cleanup_pass` is ever called and explicitly
+`drop`ped three lines later, so it cannot hang on a stranded guard. The
+assertion that mattered, the one *after* `cleanup_pass` returns, is now
+`try_lock().expect(...)` exactly as specced.
+
+Judged as met on intent. The lesson is to pin the specific line rather than a
+file-wide grep when the same pattern is legitimate elsewhere in the same
+function — a stricter reviewer reading only the literal criterion would have
+bounced correct work.

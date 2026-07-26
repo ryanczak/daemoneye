@@ -20,7 +20,7 @@ split) and the two TUI defect specs every phase references.
       outside it. The row is reserved (blank) when idle, so the box does not
       shift vertically when streaming starts or stops, in any of the three
       live-region draw modes (normal / spinner / prompt).
-- [ ] Every prose query the user submits is committed to scrollback via the
+- [x] Every prose query the user submits is committed to scrollback via the
       same `commit_panel()` element used for tool output, before the response
       streams. Scrolling back through a finished conversation shows both
       sides.
@@ -57,7 +57,7 @@ split) and the two TUI defect specs every phase references.
 |----|------------------------------------------------------------------------|--------|
 | 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | done (approved_after_2) |
 | 02 | cleanup-deadlock ([phase-02-cleanup-deadlock.md](phase-02-cleanup-deadlock.md)) | done (approved_first_try) |
-| 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | review      |
+| 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | done (approved_first_try) |
 | 04 | unlock-blocking-paths                                                   | todo   |
 | 05 | tmux-call-hardening                                                     | todo   |
 | 06 | stall-instrumentation (rescoped — see Notes)                            | todo   |
