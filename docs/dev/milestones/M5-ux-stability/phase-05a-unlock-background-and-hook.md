@@ -1,7 +1,7 @@
 # Phase 05a: Get tmux Subprocesses Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** in-progress (bounced x2 — see `bugs/bug-05a-1.md`)
 **Depends on:** phase-04j (conversion sweep complete) — `done`
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -615,6 +615,13 @@ compile — a guardrail, not an obstacle.
       `gc.rs:78` in `notify_job_completion`, which **holds no session lock and is
       not in scope**. Verify placement by reading; the count cannot prove it.
 - [ ] `grep -n "pub type SessionStore" src/daemon/session.rs` still shows the alias.
+- [ ] **`sed -n '148,178p' src/daemon/background/gc.rs` shows `struct GcKill` carrying
+      its own doc comment ("One window the GC has decided to kill…"), and the
+      "Periodic garbage collector" doc block sitting *directly* above
+      `pub fn gc_bg_windows` with no item between them.** Added after bug-05a-1:
+      inserting `GcKill` between that doc block and the function silently transfers
+      `gc_bg_windows`'s documentation onto the struct. Nothing in the gate set can
+      see this — verify by reading.
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
@@ -975,3 +982,50 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** aa3802a4bcd20cbbb609cdfdb4cbfb3200af0246
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-07-26 (second bounce, bug-05a-1 still open)
+
+**Read `bugs/bug-05a-1.md` before doing anything else.** The previous run returned
+`complete` with an **empty diff**: it re-verified the acceptance criteria, found
+them all green, and stopped. The criteria were green — and the bug was still there,
+because no criterion covered it. A green criteria sweep is **not** evidence the
+phase is done when a bug doc is open.
+
+**The restructure itself is correct and reviewed — do not touch it.** The locked /
+unlocked split, the `GcKill` fields, the `retain`'s `tracked` insert, the two
+`kill_job_window` sites, `hook.rs`, and `helpers.rs` are all approved. `src/` is
+byte-identical to the reviewed state.
+
+**The only edit required is in `src/daemon/background/gc.rs`:** move `struct GcKill`
+**above** the `/// Periodic garbage collector …` doc block, and give it the doc
+comment the spec supplied. Right now that block documents `GcKill` instead of
+`gc_bg_windows`, so a `pub fn` is undocumented and a five-field struct is described
+as a "periodic garbage collector … called every 60 seconds." Target state:
+
+```rust
+/// One window the GC has decided to kill, captured under the lock so the kill
+/// itself can happen outside it.
+struct GcKill {
+    session_id: String,
+    window_name: String,
+    tmux_session: String,
+    pane_id: String,
+    reason: &'static str,
+}
+
+/// Periodic garbage collector for background windows.
+///
+/// Called every 60 seconds by the `bg-window-gc` supervised task.
+///
+/// For each session's tracked `bg_windows`:
+/// - Kills windows whose pane is gone, dead, or has been idle since completing.
+///
+/// Also scans all tmux panes for daemon-prefixed windows not tracked by any
+/// session (orphans from a daemon restart or missed completion signal) and
+/// kills those too.
+pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
+```
+
+That is the whole change. Then re-run the gates and the count criteria to confirm
+nothing else moved: 915 tests, 0 raw acquisitions in all three files,
+`with_sessions` at 3/1/2, `kill_job_window` at 3 in `gc.rs`.
