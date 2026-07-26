@@ -1,7 +1,36 @@
 # NEXT
 
-**Active phase: none.** M5 phase-04b is `done`; phase 04c (convert `ask.rs`) is
-**not yet drafted**. Draft it with `/rexymcp:architect next`.
+**Active phase: M5 phase-04c — convert-ask** (`todo`, drafted 2026-07-25).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04c-convert-ask.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04c-convert-ask`.
+
+Converts the 13 `sessions.lock()` sites in `src/daemon/server/ask.rs`. Unlike
+`handlers.rs` these are not uniform — seven are `sessions.lock().ok()?` chains
+inside `.and_then(…)` closures, so the spec spells out each conversion instead
+of leaving it to pattern matching. The three consecutive ghost-config reads at
+579/590/600 collapse into one acquisition (exact target code in the spec), so
+the finish condition is **11** `with_sessions` calls for 13 former sites, and
+`cargo test --lib` still at **914** — this phase adds no tests.
+
+**⚠ Hazard found while drafting, now recorded as `docs/design/daemon-stalls.md`
+§ 3.5.** The re-entrancy assertion only catches `with_sessions` nested inside
+`with_sessions`. A converted closure that encloses a call still using **raw**
+`.lock()` deadlocks silently — no panic, no log, just a hung test run.
+`ask.rs:571` calls `build_memory_namespaces`, which locks at
+`executor/mod.rs:88` and is not converted until 04d, so no 04c closure may span
+lines 571–575. The spec forbids it explicitly.
+
+That generalises: during the 04b–04d window the guard is weakest exactly at the
+converted/unconverted boundary, and **a conversion phase's failure mode is a
+hang, not a red gate**. Every remaining conversion phase must name the
+store-touching calls inside its region. The hazard disappears once 04e's newtype
+makes raw `.lock()` stop compiling — an argument for finishing the sequence
+rather than stopping after the useful-looking middle.
+
+Also noted for 04d: `build_memory_namespaces` calls `crate::agents::load_agent`
+(a config-file read) **while holding the lock** — mechanism A living in
+`executor/mod.rs`. 04d should hoist that I/O out, not merely convert the call.
 
 **M5 phase-04b — convert-handlers is `done`** (2026-07-25,
 `approved_first_try`, 95 turns). All 15 `sessions.lock()` sites in
