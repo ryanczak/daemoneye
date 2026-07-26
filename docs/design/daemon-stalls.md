@@ -346,3 +346,105 @@ handling.
 
 Applies to prose queries. Slash commands and the synthetic `"Hello!"` greeting
 are excluded — see the phase doc for the exact boundary.
+
+
+---
+
+## 3. Structural answer to re-entrant `SessionStore` locking
+
+**Decided by the PE, 2026-07-25: adopt a `with_sessions(…)` accessor.** This
+section records the decision, the survey that backs it, and the sizing — it is
+the input to phase 04's draft, not a phase spec itself.
+
+### 3.1 Why structural rather than another point fix
+
+Two independent re-entrant `sessions`-lock defects have now shipped in this
+codebase:
+
+1. `stream.rs` — the `sessions` guard held across `spawn_compaction`, which
+   re-locks. Found and fixed during the M4 phase-08 architect takeover.
+2. `mod.rs:693`/`:709` — the session-cleanup double-lock. Root-caused in § 1.5c
+   and fixed in M5 phase-02, after wedging the daemon hourly.
+
+Neither was catchable by any lint. `clippy::await_holding_lock` targets guards
+held across suspension points; both bugs were plain double-acquires with no
+`.await` between them, so the gate stayed green for the entire life of each
+defect. Two occurrences with zero tooling coverage is the argument for changing
+the shape of the API rather than fixing the third one later.
+
+### 3.2 Survey
+
+- **100** `sessions.lock()` call sites outside tests, concentrated in
+  `server/handlers.rs` (15), `server/ask.rs` (13), `context/background.rs` (13),
+  `ghost.rs` (11), `executor/mod.rs` (10), `stream.rs` (8).
+- **13** `Arc::clone(&sessions…)` sites — a newtype must derive `Clone`.
+- **0** guards held across `.await` (confirmed: `clippy -D warnings` is clean and
+  `await_holding_lock` is warn-by-default). Every existing site is therefore
+  convertible to a synchronous closure without restructuring async control flow.
+- Dominant shape is short and closure-shaped already:
+
+```rust
+// src/daemon/server/handlers.rs:57
+if let Ok(mut store) = sessions.lock()
+    && let Some(entry) = store.get_mut(&session_id)
+{
+    entry.active_model = Some(model_name.clone());
+}
+```
+
+The survey also turned up a live instance of the pattern the accessor removes —
+two sequential acquisitions where one would do (not a deadlock; the first guard
+drops at the end of its `if let`):
+
+```rust
+// src/daemon/server/handlers.rs:166 and :173
+let current_target = if let Ok(store) = sessions.lock() { … } else { None };
+let chat_pane_id: Option<String> = if let Ok(store) = sessions.lock() { … } else { None };
+```
+
+### 3.3 The shape
+
+A closure accessor alone is only advisory — raw `.lock()` remains callable, so
+nesting stays writable. The enforceable version is a **newtype with a private
+inner**, which makes the compiler find every site:
+
+```rust
+#[derive(Clone)]
+pub struct SessionStore(Arc<Mutex<HashMap<String, SessionEntry>>>);   // inner is private
+
+impl SessionStore {
+    /// The only way to reach the map. The guard's lifetime is the closure body,
+    /// so it cannot escape, cannot be held across an `.await`, and a nested
+    /// `with_sessions` inside `f` is visible at the call site rather than
+    /// hidden three frames down.
+    pub fn with<T>(&self, f: impl FnOnce(&mut HashMap<String, SessionEntry>) -> T) -> T { … }
+}
+```
+
+Add a **debug-build re-entrancy assertion** inside `with` — a thread-local depth
+counter that panics in `cfg!(debug_assertions)` on a nested acquisition. That
+converts the failure from "daemon wedges an hour later in production" into "test
+run fails immediately with a stack trace." Detection and prevention together;
+neither alone is sufficient, since the newtype prevents *accidental* nesting but
+a determined caller can still nest two `with` calls.
+
+### 3.4 Sizing — this must not be one phase
+
+100 call sites in a single mechanical sweep is precisely the shape that has
+defeated this executor before (M4's retrospective: large blocks and broad
+rewires → self-sabotage; M5's clean runs were all small, single-purpose, fully
+quoted). Split by file group, each phase independently green:
+
+- **04a** — introduce the newtype + `with` + the debug re-entrancy assertion,
+  and convert `session.rs` and `mod.rs` only. Establishes the pattern with a
+  worked example the later phases can quote.
+- **04b/04c** — convert the remaining files in two or three groups, largest
+  first (`handlers.rs` + `ask.rs`, then `background.rs` + `ghost.rs` + the rest).
+  Pure mechanical conversion; the compiler enumerates the work.
+- Mechanisms A and B from § 1.3–1.4 (blocking I/O and tmux subprocesses under
+  the lock, in `webhook/process.rs` and the tmux layer) stay their own phases —
+  the accessor does not fix them, it only makes them easier to see.
+
+The intermediate states are safe: until a file is converted it keeps calling
+`.lock()` on the inner field, so the newtype must expose that path within the
+crate until the last group lands, then drop it.
