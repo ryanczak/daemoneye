@@ -1,10 +1,68 @@
 # NEXT
 
-**Active phase: M5 phase-04i — convert-background-windows** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04i-convert-background-windows.md`.
+**No active phase.** 04i is `done` (`approved_first_try`). The next conversion
+phase (04j — convert-stream-hooks, `stream.rs` 9 + `hook.rs` 3 = 12 sites) is
+**not yet drafted**. Draft it with `/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04i-convert-background-windows`.
+---
+
+## M5 phase-04i — convert-background-windows is `done`
+
+(2026-07-26, `approved_first_try`, no bounces, 76 turns, commit `08e2b49`.)
+
+All 7 mechanical sites converted — `run.rs` 4, `respawn.rs` 3, both at **0** raw
+acquisitions. Gates green, 915 tests unchanged, every criterion exact.
+
+Verified by reading rather than counting: all seven calls use `&sessions` with the
+ampersand (4 + 3, none reverting to the reference convention used elsewhere in the
+daemon); all three `.find(…)` lookups stayed inside their closures rather than
+being hoisted or dodged by cloning; `respawn.rs:106` still assigns
+`w.exit_code = None` for the retry reset while the other two assign
+`Some(exit_code)`; and `tmux::kill_job_window` remains outside its closure in both
+files.
+
+**The two non-zero criteria did their job.** `helpers.rs` and `gc.rs` each still
+hold exactly **1** raw acquisition — pinning them at 1 rather than 0 is what would
+have caught an over-eager sweep into phase 05's restructure sites.
+
+### Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 5 clean confirmations).** Second phase running
+   with no draft correction needed.
+2. **Specs asserting test coverage (3rd occurrence, 4 clean confirmations).** 04i
+   stated outright that the `bg_windows` updates these sites perform are **not**
+   covered by the unit suite, so a coverage claim would have been false rather than
+   merely unproven — and none was made.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Riding on phase 05.
+
+**All await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change made.**
+
+### Where the conversion stands
+
+Converted: `server/handlers.rs`, `server/ask.rs` (bar two known multi-line
+stragglers), the whole `executor/` subtree, `context/background.rs`,
+`briefing.rs`, `ghost.rs`, `background/run.rs`, `background/respawn.rs`.
+
+Remaining: **04j** `stream.rs` (9, incl. the multi-line site at `:896`) +
+`hook.rs` (3) = 12 → **04k** newtype + enforce → **05** (now 4 mechanism-A
+restructures) → 06 → 07, plus the independent 08–11 instance-hardening set.
+
+**Two things to carry into drafting 04j.** `stream.rs` calls `spawn_compaction`,
+and holding the `sessions` guard across that call is a confirmed historical
+self-deadlock in this codebase; `context/background.rs` was converted first
+precisely so that a `stream.rs` closure enclosing it now trips the re-entrancy
+**assertion** (a loud panic) instead of hanging silently. Say so in the hazard
+table. And **re-derive every line number with the scan** — `stream.rs` has one
+multi-line acquisition that `grep -c` cannot see.
+
+**04k still needs re-scoping when drafted** — 13 `Arc::clone` sites, 13
+test-module acquisitions, the two unassigned `ask.rs` stragglers, and 04f's
+coverage follow-up. It may need its own split.
+
+---
+
+## Superseded: the 04i dispatch note
 
 ## `background/` was 9 sites; only 7 belong in a conversion phase
 

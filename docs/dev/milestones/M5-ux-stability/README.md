@@ -79,7 +79,7 @@ take the socket.
 | 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | done (approved_after_1) |
 | 04g | convert-ghost-exit-paths ([phase-04g-convert-ghost-exit-paths.md](phase-04g-convert-ghost-exit-paths.md)) — `write_mailbox_on_exit` (3) + `briefing.rs` (1) = 4 sites | done (approved_first_try) |
 | 04h | convert-ghost-turn-loop ([phase-04h-convert-ghost-turn-loop.md](phase-04h-convert-ghost-turn-loop.md)) — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | done (approved_first_try) |
-| 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | review      |
+| 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | done (approved_first_try) |
 | 04j | convert-stream-hooks — `stream.rs` (8 + 1 multi-line) + `hook.rs` (3) = 12 sites | todo |
 | 04k | sessionstore-newtype (enforce) — **re-scope when drafting; see Notes** | todo   |
 | 05 | unlock-blocking-paths (mechanism A) — `webhook/process.rs` (2) + **`background/helpers.rs::notify_session` (1)** + **`background/gc.rs::gc_bg_windows` (1)** = 4 restructures | todo |

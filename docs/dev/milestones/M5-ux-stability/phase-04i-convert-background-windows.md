@@ -1,7 +1,7 @@
 # Phase 04i: Convert `background/run.rs` + `background/respawn.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04h (`ghost.rs` converted) — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -624,3 +624,74 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 08e2b494594ab9adba77cc714672a24ad6b0fdac
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (76 turns)
+- **Scope deviations:** none. Only `run.rs` and `respawn.rs` touched;
+  `helpers.rs` and `gc.rs` left at 1 acquisition each, as required.
+- **Calibration:** none.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit / 0 failed (unchanged); 27 integration / 2 ignored
+```
+
+**Acceptance criteria:**
+
+| Check | Result |
+|---|---|
+| `scan_locks.py` on `run.rs` / `respawn.rs` | **0 / 0** ✓ |
+| `with_sessions(` in `run.rs` / `respawn.rs` | **4 / 3** ✓ |
+| `helpers.rs` / `gc.rs` still at 1 each | **1 / 1** ✓ — phase 05's sites untouched |
+| `ghost.rs` / `context/background.rs` / `executor/mod.rs` | **0 / 0 / 0** ✓ |
+| `UnpoisonExt` in `run.rs` / `respawn.rs` | **0 / 0** ✓ |
+| `pub type SessionStore` still an alias | ✓ |
+| lib-unit tests | **915**, unchanged ✓ |
+
+**All nine spec tasks implemented as written.** The four things worth checking by
+reading rather than counting:
+
+- **All seven calls use `&sessions`** — `grep -c 'with_sessions(&sessions'` returns
+  4 in `run.rs` and 3 in `respawn.rs`, i.e. every one. No instance of the
+  reference-form convention leaked in from the rest of the daemon.
+- **All three `.find(…)` calls stayed inside their closures**
+  (`respawn.rs:104,167`, `run.rs:276`), each as the second arm of a `let`-chain on
+  `store.get_mut(sid)`. No attempt to hoist the lookup or clone the window out to
+  dodge the borrow.
+- **Polarity preserved.** `respawn.rs:106` is `w.exit_code = None` (the retry
+  reset), while `respawn.rs:169` and `run.rs:278` are `= Some(exit_code)`.
+  Inverting the first would silently mark a running retry job as finished, and no
+  test covers it.
+- **`tmux::kill_job_window` remains outside its closure** in both files —
+  confirmed at `respawn.rs:188`, immediately above the converted block. A
+  subprocess spawn inside the critical section is the defect this milestone
+  removes.
+
+No forbidden idioms in the added lines.
+
+**The two non-zero criteria did their job.** `helpers.rs` and `gc.rs` each still
+hold exactly 1 raw acquisition. Those are **not** conversions — `notify_session`
+holds the guard across two file writes and a tmux subprocess, and `gc_bg_windows`
+holds it across `kill_job_window` in a loop over every session — and they are
+phase 05's work. Pinning both at 1 rather than 0 is what would have caught an
+over-eager sweep.
+
+**Fourth consecutive phase where the corrected drafting practices held.** Every
+criterion was validated against the tree before being pinned, and for the second
+phase running no draft correction was needed. The Test plan named no
+discriminating test; it went further and stated that the `bg_windows` registry
+updates these sites perform are **not** covered by the unit suite, so a coverage
+claim would have been false rather than merely unproven. The Update Log made no
+such claim.
+
+**Milestone position:** `background/run.rs` and `background/respawn.rs` join
+`handlers.rs`, `ask.rs` (bar two known stragglers), the whole `executor/` subtree,
+`context/background.rs`, `briefing.rs`, and `ghost.rs`. Remaining conversions:
+`stream.rs` (9, incl. one multi-line) + `hook.rs` (3) in 04j, then the newtype.
