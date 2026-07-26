@@ -77,10 +77,11 @@ take the socket.
 | 04d | convert-executor-dispatch ([phase-04d-convert-executor-dispatch.md](phase-04d-convert-executor-dispatch.md)) — `executor/mod.rs`, 10 sites + `load_agent` hoist | done (approved_first_try) |
 | 04e | convert-executor-tail ([phase-04e-convert-executor-tail.md](phase-04e-convert-executor-tail.md)) — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | done (approved_first_try) |
 | 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | done (approved_after_1) |
-| 04g | convert-ghost — `ghost.rs` (11) + `briefing.rs` (1) = 12 sites | todo |
-| 04h | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
-| 04i | convert-stream-hooks — `stream.rs` (8) + `hook.rs` (3) = 11 sites | todo |
-| 04j | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)        | todo   |
+| 04g | convert-ghost-exit-paths ([phase-04g-convert-ghost-exit-paths.md](phase-04g-convert-ghost-exit-paths.md)) — `write_mailbox_on_exit` (3) + `briefing.rs` (1) = 4 sites | todo |
+| 04h | convert-ghost-turn-loop — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | todo |
+| 04i | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
+| 04j | convert-stream-hooks — `stream.rs` (8 + 1 multi-line) + `hook.rs` (3) = 12 sites | todo |
+| 04k | sessionstore-newtype (enforce) — **re-scope when drafting; see Notes** | todo   |
 | 05 | unlock-blocking-paths (webhook/process.rs — mechanism A)                | todo   |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
@@ -89,13 +90,15 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 04g–07 are named but **not yet drafted**. Draft each with
+Phases 04h–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
-**The 04d tail was split into five phases (04d–04i) on 2026-07-26**, replacing
-the earlier "04d×3" estimate, after a site-by-site survey. The newtype phase
-moved from 04e to **04j** — it was undrafted and unstarted, so the renumbering
-costs nothing. Actual per-file counts, verified against the tree:
+**The 04d tail was split on 2026-07-26** — first into five phases (04d–04i),
+replacing the earlier "04d×3" estimate, then **the ghost group was split again**
+(04g exit paths / 04h turn loop) when a site-by-site read found three individually
+hard cases in `do_ghost_turn`. The tail is now 04d–04k. Undrafted phases were
+renumbered both times, which costs nothing. Per-file counts, verified against the
+tree with a multi-line-aware scan:
 
 **⚠ Counts corrected twice, and the grep itself was the problem the second time.**
 
@@ -108,7 +111,7 @@ production sites** that every prior survey and criterion missed:
 |---|---|
 | `context/background.rs:118`, `:137` | 04f bounced — see `bugs/bug-04f-1.md` |
 | `server/ask.rs:519`, `:686` | **04c was approved as "fully converted" and is not** — see its verdict correction |
-| `stream.rs:896` | belongs to 04i; no harm, just add it to that phase's inventory |
+| `stream.rs:896` | belongs to **04j** (post-split); already folded into its inventory |
 
 Every remaining phase must use a multi-line-aware check, not `grep -c`. The bug
 doc carries a working one.
@@ -122,14 +125,15 @@ doc carries a working one.
 | `executor/mod.rs` | 10 | 0 | 04d — `done` |
 | `executor/foreground.rs` + `executor/knowledge/*` | 8 | 0 | 04e — `done` |
 | `context/background.rs` | **4** (13 → 2 → 4) | **11** | 04f |
-| `ghost.rs` (11) + `briefing.rs` (1) | 12 | 0 | 04g |
-| `background/{run,respawn,helpers,gc}.rs` | 9 | 0 | 04h |
-| `stream.rs` (8 + **1 multi-line** = 9) + `hook.rs` (3) | 12 | 0 | 04i |
+| `ghost.rs` (11) + `briefing.rs` (1) | 12 | 0 | **04g** (4) + **04h** (8) |
+| `background/{run,respawn,helpers,gc}.rs` | 9 | 0 | 04i |
+| `stream.rs` (8 + **1 multi-line** = 9) + `hook.rs` (3) | 12 | 0 | 04j |
 | `server/ask.rs` — **2 multi-line stragglers from 04c** | 2 | 0 | unassigned |
 | `webhook/process.rs` | 2 | 0 | **phase 05** (mechanism A, not a conversion phase) |
 
-**Only `context/background.rs` was wrong** — the 04g/04h/04i figures were already
-correct, because those files hold no `sessions.lock()` in their test modules. So
+**Only `context/background.rs` was wrong** — the ghost, `background/`, and
+`stream.rs`+`hook.rs` figures were already correct, because those files hold no
+`sessions.lock()` in their test modules. So
 the true total is **54 production sites** (18 already converted by 04d+04e, 34
 remaining, plus webhook's 2 in phase 05), not the 65 previously recorded.
 
@@ -137,8 +141,8 @@ remaining, plus webhook's 2 in phase 05), not the 65 previously recorded.
 four hits, `:432` is `with_sessions`'s own acquisition (correct and permanent),
 `:443` is a doc comment, and `:1204`/`:1226` are tests.
 
-**13 test-module sites now belong to 04j** (11 in `context/background.rs`, 2 in
-`session.rs`). The newtype makes raw `.lock()` stop compiling, so 04j must convert
+**13 test-module sites now belong to 04k** (11 in `context/background.rs`, 2 in
+`session.rs`). The newtype makes raw `.lock()` stop compiling, so 04k must convert
 them — its scope is larger than "the 13 `Arc::clone` sites" implies.
 
 **Phases 08–11 were added 2026-07-26** after a live incident (two daemons

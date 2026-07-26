@@ -1,8 +1,98 @@
 # NEXT
 
-**No active phase.** 04f is `done` (`approved_after_1`). The next conversion phase
-(04g — convert-ghost, `ghost.rs` + `briefing.rs`, 12 sites) is **not yet drafted**.
-Draft it with `/rexymcp:architect next`.
+**Active phase: M5 phase-04g — convert-ghost-exit-paths** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04g-convert-ghost-exit-paths.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04g-convert-ghost-exit-paths`.
+
+## The ghost group was split — 04g (4 sites) + 04h (8 sites)
+
+The planned "04g = ghost.rs + briefing.rs, 12 sites" is now two phases. Reading
+all 12 sites found **three individually hard cases, all inside `do_ghost_turn`**,
+each with a different failure mode:
+
+- **`ghost.rs:309`** — `anyhow::bail!` inside the guarded block, i.e. a
+  `return Err(..)` from the enclosing async fn.
+- **`ghost.rs:469`** — `append_session_message(...)` is called **inside** the
+  critical section. That is blocking file I/O under the global session lock — a
+  live mechanism-A defect, and the conversion must **hoist** it, not preserve it.
+- **`ghost.rs:488`** — a bare `break;` inside the guarded block, exiting the
+  enclosing turn loop. Inside a closure that is **a compile error**, not a silent
+  behaviour change — so unlike 04f's traps it fails loudly, but it will stall an
+  executor that tries the mechanical wrap first.
+
+Bundling those with the four easy exit-path sites risked one confusion consuming
+the run, on the most safety-sensitive subsystem in the daemon (autonomous
+remediation). So:
+
+- **04g — ghost exit paths (drafted):** `write_mailbox_on_exit` (3) +
+  `briefing.rs` (1) = **4 sites**, `size=s`, ~70 lines. Two have a plain `return`
+  inside the guard; the region has **no store-touching callees at all** (verified:
+  `src/agents/mailbox.rs` has zero `SessionStore` references, and
+  `do_generate_briefing` does not take `sessions`), so the §3.5 deadlock hazard is
+  absent here.
+- **04h — ghost turn loop (not drafted):** `start_session` (1) + `do_ghost_turn`
+  (7) = **8 sites**, carrying all three hard cases above.
+
+Undrafted phases renumbered: background-windows → 04i, stream-hooks → 04j,
+newtype → 04k. Second free renumbering; the tail is now 04d–04k.
+
+## What 04g pins, and how the counts were derived
+
+**Two acceptance criteria are deliberately non-zero:** `ghost.rs` must end at
+**8** raw acquisitions, not 0. A zero there means the turn loop was converted out
+of scope, which is the specific over-reach this split creates.
+
+`briefing.rs` carries a conditional: converting its only site may leave
+`use crate::util::UnpoisonExt;` unused, and `cargo build` vs
+`cargo clippy --all-targets` **disagree** about whether a test-only import counts
+as used. That disagreement is what produced 04f's `hard_fail`, so the spec makes
+the check conditional (grep for remaining `unwrap_or_log`, then delete *or* move
+into `mod tests`) and requires both commands.
+
+**I ran the scan before pinning, and it caught me.** I had written 12 as
+`ghost.rs`'s production count in two places; the actual value is **11** (plus
+`briefing.rs`'s 1 = 12 for the group). Both were corrected before the doc landed.
+That is the fourth counting slip in this milestone and the first one caught before
+dispatch rather than at review — the practice of running the criterion instead of
+deriving it is what made the difference, and the doc now says so inline.
+
+The scan script is inlined in 04g's Pre-flight as `/tmp/scan_locks.py` rather than
+referenced, so the executor does not have to reconstruct it from the bug doc.
+
+## Also applied from the 04f review
+
+**The Test plan no longer names a discriminating test.** Given three consecutive
+phases where I asserted coverage that didn't exist, 04g's Test plan says: run the
+mailbox/briefing tests, report what you observed, and — explicitly — *"Do not
+claim any of these 'guards' a specific line. A claim about what a test would catch
+is only admissible in this project if you demonstrate it by mutation."* No
+mutation is required, because no test change is required.
+
+## Still open for the PE — four threads, none folded
+
+1. **Count criteria (4th).** `grep -c` retired; multi-line-aware scan now inlined
+   in the phase doc that needs it.
+2. **Specs asserting test coverage (3rd).** 04g is the first phase drafted under
+   the corrected rule (never name the discriminator; require mutation proof or
+   claim nothing).
+3. **Fixture defaults neutering assertions (1st).** From 04f —
+   `make_test_entry()` defaulting `compaction_in_flight: false` made three
+   assertions tautological.
+4. **Lock/HOME test hygiene (3 deep).** Still riding on phase 05.
+
+## Remaining 04x work
+
+04g (4) → 04h (8, the hard ghost cases) → 04i (`background/*`, 9) → 04j
+(`stream.rs` 9 + `hook.rs` 3 = 12) → **04k** (newtype + enforce).
+
+**04k is materially larger than its name suggests** — the 13 `Arc::clone` sites,
+**plus** 13 test-module acquisitions (11 in `context/background.rs`, 2 in
+`session.rs`), **plus** the two unassigned `ask.rs` multi-line stragglers,
+**plus** 04f's coverage follow-up (make three vacuous `compaction_in_flight`
+assertions real, mutation-checked). Re-scope it when drafting; it may need its own
+split.
 
 ---
 
