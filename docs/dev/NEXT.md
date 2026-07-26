@@ -1,8 +1,70 @@
 # NEXT
 
-**No active phase.** 04d is `done`; the next conversion phase (04e —
-convert-executor-tail) is **not yet drafted**. Draft it with
-`/rexymcp:architect next`.
+**Active phase: M5 phase-04e — convert-executor-tail** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04e-convert-executor-tail.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04e-convert-executor-tail`.
+
+Converts the last 8 `sessions.lock()` sites under `src/daemon/executor/` —
+`foreground.rs` (4), `knowledge/mod.rs` (1), `knowledge/pane.rs` (2),
+`knowledge/ghost.rs` (1) — finishing the executor subtree.
+
+**Finish condition: 8 `with_sessions` calls for 8 former sites**, zero raw locks
+anywhere under `src/daemon/executor/`, and **915** lib-unit tests unchanged. There
+is no collapse in this phase, so the arithmetic is 1:1 — every site reads a
+different thing at a different point.
+
+**Two of the eight hold the guard across an early `return` from the enclosing
+function**, which is the trap that made 04d's site 922 non-mechanical. Both get
+exact target code:
+
+- **`foreground.rs:232`** is the 922 shape one level deeper — the guard is held
+  across `cache.panes.read()` inside an **IIFE** that `return`s. Moving the read
+  into a `with_sessions` closure makes the `return` exit *that* closure, so the
+  IIFE falls through to `None` and `target_hint` silently becomes `None`. **It
+  compiles.** The spec hoists the read above the IIFE.
+- **`knowledge/pane.rs:19`** is worse: the locked block contains **three**
+  `return`s from `close_bg_window`, two carrying distinct user-facing error
+  strings. The spec has the closure return `Result<(String,String,bool), String>`
+  and match outside, with the messages pinned byte-identical.
+
+**Cross-module hazard, verified while drafting** (task 9): `inject_ghost_event`
+→ `inject_into_sessions`/`notify_chat_panes` in `webhook/process.rs` **is** an
+unconverted store-toucher, and it is called immediately after task 8's closure in
+`knowledge/ghost.rs`. So is `GhostManager::start_session_with_config` (`ghost.rs`,
+11 sites) just before it, and `respawn_background_in_pane`/
+`run_background_in_window` (`background/`, 9 sites) reached from `foreground.rs`.
+All three already sit outside the converted regions; the spec forbids widening a
+closure over them. By contrast `append_session_message` (`session.rs:281`) is file
+I/O only — mechanism-A relevant, but it will not deadlock.
+
+### Both 04d spec defects were addressed in this doc, not just noted
+
+- **No new tests.** 04e is a pure conversion with no structural change, so the
+  existing 915 tests are the net — matching 04b and 04c, both of which landed
+  `approved_first_try`. This structurally avoids repeating 04d's
+  non-discriminating-test defect: there is no test to get wrong.
+- **Count criteria self-checked against the spec's own identifiers**, which is
+  what 04d got wrong. The `use` lines are safe (`with_sessions` in an import has
+  no trailing `(`), and the doc now explicitly forbids writing the literal
+  `sessions.lock()` or `with_sessions(` **in a comment**, since the greps count
+  raw text including comments. That was the exact failure mode of 04d's criterion 3.
+- **Authorizations says None and explains the boundary**: no tests means no
+  `HOME` redirection means no `unsafe`, and the doc tells the executor to file a
+  blocker rather than improvise if it thinks it needs one.
+
+**⚠ Still open for the PE:** the calibration question raised at 04d review — third
+occurrence of the "same doc contradicts itself" pattern — is **unanswered**. No
+`WORKFLOW.md` fold has been made (§5 requires your sign-off). The candidate fold:
+before dispatch, the architect mechanically checks every count-grep criterion
+against the spec's own mandated identifiers. 04e applies that check by hand; the
+question is whether it becomes a standing rule.
+
+Also unanswered and now three-deep: the lock/HOME **test-hygiene** thread (04a→04b
+fast-fail carry, 04c `try_lock` follow-up, 04d's missing RAII guard). Both
+follow-ups still ride on **phase 05**, which owns mechanism A and needs the
+`load_agent` seam anyway.
 
 ---
 
@@ -199,7 +261,7 @@ group is 8–13 sites, comfortably inside one session.
 
 ---
 
-## Previously active: M5 phase-04c — convert-ask (`review`)
+## M5 phase-04c — convert-ask is `done` (approved_first_try, 2026-07-26)
 
 Doc: `docs/dev/milestones/M5-ux-stability/phase-04c-convert-ask.md`.
 

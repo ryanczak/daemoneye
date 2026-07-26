@@ -75,7 +75,7 @@ take the socket.
 | 04b | convert-handlers ([phase-04b-convert-handlers.md](phase-04b-convert-handlers.md)) | done (approved_first_try) |
 | 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | done (approved_first_try) |
 | 04d | convert-executor-dispatch ([phase-04d-convert-executor-dispatch.md](phase-04d-convert-executor-dispatch.md)) — `executor/mod.rs`, 10 sites + `load_agent` hoist | done (approved_first_try) |
-| 04e | convert-executor-tail — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | todo |
+| 04e | convert-executor-tail ([phase-04e-convert-executor-tail.md](phase-04e-convert-executor-tail.md)) — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | todo |
 | 04f | convert-context-background — `context/background.rs`, 13 sites | todo |
 | 04g | convert-ghost — `ghost.rs` (11) + `briefing.rs` (1) = 12 sites | todo |
 | 04h | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
@@ -89,7 +89,7 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 04e–07 are named but **not yet drafted**. Draft each with
+Phases 04f–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
 **The 04d tail was split into five phases (04d–04i) on 2026-07-26**, replacing
