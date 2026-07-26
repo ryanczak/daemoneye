@@ -89,19 +89,29 @@ pub async fn handle_notify_session_closed<W>(
 where
     W: AsyncWriteExt + Unpin,
 {
-    if let Ok(mut store) = sessions.lock() {
-        store.retain(|_, entry| {
-            if entry.tmux_session == session_name {
-                entry.cleanup_bg_windows();
-                log::info!(
-                    "Cleaned up session '{}' on tmux session-closed.",
-                    session_name
-                );
-                false
-            } else {
-                true
+    let closed: Vec<crate::daemon::session::SessionEntry> = with_sessions(&sessions, |store| {
+        let matching: Vec<String> = store
+            .iter()
+            .filter(|(_, entry)| entry.tmux_session == session_name)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        let mut closed = Vec::with_capacity(matching.len());
+        for key in matching {
+            if let Some(entry) = store.remove(&key) {
+                closed.push(entry);
             }
-        });
+        }
+        closed
+    });
+
+    // Unlocked phase: everything blocking happens out here.
+    for entry in &closed {
+        entry.cleanup_bg_windows();
+        log::info!(
+            "Cleaned up session '{}' on tmux session-closed.",
+            session_name
+        );
     }
 
     if managed_session.as_deref() == Some(session_name.as_str()) {

@@ -1,6 +1,6 @@
 use crate::ai::Message;
 use crate::ai::filter::mask_sensitive;
-use crate::daemon::session::{SessionStore, append_session_message};
+use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
 use crate::daemon::utils::normalize_output;
 use crate::tmux;
 use std::sync::Mutex;
@@ -152,18 +152,22 @@ pub(super) fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJ
         body,
         pane_persists,
     } = job;
-    let Ok(mut store) = sessions.lock() else {
-        return;
-    };
-    let Some(entry) = store.get_mut(session_id) else {
+    // Phase 1 (locked): update the registry and take what the rest needs.
+    // Returns None when the session entry is gone.
+    let Some(chat_pane) = with_sessions(sessions, |store| {
+        let entry = store.get_mut(session_id)?;
+
+        // Update exit_code in the bg_windows registry.
+        if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
+            w.exit_code = Some(exit_code);
+        }
+
+        Some(entry.chat_pane.clone())
+    }) else {
         return;
     };
 
-    // Update exit_code in the bg_windows registry.
-    if let Some(w) = entry.bg_windows.iter_mut().find(|w| w.pane_id == pane_id) {
-        w.exit_code = Some(exit_code);
-    }
-
+    // Phase 2 (unlocked): the filesystem scan, the formatting, and the file write.
     let persist_note = if pane_persists {
         format!(
             "The window is still open (pane {pane_id}). \
@@ -192,15 +196,22 @@ pub(super) fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJ
         turn: None,
     };
     append_session_message(session_id, &completion_msg);
-    entry.messages.push(completion_msg);
 
+    // Phase 3 (locked): push the message into the in-memory history.
+    with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(session_id) {
+            entry.messages.push(completion_msg);
+        }
+    });
+
+    // Phase 4 (unlocked): the tmux notification.
     let status_word = if exit_code == 0 {
         "succeeded"
     } else {
         "failed"
     };
     let alert = format!("`{cmd}` {status_word} in pane {pane_id}");
-    if let Some(ref cp) = entry.chat_pane {
+    if let Some(ref cp) = chat_pane {
         let _ = std::process::Command::new("tmux")
             .args(["display-message", "-d", "5000", "-t", cp, &alert])
             .output();

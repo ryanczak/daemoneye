@@ -1,7 +1,7 @@
 # Phase 05a: Get tmux Subprocesses Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04j (conversion sweep complete) — `done`
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -710,3 +710,9 @@ think you need `unsafe` or a new dependency, **stop and report a blocker**.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 19:36 (started)
+
+**Executor:** model (phase-05a)
+
+Implemented all three restructures: `hook.rs:92`, `gc.rs:201`, `helpers.rs:155`.

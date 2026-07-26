@@ -1,3 +1,4 @@
+use crate::daemon::session::with_sessions;
 use crate::daemon::utils::log_event;
 use crate::ipc::Response;
 use crate::tmux;
@@ -156,6 +157,14 @@ const DAEMON_BG_PREFIXES: &[&str] = &[
 /// Also scans all tmux panes for daemon-prefixed windows not tracked by any
 /// session (orphans from a daemon restart or missed completion signal) and
 /// kills those too.
+struct GcKill {
+    session_id: String,
+    window_name: String,
+    tmux_session: String,
+    pane_id: String,
+    reason: &'static str,
+}
+
 pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
     use std::collections::{HashMap, HashSet};
 
@@ -198,56 +207,70 @@ pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
         }
     }
 
-    let Ok(mut store) = sessions.lock() else {
-        return;
-    };
+    // Locked phase: decide what to kill and which panes stay tracked. No
+    // subprocess spawn and no file write happens while the guard is alive.
+    let (kills, tracked_pane_ids): (Vec<GcKill>, HashSet<String>) =
+        with_sessions(sessions, |store| {
+            let mut kills: Vec<GcKill> = Vec::new();
+            let mut tracked: HashSet<String> = HashSet::new();
 
-    // Track all pane IDs referenced by any session (for orphan detection).
-    let mut tracked_pane_ids: HashSet<String> = HashSet::new();
-
-    for (session_id, entry) in store.iter_mut() {
-        let to_kill = plan_gc_actions(&entry.bg_windows, &pane_map, now_unix);
-        if to_kill.is_empty() {
-            for w in &entry.bg_windows {
-                tracked_pane_ids.insert(w.pane_id.clone());
-            }
-            continue;
-        }
-
-        for pane_id in &to_kill {
-            // Look up window info before removing.
-            if let Some(win) = entry.bg_windows.iter().find(|w| &w.pane_id == pane_id) {
-                let reason = if pane_map.contains_key(pane_id) {
-                    if pane_map[pane_id].dead {
-                        "pane_dead"
-                    } else {
-                        "idle_completed"
+            for (session_id, entry) in store.iter_mut() {
+                let to_kill = plan_gc_actions(&entry.bg_windows, &pane_map, now_unix);
+                if to_kill.is_empty() {
+                    for w in &entry.bg_windows {
+                        tracked.insert(w.pane_id.clone());
                     }
-                } else {
-                    "pane_gone"
-                };
-                log_event(
-                    "gc_window",
-                    serde_json::json!({
-                        "session": session_id,
-                        "win_name": win.window_name,
-                        "pane_id": pane_id,
-                        "reason": reason,
-                    }),
-                );
-                if let Err(e) = tmux::kill_job_window(&win.tmux_session, &win.window_name) {
-                    log::warn!("gc_bg_windows: failed to kill {}: {}", win.window_name, e);
+                    continue;
                 }
-            }
-        }
 
-        entry.bg_windows.retain(|w| {
-            let keep = !to_kill.contains(&w.pane_id);
-            if keep {
-                tracked_pane_ids.insert(w.pane_id.clone());
+                for pane_id in &to_kill {
+                    // Look up window info before removing.
+                    if let Some(win) = entry.bg_windows.iter().find(|w| &w.pane_id == pane_id) {
+                        let reason = if pane_map.contains_key(pane_id) {
+                            if pane_map[pane_id].dead {
+                                "pane_dead"
+                            } else {
+                                "idle_completed"
+                            }
+                        } else {
+                            "pane_gone"
+                        };
+                        kills.push(GcKill {
+                            session_id: session_id.clone(),
+                            window_name: win.window_name.clone(),
+                            tmux_session: win.tmux_session.clone(),
+                            pane_id: pane_id.clone(),
+                            reason,
+                        });
+                    }
+                }
+
+                entry.bg_windows.retain(|w| {
+                    let keep = !to_kill.contains(&w.pane_id);
+                    if keep {
+                        tracked.insert(w.pane_id.clone());
+                    }
+                    keep
+                });
             }
-            keep
+
+            (kills, tracked)
         });
+
+    // Unlocked phase: everything blocking happens out here.
+    for k in &kills {
+        log_event(
+            "gc_window",
+            serde_json::json!({
+                "session": k.session_id,
+                "win_name": k.window_name,
+                "pane_id": k.pane_id,
+                "reason": k.reason,
+            }),
+        );
+        if let Err(e) = tmux::kill_job_window(&k.tmux_session, &k.window_name) {
+            log::warn!("gc_bg_windows: failed to kill {}: {}", k.window_name, e);
+        }
     }
 
     // Orphan sweep: kill daemon-prefixed windows not tracked by any session.
