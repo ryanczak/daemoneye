@@ -1,7 +1,7 @@
 # Bug 1 on phase-05a: `GcKill` stole `gc_bg_windows`'s doc comment
 
 **Severity:** minor
-**Status:** open — **not addressed by run 2** (2026-07-26)
+**Status:** resolved (run 3, commit `edc51f9`) — 2026-07-26
 **Filed:** 2026-07-26
 
 > **Run 2 returned `complete` with an empty diff.** It re-ran the phase's

@@ -1,7 +1,7 @@
 # Phase 05a: Get tmux Subprocesses Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04j (conversion sweep complete) — `done`
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -1154,3 +1154,43 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 91a570187eb0d778d89df08ca457e1ed25edd13d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (both on `bugs/bug-05a-1.md`, one bug filed)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none in the final state. Run 1 dropped the doc comment the
+  spec supplied for `GcKill` and placed the struct between `gc_bg_windows`'s doc
+  block and the function, transferring a `pub fn`'s documentation onto a private
+  struct. Run 3 fixed it with a diff containing exactly that move and nothing else.
+- **Calibration:** two new threads, neither folded.
+  1. **Partially-transcribed spec quotes (1st).** The spec gave `GcKill` *with* its
+     doc comment; run 1 transcribed the struct body and dropped the comment above
+     it. Related to the fabricated-quote thread opened while drafting 05a, but the
+     inverse: not invented text, but silently omitted text.
+  2. **Criteria-sweep false completion (1st).** Run 2 returned `complete` with an
+     **empty diff** — it re-ran the acceptance criteria, found them green, and
+     stopped without reading the open bug doc. The criteria were green precisely
+     because none of them covered the defect. Adding a criterion for it (and a
+     Notes-for-executor block) fixed it on run 3. If this recurs, the candidate
+     fold is a `WORKFLOW.md` rule: **an open bug doc must be explicitly closed out
+     in the Update Log before a run may return `complete`** — a green criteria
+     sweep is not a completion test.
+
+**Verified by reading, not counting** (the counts cannot show these):
+
+- The three restructures are correct and were unchanged by runs 2–3.
+  `git diff` between the first reviewed state and final shows *only* the struct
+  move in `gc.rs`.
+- `hook.rs` — `cleanup_bg_windows()` and `log::info!` run in the unlocked loop, so
+  a hook matching N sessions still logs N times.
+- `gc.rs` — the `retain` still inserts kept pane ids into `tracked`. This was the
+  phase's one silent-failure risk: a dropped insert would make the orphan sweep
+  kill a live window with every gate green. Both `kill_job_window` sites are
+  outside the closure.
+- `helpers.rs` — `chat_pane` is **cloned** in phase 1, phase 3 **re-checks
+  `get_mut`** (the entry can legitimately vanish during the filesystem scan), and
+  `append_session_message` still precedes the in-memory push.
+
+915 lib-unit tests, unchanged — this phase added none, as specified.
