@@ -1,7 +1,7 @@
 # Phase 04g: Convert the Ghost Exit Paths — `write_mailbox_on_exit` + `briefing.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04f (`context/background.rs` converted) — `done`
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -558,3 +558,90 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6a2c03590013c64e2e5dd8df560c1c54d584eaf1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside existing code paths; no CLI surface, no config key.
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (71 turns)
+- **Scope deviations:** none. Only `ghost.rs` and `briefing.rs` touched, and the
+  ghost turn loop was left alone — the specific over-reach this split created.
+- **Calibration:** none on the executor. **The two corrected drafting practices
+  both worked** — see below.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit / 0 failed (unchanged); 27 integration / 2 ignored
+```
+
+**Acceptance criteria — multi-line-aware scan, not `grep -c`:**
+
+| Check | Result |
+|---|---|
+| `scan_locks.py src/daemon/ghost.rs` | **8** ✓ — turn loop untouched |
+| `scan_locks.py src/daemon/briefing.rs` | **0** ✓ |
+| `with_sessions(` in `ghost.rs` | **3** ✓ |
+| `with_sessions(` in `briefing.rs` | **1** ✓ |
+| `grep -c "sessions\.lock()"` in `ghost.rs` | **8** ✓ — agrees with the scan |
+| `background.rs` / `executor/mod.rs` | **0 / 0** ✓ — 04d–04f untouched |
+| `pub type SessionStore` still an alias | ✓ |
+| lib-unit tests | **915**, unchanged ✓ |
+
+**Spec conformance, read from the diff:**
+
+- All four sites match their target code. Tasks 1 and 4 use
+  `let Some(..) = with_sessions(..) else { return; }`; tasks 2 and 3 are
+  mechanical wraps.
+- **The two miss paths stayed separate** — `write_mailbox_on_exit` still has the
+  `with_sessions` `let … else { return; }` for "entry absent" followed by the
+  distinct `let Some(agent_name) = agent_name else { return; };` for "entry
+  present, no agent". Verified by reading `ghost.rs:31-41`. Merging them would
+  have worked and destroyed the distinction.
+- **`log::warn!` stayed outside the closure** in `briefing.rs`, so the daemon no
+  longer logs while holding the global session lock on that path.
+- **Strings byte-identical**, checked with literal `grep -cF` against the parent
+  commit: both mailbox task-description fallbacks (which reach a coordinator ghost
+  through `await_agent_result`) and the briefing warning — 1 occurrence before and
+  after, each.
+- **The `UnpoisonExt` conditional was resolved correctly.** `briefing.rs`'s
+  top-level import is gone and the only remaining one is at line 151, *inside*
+  `mod tests` (which begins at 150) — the spec's first branch, correctly applied
+  because the test module already had its own. `ghost.rs` keeps its import, as it
+  must with 8 raw acquisitions left. Both `cargo build` **and**
+  `cargo clippy --all-targets` pass, which is the pair that disagreed and produced
+  the previous phase's `hard_fail`.
+- No forbidden idioms in the added lines.
+
+---
+
+## The two corrected drafting practices both held
+
+Recorded because they are the first clean confirmations after four counting slips
+and three false coverage claims.
+
+**1. Running the criterion instead of deriving it caught a real error before
+dispatch.** While drafting, the scan reported `ghost.rs: 11` where the doc said
+12 (in two places). Corrected pre-dispatch. Every count criterion then came out
+exact at review — the first phase in this milestone where no count needed
+correcting afterwards.
+
+**2. Naming no discriminating test produced an honest Update Log.** The Test plan
+asked only for tests run and observed, and explicitly forbade claiming a test
+guards a line without mutation proof. The executor reported exactly that — which
+tests it ran and that they passed — and separately answered the reasoning check
+about the two miss paths. **No coverage claim was made, so none needed
+refuting.** Contrast the previous two phases, where a planted conclusion produced
+a false claim that took a mutation to disprove.
+
+The follow-up from 04f still stands and is unaffected by this phase: three of the
+four `compaction_in_flight` clear sites in `context/background.rs` remain
+unguarded, carried to 04k.

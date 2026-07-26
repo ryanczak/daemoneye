@@ -1,10 +1,86 @@
 # NEXT
 
-**Active phase: M5 phase-04g — convert-ghost-exit-paths** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04g-convert-ghost-exit-paths.md`.
+**No active phase.** 04g is `done` (`approved_first_try`). The next conversion
+phase (04h — convert-ghost-turn-loop, 8 sites, carrying all three hard ghost
+cases) is **not yet drafted**. Draft it with `/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04g-convert-ghost-exit-paths`.
+---
+
+## M5 phase-04g — convert-ghost-exit-paths is `done`
+
+(2026-07-26, `approved_first_try`, no bounces, 71 turns, commit `6a2c035`.)
+
+All 4 exit-path sites converted — 3 in `write_mailbox_on_exit`, 1 in
+`generate_and_save_briefing`. `ghost.rs` is at **8** raw acquisitions (the turn
+loop, untouched as required), `briefing.rs` at **0**. Every count came out exact
+under the multi-line-aware scan; gates green; 915 tests unchanged.
+
+Verified by reading the diff rather than the summary: the two miss paths in
+`write_mailbox_on_exit` stayed separate ("entry absent" vs "entry present, no
+agent"), `log::warn!` moved outside the closure so `briefing.rs` no longer logs
+under the global lock, and all three contract-bearing strings are byte-identical
+by literal `grep -cF` against the parent. The `UnpoisonExt` conditional resolved
+correctly — top-level import removed, `mod tests`' own retained at line 151, with
+both `cargo build` and `cargo clippy --all-targets` passing.
+
+### Both corrected drafting practices held — first clean confirmation
+
+Worth recording after four counting slips and three false coverage claims:
+
+1. **Running the criterion instead of deriving it caught an error pre-dispatch.**
+   The scan said `ghost.rs: 11` where my draft said 12, in two places. Fixed
+   before dispatch — and then **every count criterion came out exact at review**,
+   the first phase in this milestone needing no post-hoc correction.
+2. **Naming no discriminating test produced an honest Update Log.** The Test plan
+   asked only for tests run and observed and forbade unproven coverage claims. The
+   executor reported exactly that, plus the reasoning check on the two miss paths.
+   **No coverage claim was made, so none needed refuting** — versus the previous
+   two phases, where a planted conclusion produced a false claim that took a
+   mutation to disprove.
+
+That is now two clean data points for thread 1 and one for thread 2.
+
+### Next up: 04h is the hard one
+
+`start_session` (1 site) + `do_ghost_turn` (7) = **8 sites**, and it carries all
+three cases that motivated splitting the ghost group:
+
+- **`ghost.rs:309`** — `anyhow::bail!` inside the guard (a `return Err` from the
+  enclosing async fn).
+- **`ghost.rs:469`** — `append_session_message(...)` called **inside** the
+  critical section: blocking file I/O under the global session lock, a live
+  mechanism-A defect the conversion must **hoist**, not preserve. Note
+  `ghost.rs:1008` already does it the right way (append *before* the lock) — quote
+  that as the worked example when drafting.
+- **`ghost.rs:488`** — a bare `break;` inside the guard, exiting the turn loop.
+  Inside a closure that is a **compile error**, so it fails loudly rather than
+  silently — but it will stall an executor that tries the mechanical wrap first.
+  Spell out the extract-then-act shape.
+
+**Line numbers will have shifted** — 04g removed ~3 lines from the top of
+`ghost.rs`. Re-derive every site with the scan before drafting; do not reuse the
+numbers above without re-checking them.
+
+### Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 2 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 1 clean confirmation).**
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Still on phase 05.
+
+**All await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change made.**
+
+### Remaining 04x work
+
+04h (8, the hard ghost cases) → 04i (`background/*`, 9) → 04j (`stream.rs` 9 +
+`hook.rs` 3 = 12) → **04k** (newtype + enforce).
+
+**04k still needs re-scoping when drafted** — the 13 `Arc::clone` sites, plus 13
+test-module acquisitions, plus the two unassigned `ask.rs` multi-line stragglers,
+plus 04f's coverage follow-up (three vacuous `compaction_in_flight` assertions to
+make real, mutation-checked). It may need its own split.
+
+---
 
 ## The ghost group was split — 04g (4 sites) + 04h (8 sites)
 
