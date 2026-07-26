@@ -1,7 +1,7 @@
 # Phase 05b: Get the Last Blocking Work Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05a (subprocess-under-lock restructures) — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -618,3 +618,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6f6c8bfc182d83ccbb8c05cf38b6a6074ca44bbe
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. Exactly the three sites, exactly the specified
+  shapes; `src/` diff touches only `webhook/process.rs` and `daemon/stream.rs`.
+- **Calibration:** one observation, no fold. The executor's own "started" Update
+  Log entry self-labels as **"Claude Sonnet 4.5"**, which is false — the
+  server-authored entry directly below it correctly records
+  `Qwen/Qwen3.6-27B-FP8`. Harmless here because the authoritative entry is
+  server-written, but Update Log entries are read as record, and a model
+  misidentifying itself in one is worth watching for recurrence. 1st occurrence.
+
+**Verified by reading, not counting** (the counts cannot show these):
+
+- **Task 3's conditionality holds.** `store.get(id).map(…)` returns
+  `Option<SessionMeta>` and the write is gated on `if let Some(meta)`, so a
+  `get(id)` miss still writes **no** file. An unconditional hoist would have
+  created a meta file for an evicted session with every gate green — the phase's
+  one silent-failure risk.
+- **`spawn_compaction` is outside every closure.** The `with_sessions` closure
+  closes with `});`, then the `if let Some(meta)` block, then the `!is_ghost_session`
+  block, and only then the comment and the call. The re-entrancy warning survives
+  byte-identical.
+- **The ghost skip is intact** and still gates the lock acquisition itself; all six
+  `SessionMeta` fields are unchanged, with `saved_name` the only clone.
+- **Task 2 dropped `let _ = entry;` rather than carrying it forward**, and the
+  four-line staleness comment survives byte-identical, moved to sit above the loop
+  it describes.
+- **05a's doc-comment hazard did not recur.** Both `inject_into_sessions` and
+  `notify_chat_panes` still carry their own `///` blocks, correctly attached.
+- **The inverted `UnpoisonExt` case was handled correctly** — the import stayed at
+  **1** in `process.rs` (still needed for `state.dedup` and `state.rate_limit`)
+  after five consecutive phases where the right answer was deletion.
+
+915 lib-unit tests, unchanged — this phase added none, as specified.
+
+### Milestone state after 05b
+
+The mechanism-A/B restructure work is **complete**. A whole-`src/` scan reports
+exactly **4** production acquisitions, and every one is legitimate or assigned:
+
+| File:line | What it is |
+|---|---|
+| `session.rs:432` | `with_sessions` itself — the one real acquisition, by design |
+| `session.rs:443` | **not code** — a doc comment on `cleanup_pass` containing the literal `sessions.lock()`; the scan is text-based |
+| `ask.rs:519`, `:686` | the two multi-line stragglers — **phase 05c's** |
+
+**The milestone's third exit criterion is not yet tickable.** Its first half —
+"no `SessionStore` critical section performs blocking work" — is now true. Its
+second half — "**enforced by a test or lint, not only by review**" — is exactly
+what 05c's newtype delivers. Tick the box when 05c lands, not now.
