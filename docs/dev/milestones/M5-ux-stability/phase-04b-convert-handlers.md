@@ -1,7 +1,7 @@
 # Phase 04b: Convert `handlers.rs` Lock Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04a (`with_sessions` accessor) — `done`
 **Estimated diff:** ~160 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -289,3 +289,124 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 ### Update — 2026-07-26 01:04 (progress)
 
 Converted all 15 `sessions.lock()` sites in `handlers.rs` to `with_sessions`, collapsing the two adjacent acquisitions at lines 166/173 into one. Added the fast-failing depth test `with_sessions_sets_depth_inside_closure` to `session.rs`. Verified the test catches the `let _ =` bug instantly (0ms failure vs. hang). All 914 tests pass. `ask.rs` untouched at 13 lock sites. `SessionStore` remains a plain type alias.
+
+### Update — ts=1785028579447 (complete, server-authored)
+
+**Summary:** **Summary:** Converted all 15 `sessions.lock()` sites in `handlers.rs` to the `with_sessions` accessor from phase 04a, collapsing the two adjacent acquisitions at lines 166/173 into one call as encouraged by the spec. Added the fast-failing depth test `with_sessions_sets_depth_inside_closure` to `session.rs` — verified it catches a `let _ =` dropped guard binding instantly (0ms failure) rather than hanging like the older re-entrancy test. All 914 tests pass (`cargo test --lib`), clippy is clean, and `ask.rs` remains untouched at 13 lock sites. No deviations from the spec.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.42s
+
+
+LINT
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.45s
+
+
+TEST
+x::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::backfill_idempotent ... ok
+test memory::tests::session_memory_block_respects_cap ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test memory::tests::update_memory_creates_new_entry ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test memory::tests::update_memory_sets_updated_timestamp ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 914 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.51s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-04b-convert-handlers.md` — +5 -1
+- `src/daemon/server/handlers.rs` — +119 -126
+- `src/daemon/session.rs` — +19 -0
+
+**Commit:** e182ef8c92ba204d892315dd507837d1a75b125b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
