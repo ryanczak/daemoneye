@@ -380,6 +380,59 @@ impl SessionEntry {
     }
 }
 
+thread_local! {
+    /// Depth of the current thread's `with_sessions` nesting. Only ever 0 or 1
+    /// in correct code.
+    static SESSIONS_LOCK_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII depth counter for `with_sessions`. Decrements on drop, so the count is
+/// correct even when the closure panics — otherwise one panicking test would
+/// poison the counter for every later test on the same thread.
+struct SessionsLockDepth;
+
+impl SessionsLockDepth {
+    fn enter() -> Self {
+        SESSIONS_LOCK_DEPTH.with(|d| {
+            assert_eq!(
+                d.get(),
+                0,
+                "re-entrant SessionStore lock: with_sessions() called while this \
+                 thread already holds the store. std::sync::Mutex is not reentrant \
+                 — this would deadlock the whole daemon. Collect what you need \
+                 inside the outer closure and use it after it returns. See \
+                 docs/design/daemon-stalls.md § 1.5c."
+            );
+            d.set(1);
+        });
+        Self
+    }
+}
+
+impl Drop for SessionsLockDepth {
+    fn drop(&mut self) {
+        SESSIONS_LOCK_DEPTH.with(|d| d.set(0));
+    }
+}
+
+/// Run `f` with exclusive access to the session map.
+///
+/// This is the intended way to touch `SessionStore`. The guard's lifetime is the
+/// closure body, so it cannot escape, cannot be held across an `.await`, and a
+/// nested acquisition trips an assertion instead of deadlocking.
+///
+/// Do **not** call `with_sessions` from inside `f`, and do not call anything from
+/// inside `f` that reaches the store — collect what you need, return it, and act
+/// after the closure returns.
+pub fn with_sessions<T>(
+    sessions: &SessionStore,
+    f: impl FnOnce(&mut HashMap<String, SessionEntry>) -> T,
+) -> T {
+    let _depth = SessionsLockDepth::enter();
+    let mut store = sessions.lock().unwrap_or_log();
+    f(&mut store)
+}
+
 /// One session-cleanup pass: evict sessions idle longer than `idle_after` and
 /// report which sessions remain.
 ///
@@ -396,23 +449,23 @@ pub fn cleanup_pass(
     now: std::time::Instant,
     idle_after: std::time::Duration,
 ) -> (Vec<SessionEntry>, std::collections::HashSet<String>) {
-    let mut store = sessions.lock().unwrap_or_log();
+    with_sessions(sessions, |store| {
+        let expired: Vec<String> = store
+            .iter()
+            .filter(|(_, v)| now.duration_since(v.last_accessed()) >= idle_after)
+            .map(|(k, _)| k.clone())
+            .collect();
 
-    let expired: Vec<String> = store
-        .iter()
-        .filter(|(_, v)| now.duration_since(v.last_accessed()) >= idle_after)
-        .map(|(k, _)| k.clone())
-        .collect();
-
-    let mut evicted = Vec::with_capacity(expired.len());
-    for key in expired {
-        if let Some(entry) = store.remove(&key) {
-            evicted.push(entry);
+        let mut evicted = Vec::with_capacity(expired.len());
+        for key in expired {
+            if let Some(entry) = store.remove(&key) {
+                evicted.push(entry);
+            }
         }
-    }
 
-    let active: std::collections::HashSet<String> = store.keys().cloned().collect();
-    (evicted, active)
+        let active: std::collections::HashSet<String> = store.keys().cloned().collect();
+        (evicted, active)
+    })
 }
 
 #[cfg(test)]
@@ -1164,5 +1217,51 @@ mod tests {
             .try_lock()
             .expect("cleanup_pass must release the lock before returning");
         assert_eq!(remaining.len(), 1);
+    }
+
+    #[test]
+    fn with_sessions_runs_closure_and_releases_lock() {
+        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        {
+            let mut store = sessions.lock().unwrap();
+            store.insert("test".to_string(), entry_with(Instant::now()));
+        }
+
+        let len = with_sessions(&sessions, |s| s.len());
+        assert_eq!(len, 1, "closure return value should be passed through");
+        assert!(
+            sessions.try_lock().is_ok(),
+            "guard must be released after with_sessions returns"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "re-entrant SessionStore lock")]
+    fn with_sessions_rejects_reentrant_call() {
+        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        with_sessions(&sessions, |_s| {
+            // nested call — should panic with the re-entrancy message
+            with_sessions(&sessions, |_s| {});
+        });
+    }
+
+    #[test]
+    fn with_sessions_depth_resets_after_panic() {
+        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+
+        // First call panics — the depth counter must still reset via Drop
+        let old_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_sessions(&sessions, |_s| panic!("intentional test panic"));
+        }));
+        std::panic::set_hook(old_hook);
+
+        // Second call must succeed — depth is back to 0
+        let len = with_sessions(&sessions, |s| {
+            s.insert("after-panic".to_string(), entry_with(Instant::now()));
+            s.len()
+        });
+        assert_eq!(len, 1, "depth counter must reset after a panicked closure");
     }
 }

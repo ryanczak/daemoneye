@@ -1,7 +1,7 @@
 # Phase 04a: `with_sessions` Accessor + Re-entrancy Guard
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (cleanup deadlock) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -348,3 +348,9 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 00:37 (started)
+
+**Executor:** Claude Sonnet 4.5
+
+Implemented tasks 1–5: added the `SESSIONS_LOCK_DEPTH` thread-local guard with RAII `SessionsLockDepth`, the `with_sessions` accessor, converted `cleanup_pass` and the shutdown pipe-pane sweep to use it, and added three tests. `cargo test --lib` reports 913 passing (910 + 3 new).

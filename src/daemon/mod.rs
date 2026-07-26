@@ -826,13 +826,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     //    survives; orphaned de-* windows from this run are cleaned up automatically
     //    the next time the session's 30-minute GC fires or on daemon restart.
     {
-        let store = sessions.lock().unwrap_or_log();
-        for (_, entry) in store.iter() {
-            if let Some(ref pane_id) = entry.pipe_source_pane
-                && !pane_id.is_empty()
-            {
-                crate::tmux::stop_pipe_pane(pane_id);
-            }
+        let pipe_panes: Vec<String> = crate::daemon::session::with_sessions(&sessions, |store| {
+            store
+                .values()
+                .filter_map(|entry| entry.pipe_source_pane.clone())
+                .filter(|pane_id| !pane_id.is_empty())
+                .collect()
+        });
+        for pane_id in &pipe_panes {
+            crate::tmux::stop_pipe_pane(pane_id);
         }
     }
 
