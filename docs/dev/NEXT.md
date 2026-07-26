@@ -1,105 +1,108 @@
 # NEXT
 
-**Active phase: M5 phase-05b — unlock-webhook-and-stream** (`todo`, drafted
+**Active phase: M5 phase-05c — convert-stragglers-and-tests** (`todo`, drafted
 2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05b-unlock-webhook-and-stream.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05c-convert-stragglers-and-tests.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05b-unlock-webhook-and-stream`.
+Dispatch with `/rexymcp:dispatch phase-05c-convert-stragglers-and-tests`.
 
-## This closes the milestone's third exit criterion
+## 05c was re-scoped, and measuring is what changed the plan
 
-05b is the last of the mechanism-A/B restructures. After it lands, **no
-`SessionStore` critical section anywhere in the daemon performs blocking work.**
+05c has carried a "**re-scope when drafting**" flag for six phases. Surveying it
+properly found that **every number in that flag was wrong**, and that the phase
+had to become three:
 
-| Site | Blocking work under the guard |
-|---|---|
-| `webhook/process.rs:162` | a `tmux display-message` subprocess **per session**, inside `for entry in guard.values()` |
-| `webhook/process.rs:149` | `append_session_message` per session — two file writes each |
-| `stream.rs:722` | `write_session_meta` — a file write inside a `let`-chain guard |
+| Item | Long-standing estimate | Measured |
+|---|---|---|
+| Test-module acquisitions | 13 (11 `background.rs` + 2 `session.rs`) | **20** (17 + 3) |
+| `Arc::clone` / construction sites | 13 | **16** construction sites; the 27 `.clone()` calls **need no change at all** |
+| `ask.rs` stragglers | 2 | 2 ✓ |
 
-**Finish condition: 0 raw acquisitions in both files**, with `with_sessions(` at
-**2** in `process.rs` and **9** in `stream.rs`. `size=s`, ~90 lines — the smallest
-phase since 04g.
+**The `Arc::clone` finding shrinks the newtype phase substantially.** A newtype
+that derives `Clone` leaves all 27 `sessions.clone()` call sites compiling
+untouched; only the **16** `Arc::new(Mutex::new(HashMap::new()))` construction
+sites break. The "13 `Arc::clone` sites" line in every prior note was measuring
+the wrong thing.
 
-### The worked example is now in-tree and next door
+### The split — three phases, no renumbering needed
 
-05a's `notify_session` (`background/helpers.rs`) carries **both** shapes 05b
-needs: a value cloned out under the lock and used to spawn a subprocess after it,
-and a file write moved out entirely. Tasks 1 and 2 are that same move, plural —
-collect a `Vec` instead of a single `Option`. Quoted in full.
+05c was the last drafted phase, so 06/07/08–11 keep their numbers.
 
-### The `UnpoisonExt` asymmetry is inverted this time
+| # | Scope | Size |
+|---|---|---|
+| **05c** | 22 conversions: `ask.rs` (2, production) + `background.rs` (17, test) + `session.rs` (3, test) | m |
+| **05d** | the newtype + enforcement: type change, `Clone` derive, 16 construction sites | m |
+| **05e** | 04f's coverage follow-up — 3 vacuous `compaction_in_flight` assertions made real, mutation-checked | s |
 
-Five consecutive phases ended in "delete the now-unused import," which makes the
-opposite the easy mistake. `process.rs` has **four** `unwrap_or_log` calls; only
-two are this phase's. The others are on `state.dedup` (`:45`) and
-`state.rate_limit` (`:275`) — **different mutexes entirely** — so the import must
-stay and the criterion pins it at **1, not 0**.
+Splitting on the **conversion / newtype** seam is what keeps 05d honest: after
+05c the only `.lock()` left is inside `with_sessions`, so the newtype either
+compiles or names exactly what was missed. Bundling them would have hidden that
+signal in a 38-site diff.
 
-### Two silent-failure risks, both pinned
+**05e is independent and can run in any order** — it is test-quality work in
+`background.rs` with no dependency on the newtype. It is kept out of 05c
+deliberately: a mechanical 22-site sweep and delicate mutation-checked assertion
+work are the mixed-shape combination that forced the 04g/04h and 04i splits.
 
-1. **Task 3's conditionality.** `store.get(id)` returning `None` must still mean
-   *no meta file is written*. An unconditional hoist would create a meta file for
-   an evicted session, and every gate would stay green. The closure returns
-   `Option<SessionMeta>` and the write is gated on it.
-2. **Task 2's dead suppression.** `let _ = entry;` exists only to silence an
-   unused-variable warning from the `for` pattern. Collecting `keys()` never binds
-   it, so carrying it forward would leave a `let _ = ...` with nothing to suppress.
+## Drafting caught two of my own errors before dispatch
 
-### Drafting caught one of my own errors before dispatch
+Both from running the criterion instead of deriving it — the sixth phase running
+where the practice has paid:
 
-`grep -cF "std::sync::Mutex is not reentrant"` returns **0**, not 1 — the comment
-**wraps across two lines**, so the literal spans a line break and `grep -F` is
-line-oriented. Corrected to the tail half of the sentence, with the reason stated
-inline so it doesn't read as a stale count. Running the criterion instead of
-deriving it caught it; that is now five phases running where the practice has paid.
+1. **`grep -cF "sessions.try_lock().is_ok()"` returns 2, not 1.** There are two
+   guard-release assertions in `session.rs` (`:1193`, `:1233`), not one — and
+   `:1193` sits **eleven lines below a site the phase converts**, in the same
+   test. The spec now names both, pins the criterion at 2, and calls out the
+   adjacency.
+2. **`grep -c "\.ok()?"` is a regex, not a literal.** Corrected to `grep -cF`,
+   with a note that site `:519` is the string's only occurrence in the file so
+   the criterion is exact.
 
-### A discovery worth carrying into 05c
+## The two hazards 05c actually turns on
 
-The scan reports `session.rs:443` as a production acquisition. **It is not code —
-it is a doc comment on `cleanup_pass` containing the literal `sessions.lock()`**,
-and the scan is text-based. After 05b the daemon's true end state is:
+1. **`ask.rs:519` changes behavior, deliberately.** `.ok()?` is a **poison bail**:
+   on a poisoned mutex it silently yields `None`, `unwrap_or(0)` turns that into
+   `0`, and a zero `last_snapshot_activity` makes `inject_snapshot` fire when it
+   should not. `with_sessions` recovers instead. That is the milestone's whole
+   purpose — the spec forbids preserving the bail or adding a poison fallback.
+2. **`ask.rs:686` drains with `.take()`.** The mutation must stay **inside** the
+   closure; reading the field and clearing it afterwards opens a window where two
+   turns both deliver the notice, and no test would catch it.
 
-| File:line | What it is |
-|---|---|
-| `session.rs:432` | **`with_sessions` itself** — the one real acquisition, by design |
-| `session.rs:443` | **not code** — a doc comment the scan counts |
-| `ask.rs:519`, `:686` | the two multi-line stragglers — **05c's** |
+## A constraint 05d must respect — found while drafting 05c
 
-05b's spec says explicitly not to touch any of the four. **05c should not chase
-the phantom at `:443`.**
+`with_sessions_runs_closure_and_releases_lock` asserts on **`sessions.try_lock()`**,
+and the `cleanup_pass` test does the same. **The newtype must expose `try_lock`**
+(or those two assertions lose the only thing proving guard release). Discovering
+this at 05d time would have meant either a late redesign or a quietly gutted test.
 
 ## Still open for the PE — six calibration threads
 
-1. **Count criteria (4th occurrence, 8 clean confirmations).**
-2. **Specs asserting test coverage (3rd occurrence, 7 clean confirmations).** 05b
-   states that **none** of its three functions is covered — `process.rs`'s test
-   module covers only `severity_rank`, `camel_to_kebab` and `parse_ghost_trigger`,
-   none of which touch a `SessionStore` — so a coverage claim would be false.
-3. **Fixture defaults neutering assertions (1st, from 04f).**
-4. **Lock/HOME test hygiene (3 deep).** Rides on **05c**.
-5. **Partially-transcribed spec quotes (1st, from 05a).** The spec gave `GcKill`
-   *with* its doc comment; run 1 transcribed the body and dropped the comment,
-   silently stealing `gc_bg_windows`'s documentation. Inverse of the
-   fabricated-quote risk: not invented text, but omitted text.
-6. **Criteria-sweep false completion (1st, from 05a).** Run 2 returned `complete`
-   with an **empty diff** — it re-ran the acceptance criteria, found them green,
-   and stopped without reading the open bug doc. The criteria were green precisely
-   because none covered the defect. Candidate fold if it recurs: **an open bug doc
-   must be explicitly closed out in the Update Log before a run may return
-   `complete`.** A green criteria sweep is not a completion test.
+1. **Count criteria (4th occurrence, 9 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 8 clean confirmations).** 05c
+   states that the 2 production sites are uncovered while the 20 test-module sites
+   **are** the tests, so the suite is its own net there — a distinction no prior
+   phase in this milestone has had to draw.
+3. **Fixture defaults neutering assertions (1st, from 04f).** 05e is the phase
+   that resolves it.
+4. **Lock/HOME test hygiene (3 deep).** Still unassigned; 05c touches test modules
+   but changes only how they acquire the store.
+5. **Partially-transcribed spec quotes (1st, from 05a).**
+6. **Criteria-sweep false completion (1st, from 05a).**
 
-Threads 5 and 6 both come from 05a and both are first occurrences — data, not yet
-trends. 05b folds thread 5's lesson as a per-phase hazard note rather than a
-`WORKFLOW.md` change.
+**All six await your sign-off.** Threads 1 and 2 now have nine and eight clean
+confirmations against the four counting errors and three false coverage claims
+that motivated them.
 
-## After 05b
+## After 05c
 
-**05c** — sessionstore-newtype + enforce. Runs **last** and **still needs
-re-scoping**: 13 `Arc::clone` sites, 13 test-module acquisitions, the 2 `ask.rs`
-stragglers, and 04f's coverage follow-up (three vacuous `compaction_in_flight`
-assertions to make real, mutation-checked). Then 06 → 07, plus the drafted 08–11
-instance set.
+**05d** (newtype + enforce) → **05e** (04f coverage follow-up) → 06
+(tmux-call-hardening) → 07 (stall-instrumentation), plus the drafted 08–11
+instance-hardening set.
+
+The milestone's third exit criterion — "no `SessionStore` critical section
+performs blocking work … **enforced by a test or lint, not only by review**" — is
+true in substance as of 05b and becomes *enforced* at 05d. Tick it then.
 
 ---
 
