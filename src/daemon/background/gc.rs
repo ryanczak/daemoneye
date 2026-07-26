@@ -147,6 +147,16 @@ const DAEMON_BG_PREFIXES: &[&str] = &[
     crate::daemon::GS_SCHED_WINDOW_PREFIX,
 ];
 
+/// One window the GC has decided to kill, captured under the lock so the kill
+/// itself can happen outside it.
+struct GcKill {
+    session_id: String,
+    window_name: String,
+    tmux_session: String,
+    pane_id: String,
+    reason: &'static str,
+}
+
 /// Periodic garbage collector for background windows.
 ///
 /// Called every 60 seconds by the `bg-window-gc` supervised task.
@@ -157,14 +167,6 @@ const DAEMON_BG_PREFIXES: &[&str] = &[
 /// Also scans all tmux panes for daemon-prefixed windows not tracked by any
 /// session (orphans from a daemon restart or missed completion signal) and
 /// kills those too.
-struct GcKill {
-    session_id: String,
-    window_name: String,
-    tmux_session: String,
-    pane_id: String,
-    reason: &'static str,
-}
-
 pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
     use std::collections::{HashMap, HashSet};
 
