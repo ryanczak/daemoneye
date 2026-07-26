@@ -1,92 +1,105 @@
 # NEXT
 
-**Active phase: M5 phase-05a — unlock-background-and-hook** (`todo`, drafted
+**Active phase: M5 phase-05b — unlock-webhook-and-stream** (`todo`, drafted
 2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05a-unlock-background-and-hook.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05b-unlock-webhook-and-stream.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05a-unlock-background-and-hook`.
+Dispatch with `/rexymcp:dispatch phase-05b-unlock-webhook-and-stream`.
 
-## This is a bugfix phase, not a refactor
+## This closes the milestone's third exit criterion
 
-Three sites spawn **tmux subprocesses while holding the global session lock**. All
-three are mechanism A + B, and one of them is the *same defect* that caused the
-confirmed production hang — in a place the original fix never reached.
+05b is the last of the mechanism-A/B restructures. After it lands, **no
+`SessionStore` critical section anywhere in the daemon performs blocking work.**
 
 | Site | Blocking work under the guard |
 |---|---|
-| `hook.rs:92` | `cleanup_bg_windows()` → `kill_job_window` **per window** + `stop_pipe_pane`, inside `store.retain(…)` |
-| `gc.rs:201` | `kill_job_window` per window over **every session**, plus `log_event` appends — **and the orphan sweep**, because the guard binds at function scope |
-| `helpers.rs:155` | a **filesystem scan** (`related_knowledge_hints` → `load_all_entries`), **two file writes**, and a `tmux display-message` — guard held ~50 lines to end of function |
+| `webhook/process.rs:162` | a `tmux display-message` subprocess **per session**, inside `for entry in guard.values()` |
+| `webhook/process.rs:149` | `append_session_message` per session — two file writes each |
+| `stream.rs:722` | `write_session_meta` — a file write inside a `let`-chain guard |
 
-**Finish condition: 0 raw acquisitions in all three files**, with `with_sessions(`
-at **3** in `hook.rs`, **1** in `gc.rs`, and **2** in `helpers.rs`.
+**Finish condition: 0 raw acquisitions in both files**, with `with_sessions(` at
+**2** in `process.rs` and **9** in `stream.rs`. `size=s`, ~90 lines — the smallest
+phase since 04g.
 
-### `helpers.rs` needs two acquisitions — that is the point
+### The worked example is now in-tree and next door
 
-`notify_session` splits into **locked → unlocked → locked → unlocked**: update the
-registry and clone out `chat_pane`; then scan, format and write the file; then push
-the message into memory; then send the tmux notification. The spec pins two
-subtleties: `chat_pane` must be **cloned** in phase 1 (the original's borrow of
-`entry.chat_pane` is what pinned the guard open to the end of the function), and
-phase 3 must **re-check `get_mut`** because the entry can legitimately vanish while
-the filesystem scan runs.
+05a's `notify_session` (`background/helpers.rs`) carries **both** shapes 05b
+needs: a value cloned out under the lock and used to spawn a subprocess after it,
+and a file write moved out entirely. Tasks 1 and 2 are that same move, plural —
+collect a `Vec` instead of a single `Option`. Quoted in full.
 
-### `cleanup_pass` is the worked example for all three
+### The `UnpoisonExt` asymmetry is inverted this time
 
-Quoted in full, with its caller. It is the fix that resolved the confirmed hang, and
-its two load-bearing properties are exactly what these tasks copy: the closure
-**removes entries and returns them by value**, and the blocking teardown runs after
-it returns under the comment "Unlocked phase: everything blocking happens out here."
-Task 1 is that pattern almost verbatim.
+Five consecutive phases ended in "delete the now-unused import," which makes the
+opposite the easy mistake. `process.rs` has **four** `unwrap_or_log` calls; only
+two are this phase's. The others are on `state.dedup` (`:45`) and
+`state.rate_limit` (`:275`) — **different mutexes entirely** — so the import must
+stay and the criterion pins it at **1, not 0**.
 
-### The one silent-failure risk
+### Two silent-failure risks, both pinned
 
-`gc.rs`'s `retain` must keep inserting kept pane ids into the tracked set. That set
-drives orphan detection, and the orphan sweep kills anything untracked — so a
-dropped insert would make the GC **kill a live window**. Gates would stay green.
-The spec calls it out and the Test plan asks for it as a reasoning check.
+1. **Task 3's conditionality.** `store.get(id)` returning `None` must still mean
+   *no meta file is written*. An unconditional hoist would create a meta file for
+   an evicted session, and every gate would stay green. The closure returns
+   `Option<SessionMeta>` and the write is gated on it.
+2. **Task 2's dead suppression.** `let _ = entry;` exists only to silence an
+   unused-variable warning from the `for` pattern. Collecting `keys()` never binds
+   it, so carrying it forward would leave a `let _ = ...` with nothing to suppress.
 
-## Drafting caught four of my own errors before dispatch
+### Drafting caught one of my own errors before dispatch
 
-Validating rather than assuming, which is now the habit:
+`grep -cF "std::sync::Mutex is not reentrant"` returns **0**, not 1 — the comment
+**wraps across two lines**, so the literal spans a line break and `grep -F` is
+line-oriented. Corrected to the tail half of the sentence, with the reason stated
+inline so it doesn't read as a stale count. Running the criterion instead of
+deriving it caught it; that is now five phases running where the practice has paid.
 
-1. **`kill_job_window` in `gc.rs` is 3, not 2.** The third is at `gc.rs:78` in
-   `notify_job_completion`, which holds no session lock and is out of scope. The
-   criterion says 3 and names which two are the phase's.
-2. **`gc.rs` and `helpers.rs` have no `UnpoisonExt` import and no `unwrap_or_log`
-   at all** — both sites use `let Ok(mut store) = … else`. So unlike the last five
-   phases there is **nothing to delete**, and the spec says so plus "if you find
-   yourself editing an import in either file, stop — you have gone off-spec."
-   Authorizations explicitly grants **no** import deletions.
-3. **I fabricated `helpers.rs`'s import line.** I quoted
-   `{FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe}` —
-   those symbols belong to `pane.rs`. The real line is
-   `{SessionStore, append_session_message}`. Corrected from the tree. This is the
-   failure mode the workflow warns about directly: a worked example citing a symbol
-   that does not exist is **worse than none, because it is trusted**.
-4. **`gc.rs` imports nothing from `crate::daemon::session`** — it spells the type
-   out in full in the signature — so it needs a *new* import line, not an extended
-   list. The two files need different edits and the spec now shows both.
+### A discovery worth carrying into 05c
 
-## Still open for the PE — four calibration threads
+The scan reports `session.rs:443` as a production acquisition. **It is not code —
+it is a doc comment on `cleanup_pass` containing the literal `sessions.lock()`**,
+and the scan is text-based. After 05b the daemon's true end state is:
 
-1. **Count criteria (4th occurrence, 7 clean confirmations).**
-2. **Specs asserting test coverage (3rd occurrence, 6 clean confirmations).** 05a
-   states that **none** of the three restructured functions is covered by the unit
-   suite — `gc.rs`'s tests cover `plan_gc_actions`, which this phase moves but does
-   not modify — so a coverage claim would be false, not merely unproven.
+| File:line | What it is |
+|---|---|
+| `session.rs:432` | **`with_sessions` itself** — the one real acquisition, by design |
+| `session.rs:443` | **not code** — a doc comment the scan counts |
+| `ask.rs:519`, `:686` | the two multi-line stragglers — **05c's** |
+
+05b's spec says explicitly not to touch any of the four. **05c should not chase
+the phantom at `:443`.**
+
+## Still open for the PE — six calibration threads
+
+1. **Count criteria (4th occurrence, 8 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 7 clean confirmations).** 05b
+   states that **none** of its three functions is covered — `process.rs`'s test
+   module covers only `severity_rank`, `camel_to_kebab` and `parse_ghost_trigger`,
+   none of which touch a `SessionStore` — so a coverage claim would be false.
 3. **Fixture defaults neutering assertions (1st, from 04f).**
-4. **Lock/HOME test hygiene (3 deep).** Rides on **05c** — 05a adds no tests.
+4. **Lock/HOME test hygiene (3 deep).** Rides on **05c**.
+5. **Partially-transcribed spec quotes (1st, from 05a).** The spec gave `GcKill`
+   *with* its doc comment; run 1 transcribed the body and dropped the comment,
+   silently stealing `gc_bg_windows`'s documentation. Inverse of the
+   fabricated-quote risk: not invented text, but omitted text.
+6. **Criteria-sweep false completion (1st, from 05a).** Run 2 returned `complete`
+   with an **empty diff** — it re-ran the acceptance criteria, found them green,
+   and stopped without reading the open bug doc. The criteria were green precisely
+   because none covered the defect. Candidate fold if it recurs: **an open bug doc
+   must be explicitly closed out in the Update Log before a run may return
+   `complete`.** A green criteria sweep is not a completion test.
 
-Error 3 above is arguably a fifth thread: **fabricated code quotes in specs**. First
-occurrence, caught pre-dispatch. Worth watching, since the pre-injection guidance
-identifies it as the most dangerous kind of spec error.
+Threads 5 and 6 both come from 05a and both are first occurrences — data, not yet
+trends. 05b folds thread 5's lesson as a per-phase hazard note rather than a
+`WORKFLOW.md` change.
 
-## After 05a
+## After 05b
 
-**05b** — `webhook/process.rs` (2) + `stream.rs:722` (3 sites; one subprocess loop,
-two file-write hoists) → **05c** newtype + enforce, which must run last and still
-needs re-scoping → 06 → 07, plus the drafted 08–11 instance set.
+**05c** — sessionstore-newtype + enforce. Runs **last** and **still needs
+re-scoping**: 13 `Arc::clone` sites, 13 test-module acquisitions, the 2 `ask.rs`
+stragglers, and 04f's coverage follow-up (three vacuous `compaction_in_flight`
+assertions to make real, mutation-checked). Then 06 → 07, plus the drafted 08–11
+instance set.
 
 ---
 
