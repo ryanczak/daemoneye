@@ -80,7 +80,7 @@ take the socket.
 | 04g | convert-ghost-exit-paths ([phase-04g-convert-ghost-exit-paths.md](phase-04g-convert-ghost-exit-paths.md)) — `write_mailbox_on_exit` (3) + `briefing.rs` (1) = 4 sites | done (approved_first_try) |
 | 04h | convert-ghost-turn-loop ([phase-04h-convert-ghost-turn-loop.md](phase-04h-convert-ghost-turn-loop.md)) — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | done (approved_first_try) |
 | 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | done (approved_first_try) |
-| 04j | convert-stream-hooks ([phase-04j-convert-stream-hooks.md](phase-04j-convert-stream-hooks.md)) — `stream.rs` (8) + `hook.rs` (2) = 10 conversion sites | in-progress |
+| 04j | convert-stream-hooks ([phase-04j-convert-stream-hooks.md](phase-04j-convert-stream-hooks.md)) — `stream.rs` (8) + `hook.rs` (2) = 10 conversion sites | review      |
 | 04k | sessionstore-newtype (enforce) — **re-scope when drafting; see Notes** | todo   |
 | 05 | unlock-blocking-paths (mechanism A) — **6 restructures**: `webhook/process.rs` (2), `background/helpers.rs::notify_session`, `background/gc.rs::gc_bg_windows`, `stream.rs:719` (`write_session_meta`), `hook.rs:91` (`cleanup_bg_windows`). **Re-scope/split when drafting** | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
