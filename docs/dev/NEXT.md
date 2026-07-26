@@ -1,7 +1,31 @@
 # NEXT
 
-**Active phase: none.** M5 phase-03 is `done`; phase 04 (unlock-blocking-paths)
-is **not yet drafted**. Draft it with `/rexymcp:architect next`.
+**Active phase: M5 phase-04a — with-sessions-accessor** (`todo`, drafted
+2026-07-25).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04a-with-sessions-accessor.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04a-with-sessions-accessor`.
+
+First of four phases implementing the PE's chosen structural answer to
+re-entrant `SessionStore` locking. Adds the free accessor
+`with_sessions(&store, |map| …)` with an **always-on** re-entrancy assertion
+inside it, and converts only the two live lock sites (`cleanup_pass` in
+`session.rs`, the shutdown pipe-pane sweep in `mod.rs`). The other 98 sites are
+explicitly out of scope and keep compiling untouched.
+
+The `mod.rs` conversion also hoists a blocking `stop_pipe_pane` subprocess out
+of the critical section — mechanism A in the shutdown path — and that
+collect-inside / act-outside shape is the worked example phases 04b–04c follow.
+
+**Ordering correction made while drafting:** the newtype lands **last** (04d),
+not first. 13 `Arc::clone(&sessions…)` sites (9 in `mod.rs`) become type errors
+the moment `SessionStore` stops being an `Arc` alias, which would turn 04a into
+an accidental 100-site sweep. Introducing the free accessor first leaves the type
+alias intact. Recorded in `docs/design/daemon-stalls.md` § 3.4.
+
+Finish condition: `cargo test --lib` reports 913 (910 + exactly 3). The
+load-bearing test is `with_sessions_rejects_reentrant_call` — the automated
+version of the defect that wedged the daemon for 12 hours.
 
 **M5 phase-03 — echo-user-input is `done`** (2026-07-25, `approved_first_try`,
 46 turns — the shortest run of the milestone). The user's prose queries now

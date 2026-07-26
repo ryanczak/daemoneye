@@ -58,9 +58,13 @@ split) and the two TUI defect specs every phase references.
 | 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | done (approved_after_2) |
 | 02 | cleanup-deadlock ([phase-02-cleanup-deadlock.md](phase-02-cleanup-deadlock.md)) | done (approved_first_try) |
 | 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | done (approved_first_try) |
-| 04 | unlock-blocking-paths                                                   | todo   |
-| 05 | tmux-call-hardening                                                     | todo   |
-| 06 | stall-instrumentation (rescoped — see Notes)                            | todo   |
+| 04a | with-sessions-accessor ([phase-04a-with-sessions-accessor.md](phase-04a-with-sessions-accessor.md)) | todo |
+| 04b | convert-lock-sites-1 (handlers.rs + ask.rs)                            | todo   |
+| 04c | convert-lock-sites-2 (background.rs + ghost.rs + tail)                 | todo   |
+| 04d | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)       | todo   |
+| 05 | unlock-blocking-paths (webhook/process.rs — mechanism A)                | todo   |
+| 06 | tmux-call-hardening (mechanism B)                                       | todo   |
+| 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 
 Phases 03–06 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
@@ -122,3 +126,26 @@ Worth recording as a general lesson: `clippy::await_holding_lock` gave false
 comfort here. It targets guards held across suspension points, and this bug has
 no `.await` between the two locks — so the lint gate was green for the entire
 life of the defect.
+
+
+**Lock-accessor plan (PE decision, 2026-07-25).** After two independent
+re-entrant `sessions`-lock defects — one fixed during the M4 phase-08 takeover,
+one root-caused as the M5 hang — the PE chose a structural answer over a third
+point fix: a `with_sessions(|store| …)` accessor, ending in a newtype with a
+private inner so the compiler enforces it. Survey, shape, and the four-phase
+ordering are in `docs/design/daemon-stalls.md` § 3.
+
+Two survey findings shaped the split:
+
+- **100** `sessions.lock()` sites, and **zero** guards held across `.await`
+  (confirmed via the clean `clippy -D warnings` gate, since
+  `await_holding_lock` is warn-by-default). Every site is therefore
+  closure-convertible without touching async control flow.
+- **13** `Arc::clone(&sessions…)` sites, 9 of them in `daemon/mod.rs`. These
+  break the instant a newtype is introduced, which is why **the newtype lands
+  last (04d), not first** — otherwise 04a becomes an accidental 100-site sweep.
+
+The re-entrancy assertion inside the accessor is deliberately **always on**, not
+`debug_assert`: re-entrancy here is never legitimate, `supervise` restarts a
+panicked task, and the deadlock it replaces took the daemon down for 12 hours.
+A `debug_assert` would be compiled out of exactly the build where it matters.

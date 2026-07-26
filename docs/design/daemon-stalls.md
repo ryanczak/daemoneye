@@ -405,7 +405,7 @@ let chat_pane_id: Option<String> = if let Ok(store) = sessions.lock() { … } el
 ### 3.3 The shape
 
 A closure accessor alone is only advisory — raw `.lock()` remains callable, so
-nesting stays writable. The enforceable version is a **newtype with a private
+nesting stays writable. The enforceable end state is a **newtype with a private
 inner**, which makes the compiler find every site:
 
 ```rust
@@ -428,23 +428,40 @@ run fails immediately with a stack trace." Detection and prevention together;
 neither alone is sufficient, since the newtype prevents *accidental* nesting but
 a determined caller can still nest two `with` calls.
 
-### 3.4 Sizing — this must not be one phase
+### 3.4 Sizing and ordering — accessor first, newtype last
 
 100 call sites in a single mechanical sweep is precisely the shape that has
 defeated this executor before (M4's retrospective: large blocks and broad
 rewires → self-sabotage; M5's clean runs were all small, single-purpose, fully
-quoted). Split by file group, each phase independently green:
+quoted). Split by file group, each phase independently green.
 
-- **04a** — introduce the newtype + `with` + the debug re-entrancy assertion,
-  and convert `session.rs` and `mod.rs` only. Establishes the pattern with a
-  worked example the later phases can quote.
-- **04b/04c** — convert the remaining files in two or three groups, largest
-  first (`handlers.rs` + `ask.rs`, then `background.rs` + `ghost.rs` + the rest).
-  Pure mechanical conversion; the compiler enumerates the work.
+**The newtype must land last, not first.** A survey of the conversion found 13
+`Arc::clone(&sessions…)` sites (9 of them in `daemon/mod.rs` alone). Under a
+newtype, `Arc::clone(&sessions)` returns the inner `Arc`, not a `SessionStore`,
+so every one of those sites becomes a type error the moment the newtype is
+introduced — turning "phase 04a" into a 100-site sweep by accident. Introducing
+the free accessor first keeps `pub type SessionStore = Arc<Mutex<…>>` unchanged,
+so unconverted sites and all 13 `Arc::clone` calls keep compiling untouched.
+
+Revised sequence:
+
+- **04a** — add the free `with_sessions(&SessionStore, |store| …)` accessor plus
+  the re-entrancy assertion, and convert only the two live sites
+  (`session.rs` `cleanup_pass`, `mod.rs` shutdown sweep). Tiny; establishes the
+  pattern and the guard with a worked example later phases quote.
+- **04b/04c** — mechanical conversion of the remaining sites by file group,
+  largest first (`handlers.rs` + `ask.rs`, then `background.rs` + `ghost.rs` +
+  the tail). The type is unchanged throughout, so each group compiles alone.
+- **04d** — flip `SessionStore` to the newtype with a private inner, convert the
+  13 `Arc::clone` sites to `.clone()`, and delete the raw path. The compiler
+  enumerates any straggler. Only at this point is the invariant *enforced* rather
+  than merely available.
 - Mechanisms A and B from § 1.3–1.4 (blocking I/O and tmux subprocesses under
   the lock, in `webhook/process.rs` and the tmux layer) stay their own phases —
   the accessor does not fix them, it only makes them easier to see.
 
-The intermediate states are safe: until a file is converted it keeps calling
-`.lock()` on the inner field, so the newtype must expose that path within the
-crate until the last group lands, then drop it.
+**Assertion severity: always on, not `debug_assert`.** A re-entrant acquisition
+on one thread is never legitimate here — it would deadlock. Panicking is strictly
+better than wedging: the `supervise` wrapper restarts a panicked task, whereas the
+phase-02 deadlock took the daemon down for 12 hours. A `debug_assert` would have
+been compiled out of exactly the build where it mattered.
