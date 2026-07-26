@@ -1,12 +1,107 @@
 # NEXT
 
-**Active phase: M5 phase-04d — convert-executor-dispatch** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04d-convert-executor-dispatch.md`.
+**No active phase.** 04d is `done`; the next conversion phase (04e —
+convert-executor-tail) is **not yet drafted**. Draft it with
+`/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04d-convert-executor-dispatch`.
+---
 
-Converts the 10 `sessions.lock()` sites in `src/daemon/executor/mod.rs` and
+## M5 phase-04d — convert-executor-dispatch is `done`
+
+(2026-07-26, `approved_first_try`, no bounces, 128 turns, commit `1ea8c7e`.)
+
+All 10 `sessions.lock()` sites in `src/daemon/executor/mod.rs` now go through
+`with_sessions` — **6 calls for 10 former sites**, the pinned finish condition.
+Gates re-run independently: fmt/build/clippy exit 0, **915** lib-unit (914 + 1)
++ 27 integration green, run terminated.
+
+**The mechanism-A defect is fixed.** `load_agent` sits at `mod.rs:93`, outside
+every closure, so `build_memory_namespaces` no longer holds the global session
+map across a config-file read. `ask.rs:566` got the fix without an edit, which
+was the point of fixing it inside the shared function.
+
+**Site 922 was converted correctly** — the one that could not be done
+mechanically. `default_target` is now read and the guard released *before*
+`cache.panes.read()` (killing the nested-lock hazard), and the `return Ok(dtp)`
+stayed in the function body instead of moving inside a closure. Task 2's
+`effective_parent_job_id: gc.map(|_| sid.to_string())` subtlety also survived, so
+non-ghost sessions still report no parent job id.
+
+### ⚠ Two architect spec defects found at review — read before drafting 04e
+
+Both are mine. The executor conformed to the spec exactly and is not at fault.
+
+**1. An acceptance criterion was unsatisfiable.** Criterion 3 demanded
+`grep -c load_agent == 1` while task 7 mandated a test whose *name* contains
+`load_agent`, forcing the count to 2. Annotated inline in the phase doc.
+
+**This is the third occurrence of the phase-01 pattern** — "pinning an
+implementation that could not satisfy the behavior stated elsewhere in the same
+doc." Phase-01 logged two and said a third warrants raising with the PE. **Raised
+2026-07-26; awaiting the PE's call on whether this becomes a `WORKFLOW.md` fold.**
+The candidate fold: before dispatch, the architect mechanically checks every
+acceptance criterion that greps a count against the spec's own mandated
+identifiers.
+
+**2. Task 7 specified a test that cannot fail — verified by mutation, not by
+reading.** The review reverted `build_memory_namespaces` to the chained body and
+ran the new test:
+
+```
+test build_memory_namespaces_does_not_hold_the_lock_across_load_agent ... ok
+```
+
+It passes against the un-hoisted code. The guard is function-local in both
+implementations, so `try_lock` *after the call returns* can never distinguish
+them. The spec said "assert the observable proxy" without noticing the proxy is
+vacuous. Tree restored afterwards; confirmed clean.
+
+**The production fix is real** (greppable at `mod.rs:93`); only the regression net
+is missing.
+
+### Follow-ups for phase 05 (`unlock-blocking-paths`), not dispatched as a bounce
+
+05 already owns mechanism A and will need a seam for `webhook/process.rs`, so
+both items belong there:
+
+- **Put `load_agent` behind a trait seam** and rewrite
+  `build_memory_namespaces_does_not_hold_the_lock_across_load_agent` so a stub can
+  attempt `try_lock` *during* the call. It must fail against the chained body.
+- **That test restores `HOME` without an RAII guard**, so a failing assertion
+  leaks a temp `HOME` *and* poisons `TEST_HOME_LOCK` for the rest of the run. M4
+  phase-06 fixed this exact class ("HOME-leak → RAII guard"); apply the guard when
+  the test is rewritten. **This is the third HOME/lock-test-hygiene item in M5** —
+  after the 04a→04b fast-fail carry and the 04c `try_lock` follow-up — which is
+  itself worth weighing as a `STANDARDS.md` fold on lock/HOME test hygiene.
+
+**Accepted rather than bounced:** the new test adds three `unsafe` blocks
+(`env::set_var`/`remove_var`, unsafe in edition 2024). 04d's Authorizations said
+"None", but this is the established codebase idiom — `with_test_home` at
+`src/daemon/utils/event_log.rs:288-299` does the same and there is no safe
+alternative. **Every future phase whose tests redirect `HOME` needs this
+pre-authorized in its Authorizations section.** Drafting omission, not a
+violation.
+
+**Nit, not filed:** `// ── Delegation depth tracking` at `mod.rs:186` now heads a
+comment-only stub. Delete both lines when the region is next touched.
+
+### Remaining 04x work
+
+04e (`foreground.rs` + `knowledge/*`, 8 sites) → 04f (`context/background.rs`,
+13) → 04g (`ghost.rs` + `briefing.rs`, 12) → 04h (`background/*`, 9) → 04i
+(`stream.rs` + `hook.rs`, 11) → 04j (newtype + enforce). Then 05, 06, 07, and the
+independent 08–11 instance-hardening set.
+
+**Sizing data point:** 128 turns for 10 conversions + 1 hoist + 1 test, against
+95 for 04b's 15 conversions and ~70–90 predicted here. The prediction was low;
+the collapse and the hoist cost more per site than a uniform conversion does.
+Budget ~10–12 turns/site for phases with a structural change, ~6 for uniform ones.
+
+---
+
+## Superseded: the original 04d dispatch note
+
+Converted the 10 `sessions.lock()` sites in `src/daemon/executor/mod.rs` and
 **fixes the mechanism-A defect the 04c hazard note pointed at**:
 `build_memory_namespaces` (`executor/mod.rs:88`) holds the global session lock
 across `crate::agents::load_agent()`, a config-file read. Task 1 hoists the read

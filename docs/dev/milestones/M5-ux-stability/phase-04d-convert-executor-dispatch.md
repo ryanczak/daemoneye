@@ -1,8 +1,8 @@
 # Phase 04d: Convert `executor/mod.rs` Lock Sites + Hoist `load_agent`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
-**Depends on:** phase-04c (`ask.rs` converted) — `review`
+**Status:** done
+**Depends on:** phase-04c (`ask.rs` converted) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=refactor, size=m
 
@@ -538,6 +538,12 @@ editing them, you changed the signature or the return contract — re-read task 
 - [ ] `grep -c "with_sessions(" src/daemon/executor/mod.rs` returns `6`.
 - [ ] `grep -c "load_agent" src/daemon/executor/mod.rs` returns `1`, and it is
       **not** inside a `with_sessions` closure.
+      **[ARCHITECT ERROR, corrected at review 2026-07-26: this criterion is
+      unsatisfiable as written. Task 7 mandates a test named
+      `build_memory_namespaces_does_not_hold_the_lock_across_load_agent`, whose
+      name contains `load_agent`, so the count is necessarily 2. The substantive
+      requirement — the single call site is outside every closure — is met at
+      `mod.rs:93`. Not an executor failure.]**
 - [ ] `src/daemon/server/ask.rs` is unmodified by this phase
       (`git diff --name-only` does not list it).
 - [ ] The two pre-existing `build_memory_namespaces` tests pass unmodified.
@@ -740,3 +746,132 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1ea8c7effb2df599cc986d99f059bc2a474faa84
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside an existing code path; no CLI surface, no config key.
+
+(Heading written by the architect at review — the server-authored completion
+entry does not emit it. Same calibration item as 04c.)
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (128 turns)
+- **Scope deviations:** none by the executor. All 7 spec tasks implemented as
+  written; `ask.rs`, `foreground.rs`, `knowledge/*`, and `SessionStore` all
+  untouched as Out-of-scope required.
+- **Calibration:** **two architect spec defects, both mine, neither the
+  executor's fault.** See "Architect spec defects" below. This is the **third**
+  occurrence of the phase-01 pattern (pinning something the same doc makes
+  unsatisfiable) — per the phase-01 calibration note, third occurrence warrants
+  raising with the PE. Raised.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit passed / 0 failed (914 + 1 new)
+              27 integration passed / 2 ignored
+              run terminated normally (no hang)
+```
+
+**Acceptance criteria:**
+
+| Criterion | Result |
+|---|---|
+| `sessions.lock()` in `executor/mod.rs` | **0** ✓ |
+| `with_sessions(` in `executor/mod.rs` | **6** ✓ (the pinned finish condition) |
+| `load_agent` count == 1 | **2** — see ARCHITECT ERROR annotation above; substantive intent met |
+| `ask.rs` unmodified | ✓ not in `files_changed` |
+| Two pre-existing `build_memory_namespaces` tests unmodified | ✓ zero removed test lines |
+| build / clippy / fmt / test | ✓ all green |
+| `cargo test` terminates | ✓ no hang |
+
+**Spec conformance, checked by reading the diff:**
+
+- **Task 1 (hoist)** matches the spec body exactly. `load_agent` is now at
+  `mod.rs:93`, outside every closure; the `with_sessions` call above it returns
+  `Option<String>` and the `?` operators bind to the closure. Signature
+  unchanged, so `ask.rs:566` gets the mechanism-A fix without an edit.
+- **Task 2 (collapse)** matches, including the subtlety flagged in the spec:
+  `effective_parent_job_id: gc.map(|_| sid.to_string())` — `Some(sid)` only when
+  `ghost_config` is present, so a non-ghost session does not report a parent job
+  id. `#[derive(Default)]` covers both miss paths and the defaults match the old
+  fall-throughs (`false`, `0`, `None`, `0`). `GhostPolicy::from_config` inside
+  the closure is safe — pure field mapping, `policy.rs:32-39`.
+- **Tasks 3, 4** match.
+- **Task 5 (site 922)** correctly extract-then-act: `default_target` is read and
+  the guard released *before* `cache.panes.read()`, killing the nested-lock
+  hazard, and the `return Ok(dtp)` stays in the function body rather than moving
+  inside a closure. `contains_key(&dtp)` adjusted for the now-owned `String`.
+  This was the one site that could not be converted mechanically; it was done
+  correctly.
+- **Task 6** holds: every closure reads/writes one entry and returns. None
+  encloses `knowledge::track_artifact` (`knowledge/mod.rs:38`),
+  `knowledge/pane.rs:19,52`, or `foreground.rs:170,199,232,885`. The §3.5 hazard
+  is avoided, which the terminating test run corroborates.
+- No `#[allow]`, no `#[ignore]`, no `dbg!`/`println!`, no `TODO`/`FIXME`/`XXX`.
+
+**Three `unsafe` blocks were added, all in the new test** (`env::set_var` ×2,
+`env::remove_var` ×1). 04d's Authorizations said "None", and the DoD says no new
+`unsafe`. Accepted rather than bounced: `std::env::set_var` is `unsafe` in
+edition 2024, and this is the established codebase idiom for HOME-redirecting
+tests — `with_test_home` at `src/daemon/utils/event_log.rs:288-299` does exactly
+the same thing. There is no safe alternative. The architect should have
+pre-authorized it in the phase doc; that is a spec omission, not a violation.
+
+---
+
+## Architect spec defects found at review
+
+**1. Acceptance criterion 3 was unsatisfiable.** Annotated inline above.
+Criterion 3 demanded `grep -c load_agent == 1` while task 7 mandated a test name
+containing `load_agent`. The executor reported 2 and explained why — correct
+behavior. Third occurrence of the phase-01 "same doc contradicts itself" pattern.
+
+**2. Task 7's test does not test what it claims — verified by mutation, not by
+reading.** The review reverted `build_memory_namespaces` to the old chained body
+(guard held across `load_agent`) and ran the new test:
+
+```
+$ cargo test --lib build_memory_namespaces_does_not_hold_the_lock_across_load_agent
+test daemon::executor::tests::build_memory_namespaces_does_not_hold_the_lock_across_load_agent ... ok
+```
+
+**It passes against the un-hoisted code.** The tree was restored afterwards
+(`git checkout src/daemon/executor/mod.rs`, confirmed clean).
+
+The reason is structural and was baked into the spec: the guard is function-local
+in *both* implementations, so by the time `build_memory_namespaces` returns the
+lock is free either way. `store.try_lock().is_ok()` after the call can never
+distinguish them. Task 7 even said so out loud — "assert the observable proxy" —
+without noticing that the proxy is vacuous. The executor implemented precisely
+what was asked.
+
+**The production fix is real** — `load_agent` is demonstrably outside every
+closure at `mod.rs:93`, greppable and confirmed in the diff. Only the regression
+net is missing. A real test needs `load_agent` behind a trait seam so a stub can
+attempt `try_lock` *during* the call; that is a design change, not a test tweak.
+
+**Follow-up, deliberately not dispatched as a bounce** (the fix is architect work
+and the executor conformed): carry into **phase 05** (`unlock-blocking-paths`),
+which owns mechanism A and will need exactly this seam for
+`webhook/process.rs`. Fold both items in:
+
+- Inject `load_agent` behind a seam and rewrite
+  `build_memory_namespaces_does_not_hold_the_lock_across_load_agent` so it fails
+  against the chained body.
+- That test restores `HOME` without an RAII guard, so a failing assertion leaks
+  a temp `HOME` **and** poisons `TEST_HOME_LOCK` for the rest of the run. M4
+  phase-06 fixed this same class ("HOME-leak → RAII guard"); apply the guard
+  when the test is rewritten.
+
+**Nit, not filed:** the `// ── Delegation depth tracking` marker at `mod.rs:186`
+now heads a comment-only stub. The spec permitted keeping the marker, so this is
+conformance, but the follow-on line restates what the code does
+(`STANDARDS.md` §2.3). Delete both lines whenever this region is next touched.
