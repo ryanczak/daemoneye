@@ -1,10 +1,21 @@
 # Phase 04f: Convert `context/background.rs` — the Compaction Swap
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-04e (`executor/` subtree converted) — `done`
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=refactor, size=s
+
+> **Bounced at review 2026-07-26 — see [`bugs/bug-04f-1.md`](bugs/bug-04f-1.md).**
+> The file has **4** production lock sites, not the 2 this spec inventoried. The
+> two missed ones split `sessions` and `.lock()` across lines, so the
+> `grep -c "sessions\.lock()"` criteria could not see them. **Root cause is this
+> spec, not the executor** — tasks 1–3 were implemented exactly as written and
+> every criterion given passed. Fix the two remaining sites and the vacuous
+> flag-ordering test per the bug doc, then re-dispatch.
+>
+> **The Site inventory and Acceptance criteria below are wrong as written.** The
+> bug doc supersedes them.
 
 ## Goal
 

@@ -578,3 +578,53 @@ cargo test  → 914 lib-unit passed / 0 failed; 27 integration passed / 2 ignore
   phase row. `docs/architecture.md` untouched. One conventional commit
   (`refactor(ask): …`) whose body explains *why*.
 - No new tests, as the Test plan required. The pinned 914 is the regression net.
+
+### Verdict correction — 2026-07-26 (filed during 04f review)
+
+**`ask.rs` was not fully converted, and this phase's approval said it was.** The
+verdict above states "0 raw locks / 11 `with_sessions` calls". The count was
+accurate; **the conclusion drawn from it was not.**
+
+`grep -c "sessions\.lock()"` — the criterion this phase used — cannot see an
+acquisition that splits `sessions` and `.lock()` across lines. Two such sites
+remain in `ask.rs`:
+
+`src/daemon/server/ask.rs:517-525`:
+
+```rust
+    let last_snapshot_activity: u64 = session_id
+        .as_ref()
+        .and_then(|id| {
+            sessions
+                .lock()
+                .ok()?
+                .get(id)
+                .map(|e| e.last_snapshot_activity)
+        })
+        .unwrap_or(0);
+```
+
+`src/daemon/server/ask.rs:685-691`:
+
+```rust
+    let pending_notice: Option<String> = session_id.as_ref().and_then(|id| {
+        sessions
+            .lock()
+            .unwrap_or_log()
+            .get_mut(id)
+            .and_then(|e| e.pending_compaction_notice.take())
+    });
+```
+
+Both are genuine `SessionStore` acquisitions. The first still carries the
+`.ok()?` poison-bail shape this phase was meant to eliminate.
+
+**Nothing is being reopened.** The phase stays `done` and the verdict stays
+`approved_first_try`: the executor converted every site the spec inventoried, and
+the miss originates in the architect's survey instrument. The two stragglers are
+recorded in the milestone README's count table as **unassigned** and must be
+folded into whichever phase next touches `ask.rs` — or into the newtype
+enforcement phase, which will fail to compile until they are converted.
+
+**Instrument fix for every future phase:** use a multi-line-aware scan, not
+`grep -c`. A working one is in `bugs/bug-04f-1.md` § Verification.

@@ -1,10 +1,104 @@
 # NEXT
 
-**Active phase: M5 phase-04f — convert-context-background** (`todo`, drafted
-2026-07-26).
+**Active phase: M5 phase-04f — convert-context-background** (`in-progress`,
+**bounced** at review 2026-07-26 — `bugs/bug-04f-1.md`).
 Doc: `docs/dev/milestones/M5-ux-stability/phase-04f-convert-context-background.md`.
 
-Dispatch with `/rexymcp:dispatch phase-04f-convert-context-background`.
+Re-dispatch with `/rexymcp:dispatch phase-04f-convert-context-background` — the
+executor reads the phase doc, the bug doc, and the Update Log.
+
+## ⚠ The measuring instrument was wrong for six phases
+
+`grep -c "sessions\.lock()"` — the criterion used by **every** count check in
+04a–04f — **cannot see an acquisition that splits `sessions` and `.lock()` across
+lines.** A multi-line-aware scan found **5 production sites** that every prior
+survey and every acceptance criterion missed:
+
+| File:line | Consequence |
+|---|---|
+| `context/background.rs:118`, `:137` | **04f bounced** — 2 of its 4 sites left raw |
+| `server/ask.rs:519`, `:686` | **04c was approved as "fully converted" and is not** |
+| `stream.rs:896` | 04i's problem; add to that phase's inventory (9 + 3 = 12 sites) |
+
+This is my third counting error in this milestone, and the worst of the three,
+because the previous two were bad arithmetic while this one was a **blind
+instrument that reported success**. 04f's Finish condition ("0 raw
+`sessions.lock()` in the production region") was satisfied as measured and false in
+substance.
+
+**Every remaining phase must use a multi-line-aware scan.** A working one is in
+`bugs/bug-04f-1.md` § Verification. `grep -c` is retired for this purpose.
+
+### 04c: corrected, not reopened
+
+`ask.rs:519` and `:686` are genuine `SessionStore` acquisitions; the first still
+carries the `.ok()?` poison-bail this milestone exists to remove. A correction
+block is appended to `phase-04c-convert-ask.md`.
+
+The phase **stays `done`** and the verdict **stays `approved_first_try`**: the
+executor converted every site the spec inventoried, and the miss originates in my
+survey instrument. The two stragglers are **unassigned** in the README count
+table — fold them into whichever phase next touches `ask.rs`, or leave them for
+the newtype phase, which will fail to compile until they are converted.
+
+### 04f bounce, in two parts
+
+**Part 1 (major, the reason for the bounce).** `run_compaction` still holds two
+raw locks at `background.rs:118` and `:137`, both clearing
+`compaction_in_flight` on an early-discard path. The bug doc has exact target
+code for both.
+
+There is a trap in the fix, called out in the bug doc: converting those two makes
+`use crate::util::UnpoisonExt;` **unused by production code** while the test module
+still needs it. `cargo build` and `cargo clippy --all-targets` disagree about
+whether a test-only import counts as used, so the import must move into
+`mod tests` and **both** commands must be re-run.
+
+**Part 2 (the test was vacuous).** My spec asserted
+`background_swap_discards_on_new_turn` guards the stale branch's
+flag-clear-before-return ordering, and asked the executor to confirm it by reading
+the assertions. The executor reported confirmation. **Both of us were wrong** —
+proven by mutation:
+
+```
+$ # with `entry.compaction_in_flight = false;` deleted from the stale branch
+$ cargo test --lib background_swap_discards_on_new_turn
+test ... ok
+```
+
+`make_test_entry()` builds the entry with `compaction_in_flight: false` and the
+test calls `run_compaction` directly rather than through `try_snapshot`, so the
+flag is never `true` and `assert!(!entry.compaction_in_flight)` cannot fail. Tree
+restored after the check.
+
+**The production ordering is correct** (`background.rs:237-238`, verified by
+reading). Only the net was missing. The bug doc amends the "no new tests"
+instruction to permit modifying that one test so the flag is `true` before the
+call, and requires the executor to demonstrate the fail/pass pair.
+
+**This is the second consecutive phase where I claimed test coverage that did not
+exist** — 04d's `try_lock`-after-return proxy, now this. Both times the spec
+planted the conclusion and asked the executor to confirm it, which is a leading
+question, not a verification.
+
+## Calibration — now three threads, and two are about my specs
+
+1. **Count criteria (fourth occurrence).** Was "check criteria against the spec's
+   own identifiers"; the real lesson is bigger — **a count criterion is only as
+   good as its pattern**, and a criterion that can report success while the goal is
+   unmet is worse than no criterion. Candidate fold: count criteria must use a
+   scan proven against the actual code shape, and the architect must run it before
+   pinning it. (I did run 04f's — and it was still blind, because I validated it
+   against the count I already believed.)
+2. **Specs that assert test coverage (second occurrence).** Candidate fold: a spec
+   may not tell the executor which test is the discriminator; it must instead
+   require the executor to *demonstrate* discrimination by mutation. The bug doc
+   uses that shape — fail/pass pair quoted — and it is the first time this
+   milestone has asked for proof rather than assertion.
+3. **Lock/HOME test hygiene (three deep).** Still riding on phase 05.
+
+**All three still await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change
+has been made.**
 
 ## ⚠ I had the site count wrong — corrected while drafting
 

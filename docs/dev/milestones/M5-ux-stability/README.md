@@ -76,7 +76,7 @@ take the socket.
 | 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | done (approved_first_try) |
 | 04d | convert-executor-dispatch ([phase-04d-convert-executor-dispatch.md](phase-04d-convert-executor-dispatch.md)) — `executor/mod.rs`, 10 sites + `load_agent` hoist | done (approved_first_try) |
 | 04e | convert-executor-tail ([phase-04e-convert-executor-tail.md](phase-04e-convert-executor-tail.md)) — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | done (approved_first_try) |
-| 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **2 production** sites | review |
+| 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | in-progress (bug-04f-1) |
 | 04g | convert-ghost — `ghost.rs` (11) + `briefing.rs` (1) = 12 sites | todo |
 | 04h | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
 | 04i | convert-stream-hooks — `stream.rs` (8) + `hook.rs` (3) = 11 sites | todo |
@@ -97,18 +97,35 @@ the earlier "04d×3" estimate, after a site-by-site survey. The newtype phase
 moved from 04e to **04j** — it was undrafted and unstarted, so the renumbering
 costs nothing. Actual per-file counts, verified against the tree:
 
-**Counts corrected 2026-07-26 (second pass).** The first survey used a plain
-`grep -c` that counted `#[cfg(test)]` modules as production. Re-derived by
-splitting each file at its `#[cfg(test)]` line:
+**⚠ Counts corrected twice, and the grep itself was the problem the second time.**
+
+**Third pass (2026-07-26, at 04f review).** `grep -c "sessions\.lock()"` — used by
+every count criterion in phases 04a–04f — **cannot see acquisitions that split
+`sessions` and `.lock()` across lines.** A multi-line-aware scan found **5 such
+production sites** that every prior survey and criterion missed:
+
+| File:line | Consequence |
+|---|---|
+| `context/background.rs:118`, `:137` | 04f bounced — see `bugs/bug-04f-1.md` |
+| `server/ask.rs:519`, `:686` | **04c was approved as "fully converted" and is not** — see its verdict correction |
+| `stream.rs:896` | belongs to 04i; no harm, just add it to that phase's inventory |
+
+Every remaining phase must use a multi-line-aware check, not `grep -c`. The bug
+doc carries a working one.
+
+**Second pass (2026-07-26).** The first survey used a plain `grep -c` that counted
+`#[cfg(test)]` modules as production. Re-derived by splitting each file at its
+`#[cfg(test)]` line:
 
 | Group | Production | Test-only | Phase |
 |---|---|---|---|
 | `executor/mod.rs` | 10 | 0 | 04d — `done` |
 | `executor/foreground.rs` + `executor/knowledge/*` | 8 | 0 | 04e — `done` |
-| `context/background.rs` | **2** (was miscounted 13) | **11** | 04f |
+| `context/background.rs` | **4** (13 → 2 → 4) | **11** | 04f |
 | `ghost.rs` (11) + `briefing.rs` (1) | 12 | 0 | 04g |
 | `background/{run,respawn,helpers,gc}.rs` | 9 | 0 | 04h |
-| `stream.rs` (8) + `hook.rs` (3) | 11 | 0 | 04i |
+| `stream.rs` (8 + **1 multi-line** = 9) + `hook.rs` (3) | 12 | 0 | 04i |
+| `server/ask.rs` — **2 multi-line stragglers from 04c** | 2 | 0 | unassigned |
 | `webhook/process.rs` | 2 | 0 | **phase 05** (mechanism A, not a conversion phase) |
 
 **Only `context/background.rs` was wrong** — the 04g/04h/04i figures were already
