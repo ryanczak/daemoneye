@@ -1,7 +1,7 @@
 # Phase 03: Echo User Input to the Transcript
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (spinner row), phase-02 (cleanup deadlock) — both `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -290,3 +290,134 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 **Executor:** model
 
 **Work started:** Implement echo of user input to transcript, add `echo_body` and `should_echo` helpers with tests, fix `cleanup_pass_evicts_idle_and_keeps_active` to use `try_lock`.
+
+### Update — ts=1785024409069 (complete, server-authored)
+
+**Summary:** All verification gates pass:
+
+- `cargo fmt --all` clean
+- `cargo build` succeeds with zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` exits zero
+- `cargo test` reports **910** passing (908 + 2 new tests)
+- `grep -n 'commit_panel("you"' src/cli/commands/chat.rs` returns exactly **one** line
+- `grep -n 'sessions.lock().unwrap()' src/daemon/session.rs` returns nothing inside `cleanup_pass_evicts_idle_and_keeps_active`
+- Working tree is clean, one conventional commit covers all changes
+
+**Summary + Notes for review:**
+
+Added two small pure helpers (`echo_body` and `should_echo`) to `chat.rs` that extract the body-construction and echo-decision logic from the chat loop. Before each user query is sent to the model, the query is committed as a `"you"`-titled `commit_panel` into scrollback — the same element used for tool output. The `should_echo` guard ensures client-only commands (`/exit`, `/help`, `/clear`, etc.) are never echoed while prose that starts with `/` or keywords like `help` is correctly echoed. The startup greeting at line 326 is untouched. Also fixed the phase-02 follow-up: `cleanup_pass_evicts_idle_and_keeps_active` now uses `try_lock` with `expect` so a session-cleanup deadlock regression fails fast rather than hanging CI. End-to-end verification of committed scrollback requires a live terminal and is deferred to the architect.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+led_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test memory::tests::migrate_namespace_skips_already_migrated ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 910 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.34s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test event_log_append_read ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-03-echo-user-input.md` — +7 -1
+- `src/cli/commands/chat.rs` — +60 -0
+- `src/daemon/session.rs` — +4 -1
+
+**Commit:** e9b9c7f1c0571927d0e2893179b48b74534144ba
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
