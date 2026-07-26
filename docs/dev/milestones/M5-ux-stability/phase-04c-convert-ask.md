@@ -1,7 +1,7 @@
 # Phase 04c: Convert `ask.rs` Lock Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04b (`handlers.rs` converted) — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -365,3 +365,133 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 **Executor:** claude-sonnet-4-5-20250514
 
 Converting all 13 `sessions.lock()` sites in `ask.rs` to `with_sessions`.
+
+### Update — ts=1785031010722 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified:
+
+- `grep -c "sessions.lock()" src/daemon/server/ask.rs` → **0**
+- `grep -c "with_sessions(" src/daemon/server/ask.rs` → **11** (13 sites minus the 3→1 collapse)
+- `grep -c "sessions.lock()" src/daemon/executor/mod.rs` → **10** (unchanged)
+- `grep -n "pub type SessionStore" src/daemon/session.rs` → **117** (still a type alias)
+- `cargo test --lib` → **914** passed, unchanged
+- `cargo fmt --all`, `cargo build`, `cargo clippy` all clean
+- Test run completed without hanging (no `with_sessions` closure encloses `build_memory_namespaces`)
+
+**Summary + Notes for review:** Converted all 13 `sessions.lock()` sites in `ask.rs` to `with_sessions`, collapsing sites 579/590/600 into a single acquisition as specified. The `build_memory_namespaces` call at line 571 remains outside any `with_sessions` closure to avoid deadlock with its unconverted raw lock. The `is_ghost_session` shadowing between line 483 and the collapsed block is preserved as load-bearing. For a session ID not present in the store, `ghost_turn_limit` correctly returns `None` because `store.get(id)?` inside the `with_sessions` closure returns `None` from the closure, which propagates through `and_then` unchanged — same semantics as before, just via `unwrap_or_log()` on poison instead of `.ok()?` early-bail.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.52s
+
+
+LINT
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.57s
+
+
+TEST
+wport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test memory::tests::update_memory_partial_update_preserves_other_fields ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 914 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.28s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-04c-convert-ask.md` — +7 -1
+- `src/daemon/server/ask.rs` — +60 -74
+
+**Commit:** b05475955dc020f2b0fc79ee74b7f4a09fd74bd9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
