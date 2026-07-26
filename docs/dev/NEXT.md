@@ -1,12 +1,89 @@
 # NEXT
 
-**Active phase: M5 phase-04e — convert-executor-tail** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04e-convert-executor-tail.md`.
+**No active phase.** 04e is `done` and **the entire `src/daemon/executor/`
+subtree is now converted**. The next conversion phase (04f —
+convert-context-background, `context/background.rs`, 13 sites) is **not yet
+drafted**. Draft it with `/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04e-convert-executor-tail`.
+---
 
-Converts the last 8 `sessions.lock()` sites under `src/daemon/executor/` —
+## M5 phase-04e — convert-executor-tail is `done`
+
+(2026-07-26, `approved_first_try`, no bounces, 84 turns, commit `3f39732`.)
+
+All 8 remaining `sessions.lock()` sites under `src/daemon/executor/` now go
+through `with_sessions` — **8 calls for 8 sites**, and **zero raw locks anywhere
+in the subtree**. Every per-file count came out exact (4 / 1 / 2 / 1, with
+`executor/mod.rs` still at 6 from 04d). Gates re-run independently: fmt/build/
+clippy exit 0, **915** lib-unit + 27 integration green, unchanged — no new tests,
+as specified — and the run terminated.
+
+**Both non-mechanical rewrites landed correctly**, which was the whole risk of
+this phase:
+
+- **`foreground.rs:232`** — the read is hoisted *above* the IIFE. The first
+  branch is byte-identical, the second reads `default_target` with no lock held,
+  both `cache.panes.read()` calls are outside any sessions closure, and both
+  `return`s stayed inside the IIFE. The failure mode — moving the `return` into
+  a `with_sessions` closure so the IIFE falls through and `target_hint` silently
+  becomes `None`, **which compiles** — did not occur.
+- **`knowledge/pane.rs:19`** — the closure returns
+  `Result<(String,String,bool), String>` and the caller matches. All three
+  user-facing strings verified byte-identical against the parent commit with
+  literal `grep -cF`, not by trusting the summary.
+
+**Two clean phases in a row with zero defects of any kind** (04e and, on the
+executor's side, 04d). The spec shape that produced this: exact target code for
+every site, an explicit hazard table, and no new tests in a pure-conversion
+phase.
+
+### Calibration threads — both now have supporting data
+
+**Thread 1 — count-grep criteria.** 04e's criteria were self-checked against the
+spec's own identifiers, with an explicit prohibition on writing the literal
+`sessions.lock()` or `with_sessions(` in a comment. **It worked** — all six counts
+came out exact. That is one clean data point for the candidate fold raised at 04d
+review (third occurrence of the "same doc contradicts itself" pattern).
+**Still unanswered by the PE; no `WORKFLOW.md` change has been made.**
+
+**Thread 2 — no-new-tests in pure-conversion phases.** 04b, 04c, and 04e all
+specified zero new tests and all three landed `approved_first_try`. 04d, the one
+phase in this sequence that mandated a test, produced a non-discriminating one.
+That is now **three clean data points for the pattern and one counter-example** —
+worth weighing as guidance rather than a rule, since a structural change *does*
+deserve a test; it just has to be a test that can fail.
+
+### Residual risk recorded, not papered over
+
+`target_hint` has no unit-test coverage, before this phase or after. The task-3
+failure mode would degrade the approval prompt's pane hint to `None` without
+failing any test. Coverage was not reduced, and inventing a test for an
+approval-prompt string was deliberately out of scope — but if a later phase
+touches `find_best_target_pane` or `target_hint`, that is the moment to add it.
+
+### Remaining 04x work — 45 sites in four phases, then enforcement
+
+04f (`context/background.rs`, 13) → 04g (`ghost.rs` + `briefing.rs`, 12) → 04h
+(`background/*`, 9) → 04i (`stream.rs` + `hook.rs`, 11) → 04j (newtype +
+enforce, converts the 13 `Arc::clone` sites). Then 05 (`webhook/process.rs`,
+mechanism A, carrying the two 04d follow-ups), 06, 07, and the independent 08–11
+instance-hardening set.
+
+**The §3.5 migration hazard shrinks with each phase but is still live**, and it is
+worst at the converted/unconverted boundary. `webhook/process.rs` (2 sites) is now
+the most-reached unconverted store-toucher — `inject_ghost_event` is called from
+`ghost.rs`, `knowledge/ghost.rs`, and the scheduler — so every remaining
+conversion phase must keep naming it in its hazard table until 05 lands.
+
+**Sizing:** 84 turns for 8 sites with two structural rewrites and no new tests —
+against 128 for 04d's 10 sites plus a hoist and a test, and 95 for 04b's 15
+uniform conversions. The ~10–12 turns/site estimate for structural phases held.
+
+---
+
+## Superseded: the original 04e dispatch note
+
+Converted the last 8 `sessions.lock()` sites under `src/daemon/executor/` —
 `foreground.rs` (4), `knowledge/mod.rs` (1), `knowledge/pane.rs` (2),
 `knowledge/ghost.rs` (1) — finishing the executor subtree.
 

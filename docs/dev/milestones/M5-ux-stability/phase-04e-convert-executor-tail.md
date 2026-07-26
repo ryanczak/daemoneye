@@ -1,7 +1,7 @@
 # Phase 04e: Convert the `executor/` Tail — `foreground.rs` + `knowledge/*`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04d (`executor/mod.rs` converted) — `done`
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -709,3 +709,77 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3f39732e45096313491ad158a3ae236ebd633f34
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (84 turns)
+- **Scope deviations:** none. All 9 spec tasks implemented as written;
+  `executor/mod.rs`, `webhook/process.rs`, `ghost.rs`, `background/`,
+  `context/background.rs`, `briefing.rs`, `stream.rs`, `hook.rs`, and
+  `SessionStore` all untouched as Out-of-scope required.
+- **Calibration:** none. **The executor subtree is now fully converted.**
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit passed / 0 failed (unchanged — no new tests)
+              27 integration passed / 2 ignored
+              run terminated normally (no hang)
+```
+
+**Acceptance criteria — every count exact:**
+
+| Criterion | Result |
+|---|---|
+| raw `sessions.lock()` anywhere under `src/daemon/executor/` | **0** ✓ |
+| `with_sessions(` in `foreground.rs` | **4** ✓ |
+| `with_sessions(` in `knowledge/mod.rs` | **1** ✓ |
+| `with_sessions(` in `knowledge/pane.rs` | **2** ✓ |
+| `with_sessions(` in `knowledge/ghost.rs` | **1** ✓ |
+| `with_sessions(` in `executor/mod.rs` (04d untouched) | **6** ✓ |
+| `pub type SessionStore` still an alias | `session.rs:117` ✓ |
+| lib-unit test count | **915**, unchanged ✓ |
+| `cargo test` terminates | ✓ |
+
+The comment prohibition held — the counts came out exact, so nothing wrote the
+literal `sessions.lock()` or `with_sessions(` into a comment.
+
+**The two non-mechanical rewrites were both done correctly.** This was the risk
+the phase carried, and both were verified by reading the code, not the summary:
+
+- **Task 3 (`foreground.rs:232`)** — the read is hoisted *above* the IIFE. The
+  first branch is byte-identical (`return Some(tp.to_string())` intact), the
+  second reads `default_target` with no lock held, both `cache.panes.read()`
+  calls sit outside any sessions closure, and **both `return`s remain inside the
+  IIFE**. The failure mode this guarded against — moving the `return` into a
+  `with_sessions` closure so the IIFE falls through and `target_hint` silently
+  becomes `None`, which *compiles* — did not occur.
+- **Task 6 (`knowledge/pane.rs:19`)** — the closure returns
+  `Result<(String, String, bool), String>` and the caller matches, re-raising
+  each `Err` as a return from `close_bg_window`. All three user-facing strings
+  verified byte-identical against the parent commit by literal `grep -cF`:
+  identical occurrence counts before and after for "No active session — cannot
+  close background window.", "Session '{}' not found.", and "No background window
+  with pane ID {} found in this session."
+
+**Task 9 confirmed structurally:** task 8's closure closes with `});` before
+`inject_ghost_event(` (which reaches `webhook/process.rs`'s raw locks);
+`GhostManager::start_session_with_config` and the `background/` respawn helpers
+likewise sit outside every converted closure. The terminating test run
+corroborates — the §3.5 hazard manifests as a hang, and there was none.
+
+No forbidden idioms in the added lines: no `unsafe`, `#[allow]`, `#[ignore]`,
+`dbg!`, `println!`, `TODO`/`FIXME`/`XXX`, `unwrap()`, or `expect()`.
+
+**Residual risk, accepted and recorded rather than papered over:** `target_hint`
+has no unit-test coverage, before this phase or after. The task-3 failure mode
+would degrade the approval prompt's pane hint to `None` without failing any test.
+This phase did not *reduce* coverage, and the spec deliberately chose reasoning
+plus review over inventing a test for an approval-prompt string — but the gap is
+real. If a later phase touches `find_best_target_pane` or `target_hint` again,
+that is the moment to add coverage.
