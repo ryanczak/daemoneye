@@ -60,7 +60,7 @@ split) and the two TUI defect specs every phase references.
 | 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | done (approved_first_try) |
 | 04a | with-sessions-accessor ([phase-04a-with-sessions-accessor.md](phase-04a-with-sessions-accessor.md)) | done (approved_first_try) |
 | 04b | convert-handlers ([phase-04b-convert-handlers.md](phase-04b-convert-handlers.md)) | done (approved_first_try) |
-| 04c | convert-ask (13 sites; `lock().ok()?` chains need per-site care)        | todo   |
+| 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | todo   |
 | 04d | convert-tail (background.rs + ghost.rs + executor + stream, ~60 sites — likely splits further) | todo |
 | 04e | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)        | todo   |
 | 05 | unlock-blocking-paths (webhook/process.rs — mechanism A)                | todo   |

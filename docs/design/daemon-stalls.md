@@ -475,3 +475,41 @@ on one thread is never legitimate here — it would deadlock. Panicking is stric
 better than wedging: the `supervise` wrapper restarts a panicked task, whereas the
 phase-02 deadlock took the daemon down for 12 hours. A `debug_assert` would have
 been compiled out of exactly the build where it mattered.
+
+
+### 3.5 Migration hazard: the assertion does not cover unconverted callees
+
+Discovered while drafting the `ask.rs` conversion (04c), and load-bearing for
+every phase in the 04b–04d window.
+
+The re-entrancy assertion inside `with_sessions` fires on **`with_sessions`
+nested inside `with_sessions`**. It cannot see a `with_sessions` closure that
+calls a function still using raw `sessions.lock()` — that path takes the mutex
+the ordinary way, finds it held by the enclosing closure, and **blocks forever**:
+no panic, no log line, just a hung process or a test run that never returns.
+
+So during the migration the guard is *weakest* exactly where the risk is
+highest — at the boundary between converted and unconverted code.
+
+The concrete instance: `ask.rs:571` calls
+`crate::daemon::executor::build_memory_namespaces(…, sessions, …)`, which locks
+at `executor/mod.rs:88` and is not converted until 04d. Any 04c conversion that
+enclosed that call would deadlock silently.
+
+Two consequences for the remaining conversion phases:
+
+1. Every phase doc must name the store-touching calls inside the region being
+   converted, and forbid closures from spanning them. "Check the helpers" is not
+   sufficient — the specific call sites belong in the spec.
+2. A conversion phase's failure mode is a **hang**, not a red gate. Treat a
+   `cargo test` run that does not terminate as the diagnostic it is, rather than
+   as flakiness.
+
+This is temporary. Once 04e lands the newtype with a private inner, raw `.lock()`
+outside the accessor stops compiling and the hazard disappears — which is a
+second argument for finishing the sequence rather than stopping after the
+useful-looking middle.
+
+Worth noting `build_memory_namespaces` also calls `crate::agents::load_agent`
+(a config-file read) while holding the lock — mechanism A, in `executor/mod.rs`.
+Flagged here so 04d does not merely convert it but also hoists the I/O out.
