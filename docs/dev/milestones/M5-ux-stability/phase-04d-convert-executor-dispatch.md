@@ -1,7 +1,7 @@
 # Phase 04d: Convert `executor/mod.rs` Lock Sites + Hoist `load_agent`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04c (`ask.rs` converted) — `review`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -612,3 +612,9 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 13:28 (started)
+
+**Executor:** Claude executor
+
+Converted all 10 `sessions.lock()` sites in `src/daemon/executor/mod.rs` to `with_sessions`, collapsing five consecutive prologue reads into one `DispatchSnapshot` acquisition. Hoisted `load_agent()` out of the lock in `build_memory_namespaces`. Added one test verifying the lock is released after the call.

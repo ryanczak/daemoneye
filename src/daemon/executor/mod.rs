@@ -5,7 +5,7 @@ mod schedule;
 
 use crate::ai::{PendingCall, next_tool_id};
 use crate::daemon::policy::GhostPolicy;
-use crate::daemon::session::SessionStore;
+use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::send_response_split;
 use crate::ipc::{PaneInfo, Request, Response};
 use crate::scheduler::ScheduleStore;
@@ -83,13 +83,14 @@ pub fn build_memory_namespaces(
     if !is_ghost {
         return vec!["global".to_string()];
     }
+    let agent_name: Option<String> = session_id.and_then(|sid| {
+        with_sessions(sessions, |store| {
+            store.get(sid)?.ghost_config.as_ref()?.agent.clone()
+        })
+    });
     let mut namespaces: Vec<String> = Vec::new();
-    if let Some(sid) = session_id
-        && let Ok(store) = sessions.lock()
-        && let Some(entry) = store.get(sid)
-        && let Some(ref gc) = entry.ghost_config
-        && let Some(ref agent_name) = gc.agent
-        && let Ok(agent) = crate::agents::load_agent(agent_name)
+    if let Some(name) = agent_name
+        && let Ok(agent) = crate::agents::load_agent(&name)
     {
         namespaces.push(agent.memory_namespace.clone());
         for extra in &agent.read_namespaces {
@@ -105,6 +106,19 @@ pub fn build_memory_namespaces(
 // ---------------------------------------------------------------------------
 // Main tool dispatcher
 // ---------------------------------------------------------------------------
+
+/// Everything `execute_tool_call` needs from the session entry, read in one
+/// acquisition. Five separate reads of the same entry preceded this.
+#[derive(Default)]
+struct DispatchSnapshot {
+    ghost_policy: Option<GhostPolicy>,
+    tool_policy: Option<crate::agents::ToolPolicy>,
+    is_ghost_shell: bool,
+    spawn_depth: u8,
+    effective_parent_job_id: Option<String>,
+    saved_name: Option<String>,
+    turn_count: usize,
+}
 
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
@@ -124,37 +138,43 @@ where
         chat_pane,
         sessions,
     } = ctx;
-    // ── Pre-fetch Ghost Policy and Tool Policy ───────────────────────────────
-    let ghost_and_tool: Option<(GhostPolicy, Option<crate::agents::ToolPolicy>)> =
-        if let Some(sid) = session_id {
-            if let Ok(store) = sessions.lock() {
-                store.get(sid).and_then(|e| {
-                    if e.is_ghost {
-                        e.ghost_config
-                            .as_ref()
-                            .map(|gc| (GhostPolicy::from_config(gc), gc.tool_policy.clone()))
+    // ── Pre-fetch session state in one acquisition ───────────────────────────
+    let snap: DispatchSnapshot = match session_id {
+        Some(sid) => with_sessions(sessions, |store| match store.get(sid) {
+            Some(e) => {
+                let gc = e.ghost_config.as_ref();
+                DispatchSnapshot {
+                    ghost_policy: if e.is_ghost {
+                        gc.map(GhostPolicy::from_config)
                     } else {
                         None
-                    }
-                })
-            } else {
-                None
+                    },
+                    tool_policy: if e.is_ghost {
+                        gc.and_then(|g| g.tool_policy.clone())
+                    } else {
+                        None
+                    },
+                    is_ghost_shell: e.is_ghost,
+                    spawn_depth: gc.map(|g| g.spawn_depth).unwrap_or(0),
+                    effective_parent_job_id: gc.map(|_| sid.to_string()),
+                    saved_name: e.saved_name.clone(),
+                    turn_count: e.turn_count,
+                }
             }
-        } else {
-            None
-        };
-    let ghost_policy: Option<GhostPolicy> = ghost_and_tool.as_ref().map(|(gp, _)| gp.clone());
-    let tool_policy: Option<crate::agents::ToolPolicy> = ghost_and_tool.and_then(|(_, tp)| tp);
-    // Defensive guard: a ghost shell entry must always have a ghost_config.
-    let is_ghost_shell: bool = if let Some(sid) = session_id {
-        if let Ok(store) = sessions.lock() {
-            store.get(sid).map(|e| e.is_ghost).unwrap_or(false)
-        } else {
-            false
-        }
-    } else {
-        false
+            None => DispatchSnapshot::default(),
+        }),
+        None => DispatchSnapshot::default(),
     };
+    let DispatchSnapshot {
+        ghost_policy,
+        tool_policy,
+        is_ghost_shell,
+        spawn_depth,
+        effective_parent_job_id,
+        saved_name,
+        turn_count,
+    } = snap;
+    // Defensive guard: a ghost shell entry must always have a ghost_config.
     if is_ghost_shell && ghost_policy.is_none() {
         let msg = "Error: ghost shell has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
         log::error!("{} for session {:?}", msg, session_id);
@@ -164,20 +184,7 @@ where
     let is_ghost = ghost_policy.is_some();
 
     // ── Delegation depth tracking ────────────────────────────────────────────
-    let (spawn_depth, effective_parent_job_id): (u8, Option<String>) = if let Some(sid) = session_id
-    {
-        if let Ok(store) = sessions.lock() {
-            store
-                .get(sid)
-                .and_then(|e| e.ghost_config.as_ref())
-                .map(|gc| (gc.spawn_depth, Some(sid.to_string())))
-                .unwrap_or((0, None))
-        } else {
-            (0, None)
-        }
-    } else {
-        (0, None)
-    };
+    // (spawn_depth and effective_parent_job_id already loaded in DispatchSnapshot)
 
     // ── Tool Policy Enforcement (agent-level) ────────────────────────────────
     if let Some(policy) = &tool_policy
@@ -201,11 +208,6 @@ where
     let memory_namespaces_owned = build_memory_namespaces(session_id, sessions, is_ghost_shell);
     let memory_namespaces: Vec<&str> = memory_namespaces_owned.iter().map(|s| s.as_str()).collect();
     // ── Artifact context for session_origin stamping + tracking ───────────────
-    let saved_name: Option<String> =
-        session_id.and_then(|sid| sessions.lock().ok()?.get(sid)?.saved_name.clone());
-    let turn_count: usize = session_id
-        .and_then(|sid| sessions.lock().ok()?.get(sid).map(|e| e.turn_count))
-        .unwrap_or(0);
     let artifact_ctx = knowledge::ArtifactCtx {
         session_id,
         sessions,
@@ -325,14 +327,15 @@ where
                 }
             }
             // Persist into session state
-            if let Some(sid) = session_id
-                && let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(sid)
-            {
-                for name in &loaded {
-                    entry.loaded_tools.insert(name.clone());
-                }
-                entry.dirty = true;
+            if let Some(sid) = session_id {
+                with_sessions(sessions, |store| {
+                    if let Some(entry) = store.get_mut(sid) {
+                        for name in &loaded {
+                            entry.loaded_tools.insert(name.clone());
+                        }
+                        entry.dirty = true;
+                    }
+                });
             }
             let mut result_parts = Vec::new();
             for g in groups {
@@ -533,8 +536,11 @@ where
         }
 
         PendingCall::GetTerminalContext { .. } => {
-            let target_pane: Option<String> = session_id
-                .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone());
+            let target_pane: Option<String> = session_id.and_then(|sid| {
+                with_sessions(sessions, |store| {
+                    store.get(sid)?.default_target_pane.clone()
+                })
+            });
             let ctx = cache.get_labeled_context(chat_pane, chat_pane);
             let pane_map = cache.pane_map_summary(chat_pane);
             let fg_line = target_pane
@@ -918,15 +924,17 @@ where
     }
 
     // Check for a user-selected default target pane in the session.
-    if let Some(sid) = session_id
-        && let Ok(store) = sessions.lock()
-        && let Some(entry) = store.get(sid)
-        && let Some(ref dtp) = entry.default_target_pane
+    let default_target: Option<String> = session_id.and_then(|sid| {
+        with_sessions(sessions, |store| {
+            store.get(sid)?.default_target_pane.clone()
+        })
+    });
+    if let Some(dtp) = default_target
         && chat_pane != Some(dtp.as_str())
     {
         let panes = cache.panes.read().unwrap_or_log();
-        if panes.contains_key(dtp) {
-            return Ok(dtp.clone());
+        if panes.contains_key(&dtp) {
+            return Ok(dtp);
         }
     }
 
@@ -962,11 +970,12 @@ where
     rx.read_line(&mut pane_line).await?;
     match serde_json::from_str::<Request>(pane_line.trim()) {
         Ok(Request::PaneSelectResponse { pane_id, .. }) => {
-            if let Some(sid) = session_id
-                && let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(sid)
-            {
-                entry.default_target_pane = Some(pane_id.clone());
+            if let Some(sid) = session_id {
+                with_sessions(sessions, |store| {
+                    if let Some(entry) = store.get_mut(sid) {
+                        entry.default_target_pane = Some(pane_id.clone());
+                    }
+                });
             }
             Ok(pane_id)
         }
@@ -1165,5 +1174,101 @@ mod tests {
             !ns.iter().any(|n| n == "victim"),
             "agent must NOT reach an unrelated namespace it was never granted: {ns:?}"
         );
+    }
+
+    #[test]
+    fn build_memory_namespaces_does_not_hold_the_lock_across_load_agent() {
+        use crate::agents::AgentConfig;
+        use crate::daemon::session::SessionEntry;
+        use crate::util::UnpoisonExt;
+        use std::collections::HashMap;
+
+        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let tmp = std::env::temp_dir().join(format!("de_lock_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let old = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
+
+        crate::agents::save_agent(&AgentConfig {
+            name: "test-agent".to_string(),
+            description: String::new(),
+            prompt: String::new(),
+            model: None,
+            memory_namespace: "test-agent-ns".to_string(),
+            max_turns: None,
+            auto_approve_read_only: false,
+            auto_approve_scripts: Vec::new(),
+            read_namespaces: vec![],
+            tools: None,
+        })
+        .unwrap();
+
+        let entry = SessionEntry {
+            messages: vec![],
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: vec![],
+            last_prompt_tokens: 0,
+            tmux_session: "test".to_string(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            pipe_source_pane: None,
+            is_ghost: true,
+            ghost_config: Some(crate::ipc::GhostConfig {
+                agent: Some("test-agent".to_string()),
+                ..Default::default()
+            }),
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: vec![],
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            loaded_tools: std::collections::HashSet::new(),
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+        };
+        let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        store
+            .lock()
+            .unwrap_or_log()
+            .insert("gsid".to_string(), entry);
+
+        let ns = build_memory_namespaces(Some("gsid"), &store, true);
+
+        // The lock must be released after the call — try_lock must succeed.
+        assert!(
+            store.try_lock().is_ok(),
+            "store should be immediately lockable after build_memory_namespaces returns"
+        );
+
+        // Result still contains "global" as the fallback.
+        assert!(
+            ns.iter().any(|n| n == "global"),
+            "global fallback present: {ns:?}"
+        );
+
+        match old {
+            Some(v) => unsafe {
+                std::env::set_var("HOME", v);
+            },
+            None => unsafe {
+                std::env::remove_var("HOME");
+            },
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
