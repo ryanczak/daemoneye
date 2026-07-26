@@ -78,7 +78,7 @@ take the socket.
 | 04e | convert-executor-tail ([phase-04e-convert-executor-tail.md](phase-04e-convert-executor-tail.md)) — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | done (approved_first_try) |
 | 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | done (approved_after_1) |
 | 04g | convert-ghost-exit-paths ([phase-04g-convert-ghost-exit-paths.md](phase-04g-convert-ghost-exit-paths.md)) — `write_mailbox_on_exit` (3) + `briefing.rs` (1) = 4 sites | done (approved_first_try) |
-| 04h | convert-ghost-turn-loop — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | todo |
+| 04h | convert-ghost-turn-loop ([phase-04h-convert-ghost-turn-loop.md](phase-04h-convert-ghost-turn-loop.md)) — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | todo |
 | 04i | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
 | 04j | convert-stream-hooks — `stream.rs` (8 + 1 multi-line) + `hook.rs` (3) = 12 sites | todo |
 | 04k | sessionstore-newtype (enforce) — **re-scope when drafting; see Notes** | todo   |
@@ -90,7 +90,7 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 04h–07 are named but **not yet drafted**. Draft each with
+Phases 04i–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
 **The 04d tail was split on 2026-07-26** — first into five phases (04d–04i),

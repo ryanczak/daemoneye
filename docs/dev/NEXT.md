@@ -1,8 +1,101 @@
 # NEXT
 
-**No active phase.** 04g is `done` (`approved_first_try`). The next conversion
-phase (04h — convert-ghost-turn-loop, 8 sites, carrying all three hard ghost
-cases) is **not yet drafted**. Draft it with `/rexymcp:architect next`.
+**Active phase: M5 phase-04h — convert-ghost-turn-loop** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04h-convert-ghost-turn-loop.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04h-convert-ghost-turn-loop`.
+
+Converts the last **8** sites in `ghost.rs` — 1 in `start_session_with_config`,
+7 in `do_ghost_turn` — finishing the file. **Finish condition: 11
+`with_sessions` calls (3 from 04g + 8 here), 0 raw acquisitions.** `size=m`,
+~140 lines, 8 sites → 8 calls with no collapses.
+
+## Three hard cases, each failing differently
+
+- **Site 306 — `anyhow::bail!` inside the guard.** Expands to `return Err(..)`
+  from `do_ghost_turn`; inside a closure it returns from the closure and the
+  types no longer line up. Spec has the `Option` + outside-`bail!` shape.
+- **Site 466 — a blocking file write inside the critical section.** A live
+  mechanism-A defect: `append_session_message` writes two files while the global
+  session lock is held. **And the hoist is not mechanical** — the write sits
+  *inside* the `if let Some(entry)`, so it currently only happens when the entry
+  exists. Hoisting it unconditionally would append for a vanished session. The
+  spec returns a `pushed` flag and gates the write on it.
+- **Site 485 — a bare `break;` inside the guard.** Exits the turn loop; inside a
+  closure that is `E0267`. Fails loudly rather than silently, but the spec tells
+  the executor to write it correctly rather than discover the error.
+
+**A fourth trap, easy to hit by accident:** site 847's `break;` sits flush against
+the closing brace of the block being converted, and belongs to the surrounding
+event loop. Pulling it into the closure is the same `E0267`. Called out explicitly.
+
+## Worked example for the hoist comes from the same file
+
+`ghost.rs:1003` already does it right — `append_session_message` **before** the
+lock, lock-free by construction:
+
+```rust
+append_session_message(session_id, &assistant_msg);
+{ let mut store = sessions.lock()…; if let Some(entry) = … { … } }
+```
+
+Task 4 reaches the same property from the other side (write *after*, gated on the
+flag), and the spec explicitly forbids "harmonizing" the two — 1003's write is
+unconditional and 466's must stay conditional.
+
+## Re-deriving the line numbers caught the shift, and validating criteria caught two more errors
+
+**All eight sites moved by −3** after 04g edited the top of `ghost.rs` (257→254,
+309→306, 328→325, 469→466, 488→485, 511→508, 850→847, 1008→1005). Re-derived with
+the scan, exactly as the previous entry warned.
+
+Then validating the criteria against the tree — rather than deriving them — caught
+two further errors in my own draft:
+
+1. I wrote `grep -c "append_session_message"` should return **3**. It is **4**:
+   there is an unrelated call at `ghost.rs:212` in `start_session_with_config`
+   that appends the initial user message. The criterion now says 4, names that
+   call as out of bounds, and notes that the count alone cannot prove none sits
+   inside a closure — that needs reading.
+2. I wrote that the phase removes "the last 8 `unwrap_or_log` calls". It is **7** —
+   site 847 uses `if let Ok(mut store) = sessions.lock()` and has no
+   `unwrap_or_log`. Task 9 now states the verified expected outcome (delete the
+   `UnpoisonExt` import, since none of the 7 are in the test module) while still
+   requiring the executor to confirm before acting, and treats "hits remain
+   outside `mod tests`" as evidence of a missed conversion rather than a reason to
+   keep the import.
+
+That is three drafting errors caught pre-dispatch in two consecutive phases, all
+by running checks instead of reasoning about them. The practice is working; the
+underlying tendency has not gone away.
+
+## Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence).** Now **3 clean confirmations** — 04g's
+   pre-dispatch catch, and 04h's two.
+2. **Specs asserting test coverage (3rd occurrence, 1 confirmation).** 04h's Test
+   plan again names no discriminator and states the rule explicitly: "the tests
+   pass" is admissible, "the tests would catch a regression in task 4" is not.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Still riding on phase 05.
+
+**All await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change made.**
+
+## After 04h
+
+`ghost.rs` and the whole `executor/` subtree will be fully converted. Remaining:
+04i (`background/*`, 9) → 04j (`stream.rs` 9 + `hook.rs` 3 = 12) → **04k**
+(newtype + enforce).
+
+**04k still needs re-scoping when drafted** — the 13 `Arc::clone` sites, plus 13
+test-module acquisitions, plus the two unassigned `ask.rs` multi-line stragglers,
+plus 04f's coverage follow-up (three vacuous `compaction_in_flight` assertions to
+make real, mutation-checked). It may need its own split.
+
+---
+
+## Superseded: the 04g completion note
 
 ---
 

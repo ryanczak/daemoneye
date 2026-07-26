@@ -1,0 +1,586 @@
+# Phase 04h: Convert the Ghost Turn Loop — `start_session` + `do_ghost_turn`
+
+**Milestone:** M5 — UX & Stability
+**Status:** todo
+**Depends on:** phase-04g (ghost exit paths converted) — `done`
+**Estimated diff:** ~140 lines
+**Tags:** language=rust, kind=refactor, size=m
+
+## Goal
+
+Convert the last **8** `sessions.lock()` sites in `src/daemon/ghost.rs` —
+1 in `GhostManager::start_session_with_config`, 7 in `do_ghost_turn` — to
+`with_sessions`, finishing the file.
+
+**Finish condition: 11 `with_sessions` calls in `ghost.rs` (3 from the previous
+phase + 8 here), and 0 raw acquisitions in the production region.**
+
+Three of the eight are individually hard, each failing a different way. They are
+tasks 2, 4, and 5, and they are why this was split out from the exit-path phase:
+
+- an `anyhow::bail!` inside the guarded block,
+- a **blocking file write** inside the critical section — a live mechanism-A
+  defect this phase must *fix*, not preserve,
+- a bare `break;` inside the guarded block, which **cannot compile** inside a
+  closure.
+
+## Architecture references
+
+Read before starting:
+
+- `docs/design/daemon-stalls.md` § 1 mechanism A — lock held across blocking
+  work. Task 4 is a live instance: `append_session_message` writes a file while
+  the global session lock is held.
+- `docs/design/daemon-stalls.md` § 3.5 — the migration hazard: a converted
+  closure enclosing a call that still uses raw `.lock()` deadlocks silently.
+  Task 8 tabulates this file's remaining exposure.
+- `CLAUDE.md` § "Ghost Shell conventions" — the turn loop, `max_ghost_turns`
+  budget, and the `trigger_ghost_turn` fresh-channel rule. This phase changes
+  lock acquisition only; it must not alter turn accounting.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+5. Verify the starting state.
+
+**Use this scan, not `grep -c`.** A plain `grep -c "sessions\.lock()"` cannot see
+an acquisition that splits `sessions` and `.lock()` across lines; that blindness
+caused a bounce earlier in this milestone. Save as `/tmp/scan_locks.py`:
+
+```python
+import pathlib, re, sys
+for f in sys.argv[1:]:
+    L = pathlib.Path(f).read_text().splitlines()
+    tb = next((i for i, l in enumerate(L, 1) if l.strip().startswith("#[cfg(test)]")), None)
+    prod = 0
+    for i, l in enumerate(L, 1):
+        if tb and i >= tb:
+            break
+        if "sessions.lock()" in l:
+            prod += 1
+        elif re.search(r'\bsessions\s*$', l) and i < len(L) and L[i].strip().startswith(".lock()"):
+            prod += 1
+    print(f"{f}: {prod}")
+```
+
+Then:
+
+```bash
+python3 /tmp/scan_locks.py src/daemon/ghost.rs   # expect 8
+grep -c "with_sessions(" src/daemon/ghost.rs     # expect 3
+grep -c "sessions\.lock()" src/daemon/ghost.rs   # expect 8 (none are multi-line here)
+```
+
+**These values were verified against the tree while drafting**, and the line
+numbers below were re-derived after the previous phase shifted them by 3. If the
+scan does not print 8, **stop and report a blocker** — the per-site code is stale
+and guessing which site is which is how a conversion phase corrupts a file.
+
+## Current state
+
+`SessionStore` is still the bare type alias:
+
+```rust
+// src/daemon/session.rs:117
+pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
+```
+
+### The accessor — `src/daemon/session.rs:427-434`
+
+```rust
+pub fn with_sessions<T>(
+    sessions: &SessionStore,
+    f: impl FnOnce(&mut HashMap<String, SessionEntry>) -> T,
+) -> T {
+    let _depth = SessionsLockDepth::enter();
+    let mut store = sessions.lock().unwrap_or_log();
+    f(&mut store)
+}
+```
+
+Generic over `T`; **synchronous** `FnOnce`, so no `.await` can occur inside.
+
+### The import is already correct
+
+`src/daemon/ghost.rs:10-12` already imports `with_sessions` (the previous phase
+added it):
+
+```rust
+use crate::daemon::session::{
+    SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
+};
+```
+
+**No import change is needed.** Also: `ghost.rs` keeps its
+`use crate::util::UnpoisonExt;` **only if something still uses `unwrap_or_log`**
+after this phase. This phase removes the last 8 `sessions.lock().unwrap_or_log()`
+calls, so check at the end — see task 9.
+
+### Site inventory — 8 sites, all single-line
+
+| # | Line | Function | Shape |
+|---|---|---|---|
+| 1 | 254 | `start_session_with_config` (fn at 171) | scoped block, single `insert` |
+| 2 | 306 | `do_ghost_turn` (fn at 298) | **`anyhow::bail!` inside the guard** |
+| 3 | 325 | `do_ghost_turn` | read via `.map(…).unwrap_or_else(…)` |
+| 4 | 466 | `do_ghost_turn` | **`append_session_message` (file write) inside the guard** |
+| 5 | 485 | `do_ghost_turn` | **`break;` inside the guard** |
+| 6 | 508 | `do_ghost_turn` | scoped block, single field write |
+| 7 | 847 | `do_ghost_turn` | `if let Ok(..) && let Some(..)` chain; **a `break;` follows it, outside** |
+| 8 | 1005 | `do_ghost_turn` | scoped block, two field writes |
+
+## Spec
+
+### 1. Line 254 — `start_session_with_config` insert
+
+```rust
+        {
+            let mut store = sessions.lock().unwrap_or_log();
+            store.insert(session_id.clone(), entry);
+        }
+```
+
+becomes:
+
+```rust
+        with_sessions(sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
+```
+
+`entry` is moved into the closure, which is fine — nothing after uses it.
+`store.insert` returns the displaced value; the original discarded it as a block
+with no tail expression, and the closure returning `()` preserves that. Do **not**
+add a `let _ =`.
+
+### 2. Line 306 — `anyhow::bail!` inside the guard
+
+```rust
+    let (_messages, ghost_config, tmux_session, _target_pane, ghost_active_model) = {
+        let store = sessions.lock().unwrap_or_log();
+        let Some(entry) = store.get(session_id) else {
+            anyhow::bail!("Ghost Shell '{}' not found", session_id);
+        };
+        (
+            entry.messages.clone(),
+            entry.ghost_config.clone(),
+            entry.tmux_session.clone(),
+            entry.default_target_pane.clone(),
+            entry.active_model.clone(),
+        )
+    };
+```
+
+`anyhow::bail!` expands to `return Err(...)` **from `do_ghost_turn`**. Inside a
+closure it would return from the closure instead — a type error, since the
+closure's other arm yields a tuple.
+
+Have the closure return an `Option` and bail outside it:
+
+```rust
+    let Some((_messages, ghost_config, tmux_session, _target_pane, ghost_active_model)) =
+        with_sessions(sessions, |store| {
+            let entry = store.get(session_id)?;
+            Some((
+                entry.messages.clone(),
+                entry.ghost_config.clone(),
+                entry.tmux_session.clone(),
+                entry.default_target_pane.clone(),
+                entry.active_model.clone(),
+            ))
+        })
+    else {
+        anyhow::bail!("Ghost Shell '{}' not found", session_id);
+    };
+```
+
+The error string must stay byte-identical — it is the message a failed ghost
+spawn surfaces. Keep the leading-underscore names (`_messages`,
+`_target_pane`) exactly as they are; they are deliberately unused bindings and
+renaming them would produce new warnings.
+
+### 3. Line 325 — ghost-config policy read
+
+```rust
+    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target, auto_approve_commands) = {
+        let store = sessions.lock().unwrap_or_log();
+        store
+            .get(session_id)
+            .and_then(|e| e.ghost_config.as_ref())
+            .map(|gc| { … })
+            .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))
+    };
+```
+
+Mechanical — the block's value is the tuple, so wrap the body unchanged:
+
+```rust
+    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target, auto_approve_commands) =
+        with_sessions(sessions, |store| {
+            store
+                .get(session_id)
+                .and_then(|e| e.ghost_config.as_ref())
+                .map(|gc| { … })
+                .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))
+        });
+```
+
+Keep the `.map(|gc| …)` body and the `unwrap_or_else` fallback **exactly** as
+they are, including the `"none"` strings and the `daemon_ceiling` default —
+`daemon_ceiling` is a local read before the block and the closure borrows it.
+
+### 4. Line 466 — hoist the file write out of the critical section
+
+**This is a live mechanism-A defect, not just a conversion.** Current code:
+
+```rust
+            {
+                let mut store = sessions.lock().unwrap_or_log();
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages.push(wrap_up.clone());
+                    crate::daemon::session::append_session_message(session_id, &wrap_up);
+                }
+            }
+```
+
+`append_session_message` (`src/daemon/session.rs:281`) writes two files. It runs
+here **while the global session lock is held**, which is exactly what this
+milestone exists to eliminate.
+
+**The subtlety that makes this non-mechanical:** the write sits *inside* the
+`if let Some(entry)`, so today it only happens when the entry exists. Hoisting it
+unconditionally would append to the session file even for a vanished session — a
+behavior change. Return whether the push happened and gate the write on it:
+
+```rust
+            let pushed = with_sessions(sessions, |store| {
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages.push(wrap_up.clone());
+                    true
+                } else {
+                    false
+                }
+            });
+            if pushed {
+                crate::daemon::session::append_session_message(session_id, &wrap_up);
+            }
+```
+
+`wrap_up` survives the closure because the push clones it.
+
+**Worked example — the same file already does this correctly at line 1003:**
+
+```rust
+        append_session_message(session_id, &assistant_msg);
+        {
+            let mut store = sessions.lock().unwrap_or_log();
+            if let Some(entry) = store.get_mut(session_id) {
+                entry.messages.push(assistant_msg);
+                entry.last_accessed = Instant::now();
+            }
+        }
+```
+
+That site writes the file **before** taking the lock — lock-free by construction.
+Task 4 reaches the same property from the other side, by moving the write after.
+
+**Do not "harmonize" the two.** Site 1003's write is unconditional and task 4's
+must stay conditional; making task 4 unconditional to match would be the behavior
+change described above. Leave site 1003's ordering alone (it is task 8).
+
+### 5. Line 485 — the `break`
+
+```rust
+        let (messages, loaded_tools, token_scale, started_at) = {
+            let store = sessions.lock().unwrap_or_log();
+            let Some(entry) = store.get(session_id) else {
+                break;
+            };
+            (
+                entry.messages.clone(),
+                entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
+                entry.token_scale,
+                entry.started_at,
+            )
+        };
+```
+
+That `break;` exits the enclosing turn `loop`. A `break` targeting a loop
+**outside** a closure is a **compile error** inside one
+(`E0267: can't break outside of a loop`). So unlike some traps in this milestone
+this one fails loudly — but do not try the mechanical wrap first and then react to
+the error. Write it correctly:
+
+```rust
+        let Some((messages, loaded_tools, token_scale, started_at)) =
+            with_sessions(sessions, |store| {
+                let entry = store.get(session_id)?;
+                Some((
+                    entry.messages.clone(),
+                    entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
+                    entry.token_scale,
+                    entry.started_at,
+                ))
+            })
+        else {
+            break;
+        };
+```
+
+The `break` now sits in the loop body where it belongs.
+
+### 6. Line 508 — compacted working set write-back
+
+```rust
+        if compacted {
+            {
+                let mut store = sessions.lock().unwrap_or_log();
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages = chat_messages.clone();
+                }
+            }
+            write_session_file(session_id, &chat_messages);
+        }
+```
+
+Mechanical — only the inner block changes:
+
+```rust
+        if compacted {
+            with_sessions(sessions, |store| {
+                if let Some(entry) = store.get_mut(session_id) {
+                    entry.messages = chat_messages.clone();
+                }
+            });
+            write_session_file(session_id, &chat_messages);
+        }
+```
+
+`write_session_file` is already outside the lock. **Keep it there** — do not pull
+it into the closure.
+
+### 7. Line 847 — cost accumulation, and the `break` that must stay out
+
+```rust
+                        // Accumulate cost on the session entry.
+                        if let Ok(mut store) = sessions.lock()
+                            && let Some(entry) = store.get_mut(session_id)
+                        {
+                            entry.cost_usd += record.cost.total_cost_usd;
+                            *entry
+                                .cost_by_agent
+                                .entry(record.agent_name.clone())
+                                .or_insert(0.0) += record.cost.total_cost_usd;
+                            if record.pricing_source == PricingSource::Unknown {
+                                entry.has_untracked_cost = true;
+                            }
+                        }
+                        break;
+```
+
+becomes:
+
+```rust
+                        // Accumulate cost on the session entry.
+                        with_sessions(sessions, |store| {
+                            if let Some(entry) = store.get_mut(session_id) {
+                                entry.cost_usd += record.cost.total_cost_usd;
+                                *entry
+                                    .cost_by_agent
+                                    .entry(record.agent_name.clone())
+                                    .or_insert(0.0) += record.cost.total_cost_usd;
+                                if record.pricing_source == PricingSource::Unknown {
+                                    entry.has_untracked_cost = true;
+                                }
+                            }
+                        });
+                        break;
+```
+
+**The `break;` on the line after the block is NOT part of it** — it belongs to
+the surrounding `match` arm / event loop and must stay exactly where it is,
+outside the closure. Pulling it in is the same `E0267` as task 5, and it is easy
+to do by accident because it sits flush against the closing brace. Note the
+`entry` API call inside (`.cost_by_agent.entry(..)`) is a `HashMap::entry` on a
+**field**, unrelated to the store's entry — do not rename anything.
+
+### 8. Line 1005 — assistant message write-back
+
+```rust
+        append_session_message(session_id, &assistant_msg);
+        {
+            let mut store = sessions.lock().unwrap_or_log();
+            if let Some(entry) = store.get_mut(session_id) {
+                entry.messages.push(assistant_msg);
+                entry.last_accessed = Instant::now();
+            }
+        }
+```
+
+becomes:
+
+```rust
+        append_session_message(session_id, &assistant_msg);
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(session_id) {
+                entry.messages.push(assistant_msg);
+                entry.last_accessed = Instant::now();
+            }
+        });
+```
+
+`assistant_msg` moves into the closure — that is why `append_session_message` is
+called **before**, by reference, and it must stay there. Do not reorder.
+
+### 9. Check `UnpoisonExt` after the eight conversions
+
+`ghost.rs` has **7** `unwrap_or_log` calls, all production, all on the sites you
+are converting (site 847 is the eighth site but uses `if let Ok(mut store) = …`
+rather than `unwrap_or_log`). Verified while drafting: **none** are in the
+`#[cfg(test)]` module (which begins at line ~1046).
+
+**So the expected outcome is: delete `use crate::util::UnpoisonExt;` outright.**
+Confirm it rather than assuming it — run:
+
+```bash
+grep -n "unwrap_or_log" src/daemon/ghost.rs
+```
+
+- **Nothing returned** (the expected case) → **delete** the
+  `use crate::util::UnpoisonExt;` line.
+- **Hits only inside `mod tests`** → **move** the import inside `mod tests`
+  instead of deleting it.
+- **Hits outside the test module** → you missed a conversion. Go back and finish
+  it; do not leave the import as a way to make the build pass.
+
+Verify with **both** `cargo build` **and**
+`cargo clippy --all-targets --all-features -- -D warnings`. They disagree about
+whether a test-only import counts as used, and that exact disagreement produced a
+`hard_fail` two phases ago. **Do not skip the second command**, and do not
+conclude from a green `cargo build` that the import question is settled.
+
+### 10. No collapses, and do not widen any closure
+
+Sites 2 and 3 read the same entry ~20 lines apart, and 5/6 and 7/8 are near one
+another. **Do not collapse any of them. 8 sites → 8 `with_sessions` calls.**
+Between sites 2 and 3 sits `load_named_prompt` (a file read) and
+`get_or_init_sys_context`; between 5 and 6 sits
+`enforce_ghost_working_set`. Merging across any of those would pull blocking work
+into a critical section — the defect this phase removes at task 4.
+
+**Store-touching callees in this region that stay raw** (§ 3.5): none in
+`ghost.rs` itself after this phase. But `do_ghost_turn` dispatches tool calls
+through `execute_tool_call`, which reaches `webhook/process.rs`'s 2 raw
+acquisitions via `inject_ghost_event`. Every closure in this phase reads or writes
+one entry and returns immediately — **keep it that way**; none may be widened over
+a dispatch, an `.await`, or a `write_session_file`/`append_session_message` call.
+`with_sessions` takes a synchronous `FnOnce`, so an `.await` inside one will not
+compile — a guardrail, not an obstacle.
+
+## Acceptance criteria
+
+- [ ] `python3 /tmp/scan_locks.py src/daemon/ghost.rs` prints **0**.
+- [ ] `grep -c "with_sessions(" src/daemon/ghost.rs` returns **11** (3 pre-existing
+      + 8 from this phase).
+- [ ] `grep -c "sessions\.lock()" src/daemon/ghost.rs` returns **0**.
+- [ ] `python3 /tmp/scan_locks.py src/daemon/briefing.rs src/daemon/context/background.rs src/daemon/executor/mod.rs`
+      prints **0** for all three (earlier phases untouched).
+- [ ] `grep -c "append_session_message" src/daemon/ghost.rs` returns **4** —
+      unchanged from before this phase. The four are: the import (line 11), an
+      unrelated call in `start_session_with_config` (line 212, appends the initial
+      user message — **not yours to touch**), task 4's hoisted call, and task 8's
+      pre-existing call. **None of the three calls may sit inside a
+      `with_sessions` closure** — verify by reading, since the count alone cannot
+      tell you that.
+- [ ] `grep -n "pub type SessionStore" src/daemon/session.rs` still shows the alias.
+- [ ] `cargo build` succeeds with zero new warnings.
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
+- [ ] `cargo fmt --all` passes.
+- [ ] `cargo test` passes with **915** lib-unit tests — unchanged. This phase adds
+      no tests; **916 means scope crept.**
+- [ ] `cargo test` completes without hanging.
+
+The `grep -c` criteria count raw text including comments. **Do not write the
+literal `sessions.lock()`, `with_sessions(`, or `append_session_message` in a new
+comment** in this file — it would break a criterion even with correct code.
+
+## Test plan
+
+Behavior-preserving refactor apart from task 4's hoist, which moves a file write
+out of a critical section without changing whether it happens. The existing
+**915** tests are the regression net and must all still pass, unchanged.
+**Write no new tests.**
+
+Run the ghost integration tests and report what you observe:
+
+```bash
+cargo test g1_spawn_ghost_shell_with_agent_merge
+cargo test g3_tool_policy
+cargo test g5_
+cargo test g6_
+```
+
+**Report only which tests you ran and whether they passed.** Do **not** claim any
+of them "guards" or "covers" a particular line or branch. In this project a claim
+about what a test would catch is admissible only when demonstrated by mutation,
+and this phase requires no mutation — so make no such claim. Stating "the tests
+pass" is correct; stating "the tests would catch a regression in task 4" is not.
+
+Two reasoning checks to state in the Update Log, no new tests:
+
+1. **Task 4 conditionality.** Confirm that `append_session_message` is still
+   called *only* when the entry existed and the push happened — i.e. that a
+   vanished session appends nothing. Name the mechanism (`pushed` flag).
+2. **Task 2 error path.** Confirm `do_ghost_turn` still returns
+   `Err("Ghost Shell '<id>' not found")` when the entry is absent, rather than
+   proceeding with empty data.
+
+## End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside existing code paths; no CLI surface, no config key, no
+> file the running binary loads.
+
+**Do not attempt an interactive verification.** Do not launch tmux, the daemon, or
+a ghost shell. Write the sentence above under an "End-to-end verification"
+heading in the Update Log.
+
+## Authorizations
+
+- [x] May delete or relocate `use crate::util::UnpoisonExt;` in
+      `src/daemon/ghost.rs`, per task 9's conditional.
+
+This phase adds no tests, so it needs no `HOME` redirection and no `unsafe`. If
+you think you need `unsafe` or a new dependency, **stop and report a blocker**.
+
+## Out of scope
+
+- **Do not touch `webhook/process.rs`** — its 2 raw acquisitions are phase 05
+  (mechanism A). Task 10 names it so you avoid enclosing it, not so you fix it.
+- **Do not convert `background/`, `stream.rs`, or `hook.rs`.** Later phases.
+- **Do not re-touch `briefing.rs`, `context/background.rs`, or `executor/`.**
+  Done in earlier phases and pinned by a criterion.
+- **Do not change `SessionStore` into a newtype**, and do not touch the 13
+  `Arc::clone` sites.
+- **Do not reorder `append_session_message` at task 8**, and do not make task 4's
+  call unconditional to match it. Task 4 explains why they legitimately differ.
+- **Do not pull `write_session_file` (task 6) or the `break` statements (tasks 5
+  and 7) into any closure.**
+- **Do not collapse any two sites.** Task 10 explains why.
+- **Do not alter turn accounting** — `turn += 1`, `wrap_up_turn`,
+  `max_ghost_turns`, and the budget-exhausted message are all untouched by this
+  phase.
+- **Do not reword any string** — the `bail!` message (task 2), the
+  `"none"`/`daemon_ceiling` fallbacks (task 3), and the BUDGET EXHAUSTED prompt
+  near task 4 are all byte-identical requirements.
+- **Do not add `#[allow(...)]` anywhere.** If clippy objects to a `let … else`
+  shape or an unused-variable pattern, report a blocker rather than suppressing.
+
+## Update Log
+
+(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+<!-- entries appended below this line -->
