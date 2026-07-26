@@ -1,5 +1,5 @@
 use super::super::ToolCallOutcome;
-use crate::daemon::session::SessionStore;
+use crate::daemon::session::{SessionStore, with_sessions};
 
 // ---------------------------------------------------------------------------
 // Spawn ghost shell
@@ -66,11 +66,11 @@ pub async fn spawn_ghost(
         Ok(sid) => {
             let job_id = sid.clone();
             let task_message = message.to_string();
-            if let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(&sid)
-            {
-                entry.ghost_task_message = Some(task_message);
-            }
+            with_sessions(sessions, |store| {
+                if let Some(entry) = store.get_mut(&sid) {
+                    entry.ghost_task_message = Some(task_message);
+                }
+            });
             inject_ghost_event(
                 sessions,
                 &format!(

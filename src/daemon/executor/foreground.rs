@@ -4,7 +4,7 @@ use super::send_response_split;
 use super::{ApprovalRequest, GhostCtx, SessionCtx, ToolCallOutcome};
 use crate::ai::mask_sensitive;
 use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
-use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe};
+use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe, with_sessions};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, fingerprint_pam_configured, get_pane_remote_host,
     interactive_destination, is_fingerprint_prompt, is_interactive_command, log_command,
@@ -167,7 +167,11 @@ where
             tp.starts_with('%') && tp.len() > 1 && tp[1..].bytes().all(|b| b.is_ascii_digit());
         if !valid_format {
             let correct = session_id
-                .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone())
+                .and_then(|sid| {
+                    with_sessions(sessions, |store| {
+                        store.get(sid)?.default_target_pane.clone()
+                    })
+                })
                 .unwrap_or_default();
             let suggestion = if correct.is_empty() {
                 "Check [PANE MAP] or call list_panes to find the correct pane ID.".to_string()
@@ -196,7 +200,11 @@ where
         let pane_exists = crate::tmux::pane_exists(tp);
         if !pane_exists {
             let correct = session_id
-                .and_then(|sid| sessions.lock().ok()?.get(sid)?.default_target_pane.clone())
+                .and_then(|sid| {
+                    with_sessions(sessions, |store| {
+                        store.get(sid)?.default_target_pane.clone()
+                    })
+                })
                 .unwrap_or_default();
             let suggestion = if correct.is_empty() {
                 "Call list_panes to discover current pane IDs, or use the [PANE MAP] below."
@@ -219,6 +227,11 @@ where
 
     // Compute a best-guess target pane hint synchronously so the approval
     // prompt can show which pane will be used.
+    let default_target: Option<String> = session_id.and_then(|sid| {
+        with_sessions(sessions, |store| {
+            store.get(sid)?.default_target_pane.clone()
+        })
+    });
     let target_hint: Option<String> = (|| {
         if let Some(tp) = target
             && chat_pane != Some(tp)
@@ -228,10 +241,7 @@ where
                 return Some(tp.to_string());
             }
         }
-        if let Some(sid) = session_id
-            && let Ok(store) = sessions.lock()
-            && let Some(entry) = store.get(sid)
-            && let Some(ref dtp) = entry.default_target_pane
+        if let Some(ref dtp) = default_target
             && chat_pane != Some(dtp.as_str())
         {
             let panes = cache.panes.read().unwrap_or_log();
@@ -879,17 +889,18 @@ where
             send_response_split(tx, Response::ToolResult(msg.clone())).await?;
             return Ok(ToolCallOutcome::Result(msg));
         }
-        let win_name: String = {
-            let mut name = pane_id.to_string();
-            if let Some(sid) = session_id
-                && let Ok(store) = sessions.lock()
-                && let Some(entry) = store.get(sid)
-                && let Some(w) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id)
-            {
-                name = w.window_name.clone();
-            }
-            name
-        };
+        let win_name: String = session_id
+            .and_then(|sid| {
+                with_sessions(sessions, |store| {
+                    store
+                        .get(sid)?
+                        .bg_windows
+                        .iter()
+                        .find(|w| w.pane_id == pane_id)
+                        .map(|w| w.window_name.clone())
+                })
+            })
+            .unwrap_or_else(|| pane_id.to_string());
         let resolved_retry_cmd;
         let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
             resolved_retry_cmd = policy.resolve_command(cmd);

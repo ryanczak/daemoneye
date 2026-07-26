@@ -1,7 +1,7 @@
 # Phase 04e: Convert the `executor/` Tail — `foreground.rs` + `knowledge/*`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04d (`executor/mod.rs` converted) — `done`
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -553,3 +553,36 @@ not grant.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 14:08 (started)
+
+**Executor:** rexyMCP executor
+
+Converted all 8 remaining `sessions.lock()` sites under `src/daemon/executor/` to `with_sessions`:
+
+- **Task 1** (`foreground.rs:170`): invalid-pane-format guard — wrapped in `with_sessions` inside `and_then`, same shape as 04c.
+- **Task 2** (`foreground.rs:199`): stale-pane guard — identical rewrite.
+- **Task 3** (`foreground.rs:232`): IIFE with guard held across `cache.panes.read()` — extracted `default_target` read before the IIFE, replaced the `let`-chain with `default_target` reference inside. When `target` names a pane present in the cache, the IIFE still returns `Some(target)` from the first branch unchanged; the `default_target` read is a no-op on that path.
+- **Task 4** (`foreground.rs:885`): retry-window name lookup — replaced block expression with `and_then` + `with_sessions` + `unwrap_or_else(|| pane_id.to_string())`.
+- **Task 5** (`knowledge/mod.rs:38`): `track_artifact` — replaced `let Ok(mut store) = ... else { return }` with `with_sessions` closure.
+- **Task 6** (`knowledge/pane.rs:19`): `close_bg_window` — closure returns `Result<(String, String, bool), String>`, matched outside to preserve the three distinct user-facing error strings. All three strings are byte-identical to originals:
+  1. `"No active session — cannot close background window."` (untouched, early return before the closure)
+  2. `"Session '{}' not found."` (from `Err` in closure, re-raised by `match`)
+  3. `"No background window with pane ID {} found in this session."` (from `Err` in closure, re-raised by `match`)
+- **Task 7** (`knowledge/pane.rs:52`): window removal — replaced `if let Ok(mut store)` with `with_sessions`.
+- **Task 8** (`knowledge/ghost.rs:69`): ghost task message — replaced `if let Ok(mut store)` with `with_sessions`, closure ends before `inject_ghost_event`.
+- **Task 9**: Verified no closure spans unconverted callees (`inject_ghost_event`, `GhostManager::start_session_with_config`, `respawn_background_in_pane`, `run_background_in_window`). All remain outside converted closures.
+
+Verification:
+- `grep -rc "sessions\.lock()" src/daemon/executor/` — all files report 0
+- `grep -c "with_sessions(" src/daemon/executor/foreground.rs` — 4
+- `grep -c "with_sessions(" src/daemon/executor/knowledge/mod.rs` — 1
+- `grep -c "with_sessions(" src/daemon/executor/knowledge/pane.rs` — 2
+- `grep -c "with_sessions(" src/daemon/executor/knowledge/ghost.rs` — 1
+- `grep -c "with_sessions(" src/daemon/executor/mod.rs` — 6 (unchanged)
+- `cargo build` — clean
+- `cargo clippy --all-targets --all-features -- -D warnings` — clean
+- `cargo fmt --all` — clean
+- `cargo test` — 915 passed, 0 failed (unchanged), no hangs
+
+End-to-end verification: Not applicable — phase ships no runtime-loadable artifact. Internal refactor of lock acquisition inside existing code paths; no CLI surface, no config key, no file the running binary loads.

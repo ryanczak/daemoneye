@@ -1,6 +1,6 @@
 use crate::ai::filter::mask_sensitive;
 use crate::daemon::session::{
-    FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe,
+    FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe, with_sessions,
 };
 use crate::daemon::utils::{log_event, normalize_output};
 use crate::util::UnpoisonExt;
@@ -15,22 +15,25 @@ pub fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions: &Sessi
     let Some(sid) = session_id else {
         return "No active session — cannot close background window.".to_string();
     };
-    let (win_name, tmux_session, still_running) = {
-        let store = sessions.lock().unwrap_or_log();
+    let looked_up: Result<(String, String, bool), String> = with_sessions(sessions, |store| {
         let Some(entry) = store.get(sid) else {
-            return format!("Session '{}' not found.", sid);
+            return Err(format!("Session '{}' not found.", sid));
         };
         let Some(win) = entry.bg_windows.iter().find(|w| w.pane_id == pane_id) else {
-            return format!(
+            return Err(format!(
                 "No background window with pane ID {} found in this session.",
                 pane_id
-            );
+            ));
         };
-        (
+        Ok((
             win.window_name.clone(),
             win.tmux_session.clone(),
             win.exit_code.is_none(),
-        )
+        ))
+    });
+    let (win_name, tmux_session, still_running) = match looked_up {
+        Ok(v) => v,
+        Err(msg) => return msg,
     };
 
     if still_running {
@@ -49,11 +52,11 @@ pub fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions: &Sessi
         );
     }
 
-    if let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(sid)
-    {
-        entry.bg_windows.retain(|w| w.pane_id != pane_id);
-    }
+    with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(sid) {
+            entry.bg_windows.retain(|w| w.pane_id != pane_id);
+        }
+    });
 
     log_event(
         "close_bg_window",

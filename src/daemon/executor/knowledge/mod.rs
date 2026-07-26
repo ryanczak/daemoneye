@@ -18,7 +18,7 @@ pub(super) use memory::{
 };
 pub(super) use pane::{close_bg_window, list_panes, watch_pane};
 
-use crate::daemon::session::SessionStore;
+use crate::daemon::session::{SessionStore, with_sessions};
 
 // ── ArtifactCtx + track_artifact moved verbatim from old lines 20–46 ──
 pub(super) struct ArtifactCtx<'a> {
@@ -35,18 +35,17 @@ fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
         return;
     }
     let Some(sid) = ctx.session_id else { return };
-    let Ok(mut store) = ctx.sessions.lock() else {
-        return;
-    };
-    if let Some(entry) = store.get_mut(sid) {
-        entry
-            .artifacts_created
-            .push(crate::session_store::ArtifactRef {
-                kind: kind.to_string(),
-                name: name.to_string(),
-                at_turn: ctx.turn_count,
-            });
-    }
+    with_sessions(ctx.sessions, |store| {
+        if let Some(entry) = store.get_mut(sid) {
+            entry
+                .artifacts_created
+                .push(crate::session_store::ArtifactRef {
+                    kind: kind.to_string(),
+                    name: name.to_string(),
+                    at_turn: ctx.turn_count,
+                });
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
