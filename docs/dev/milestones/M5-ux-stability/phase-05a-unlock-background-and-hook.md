@@ -1,7 +1,7 @@
 # Phase 05a: Get tmux Subprocesses Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress (bounced x2 — see `bugs/bug-05a-1.md`)
+**Status:** review
 **Depends on:** phase-04j (conversion sweep complete) — `done`
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -1035,3 +1035,122 @@ pub fn gc_bg_windows(sessions: &crate::daemon::session::SessionStore) {
 That is the whole change. Then re-run the gates and the count criteria to confirm
 nothing else moved: 915 tests, 0 raw acquisitions in all three files,
 `with_sessions` at 3/1/2, `kill_job_window` at 3 in `gc.rs`.
+
+### Update — ts=1785100216728 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Fixed bug-05a-1: moved `struct GcKill` above the `/// Periodic garbage collector…` doc block in `gc.rs`, giving `GcKill` its own doc comment and restoring `gc_bg_windows`'s documentation. The restructure from prior runs was already correct — only the doc comment ordering was wrong. All gates pass: `cargo fmt`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` (915 tests). Lock counts remain 0/0/0, `with_sessions` counts are 3/1/2, `kill_job_window` count is 3. Working tree is clean.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test memory::tests::memory_without_frontmatter_has_empty_metadata ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test memory::tests::memory_without_frontmatter_has_no_tags ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test manifest::tests::manifest_mixed_stores ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 915 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_ask_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_masking_applied ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/phase-05a-unlock-background-and-hook.md` — +6 -0
+- `src/daemon/background/gc.rs` — +10 -8
+
+**Commit:** 91a570187eb0d778d89df08ca457e1ed25edd13d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
