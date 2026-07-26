@@ -1,8 +1,102 @@
 # NEXT
 
-**No active phase.** 04j is `done` (`approved_first_try`). **The 04x conversion
-sweep is complete except for phase 05's six restructures.** Nothing is drafted;
-see "What to draft next" below — the ordering needs a decision before drafting.
+**No active phase — but the plan is settled.** 04j is `done`; the 04x conversion
+sweep is complete. The ordering decision is made (PE, 2026-07-26): **phase 05 runs
+before the newtype, and is split in two.**
+
+**Next to draft: 05a — unlock-background-and-hook.** Run
+`/rexymcp:architect next`.
+
+---
+
+## The renumber and split (PE decision, 2026-07-26)
+
+The numbering had `04k` (newtype) sorting before `05` (the restructures), which was
+backwards — the newtype makes raw `.lock()` stop compiling, so it cannot land while
+any raw acquisition remains. Renumbered; **nothing on disk was renamed**, since 04k
+was never drafted:
+
+| Was | Now | Scope | Sites |
+|---|---|---|---|
+| `05` (6 restructures) | **05a** | `background/helpers.rs::notify_session`, `background/gc.rs::gc_bg_windows`, `hook.rs:92` | 3 |
+| — | **05b** | `webhook/process.rs` (2) + `stream.rs:722` | 3 |
+| `04k` | **05c** | sessionstore-newtype + enforce — runs **last** | — |
+
+06 (tmux-call-hardening), 07 (stall-instrumentation) and the drafted 08–11
+instance-hardening set are untouched.
+
+### The split is by file, not by fix shape — surveying changed my plan
+
+I intended to split by shape (subprocess-under-lock vs file-write-under-lock).
+Reading the six sites showed **`webhook/process.rs` holds one of each**:
+
+- `notify_chat_panes` (`:162`) spawns a `tmux display-message` **per session**,
+  inside `for entry in guard.values()`, under the guard.
+- `inject_into_sessions` (`:149`) calls `append_session_message` **per session**
+  under the guard — file writes only. It also carries a `let _ = entry;` purely to
+  suppress an unused-variable warning, which disappears once the fix collects only
+  the session ids.
+
+Splitting by shape would have put two phases into the same file. **Splitting by
+file keeps each file wholly owned by one phase** — which matters here, because the
+non-zero-count criteria that guard these splits get fiddly when two phases share a
+file, and those criteria are what has caught over-reach in the last four phases.
+
+### 05a is uniform; 05b is small but mixed
+
+**05a — all three sites spawn tmux subprocesses while holding the guard**, and all
+three take the same fix: collect under the lock, release, then act.
+
+- `helpers.rs::notify_session` — 2 file writes **plus** a `tmux display-message`,
+  with the guard held from acquisition to the end of the function (~50 lines).
+- `gc.rs::gc_bg_windows` — `kill_job_window` per window, looped over **every**
+  session.
+- `hook.rs:92` — `store.retain(|_, entry| { … entry.cleanup_bg_windows(); … })`,
+  where `cleanup_bg_windows` runs `kill_job_window` per window **plus**
+  `stop_pipe_pane`.
+
+**`cleanup_pass` (`src/daemon/session.rs`) is the worked example for all three** —
+it is the fix that resolved the confirmed production hang, and `hook.rs:92` is
+literally the same defect, never fixed there. Quote it when drafting.
+
+**05b — 3 small sites, two shapes:** one subprocess loop (`notify_chat_panes`), two
+plain file-write hoists (`inject_into_sessions`, `stream.rs:722`'s
+`write_session_meta`).
+
+### Line numbers moved — re-derive before drafting
+
+These were recorded earlier as `stream.rs:719` and `hook.rs:91`. After 04j's
+conversions they are **`stream.rs:722`** and **`hook.rs:92`**. Re-derive every site
+with the multi-line-aware scan when drafting; `grep -c` stays retired.
+
+### Also unassigned
+
+The two `ask.rs` multi-line stragglers (`:519`, `:686`) are **conversions**, not
+restructures. Natural home is **05c**, where they will fail to compile if missed —
+but they could equally ride along with whichever phase next touches `ask.rs`.
+05c also inherits 04f's coverage follow-up (three vacuous `compaction_in_flight`
+assertions to make real, mutation-checked) and the 13 test-module acquisitions.
+**05c is still the phase most in need of re-scoping.**
+
+### Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 7 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 6 clean confirmations).**
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Now rides on **05c**, not 05 — it is a
+   test-hygiene item and 05a/05b add no tests.
+
+**All four await your sign-off.** Threads 1 and 2 have substantial data now; the
+conversion sweep is finished and the remaining phases are a different shape, so
+this is a natural moment to fold either.
+
+---
+
+## Superseded: the 04j completion note
+
+> **Everything below this line is historical** — per-phase notes kept as a record
+> of what was true at the time. Where it discusses numbering (`04k`, an unsplit
+> `phase 05`) or an open ordering question, **the top of this file supersedes it.**
 
 ---
 
@@ -50,7 +144,11 @@ multi-line stragglers), the whole `executor/` subtree, `context/background.rs`,
 Plus the two unassigned `ask.rs` multi-line stragglers (`:519`, `:686`), which are
 conversions rather than restructures.
 
-## ⚠ What to draft next — an ordering decision comes first
+## ~~What to draft next — an ordering decision comes first~~ — RESOLVED
+
+> Resolved by the PE on 2026-07-26: renumber so 05 lands first, split in two. See
+> "The renumber and split" at the top. The three options below are kept only to
+> show what was weighed.
 
 The numbering currently implies **04k (newtype) → 05 (restructures)**, and that is
 **backwards**. 04k makes raw `.lock()` stop compiling, so it cannot land while six

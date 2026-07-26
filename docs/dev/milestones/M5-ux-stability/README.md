@@ -81,8 +81,9 @@ take the socket.
 | 04h | convert-ghost-turn-loop ([phase-04h-convert-ghost-turn-loop.md](phase-04h-convert-ghost-turn-loop.md)) — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | done (approved_first_try) |
 | 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | done (approved_first_try) |
 | 04j | convert-stream-hooks ([phase-04j-convert-stream-hooks.md](phase-04j-convert-stream-hooks.md)) — `stream.rs` (8) + `hook.rs` (2) = 10 conversion sites | done (approved_first_try) |
-| 04k | sessionstore-newtype (enforce) — **re-scope when drafting; see Notes** | todo   |
-| 05 | unlock-blocking-paths (mechanism A) — **6 restructures**: `webhook/process.rs` (2), `background/helpers.rs::notify_session`, `background/gc.rs::gc_bg_windows`, `stream.rs:719` (`write_session_meta`), `hook.rs:91` (`cleanup_bg_windows`). **Re-scope/split when drafting** | todo |
+| 05a | unlock-background-and-hook (mechanism A/B) — `background/helpers.rs::notify_session`, `background/gc.rs::gc_bg_windows`, `hook.rs:92` = 3 subprocess-under-lock restructures | todo |
+| 05b | unlock-webhook-and-stream (mechanism A/B) — `webhook/process.rs` (2) + `stream.rs:722` = 3 restructures | todo |
+| 05c | sessionstore-newtype (enforce) — **was 04k; runs LAST.** 13 `Arc::clone` sites + 13 test-module acquisitions + 2 `ask.rs` stragglers + 04f coverage follow-up. **Re-scope when drafting** | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
@@ -90,15 +91,15 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 04k–07 are named but **not yet drafted**. Draft each with
+Phases 05a–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
 **The 04d tail was split on 2026-07-26** — first into five phases (04d–04i),
 replacing the earlier "04d×3" estimate, then **the ghost group was split again**
 (04g exit paths / 04h turn loop) when a site-by-site read found three individually
-hard cases in `do_ghost_turn`. The tail is now 04d–04k. Undrafted phases were
-renumbered both times, which costs nothing. Per-file counts, verified against the
-tree with a multi-line-aware scan:
+hard cases in `do_ghost_turn`. **The conversion tail ran 04d–04j and is now
+complete.** Undrafted phases were renumbered at each split, which costs nothing.
+Per-file counts, verified against the tree with a multi-line-aware scan:
 
 **⚠ Counts corrected twice, and the grep itself was the problem the second time.**
 
@@ -127,23 +128,23 @@ doc carries a working one.
 | `context/background.rs` | **4** (13 → 2 → 4) | **11** | 04f |
 | `ghost.rs` (11) + `briefing.rs` (1) | 12 | 0 | **04g** (4) + **04h** (8) |
 | `background/{run,respawn}.rs` | 7 | 0 | 04i |
-| `background/{helpers,gc}.rs` — **not conversions** | 2 | 0 | **phase 05** |
-| `stream.rs` (8 + **1 multi-line** = 9) + `hook.rs` (3) | 12 | 0 | **04j** (10) + **phase 05** (2) |
+| `background/{helpers,gc}.rs` — **not conversions** | 2 | 0 | **05a** |
+| `stream.rs` (8 + **1 multi-line** = 9) + `hook.rs` (3) | 12 | 0 | **04j** (10) + **05a** (`hook.rs:92`) + **05b** (`stream.rs:722`) |
 | `server/ask.rs` — **2 multi-line stragglers from 04c** | 2 | 0 | unassigned |
-| `webhook/process.rs` | 2 | 0 | **phase 05** (mechanism A, not a conversion phase) |
+| `webhook/process.rs` | 2 | 0 | **05b** (mechanism A/B, not a conversion phase) |
 
 **Only `context/background.rs` was wrong** — the ghost, `background/`, and
 `stream.rs`+`hook.rs` figures were already correct, because those files hold no
 `sessions.lock()` in their test modules. So
 the true total is **54 production sites** (18 already converted by 04d+04e, 34
-remaining, plus webhook's 2 in phase 05), not the 65 previously recorded.
+remaining, plus webhook's 2 in 05b), not the 65 previously recorded.
 
 `src/daemon/session.rs` still contributes **zero** production conversions: of its
 four hits, `:432` is `with_sessions`'s own acquisition (correct and permanent),
 `:443` is a doc comment, and `:1204`/`:1226` are tests.
 
-**13 test-module sites now belong to 04k** (11 in `context/background.rs`, 2 in
-`session.rs`). The newtype makes raw `.lock()` stop compiling, so 04k must convert
+**13 test-module sites now belong to 05c** (11 in `context/background.rs`, 2 in
+`session.rs`). The newtype makes raw `.lock()` stop compiling, so 05c must convert
 them — its scope is larger than "the 13 `Arc::clone` sites" implies.
 
 **Phases 08–11 were added 2026-07-26** after a live incident (two daemons
@@ -162,6 +163,42 @@ attributed. What remains for it is narrower — a watchdog for *future* wedges �
 and it should only be drafted if phases 04–05 leave a real gap.
 
 ## Notes
+
+**Phase 05 split in two, and the newtype moved behind it (2026-07-26, PE
+decision).** The numbering had `04k` (newtype) sorting before `05` (the
+restructures), which was backwards: the newtype makes raw `.lock()` stop
+compiling, so it cannot land while any raw acquisition remains. Resolved by
+renumbering the undrafted phases — nothing on disk changed names, since 04k was
+never drafted:
+
+| Was | Now | Scope |
+|---|---|---|
+| `05` (6 restructures) | **05a** | `background/helpers.rs::notify_session`, `background/gc.rs::gc_bg_windows`, `hook.rs:92` — 3 sites |
+| — | **05b** | `webhook/process.rs` (2) + `stream.rs:722` — 3 sites |
+| `04k` | **05c** | sessionstore-newtype + enforce — runs **last** |
+
+**The split is by file, not by fix shape**, which was the opposite of the first
+plan. Surveying the six sites showed `webhook/process.rs` holds **one of each
+shape** — `notify_chat_panes` spawns a `tmux display-message` per session under the
+guard, while `inject_into_sessions` only does `append_session_message` per session
+under it. Splitting by shape would have put two phases into the same file; splitting
+by file keeps each file wholly owned by one phase, which matters because the
+non-zero-count criteria that guard these splits get fiddly when two phases share a
+file.
+
+**05a is uniform in shape.** All three of its sites spawn tmux subprocesses while
+holding the guard, and all three take the same fix: collect what is needed under the
+lock, release, then act. `cleanup_pass` (`src/daemon/session.rs`) is the worked
+example — it is the fix that resolved the confirmed production hang, and
+`hook.rs:92` is the same defect that was simply never fixed there.
+
+**05b carries both shapes across 3 small sites** — one subprocess loop
+(`notify_chat_panes`), two file writes (`inject_into_sessions`, `write_session_meta`).
+
+**Line numbers moved.** These sites were recorded earlier as `stream.rs:719` and
+`hook.rs:91`; after 04j's conversions they are **`stream.rs:722`** and
+**`hook.rs:92`**. Re-derive with the multi-line-aware scan before drafting either
+phase — `grep -c` remains retired for this purpose.
 
 **Instance ownership (2026-07-26) — phases 08–11 added mid-milestone.** A live
 incident: on 2026-07-25 two daemons ran concurrently against one
