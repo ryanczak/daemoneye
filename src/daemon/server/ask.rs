@@ -75,10 +75,7 @@ where
     // Slow path: file on disk (survives daemon restarts).
     let mut messages: Vec<Message> = session_id
         .as_ref()
-        .and_then(|id| {
-            let mem = sessions.lock().unwrap_or_log();
-            mem.get(id).map(|e| e.messages.clone())
-        })
+        .and_then(|id| with_sessions(sessions, |mem| mem.get(id).map(|e| e.messages.clone())))
         .or_else(|| {
             session_id
                 .as_ref()
@@ -97,7 +94,7 @@ where
         f64,
         bool,
     ) = if let Some(ref id) = session_id {
-        if let Ok(mut store) = sessions.lock() {
+        with_sessions(sessions, |store| {
             let entry = store.entry(id.clone()).or_insert_with(|| {
                 // Try to restore continuity state from persisted meta.
                 let meta = crate::daemon::session::read_session_meta(id);
@@ -234,22 +231,18 @@ where
             let cost_usd = entry.cost_usd;
             let has_untracked = entry.has_untracked_cost;
             (brief, drift_msg, cost_usd, has_untracked)
-        } else {
-            (None, None, 0.0, false)
-        }
+        })
     } else {
         (None, None, 0.0, false)
     };
 
     // Read the session's active model override once so it stays consistent for
     // the whole turn (including the budget line and every AI loop iteration).
-    let session_active_model: Option<String> = if let Some(ref id) = session_id
-        && let Ok(store) = sessions.lock()
-    {
-        store.get(id.as_str()).and_then(|e| e.active_model.clone())
-    } else {
-        None
-    };
+    let session_active_model: Option<String> = session_id.as_ref().and_then(|id| {
+        with_sessions(sessions, |store| {
+            store.get(id.as_str()).and_then(|e| e.active_model.clone())
+        })
+    });
 
     // Read last prompt token count up front — it drives the compaction decision
     // below and is also used later for the [BUDGET] line.
@@ -262,8 +255,8 @@ where
     let (effective_prompt_tokens, session_token_scale): (u32, f64) = if let Some(ref id) =
         session_id
     {
-        if let Ok(guard) = sessions.lock() {
-            if let Some(entry) = guard.get(id.as_str()) {
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get(id.as_str()) {
                 let lpt = entry.last_prompt_tokens;
                 let scale = entry.token_scale;
                 if lpt > 0 {
@@ -275,9 +268,7 @@ where
             } else {
                 (0, 1.5)
             }
-        } else {
-            (0, 1.5)
-        }
+        })
     } else {
         (0, 1.5)
     };
@@ -325,7 +316,7 @@ where
         let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, true);
         let started_at = session_id
             .as_ref()
-            .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.started_at));
+            .and_then(|id| with_sessions(sessions, |store| store.get(id).map(|e| e.started_at)));
         if let Some(since) = started_at {
             // Budget-based compaction: compute the target budget and plan the
             // cut against the session's calibrated token_scale (phase 02).
@@ -464,8 +455,8 @@ where
     // by compaction — this gives the client a stable, ever-increasing indicator.
     let this_turn_count = session_id
         .as_ref()
-        .and_then(|id| {
-            sessions.lock().ok().map(|mut store| {
+        .map(|id| {
+            with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(id) {
                     entry.turn_count += 1;
                     entry.turn_count
@@ -480,7 +471,7 @@ where
     // enforced in ghost.rs via max_ghost_turns — this check is skipped for them.
     let is_ghost_session = session_id
         .as_ref()
-        .and_then(|id| sessions.lock().ok()?.get(id).map(|e| e.is_ghost))
+        .and_then(|id| with_sessions(sessions, |store| store.get(id).map(|e| e.is_ghost)))
         .unwrap_or(false);
     if !is_ghost_session
         && let Some(turn_limit) = crate::config::LimitsConfig::cap_usize(config.limits.max_turns)
@@ -505,7 +496,7 @@ where
     // without needing to infer it from the topology.
     let default_target_pane: Option<String> = session_id
         .as_ref()
-        .and_then(|id| sessions.lock().ok()?.get(id)?.default_target_pane.clone());
+        .and_then(|id| with_sessions(sessions, |store| store.get(id)?.default_target_pane.clone()));
 
     // Activity-based snapshot refresh: compare the foreground pane's current
     // last_activity timestamp against the value recorded when we last injected a
@@ -539,33 +530,36 @@ where
     if inject_snapshot
         && pane_activity > 0
         && let Some(ref id) = session_id
-        && let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(id)
     {
-        entry.last_snapshot_activity = pane_activity;
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(id) {
+                entry.last_snapshot_activity = pane_activity;
+            }
+        });
     }
 
     // Ghost sessions: resolve the effective turn cap (runbook value clamped
     // to daemon ceiling; 0 = use the ceiling).  Returns None for regular chat.
     let ghost_turn_limit: Option<usize> = session_id.as_ref().and_then(|id| {
-        let store = sessions.lock().ok()?;
-        let entry = store.get(id)?;
-        if !entry.is_ghost {
-            return None;
-        }
-        let ceiling = config.ghost.max_ghost_turns;
-        let limit = entry
-            .ghost_config
-            .as_ref()
-            .map(|gc| {
-                if gc.max_ghost_turns > 0 {
-                    gc.max_ghost_turns.min(ceiling)
-                } else {
-                    ceiling
-                }
-            })
-            .unwrap_or(ceiling);
-        Some(limit)
+        with_sessions(sessions, |store| {
+            let entry = store.get(id)?;
+            if !entry.is_ghost {
+                return None;
+            }
+            let ceiling = config.ghost.max_ghost_turns;
+            let limit = entry
+                .ghost_config
+                .as_ref()
+                .map(|gc| {
+                    if gc.max_ghost_turns > 0 {
+                        gc.max_ghost_turns.min(ceiling)
+                    } else {
+                        ceiling
+                    }
+                })
+                .unwrap_or(ceiling);
+            Some(limit)
+        })
     });
 
     // Build the prompt using the prompt module.
@@ -575,39 +569,31 @@ where
         is_ghost_session,
     );
     let memory_namespaces: Vec<&str> = memory_namespaces_owned.iter().map(|s| s.as_str()).collect();
-    let tool_policy_owned: Option<crate::agents::ToolPolicy> = session_id.as_ref().and_then(|id| {
-        let store = sessions.lock().ok()?;
-        let entry = store.get(id)?;
-        if !entry.is_ghost {
-            return None;
-        }
-        entry
-            .ghost_config
-            .as_ref()
-            .and_then(|gc| gc.tool_policy.clone())
-    });
-    let agent_name_owned: Option<String> = session_id.as_ref().and_then(|id| {
-        let store = sessions.lock().ok()?;
-        let entry = store.get(id)?;
-        if !entry.is_ghost {
-            return None;
-        }
-        entry.ghost_config.as_ref().and_then(|gc| gc.agent.clone())
-    });
-    let (is_ghost_session, parent_job_id_owned): (bool, Option<String>) = session_id
+    let (tool_policy_owned, agent_name_owned, is_ghost_session, parent_job_id_owned) = session_id
         .as_ref()
         .and_then(|id| {
-            let store = sessions.lock().ok()?;
-            let entry = store.get(id)?;
-            Some((
-                entry.is_ghost,
-                entry
+            with_sessions(sessions, |store| {
+                let entry = store.get(id)?;
+                let ghost = entry.is_ghost;
+                let (policy, agent) = if ghost {
+                    (
+                        entry
+                            .ghost_config
+                            .as_ref()
+                            .and_then(|gc| gc.tool_policy.clone()),
+                        entry.ghost_config.as_ref().and_then(|gc| gc.agent.clone()),
+                    )
+                } else {
+                    (None, None)
+                };
+                let parent = entry
                     .ghost_config
                     .as_ref()
-                    .and_then(|gc| gc.parent_job_id.clone()),
-            ))
+                    .and_then(|gc| gc.parent_job_id.clone());
+                Some((policy, agent, ghost, parent))
+            })
         })
-        .unwrap_or((false, None));
+        .unwrap_or((None, None, false, None));
     let cost_attribution = CostAttribution {
         agent_name: agent_name_owned
             .clone()

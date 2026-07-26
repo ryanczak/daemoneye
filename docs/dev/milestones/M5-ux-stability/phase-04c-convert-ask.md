@@ -1,7 +1,7 @@
 # Phase 04c: Convert `ask.rs` Lock Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04b (`handlers.rs` converted) — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -359,3 +359,9 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 01:48 (started)
+
+**Executor:** claude-sonnet-4-5-20250514
+
+Converting all 13 `sessions.lock()` sites in `ask.rs` to `with_sessions`.
