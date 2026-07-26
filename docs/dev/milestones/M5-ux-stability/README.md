@@ -81,7 +81,7 @@ take the socket.
 | 04h | convert-ghost-turn-loop ([phase-04h-convert-ghost-turn-loop.md](phase-04h-convert-ghost-turn-loop.md)) — `start_session` (1) + `do_ghost_turn` (7) = 8 sites | done (approved_first_try) |
 | 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | done (approved_first_try) |
 | 04j | convert-stream-hooks ([phase-04j-convert-stream-hooks.md](phase-04j-convert-stream-hooks.md)) — `stream.rs` (8) + `hook.rs` (2) = 10 conversion sites | done (approved_first_try) |
-| 05a | unlock-background-and-hook (mechanism A/B) — `background/helpers.rs::notify_session`, `background/gc.rs::gc_bg_windows`, `hook.rs:92` = 3 subprocess-under-lock restructures | todo |
+| 05a | unlock-background-and-hook ([phase-05a-unlock-background-and-hook.md](phase-05a-unlock-background-and-hook.md)) — `helpers.rs::notify_session`, `gc.rs::gc_bg_windows`, `hook.rs:92` = 3 subprocess-under-lock restructures | todo |
 | 05b | unlock-webhook-and-stream (mechanism A/B) — `webhook/process.rs` (2) + `stream.rs:722` = 3 restructures | todo |
 | 05c | sessionstore-newtype (enforce) — **was 04k; runs LAST.** 13 `Arc::clone` sites + 13 test-module acquisitions + 2 `ask.rs` stragglers + 04f coverage follow-up. **Re-scope when drafting** | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
@@ -91,7 +91,7 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 05a–07 are named but **not yet drafted**. Draft each with
+Phases 05b–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
 **The 04d tail was split on 2026-07-26** — first into five phases (04d–04i),

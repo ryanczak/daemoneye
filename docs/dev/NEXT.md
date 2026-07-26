@@ -1,11 +1,96 @@
 # NEXT
 
-**No active phase — but the plan is settled.** 04j is `done`; the 04x conversion
-sweep is complete. The ordering decision is made (PE, 2026-07-26): **phase 05 runs
-before the newtype, and is split in two.**
+**Active phase: M5 phase-05a — unlock-background-and-hook** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05a-unlock-background-and-hook.md`.
 
-**Next to draft: 05a — unlock-background-and-hook.** Run
-`/rexymcp:architect next`.
+Dispatch with `/rexymcp:dispatch phase-05a-unlock-background-and-hook`.
+
+## This is a bugfix phase, not a refactor
+
+Three sites spawn **tmux subprocesses while holding the global session lock**. All
+three are mechanism A + B, and one of them is the *same defect* that caused the
+confirmed production hang — in a place the original fix never reached.
+
+| Site | Blocking work under the guard |
+|---|---|
+| `hook.rs:92` | `cleanup_bg_windows()` → `kill_job_window` **per window** + `stop_pipe_pane`, inside `store.retain(…)` |
+| `gc.rs:201` | `kill_job_window` per window over **every session**, plus `log_event` appends — **and the orphan sweep**, because the guard binds at function scope |
+| `helpers.rs:155` | a **filesystem scan** (`related_knowledge_hints` → `load_all_entries`), **two file writes**, and a `tmux display-message` — guard held ~50 lines to end of function |
+
+**Finish condition: 0 raw acquisitions in all three files**, with `with_sessions(`
+at **3** in `hook.rs`, **1** in `gc.rs`, and **2** in `helpers.rs`.
+
+### `helpers.rs` needs two acquisitions — that is the point
+
+`notify_session` splits into **locked → unlocked → locked → unlocked**: update the
+registry and clone out `chat_pane`; then scan, format and write the file; then push
+the message into memory; then send the tmux notification. The spec pins two
+subtleties: `chat_pane` must be **cloned** in phase 1 (the original's borrow of
+`entry.chat_pane` is what pinned the guard open to the end of the function), and
+phase 3 must **re-check `get_mut`** because the entry can legitimately vanish while
+the filesystem scan runs.
+
+### `cleanup_pass` is the worked example for all three
+
+Quoted in full, with its caller. It is the fix that resolved the confirmed hang, and
+its two load-bearing properties are exactly what these tasks copy: the closure
+**removes entries and returns them by value**, and the blocking teardown runs after
+it returns under the comment "Unlocked phase: everything blocking happens out here."
+Task 1 is that pattern almost verbatim.
+
+### The one silent-failure risk
+
+`gc.rs`'s `retain` must keep inserting kept pane ids into the tracked set. That set
+drives orphan detection, and the orphan sweep kills anything untracked — so a
+dropped insert would make the GC **kill a live window**. Gates would stay green.
+The spec calls it out and the Test plan asks for it as a reasoning check.
+
+## Drafting caught four of my own errors before dispatch
+
+Validating rather than assuming, which is now the habit:
+
+1. **`kill_job_window` in `gc.rs` is 3, not 2.** The third is at `gc.rs:78` in
+   `notify_job_completion`, which holds no session lock and is out of scope. The
+   criterion says 3 and names which two are the phase's.
+2. **`gc.rs` and `helpers.rs` have no `UnpoisonExt` import and no `unwrap_or_log`
+   at all** — both sites use `let Ok(mut store) = … else`. So unlike the last five
+   phases there is **nothing to delete**, and the spec says so plus "if you find
+   yourself editing an import in either file, stop — you have gone off-spec."
+   Authorizations explicitly grants **no** import deletions.
+3. **I fabricated `helpers.rs`'s import line.** I quoted
+   `{FG_HOOK_COUNTER, SessionStore, append_session_message, bg_done_subscribe}` —
+   those symbols belong to `pane.rs`. The real line is
+   `{SessionStore, append_session_message}`. Corrected from the tree. This is the
+   failure mode the workflow warns about directly: a worked example citing a symbol
+   that does not exist is **worse than none, because it is trusted**.
+4. **`gc.rs` imports nothing from `crate::daemon::session`** — it spells the type
+   out in full in the signature — so it needs a *new* import line, not an extended
+   list. The two files need different edits and the spec now shows both.
+
+## Still open for the PE — four calibration threads
+
+1. **Count criteria (4th occurrence, 7 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 6 clean confirmations).** 05a
+   states that **none** of the three restructured functions is covered by the unit
+   suite — `gc.rs`'s tests cover `plan_gc_actions`, which this phase moves but does
+   not modify — so a coverage claim would be false, not merely unproven.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Rides on **05c** — 05a adds no tests.
+
+Error 3 above is arguably a fifth thread: **fabricated code quotes in specs**. First
+occurrence, caught pre-dispatch. Worth watching, since the pre-injection guidance
+identifies it as the most dangerous kind of spec error.
+
+## After 05a
+
+**05b** — `webhook/process.rs` (2) + `stream.rs:722` (3 sites; one subprocess loop,
+two file-write hoists) → **05c** newtype + enforce, which must run last and still
+needs re-scoping → 06 → 07, plus the drafted 08–11 instance set.
+
+---
+
+## Superseded: the renumber-and-split note
 
 ---
 
