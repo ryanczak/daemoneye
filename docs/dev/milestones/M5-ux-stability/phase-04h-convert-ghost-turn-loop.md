@@ -1,7 +1,7 @@
 # Phase 04h: Convert the Ghost Turn Loop — `start_session` + `do_ghost_turn`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04g (ghost exit paths converted) — `done`
 **Estimated diff:** ~140 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -584,3 +584,9 @@ you think you need `unsafe` or a new dependency, **stop and report a blocker**.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 17:18 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Converting 8 remaining `sessions.lock()` sites in `ghost.rs` to `with_sessions`.

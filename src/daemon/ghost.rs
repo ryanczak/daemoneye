@@ -1,4 +1,3 @@
-use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -250,10 +249,9 @@ impl GhostManager {
             pending_compaction_notice: None,
         };
 
-        {
-            let mut store = sessions.lock().unwrap_or_log();
+        with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
-        }
+        });
 
         crate::daemon::stats::inc_ghosts_launched();
 
@@ -302,18 +300,19 @@ async fn do_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
-    let (_messages, ghost_config, tmux_session, _target_pane, ghost_active_model) = {
-        let store = sessions.lock().unwrap_or_log();
-        let Some(entry) = store.get(session_id) else {
-            anyhow::bail!("Ghost Shell '{}' not found", session_id);
-        };
-        (
-            entry.messages.clone(),
-            entry.ghost_config.clone(),
-            entry.tmux_session.clone(),
-            entry.default_target_pane.clone(),
-            entry.active_model.clone(),
-        )
+    let Some((_messages, ghost_config, tmux_session, _target_pane, ghost_active_model)) =
+        with_sessions(sessions, |store| {
+            let entry = store.get(session_id)?;
+            Some((
+                entry.messages.clone(),
+                entry.ghost_config.clone(),
+                entry.tmux_session.clone(),
+                entry.default_target_pane.clone(),
+                entry.active_model.clone(),
+            ))
+        })
+    else {
+        anyhow::bail!("Ghost Shell '{}' not found", session_id);
     };
 
     let prompt_name = config.ai.prompt.clone();
@@ -321,32 +320,32 @@ async fn do_ghost_turn(
     let sys_context = get_or_init_sys_context();
 
     let daemon_ceiling = config.ghost.max_ghost_turns;
-    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target, auto_approve_commands) = {
-        let store = sessions.lock().unwrap_or_log();
-        store
-            .get(session_id)
-            .and_then(|e| e.ghost_config.as_ref())
-            .map(|gc| {
-                let scripts = if gc.auto_approve_scripts.is_empty() {
-                    "none".to_string()
-                } else {
-                    gc.auto_approve_scripts.join(", ")
-                };
-                let turns = if gc.max_ghost_turns > 0 {
-                    gc.max_ghost_turns.min(daemon_ceiling)
-                } else {
-                    daemon_ceiling
-                };
-                (
-                    scripts,
-                    gc.run_with_sudo,
-                    turns,
-                    gc.ssh_target.clone(),
-                    gc.auto_approve_commands,
-                )
-            })
-            .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))
-    };
+    let (approved_scripts, run_with_sudo, max_ghost_turns, ssh_target, auto_approve_commands) =
+        with_sessions(sessions, |store| {
+            store
+                .get(session_id)
+                .and_then(|e| e.ghost_config.as_ref())
+                .map(|gc| {
+                    let scripts = if gc.auto_approve_scripts.is_empty() {
+                        "none".to_string()
+                    } else {
+                        gc.auto_approve_scripts.join(", ")
+                    };
+                    let turns = if gc.max_ghost_turns > 0 {
+                        gc.max_ghost_turns.min(daemon_ceiling)
+                    } else {
+                        daemon_ceiling
+                    };
+                    (
+                        scripts,
+                        gc.run_with_sudo,
+                        turns,
+                        gc.ssh_target.clone(),
+                        gc.auto_approve_commands,
+                    )
+                })
+                .unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))
+        });
     let remote_line = if let Some(ref target) = ssh_target {
         format!(
             "Remote SSH Target: {} — all commands are automatically wrapped in \
@@ -462,12 +461,16 @@ async fn do_ghost_turn(
                 tool_results: None,
                 turn: Some(turn + 1),
             };
-            {
-                let mut store = sessions.lock().unwrap_or_log();
+            let pushed = with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(session_id) {
                     entry.messages.push(wrap_up.clone());
-                    crate::daemon::session::append_session_message(session_id, &wrap_up);
+                    true
+                } else {
+                    false
                 }
+            });
+            if pushed {
+                crate::daemon::session::append_session_message(session_id, &wrap_up);
             }
             wrap_up_turn = true;
         }
@@ -481,17 +484,18 @@ async fn do_ghost_turn(
             if wrap_up_turn { " (wrap-up)" } else { "" }
         );
 
-        let (messages, loaded_tools, token_scale, started_at) = {
-            let store = sessions.lock().unwrap_or_log();
-            let Some(entry) = store.get(session_id) else {
-                break;
-            };
-            (
-                entry.messages.clone(),
-                entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
-                entry.token_scale,
-                entry.started_at,
-            )
+        let Some((messages, loaded_tools, token_scale, started_at)) =
+            with_sessions(sessions, |store| {
+                let entry = store.get(session_id)?;
+                Some((
+                    entry.messages.clone(),
+                    entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
+                    entry.token_scale,
+                    entry.started_at,
+                ))
+            })
+        else {
+            break;
         };
 
         let (chat_messages, compacted) =
@@ -504,12 +508,11 @@ async fn do_ghost_turn(
                 config,
             );
         if compacted {
-            {
-                let mut store = sessions.lock().unwrap_or_log();
+            with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(session_id) {
                     entry.messages = chat_messages.clone();
                 }
-            }
+            });
             write_session_file(session_id, &chat_messages);
         }
 
@@ -844,18 +847,18 @@ async fn do_ghost_turn(
                         );
 
                         // Accumulate cost on the session entry.
-                        if let Ok(mut store) = sessions.lock()
-                            && let Some(entry) = store.get_mut(session_id)
-                        {
-                            entry.cost_usd += record.cost.total_cost_usd;
-                            *entry
-                                .cost_by_agent
-                                .entry(record.agent_name.clone())
-                                .or_insert(0.0) += record.cost.total_cost_usd;
-                            if record.pricing_source == PricingSource::Unknown {
-                                entry.has_untracked_cost = true;
+                        with_sessions(sessions, |store| {
+                            if let Some(entry) = store.get_mut(session_id) {
+                                entry.cost_usd += record.cost.total_cost_usd;
+                                *entry
+                                    .cost_by_agent
+                                    .entry(record.agent_name.clone())
+                                    .or_insert(0.0) += record.cost.total_cost_usd;
+                                if record.pricing_source == PricingSource::Unknown {
+                                    entry.has_untracked_cost = true;
+                                }
                             }
-                        }
+                        });
                         break;
                     }
                     AiEvent::Error(e) => {
@@ -1001,13 +1004,12 @@ async fn do_ghost_turn(
         };
 
         append_session_message(session_id, &assistant_msg);
-        {
-            let mut store = sessions.lock().unwrap_or_log();
+        with_sessions(sessions, |store| {
             if let Some(entry) = store.get_mut(session_id) {
                 entry.messages.push(assistant_msg);
                 entry.last_accessed = Instant::now();
             }
-        }
+        });
 
         if pending_calls.is_empty() {
             break;
