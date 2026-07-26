@@ -10,7 +10,6 @@ use crate::config::Config;
 use crate::daemon::context::epochs;
 use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::log_event;
-use crate::util::UnpoisonExt;
 use std::sync::Arc;
 
 /// Whether an epoch build may spend a model call on a narrative summary.
@@ -115,13 +114,11 @@ async fn run_compaction(
 
     let Some(tail_start) = tail_start else {
         // No viable cut — discard.
-        if let Some(entry) = sessions
-            .lock()
-            .unwrap_or_log()
-            .get_mut(&snapshot.session_id)
-        {
-            entry.compaction_in_flight = false;
-        }
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(&snapshot.session_id) {
+                entry.compaction_in_flight = false;
+            }
+        });
         return Ok(());
     };
 
@@ -134,13 +131,11 @@ async fn run_compaction(
         && dropped_last_turn > 0
         && last_prior.turn_end >= dropped_last_turn
     {
-        if let Some(entry) = sessions
-            .lock()
-            .unwrap_or_log()
-            .get_mut(&snapshot.session_id)
-        {
-            entry.compaction_in_flight = false;
-        }
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(&snapshot.session_id) {
+                entry.compaction_in_flight = false;
+            }
+        });
         return Ok(());
     }
 
@@ -281,6 +276,7 @@ mod tests {
     use crate::ai::Message;
     use crate::config::Config;
     use crate::daemon::session::SessionEntry;
+    use crate::util::UnpoisonExt;
     use std::collections::HashMap;
 
     /// RAII test-home guard: holds `TEST_HOME_LOCK`, points `HOME` at a fresh

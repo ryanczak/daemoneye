@@ -528,3 +528,32 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 4f60a9a8d66d246505a0286a7d8f1e37c4d565e7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-07-26 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the spec was not the problem — `bugs/bug-04f-1.md` § "How to fix"
+item 2 already contains the exact remaining edit verbatim ("add `use
+crate::util::UnpoisonExt;` inside `mod tests`"), so a refined re-dispatch would
+add emphasis rather than information; both conversions on disk are correct and
+worth preserving, and the executor reached the hard part before stalling in a
+read-only loop.
+
+**Failure shape:** `HardFail { NoProgressStall { consecutive_read_only: 60 } }` at
+turn 71. The first ~12 turns did the real work (both `patch` calls succeeded);
+the remaining ~40 were `grep -c "UnpoisonExt" …` repeated with no edits between.
+The gates were **never run** — `command_outputs` were all `null`, so it never saw
+clippy's output, which names the fix explicitly. That is the specific behaviour
+the resume guidance redirects.
+
+**On-disk state at escalation** (dirty tree, preserved deliberately):
+
+- `background.rs:118` and `:137` → both converted to `with_sessions`, matching the
+  bug doc's target code, `return Ok(())` left outside the closures. **Correct.**
+- `use crate::util::UnpoisonExt;` deleted from the file header. **Correct, and
+  half the fix** — the companion `mod tests` import was never added.
+- `cargo build` → exit 0. `cargo clippy --all-targets` → **exit 101, 17 errors**,
+  every one "trait `UnpoisonExt` … not in scope". This is exactly the
+  build-vs-clippy disagreement the bug doc warned about.
+- Bug-doc item 3 (amend `background_swap_discards_on_new_turn`, demonstrate the
+  fail/pass pair) not started.
