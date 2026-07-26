@@ -1,7 +1,7 @@
 # Phase 04a: `with_sessions` Accessor + Re-entrancy Guard
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (cleanup deadlock) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -475,3 +475,83 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0828707e8c226d3b715e66801d33f7f4920ed360
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification — 2026-07-25 (architect-performed)
+
+The phase ships no user-visible behavior change, but the **shutdown path** was
+converted (task 4), so that path was exercised against the real binary rather
+than assumed.
+
+Started `./target/release/daemoneye daemon --console`, confirmed the socket
+accepts a connection, then sent `SIGTERM`:
+
+```
+2026-07-26T00:54:14Z INFO  Daemon listening on /home/matt/.daemoneye/var/run/daemoneye.sock
+2026-07-26T00:55:14Z INFO  Received SIGTERM, shutting down.
+2026-07-26T00:55:14Z INFO  Daemon stopped cleanly.
+```
+
+`Daemon stopped cleanly.` is logged immediately after the converted pipe-pane
+block (`mod.rs`), so the rewritten code ran: no panic from the new assertion, no
+hang from the accessor, and the socket was removed on exit.
+
+Incidentally confirms something the § 1.5b live capture left ambiguous: a
+**healthy** daemon does exit on `SIGTERM`. The wedged one earlier that ignored it
+was ignoring it *because* it was deadlocked — its shutdown path needed the very
+lock that was stranded.
+
+Harness note: `pgrep … | head -1` initially matched a wrapper process rather than
+the daemon, which briefly looked like the daemon surviving `SIGTERM`. It had not
+— the real process was reparented to `systemd --user` after the launching shell
+exited. Signal the PID whose parent chain you have actually verified.
+
+### Review verdict — 2026-07-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (50 turns)
+- **Gates (reviewer re-run):** `cargo fmt --all --check` clean; `cargo build`
+  clean; `cargo clippy --all-targets --all-features -- -D warnings` exits zero;
+  `cargo test` 913 lib + 27 integration, 0 failed. Exactly the pinned 913.
+- **Acceptance criteria:** all verified independently. `sessions.lock()` in
+  `session.rs` appears only inside `with_sessions` (line 432; the other hit is a
+  doc comment). `mod.rs` has zero. The `SessionStore` type alias is unchanged at
+  `session.rs:117`. The diff touches only `session.rs`, `mod.rs`, and the two
+  docs — none of the other 98 lock sites, and none of the 13 `Arc::clone` sites.
+- **The `let _depth` binding is correct**, and proven load-bearing: mutating it
+  to `let _ =` disables the guard entirely and
+  `with_sessions_rejects_reentrant_call` then **deadlocks**, exactly as the
+  production bug would. This was the single most likely way to get the phase
+  wrong and it was not gotten wrong.
+- **Second mutation:** emptying the `Drop` impl makes
+  `with_sessions_depth_resets_after_panic` fail fast with the re-entrancy
+  assertion. The RAII reset is real, not decorative.
+- **Drop order verified:** `_depth` is declared before `store`, so the
+  `MutexGuard` releases *before* the depth counter resets. The reverse order
+  would leave a window where depth reads 0 while the lock is still held.
+- **End-to-end:** shutdown path exercised against the real binary — see the
+  preceding entry.
+- **Scope deviations:** none.
+- **Calibration:** none for the executor. Third consecutive
+  `approved_first_try` on a small, fully-quoted phase (50 turns).
+
+#### Follow-up for phase 04b, not blocking
+
+The re-entrancy guard's only regression test catches a `let _depth` → `let _`
+regression by **hanging**, not by failing — the nested call deadlocks before any
+assertion can fire. CI would stall to its timeout rather than report a failure.
+
+Add a fast-failing companion in 04b: inside a `with_sessions` closure, assert the
+thread-local depth reads 1.
+
+```rust
+with_sessions(&sessions, |_| {
+    assert_eq!(SESSIONS_LOCK_DEPTH.with(|d| d.get()), 1);
+});
+```
+
+That fails instantly under the `let _` mutation instead of hanging. **This is the
+second instance in this milestone of a test that catches its regression by
+hanging** (the first was `cleanup_pass_evicts_idle_and_keeps_active`, fixed in
+phase-03). Two occurrences — if a third appears, it is worth a `STANDARDS.md`
+line saying regression tests for lock invariants must fail fast, never block.

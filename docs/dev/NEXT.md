@@ -1,31 +1,35 @@
 # NEXT
 
-**Active phase: M5 phase-04a — with-sessions-accessor** (`todo`, drafted
-2026-07-25).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04a-with-sessions-accessor.md`.
+**Active phase: none.** M5 phase-04a is `done`; phase 04b
+(convert-lock-sites-1) is **not yet drafted**. Draft it with
+`/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04a-with-sessions-accessor`.
+**M5 phase-04a — with-sessions-accessor is `done`** (2026-07-25,
+`approved_first_try`, 50 turns). `with_sessions(&store, |map| …)` now exists in
+`src/daemon/session.rs` with an always-on re-entrancy assertion behind an RAII
+depth guard. Two sites converted (`cleanup_pass`; the shutdown pipe-pane sweep,
+which also hoists a blocking `stop_pipe_pane` subprocess out of the critical
+section). `SessionStore` is still the `Arc<Mutex<…>>` alias, so the other 98
+sites and all 13 `Arc::clone` sites compile untouched.
 
-First of four phases implementing the PE's chosen structural answer to
-re-entrant `SessionStore` locking. Adds the free accessor
-`with_sessions(&store, |map| …)` with an **always-on** re-entrancy assertion
-inside it, and converts only the two live lock sites (`cleanup_pass` in
-`session.rs`, the shutdown pipe-pane sweep in `mod.rs`). The other 98 sites are
-explicitly out of scope and keep compiling untouched.
+Both guard mutations were checked by the reviewer: `let _depth` → `let _`
+disables the guard and the re-entrancy test then deadlocks (proving the binding
+is load-bearing), and emptying the `Drop` impl makes the panic-reset test fail
+fast. Shutdown path verified against the real binary — `Received SIGTERM` →
+`Daemon stopped cleanly.`, socket removed.
 
-The `mod.rs` conversion also hoists a blocking `stop_pipe_pane` subprocess out
-of the critical section — mechanism A in the shutdown path — and that
-collect-inside / act-outside shape is the worked example phases 04b–04c follow.
+**Carry into phase 04b** (recorded in the 04a verdict): add a fast-failing
+companion test asserting the thread-local depth reads 1 inside a `with_sessions`
+closure. The current re-entrancy test catches its regression by *hanging*, which
+stalls CI instead of failing it. **This is the second such test in this
+milestone** — a third would justify a `STANDARDS.md` line requiring lock-invariant
+regression tests to fail fast rather than block.
 
-**Ordering correction made while drafting:** the newtype lands **last** (04d),
-not first. 13 `Arc::clone(&sessions…)` sites (9 in `mod.rs`) become type errors
-the moment `SessionStore` stops being an `Arc` alias, which would turn 04a into
-an accidental 100-site sweep. Introducing the free accessor first leaves the type
-alias intact. Recorded in `docs/design/daemon-stalls.md` § 3.4.
-
-Finish condition: `cargo test --lib` reports 913 (910 + exactly 3). The
-load-bearing test is `with_sessions_rejects_reentrant_call` — the automated
-version of the defect that wedged the daemon for 12 hours.
+**Remaining M5 phases:** 04b (convert `handlers.rs` + `ask.rs`), 04c
+(`background.rs` + `ghost.rs` + tail), 04d (newtype + enforce, converts the 13
+`Arc::clone` sites), 05 (`webhook/process.rs` — mechanism A), 06 (tmux-call
+hardening — mechanism B), 07 (stall-instrumentation, rescoped). Plan and
+rationale in `docs/design/daemon-stalls.md` § 3.4.
 
 **M5 phase-03 — echo-user-input is `done`** (2026-07-25, `approved_first_try`,
 46 turns — the shortest run of the milestone). The user's prose queries now

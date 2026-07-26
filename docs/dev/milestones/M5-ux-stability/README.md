@@ -58,7 +58,7 @@ split) and the two TUI defect specs every phase references.
 | 01 | spinner-gutter ([phase-01-spinner-gutter.md](phase-01-spinner-gutter.md)) | done (approved_after_2) |
 | 02 | cleanup-deadlock ([phase-02-cleanup-deadlock.md](phase-02-cleanup-deadlock.md)) | done (approved_first_try) |
 | 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | done (approved_first_try) |
-| 04a | with-sessions-accessor ([phase-04a-with-sessions-accessor.md](phase-04a-with-sessions-accessor.md)) | review      |
+| 04a | with-sessions-accessor ([phase-04a-with-sessions-accessor.md](phase-04a-with-sessions-accessor.md)) | done (approved_first_try) |
 | 04b | convert-lock-sites-1 (handlers.rs + ask.rs)                            | todo   |
 | 04c | convert-lock-sites-2 (background.rs + ghost.rs + tail)                 | todo   |
 | 04d | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)       | todo   |
