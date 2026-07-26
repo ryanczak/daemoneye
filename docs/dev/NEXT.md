@@ -1,37 +1,30 @@
 # NEXT
 
-**Active phase: M5 phase-04b — convert-handlers** (`todo`, drafted 2026-07-25).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04b-convert-handlers.md`.
+**Active phase: none.** M5 phase-04b is `done`; phase 04c (convert `ask.rs`) is
+**not yet drafted**. Draft it with `/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04b-convert-handlers`.
+**M5 phase-04b — convert-handlers is `done`** (2026-07-25,
+`approved_first_try`, 95 turns). All 15 `sessions.lock()` sites in
+`server/handlers.rs` now go through `with_sessions`; the two adjacent
+acquisitions at 166/173 collapsed into one, so the file has 14 calls for 15
+former sites. `ask.rs` untouched at 13, `SessionStore` still a plain alias.
 
-Converts all 15 `sessions.lock()` sites in `src/daemon/server/handlers.rs` to
-the phase-04a `with_sessions` accessor. Behavior-preserving and mechanical —
-three quoted before/after shapes cover every site, and `with_sessions` is
-already in scope there via the existing `use crate::daemon::session::*;` glob,
-so no import churn.
+The 04a follow-up is closed: `with_sessions_sets_depth_inside_closure` fails in
+**0.00s** under a `let _depth` → `let _` mutation (verified by the reviewer),
+where the older re-entrancy test hangs under the same change.
 
-Also carries the fast-failing depth test from the 04a review:
-`with_sessions_sets_depth_inside_closure` asserts the thread-local depth reads 1
-*inside* the closure, so a `let _depth` → `let _` regression fails instantly
-instead of deadlocking the way the existing re-entrancy test does.
+**Sizing data for 04d — read before drafting it.** 95 turns for 15 conversions
+plus one test, against 46/50/70 for the three preceding `size=s` phases. That is
+~6 turns per site plus fixed overhead. The 04d tail (`background.rs`,
+`ghost.rs`, `executor/mod.rs`, `stream.rs`) is **~60 sites** — roughly 360 turns
+at this rate, which fits under the 600-turn cap but leaves no margin for a stall
+and is well past what one review can cover carefully. **Split 04d into at least
+three phases of ~15–20 sites, one file group each.**
 
-Finish condition: `cargo test --lib` reports 914 (913 + exactly 1). The
-conversions add no tests.
-
-**Plan re-split while drafting.** 04b was originally `handlers.rs` + `ask.rs`.
-The survey showed they are different jobs: `handlers.rs` is 15 uniform
-`if let Ok(store) = sessions.lock()` shapes, while `ask.rs` has
-`sessions.lock().ok()?` chains inside `.and_then(…)` closures where wrapping
-changes what `?` returns from. `ask.rs` is now its own phase (04c), the tail is
-04d, and the newtype moves to 04e. Rationale in
-`docs/design/daemon-stalls.md` § 3.4.
-
-One behavior change is intended and called out in the spec: the `else { None }`
-poison branches disappear, because `with_sessions` recovers via
-`.unwrap_or_log()` rather than silently skipping the work. That is what
-`CLAUDE.md` § "Important Invariants" already requires; these `if let Ok(…)` sites
-were the stragglers.
+**Remaining M5 phases:** 04c (`ask.rs`, 13 sites with `lock().ok()?` chains
+needing per-site care), 04d×3 (the tail), 04e (newtype + enforce, converts the
+13 `Arc::clone` sites), 05 (`webhook/process.rs` — mechanism A), 06 (tmux-call
+hardening — mechanism B), 07 (stall-instrumentation, rescoped).
 
 **M5 phase-04a — with-sessions-accessor is `done`** (2026-07-25,
 `approved_first_try`, 50 turns). `with_sessions(&store, |map| …)` now exists in

@@ -1,7 +1,7 @@
 # Phase 04b: Convert `handlers.rs` Lock Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04a (`with_sessions` accessor) — `done`
 **Estimated diff:** ~160 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -410,3 +410,87 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e182ef8c92ba204d892315dd507837d1a75b125b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification — 2026-07-25 (architect-performed)
+
+`handlers.rs` **is** the IPC dispatch layer, so a real client request exercises
+the converted code directly — this is stronger than the "not applicable" the
+phase doc allowed for.
+
+Started `./target/release/daemoneye daemon --console`, then ran
+`./target/release/daemoneye status`, which routes through the converted
+`handle_status` (the line-232 aggregation). With no sessions:
+
+```
+── SESSION ───────────────────────────────────────────────
+  active          0
+  turns           0  ·  none
+  context         0 / 131071 tokens  0%
+```
+
+That alone proves nothing — a conversion that always returned defaults would
+print the same thing. So a real chat session was opened and the query repeated:
+
+```
+── SESSION ───────────────────────────────────────────────
+  active          1
+  turns           1  ·  none
+  context         0 / 131071 tokens  0%
+```
+
+The converted aggregation reads the live store. Daemon stopped cleanly
+afterwards; socket removed; tree clean.
+
+Harness note: an earlier phase's test daemon was still running and the two
+instances fought over webhook port 9393, producing
+`Supervised task 'webhook' exited unexpectedly — restarting … (attempt 7)` in the
+log. That is a leftover from architect E2E runs, **not** a product defect and not
+introduced by this phase. Both were stopped. Check for stray daemons before
+reading a webhook restart loop as a regression.
+
+### Review verdict — 2026-07-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (95 turns)
+- **Gates (reviewer re-run):** `cargo fmt --all --check` clean; `cargo build`
+  clean; `cargo clippy --all-targets --all-features -- -D warnings` exits zero;
+  `cargo test` 914 lib + 27 integration, 0 failed. Exactly the pinned 914.
+- **Acceptance criteria:** all verified independently.
+  `grep -c "sessions.lock()" src/daemon/server/handlers.rs` → **0**.
+  `ask.rs` → **13**, unchanged, so scope held against the adjacent file.
+  `SessionStore` is still the `Arc<Mutex<…>>` alias. The diff touches only
+  `handlers.rs`, `session.rs`, and the two docs.
+- **The 166/173 collapse landed.** `handlers.rs` has **14** `with_sessions`
+  calls for 15 former sites — the two adjacent acquisitions became one, which is
+  the accessor earning its keep rather than a mechanical 1:1 substitution.
+- **Mutation check (reviewer-run, not trusted):** with
+  `let _depth` → `let _` in `with_sessions`, the new
+  `with_sessions_sets_depth_inside_closure` fails in **0.00s** with
+  `left: 0, right: 1` and the explanatory message. Under the same mutation the
+  older `with_sessions_rejects_reentrant_call` **hangs**. The 04a follow-up is
+  properly closed: this file now fails fast on a broken guard.
+- **`unsafe` audit:** `handlers.rs:28` contains an `unsafe` block, but it is
+  pre-existing (the `libc::kill` self-signal for graceful stop, with a SAFETY
+  comment). `git diff HEAD~2 HEAD` shows **zero** added `unsafe` lines.
+- **Behavior preservation spot-checked** on the two most restructured sites:
+  `is_dirty` (`if let` chain → `is_some_and`) and `active_agents` (push-loop →
+  `filter_map` + `collect`, still sorted afterwards). Both equivalent.
+- **End-to-end:** converted dispatch path exercised against the real binary with
+  a live session — see the preceding entry.
+- **Scope deviations:** none.
+- **Calibration:** none for the executor. Fourth consecutive
+  `approved_first_try`, and the first at `size=m`.
+
+#### Throughput data for sizing phase 04d
+
+This phase took **95 turns** for 15 mechanical conversions plus one test. The
+three preceding `size=s` phases took 46, 50, and 70. Roughly **6 turns per
+converted site**, plus fixed overhead for orientation and the gate loop.
+
+Phase 04d (the tail: `background.rs`, `ghost.rs`, `executor/mod.rs`,
+`stream.rs`) is ~60 sites. At this rate that is ~360 turns — under the 600-turn
+`max_turns` cap, but with no margin for a stall and far past the point where a
+single review can be thorough. **Split 04d into at least three phases of ~15–20
+sites**, one file group each. The observed rate, not a guess, is the basis for
+that.
