@@ -724,6 +724,12 @@ think you need `unsafe` or a new dependency, **stop and report a blocker**.
 
 Implemented all three restructures: `hook.rs:92`, `gc.rs:201`, `helpers.rs:155`.
 
+### Update — 2026-07-26 21:08 (started)
+
+**Executor:** model (phase-05a, bug-05a-1 fix)
+
+Fixing doc comment placement: `GcKill` struct was sitting between `gc_bg_windows`'s doc block and the function, silently transferring the function's documentation onto the struct.
+
 ### Update — ts=1785095164193 (complete, server-authored)
 
 **Summary:** **Summary + Notes for review:**
