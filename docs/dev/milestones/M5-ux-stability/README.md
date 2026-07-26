@@ -82,7 +82,7 @@ take the socket.
 | 04i | convert-background-windows ([phase-04i-convert-background-windows.md](phase-04i-convert-background-windows.md)) — `run.rs` (4) + `respawn.rs` (3) = 7 mechanical sites | done (approved_first_try) |
 | 04j | convert-stream-hooks ([phase-04j-convert-stream-hooks.md](phase-04j-convert-stream-hooks.md)) — `stream.rs` (8) + `hook.rs` (2) = 10 conversion sites | done (approved_first_try) |
 | 05a | unlock-background-and-hook ([phase-05a-unlock-background-and-hook.md](phase-05a-unlock-background-and-hook.md)) — `helpers.rs::notify_session`, `gc.rs::gc_bg_windows`, `hook.rs:92` = 3 subprocess-under-lock restructures | done (approved_after_2) |
-| 05b | unlock-webhook-and-stream ([phase-05b-unlock-webhook-and-stream.md](phase-05b-unlock-webhook-and-stream.md)) — `webhook/process.rs` (2) + `stream.rs:722` = 3 restructures | in-progress |
+| 05b | unlock-webhook-and-stream ([phase-05b-unlock-webhook-and-stream.md](phase-05b-unlock-webhook-and-stream.md)) — `webhook/process.rs` (2) + `stream.rs:722` = 3 restructures | review      |
 | 05c | sessionstore-newtype (enforce) — **was 04k; runs LAST.** 13 `Arc::clone` sites + 13 test-module acquisitions + 2 `ask.rs` stragglers + 04f coverage follow-up. **Re-scope when drafting** | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
