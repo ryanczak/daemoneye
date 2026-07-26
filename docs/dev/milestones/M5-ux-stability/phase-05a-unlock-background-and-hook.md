@@ -1,7 +1,7 @@
 # Phase 05a: Get tmux Subprocesses Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** in-progress (bounced — see `bugs/bug-05a-1.md`)
 **Depends on:** phase-04j (conversion sweep complete) — `done`
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=m
