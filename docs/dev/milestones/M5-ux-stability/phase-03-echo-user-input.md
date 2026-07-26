@@ -1,7 +1,7 @@
 # Phase 03: Echo User Input to the Transcript
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (spinner row), phase-02 (cleanup deadlock) — both `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -284,3 +284,9 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 00:00 (started)
+
+**Executor:** model
+
+**Work started:** Implement echo of user input to transcript, add `echo_body` and `should_echo` helpers with tests, fix `cleanup_pass_evicts_idle_and_keeps_active` to use `try_lock`.

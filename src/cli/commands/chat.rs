@@ -503,6 +503,14 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             }
         }
 
+        // Echo the user's words into scrollback so the transcript reads as a
+        // conversation. Same element as tool output — one visual grammar for
+        // everything committed above the live region.
+        if should_echo(&query) {
+            let echo_body: Vec<String> = echo_body(&query);
+            let _ = renderer.commit_panel("you", &echo_body, false);
+        }
+
         // ── Send the user query ─────────────────────────────────────────
         {
             let cw = chat_width;
@@ -813,6 +821,24 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
     lines
 }
 
+/// Build the body lines for the user-query echo panel.
+fn echo_body(query: &str) -> Vec<String> {
+    query.lines().map(str::to_string).collect()
+}
+
+/// Return `true` when a query should be echoed into scrollback.
+///
+/// Client-only commands (`/exit`, `/help`, `/clear`, …) never reach the model
+/// so they must not be echoed.  Prose that merely starts with `/` (a file path)
+/// or with a keyword like `help` or `clear` *does* reach the model and is
+/// echoed.
+fn should_echo(query: &str) -> bool {
+    !matches!(
+        query,
+        "/exit" | "/quit" | "exit" | "quit" | "/help" | "help" | "?" | "/?" | "/clear" | "/new"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::HELP_TEXT;
@@ -843,5 +869,39 @@ mod tests {
             HELP_TEXT.contains("10 lines"),
             "HELP_TEXT must document the 10-line tool-output cap"
         );
+    }
+
+    #[test]
+    fn echo_body_splits_multiline_query() {
+        use super::echo_body;
+
+        assert_eq!(echo_body("one line"), vec!["one line"]);
+
+        let parts = echo_body("first\nsecond\nthird");
+        assert_eq!(parts, vec!["first", "second", "third"]);
+
+        assert_eq!(echo_body("trailing\n"), vec!["trailing"]);
+    }
+
+    #[test]
+    fn echo_skips_client_only_commands() {
+        use super::should_echo;
+
+        // Must NOT echo — client-only commands
+        for cmd in [
+            "/exit", "/quit", "exit", "quit", "/help", "help", "?", "/?", "/clear", "/new",
+        ] {
+            assert!(!should_echo(cmd), "must not echo: {cmd}");
+        }
+
+        // Must echo — prose queries
+        for q in [
+            "what is this error",
+            "/etc/hosts is missing",
+            "help me debug this",
+            "clearly this is wrong",
+        ] {
+            assert!(should_echo(q), "must echo: {q}");
+        }
     }
 }

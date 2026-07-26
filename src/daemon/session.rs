@@ -1160,6 +1160,9 @@ mod tests {
         assert_eq!(evicted.len(), 1);
         assert!(active_ids.contains("active"));
         assert!(!active_ids.contains("idle"));
-        assert_eq!(sessions.lock().unwrap().len(), 1);
+        let remaining = sessions
+            .try_lock()
+            .expect("cleanup_pass must release the lock before returning");
+        assert_eq!(remaining.len(), 1);
     }
 }
