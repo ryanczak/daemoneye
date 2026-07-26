@@ -1,7 +1,7 @@
 # Phase 05c: Convert the Last Stragglers and Every Test-Module Acquisition
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05b (last blocking work removed) — `done`
 **Estimated diff:** ~170 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -87,21 +87,55 @@ must survive."
 
 ## Current state
 
-### Imports — no file needs an edit
+### ⚠ `background.rs` loses its `UnpoisonExt` import — corrected after run 1
 
-All three already have `with_sessions` in scope. **Do not add or remove a single
-import in this phase.**
+**This section replaces an earlier claim that no import changes at all.** That
+claim was wrong and it is what stalled the first run.
+
+`background.rs` has **exactly 17** `unwrap_or_log` calls, and they are **exactly
+the 17 test sites this phase converts**. `with_sessions` handles poison
+internally, so after the conversion the count is **0** and
+`use crate::util::UnpoisonExt;` (line 279, inside `mod tests`) is unused.
+
+**`cargo build` and `cargo clippy --all-targets` disagree about this**, which is
+what makes it hard to see:
+
+```
+cargo build                                        → 0 warnings
+cargo clippy --all-targets --all-features -D warnings
+  → error: unused import: `crate::util::UnpoisonExt`
+```
+
+A test-module import is invisible to a plain `cargo build` because the test cfg
+is not compiled. **This is the same trap that produced 04f's `hard_fail`.** Run
+**both** commands; treat clippy as authoritative.
+
+**So: delete `use crate::util::UnpoisonExt;` from `background.rs`.** That is the
+one and only import change this phase makes.
+
+Do **not** pipe gate commands through `tail`/`head` — `cargo clippy … | tail -20`
+exits with `tail`'s status, so a failing gate reads as passing. Run the command
+bare and check its exit code.
+
+### Imports — the other two files need no edit
+
+`ask.rs` and `session.rs` already have `with_sessions` in scope, and **their
+imports must not change.**
 
 - **`ask.rs`** imports by glob: `use crate::daemon::session::*;` and
   `use crate::daemon::utils::*;` (lines 7 and 9). Both `with_sessions` and
   `UnpoisonExt` arrive that way, so converting a site changes nothing about
   imports.
-- **`background.rs:11`** — `use crate::daemon::session::{SessionStore, with_sessions};`
-  already, and its `mod tests` does `use super::*;` (line 275).
 - **`session.rs`** *defines* `with_sessions`, and its `mod tests` does
   `use super::*;` (line 473).
 
-If you find yourself editing an import line in any of the three, **stop — you
+`background.rs` also already imports `with_sessions` at line 11
+(`use crate::daemon::session::{SessionStore, with_sessions};`) and its
+`mod tests` does `use super::*;` (line 275) — **that line stays.** The only
+import this phase touches anywhere is the `UnpoisonExt` deletion described
+above.
+
+If you find yourself editing any import line other than that one, **stop — you
 have gone off-spec.**
 
 ### ⭐ The worked example is in the same file, eleven times over
@@ -349,9 +383,13 @@ exactly this way, and the acceptance criterion pins their combined count at
 - [ ] `grep -cF "sessions.try_lock().is_ok()" src/daemon/session.rs` returns
       **2** — **not 1.** Both guard-release assertions survive untouched; see
       task 4.
-- [ ] `grep -c "UnpoisonExt" src/daemon/server/ask.rs` returns **0**;
-      `src/daemon/context/background.rs` returns **1**; `src/daemon/session.rs`
-      returns **1**. All three unchanged.
+- [ ] `grep -c "UnpoisonExt" src/daemon/server/ask.rs` returns **0** (unchanged)
+      and `src/daemon/session.rs` returns **1** (unchanged — still needed for
+      `with_sessions`'s own body at `:432`).
+- [ ] `grep -c "UnpoisonExt" src/daemon/context/background.rs` returns **0** —
+      **the import must be DELETED.** See § "`background.rs` loses its
+      `UnpoisonExt` import" below. This criterion was **corrected after the first
+      run**; it previously said 1, which is impossible.
 - [ ] `git diff --stat` shows **exactly three** `src/` files changed.
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
@@ -399,8 +437,11 @@ surface. The gates plus the three reasoning checks above are the verification.
 
 - [x] May edit `src/daemon/server/ask.rs`, `src/daemon/context/background.rs`,
       and `src/daemon/session.rs` — **test modules included.**
-- [ ] **No** import additions or deletions, in any file. All three already have
-      `with_sessions` in scope.
+- [x] **Must delete** `use crate::util::UnpoisonExt;` from
+      `src/daemon/context/background.rs` — it is unused once the 17 conversions
+      land, and `cargo clippy --all-targets` fails without the deletion.
+- [ ] **No other** import addition or deletion, in any file. `ask.rs` and
+      `session.rs` already have `with_sessions` in scope and must not change.
 - [ ] **No** new tests, no deleted tests, no renamed tests.
 - [ ] **No** edits to `session.rs:432` (the acquisition inside `with_sessions`)
       or `:443` (the doc comment the scan matches).
@@ -437,3 +478,49 @@ item scope, **read the lines directly above the insertion point first.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 23:00 (started)
+
+**Executor:** Claude (Anthropic)
+
+Converting the last 22 `sessions.lock()` acquisitions to `with_sessions`: 2 production sites in `ask.rs` and 20 test-module sites across `background.rs` (17) and `session.rs` (3).
+
+### Update — 2026-07-26 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** all 22 conversions are already correct on disk and the stall was
+caused by a contradiction in my spec, not by the executor — resume preserves the
+work and removes the contradiction, where a fresh re-dispatch would re-derive
+finished work against an already-green scan.
+
+### Notes for executor — 2026-07-26 (after run 1's `NoProgressStall`)
+
+**Your conversion work was correct and is still on disk. Do not redo it.**
+Verified independently:
+
+| Check | Result |
+|---|---|
+| `scan_all` — `ask.rs` / `background.rs` | `prod=0 test=0` both |
+| `scan_all` — `session.rs` | `prod=2 test=0` (the two intended survivors) |
+| `with_sessions(` — `ask.rs` / `background.rs` | 13 / 21 |
+| `.ok()?` in `ask.rs` | 0 — poison bail gone |
+| `.take()` at `ask.rs:686` | still inside the closure |
+| `sessions.try_lock().is_ok()` | 2 — both assertions intact |
+
+**The stall was my spec's fault.** It asserted
+`grep -c "UnpoisonExt" src/daemon/context/background.rs` must stay at **1** and
+forbade all import deletions. Both were wrong: `background.rs`'s 17
+`unwrap_or_log` calls *are* the 17 sites you converted, so the import is now
+unused and `cargo clippy --all-targets` fails on it. You spent ~60 read-only
+turns re-checking an impossible criterion. The criterion and the authorization
+are now corrected.
+
+**There is exactly one edit left:** delete `use crate::util::UnpoisonExt;` from
+`src/daemon/context/background.rs` (line 279, inside `mod tests`).
+
+Then run the four gates **bare, not piped through `tail`** — a piped command
+exits with `tail`'s status, so a failing gate reads as passing. Finish condition:
+
+- `cargo clippy --all-targets --all-features -- -D warnings` **exits 0**
+- `cargo test` reports **915** lib-unit tests — not 914, not 916
+- `grep -c "UnpoisonExt" src/daemon/context/background.rs` returns **0**

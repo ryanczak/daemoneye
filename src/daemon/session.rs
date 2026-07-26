@@ -1180,10 +1180,9 @@ mod tests {
         let idle = Instant::now()
             .checked_sub(std::time::Duration::from_secs(3600))
             .unwrap_or(Instant::now());
-        sessions
-            .lock()
-            .unwrap()
-            .insert("s1".to_string(), entry_with(idle));
+        with_sessions(&sessions, |store| {
+            store.insert("s1".to_string(), entry_with(idle));
+        });
 
         let now = Instant::now();
         let (_evicted, _active) =
@@ -1201,10 +1200,10 @@ mod tests {
             .unwrap_or(Instant::now());
         let active = Instant::now();
 
-        let mut store = sessions.lock().unwrap();
-        store.insert("idle".to_string(), entry_with(idle));
-        store.insert("active".to_string(), entry_with(active));
-        drop(store);
+        with_sessions(&sessions, |store| {
+            store.insert("idle".to_string(), entry_with(idle));
+            store.insert("active".to_string(), entry_with(active));
+        });
 
         let now = Instant::now();
         let (evicted, active_ids) =
@@ -1222,10 +1221,9 @@ mod tests {
     #[test]
     fn with_sessions_runs_closure_and_releases_lock() {
         let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
-        {
-            let mut store = sessions.lock().unwrap();
+        with_sessions(&sessions, |store| {
             store.insert("test".to_string(), entry_with(Instant::now()));
-        }
+        });
 
         let len = with_sessions(&sessions, |s| s.len());
         assert_eq!(len, 1, "closure return value should be passed through");

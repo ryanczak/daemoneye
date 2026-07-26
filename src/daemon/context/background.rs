@@ -276,7 +276,6 @@ mod tests {
     use crate::ai::Message;
     use crate::config::Config;
     use crate::daemon::session::SessionEntry;
-    use crate::util::UnpoisonExt;
     use std::collections::HashMap;
 
     /// RAII test-home guard: holds `TEST_HOME_LOCK`, points `HOME` at a fresh
@@ -382,14 +381,12 @@ mod tests {
         let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let session_id = "test-discard".to_string();
         let entry = make_test_entry();
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .insert(session_id.clone(), entry);
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
 
         // Simulate a snapshot with turn_count = 1, then bump to 2.
-        {
-            let mut store = sessions.lock().unwrap_or_log();
+        with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
             entry.turn_count = 1;
             entry.messages.push(Message {
@@ -399,15 +396,14 @@ mod tests {
                 tool_results: None,
                 turn: None,
             });
-        }
+        });
 
         // Take a snapshot (marks in-flight).
         let snapshot = try_snapshot(&session_id, &sessions).unwrap();
         assert_eq!(snapshot.turn_count, 1);
 
         // Simulate a new turn arriving — bump turn_count and msg_len.
-        {
-            let mut store = sessions.lock().unwrap_or_log();
+        with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
             entry.turn_count = 2;
             entry.messages.push(Message {
@@ -417,7 +413,7 @@ mod tests {
                 tool_results: None,
                 turn: None,
             });
-        }
+        });
 
         // Run compaction — should discard because turn_count changed.
         let config = Arc::new(Config::default());
@@ -425,11 +421,12 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify: compaction_in_flight is cleared, messages untouched.
-        let store = sessions.lock().unwrap_or_log();
-        let entry = store.get(&session_id).unwrap();
-        assert!(!entry.compaction_in_flight);
-        assert_eq!(entry.messages.len(), 2); // original 2 messages
-        assert!(entry.pending_compaction_notice.is_none());
+        with_sessions(&sessions, |store| {
+            let entry = store.get(&session_id).unwrap();
+            assert!(!entry.compaction_in_flight);
+            assert_eq!(entry.messages.len(), 2); // original 2 messages
+            assert!(entry.pending_compaction_notice.is_none());
+        });
     }
 
     #[tokio::test(start_paused = true)]
@@ -437,17 +434,15 @@ mod tests {
         let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
         let session_id = "test-in-flight".to_string();
         let entry = make_test_entry();
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .insert(session_id.clone(), entry);
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
 
         // Mark as in-flight.
-        {
-            let mut store = sessions.lock().unwrap_or_log();
+        with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
             entry.compaction_in_flight = true;
-        }
+        });
 
         // spawn_compaction should be a no-op (doesn't spawn a task).
         // We verify by checking that the in-flight flag is unchanged.
@@ -458,9 +453,10 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
         // Flag should still be true — no task touched it.
-        let store = sessions.lock().unwrap_or_log();
-        let entry = store.get(&session_id).unwrap();
-        assert!(entry.compaction_in_flight);
+        with_sessions(&sessions, |store| {
+            let entry = store.get(&session_id).unwrap();
+            assert!(entry.compaction_in_flight);
+        });
     }
 
     #[test]
@@ -471,24 +467,23 @@ mod tests {
         let session_id = "test-notice".to_string();
         let mut entry = make_test_entry();
         entry.pending_compaction_notice = Some("test notice".to_string());
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .insert(session_id.clone(), entry);
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
 
         // Drain the notice.
-        let notice = {
-            let mut store = sessions.lock().unwrap_or_log();
+        let notice = with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
             entry.pending_compaction_notice.take()
-        };
+        });
 
         assert_eq!(notice.as_deref(), Some("test notice"));
 
         // Verify the field is cleared.
-        let store = sessions.lock().unwrap_or_log();
-        let entry = store.get(&session_id).unwrap();
-        assert!(entry.pending_compaction_notice.is_none());
+        with_sessions(&sessions, |store| {
+            let entry = store.get(&session_id).unwrap();
+            assert!(entry.pending_compaction_notice.is_none());
+        });
     }
 
     #[tokio::test(start_paused = true)]
@@ -501,10 +496,9 @@ mod tests {
         let mut entry = make_test_entry();
         entry.messages = msgs.clone();
         entry.turn_count = 5;
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .insert(session_id.clone(), entry);
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
 
         let snapshot = CompactionSnapshot {
             session_id: session_id.clone(),
@@ -519,18 +513,19 @@ mod tests {
         let result = run_compaction(&snapshot, &sessions, &hermetic_config()).await;
         assert!(result.is_ok());
 
-        let store = sessions.lock().unwrap_or_log();
-        let entry = store.get(&session_id).unwrap();
-        assert!(!entry.compaction_in_flight, "in-flight flag cleared");
-        assert!(
-            entry.messages.len() < 32,
-            "history compacted, got {}",
-            entry.messages.len()
-        );
-        assert!(
-            entry.pending_compaction_notice.is_some(),
-            "notice queued for next turn"
-        );
+        with_sessions(&sessions, |store| {
+            let entry = store.get(&session_id).unwrap();
+            assert!(!entry.compaction_in_flight, "in-flight flag cleared");
+            assert!(
+                entry.messages.len() < 32,
+                "history compacted, got {}",
+                entry.messages.len()
+            );
+            assert!(
+                entry.pending_compaction_notice.is_some(),
+                "notice queued for next turn"
+            );
+        });
         let recorded = epochs::read_epochs(&session_id);
         assert_eq!(recorded.len(), 1, "exactly one epoch recorded");
         assert!(
@@ -549,10 +544,9 @@ mod tests {
         let mut entry = make_test_entry();
         entry.messages = msgs.clone();
         entry.turn_count = 5;
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .insert(session_id.clone(), entry);
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
 
         let snapshot = CompactionSnapshot {
             session_id: session_id.clone(),
@@ -569,13 +563,12 @@ mod tests {
 
         // Restore the entry so the staleness check would PASS — isolating the
         // idempotency guard as the sole reason a second epoch is not created.
-        {
-            let mut store = sessions.lock().unwrap_or_log();
+        with_sessions(&sessions, |store| {
             let e = store.get_mut(&session_id).unwrap();
             e.messages = msgs.clone();
             e.turn_count = 5;
             e.compaction_in_flight = false;
-        }
+        });
 
         // Second build over the same snapshot: the guard must skip it.
         run_compaction(&snapshot, &sessions, &config).await.unwrap();
@@ -596,10 +589,9 @@ mod tests {
         let mut entry = make_test_entry();
         entry.messages = msgs.clone();
         entry.turn_count = 5;
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .insert(session_id.clone(), entry);
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
 
         let snapshot = CompactionSnapshot {
             session_id: session_id.clone(),
@@ -611,12 +603,14 @@ mod tests {
 
         // Evict the entry before the swap. run_compaction builds the epoch on
         // the owned snapshot, then finds the entry gone at swap time.
-        sessions.lock().unwrap_or_log().remove(&session_id);
+        with_sessions(&sessions, |store| {
+            store.remove(&session_id);
+        });
 
         let result = run_compaction(&snapshot, &sessions, &hermetic_config()).await;
         assert!(result.is_ok(), "clean discard, no panic");
         assert!(
-            sessions.lock().unwrap_or_log().get(&session_id).is_none(),
+            with_sessions(&sessions, |store| store.get(&session_id).is_none()),
             "evicted entry stays gone"
         );
     }

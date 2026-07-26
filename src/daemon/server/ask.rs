@@ -516,11 +516,9 @@ where
     let last_snapshot_activity: u64 = session_id
         .as_ref()
         .and_then(|id| {
-            sessions
-                .lock()
-                .ok()?
-                .get(id)
-                .map(|e| e.last_snapshot_activity)
+            with_sessions(sessions, |store| {
+                store.get(id).map(|e| e.last_snapshot_activity)
+            })
         })
         .unwrap_or(0);
     let inject_snapshot =
@@ -683,11 +681,11 @@ where
     // task. Drained here at the top of the turn's response, alongside the
     // existing compaction notice above.
     let pending_notice: Option<String> = session_id.as_ref().and_then(|id| {
-        sessions
-            .lock()
-            .unwrap_or_log()
-            .get_mut(id)
-            .and_then(|e| e.pending_compaction_notice.take())
+        with_sessions(sessions, |store| {
+            store
+                .get_mut(id)
+                .and_then(|e| e.pending_compaction_notice.take())
+        })
     });
     if let Some(notice) = pending_notice {
         send_response_split(tx, Response::SystemMsg(notice)).await?;
