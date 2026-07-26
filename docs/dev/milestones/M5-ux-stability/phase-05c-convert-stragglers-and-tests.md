@@ -1,7 +1,7 @@
 # Phase 05c: Convert the Last Stragglers and Every Test-Module Acquisition
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05b (last blocking work removed) — `done`
 **Estimated diff:** ~170 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -642,3 +642,76 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d4321da25bad649f51e234766ac408574956adfb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 `hard_fail` (`NoProgressStall`, 123 turns), resolved by resume
+  (20 turns). No bug filed — the failure was a spec defect, not executor work.
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. All 22 conversions landed in run 1 exactly as
+  specified; run 2 added only the one-line import deletion.
+- **Calibration:** two threads, one now a confirmed trend.
+
+**The `hard_fail` was my spec's fault, and it is worth recording precisely.** The
+spec asserted `grep -c "UnpoisonExt" src/daemon/context/background.rs` must stay
+at **1** and forbade all import deletions. Both were impossible: `background.rs`'s
+17 `unwrap_or_log` calls **are** the 17 sites the phase converts, so the import is
+necessarily unused afterwards and `cargo clippy --all-targets` fails on it. The
+executor completed every conversion correctly, then spent ~60 read-only turns
+re-checking an unsatisfiable criterion (varying `sed` ranges enough to slip past
+the identical-call governor) until `NoProgressStall` fired. It was right and the
+document was wrong.
+
+**Resume was the correct lever** — the work was on disk and correct, and the stall
+had a single removable cause. A fresh re-dispatch would have re-derived finished
+work against an already-green scan, which is how 05a's run 2 produced a false
+completion.
+
+**Verified by reading, not counting:**
+
+- **Task 1's poison bail is gone.** `ask.rs:519` no longer carries `.ok()?`; on a
+  poisoned mutex the value is now recovered and logged rather than silently
+  becoming `0` and forcing a snapshot injection.
+- **Task 2's `.take()` is still inside the closure**, preserving
+  delivery-exactly-once for the compaction notice.
+- **Both `try_lock` assertions survive** (`:1193`, `:1233`) with only their setup
+  blocks converted. These are the only things proving guard release, and one sits
+  eleven lines below a converted site.
+- **No test was added, removed or renamed** — `git diff` shows no `#[test]` /
+  `#[tokio::test]` attribute changes, and the count held at 915.
+- **No `unsafe` was added.** The eight hits in these files are pre-existing
+  `std::env::set_var("HOME", …)` calls that Rust 2024 requires to be `unsafe`.
+
+**Gates re-run bare, with exit codes captured** rather than piped through `tail`:
+fmt 0, build 0 (zero warnings), clippy 0, test 0 with **915** lib-unit tests.
+
+### The lock work is now structurally complete
+
+A whole-tree sweep finds acquisitions in **one file only**:
+
+| File:line | What it is |
+|---|---|
+| `session.rs:432` | `with_sessions` itself — the one real acquisition, by design |
+| `session.rs:443` | **not code** — a `cleanup_pass` doc-comment line the text-based scan matches |
+
+Everything else in the daemon, production and test, goes through `with_sessions`.
+That is exactly the precondition 05d needs: the newtype will either compile or
+name precisely what was missed.
+
+### Calibration
+
+1. **Build-vs-clippy disagreement on test-module imports — 2nd occurrence, now a
+   trend.** 04f's `hard_fail` and 05c's have the same root: `cargo build` reports
+   zero warnings while `cargo clippy --all-targets` errors on an unused
+   test-module import, because a plain build never compiles the test cfg. Both
+   cost a full run. **Candidate fold:** a phase that converts *every* use of a
+   trait must state what happens to its import, and must not assert an import
+   count without checking whether the conversions exhaust its uses. Awaiting PE
+   sign-off.
+2. **Piping gate commands through `tail` masks the exit status — 1st occurrence.**
+   Run 1 executed `cargo clippy … 2>&1 | tail -20`, which exits with `tail`'s
+   status, so a hard failure read as a pass. This turned a loud, immediately
+   actionable error into a silent one and is part of why the run stalled instead
+   of failing fast. Data, not yet a trend; if it recurs the fold belongs in the
+   executor contract.
