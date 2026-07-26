@@ -1,7 +1,7 @@
 # Phase 04j: Convert `stream.rs` + `hook.rs` — the Conversion Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04i (`background/run.rs` + `respawn.rs`) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -709,3 +709,9 @@ think you need `unsafe` or a new dependency, **stop and report a blocker**.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 18:40 (started)
+
+**Executor:** model (phase-04j)
+
+Converted all 10 `sessions.lock()` sites to `with_sessions`: 8 in `stream.rs`, 2 in `hook.rs`. Each file retains exactly 1 raw acquisition (phase 05's restructure sites).

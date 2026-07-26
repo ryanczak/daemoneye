@@ -1,4 +1,5 @@
 use crate::daemon::server::is_valid_pane_id;
+use crate::daemon::session::with_sessions;
 use crate::daemon::utils::send_response_split;
 use crate::ipc::Response;
 use crate::tmux::cache::SessionCache;
@@ -160,14 +161,14 @@ pub async fn handle_notify_client_attached<W>(
 where
     W: AsyncWriteExt + Unpin,
 {
-    if let Ok(mut store) = sessions.lock() {
+    with_sessions(&sessions, |store| {
         for entry in store.values_mut() {
             if entry.tmux_session == session_name {
                 entry.last_detach = None;
                 entry.detach_time_utc = None;
             }
         }
-    }
+    });
     send_response_split(tx, Response::Ok).await?;
     Ok(())
 }
@@ -183,7 +184,7 @@ where
 {
     let now = Instant::now();
     let now_utc = chrono::Utc::now();
-    if let Ok(mut store) = sessions.lock() {
+    with_sessions(&sessions, |store| {
         for entry in store.values_mut() {
             if entry.tmux_session == session_name {
                 entry.last_detach = Some(now);
@@ -191,7 +192,7 @@ where
                 entry.messages_at_detach = entry.messages.len();
             }
         }
-    }
+    });
     send_response_split(tx, Response::Ok).await?;
     Ok(())
 }

@@ -3,12 +3,13 @@ use crate::config::{Config, PricingSource};
 use crate::cost::{CostAttribution, CostRecord, compute_cost};
 use crate::daemon::auto_name;
 use crate::daemon::executor::{self, SessionCtx};
-use crate::daemon::session::{SessionStore, append_session_message, write_session_file};
+use crate::daemon::session::{
+    SessionStore, append_session_message, with_sessions, write_session_file,
+};
 use crate::daemon::utils::{log_event, send_response_split};
 use crate::ipc::Response;
 use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
-use crate::util::UnpoisonExt;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -104,10 +105,11 @@ where
         let loaded_tools: Vec<String> = session_id
             .as_deref()
             .and_then(|sid| {
-                let store = sessions.lock().unwrap_or_log();
-                store
-                    .get(sid)
-                    .map(|e| e.loaded_tools.iter().cloned().collect())
+                with_sessions(&sessions, |store| {
+                    store
+                        .get(sid)
+                        .map(|e| e.loaded_tools.iter().cloned().collect())
+                })
             })
             .unwrap_or_default();
 
@@ -658,18 +660,19 @@ where
                         );
 
                         // Accumulate cost on the session entry.
-                        if let Some(ref id) = session_id
-                            && let Ok(mut store) = sessions.lock()
-                            && let Some(entry) = store.get_mut(id)
-                        {
-                            entry.cost_usd += record.cost.total_cost_usd;
-                            *entry
-                                .cost_by_agent
-                                .entry(record.agent_name.clone())
-                                .or_insert(0.0) += record.cost.total_cost_usd;
-                            if record.pricing_source == PricingSource::Unknown {
-                                entry.has_untracked_cost = true;
-                            }
+                        if let Some(ref id) = session_id {
+                            with_sessions(&sessions, |store| {
+                                if let Some(entry) = store.get_mut(id) {
+                                    entry.cost_usd += record.cost.total_cost_usd;
+                                    *entry
+                                        .cost_by_agent
+                                        .entry(record.agent_name.clone())
+                                        .or_insert(0.0) += record.cost.total_cost_usd;
+                                    if record.pricing_source == PricingSource::Unknown {
+                                        entry.has_untracked_cost = true;
+                                    }
+                                }
+                            });
                         }
 
                         log_event(
@@ -686,22 +689,22 @@ where
 
                         // Persist the conversation for the next turn.
                         if let Some(ref id) = session_id {
-                            if let Ok(mut store) = sessions.lock()
-                                && let Some(entry) = store.get_mut(id)
-                            {
-                                entry.messages = messages.clone();
-                                entry.last_accessed = Instant::now();
-                                entry.last_prompt_tokens = usage.input_tokens
-                                    + usage.cache_read_tokens
-                                    + usage.cache_write_tokens;
-                                crate::daemon::context::estimate::update_token_scale(
-                                    entry, &messages,
-                                );
-                                entry.dirty = true;
-                                if chat_pane.is_some() {
-                                    entry.chat_pane = chat_pane.clone();
+                            with_sessions(&sessions, |store| {
+                                if let Some(entry) = store.get_mut(id) {
+                                    entry.messages = messages.clone();
+                                    entry.last_accessed = Instant::now();
+                                    entry.last_prompt_tokens = usage.input_tokens
+                                        + usage.cache_read_tokens
+                                        + usage.cache_write_tokens;
+                                    crate::daemon::context::estimate::update_token_scale(
+                                        entry, &messages,
+                                    );
+                                    entry.dirty = true;
+                                    if chat_pane.is_some() {
+                                        entry.chat_pane = chat_pane.clone();
+                                    }
                                 }
-                            }
+                            });
                             if needs_compaction {
                                 // Archive invariant: every message in the pre-compaction vec
                                 // was appended to the archive when first persisted, so the
@@ -748,18 +751,19 @@ where
                             && config.sessions.auto_name_enabled
                             && config.sessions.auto_name_turn_threshold > 0
                         {
-                            let should_suggest = if let Ok(mut store) = sessions.lock()
-                                && let Some(ref id) = session_id
-                                && let Some(entry) = store.get_mut(id)
-                                && entry.saved_name.is_none()
-                                && !entry.auto_name_suggested
-                                && entry.turn_count == config.sessions.auto_name_turn_threshold
-                            {
-                                entry.auto_name_suggested = true;
-                                true
-                            } else {
-                                false
-                            };
+                            let should_suggest = with_sessions(&sessions, |store| {
+                                if let Some(ref id) = session_id
+                                    && let Some(entry) = store.get_mut(id)
+                                    && entry.saved_name.is_none()
+                                    && !entry.auto_name_suggested
+                                    && entry.turn_count == config.sessions.auto_name_turn_threshold
+                                {
+                                    entry.auto_name_suggested = true;
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
                             if should_suggest
                                 && let Some((name, desc)) =
                                     auto_name::suggest_session_name(&messages, config).await
@@ -824,18 +828,19 @@ where
                     );
 
                     // Accumulate cost on the session entry.
-                    if let Some(ref id) = session_id
-                        && let Ok(mut store) = sessions.lock()
-                        && let Some(entry) = store.get_mut(id)
-                    {
-                        entry.cost_usd += record.cost.total_cost_usd;
-                        *entry
-                            .cost_by_agent
-                            .entry(record.agent_name.clone())
-                            .or_insert(0.0) += record.cost.total_cost_usd;
-                        if record.pricing_source == PricingSource::Unknown {
-                            entry.has_untracked_cost = true;
-                        }
+                    if let Some(ref id) = session_id {
+                        with_sessions(&sessions, |store| {
+                            if let Some(entry) = store.get_mut(id) {
+                                entry.cost_usd += record.cost.total_cost_usd;
+                                *entry
+                                    .cost_by_agent
+                                    .entry(record.agent_name.clone())
+                                    .or_insert(0.0) += record.cost.total_cost_usd;
+                                if record.pricing_source == PricingSource::Unknown {
+                                    entry.has_untracked_cost = true;
+                                }
+                            }
+                        });
                     }
 
                     log_event(
@@ -852,13 +857,17 @@ where
 
                     // Update session token tracking so the budget line in the next
                     // prompt reflects the actual context size of this turn.
-                    if let Some(ref id) = session_id
-                        && let Ok(mut store) = sessions.lock()
-                        && let Some(entry) = store.get_mut(id)
-                    {
-                        entry.last_prompt_tokens =
-                            usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens;
-                        crate::daemon::context::estimate::update_token_scale(entry, &messages);
+                    if let Some(ref id) = session_id {
+                        with_sessions(&sessions, |store| {
+                            if let Some(entry) = store.get_mut(id) {
+                                entry.last_prompt_tokens = usage.input_tokens
+                                    + usage.cache_read_tokens
+                                    + usage.cache_write_tokens;
+                                crate::daemon::context::estimate::update_token_scale(
+                                    entry, &messages,
+                                );
+                            }
+                        });
                     }
 
                     // Push one assistant message listing all tool calls.
@@ -893,11 +902,9 @@ where
                                 let session_tool_count = session_id
                                     .as_ref()
                                     .and_then(|id| {
-                                        sessions
-                                            .lock()
-                                            .ok()?
-                                            .get(id)
-                                            .map(|e| e.tool_calls_this_session)
+                                        with_sessions(&sessions, |store| {
+                                            store.get(id).map(|e| e.tool_calls_this_session)
+                                        })
                                     })
                                     .unwrap_or(0);
                                 if session_tool_count >= session_limit {
@@ -1009,10 +1016,12 @@ where
                                 // Bump per-session counter for non-approval-gated tools.
                                 if !APPROVAL_GATED.contains(&tool_name)
                                     && let Some(id) = &session_id
-                                    && let Ok(mut store) = sessions.lock()
-                                    && let Some(entry) = store.get_mut(id)
                                 {
-                                    entry.tool_calls_this_session += 1;
+                                    with_sessions(&sessions, |store| {
+                                        if let Some(entry) = store.get_mut(id) {
+                                            entry.tool_calls_this_session += 1;
+                                        }
+                                    });
                                 }
                             }
                             executor::ToolCallOutcome::SpawnGhostSession {
