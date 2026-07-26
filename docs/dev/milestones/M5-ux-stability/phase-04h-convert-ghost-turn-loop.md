@@ -1,7 +1,7 @@
 # Phase 04h: Convert the Ghost Turn Loop — `start_session` + `do_ghost_turn`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04g (ghost exit paths converted) — `done`
 **Estimated diff:** ~140 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -728,3 +728,78 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** aca7dc2e5d291bc2bb45aed0e620915caa44004f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside existing code paths; no CLI surface, no config key.
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (84 turns)
+- **Scope deviations:** none. Only `ghost.rs` touched.
+- **Calibration:** none on the executor. **`ghost.rs` is now fully converted**,
+  and this phase fixed a live mechanism-A defect.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit / 0 failed (unchanged); 27 integration / 2 ignored
+```
+
+**Acceptance criteria:**
+
+| Check | Result |
+|---|---|
+| `scan_locks.py src/daemon/ghost.rs` | **0** ✓ |
+| `with_sessions(` in `ghost.rs` | **11** ✓ (3 from 04g + 8) |
+| `grep -c "sessions\.lock()"` in `ghost.rs` | **0** ✓ |
+| `briefing.rs` / `context/background.rs` / `executor/mod.rs` | **0 / 0 / 0** ✓ |
+| `append_session_message` occurrences | **4** ✓ — import (10), the unrelated `start_session` call (211), task 4's hoisted call (473), task 8's pre-existing call (1006) |
+| `UnpoisonExt` / `unwrap_or_log` in `ghost.rs` | **0** ✓ — import deleted, the predicted outcome |
+| `pub type SessionStore` still an alias | ✓ |
+| lib-unit tests | **915**, unchanged ✓ |
+
+**All ten spec tasks implemented as written.** The four things a count cannot
+prove, each verified by reading the code:
+
+- **Task 4 — the mechanism-A fix is real and conditionality survived.** The
+  closure returns a `pushed` bool; `append_session_message` sits *after* `});`,
+  gated on `if pushed`. So the file write no longer happens under the global
+  session lock, **and** a vanished session still appends nothing. This was the
+  phase's only silent-failure risk — an unconditional hoist would have kept every
+  gate green while appending for entries that no longer exist.
+- **Task 5's `break` is outside its closure**, in the loop body after `else {`.
+- **Task 7's `break` is still outside**, sitting after `});` in the event-loop
+  match arm — the placement flagged as easy to swallow because it abuts the
+  closing brace.
+- **Task 8's ordering is unchanged** — `append_session_message` before the
+  closure, since `assistant_msg` moves into it.
+
+`bail!("Ghost Shell '{}' not found", …)` is byte-identical by literal `grep -cF`
+against the parent. `write_session_file` (task 6) remains outside its closure. No
+forbidden idioms in the added lines.
+
+**One correct deviation from the spec's literal text:** task 1 uses
+`with_sessions(&sessions, …)` rather than `with_sessions(sessions, …)`, because in
+`start_session_with_config` the parameter is an owned `SessionStore` rather than a
+reference. The spec's snippet was written from the `do_ghost_turn` convention. The
+executor adapted correctly instead of copying the snippet verbatim.
+
+**Third consecutive phase where the corrected drafting practices held.** The Test
+plan named no discriminating test and the Update Log made no coverage claim —
+it reported the integration tests run and passed, plus the two reasoning checks
+(task 4 conditionality via the `pushed` flag; task 2's `Err` path). Nothing needed
+refuting. Note the run also confirmed the value of re-deriving line numbers: all
+eight had shifted by 3 after 04g, and the Pre-flight count check was what would
+have caught it had they not been re-derived.
+
+**Milestone position:** with `ghost.rs` done, the `executor/` subtree,
+`context/background.rs`, `briefing.rs`, `server/ask.rs` (bar two known
+stragglers), and `server/handlers.rs` are all converted. Remaining conversions:
+`background/*` (9), `stream.rs` (9) + `hook.rs` (3), then the newtype.

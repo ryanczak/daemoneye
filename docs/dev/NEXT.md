@@ -1,10 +1,70 @@
 # NEXT
 
-**Active phase: M5 phase-04h — convert-ghost-turn-loop** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04h-convert-ghost-turn-loop.md`.
+**No active phase.** 04h is `done` (`approved_first_try`) and **`ghost.rs` is
+fully converted**. The next conversion phase (04i — convert-background-windows,
+`background/*`, 9 sites) is **not yet drafted**. Draft it with
+`/rexymcp:architect next`.
 
-Dispatch with `/rexymcp:dispatch phase-04h-convert-ghost-turn-loop`.
+---
+
+## M5 phase-04h — convert-ghost-turn-loop is `done`
+
+(2026-07-26, `approved_first_try`, no bounces, 84 turns, commit `aca7dc2`.)
+
+All 8 remaining sites in `ghost.rs` converted — **11 `with_sessions` calls, 0 raw
+acquisitions**, `UnpoisonExt` import deleted exactly as predicted. Gates green,
+915 tests unchanged, every count exact.
+
+**This phase also fixed a live mechanism-A defect**, not just converted syntax:
+`append_session_message` was writing two files *inside* the critical section. It
+now runs after the closure, gated on a `pushed` flag so a vanished session still
+appends nothing. That conditionality was the phase's only silent-failure risk — an
+unconditional hoist would have kept every gate green while appending for entries
+that no longer exist. Verified by reading, not inferred.
+
+Also verified by reading (counts cannot prove these): both `break` statements
+stayed outside their closures — including task 7's, which abuts the closing brace
+and was flagged as easy to swallow — task 8's `append_session_message` ordering is
+unchanged, `write_session_file` stayed outside, and the `bail!` string is
+byte-identical by literal `grep -cF`.
+
+**One correct deviation:** task 1 uses `with_sessions(&sessions, …)` because
+`start_session_with_config` takes an owned `SessionStore`, not a reference. My
+snippet was written from the `do_ghost_turn` convention; the executor adapted
+rather than copying it verbatim. Worth noting as evidence that quoted snippets are
+read as intent, not transcribed — but also that a snippet whose receiver type
+differs from its destination is a small drafting flaw I should catch.
+
+### Where the conversion stands
+
+Converted: `server/handlers.rs`, `server/ask.rs` (bar two known stragglers),
+`executor/` (whole subtree), `context/background.rs`, `briefing.rs`, `ghost.rs`.
+
+Remaining: **04i** `background/{run,respawn,helpers,gc}.rs` (9) → **04j**
+`stream.rs` (9, incl. one multi-line at `:896`) + `hook.rs` (3) = 12 → **04k**
+newtype + enforce.
+
+### Calibration — four threads, none folded
+
+1. **Count criteria (4th occurrence, 3 clean confirmations).** 04h's counts all
+   came out exact; the pre-dispatch validation caught two draft errors
+   (`append_session_message` is 4 not 3; 7 `unwrap_or_log` calls not 8).
+2. **Specs asserting test coverage (3rd occurrence, 2 clean confirmations).**
+   Third consecutive phase where the Test plan named no discriminator and the
+   Update Log made no coverage claim — nothing to refute at review.
+3. **Fixture defaults neutering assertions (1st, from 04f).**
+4. **Lock/HOME test hygiene (3 deep).** Still riding on phase 05.
+
+**All await your sign-off; no `WORKFLOW.md` or `STANDARDS.md` change made.**
+
+**04k still needs re-scoping when drafted** — the 13 `Arc::clone` sites, plus 13
+test-module acquisitions, plus the two unassigned `ask.rs` multi-line stragglers,
+plus 04f's coverage follow-up (three vacuous `compaction_in_flight` assertions to
+make real, mutation-checked). It may need its own split.
+
+---
+
+## Superseded: the 04h dispatch note
 
 Converts the last **8** sites in `ghost.rs` — 1 in `start_session_with_config`,
 7 in `do_ghost_turn` — finishing the file. **Finish condition: 11
