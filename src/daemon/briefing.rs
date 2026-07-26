@@ -2,8 +2,7 @@ use anyhow::Result;
 
 use crate::ai::{AiEvent, Message, make_client};
 use crate::config::Config;
-use crate::daemon::session::SessionStore;
-use crate::util::UnpoisonExt;
+use crate::daemon::session::{SessionStore, with_sessions};
 
 /// Maximum number of recent messages to include in the briefing prompt.
 const MAX_BRIEFING_MESSAGES: usize = 50;
@@ -18,17 +17,16 @@ pub async fn generate_and_save_briefing(
     sessions: &SessionStore,
     config: &Config,
 ) {
-    let (messages, model_key) = {
-        let store = sessions.lock().unwrap_or_log();
-        let Some(entry) = store.get(session_id) else {
-            log::warn!(
-                "Briefing: session '{}' not found for agent '{}'",
-                session_id,
-                agent_name
-            );
-            return;
-        };
-        (entry.messages.clone(), entry.active_model.clone())
+    let Some((messages, model_key)) = with_sessions(sessions, |store| {
+        let entry = store.get(session_id)?;
+        Some((entry.messages.clone(), entry.active_model.clone()))
+    }) else {
+        log::warn!(
+            "Briefing: session '{}' not found for agent '{}'",
+            session_id,
+            agent_name
+        );
+        return;
     };
 
     if messages.is_empty() {

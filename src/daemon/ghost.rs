@@ -8,7 +8,7 @@ use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, PricingSource, load_named_prompt};
 use crate::cost::{CostRecord, compute_cost};
 use crate::daemon::session::{
-    SessionEntry, SessionStore, append_session_message, write_session_file,
+    SessionEntry, SessionStore, append_session_message, with_sessions, write_session_file,
 };
 use crate::daemon::utils::daemon_hostname;
 use crate::runbook::Runbook;
@@ -28,28 +28,26 @@ async fn write_mailbox_on_exit(
     sessions: &SessionStore,
     error: Option<&anyhow::Error>,
 ) {
-    let (agent_name, ghost_config) = {
-        let store = sessions.lock().unwrap_or_log();
-        let Some(entry) = store.get(session_id) else {
-            return;
-        };
+    let Some((agent_name, ghost_config)) = with_sessions(sessions, |store| {
+        let entry = store.get(session_id)?;
         let gc = entry.ghost_config.clone();
         let agent = gc.as_ref().and_then(|g| g.agent.clone());
-        (agent, gc)
+        Some((agent, gc))
+    }) else {
+        return;
     };
     let Some(agent_name) = agent_name else {
         return;
     };
 
-    let last_content = {
-        let store = sessions.lock().unwrap_or_log();
+    let last_content = with_sessions(sessions, |store| {
         store
             .get(session_id)
             .and_then(|e| e.messages.last())
             .filter(|m| m.role == "assistant")
             .map(|m| m.content.clone())
             .unwrap_or_default()
-    };
+    });
 
     let (status, err_text, result_text) = if let Some(e) = error {
         (
@@ -81,8 +79,7 @@ async fn write_mailbox_on_exit(
     let spawn_depth = ghost_config.as_ref().map(|g| g.spawn_depth).unwrap_or(0);
     let parent_job_id = ghost_config.as_ref().and_then(|g| g.parent_job_id.clone());
 
-    let task_desc = {
-        let store = sessions.lock().unwrap_or_log();
+    let task_desc = with_sessions(sessions, |store| {
         store
             .get(session_id)
             .and_then(|e| e.ghost_task_message.clone())
@@ -96,7 +93,7 @@ async fn write_mailbox_on_exit(
                     session_id, spawn_depth
                 ),
             })
-    };
+    });
 
     let mailbox_entry = crate::agents::mailbox::MailboxResult {
         job_id: session_id.to_string(),

@@ -1,7 +1,7 @@
 # Phase 04g: Convert the Ghost Exit Paths — `write_mailbox_on_exit` + `briefing.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04f (`context/background.rs` converted) — `done`
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -428,3 +428,10 @@ you think you need `unsafe` or a new dependency, **stop and report a blocker**.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 16:29 (started)
+
+**Executor:** Claude (sonnet-4-5-20250514)
+
+Converting 4 `sessions.lock()` sites on ghost-shell exit path to `with_sessions`:
+3 in `write_mailbox_on_exit` (ghost.rs) + 1 in `generate_and_save_briefing` (briefing.rs).
