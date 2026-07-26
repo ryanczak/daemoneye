@@ -59,9 +59,10 @@ split) and the two TUI defect specs every phase references.
 | 02 | cleanup-deadlock ([phase-02-cleanup-deadlock.md](phase-02-cleanup-deadlock.md)) | done (approved_first_try) |
 | 03 | echo-user-input ([phase-03-echo-user-input.md](phase-03-echo-user-input.md)) | done (approved_first_try) |
 | 04a | with-sessions-accessor ([phase-04a-with-sessions-accessor.md](phase-04a-with-sessions-accessor.md)) | done (approved_first_try) |
-| 04b | convert-lock-sites-1 (handlers.rs + ask.rs)                            | todo   |
-| 04c | convert-lock-sites-2 (background.rs + ghost.rs + tail)                 | todo   |
-| 04d | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)       | todo   |
+| 04b | convert-handlers ([phase-04b-convert-handlers.md](phase-04b-convert-handlers.md)) | todo |
+| 04c | convert-ask (13 sites; `lock().ok()?` chains need per-site care)        | todo   |
+| 04d | convert-tail (background.rs + ghost.rs + executor + stream, ~60 sites — likely splits further) | todo |
+| 04e | sessionstore-newtype (enforce; converts the 13 Arc::clone sites)        | todo   |
 | 05 | unlock-blocking-paths (webhook/process.rs — mechanism A)                | todo   |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
@@ -149,3 +150,24 @@ The re-entrancy assertion inside the accessor is deliberately **always on**, not
 `debug_assert`: re-entrancy here is never legitimate, `supervise` restarts a
 panicked task, and the deadlock it replaces took the daemon down for 12 hours.
 A `debug_assert` would be compiled out of exactly the build where it matters.
+
+**04b/04c split made while drafting (2026-07-25).** The original plan paired
+`handlers.rs` and `ask.rs` in one conversion phase. Surveying them showed they
+are not the same job:
+
+- `handlers.rs` — 15 sites, all variations on
+  `if let Ok(store) = sessions.lock() { … }`. Uniform and mechanical; the
+  compiler verifies each one.
+- `ask.rs` — 13 sites, several of the form `sessions.lock().ok()?` inside
+  `.and_then(…)` closures. Wrapping those in `with_sessions` changes what `?`
+  returns from, so each needs individual reasoning rather than pattern
+  substitution.
+
+Mixing a mechanical sweep with a set of judgement calls in one phase is how a
+clean conversion turns into a bounce. They are now 04b and 04c.
+
+The tail (04d) is ~60 sites across `background.rs`, `ghost.rs`,
+`executor/mod.rs`, and `stream.rs`. That is very likely too large for one phase
+and will be split when it is drafted — deliberately not pre-planned now, since
+04b and 04c will show how fast this executor gets through mechanical conversion
+and that is the number worth sizing against.

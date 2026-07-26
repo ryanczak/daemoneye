@@ -1,8 +1,37 @@
 # NEXT
 
-**Active phase: none.** M5 phase-04a is `done`; phase 04b
-(convert-lock-sites-1) is **not yet drafted**. Draft it with
-`/rexymcp:architect next`.
+**Active phase: M5 phase-04b — convert-handlers** (`todo`, drafted 2026-07-25).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04b-convert-handlers.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04b-convert-handlers`.
+
+Converts all 15 `sessions.lock()` sites in `src/daemon/server/handlers.rs` to
+the phase-04a `with_sessions` accessor. Behavior-preserving and mechanical —
+three quoted before/after shapes cover every site, and `with_sessions` is
+already in scope there via the existing `use crate::daemon::session::*;` glob,
+so no import churn.
+
+Also carries the fast-failing depth test from the 04a review:
+`with_sessions_sets_depth_inside_closure` asserts the thread-local depth reads 1
+*inside* the closure, so a `let _depth` → `let _` regression fails instantly
+instead of deadlocking the way the existing re-entrancy test does.
+
+Finish condition: `cargo test --lib` reports 914 (913 + exactly 1). The
+conversions add no tests.
+
+**Plan re-split while drafting.** 04b was originally `handlers.rs` + `ask.rs`.
+The survey showed they are different jobs: `handlers.rs` is 15 uniform
+`if let Ok(store) = sessions.lock()` shapes, while `ask.rs` has
+`sessions.lock().ok()?` chains inside `.and_then(…)` closures where wrapping
+changes what `?` returns from. `ask.rs` is now its own phase (04c), the tail is
+04d, and the newtype moves to 04e. Rationale in
+`docs/design/daemon-stalls.md` § 3.4.
+
+One behavior change is intended and called out in the spec: the `else { None }`
+poison branches disappear, because `with_sessions` recovers via
+`.unwrap_or_log()` rather than silently skipping the work. That is what
+`CLAUDE.md` § "Important Invariants" already requires; these `if let Ok(…)` sites
+were the stragglers.
 
 **M5 phase-04a — with-sessions-accessor is `done`** (2026-07-25,
 `approved_first_try`, 50 turns). `with_sessions(&store, |map| …)` now exists in

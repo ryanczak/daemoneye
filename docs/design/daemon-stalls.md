@@ -449,13 +449,23 @@ Revised sequence:
   the re-entrancy assertion, and convert only the two live sites
   (`session.rs` `cleanup_pass`, `mod.rs` shutdown sweep). Tiny; establishes the
   pattern and the guard with a worked example later phases quote.
-- **04b/04c** — mechanical conversion of the remaining sites by file group,
-  largest first (`handlers.rs` + `ask.rs`, then `background.rs` + `ghost.rs` +
-  the tail). The type is unchanged throughout, so each group compiles alone.
-- **04d** — flip `SessionStore` to the newtype with a private inner, convert the
+- **04b** — `handlers.rs` (15 sites). Uniform
+  `if let Ok(store) = sessions.lock() { … }` shapes; mechanical.
+- **04c** — `ask.rs` (13 sites). Split out from 04b during drafting: several are
+  `sessions.lock().ok()?` inside `.and_then(…)` closures, where wrapping in
+  `with_sessions` changes what `?` returns from. Judgement per site, not pattern
+  substitution — mixing these with a mechanical sweep is how a clean conversion
+  becomes a bounce.
+- **04d** — the tail (`background.rs`, `ghost.rs`, `executor/mod.rs`,
+  `stream.rs`, ~60 sites). Almost certainly splits further; size it against the
+  observed throughput of 04b/04c rather than guessing now.
+- **04e** — flip `SessionStore` to the newtype with a private inner, convert the
   13 `Arc::clone` sites to `.clone()`, and delete the raw path. The compiler
   enumerates any straggler. Only at this point is the invariant *enforced* rather
   than merely available.
+
+Throughout 04b–04d the type stays a plain alias, so each group compiles and ships
+independently and an unconverted file is never broken by a converted one.
 - Mechanisms A and B from § 1.3–1.4 (blocking I/O and tmux subprocesses under
   the lock, in `webhook/process.rs` and the tmux layer) stay their own phases —
   the accessor does not fix them, it only makes them easier to see.
