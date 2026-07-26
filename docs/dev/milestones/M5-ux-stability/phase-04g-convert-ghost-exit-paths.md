@@ -1,7 +1,7 @@
 # Phase 04g: Convert the Ghost Exit Paths — `write_mailbox_on_exit` + `briefing.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04f (`context/background.rs` converted) — `done`
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -435,3 +435,126 @@ you think you need `unsafe` or a new dependency, **stop and report a blocker**.
 
 Converting 4 `sessions.lock()` sites on ghost-shell exit path to `with_sessions`:
 3 in `write_mailbox_on_exit` (ghost.rs) + 1 in `generate_and_save_briefing` (briefing.rs).
+
+### Update — ts=1785083858730 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified. Here is the summary:
+
+**Summary:** Converted 4 `sessions.lock()` sites on the ghost-shell exit path to `with_sessions`: 3 in `write_mailbox_on_exit` (`ghost.rs`) and 1 in `generate_and_save_briefing` (`briefing.rs`). Sites 1 and 4 (which contain early returns) use `let-else` with `Option` return from the closure. Sites 2 and 3 are mechanical wraps. The `UnpoisonExt` import was already inside `mod tests` in `briefing.rs` — no top-level removal needed.
+
+**Verification:** `ghost.rs` has 8 raw acquisitions remaining (turn loop untouched), `briefing.rs` has 0. `with_sessions` counts: 3 in `ghost.rs`, 1 in `briefing.rs`. All 915 lib-unit tests pass. Targeted tests (`g5_mailbox_write_and_read`, `g4_briefing*`, `g5_child_inherits_depth_and_parent`, `g1_spawn_ghost_shell_with_agent_merge`) all pass. `write_mailbox_on_exit` still returns early for both distinct miss cases (entry absent vs. entry present but `agent` is `None`). `cargo build`, `cargo clippy`, and `cargo fmt` all clean. Working tree is clean.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ ok
+test webhook::process::tests::ghost_trigger_yes_detected ... ok
+test webhook::process::tests::severity_rank_case_insensitive ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test memory::tests::migrate_namespace_skips_already_migrated ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+
+test result: ok. 915 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.37s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_session_info_round_trip ... ok
+test event_log_append_read ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_masking_applied ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-04g-convert-ghost-exit-paths.md` — +8 -1
+- `src/daemon/briefing.rs` — +11 -13
+- `src/daemon/ghost.rs` — +10 -13
+
+**Commit:** 6a2c03590013c64e2e5dd8df560c1c54d584eaf1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
