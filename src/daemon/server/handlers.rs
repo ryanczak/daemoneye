@@ -54,11 +54,11 @@ where
 {
     let available = config.available_models();
     if available.contains(&model_name.as_str()) {
-        if let Ok(mut store) = sessions.lock()
-            && let Some(entry) = store.get_mut(&session_id)
-        {
-            entry.active_model = Some(model_name.clone());
-        }
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(&session_id) {
+                entry.active_model = Some(model_name.clone());
+            }
+        });
         send_response_split(tx, Response::ModelChanged { model: model_name }).await?;
     } else {
         let list = available.join(", ");
@@ -90,14 +90,15 @@ where
             (key.to_string(), model_id)
         })
         .collect();
-    let active = if let Ok(store) = sessions.lock()
-        && let Some(entry) = store.get(&session_id)
-        && let Some(ref m) = entry.active_model
-    {
-        m.clone()
-    } else {
-        "default".to_string()
-    };
+    let active = with_sessions(sessions, |store| {
+        if let Some(entry) = store.get(&session_id)
+            && let Some(ref m) = entry.active_model
+        {
+            m.clone()
+        } else {
+            "default".to_string()
+        }
+    });
     send_response_split(tx, Response::ModelList { models, active }).await?;
     Ok(())
 }
@@ -125,12 +126,12 @@ where
         .await?;
         return Ok(());
     }
-    if let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(&session_id)
-    {
-        entry.default_target_pane = Some(pane_id.clone());
-        crate::pane_prefs::save(&entry.tmux_session, &pane_id);
-    }
+    with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(&session_id) {
+            entry.default_target_pane = Some(pane_id.clone());
+            crate::pane_prefs::save(&entry.tmux_session, &pane_id);
+        }
+    });
     let (cmd, window) = {
         let panes = cache.panes.read().unwrap_or_log();
         panes
@@ -163,18 +164,13 @@ pub(super) async fn handle_list_panes<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let current_target = if let Ok(store) = sessions.lock() {
-        store
-            .get(&session_id)
-            .and_then(|e| e.default_target_pane.clone())
-    } else {
-        None
-    };
-    let chat_pane_id: Option<String> = if let Ok(store) = sessions.lock() {
-        store.get(&session_id).and_then(|e| e.chat_pane.clone())
-    } else {
-        None
-    };
+    let (current_target, chat_pane_id) = with_sessions(sessions, |store| {
+        let entry = store.get(&session_id);
+        (
+            entry.and_then(|e| e.default_target_pane.clone()),
+            entry.and_then(|e| e.chat_pane.clone()),
+        )
+    });
     let panes_snapshot = {
         let panes = cache.panes.read().unwrap_or_log();
         let mut entries: Vec<_> = panes
@@ -225,20 +221,19 @@ where
 {
     let uptime_secs = crate::daemon::daemon_uptime_secs();
     let pid = std::process::id();
-    let mut active_sessions = 0;
-    let mut active_prompt_tokens = 0;
-    let mut total_turns = 0;
-    let mut status_active_model: Option<String> = None;
-    if let Ok(sess_map) = sessions.lock() {
-        active_sessions = sess_map.len();
-        active_prompt_tokens = sess_map.values().map(|s| s.last_prompt_tokens).sum();
-        total_turns = sess_map.values().map(|s| s.turn_count).sum();
-        status_active_model = sess_map
-            .values()
-            .filter(|s| !s.is_ghost)
-            .max_by_key(|s| s.last_accessed)
-            .and_then(|s| s.active_model.clone());
-    }
+    let (active_sessions, active_prompt_tokens, total_turns, status_active_model) =
+        with_sessions(sessions, |store| {
+            (
+                store.len(),
+                store.values().map(|s| s.last_prompt_tokens).sum::<u32>(),
+                store.values().map(|s| s.turn_count).sum::<usize>(),
+                store
+                    .values()
+                    .filter(|s| !s.is_ghost)
+                    .max_by_key(|s| s.last_accessed)
+                    .and_then(|s| s.active_model.clone()),
+            )
+        });
     let schedule_count = schedule_store.list().len();
 
     let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
@@ -295,14 +290,12 @@ where
     let cost_today = crate::daemon::stats::compute_cost_today();
 
     // Collect per-session cost totals from active sessions.
-    let session_costs: Vec<(String, f64)> = if let Ok(sess_map) = sessions.lock() {
-        sess_map
+    let session_costs: Vec<(String, f64)> = with_sessions(sessions, |store| {
+        store
             .iter()
             .map(|(id, entry)| (id.clone(), entry.cost_usd))
             .collect()
-    } else {
-        Vec::new()
-    };
+    });
 
     send_response_split(
         tx,
@@ -382,23 +375,27 @@ where
                 }
             },
             active_agents: {
-                let mut agents: Vec<(String, String)> = Vec::new();
-                if let Ok(sess_map) = sessions.lock() {
-                    for entry in sess_map.values() {
-                        if let Some(ref gc) = entry.ghost_config
-                            && let Some(ref agent_name) = gc.agent
-                        {
-                            let job_id = entry
-                                .ghost_task_message
-                                .as_deref()
-                                .unwrap_or("unknown")
-                                .chars()
-                                .take(40)
-                                .collect();
-                            agents.push((agent_name.clone(), job_id));
-                        }
-                    }
-                }
+                let mut agents: Vec<(String, String)> = with_sessions(sessions, |store| {
+                    store
+                        .values()
+                        .filter_map(|entry| {
+                            if let Some(ref gc) = entry.ghost_config
+                                && let Some(ref agent_name) = gc.agent
+                            {
+                                let job_id = entry
+                                    .ghost_task_message
+                                    .as_deref()
+                                    .unwrap_or("unknown")
+                                    .chars()
+                                    .take(40)
+                                    .collect();
+                                Some((agent_name.clone(), job_id))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                });
                 agents.sort_by(|a, b| a.0.cmp(&b.0));
                 agents
             },
@@ -421,17 +418,17 @@ pub(super) async fn handle_query_limits<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let (turn_count, tool_calls_this_session, history_len) = if let Ok(store) = sessions.lock()
-        && let Some(entry) = store.get(&session_id)
-    {
-        (
-            entry.turn_count,
-            entry.tool_calls_this_session,
-            entry.messages.len(),
-        )
-    } else {
-        (0, 0, 0)
-    };
+    let (turn_count, tool_calls_this_session, history_len) = with_sessions(sessions, |store| {
+        if let Some(entry) = store.get(&session_id) {
+            (
+                entry.turn_count,
+                entry.tool_calls_this_session,
+                entry.messages.len(),
+            )
+        } else {
+            (0, 0, 0)
+        }
+    });
     let mut overrides: Vec<(String, u32)> = config
         .limits
         .per_tool
@@ -467,15 +464,15 @@ pub(super) async fn handle_reset_tool_count<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    if let Ok(mut store) = sessions.lock()
-        && let Some(entry) = store.get_mut(&session_id)
-    {
-        entry.tool_calls_this_session = 0;
-        log::info!(
-            "Session {}: per-session tool call counter reset",
-            session_id
-        );
-    }
+    with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(&session_id) {
+            entry.tool_calls_this_session = 0;
+            log::info!(
+                "Session {}: per-session tool call counter reset",
+                session_id
+            );
+        }
+    });
     send_response_split(tx, Response::Ok).await?;
     Ok(())
 }
@@ -493,23 +490,23 @@ pub(super) async fn handle_save_session<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let (msgs, turn_count, current_saved, model_name, artifacts) = if let Ok(store) =
-        sessions.lock()
-        && let Some(entry) = store.get(&session_id)
-    {
-        (
-            entry.messages.clone(),
-            entry.turn_count,
-            entry.saved_name.clone(),
-            entry
-                .active_model
-                .clone()
-                .unwrap_or_else(|| "default".to_string()),
-            entry.artifacts_created.clone(),
-        )
-    } else {
-        (Vec::new(), 0, None, "default".to_string(), Vec::new())
-    };
+    let (msgs, turn_count, current_saved, model_name, artifacts) =
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get(&session_id) {
+                (
+                    entry.messages.clone(),
+                    entry.turn_count,
+                    entry.saved_name.clone(),
+                    entry
+                        .active_model
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string()),
+                    entry.artifacts_created.clone(),
+                )
+            } else {
+                (Vec::new(), 0, None, "default".to_string(), Vec::new())
+            }
+        });
 
     match crate::session_store::save_session(crate::session_store::SaveSessionArgs {
         name: &name,
@@ -532,12 +529,12 @@ where
                     );
                 }
             }
-            if let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(&session_id)
-            {
-                entry.saved_name = Some(name.clone());
-                entry.dirty = false;
-            }
+            with_sessions(sessions, |store| {
+                if let Some(entry) = store.get_mut(&session_id) {
+                    entry.saved_name = Some(name.clone());
+                    entry.dirty = false;
+                }
+            });
             log::info!("Session {}: saved as '{}'", session_id, name);
             send_response_split(tx, Response::SessionSaved { name }).await?;
         }
@@ -559,13 +556,9 @@ pub(super) async fn handle_load_session<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let is_dirty = if let Ok(store) = sessions.lock()
-        && let Some(entry) = store.get(&session_id)
-    {
-        entry.dirty
-    } else {
-        false
-    };
+    let is_dirty = with_sessions(sessions, |store| {
+        store.get(&session_id).is_some_and(|e| e.dirty)
+    });
     if is_dirty && !force {
         send_response_split(
             tx,
@@ -598,13 +591,13 @@ where
             let loaded_count = loaded_msgs.len();
             let turn_count = meta.turn_count;
 
-            if let Ok(mut store) = sessions.lock()
-                && let Some(entry) = store.get_mut(&session_id)
-            {
-                entry.messages = loaded_msgs;
-                entry.saved_name = Some(name.clone());
-                entry.dirty = false;
-            }
+            with_sessions(sessions, |store| {
+                if let Some(entry) = store.get_mut(&session_id) {
+                    entry.messages = loaded_msgs;
+                    entry.saved_name = Some(name.clone());
+                    entry.dirty = false;
+                }
+            });
             log::info!(
                 "Session {}: loaded '{}' ({} messages)",
                 session_id,
@@ -695,13 +688,13 @@ where
 {
     match crate::session_store::rename_session(&old_name, &new_name) {
         Ok(()) => {
-            if let Ok(mut store) = sessions.lock() {
+            with_sessions(sessions, |store| {
                 for entry in store.values_mut() {
                     if entry.saved_name.as_deref() == Some(old_name.as_str()) {
                         entry.saved_name = Some(new_name.clone());
                     }
                 }
-            }
+            });
             log::info!("Saved session '{}' renamed to '{}'", old_name, new_name);
             send_response_split(tx, Response::Ok).await?;
         }

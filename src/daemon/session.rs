@@ -1264,4 +1264,23 @@ mod tests {
         });
         assert_eq!(len, 1, "depth counter must reset after a panicked closure");
     }
+
+    #[test]
+    fn with_sessions_sets_depth_inside_closure() {
+        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        with_sessions(&sessions, |_store| {
+            assert_eq!(
+                SESSIONS_LOCK_DEPTH.with(|d| d.get()),
+                1,
+                "depth must read 1 inside the closure — a `let _ =` binding on \
+                 SessionsLockDepth::enter() would drop the guard immediately and \
+                 read 0 here"
+            );
+        });
+        assert_eq!(
+            SESSIONS_LOCK_DEPTH.with(|d| d.get()),
+            0,
+            "depth must reset to 0 after the closure returns"
+        );
+    }
 }

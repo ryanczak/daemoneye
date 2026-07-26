@@ -1,7 +1,7 @@
 # Phase 04b: Convert `handlers.rs` Lock Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04a (`with_sessions` accessor) — `done`
 **Estimated diff:** ~160 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -285,3 +285,7 @@ None. No new dependencies; `docs/architecture.md` is not touched.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 01:04 (progress)
+
+Converted all 15 `sessions.lock()` sites in `handlers.rs` to `with_sessions`, collapsing the two adjacent acquisitions at lines 166/173 into one. Added the fast-failing depth test `with_sessions_sets_depth_inside_closure` to `session.rs`. Verified the test catches the `let _ =` bug instantly (0ms failure vs. hang). All 914 tests pass. `ask.rs` untouched at 13 lock sites. `SessionStore` remains a plain type alias.
