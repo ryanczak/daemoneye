@@ -1,7 +1,7 @@
 # Bug 1 on phase-04f: two production lock sites left unconverted — the grep criterion cannot see them
 
 **Severity:** major
-**Status:** open
+**Status:** verified (2026-07-26)
 **Filed:** 2026-07-26
 
 **Root cause is an architect spec defect, not executor error.** The spec's site
@@ -194,3 +194,26 @@ PY
 - [ ] `background_swap_discards_on_new_turn` **fails** when
       `entry.compaction_in_flight = false;` is deleted from the stale branch, and
       passes when restored. Both quoted in the Update Log.
+
+---
+
+## Resolution — 2026-07-26
+
+**Defect 1 (the bounce reason): fixed.** All four production sites now use
+`with_sessions`; a multi-line-aware scan reports 0 in the production region, 4
+`with_sessions(` calls, 11 test-module acquisitions untouched. The
+`UnpoisonExt` import moved into `mod tests` (line 279) and both `cargo build` and
+`cargo clippy --all-targets` pass — the trap this doc warned about was walked into
+once (it caused the `hard_fail`) and cleared on resume.
+
+**Defect 2: the diagnosis in this doc was wrong.** This doc asserted
+`background_swap_discards_on_new_turn` was the discriminator for the **stale**
+branch. It is not — that test's snapshot holds one message, so it exits through the
+**"no viable cut"** branch instead, and it *does* genuinely guard that branch
+(mutation-proven at review). No test change was needed or made.
+
+The real finding is broader and is recorded in the phase's Review verdict: three of
+the four flag-clearing sites are unguarded because `make_test_entry()` defaults
+`compaction_in_flight: false`, making the assertion tautological in any test that
+does not route through `try_snapshot`. Carried to **04j**, which must rewrite that
+test module anyway.

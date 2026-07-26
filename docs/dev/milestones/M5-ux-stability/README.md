@@ -76,7 +76,7 @@ take the socket.
 | 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | done (approved_first_try) |
 | 04d | convert-executor-dispatch ([phase-04d-convert-executor-dispatch.md](phase-04d-convert-executor-dispatch.md)) — `executor/mod.rs`, 10 sites + `load_agent` hoist | done (approved_first_try) |
 | 04e | convert-executor-tail ([phase-04e-convert-executor-tail.md](phase-04e-convert-executor-tail.md)) — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | done (approved_first_try) |
-| 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | review                  |
+| 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **4 production** sites (2 found late) | done (approved_after_1) |
 | 04g | convert-ghost — `ghost.rs` (11) + `briefing.rs` (1) = 12 sites | todo |
 | 04h | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
 | 04i | convert-stream-hooks — `stream.rs` (8) + `hook.rs` (3) = 11 sites | todo |

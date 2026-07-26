@@ -1,11 +1,95 @@
 # NEXT
 
-**Active phase: M5 phase-04f — convert-context-background** (`in-progress`,
-**bounced** at review 2026-07-26 — `bugs/bug-04f-1.md`).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-04f-convert-context-background.md`.
+**No active phase.** 04f is `done` (`approved_after_1`). The next conversion phase
+(04g — convert-ghost, `ghost.rs` + `briefing.rs`, 12 sites) is **not yet drafted**.
+Draft it with `/rexymcp:architect next`.
 
-Re-dispatch with `/rexymcp:dispatch phase-04f-convert-context-background` — the
-executor reads the phase doc, the bug doc, and the Update Log.
+---
+
+## M5 phase-04f — convert-context-background is `done`
+
+(2026-07-26, `approved_after_1`, 1 bounce + 1 `hard_fail`, 209 executor turns
+across three runs: 37 + 71 + 101. Commits `4f60a9a`, `0984efa`.)
+
+All **4** production sites in `context/background.rs` now use `with_sessions`,
+verified by a multi-line-aware scan: 0 production raw acquisitions, 4
+`with_sessions(` calls, 11 test-module acquisitions untouched, `UnpoisonExt`
+import relocated to `mod tests`. Gates green, 915 tests unchanged.
+
+**Before drafting 04g, read this — it is the one durable lesson from the run.**
+
+### The three-run arc, and what each failure actually was
+
+1. **First run → bounced (`spec_bug`).** Converted the 2 sites my spec inventoried.
+   The other 2 were invisible to `grep -c "sessions\.lock()"` because they split
+   `sessions` and `.lock()` across lines. My criterion reported success while the
+   goal was unmet.
+2. **Re-dispatch → `hard_fail` (`NoProgressStall`, 60 read-only turns).** It made
+   both remaining conversions correctly and deleted the now-unused header import —
+   then stalled for ~40 turns re-grepping `UnpoisonExt` without ever running a
+   gate. Clippy would have printed the fix.
+3. **Resume → complete.** One-line edit (`use crate::util::UnpoisonExt;` inside
+   `mod tests`). Resume was the right lever: the spec already contained the
+   remaining edit verbatim, so refined re-dispatch would have added emphasis, not
+   information.
+
+### The coverage finding — this is the part worth carrying forward
+
+Bug-doc item 3 asked the executor to prove that
+`background_swap_discards_on_new_turn` guards the **stale branch's** flag-clear
+ordering. **It could not, because the claim was false**, and it said so instead of
+faking it. Resolved by mutation at review: that test's snapshot holds one message,
+so step 1 finds no viable cut and it exits through the **"no viable cut"** branch —
+which it *does* genuinely guard (removing that clear makes it fail).
+
+Mutation-established coverage of all four flag-clearing sites:
+
+| Site | Guarded? |
+|---|---|
+| "no viable cut" discard | **yes** — one of the two sites this phase converted |
+| idempotency-guard discard | no |
+| stale-branch discard | no |
+| swap path | no |
+
+**Root cause, and the generalisable trap:** `make_test_entry()` defaults
+`compaction_in_flight: false`, so `assert!(!entry.compaction_in_flight)` is
+**tautological** in any test that hand-builds a `CompactionSnapshot` instead of
+routing through `try_snapshot`. Only one of the three tests asserting that flag
+calls `try_snapshot`, so the other two are decorative.
+
+Approved rather than bounced twice because 3 of the 4 gaps **pre-date this phase**
+(no regression; it net *added* one real guard), and a third cycle would charge an
+architect error to the model.
+
+**Follow-up assigned to 04j**, which must rewrite all 11 test-module acquisitions
+anyway once the newtype makes raw `.lock()` stop compiling: make the three vacuous
+flag assertions real and mutation-check each. Do not open a separate phase.
+
+### Calibration — the count is now four threads, three of them mine
+
+1. **Count criteria (4th).** Retired `grep -c` for this purpose. Every remaining
+   phase must use the multi-line-aware scan in `bugs/bug-04f-1.md` § Verification.
+2. **Specs asserting test coverage (3rd).** 04d's vacuous `try_lock` proxy, 04f's
+   wrong-branch claim, and now the confirmed fixture-default trap behind it. The
+   candidate fold has sharpened: **a spec must never name the discriminating test;
+   it must require the executor to demonstrate discrimination by mutation and quote
+   the fail/pass pair.** That shape worked here — it is exactly what surfaced the
+   defect from the executor instead of from my review.
+3. **Fixture defaults make assertions vacuous (new, 1st occurrence).** A shared
+   `make_*` fixture that defaults a field to the asserted-for value silently
+   neuters every assertion on it. Worth watching for recurrence before folding.
+4. **Lock/HOME test hygiene (3 deep).** Still riding on phase 05.
+
+**None folded. All await your sign-off.**
+
+### Remaining 04x work
+
+04g (`ghost.rs` 11 + `briefing.rs` 1 = 12) → 04h (`background/*`, 9) → 04i
+(`stream.rs` 8 + 1 multi-line + `hook.rs` 3 = 12) → 04j (newtype + enforce; the 13
+`Arc::clone` sites, **plus** 13 test-module acquisitions, **plus** the two
+unassigned `ask.rs` multi-line stragglers, **plus** the coverage follow-up above).
+**04j is materially larger than its one-line description suggests** — re-scope it
+when drafting.
 
 ## ⚠ The measuring instrument was wrong for six phases
 

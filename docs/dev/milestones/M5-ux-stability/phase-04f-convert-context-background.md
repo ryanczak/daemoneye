@@ -1,21 +1,21 @@
 # Phase 04f: Convert `context/background.rs` — the Compaction Swap
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04e (`executor/` subtree converted) — `done`
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=refactor, size=s
 
-> **Bounced at review 2026-07-26 — see [`bugs/bug-04f-1.md`](bugs/bug-04f-1.md).**
-> The file has **4** production lock sites, not the 2 this spec inventoried. The
-> two missed ones split `sessions` and `.lock()` across lines, so the
-> `grep -c "sessions\.lock()"` criteria could not see them. **Root cause is this
-> spec, not the executor** — tasks 1–3 were implemented exactly as written and
-> every criterion given passed. Fix the two remaining sites and the vacuous
-> flag-ordering test per the bug doc, then re-dispatch.
+> **`done` 2026-07-26, `approved_after_1`.** Closed after one bounce
+> ([`bugs/bug-04f-1.md`](bugs/bug-04f-1.md), `spec_bug`) and one `hard_fail`
+> cleared by resume. All **4** production sites converted; see the Review verdict
+> at the bottom for the mutation evidence and the coverage follow-up carried to
+> 04j.
 >
-> **The Site inventory and Acceptance criteria below are wrong as written.** The
-> bug doc supersedes them.
+> **The Site inventory ("2 production sites") and Acceptance criteria below are
+> wrong as written** — they used `grep -c "sessions\.lock()"`, which cannot see an
+> acquisition split across lines. The bug doc and the Review verdict supersede
+> them. Left unedited as the record of how the miss happened.
 
 ## Goal
 
@@ -681,3 +681,100 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0984efaf02b22d829a56f83eb03d35d10045bdb4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside an existing code path; no CLI surface, no config key.
+
+### Review verdict — 2026-07-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-04f-1.md`), then one `hard_fail` cleared by resume
+- **Executor:** Qwen/Qwen3.6-27B-FP8 — 37 turns (first run) + 71 (`hard_fail`,
+  `NoProgressStall`) + 101 (resume) = 209 turns across three runs
+- **Scope deviations:** none. Only `src/daemon/context/background.rs` touched.
+- **Calibration:** **`spec_bug` on the bounce; a third architect
+  test-coverage-assertion error found at this review.** See below.
+
+**Independent re-run at review** (separate invocations, not chained):
+
+```
+cargo fmt --all --check                                    → exit 0
+cargo build                                                → exit 0, no warnings
+cargo clippy --all-targets --all-features -- -D warnings   → exit 0
+cargo test  → 915 lib-unit / 0 failed (unchanged); 27 integration / 2 ignored
+```
+
+**Counts, under a multi-line-aware scan (not `grep -c`):**
+
+| Check | Result |
+|---|---|
+| production raw acquisitions, multi-line-aware | **0** ✓ |
+| `with_sessions(` | **4** ✓ |
+| test-module raw acquisitions | **11**, untouched ✓ |
+| `use crate::util::UnpoisonExt` | **1**, at line 279 inside `mod tests` ✓ |
+| lib-unit tests | **915**, unchanged ✓ |
+
+All four production sites are converted: `try_snapshot`, `run_compaction` step 2,
+and the two multi-line stragglers at the "no viable cut" and idempotency-guard
+discards. No forbidden idioms in either fix commit.
+
+---
+
+## Bug-doc item 3: the premise was wrong, and the mutation says so
+
+Item 3 asked the executor to make `background_swap_discards_on_new_turn` guard the
+**stale branch's** flag-clear ordering. The executor reported it could not complete
+the mutation pair, and flagged the uncertainty rather than claiming success. **It
+was right to stop: the item was unprovable as written.**
+
+Resolved by mutation at review. That test never reaches the stale branch. Its
+snapshot holds **one** message, so step 1 finds no viable cut and it exits through
+the **line-115 "no viable cut" branch** instead. Deleting *that* branch's clear:
+
+```
+$ cargo test --lib background_swap_discards_on_new_turn
+thread '…background_swap_discards_on_new_turn' panicked at background.rs:425:9:
+assertion failed: !entry.compaction_in_flight
+test result: FAILED. 0 passed; 1 failed
+```
+
+Restored → passes. **So the assertion is real, not vacuous — it just guards a
+different branch than the bug doc claimed, and that branch is one of the two this
+fix converted.** The phase gained genuine coverage on its own work.
+
+### Coverage of the four flag-clearing sites, established by mutation
+
+| Site | Guarded? |
+|---|---|
+| line 115 — "no viable cut" discard | **yes** — proven above |
+| line 134 — idempotency-guard discard | no |
+| step 2 — stale-branch discard | no — proven at the first review |
+| step 2 — swap path | **no** — proven here: removing the clear leaves `background_swap_applies_when_unchanged` passing |
+
+**Root cause of the vacuous ones, and the generalisable finding:**
+`make_test_entry()` sets `compaction_in_flight: false`, so *any* test that builds a
+`CompactionSnapshot` by hand instead of routing through `try_snapshot` can never
+observe the flag being cleared — `assert!(!entry.compaction_in_flight)` is
+tautological there. Only `background_swap_discards_on_new_turn` calls
+`try_snapshot`, which is why it alone discriminates. Two of the three tests
+asserting that flag are decorative.
+
+**Approved rather than bounced a second time, deliberately:**
+
+- the production conversion is complete and correct, verified by a scan that can
+  actually see the code shape;
+- 3 of the 4 gaps **pre-date this phase** — nothing regressed, and this phase net
+  *added* one real guard;
+- item 3 asked the executor to prove a false statement, so a third cycle would be
+  churn charged to the model for an architect error;
+- the executor's honest "I could not complete this" is the behaviour the mutation
+  requirement was introduced to produce. Bouncing it would punish exactly the
+  right response.
+
+**Follow-up — natural home is 04j (the newtype phase).** That phase must rewrite
+all 11 test-module acquisitions anyway, since the newtype makes raw `.lock()` stop
+compiling. While there: make the three vacuous flag assertions real by setting
+`compaction_in_flight = true` before the call (or routing through `try_snapshot`),
+and mutation-check each. Do **not** open a separate phase for this.
