@@ -1,7 +1,7 @@
 # Phase 04f: Convert `context/background.rs` — the Compaction Swap
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04e (`executor/` subtree converted) — `done`
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=refactor, size=s
@@ -386,3 +386,15 @@ blocker.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-26 14:35 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Converted both production `sessions.lock()` sites in `background.rs` to `with_sessions`:
+- `try_snapshot`: closure returns `Option<CompactionSnapshot>` directly; `drop(store)` removed.
+- `run_compaction` step 2: closure returns `Option<(before_len, after_len)>` with `let … else` handling both discard paths (evicted and stale). Flag clearing order preserved — `compaction_in_flight = false` before `return None` in the stale branch.
+
+All 915 lib-unit tests pass unchanged. `try_snapshot` still returns `None` for absent entry, `compaction_in_flight` already true, and `is_ghost` true (verified by closure `?` and early `return None`). The stale-path test in the test module exercises the flag-clearing order and passes.
+
+End-to-end verification: Not applicable — phase ships no runtime-loadable artifact. Internal refactor of lock acquisition inside an existing code path; no CLI surface, no config key, no file the running binary loads.

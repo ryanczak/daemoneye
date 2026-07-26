@@ -8,7 +8,7 @@
 use crate::ai::Message;
 use crate::config::Config;
 use crate::daemon::context::epochs;
-use crate::daemon::session::SessionStore;
+use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::log_event;
 use crate::util::UnpoisonExt;
 use std::sync::Arc;
@@ -64,22 +64,21 @@ pub fn spawn_compaction(session_id: String, sessions: SessionStore, config_snaps
 /// Try to take a snapshot and mark the session as in-flight.
 /// Returns `None` if already in flight or the entry is a ghost.
 fn try_snapshot(session_id: &str, sessions: &SessionStore) -> Option<CompactionSnapshot> {
-    let mut store = sessions.lock().unwrap_or_log();
-    let entry = store.get_mut(session_id)?;
-    if entry.compaction_in_flight || entry.is_ghost {
-        return None;
-    }
-    entry.compaction_in_flight = true;
+    with_sessions(sessions, |store| {
+        let entry = store.get_mut(session_id)?;
+        if entry.compaction_in_flight || entry.is_ghost {
+            return None;
+        }
+        entry.compaction_in_flight = true;
 
-    let snapshot = CompactionSnapshot {
-        session_id: session_id.to_string(),
-        messages: entry.messages.clone(),
-        turn_count: entry.turn_count,
-        msg_len: entry.messages.len(),
-        token_scale: entry.token_scale,
-    };
-    drop(store);
-    Some(snapshot)
+        Some(CompactionSnapshot {
+            session_id: session_id.to_string(),
+            messages: entry.messages.clone(),
+            turn_count: entry.turn_count,
+            msg_len: entry.messages.len(),
+            token_scale: entry.token_scale,
+        })
+    })
 }
 
 /// Run the background compaction logic on a snapshot.
@@ -225,24 +224,18 @@ async fn run_compaction(
         crate::daemon::digest::repair_tail_head(tail);
     }
 
-    // Step 2: Swap (lock once, synchronous). No `.await` may occur while the
-    // guard is alive — all async work is already done above.
-    let (before_len, after_len) = {
-        let mut store = sessions.lock().unwrap_or_log();
+    // Step 2: Swap (lock once, synchronous). `with_sessions` takes a synchronous
+    // closure, so no `.await` can occur while the guard is alive.
+    let Some((before_len, after_len)) = with_sessions(sessions, |store| {
         // Staleness check: if the entry is gone, or turn_count/msg_len changed,
         // discard the compacted vec.
-        let Some(entry) = store.get_mut(&snapshot.session_id) else {
-            // Entry evicted — discard. The epoch record already appended is
-            // harmless — it describes real history; the next load simply has
-            // one epoch whose messages are still in the working file.
-            return Ok(());
-        };
+        let entry = store.get_mut(&snapshot.session_id)?;
 
         if entry.turn_count != snapshot.turn_count || entry.messages.len() != snapshot.msg_len {
             // A turn ran while we worked — discard. Clear the flag so the next
             // turn's end can re-spawn with fresh data.
             entry.compaction_in_flight = false;
-            return Ok(());
+            return None;
         }
 
         // Match — swap.
@@ -255,7 +248,13 @@ async fn run_compaction(
             before_len, after_len, record.seq,
         ));
         entry.dirty = true;
-        (before_len, after_len)
+        Some((before_len, after_len))
+    }) else {
+        // Either the entry was evicted, or a turn ran while we worked. Both are
+        // clean discards: the epoch record already appended describes real
+        // history, and the next load simply has one epoch whose messages are
+        // still in the working file.
+        return Ok(());
     };
 
     // Step 3: Persist (no lock held).
