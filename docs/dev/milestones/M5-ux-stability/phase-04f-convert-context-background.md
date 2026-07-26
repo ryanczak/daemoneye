@@ -1,0 +1,388 @@
+# Phase 04f: Convert `context/background.rs` — the Compaction Swap
+
+**Milestone:** M5 — UX & Stability
+**Status:** todo
+**Depends on:** phase-04e (`executor/` subtree converted) — `done`
+**Estimated diff:** ~60 lines
+**Tags:** language=rust, kind=refactor, size=s
+
+## Goal
+
+Convert the **2 production** `sessions.lock()` sites in
+`src/daemon/context/background.rs` to `with_sessions`. Both hold the guard across
+an early `return` from the enclosing function, so neither is mechanical.
+
+**Finish condition: 2 `with_sessions` calls, and 0 raw `sessions.lock()` in the
+production region** (everything above `#[cfg(test)]`).
+
+**This phase is much smaller than the milestone README first claimed.** The
+earlier "13 sites" figure was a plain `grep -c` that counted the test module.
+`#[cfg(test)]` starts at line 279; **11 of the 13 hits are test code** and are
+explicitly out of scope here (see Out of scope, and the note for the newtype
+phase).
+
+## Architecture references
+
+Read before starting:
+
+- `docs/design/daemon-stalls.md` § 3.5 — the migration hazard: a converted
+  closure enclosing a call that still uses **raw** `.lock()` deadlocks silently.
+- `docs/design/daemon-stalls.md` § 1 mechanism A — lock held across blocking
+  work. Site 2 below is the compaction swap, whose existing comment already
+  states the no-`.await`-under-guard rule this conversion makes structural.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+5. Verify the starting state:
+
+```bash
+# production region only — robust to line shifts
+sed -n '1,/#\[cfg(test)\]/p' src/daemon/context/background.rs \
+  | grep -c "sessions\.lock()"                                    # expect 2
+grep -c "sessions\.lock()" src/daemon/context/background.rs       # expect 13 (2 prod + 11 test)
+grep -c "with_sessions(" src/daemon/context/background.rs         # expect 0
+grep -rc "sessions\.lock()" src/daemon/executor/ | grep -v ":0$"  # expect no output (04e landed)
+```
+
+If the production count is not 2, **stop and report a blocker** — the per-site
+code below is stale.
+
+## Current state
+
+`SessionStore` is still the bare type alias:
+
+```rust
+// src/daemon/session.rs:117
+pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
+```
+
+### The accessor — `src/daemon/session.rs:427-434`
+
+```rust
+pub fn with_sessions<T>(
+    sessions: &SessionStore,
+    f: impl FnOnce(&mut HashMap<String, SessionEntry>) -> T,
+) -> T {
+    let _depth = SessionsLockDepth::enter();
+    let mut store = sessions.lock().unwrap_or_log();
+    f(&mut store)
+}
+```
+
+Generic over `T`. Note it takes a **synchronous** `FnOnce`, so no `.await` can
+occur while the guard is alive — the compiler enforces what site 2's comment
+currently only asks for.
+
+### Import to extend — `src/daemon/context/background.rs:11`
+
+```rust
+use crate::daemon::session::SessionStore;
+```
+
+becomes:
+
+```rust
+use crate::daemon::session::{SessionStore, with_sessions};
+```
+
+**Leave `use crate::util::UnpoisonExt;` (line 13) alone.** It stays used by
+production code at lines 121 and 140 after this conversion, so removing it breaks
+the build. Do not "clean up" imports.
+
+### Why this file converts before `stream.rs`
+
+`stream.rs` calls `spawn_compaction` (this file's entry point at line 39), and a
+`sessions` lock held across that call is a **confirmed historical defect in this
+codebase** — a self-deadlock where the caller held the guard while the callee
+re-locked.
+
+Converting the callee first changes the failure mode for the phase that converts
+`stream.rs`: once `try_snapshot` goes through `with_sessions`, a `stream.rs`
+closure that encloses `spawn_compaction` trips the re-entrancy **assertion** —
+a loud panic — instead of hanging silently. That is strictly better, and it is
+why this phase is ordered ahead of the `stream.rs` conversion.
+
+### Site inventory — 2 production sites
+
+| # | Line | Function | Shape |
+|---|---|---|---|
+| 1 | 67 | `try_snapshot` (fn at 66) | `?` **and** `return None` from the enclosing fn, plus an explicit `drop(store)` |
+| 2 | 231 | `run_compaction` (async fn at 91) | **two `return Ok(())` from the enclosing async fn**, inside a block expression |
+
+## Spec
+
+### 1. `try_snapshot` — closure returns the `Option`
+
+Current body — `src/daemon/context/background.rs:66-84`:
+
+```rust
+fn try_snapshot(session_id: &str, sessions: &SessionStore) -> Option<CompactionSnapshot> {
+    let mut store = sessions.lock().unwrap_or_log();
+    let entry = store.get_mut(session_id)?;
+    if entry.compaction_in_flight || entry.is_ghost {
+        return None;
+    }
+    entry.compaction_in_flight = true;
+
+    let snapshot = CompactionSnapshot {
+        session_id: session_id.to_string(),
+        messages: entry.messages.clone(),
+        turn_count: entry.turn_count,
+        msg_len: entry.messages.len(),
+        token_scale: entry.token_scale,
+    };
+    drop(store);
+    Some(snapshot)
+}
+```
+
+The whole body is one locked region whose result is exactly the function's
+return value, so the closure can return it directly:
+
+```rust
+fn try_snapshot(session_id: &str, sessions: &SessionStore) -> Option<CompactionSnapshot> {
+    with_sessions(sessions, |store| {
+        let entry = store.get_mut(session_id)?;
+        if entry.compaction_in_flight || entry.is_ghost {
+            return None;
+        }
+        entry.compaction_in_flight = true;
+
+        Some(CompactionSnapshot {
+            session_id: session_id.to_string(),
+            messages: entry.messages.clone(),
+            turn_count: entry.turn_count,
+            msg_len: entry.messages.len(),
+            token_scale: entry.token_scale,
+        })
+    })
+}
+```
+
+Three things this gets right:
+
+- The `?` and the `return None` now bind to the **closure**, whose return type is
+  `Option<CompactionSnapshot>` — the same as the function's. So the observable
+  behavior is identical: `None` when the entry is absent, in-flight, or a ghost.
+- **`drop(store)` is deleted.** It was manual guard management; `with_sessions`
+  releases at the closure boundary. Do not keep it — there is no `store` binding
+  to drop.
+- The `let snapshot = …; Some(snapshot)` pair collapses into `Some(CompactionSnapshot { … })`.
+  This is incidental tidying that falls out of the rewrite; do not go looking for
+  other tidying to do.
+
+**Important:** `entry.compaction_in_flight = true` is the in-flight mark and it
+must still happen **inside** the locked region. Setting it after the closure
+returns would reintroduce a race where two turns both pass the check. Keep it
+where it is.
+
+### 2. `run_compaction` step 2 — the swap, with two discard paths
+
+Current code — `src/daemon/context/background.rs:229-259`:
+
+```rust
+    // Step 2: Swap (lock once, synchronous). No `.await` may occur while the
+    // guard is alive — all async work is already done above.
+    let (before_len, after_len) = {
+        let mut store = sessions.lock().unwrap_or_log();
+        // Staleness check: if the entry is gone, or turn_count/msg_len changed,
+        // discard the compacted vec.
+        let Some(entry) = store.get_mut(&snapshot.session_id) else {
+            // Entry evicted — discard. The epoch record already appended is
+            // harmless — it describes real history; the next load simply has
+            // one epoch whose messages are still in the working file.
+            return Ok(());
+        };
+
+        if entry.turn_count != snapshot.turn_count || entry.messages.len() != snapshot.msg_len {
+            // A turn ran while we worked — discard. Clear the flag so the next
+            // turn's end can re-spawn with fresh data.
+            entry.compaction_in_flight = false;
+            return Ok(());
+        }
+
+        // Match — swap.
+        let before_len = entry.messages.len();
+        let after_len = compacted.len();
+        entry.messages = compacted.clone();
+        entry.compaction_in_flight = false;
+        entry.pending_compaction_notice = Some(format!(
+            "↩ Session history compacted in the background ({} → {} messages) — epoch {} recorded",
+            before_len, after_len, record.seq,
+        ));
+        entry.dirty = true;
+        (before_len, after_len)
+    };
+```
+
+Both `return Ok(())` statements return from **`run_compaction`**, not from the
+block. Move this into a `with_sessions` closure unchanged and they return from
+the *closure* instead — a type error, or worse, a value silently bound to
+`(before_len, after_len)`.
+
+The two discard paths differ in one respect only: the stale path clears
+`compaction_in_flight` first, the evicted path has no entry to clear. Both then
+return `Ok(())`. So the closure can perform its own flag clearing and signal
+discard-vs-swap with an `Option`:
+
+```rust
+    // Step 2: Swap (lock once, synchronous). `with_sessions` takes a synchronous
+    // closure, so no `.await` can occur while the guard is alive.
+    let Some((before_len, after_len)) = with_sessions(sessions, |store| {
+        // Staleness check: if the entry is gone, or turn_count/msg_len changed,
+        // discard the compacted vec.
+        let entry = store.get_mut(&snapshot.session_id)?;
+
+        if entry.turn_count != snapshot.turn_count || entry.messages.len() != snapshot.msg_len {
+            // A turn ran while we worked — discard. Clear the flag so the next
+            // turn's end can re-spawn with fresh data.
+            entry.compaction_in_flight = false;
+            return None;
+        }
+
+        // Match — swap.
+        let before_len = entry.messages.len();
+        let after_len = compacted.len();
+        entry.messages = compacted.clone();
+        entry.compaction_in_flight = false;
+        entry.pending_compaction_notice = Some(format!(
+            "↩ Session history compacted in the background ({} → {} messages) — epoch {} recorded",
+            before_len, after_len, record.seq,
+        ));
+        entry.dirty = true;
+        Some((before_len, after_len))
+    }) else {
+        // Either the entry was evicted, or a turn ran while we worked. Both are
+        // clean discards: the epoch record already appended describes real
+        // history, and the next load simply has one epoch whose messages are
+        // still in the working file.
+        return Ok(());
+    };
+```
+
+Four points to get exactly right:
+
+- `store.get_mut(&snapshot.session_id)?` replaces the `let … else { return Ok(()) }`.
+  The `?` yields `None` from the closure, and the `let … else` on the outside turns
+  that into `return Ok(())`. Same behavior, one level moved.
+- The stale branch's `return None` **must come after** `entry.compaction_in_flight = false`.
+  Reversing them leaves the flag set forever and permanently blocks future
+  compaction for that session — a silent, permanent regression that no test
+  covers. This is the single most dangerous line in the phase.
+- The evicted path must **not** clear the flag — there is no entry. The `?` handles
+  that correctly by construction; do not add a fallback.
+- The two explanatory comments must survive. The evicted-path comment moves to the
+  `else` block (as shown, merged with the stale-path rationale); the stale-path
+  comment stays on its branch. Both explain *why* a discard is safe, which is not
+  obvious from the code.
+
+Everything after this block — step 3's file persist — is unchanged and stays
+outside the closure. It is blocking I/O and must not move inside.
+
+### 3. Change nothing else
+
+No other file. `SessionStore` stays a type alias. The 11 test-module sites stay
+raw (see Out of scope).
+
+## Acceptance criteria
+
+**Note the whole-file count does not go to zero** — 11 test-module sites remain
+by design. Use the production-region command:
+
+- [ ] `sed -n '1,/#\[cfg(test)\]/p' src/daemon/context/background.rs | grep -c "sessions\.lock()"`
+      returns **0**.
+- [ ] `grep -c "sessions\.lock()" src/daemon/context/background.rs` returns
+      **11** — the test module, untouched.
+- [ ] `grep -c "with_sessions(" src/daemon/context/background.rs` returns **2**.
+- [ ] `grep -c "drop(store)" src/daemon/context/background.rs` returns **0**.
+- [ ] `grep -n "use crate::util::UnpoisonExt" src/daemon/context/background.rs`
+      still matches — the import is still needed by lines 121/140.
+- [ ] `grep -rc "sessions\.lock()" src/daemon/executor/` produces no non-zero
+      line (04e's work untouched).
+- [ ] `grep -n "pub type SessionStore" src/daemon/session.rs` still shows the alias.
+- [ ] `cargo build` succeeds with zero new warnings.
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
+- [ ] `cargo fmt --all` passes.
+- [ ] `cargo test` passes with **915** lib-unit tests — unchanged. This phase adds
+      no tests; a higher number means scope crept.
+- [ ] `cargo test` completes **without hanging**.
+
+These greps count raw text, comments included. **Do not write the literal
+`sessions.lock()`, `with_sessions(`, or `drop(store)` in a comment** in this file
+— it would break a criterion even with correct code.
+
+## Test plan
+
+Behavior-preserving refactor: the existing **915** tests are the regression net
+and must all still pass, unchanged. **Write no new tests.**
+
+`background.rs`'s own test module already covers both converted paths — that is
+why no new test is warranted here, and it is unusually good coverage for this
+milestone:
+
+- the swap path (entry matches → messages replaced),
+- the stale path (turn ran during compaction → discard, flag cleared),
+- the evicted path (entry removed before swap → clean discard, no panic).
+
+**Those tests are the discriminator for task 2.** Run them and name them in the
+Update Log. If the flag-clearing order in the stale branch is inverted, the stale
+test is what should catch it — confirm it does by reading what it asserts, and say
+so in the Update Log.
+
+One reasoning check to state in the Update Log, no new test: confirm that
+`try_snapshot` still returns `None` (not a snapshot) for all three of the entry
+being absent, `compaction_in_flight` already `true`, and `is_ghost` being `true`.
+
+## End-to-end verification
+
+> Not applicable — phase ships no runtime-loadable artifact. Internal refactor of
+> lock acquisition inside an existing code path; no CLI surface, no config key, no
+> file the running binary loads.
+
+**Do not attempt an interactive verification.** Do not launch tmux, the daemon, or
+the chat client. Write the sentence above under an "End-to-end verification"
+heading in the Update Log.
+
+## Authorizations
+
+None.
+
+This phase adds no tests, so it needs no `HOME` redirection and therefore no
+`unsafe`. **If you think you need `unsafe` or a new dependency, stop and report a
+blocker.**
+
+## Out of scope
+
+- **Do not convert the 11 `sessions.lock()` sites in this file's `#[cfg(test)]`
+  module** (below line 279). They are test code, `STANDARDS.md` § 2 exempts tests
+  from the production error-handling rules, and converting them would triple this
+  diff for no behavioral gain. **They are the newtype phase's problem** — that
+  phase makes raw `.lock()` stop compiling, so it must convert these 11 plus the
+  2 in `session.rs`'s test module. An acceptance criterion pins the count at 11 so
+  a well-meaning conversion is caught.
+- **Do not touch `src/daemon/executor/`** — fully converted by 04e, and pinned by
+  a criterion.
+- **Do not convert `ghost.rs`, `briefing.rs`, `background/`, `stream.rs`,
+  `hook.rs`, or `webhook/process.rs`.** Separate phases.
+- **Do not change `SessionStore` into a newtype** and do not touch the 13
+  `Arc::clone` sites.
+- **Do not remove `use crate::util::UnpoisonExt;`** — still needed at lines
+  121/140.
+- **Do not move step 3's file persist inside the closure.** It is blocking I/O;
+  that is the mechanism-A defect this milestone exists to remove.
+- **Do not reorder the stale branch's flag clear and its `return None`.** Spec
+  task 2 explains the consequence.
+- **Do not reword the compaction notice string** (`"↩ Session history compacted
+  in the background …"`). It is user-visible.
+- **Do not add `#[allow(...)]` anywhere.** If clippy objects to the
+  `let … else` shape, report a blocker rather than suppressing.
+
+## Update Log
+
+(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+<!-- entries appended below this line -->

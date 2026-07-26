@@ -1,9 +1,83 @@
 # NEXT
 
-**No active phase.** 04e is `done` and **the entire `src/daemon/executor/`
-subtree is now converted**. The next conversion phase (04f —
-convert-context-background, `context/background.rs`, 13 sites) is **not yet
-drafted**. Draft it with `/rexymcp:architect next`.
+**Active phase: M5 phase-04f — convert-context-background** (`todo`, drafted
+2026-07-26).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-04f-convert-context-background.md`.
+
+Dispatch with `/rexymcp:dispatch phase-04f-convert-context-background`.
+
+## ⚠ I had the site count wrong — corrected while drafting
+
+**`context/background.rs` has 2 production sites, not 13.** The earlier figure
+came from a plain `grep -c` that counted the `#[cfg(test)]` module. `#[cfg(test)]`
+starts at line 279; **11 of the 13 hits are test code.**
+
+I re-derived every remaining group by splitting each file at its `#[cfg(test)]`
+line. **Only `context/background.rs` was wrong** — 04g/04h/04i were already right,
+because those files hold no `sessions.lock()` in their test modules. Corrected
+totals are in the milestone README. The true total is **54 production sites**
+(18 converted, 34 remaining, plus webhook's 2 in phase 05), not 65.
+
+This is the same class of mistake I flagged for `session.rs` two phases ago and
+then failed to check for the other files. **Consequence for 04j:** it inherits
+**13 test-module sites** (11 here + 2 in `session.rs`) because the newtype makes
+raw `.lock()` stop compiling — its scope is bigger than "the 13 `Arc::clone`
+sites" implies.
+
+## What 04f actually does
+
+Two sites, both **non-mechanical** — each holds the guard across an early `return`
+from the enclosing function. `size=s`, ~60 lines.
+
+- **`try_snapshot` (line 67)** carries a `?`, a `return None`, *and* an explicit
+  `drop(store)`. The whole body is one locked region whose result is the
+  function's return value, so the closure returns the `Option` directly and
+  `drop(store)` is deleted. The spec pins that
+  `entry.compaction_in_flight = true` must stay **inside** the closure — setting
+  it after would reopen a race where two turns both pass the check.
+- **`run_compaction` step 2 (line 231)** has **two `return Ok(())` from the async
+  fn** inside a block expression, with two different discard paths. The closure
+  returns `Option<(usize, usize)>` and the caller uses `let … else { return Ok(()) }`.
+
+**The single most dangerous line in the phase**, called out as such in the spec:
+the stale branch's `return None` must come *after*
+`entry.compaction_in_flight = false`. Reversing them leaves the flag set forever
+and permanently blocks future compaction for that session — silent, permanent, and
+covered by no test I could find. The evicted path must *not* clear the flag; the
+`?` handles that by construction.
+
+## Why this file is ordered before `stream.rs`
+
+`stream.rs` calls `spawn_compaction`, and a `sessions` guard held across that call
+is a **confirmed historical defect in this codebase** — the caller held the lock
+while the callee re-locked. Converting the callee first changes the failure mode
+for 04i: once `try_snapshot` goes through `with_sessions`, a `stream.rs` closure
+enclosing `spawn_compaction` trips the re-entrancy **assertion** — a loud panic —
+instead of hanging silently. Strictly better, and the reason for the ordering.
+
+## Coverage note — unusually good here
+
+`background.rs`'s own test module already covers all three converted paths (swap,
+stale-discard, evicted-discard), so the stale test is a genuine discriminator for
+the dangerous line above. That is why 04f specifies **no new tests** and names
+those tests as the net instead — the fourth consecutive pure-conversion phase to
+do so (04b, 04c, 04e, 04f), a pattern that is 3-for-3 on `approved_first_try` so
+far.
+
+## Still open for the PE
+
+1. **The count-grep calibration fold** (third occurrence, raised at 04d). 04e and
+   04f both self-check their criteria against the spec's own identifiers, and 04f
+   additionally pins a **non-zero** expected count (11 test sites remain) plus a
+   `sed`-based production-region command I verified works before pinning it. Two
+   clean data points now. **No `WORKFLOW.md` change made.**
+2. **Lock/HOME test-hygiene** (three deep). Still riding on phase 05.
+
+I would add a third, and it is about my own work rather than the executor's: the
+site-count error above is the second time a survey figure I recorded turned out to
+be wrong (the first being the 65-vs-54 total). If you want a fold, the candidate is
+that architect surveys must split production from test code before publishing a
+count.
 
 ---
 

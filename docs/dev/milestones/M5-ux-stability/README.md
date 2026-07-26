@@ -76,7 +76,7 @@ take the socket.
 | 04c | convert-ask ([phase-04c-convert-ask.md](phase-04c-convert-ask.md))      | done (approved_first_try) |
 | 04d | convert-executor-dispatch ([phase-04d-convert-executor-dispatch.md](phase-04d-convert-executor-dispatch.md)) — `executor/mod.rs`, 10 sites + `load_agent` hoist | done (approved_first_try) |
 | 04e | convert-executor-tail ([phase-04e-convert-executor-tail.md](phase-04e-convert-executor-tail.md)) — `foreground.rs` (4) + `knowledge/{mod,pane,ghost}.rs` (4) = 8 sites | done (approved_first_try) |
-| 04f | convert-context-background — `context/background.rs`, 13 sites | todo |
+| 04f | convert-context-background ([phase-04f-convert-context-background.md](phase-04f-convert-context-background.md)) — `context/background.rs`, **2 production** sites | todo |
 | 04g | convert-ghost — `ghost.rs` (11) + `briefing.rs` (1) = 12 sites | todo |
 | 04h | convert-background-windows — `background/{run,respawn,helpers,gc}.rs` = 9 sites | todo |
 | 04i | convert-stream-hooks — `stream.rs` (8) + `hook.rs` (3) = 11 sites | todo |
@@ -89,7 +89,7 @@ take the socket.
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 
-Phases 04f–07 are named but **not yet drafted**. Draft each with
+Phases 04g–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
 
 **The 04d tail was split into five phases (04d–04i) on 2026-07-26**, replacing
@@ -97,20 +97,32 @@ the earlier "04d×3" estimate, after a site-by-site survey. The newtype phase
 moved from 04e to **04j** — it was undrafted and unstarted, so the renumbering
 costs nothing. Actual per-file counts, verified against the tree:
 
-| Group | Sites | Phase |
-|---|---|---|
-| `executor/mod.rs` | 10 | 04d |
-| `executor/foreground.rs` + `executor/knowledge/*` | 8 | 04e |
-| `context/background.rs` | 13 | 04f |
-| `ghost.rs` + `briefing.rs` | 12 | 04g |
-| `background/{run,respawn,helpers,gc}.rs` | 9 | 04h |
-| `stream.rs` + `hook.rs` | 11 | 04i |
-| `webhook/process.rs` | 2 | **phase 05** (mechanism A, not a conversion phase) |
+**Counts corrected 2026-07-26 (second pass).** The first survey used a plain
+`grep -c` that counted `#[cfg(test)]` modules as production. Re-derived by
+splitting each file at its `#[cfg(test)]` line:
 
-That is **65 production sites**, not the ~60 estimated. `src/daemon/session.rs`
-contributes **zero**: its four `sessions.lock()` greps are the accessor's own
-acquisition inside `with_sessions` (`session.rs:432`), a doc comment
-(`:443`), and two tests (`:1204`, `:1226`).
+| Group | Production | Test-only | Phase |
+|---|---|---|---|
+| `executor/mod.rs` | 10 | 0 | 04d — `done` |
+| `executor/foreground.rs` + `executor/knowledge/*` | 8 | 0 | 04e — `done` |
+| `context/background.rs` | **2** (was miscounted 13) | **11** | 04f |
+| `ghost.rs` (11) + `briefing.rs` (1) | 12 | 0 | 04g |
+| `background/{run,respawn,helpers,gc}.rs` | 9 | 0 | 04h |
+| `stream.rs` (8) + `hook.rs` (3) | 11 | 0 | 04i |
+| `webhook/process.rs` | 2 | 0 | **phase 05** (mechanism A, not a conversion phase) |
+
+**Only `context/background.rs` was wrong** — the 04g/04h/04i figures were already
+correct, because those files hold no `sessions.lock()` in their test modules. So
+the true total is **54 production sites** (18 already converted by 04d+04e, 34
+remaining, plus webhook's 2 in phase 05), not the 65 previously recorded.
+
+`src/daemon/session.rs` still contributes **zero** production conversions: of its
+four hits, `:432` is `with_sessions`'s own acquisition (correct and permanent),
+`:443` is a doc comment, and `:1204`/`:1226` are tests.
+
+**13 test-module sites now belong to 04j** (11 in `context/background.rs`, 2 in
+`session.rs`). The newtype makes raw `.lock()` stop compiling, so 04j must convert
+them — its scope is larger than "the 13 `Arc::clone` sites" implies.
 
 **Phases 08–11 were added 2026-07-26** after a live incident (two daemons
 sharing one `~/.daemoneye` tree; one took the socket from the other). They are
