@@ -1,7 +1,7 @@
 # Phase 06c: `foreground.rs` tmux Calls Off the Runtime — Slice 1 (setup & send)
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06b — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -283,3 +283,125 @@ broken state.
 ### Update — 2026-07-27 17:27 (started)
 
 **Executor:** Claude (Sonnet 4.5)
+
+### Update — ts=1785173747986 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Converted all 10 tmux call sites at lines ≤ 460 in `foreground.rs` to use `tmux::off_runtime`, following the patterns from phases 06a and 06b. Sites converted: `pane_exists` (line 200, `.unwrap_or(false)`), `pane_pid` (line 303), inline `Command::new("tmux")` set-hook (line 362), `clear_pane_exit_status` (line 372), `send_keys` (line 374, the one that broke the first attempt — kept the `result` binding type identical by collapsing `Option<Result<()>>` at the match site), `highlight_pane` (line 376, Shape A `let _ =`), `pane_current_command` (lines 420 and 452), and `capture_pane` (lines 427 and 457). Built after every single site conversion as required.
+
+The `impl Drop for FgHookGuard` block is byte-identical to its pre-change form — `Drop::drop` cannot be async, so no conversion is possible there. The span-matching script confirms `UNWRAPPED: 21`, with only the 2 Drop `Command::new("tmux")` calls at lines 74 and 79 remaining below line 460. All 916 lib-unit and 27 integration tests pass, clippy is clean, and the working tree is clean.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+_yes_detected ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+
+test result: ok. 916 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.58s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_depth_limit_enforced ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test event_log_entry_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test schedule_store_persistence ... ok
+test ipc_session_info_round_trip ... ok
+test event_log_append_read ... ok
+test minimal_config_parsing ... ok
+test g4_briefing_read_and_clear ... ok
+test ghost_config_parsing ... ok
+test g6_agent_config_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_jsonl_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06c-tmux-off-runtime-foreground.md` — +5 -1
+- `src/daemon/executor/foreground.rs` — +85 -14
+
+**Commit:** c893c895e63d5481dcc91abc70b6acbc6ff1794b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
