@@ -1,7 +1,7 @@
 # Phase 06c: `foreground.rs` tmux Calls Off the Runtime — Slice 1 (setup & send)
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06b — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -405,3 +405,72 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c893c895e63d5481dcc91abc70b6acbc6ff1794b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 `hard_fail` (`NoProgressStall`, 124 turns) on the pre-split
+  29-site scope; **0 bugs filed** — the failure was scope, not executor work.
+  The re-split slice landed in 121 turns.
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. One `src/` file changed.
+- **Calibration:** the re-split worked; one over-broad criterion of mine; one
+  slicing lesson.
+
+Gates re-run bare: fmt 0, build 0 (zero warnings), clippy 0, test 0 — **916**
+lib-unit and **27** integration tests, unchanged.
+
+**Span check reports `UNWRAPPED: 21`**, and the only two at line ≤ 460 are the
+`Drop` sites at `:74`/`:79`. Ten spans converted. Scope held exactly.
+
+### The re-split fixed the actual failure
+
+The first attempt died on a `send_keys` conversion whose type error surfaced 470
+lines away. This run solved it cleanly by **keeping the binding out of the match
+scrutinee**:
+
+```rust
+let send_keys_res = tmux::off_runtime("send-keys", move || {
+    tmux::send_keys(&target_str_keys, &send_cmd_keys)
+}).await;
+let result = match send_keys_res { … }
+```
+
+and then widening the far-away arms from `Err(e) =>` to `Some(Err(e)) =>` plus a
+new `None =>` arm that reports `"tmux send-keys timed out"` and records the same
+failure stats. That is the correct shape: the timeout is distinguishable from a
+tmux refusal in what the user is told.
+
+**Verified by reading:**
+
+- **The `Drop` block is byte-identical** to its pre-phase form — confirmed by
+  `diff` against `8d1f510`, not by eye. No workaround was attempted: `block_on`
+  and `futures::executor` appear **zero** times in `foreground.rs`.
+- **`pane_exists` reads a timeout as `false`** (`.unwrap_or(false)`), so a wedged
+  tmux cannot be mistaken for "the pane is there".
+- **`highlight_pane` converted as Shape A** (`let _ = …`), leaving its
+  `unhighlight_pane` partners in slices 2 and 3 untouched and the pair balanced.
+
+### ⚠ My `block_on` criterion was over-broad
+
+It required `grep -rn "block_on\|futures::executor" src/daemon/executor/` to
+return **nothing**. It returns **six** hits — in `knowledge/artifacts.rs`,
+`agents.rs` and `memory.rs`, all **pre-existing** and untouched by this phase
+(confirmed: the diff adds none).
+
+The intent was "no workaround in `foreground.rs`", and scoped to that file the
+criterion holds at **0**. I pinned a subtree-wide assertion without running it
+first — the fourth instrument error in this phase family and the same root every
+time: **a number or an assertion that was not produced by the exact command
+written beside it.**
+
+### The slicing lesson
+
+Line-based slicing is imperfect here: the `send_keys` match at `:374` has its arms
+at `:890+`, so converting a slice-1 site **necessarily** edits >460. That is a
+consequence of the conversion, not scope creep — the executor changed only arm
+patterns there, converting no site.
+
+**For 06d/06e:** the boundary is the *site*, not the line. A phase owns a site and
+whatever that site's expression requires, wherever it extends. Both remaining
+slices should say so explicitly, or the same edit will read as a violation.
