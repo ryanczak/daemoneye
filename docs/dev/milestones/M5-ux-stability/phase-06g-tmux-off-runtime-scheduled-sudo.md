@@ -1,7 +1,7 @@
 # Phase 06g: tmux Calls Off the Runtime — `scheduled.rs` + `utils/sudo.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06f — `done` (`executor/` is finished)
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -372,3 +372,9 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 21:33 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Converting 11 tmux calls in `scheduled.rs` (7) and `utils/sudo.rs` (4) to use `off_runtime`.

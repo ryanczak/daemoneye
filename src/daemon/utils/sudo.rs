@@ -69,7 +69,12 @@ pub async fn wait_for_sudo_prompt_and_inject(pane_id: &str, credential: &str) ->
     loop {
         tokio::time::sleep(POLL).await;
         waited += POLL;
-        let snap = crate::tmux::capture_pane(pane_id, 20).unwrap_or_default();
+        let p = pane_id.to_string();
+        let snap =
+            crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 20))
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
         // Fingerprint prompts cannot be satisfied programmatically — fail fast
         // instead of waiting the full timeout.
         if is_fingerprint_prompt(&snap) {
@@ -80,10 +85,21 @@ pub async fn wait_for_sudo_prompt_and_inject(pane_id: &str, credential: &str) ->
             || snap.contains("password")
             || snap.contains("Password")
         {
-            let _ = crate::tmux::send_keys(pane_id, credential);
+            let p = pane_id.to_string();
+            let c = credential.to_string();
+            let _ =
+                crate::tmux::off_runtime("send-keys", move || crate::tmux::send_keys(&p, &c)).await;
             return true;
         }
-        if waited >= TIMEOUT || crate::tmux::pane_dead_status(pane_id).is_some() {
+        if waited >= TIMEOUT || {
+            let p = pane_id.to_string();
+            crate::tmux::off_runtime("pane-dead-status", move || {
+                crate::tmux::pane_dead_status(&p)
+            })
+            .await
+            .flatten()
+            .is_some()
+        } {
             return false;
         }
     }
@@ -99,7 +115,12 @@ pub async fn sudo_auth_failed(pane_id: &str) -> bool {
     loop {
         tokio::time::sleep(POLL).await;
         waited += POLL;
-        let snap = crate::tmux::capture_pane(pane_id, 20).unwrap_or_default();
+        let p = pane_id.to_string();
+        let snap =
+            crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 20))
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
         if snap.contains("Sorry, try again") {
             return true;
         }

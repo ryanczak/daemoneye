@@ -213,7 +213,13 @@ pub async fn run_scheduled_job(
 
     let wrapped = format!("{}; exit $?", cmd);
 
-    let pane_id = match tmux::create_job_window(&session, &temp_win_name) {
+    let s = session.to_string();
+    let t = temp_win_name.to_string();
+    let created = tmux::off_runtime("create-job-window", move || tmux::create_job_window(&s, &t))
+        .await
+        .unwrap_or_else(|| Err(anyhow::anyhow!("timed out creating window")));
+
+    let pane_id = match created {
         Ok(p) => p,
         Err(e) => {
             let msg = format!(
@@ -244,7 +250,14 @@ pub async fn run_scheduled_job(
         unix_ts,
         cmd_slug
     );
-    let win_name = match tmux::rename_window(&session, &temp_win_name, &final_win_name) {
+    let s = session.to_string();
+    let t = temp_win_name.to_string();
+    let r = final_win_name.clone();
+    let renamed = tmux::off_runtime("rename-window", move || tmux::rename_window(&s, &t, &r))
+        .await
+        .unwrap_or_else(|| Err(anyhow::anyhow!("timed out renaming window")));
+
+    let win_name = match renamed {
         Ok(()) => final_win_name,
         Err(e) => {
             log::warn!(
@@ -258,11 +271,21 @@ pub async fn run_scheduled_job(
     };
 
     // P7: keep the pane alive in a '<dead>' state so we can query pane_dead_status.
-    if let Err(e) = tmux::set_remain_on_exit(&pane_id, true) {
+    let p = pane_id.clone();
+    let set = tmux::off_runtime("set-remain-on-exit", move || {
+        tmux::set_remain_on_exit(&p, true)
+    })
+    .await
+    .unwrap_or_else(|| Err(anyhow::anyhow!("timed out setting remain-on-exit")));
+    if let Err(e) = set {
         log::warn!("Failed to set remain-on-exit for {}: {}", win_name, e);
     }
 
-    if let Err(e) = tmux::send_keys(&pane_id, &wrapped) {
+    let p = pane_id.clone();
+    let sent = tmux::off_runtime("send-keys", move || tmux::send_keys(&p, &wrapped))
+        .await
+        .unwrap_or_else(|| Err(anyhow::anyhow!("timed out sending keys")));
+    if let Err(e) = sent {
         let msg = format!("Scheduled job '{}': failed to send keys: {}", job.name, e);
         store.mark_done(&job.id, false, Some(e.to_string()));
         if let Some(ref tx) = notify_tx
@@ -283,7 +306,11 @@ pub async fn run_scheduled_job(
     let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
 
     let exit_code = loop {
-        if let Some(code) = tmux::pane_dead_status(&pane_id) {
+        let p = pane_id.clone();
+        let dead = tmux::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p))
+            .await
+            .flatten();
+        if let Some(code) = dead {
             break code;
         }
         if tokio::time::Instant::now() >= deadline {
@@ -293,9 +320,17 @@ pub async fn run_scheduled_job(
             result = rx.recv() => {
                 if let Ok(notified_pane) = result
                     && notified_pane == pane_id
-                        && let Some(code) = tmux::pane_dead_status(&pane_id) {
-                            break code;
-                        }
+                {
+                    let p = pane_id.clone();
+                    let dead = tmux::off_runtime("pane-dead-status", move || {
+                        tmux::pane_dead_status(&p)
+                    })
+                    .await
+                    .flatten();
+                    if let Some(code) = dead {
+                        break code;
+                    }
+                }
             }
             _ = tokio::time::sleep_until(deadline) => {
                 break 124;
@@ -305,7 +340,11 @@ pub async fn run_scheduled_job(
 
     crate::daemon::stats::finish_command(cmd_id, exit_code);
 
-    let raw = tmux::capture_pane(&pane_id, 5000).unwrap_or_default();
+    let p = pane_id.clone();
+    let raw = tmux::off_runtime("capture-pane", move || tmux::capture_pane(&p, 5000))
+        .await
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
     let output = normalize_output(&raw);
     let success = exit_code == 0;
 
