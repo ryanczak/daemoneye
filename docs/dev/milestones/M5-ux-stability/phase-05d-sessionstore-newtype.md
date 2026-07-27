@@ -1,7 +1,7 @@
 # Phase 05d: Make the Session Lock Unreachable — the `SessionStore` Newtype
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05c (all 22 conversions) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -388,3 +388,133 @@ Converted `SessionStore` from a `pub type` alias to a `pub struct` newtype wrapp
 1. **Clone semantics:** `#[derive(Clone)]` on the newtype clones the inner `Arc`, so all clones point to the same shared `HashMap`. If it deep-copied the map, every handler would get an isolated copy and session state would never be shared.
 2. **Re-entrancy guard:** `SessionsLockDepth::enter()` is the first statement in `with_sessions`, before the `sessions.0.lock()` acquisition — confirmed.
 3. **Decoys:** `bg_session` is `Arc<Mutex<String>>` and `managed_session` is `Arc<Option<String>>`; both still use `Arc::clone` untouched.
+
+### Update — ts=1785115482399 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Converted `SessionStore` from a `pub type` alias to a `pub struct` newtype, making `.lock()` unreachable from outside `session.rs`. The newtype derives `Clone` and `Default`, provides `SessionStore::new()`, and exposes a `#[cfg(test)]`-gated `try_lock()` for test assertions. Updated `with_sessions` to reach through via `sessions.0.lock()`. All 16 spec-listed construction sites and `Arc::clone` sites were converted, plus 4 additional `.lock()` call sites discovered by the compiler in `respawn.rs`, `run.rs`, and `pane.rs` (converted to use `with_sessions`). Removed a shadowing `type SessionStore` alias in `hook.rs`. Task 5 experiment confirmed: `sessions.lock()` produces `no method named 'lock' found for struct 'daemon::session::SessionStore'` outside `session.rs`. All gates pass: `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean, `cargo fmt --all` clean, `cargo test` 915 passed. The spec expected 4 files with `SessionStore::new()`; the compiler found 2 additional test files (`memory.rs`, `pane.rs`) that also needed conversion — these were not listed in the spec's inventory but were necessary for a clean build.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ext_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test search::tests::search_respects_kind_filter ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 915 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.20s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test event_log_append_read ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-05d-sessionstore-newtype.md` — +16 -1
+- `src/daemon/background/respawn.rs` — +6 -5
+- `src/daemon/background/run.rs` — +6 -5
+- `src/daemon/context/background.rs` — +7 -8
+- `src/daemon/executor/knowledge/memory.rs` — +3 -3
+- `src/daemon/executor/knowledge/pane.rs` — +18 -21
+- `src/daemon/executor/mod.rs` — +9 -13
+- `src/daemon/hook.rs` — +1 -4
+- `src/daemon/mod.rs` — +11 -12
+- `src/daemon/server/ask.rs` — +1 -1
+- `src/daemon/server/mod.rs` — +3 -3
+- `src/daemon/session.rs` — +33 -9
+
+**Commit:** ca46ad4fecbad070de62276b487ca824fefec826
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
