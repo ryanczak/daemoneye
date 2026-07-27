@@ -1,7 +1,7 @@
 # Phase 05g: Make the `compaction_in_flight` Assertions Real
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-04f (which found the gap) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=test, size=m
@@ -599,3 +599,97 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 853856d91bf7ec40556215739abed086e933fa32
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 `hard_fail` (`NoProgressStall`, 165 turns), resolved by resume
+  (60 turns). No bug filed — the stall was caused by two defects in my spec.
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none in the final state. One **forced** deviation: my
+  refinement told the executor to restore each mutation with
+  `git checkout -- <file>`, and the shell guard **blocked that command**, so it
+  restored by patching the line back instead. Byte-identity was verified
+  independently and holds — but the fix I designed did not actually run.
+- **Calibration:** two findings, one of them a fourth occurrence with a newly
+  demonstrated blast radius.
+
+Gates re-run bare with exit codes captured: fmt 0, build 0 (zero warnings),
+clippy 0, test 0 with **916** tests — the inverted criterion, correctly hit.
+`compaction_in_flight = false` is **4**, all production (`:119`, `:136`, `:232`,
+`:240`, all above `mod tests` at `:275`); `= true` is **5**; `#[tokio::test]` is
+**7**; one `src/` file changed; the closure audit still prints nothing.
+
+**Production byte-identity verified against the pre-phase baseline.** The only
+removed line in `git diff baaf476` is the *test-side* `e.compaction_in_flight =
+false;` flipped to `true` by task 2, and all four diff hunks start at `:497` or
+later — comfortably inside `mod tests`.
+
+### ✅ The mutation table was independently re-run, not taken on trust
+
+A claimed mutation check is not one, and this is the phase where accepting a
+coverage claim on faith would repeat the exact mistake that created it. I copied
+the file, deleted each production clear line in turn, ran `cargo test --lib`,
+and restored from the copy (sha-verified identical afterwards):
+
+| Site | Test that failed | Matches executor's table? |
+|---|---|---|
+| `:119` no viable cut | `background_swap_discards_on_new_turn` | ✓ |
+| `:136` idempotency guard | `epoch_build_idempotent_after_discard` | ✓ |
+| `:232` stale branch | `swap_discards_when_turn_ran_during_build` | ✓ |
+| `:240` swap success | `background_swap_applies_when_unchanged` | ✓ |
+
+**All four sites are genuinely guarded.** The executor's table is accurate in
+every row. 04f's finding is now closed: what were three decorative assertions are
+four real ones.
+
+### ⚠ The mutations exposed calibration thread 4 concretely — HOME-lock cascade
+
+The mutation runs produced a signal nobody was looking for:
+
+| Mutation | Failures |
+|---|---|
+| `:119` | **1** |
+| `:136` | **48** |
+| `:232` | **48** |
+| `:240` | **48** |
+
+The 47 extra failures are unrelated tests — `daemon::server::catchup::tests::*`,
+`cli::commands::costs::tests::*` — and the cause is exact:
+
+- `background_swap_discards_on_new_turn` (mutation 1's target) does **not** call
+  `TestHome::new()`.
+- The other three targets all do (`:490`, `:541`, `:587`).
+
+`TestHome` holds `crate::TEST_HOME_LOCK`. **When a test holding that lock panics,
+it poisons the lock and every other HOME-dependent test in the suite fails.** One
+real failure becomes forty-eight.
+
+This is **calibration thread 4 ("Lock/HOME test hygiene"), now at its fourth
+occurrence and the first with a measured blast radius.** It did not affect this
+phase's correctness — the target test failed in every case, which is what the
+mutation proves — but it means any future mutation or bisect in this codebase
+reads through 47 lines of noise, and a less careful reader could mis-attribute
+the cause. It is now the strongest candidate for its own phase.
+
+### The `hard_fail` was my spec's fault, twice over
+
+Worth recording precisely, because both are instances of a pattern:
+
+1. **A diff criterion with no baseline.** "`git diff …` touches no line outside
+   `mod tests`" — but the executor commits as it works, so a bare `git diff` said
+   nothing about work already committed. It burned ~60 read-only turns trying to
+   construct the right invocation. Fixed by naming the baseline commit.
+2. **A restore instruction with no mechanism.** "Restore the line" left it to
+   hand-editing, which introduced a stray `};` in `run_compaction` that then had
+   to be hunted down. Fixed by specifying `git checkout --` … which the shell
+   guard then blocked.
+
+The shared shape: **I asked the executor to prove a property of its own diff
+without pinning what the diff was against or how to manipulate it.** That is the
+second `NoProgressStall` in this milestone and both have this shape — 05c's
+criterion was unsatisfiable, this one under-specified.
+
+And the fix to (2) is its own lesson: **a refinement that depends on a command
+the harness forbids is not a refinement.** I should have confirmed
+`git checkout --` was permitted before building the correction around it.
