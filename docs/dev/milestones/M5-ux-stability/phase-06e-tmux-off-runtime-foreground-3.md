@@ -1,7 +1,7 @@
 # Phase 06e: `foreground.rs` tmux Calls Off the Runtime — Slice 3 (exit status & cleanup)
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06d (slice 2) — `done`
 **Estimated diff:** ~100 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -392,3 +392,8 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 19:37 (started)
+
+**Executor:** claude-code
+**Action:** Started phase 06e — converting 9 remaining tmux calls in `foreground.rs` to `off_runtime` (exit status detection, cleanup, and the `pane_exists` gate in `run_background`).

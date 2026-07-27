@@ -829,12 +829,23 @@ where
                         && exit_status.is_none()
                         && !saw_child
                     {
-                        if let Some(code) = tmux::read_pane_exit_status(target_str) {
+                        let t = target_str.to_string();
+                        let latch = tmux::off_runtime("read-pane-exit-status", move || {
+                            tmux::read_pane_exit_status(&t)
+                        })
+                        .await
+                        .flatten();
+                        if let Some(code) = latch {
                             exit_status = Some(code);
                             break;
                         }
                         tokio::time::sleep(LOCAL_CHILD_POLL).await;
-                        if tmux::pane_pid(target_str).unwrap_or(0) != idle_pid {
+                        let t2 = target_str.to_string();
+                        let pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t2))
+                            .await
+                            .and_then(|r| r.ok())
+                            .unwrap_or(0);
+                        if pid != idle_pid {
                             saw_child = true;
                         }
                     }
@@ -852,7 +863,13 @@ where
                         if tokio::time::Instant::now() >= deadline {
                             break;
                         }
-                        if let Some(code) = tmux::read_pane_exit_status(target_str) {
+                        let t = target_str.to_string();
+                        let latch = tmux::off_runtime("read-pane-exit-status", move || {
+                            tmux::read_pane_exit_status(&t)
+                        })
+                        .await
+                        .flatten();
+                        if let Some(code) = latch {
                             exit_status = Some(code);
                             break;
                         }
@@ -860,12 +877,20 @@ where
                             result = fg_rx.recv() => {
                                 if let Ok(notified_pane) = result
                                     && notified_pane == target_str {
-                                        let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
+                                        let t3 = target_str.to_string();
+                                        let cur_pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t3))
+                                            .await
+                                            .and_then(|r| r.ok())
+                                            .unwrap_or(0);
                                         if idle_pid != 0 && cur_pid == idle_pid { break; }
                                     }
                             }
                             _ = tokio::time::sleep(LOCAL_SLOW_POLL) => {
-                                let cur_pid = tmux::pane_pid(target_str).unwrap_or(0);
+                                let t4 = target_str.to_string();
+                                let cur_pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t4))
+                                    .await
+                                    .and_then(|r| r.ok())
+                                    .unwrap_or(0);
                                 if idle_pid != 0 && cur_pid == idle_pid { break; }
                             }
                         }
@@ -875,10 +900,20 @@ where
 
             drop(fg_hook_guard);
             tokio::time::sleep(POST_CMD_CAPTURE_DELAY).await;
-            tmux::unhighlight_pane(target_str, chat_pane);
 
-            let mut output = match tmux::capture_pane(target_str, 200) {
-                Ok(snap) if is_interactive => {
+            let t = target_str.to_string();
+            let cp = chat_pane.map(|s| s.to_string());
+            let _ = tmux::off_runtime("unhighlight-pane", move || {
+                tmux::unhighlight_pane(&t, cp.as_deref())
+            })
+            .await;
+
+            let t2 = target_str.to_string();
+            let captured = tmux::off_runtime("capture-pane", move || tmux::capture_pane(&t2, 200))
+                .await
+                .and_then(|r| r.ok());
+            let mut output = match captured {
+                Some(snap) if is_interactive => {
                     let destination = interactive_destination(cmd)
                         .unwrap_or_else(|| "the remote host".to_string());
                     let pane_snap =
@@ -898,7 +933,7 @@ where
                          <pane_snapshot>\n{pane_snap}\n</pane_snapshot>"
                     )
                 }
-                Ok(snap) => {
+                Some(snap) => {
                     let extracted = extract_command_output(&snap, cmd);
                     let mut out = mask_sensitive(&normalize_output(&extracted));
                     let hints = crate::manifest::related_knowledge_hints(&out);
@@ -908,11 +943,12 @@ where
                     }
                     out
                 }
-                Err(_) => "Command sent but could not capture output.".to_string(),
+                None => "Command sent but could not capture output.".to_string(),
             };
 
             if switched_to_working && let Some(cp) = chat_pane {
-                let _ = tmux::select_pane(cp);
+                let cp2 = cp.to_string();
+                let _ = tmux::off_runtime("select-pane", move || tmux::select_pane(&cp2)).await;
             }
 
             // Surface the exit status to the model — local pane only. Interactive
@@ -998,7 +1034,11 @@ where
     } = ghost_ctx;
     // N11: retry path — reuse an existing background pane via respawn-pane.
     if let Some(pane_id) = retry_pane {
-        if !crate::tmux::pane_exists(pane_id) {
+        let pid = pane_id.to_string();
+        let pane_alive = tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&pid))
+            .await
+            .unwrap_or(false);
+        if !pane_alive {
             let msg = format!(
                 "Error: retry_in_pane '{}' does not exist. Use background=true without \
                  retry_in_pane to start a fresh background window.",
