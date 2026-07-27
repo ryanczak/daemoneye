@@ -1,7 +1,7 @@
 # Phase 06a: Get tmux Subprocess Calls Off the Async Runtime
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05h — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -536,3 +536,80 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b8ca3bd6483fff725cc0402e870e640ef44ed226
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (111 turns)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. Exactly two `src/` files changed; `respawn.rs` still
+  shows 10 `tmux::` and 3 inline `Command` sites, untouched for 06b.
+- **Calibration:** one error of mine (a broken acceptance-criteria script), one
+  imprecise claim by the executor. Neither affected the code.
+
+Gates re-run bare with exit codes captured: fmt 0, build 0 (zero warnings),
+clippy 0, test 0 — **916** lib-unit and **27** integration tests, unchanged.
+`spawn_blocking` appears exactly once in the tree, inside the adapter.
+
+### Verified with a span-aware check: 0 unwrapped calls
+
+**My acceptance-criteria script was wrong and reported 7 false positives.** It
+excluded lines containing `move ||`, but rustfmt puts the closure body on its own
+line:
+
+```rust
+    match tmux::off_runtime("rename-window", move || {
+        tmux::rename_window(&s2, &t2, &f2)      // ← flagged, but plainly inside
+    })
+```
+
+Re-checked by paren-matching every `off_runtime(` call and testing whether each
+`tmux::` call falls inside a span: **0 genuinely unwrapped `tmux::` calls and 0
+unwrapped inline `Command::new("tmux")`**, across **18** `off_runtime` sites (16
+converted sites plus two duplicated cleanup calls in the `send_keys` timeout arm).
+
+### The three things no gate could show
+
+1. **The `Option<Result<…>>` distinction survives.** Every converted site matches
+   three arms. Timeout-or-panic (`None`) never collapses into tmux's own `Err`,
+   so a wedged server stays distinguishable from a refusal.
+2. **`.flatten()` at the `pane_dead_status` sites is correct.**
+   `pane_dead_status` returns `Option<i32>`, so `off_runtime` yields
+   `Option<Option<i32>>`; flattening then `unwrap_or(-1)` maps both "timed out"
+   and "tmux reported nothing" to `-1`, which is what the original did.
+3. **Early returns are right — but the Update Log over-counts them.** Two sites
+   return on timeout: `create_job_window` (`:72`) and `send_keys` (`:207`), and
+   both are exactly the sites whose original `Err` arm returned. The Update Log's
+   reasoning check names **three**, adding `rename_window` — which returns in
+   *neither* arm, then or now: both `Some(Err)` and `None` fall back to
+   `temp_name`, preserving the original behaviour exactly.
+
+   **The code is correct; the claim about it is not.** Recorded rather than
+   bounced, on the same basis as an earlier phase's executor self-misidentification
+   — an imprecise sentence in a reasoning check, with the underlying behaviour
+   verified correct by reading.
+
+All other `None` arms fall through as no-ops (`set_remain_on_exit`,
+`start_pipe_pane`, three `kill_job_window` sites), matching what their `Err` arms
+did before. No new `unwrap`/`expect`/`panic!`/`unsafe`/`TODO`/`println!`.
+
+### Calibration — my sixth counting-instrument error, same root
+
+The broken script is the **sixth** measurement error in this phase family, and the
+third of *this* kind: a line-oriented check applied to a multi-line reality. The
+first five were caught before dispatch by running the criteria; this one survived
+because **I ran the script against the pre-phase tree, where it happened to be
+correct** — every call was on one line then. rustfmt's reflowing of the converted
+code is what broke it.
+
+*Refinement, on top of the two from 05h:* **a criterion that parses source must be
+validated against the shape the phase will produce, not the shape it starts
+from.** Running it pre-dispatch proves nothing about a file the phase reformats.
+The span-matching approach used above is the durable form and should replace the
+line-heuristic in 06b–06e.
+
+### The pattern is now established for 06b–06e
+
+`off_runtime` + the four shapes (ignore / default / inspect-error / inline
+`Command`) is proven and quotable. The remaining ~72 async sites in `respawn.rs`,
+`executor/`, the `daemon/` core and `cli/` copy it directly.

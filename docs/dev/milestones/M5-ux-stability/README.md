@@ -89,7 +89,7 @@ take the socket.
 | 05f | unlock-ask-entry ([phase-05f-unlock-ask-entry.md](phase-05f-unlock-ask-entry.md)) — `ask.rs:97`: hoist `read_session_meta` (file read) + `pane_exists`/`start_pipe_pane` (2 subprocesses) out of the closure. **Last blocking-work site** | done (approved_first_try) |
 | 05g | compaction-coverage-followup ([phase-05g-compaction-coverage-followup.md](phase-05g-compaction-coverage-followup.md)) — 04f's 3 vacuous `compaction_in_flight` assertions made real, all 4 clearing sites mutation-checked. **Adds a test: 916** | done (approved_after_1) |
 | 05h | test-home-guard ([phase-05h-test-home-guard.md](phase-05h-test-home-guard.md)) — one poison-recovering accessor for `TEST_HOME_LOCK`; 62 sites. Stops one failing test failing 47 others | done (approved_first_try) |
-| 06a | tmux-off-runtime ([phase-06a-tmux-off-runtime.md](phase-06a-tmux-off-runtime.md)) — the `off_runtime` adapter + `background/run.rs` (16 sites). **First of ~5** | review      |
+| 06a | tmux-off-runtime ([phase-06a-tmux-off-runtime.md](phase-06a-tmux-off-runtime.md)) — the `off_runtime` adapter + `background/run.rs` (16 sites). **First of ~5** | done (approved_first_try) |
 | 06b–06e | tmux-off-runtime tail — `respawn.rs` (13), `executor/` (21), `daemon/` core (21), `cli/` (12). Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
