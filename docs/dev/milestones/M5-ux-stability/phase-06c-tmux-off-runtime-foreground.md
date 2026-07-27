@@ -1,7 +1,7 @@
 # Phase 06c: `foreground.rs` tmux Calls Off the Runtime — Slice 1 (setup & send)
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06b — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s

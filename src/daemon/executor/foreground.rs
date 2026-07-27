@@ -197,7 +197,10 @@ where
     if let Some(tp) = target
         && chat_pane != Some(tp)
     {
-        let pane_exists = crate::tmux::pane_exists(tp);
+        let tp_owned = tp.to_string();
+        let pane_exists = tmux::off_runtime("pane-exists", move || tmux::pane_exists(&tp_owned))
+            .await
+            .unwrap_or(false);
         if !pane_exists {
             let correct = session_id
                 .and_then(|sid| {
@@ -300,7 +303,11 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
 
-    let idle_pid = tmux::pane_pid(target_str).unwrap_or(0);
+    let target_str_pid = target_str.to_string();
+    let idle_pid = tmux::off_runtime("pane-pid", move || tmux::pane_pid(&target_str_pid))
+        .await
+        .and_then(|r| r.ok())
+        .unwrap_or(0);
     let is_remote_pane = get_pane_remote_host(target_str).is_some();
 
     // § 2.4 remote execution: when the foreground target is a remote (SSH/mosh) pane and
@@ -359,9 +366,21 @@ where
         target_str,
         shell_escape_arg(session_name)
     );
-    let _ = std::process::Command::new("tmux")
-        .args(["set-hook", "-t", target_str, &hook_name, &notify_cmd])
-        .output();
+    let target_str_hook = target_str.to_string();
+    let hook_name_hook = hook_name.clone();
+    let notify_cmd_hook = notify_cmd.clone();
+    let _ = tmux::off_runtime("set-hook", move || {
+        std::process::Command::new("tmux")
+            .args([
+                "set-hook",
+                "-t",
+                &target_str_hook,
+                &hook_name_hook,
+                &notify_cmd_hook,
+            ])
+            .output()
+    })
+    .await;
     let mut fg_hook_guard = FgHookGuard::new(target_str, hook_name.clone());
     let mut fg_rx = bg_done_subscribe();
 
@@ -369,11 +388,26 @@ where
     // completion (and carries its real exit code) rather than a stale value from
     // the previous command. No-op for remote/interactive panes (they don't
     // consult it).
-    tmux::clear_pane_exit_status(target_str);
+    let target_str_clear = target_str.to_string();
+    let _ = tmux::off_runtime("clear-pane-exit-status", move || {
+        tmux::clear_pane_exit_status(&target_str_clear)
+    })
+    .await;
 
-    let result = match tmux::send_keys(target_str, send_cmd) {
-        Ok(()) => {
-            tmux::highlight_pane(target_str, chat_pane);
+    let target_str_keys = target_str.to_string();
+    let send_cmd_keys = send_cmd.to_string();
+    let send_keys_res = tmux::off_runtime("send-keys", move || {
+        tmux::send_keys(&target_str_keys, &send_cmd_keys)
+    })
+    .await;
+    let result = match send_keys_res {
+        Some(Ok(())) => {
+            let target_str_highlight = target_str.to_string();
+            let chat_pane_highlight = chat_pane.map(|s| s.to_string());
+            let _ = tmux::off_runtime("highlight-pane", move || {
+                tmux::highlight_pane(&target_str_highlight, chat_pane_highlight.as_deref())
+            })
+            .await;
             let mut switched_to_working = false;
             let mut is_interactive = false;
             let mut exit_status: Option<i32> = None;
@@ -417,14 +451,26 @@ where
                         tokio::time::sleep(SUDO_POLL_INTERVAL).await;
                         waited += SUDO_POLL_INTERVAL;
 
-                        let cur = tmux::pane_current_command(target_str).unwrap_or_default();
+                        let target_str_cur = target_str.to_string();
+                        let cur = tmux::off_runtime("pane-current-command", move || {
+                            tmux::pane_current_command(&target_str_cur)
+                        })
+                        .await
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default();
 
                         if cur == "sudo" {
                             // sudo is the foreground process; inspect the pane
                             // output *now* to determine what it is waiting for.
                             // Checking while "sudo" is confirmed current prevents
                             // stale scrollback from triggering a false positive.
-                            let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
+                            let target_str_snap = target_str.to_string();
+                            let snap = tmux::off_runtime("capture-pane", move || {
+                                tmux::capture_pane(&target_str_snap, 10)
+                            })
+                            .await
+                            .and_then(|r| r.ok())
+                            .unwrap_or_default();
                             if is_fingerprint_prompt(&snap) {
                                 result = SudoAuth::Fingerprint;
                                 break 'detect;
@@ -449,12 +495,24 @@ where
                             }
                             tokio::time::sleep(SUDO_POLL_INTERVAL).await;
                             waited += SUDO_POLL_INTERVAL;
-                            let cur2 = tmux::pane_current_command(target_str).unwrap_or_default();
+                            let target_str_cur2 = target_str.to_string();
+                            let cur2 = tmux::off_runtime("pane-current-command-2", move || {
+                                tmux::pane_current_command(&target_str_cur2)
+                            })
+                            .await
+                            .and_then(|r| r.ok())
+                            .unwrap_or_default();
                             if cur2 == "sudo" {
                                 // Persisted for two consecutive polls: blocked on
                                 // input.  Re-check the pane in case the prompt just
                                 // rendered between polls.
-                                let snap2 = tmux::capture_pane(target_str, 10).unwrap_or_default();
+                                let target_str_snap2 = target_str.to_string();
+                                let snap2 = tmux::off_runtime("capture-pane-2", move || {
+                                    tmux::capture_pane(&target_str_snap2, 10)
+                                })
+                                .await
+                                .and_then(|r| r.ok())
+                                .unwrap_or_default();
                                 if is_fingerprint_prompt(&snap2) {
                                     result = SudoAuth::Fingerprint;
                                 } else {
@@ -832,9 +890,22 @@ where
             );
             output
         }
-        Err(e) => {
+        Some(Err(e)) => {
             crate::daemon::stats::finish_command(cmd_id, 1);
             let msg = format!("Failed to send command: {}", e);
+            log_command(
+                session_id,
+                "foreground",
+                target_str,
+                cmd,
+                "send-failed",
+                &msg,
+            );
+            msg
+        }
+        None => {
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            let msg = "Failed to send command: tmux send-keys timed out".to_string();
             log_command(
                 session_id,
                 "foreground",
