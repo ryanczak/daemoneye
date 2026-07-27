@@ -1,7 +1,7 @@
 # Phase 06h: tmux Calls Off the Runtime — `daemon/mod.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06g — `done`
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -552,3 +552,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ae61877e9ba4a75e7c514b18aa7fab694d245fb3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (67 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing the edited file — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+Every criterion is exact. The scan reports **6**, and all six sit at lines
+159–270 — between `pub fn detect_session` (`:155`) and the end of
+`pub fn install_session_hooks`, well before `pub async fn run_daemon` (`:327`).
+`off_runtime` **9** against a verified 0 before; `io::Error::other` **5**
+against 0; `anyhow::bail!` **5**, up from the verified 4 by exactly the one
+`None` arm; `block_on`/`futures::executor`/`spawn_blocking` **0**; one `src/`
+file in the code commit.
+
+**The sync boundary held for the second phase running.** Both
+`pub fn detect_session` and `pub fn install_session_hooks` keep their `pub fn`
+signatures and all six of their hits. Nothing was made `async` to force a
+conversion through — which also leaves `hook.rs:157`'s call site untouched, as
+required.
+
+Verified by reading, since counts cannot show these:
+
+- **The inherited lock invariant survived.** The `with_sessions(&sessions,
+  |store| …)` closure at `:871` still contains only the `filter_map`/`filter`/
+  `collect` chain, and the `stop_pipe_pane` `.await` is in the `for` loop
+  *outside* it. This was the one edit in the phase that could have silently
+  re-created the collect-under-lock defect phase 05 fixed; it did not.
+- **The `new-session` match kept all three original arms byte-identical**,
+  including the `if o.status.success()` guard on the first, with `None` added
+  as a fourth. Arm order is unchanged, so a successful create still cannot fall
+  through to a `bail!`.
+- **`.unwrap_or(false)` at the session gate**, not `true`. A timeout therefore
+  routes into the `new-session` path, whose `None` arm bails — the daemon
+  refuses to start with a real reason rather than running its whole lifetime
+  against a session it never confirmed.
+- **`client_dimensions` collapsed with `.unwrap_or((0, 0))`** — the correct
+  shape for a bare-tuple return — and the existing `if w > 0 && h > 0` guard is
+  untouched, so a timeout skips seeding the viewport exactly as "no client"
+  does today.
+- **Every `log::error!` / `log::warn!` message is unchanged** across the five
+  hook sites, and the uninstall loop still logs `hook` (the loop variable) while
+  only its clone `h` was moved into the closure.
+
+Test plan honoured: no new tests, no coverage claim. Correct — `run_daemon`
+forks, binds a socket and runs to shutdown, and `mod.rs`'s `mod tests` covers
+only the generic `supervise` wrapper. All three reasoning checks were answered
+and hold against the tree.
