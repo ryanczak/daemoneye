@@ -1,10 +1,98 @@
 # NEXT
 
-**Active phase: M5 phase-06f — tmux-off-runtime-executor-tail**
+**Active phase: M5 phase-06g — tmux-off-runtime-scheduled-sudo**
 (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06f-tmux-off-runtime-executor-tail.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06g-tmux-off-runtime-scheduled-sudo.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06f-tmux-off-runtime-executor-tail`.
+Dispatch with `/rexymcp:dispatch phase-06g-tmux-off-runtime-scheduled-sudo`.
+
+## `executor/` is finished; four conversion phases in a row, no bounces
+
+06d (10) → 06e (9) → 06f (12), all `approved_first_try`, 95 / 59 / 66 turns.
+06f's sync-boundary carve-out — the novel hazard — produced zero fumbling,
+which is the strongest evidence yet that naming a trap precisely is what buys
+the clean run.
+
+## I surveyed before scoping, and it changed the split again
+
+`daemon/` had 47 raw hits across 13 files, far too many for one phase. I
+classified every hit by whether its **enclosing function is async**, and the
+answer reshaped three phases:
+
+- **`scheduled.rs` (7) + `utils/sudo.rs` (4)** — all 11 in `async fn`s, all
+  one coherent "run a command in a pane and watch it" flow. **That is 06g.**
+- **`daemon/mod.rs`** — 9 convertible inside `run_daemon`, but **6 are in the
+  synchronous `detect_session` / `install_session_hooks`** startup path. Same
+  carve-out 06f needed; own phase (06h).
+- Everything else (`background/`, `session.rs`, `ghost.rs`, `hook.rs`,
+  `server/`, `webhook/`, `cli/`) → 06j, survey each first.
+
+`cli/` is the one to watch: ~19 hits and largely synchronous, so expect the
+majority to be restructures rather than conversions.
+
+## A fourth collapse shape, because four sites use their error
+
+`scheduled.rs`'s `create_job_window` / `rename_window` / `set_remain_on_exit` /
+`send_keys` sites all bind `Err(e)` and use it — a log line, a user-facing
+message, and `store.mark_done(&job.id, false, Some(e.to_string()))`. Collapsing
+to a default would discard that, and a timeout has no `e` to begin with. So:
+
+```rust
+.await
+.unwrap_or_else(|| Err(anyhow::anyhow!("timed out creating window")));
+```
+
+`Option<Result<T>>` → `Result<T>`, leaving the existing `match` **entirely
+untouched**. The semantic point matters more than the syntax: a scheduled job
+whose window was never created must be **marked failed**, and the existing `Err`
+arms already do that. Swallowing the timeout would leave the job looking
+successful while nothing ran.
+
+The shape table is now four rows — `Result` → `.ok()`, `Option` →
+`.flatten()`, discard → `let _ =`, **`Result` whose `Err` is used** →
+`.unwrap_or_else(|| Err(…))` — and the spec names picking the wrong
+neighbour's form as the likeliest failure.
+
+**Both new shapes were compile-checked in a scratch crate before pinning**,
+including the short-circuit-preserving block expression for `sudo.rs:86`'s
+`||`. Second phase running with that practice; it is cheap and it has caught
+nothing yet, which is the point.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 0/0, `flatten()` 0/0, 916/27). Post-state values are floors with
+the arithmetic shown. Eight clean applications.
+
+## Still open — four single-occurrence threads
+
+3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
+8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
+Plus, from 06e: an **executor-side** prose miscount, first occurrence.
+
+Plus the fold refinements: import liveness is **per import scope**; a multi-line
+census obliges **every** criterion in that phase; a source-parsing criterion must
+be validated against **the shape the phase will produce**; reasoning checks should
+**demand quoted code**; and **phase size scales with sites-per-file-length**.
+
+**A sixth species of "the count is not the scope" landed in 06f** —
+sync-enclosing-fn, after multi-line acquisitions, expressions spanning slices,
+`Drop` impls, type-import false positives, and already-`async` helpers. The
+generalisation is now strong enough to fold alongside the counting absolute if
+you want it:
+
+> **A raw hit count is the input to a survey, never the scope of a phase.**
+
+## After 06g
+
+**06h** (`daemon/mod.rs`) → **06j** (the tail, survey-first) → **06i** (the
+`close_bg_window`/`watch_pane` async restructure) → **stage A** (harden the sync
+helpers; also what bounds every `Drop` site) → **07** (stall-instrumentation),
+plus the drafted **08–11** set. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06f dispatch note
 
 ## `foreground.rs` is finished — three slices, 29 sites, zero net bounces
 
