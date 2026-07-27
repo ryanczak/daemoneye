@@ -1,7 +1,7 @@
 # Phase 06f: tmux Calls Off the Runtime — the `executor/` Tail
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06e — `done` (`foreground.rs` is finished)
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -472,3 +472,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2c6dadbe73dd9329c6cd7c79a7f9297556f20e7c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (66 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing all three edited files — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at 916 lib + 27
+integration, unchanged).
+
+**`src/daemon/executor/` is finished.** The per-file scan reports exactly
+`4 / 0 / 1`, and every remaining hit is on the do-not-convert list by name:
+`kill_job_window` (`:46`), the `WatchHookGuard` `Drop` impl (`:182`),
+`pane_current_command` (`:196`) and the inline `set-hook` (`:209`) in
+`watch_pane`'s sync prologue, plus `read.rs`'s already-`async` `wait_for`.
+`off_runtime` counts 7 / 2 / 3 against a verified 0 / 0 / 0 before;
+`block_on`/`futures::executor`/`spawn_blocking` 0 in all three; three `src/`
+files in the code commit; `WatchHookGuard`'s `Drop` diffs clean.
+
+**The sync boundary held — the thing most likely to have lost this run.** Both
+`pub fn close_bg_window` (`:13`) and `pub fn watch_pane` (`:188`) still have
+`pub fn` signatures, and all seven `pane.rs` conversions sit after the
+`tokio::spawn(async move {` at `:235`. Nothing was made `async` to force a
+conversion through, and none of the three sync-fn hits was touched.
+
+Verified by reading, since counts cannot show these:
+
+- **Both `send_keys` sites match the compile-checked form exactly**, `??` and
+  all, and both use `pane_id` in the error message — correct, because only the
+  clone `p` was moved into the closure. Both enclosing functions return
+  `anyhow::Result<String>`, so a timeout now propagates as `Err` rather than
+  falling through to poll for a `__DE_DONE__` marker that could never arrive.
+- **`capture_pane` depths were carried per-site**, not harmonised: 600 in
+  `mod.rs:57`, 200 at all three `pane.rs` sites.
+- **`read.rs` kept its ordering and its `wait_for` untouched** — send_keys →
+  `wait_for(...).await` → save_buffer → delete_buffer → the
+  `!signalled && bytes.is_empty()` bail. The "read the buffer regardless"
+  comment still describes the code.
+- **Six closures in `pane.rs` each got their own `pane_id_owned.clone()`**, as
+  required once the first move consumes it.
+- **`alert` moved into the `display-message` closure safely** — the following
+  `log::info!` recomputes its wording from `completed` and never reads `alert`.
+
+One inherent consequence worth recording rather than fixing: if
+`delete_buffer` times out, a `de-rb-N` tmux buffer leaks. That is the intended
+trade of this whole milestone — degrade one operation instead of wedging the
+daemon — and matches how every other discarded call in the sweep behaves.
+
+Test plan honoured: no new tests, no coverage claim, correct for three
+functions with no unit coverage. All three reasoning checks were answered and
+hold against the tree.
