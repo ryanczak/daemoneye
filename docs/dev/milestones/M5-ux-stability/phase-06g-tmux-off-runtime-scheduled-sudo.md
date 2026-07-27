@@ -1,7 +1,7 @@
 # Phase 06g: tmux Calls Off the Runtime — `scheduled.rs` + `utils/sudo.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06f — `done` (`executor/` is finished)
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -500,3 +500,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bddec15a28487ba65e79abf8e2295d16db8ba647
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (62 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing both edited files — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+Every criterion is exact: the per-file scan reports **0** for both files;
+`off_runtime` 7 and 4 against a verified 0 / 0 before; `unwrap_or_else(|| Err(`
+**4**; `flatten()` 2 and 1 (the three `pane_dead_status` sites);
+`grep -cF 'break code;'` **2**; `block_on`/`futures::executor`/`spawn_blocking`
+**0** in both; two `src/` files in the code commit. Every
+`and_then(|r| r.ok())` in both files sits on `capture_pane` — none on a
+`pane_dead_status` site.
+
+**All four shapes were applied to the right sites**, which was this phase's
+stated main risk:
+
+- **The `Err`-preserving collapse is correct at all four sites**, and — the part
+  that matters — **every `Err(e)` arm survived byte-for-byte**. Both
+  `store.mark_done(&job.id, false, Some(e.to_string()))` calls are still there,
+  as are the "failed to create window", "failed to send keys", "Failed to rename
+  sched window" and "Failed to set remain-on-exit" messages. A tmux timeout now
+  flows into those same arms, so a job whose window was never created is marked
+  **failed** rather than silently appearing to succeed.
+- **The `||` short-circuit at `sudo.rs:93` is preserved.** The block expression
+  sits on the right of `waited >= TIMEOUT ||`, so once the deadline passes the
+  tmux subprocess is never spawned — exactly as before.
+- **`break code` stayed a `break` in both places**, so `exit_code` still binds
+  the loop's value. The `select!` arm's `let`-chain was split into a block
+  rather than dodged.
+
+Also verified by reading:
+
+- **`capture_pane` depths carried per-site**, not harmonised: 5000 in
+  `scheduled.rs:344`, 20 at both `sudo.rs` sites.
+- **`wrapped` is moved, not cloned**, into the `send_keys` closure — correct,
+  because it is constructed at `:214` and never read after `:285`. The executor
+  chose the minimal form rather than cloning defensively.
+- **`final_win_name` *is* cloned** into the rename closure, because the `Ok(())`
+  arm still returns the original. The distinction between these two cases was
+  got right without being spelled out.
+- **Loop ordering is unchanged** — dead-check, then deadline, then `select!`. A
+  wedged tmux costs each iteration up to `TMUX_TIMEOUT`, but the deadline check
+  immediately follows, so the loop still terminates at 300 s.
+
+Test plan honoured: no new tests, no coverage claim — correct for a scheduled-job
+path and three sudo helpers that all need a live tmux server. All three reasoning
+checks were answered and hold against the tree.
