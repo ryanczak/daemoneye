@@ -409,11 +409,12 @@ pub async fn run_background_in_window(
                     if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
                         log::error!("Failed to GC dead bg window {}: {}", win_name_bg, e);
                     }
-                    if let Some(ref sid) = session_id_bg
-                        && let Ok(mut store) = sessions_bg.lock()
-                        && let Some(entry) = store.get_mut(sid)
-                    {
-                        entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
+                    if let Some(ref sid) = session_id_bg {
+                        with_sessions(&sessions_bg, |store| {
+                            if let Some(entry) = store.get_mut(sid) {
+                                entry.bg_windows.retain(|w| w.pane_id != pane_id_bg);
+                            }
+                        });
                     }
                 }
             });

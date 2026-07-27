@@ -1,5 +1,5 @@
 use crate::daemon::server::is_valid_pane_id;
-use crate::daemon::session::with_sessions;
+use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::send_response_split;
 use crate::ipc::Response;
 use crate::tmux::cache::SessionCache;
@@ -8,9 +8,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::AsyncWriteExt;
-
-type SessionStore =
-    Arc<std::sync::Mutex<std::collections::HashMap<String, crate::daemon::session::SessionEntry>>>;
 
 /// Handle NotifyActivity hook — broadcast pane activity on the BG_DONE_TX channel.
 pub async fn handle_notify_activity<W>(tx: &mut W, pane_id: &str) -> Result<()>

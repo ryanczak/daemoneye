@@ -993,12 +993,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
 
     #[test]
     fn namespaces_non_ghost_is_global_only() {
-        let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let store: SessionStore = SessionStore::new();
         let ns = build_memory_namespaces(Some("any-sid"), &store, false);
         assert_eq!(ns, vec!["global".to_string()]);
     }
@@ -1140,11 +1138,10 @@ mod tests {
             compaction_in_flight: false,
             pending_compaction_notice: None,
         };
-        let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
-        store
-            .lock()
-            .unwrap_or_log()
-            .insert("gsid".to_string(), entry);
+        let store: SessionStore = SessionStore::new();
+        with_sessions(&store, |s| {
+            s.insert("gsid".to_string(), entry);
+        });
 
         let ns = build_memory_namespaces(Some("gsid"), &store, true);
 
@@ -1241,11 +1238,10 @@ mod tests {
             compaction_in_flight: false,
             pending_compaction_notice: None,
         };
-        let store: SessionStore = Arc::new(Mutex::new(HashMap::new()));
-        store
-            .lock()
-            .unwrap_or_log()
-            .insert("gsid".to_string(), entry);
+        let store: SessionStore = SessionStore::new();
+        with_sessions(&store, |s| {
+            s.insert("gsid".to_string(), entry);
+        });
 
         let ns = build_memory_namespaces(Some("gsid"), &store, true);
 

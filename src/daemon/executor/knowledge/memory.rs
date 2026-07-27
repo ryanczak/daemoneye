@@ -240,11 +240,11 @@ pub fn search_repository(query: &str, kind: &str, namespaces: &[&str]) -> String
 mod tests {
     use super::super::testutil::{TmpHome, with_home};
     use super::*;
+    use crate::daemon::session::SessionStore;
 
     fn make_ctx() -> ArtifactCtx<'static> {
-        let store: &'static crate::daemon::session::SessionStore = Box::leak(Box::new(
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-        ));
+        let store: &'static crate::daemon::session::SessionStore =
+            Box::leak(Box::new(SessionStore::new()));
         let ns: &[&str] = &["global"];
         ArtifactCtx {
             session_id: None,

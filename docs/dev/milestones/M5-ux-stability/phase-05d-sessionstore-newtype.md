@@ -1,7 +1,7 @@
 # Phase 05d: Make the Session Lock Unreachable — the `SessionStore` Newtype
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05c (all 22 conversions) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -373,3 +373,18 @@ claim, and it is not provable by a passing test suite.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 00:56 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Converted `SessionStore` from a `pub type` alias to a `pub struct` newtype wrapping `Arc<Mutex<HashMap<String, SessionEntry>>>`. Added `#[derive(Clone, Default)]`, `SessionStore::new()`, and a `#[cfg(test)]`-gated `try_lock()` method. Updated `with_sessions` to reach through the newtype via `sessions.0.lock()`. Converted all 16 construction sites to `SessionStore::new()` and all 16 `Arc::clone(&sessions)` sites to `sessions.clone()`. Also fixed 2 additional `.lock()` call sites in `respawn.rs` and `run.rs` that were not in the spec's inventory (they used direct `.lock()` instead of `with_sessions`), and 2 more in `pane.rs`'s `watch_pane` callback, converting them to use `with_sessions`. Removed a shadowing `type SessionStore` alias from `hook.rs` and updated 3 `Arc::clone(&sessions)` → `sessions.clone()` in `server/mod.rs`. Fixed 2 additional test construction sites in `memory.rs` and `pane.rs` that were not in the spec's inventory. Removed now-unused `HashMap`/`Mutex` imports from test modules.
+
+**Build gates:** `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean, `cargo fmt --all` clean, `cargo test` 915 passed.
+
+**Task 5 experiment:** Created a scratch file `test_lock_experiment.rs` with `s.lock()` on a `SessionStore` — compiler error: `no method named 'lock' found for struct 'daemon::session::SessionStore'`. Reverted and deleted the scratch file; tree is clean.
+
+**Reasoning checks:**
+1. **Clone semantics:** `#[derive(Clone)]` on the newtype clones the inner `Arc`, so all clones point to the same shared `HashMap`. If it deep-copied the map, every handler would get an isolated copy and session state would never be shared.
+2. **Re-entrancy guard:** `SessionsLockDepth::enter()` is the first statement in `with_sessions`, before the `sessions.0.lock()` acquisition — confirmed.
+3. **Decoys:** `bg_session` is `Arc<Mutex<String>>` and `managed_session` is `Arc<Option<String>>`; both still use `Arc::clone` untouched.

@@ -179,7 +179,7 @@ pub async fn handle_client(
         }
         Request::NotifySessionClosed { session_name } => {
             crate::daemon::hook::handle_notify_session_closed(
-                Arc::clone(&sessions),
+                sessions.clone(),
                 Arc::clone(&cache),
                 Arc::clone(&managed_session),
                 Arc::clone(&bg_session),
@@ -193,7 +193,7 @@ pub async fn handle_client(
         }
         Request::NotifyClientDetached { session_name } => {
             crate::daemon::hook::handle_notify_client_detached(
-                Arc::clone(&sessions),
+                sessions.clone(),
                 &mut tx,
                 session_name,
             )
@@ -201,7 +201,7 @@ pub async fn handle_client(
         }
         Request::NotifyClientAttached { session_name } => {
             crate::daemon::hook::handle_notify_client_attached(
-                Arc::clone(&sessions),
+                sessions.clone(),
                 &mut tx,
                 session_name,
             )

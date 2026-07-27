@@ -4,7 +4,6 @@ use crate::scheduler::ScheduleStore;
 pub use crate::tmux::cache::SessionCache;
 pub use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
-use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -599,7 +598,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         },
     ));
 
-    let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+    let sessions: SessionStore = SessionStore::new();
 
     // Load or create the schedule store.
     let schedules_path = Config::schedules_path();
@@ -615,13 +614,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         let store_sup = Arc::clone(&schedule_store);
         let bg_sn_sup = Arc::clone(&bg_session);
         let cfg_sup = startup_config.clone();
-        let sessions_sup = Arc::clone(&sessions);
+        let sessions_sup = sessions.clone();
         let cache_sup = Arc::clone(&cache);
         tokio::spawn(supervise("scheduler", Arc::clone(&shutdown), move || {
             let store = Arc::clone(&store_sup);
             let bg_sn = Arc::clone(&bg_sn_sup);
             let cfg = cfg_sup.clone();
-            let sessions_sched = Arc::clone(&sessions_sup);
+            let sessions_sched = sessions_sup.clone();
             let cache_sched = Arc::clone(&cache_sup);
             async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -636,7 +635,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         let store2 = Arc::clone(&store);
                         let sn2 = sn.clone();
                         let cfg2 = cfg.clone();
-                        let sessions2 = Arc::clone(&sessions_sched);
+                        let sessions2 = sessions_sched.clone();
                         let cache2 = Arc::clone(&cache_sched);
                         tokio::spawn(async move {
                             run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None)
@@ -651,12 +650,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Optional webhook ingestion endpoint.
     if startup_config.webhook.enabled {
         let wh_config_sup = startup_config.clone();
-        let wh_sessions_sup = Arc::clone(&sessions);
+        let wh_sessions_sup = sessions.clone();
         let wh_cache_sup = Arc::clone(&cache);
         let wh_schedule_store_sup = Arc::clone(&schedule_store);
         tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
             let cfg = wh_config_sup.clone();
-            let sessions = Arc::clone(&wh_sessions_sup);
+            let sessions = wh_sessions_sup.clone();
             let cache = Arc::clone(&wh_cache_sup);
             let schedule_store = Arc::clone(&wh_schedule_store_sup);
             async move {
@@ -679,12 +678,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     }
 
     // Prune chat sessions idle for more than 30 minutes.
-    let sessions_cleanup_sup = Arc::clone(&sessions);
+    let sessions_cleanup_sup = sessions.clone();
     tokio::spawn(supervise(
         "session-cleanup",
         Arc::clone(&shutdown),
         move || {
-            let sessions_cleanup = Arc::clone(&sessions_cleanup_sup);
+            let sessions_cleanup = sessions_cleanup_sup.clone();
             async move {
                 let mut sweep_counter = 0u32;
                 loop {
@@ -719,12 +718,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     ));
 
     // Periodic GC of background windows: kills dead, idle-completed, and orphaned windows.
-    let sessions_gc_sup = Arc::clone(&sessions);
+    let sessions_gc_sup = sessions.clone();
     tokio::spawn(supervise(
         "bg-window-gc",
         Arc::clone(&shutdown),
         move || {
-            let sessions_gc = Arc::clone(&sessions_gc_sup);
+            let sessions_gc = sessions_gc_sup.clone();
             async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
@@ -770,7 +769,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 match result {
                     Ok((stream, _addr)) => {
                         let cache_conn = Arc::clone(&cache);
-                        let sessions_conn = Arc::clone(&sessions);
+                        let sessions_conn = sessions.clone();
                         let sched_conn = Arc::clone(&schedule_store);
                         let bg_conn = Arc::clone(&bg_session);
                         let managed_conn = Arc::clone(&managed_session);

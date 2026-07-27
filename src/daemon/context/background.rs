@@ -276,7 +276,6 @@ mod tests {
     use crate::ai::Message;
     use crate::config::Config;
     use crate::daemon::session::SessionEntry;
-    use std::collections::HashMap;
 
     /// RAII test-home guard: holds `TEST_HOME_LOCK`, points `HOME` at a fresh
     /// tempdir, and restores it on drop — required for any test that drives
@@ -378,7 +377,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn background_swap_discards_on_new_turn() {
-        let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let session_id = "test-discard".to_string();
         let entry = make_test_entry();
         with_sessions(&sessions, |store| {
@@ -431,7 +430,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn spawn_is_noop_when_in_flight() {
-        let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let session_id = "test-in-flight".to_string();
         let entry = make_test_entry();
         with_sessions(&sessions, |store| {
@@ -447,7 +446,7 @@ mod tests {
         // spawn_compaction should be a no-op (doesn't spawn a task).
         // We verify by checking that the in-flight flag is unchanged.
         let config = Arc::new(Config::default());
-        spawn_compaction(session_id.clone(), Arc::clone(&sessions), config);
+        spawn_compaction(session_id.clone(), sessions.clone(), config);
 
         // Give the (non-existent) task a moment.
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -463,7 +462,7 @@ mod tests {
     fn notice_delivered_next_turn() {
         // Pure state test: entry with a queued notice; the drain site returns it
         // and clears the field.
-        let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let session_id = "test-notice".to_string();
         let mut entry = make_test_entry();
         entry.pending_compaction_notice = Some("test notice".to_string());
@@ -489,7 +488,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn background_swap_applies_when_unchanged() {
         let _home = TestHome::new();
-        let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let session_id = "swap-applies".to_string();
 
         let msgs = make_turn_msgs(32);
@@ -537,7 +536,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn epoch_build_idempotent_after_discard() {
         let _home = TestHome::new();
-        let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let session_id = "idempotent".to_string();
 
         let msgs = make_turn_msgs(32);
@@ -582,7 +581,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn swap_discards_on_evicted_entry() {
         let _home = TestHome::new();
-        let sessions: SessionStore = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let session_id = "evicted".to_string();
 
         let msgs = make_turn_msgs(32);

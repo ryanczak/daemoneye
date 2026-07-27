@@ -4,7 +4,6 @@ use crate::daemon::session::{
 };
 use crate::daemon::utils::{log_event, normalize_output};
 use crate::util::UnpoisonExt;
-use std::sync::Arc;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -215,7 +214,7 @@ pub fn watch_pane(
 
     let pane_id_owned = pane_id.to_string();
     let session_id_owned = session_id.unwrap_or("-").to_string();
-    let sessions_clone = Arc::clone(sessions);
+    let sessions_clone = sessions.clone();
     let timeout = Duration::from_secs(timeout_secs);
     let pattern_owned = pattern.map(|s| s.to_string());
 
@@ -327,23 +326,23 @@ pub fn watch_pane(
             turn: None,
         };
 
-        if let Ok(mut store) = sessions_clone.lock()
-            && let Some(entry) = store.get_mut(&session_id_owned)
-        {
-            append_session_message(&session_id_owned, &watch_msg);
-            entry.messages.push(watch_msg);
+        with_sessions(&sessions_clone, |store| {
+            if let Some(entry) = store.get_mut(&session_id_owned) {
+                append_session_message(&session_id_owned, &watch_msg);
+                entry.messages.push(watch_msg);
 
-            let alert = if completed {
-                format!("Watched pane {} command completed", pane_id_owned)
-            } else {
-                format!("Watched pane {} timed out", pane_id_owned)
-            };
-            if let Some(ref cp) = entry.chat_pane {
-                let _ = std::process::Command::new("tmux")
-                    .args(["display-message", "-d", "5000", "-t", cp, &alert])
-                    .output();
+                let alert = if completed {
+                    format!("Watched pane {} command completed", pane_id_owned)
+                } else {
+                    format!("Watched pane {} timed out", pane_id_owned)
+                };
+                if let Some(ref cp) = entry.chat_pane {
+                    let _ = std::process::Command::new("tmux")
+                        .args(["display-message", "-d", "5000", "-t", cp, &alert])
+                        .output();
+                }
             }
-        }
+        });
         log::info!(
             "watch_pane {}: {}",
             pane_id_owned,
@@ -398,8 +397,7 @@ mod tests {
 
     #[test]
     fn close_bg_window_no_session() {
-        let store: SessionStore =
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let store: SessionStore = SessionStore::new();
         assert_eq!(
             close_bg_window("%1", None, &store),
             "No active session — cannot close background window."
@@ -408,8 +406,7 @@ mod tests {
 
     #[test]
     fn close_bg_window_unknown_session() {
-        let store: SessionStore =
-            std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let store: SessionStore = SessionStore::new();
         assert_eq!(
             close_bg_window("%1", Some("missing-sid"), &store),
             "Session 'missing-sid' not found."

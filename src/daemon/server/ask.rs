@@ -718,7 +718,7 @@ where
         wants_background_compaction,
         config,
         cache,
-        sessions: Arc::clone(sessions),
+        sessions: sessions.clone(),
         schedule_store,
         cost_attribution,
     };

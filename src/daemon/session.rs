@@ -113,8 +113,32 @@ pub struct SessionEntry {
     pub pending_compaction_notice: Option<String>,
 }
 
-/// Thread-safe, shared session store passed to every client handler.
-pub type SessionStore = Arc<Mutex<HashMap<String, SessionEntry>>>;
+/// Shared registry of live sessions.
+///
+/// A newtype rather than an alias so the inner mutex cannot be locked from
+/// outside this module: `with_sessions` is the only way in, which is what keeps
+/// blocking work out of the critical section. See
+/// `docs/design/daemon-stalls.md` § 1 mechanism A.
+#[derive(Clone, Default)]
+pub struct SessionStore(Arc<Mutex<HashMap<String, SessionEntry>>>);
+
+impl SessionStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Test-only escape hatch for asserting the guard was released.
+    ///
+    /// Deliberately `#[cfg(test)]`: production code must go through
+    /// `with_sessions`, and a non-blocking peek is only ever needed to prove a
+    /// lock is *not* held.
+    #[cfg(test)]
+    pub fn try_lock(
+        &self,
+    ) -> std::sync::TryLockResult<std::sync::MutexGuard<'_, HashMap<String, SessionEntry>>> {
+        self.0.try_lock()
+    }
+}
 
 pub static BG_DONE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<String>> =
     std::sync::OnceLock::new();
@@ -429,7 +453,7 @@ pub fn with_sessions<T>(
     f: impl FnOnce(&mut HashMap<String, SessionEntry>) -> T,
 ) -> T {
     let _depth = SessionsLockDepth::enter();
-    let mut store = sessions.lock().unwrap_or_log();
+    let mut store = sessions.0.lock().unwrap_or_log();
     f(&mut store)
 }
 
@@ -1176,7 +1200,7 @@ mod tests {
 
     #[test]
     fn cleanup_pass_releases_the_lock() {
-        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let idle = Instant::now()
             .checked_sub(std::time::Duration::from_secs(3600))
             .unwrap_or(Instant::now());
@@ -1194,7 +1218,7 @@ mod tests {
 
     #[test]
     fn cleanup_pass_evicts_idle_and_keeps_active() {
-        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         let idle = Instant::now()
             .checked_sub(std::time::Duration::from_secs(3600))
             .unwrap_or(Instant::now());
@@ -1220,7 +1244,7 @@ mod tests {
 
     #[test]
     fn with_sessions_runs_closure_and_releases_lock() {
-        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         with_sessions(&sessions, |store| {
             store.insert("test".to_string(), entry_with(Instant::now()));
         });
@@ -1236,7 +1260,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "re-entrant SessionStore lock")]
     fn with_sessions_rejects_reentrant_call() {
-        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         with_sessions(&sessions, |_s| {
             // nested call — should panic with the re-entrancy message
             with_sessions(&sessions, |_s| {});
@@ -1245,7 +1269,7 @@ mod tests {
 
     #[test]
     fn with_sessions_depth_resets_after_panic() {
-        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
 
         // First call panics — the depth counter must still reset via Drop
         let old_hook = std::panic::take_hook();
@@ -1265,7 +1289,7 @@ mod tests {
 
     #[test]
     fn with_sessions_sets_depth_inside_closure() {
-        let sessions: SessionStore = Arc::new(Mutex::new(HashMap::new()));
+        let sessions: SessionStore = SessionStore::new();
         with_sessions(&sessions, |_store| {
             assert_eq!(
                 SESSIONS_LOCK_DEPTH.with(|d| d.get()),
