@@ -1,7 +1,7 @@
 # Phase 06d: `foreground.rs` tmux Calls Off the Runtime — Slice 2 (poll & capture)
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06c (slice 1) — `done`
 **Estimated diff:** ~110 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -401,3 +401,55 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ccbcfc3dfacfc783ef9c8deec8e0ee42014fdc9d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (95 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing the edited file — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+**The span check is exact, and the names matter more than the count.** It
+reports `UNWRAPPED: 11` — the 2 `Drop` sites (`:74`, `:79`) plus exactly the
+nine on 06e's list: `read_pane_exit_status` (`:832`, `:855`), `pane_pid`
+(`:837`, `:863`, `:868`), `unhighlight_pane` (`:878`), `capture_pane` (`:880`),
+`select_pane` (`:915`), `pane_exists` (`:1001`). Name-for-name identical to the
+spec's set, so the correct ten were converted and nothing was borrowed from the
+next slice. `off_runtime` is at 20; `block_on`/`futures::executor`/
+`spawn_blocking` all 0; `git show --stat` on the code commit lists exactly one
+`src/` file. The `impl Drop for FgHookGuard` block diffs clean against the
+parent.
+
+Verified by reading rather than by counting:
+
+- **`unhighlight_pane` took the right shape.** No `.and_then(|r| r.ok())` — the
+  owned `t`/`cp` bindings with `cp.as_deref()` inside the closure, matching
+  06c's `highlight_pane`. It still sits immediately after `drop(fg_hook_guard)`
+  on the same sudo-failure path, so the pane cannot be left tinted.
+- **All 10 `and_then(|r| r.ok())` occurrences sit on `Result`-returning
+  helpers** — `pane_pid`, `pane_current_command`, `capture_pane`. None on a
+  `()`-returning one.
+- **The `pane_pid` conversion preserves short-circuiting.** It became a block
+  expression inside the `else if` condition: `idle_pid != 0 && { … } ==
+  idle_pid`. `==` binds tighter than `&&`, so the block — and its `.await` — is
+  only evaluated when `idle_pid != 0`, exactly as the original call was. Default
+  stays `.unwrap_or(0)`.
+- **The two `capture_pane` let-chain sites were restructured, not just
+  wrapped**, because `let Ok(snap) = …` cannot appear in a chain once the value
+  is an `Option`. The new `if let Some(s) = snap && looks_like_shell_prompt(&s)`
+  falls through on both `Err` and timeout, which is what the original chain did
+  on `Err`. No path sets `prompt_found` that did not before.
+- **The `set-hook` / `set-option` pair keeps its ordering** — both awaits
+  complete before `fg_hook_guard.add_silence(...)`, so the guard never registers
+  a hook that was not installed first.
+
+Test plan honoured: no new tests, and the Update Log claims no coverage — the
+correct posture for a file with no unit coverage of `run_foreground`. Both
+required reasoning checks were answered with quoted code and both check out
+against the tree.
