@@ -1,7 +1,7 @@
 # Phase 05h: Stop One Failing Test From Failing Forty-Seven Others
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05g (which measured the cascade) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -296,3 +296,158 @@ Restore the probe by reverting the file, not by retyping the line, and confirm
 (The +1 vs spec's 62 is the accessor's own `TEST_HOME_LOCK.lock()` call.)
 
 Starting phase: adding `test_home_guard()` accessor and routing all 62 call sites through it.
+
+### Update — ts=1785159313827 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified:
+
+- **Census:** `{'unwrap': 0, 'unwrap_or_log': 0, 'other': 1}` — exactly one acquisition (the accessor's own body).
+- **`TEST_HOME_LOCK.lock()` count:** 0 outside the accessor (the only `TEST_HOME_LOCK` + `.lock()` is inside `test_home_guard()` in `src/lib.rs`).
+- **`test_home_guard()` call count:** 63 (62 call sites + 1 definition).
+- **`UnpoisonExt` in `src/daemon/executor/mod.rs`:** 1 import remains (line 13, used by 3 `unwrap_or_log` calls on `cache.panes`).
+- **`UnpoisonExt` file count:** 15, down from 25 (10 deleted).
+- **`use crate::TEST_HOME_LOCK` in `ghost_ws.rs`:** 0.
+- **`cargo build`:** zero warnings.
+- **`cargo clippy --all-targets --all-features -- -D warnings`:** clean.
+- **`cargo fmt --all`:** clean.
+- **`cargo test`:** 916 lib-unit tests + 27 integration tests, all passing.
+- **Cascade probe:** With `panic!("cascade probe")` inserted as the first line of `background_swap_applies_when_unchanged`, exactly **1** test failed (the probed test itself), confirming poison recovery works.
+
+**Summary + Notes for review:** Added `test_home_guard()` to `src/lib.rs` as a poison-recovering accessor for `TEST_HOME_LOCK`, routing all 62 acquisition sites through it (41 `.unwrap()`, 12 `.unwrap_or_log()`, 9 `.unwrap_or_else()`). Deleted 10 now-unused `UnpoisonExt` imports and 1 `use crate::TEST_HOME_LOCK` import. Two additional `UnpoisonExt` imports in `src/daemon/executor/mod.rs` (inside individual test functions) were also removed — they were test-scoped duplicates of the module-level import that survived. All 916 + 27 tests pass; the cascade probe confirms only 1 failure instead of 48.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ext_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 916 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.36s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test event_log_append_read ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-05h-test-home-guard.md` — +10 -1
+- `src/agents/mailbox.rs` — +1 -2
+- `src/agents/mod.rs` — +1 -2
+- `src/cli/commands/costs.rs` — +5 -5
+- `src/daemon/briefing.rs` — +1 -2
+- `src/daemon/context/background.rs` — +1 -3
+- `src/daemon/context/epochs.rs` — +6 -18
+- `src/daemon/context/ghost_ws.rs` — +1 -4
+- `src/daemon/context/recall.rs` — +1 -3
+- `src/daemon/executor/file_ops/read.rs` — +1 -2
+- `src/daemon/executor/knowledge/mod.rs` — +1 -2
+- `src/daemon/executor/mod.rs` — +2 -4
+- `src/daemon/server/catchup.rs` — +6 -6
+- `src/daemon/session.rs` — +8 -8
+- `src/daemon/stats.rs` — +7 -7
+- `src/daemon/utils/event_log.rs` — +1 -1
+- `src/daemon/utils/mod.rs` — +1 -1
+- `src/lib.rs` — +17 -0
+- `src/manifest_tests.rs` — +1 -2
+- `src/memory_tests.rs` — +1 -2
+- `src/runbook.rs` — +1 -2
+- `src/scripts.rs` — +1 -2
+- `src/search.rs` — +2 -3
+- `src/session_store_tests.rs` — +1 -1
+- `tests/integration.rs` — +11 -11
+
+**Commit:** 8b62f17f5cf4ddf785805f001b5eca2ba25645cf
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
