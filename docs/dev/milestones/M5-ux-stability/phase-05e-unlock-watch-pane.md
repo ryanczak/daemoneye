@@ -1,7 +1,7 @@
 # Phase 05e: Get `watch_pane`'s Completion Callback Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05d (the newtype) — `done`
 **Estimated diff:** ~40 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -487,3 +487,57 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 10cdc736ad5242bb81b6015fb8491e86c6c918c7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (31 turns)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. One `src/` file changed, exactly the specified
+  four-phase shape.
+- **Calibration:** none new.
+
+Gates re-run bare with exit codes captured: fmt 0, build 0 (zero warnings),
+clippy 0, test 0 with **915** tests unchanged. Every count criterion exact —
+`with_sessions` 4, `append_session_message` 2, `display-message` 1,
+`UnpoisonExt` 2, `unwrap_or_log` 4.
+
+**The closure audit reports `pane.rs` clean and still reports `ask.rs:97`** —
+the phase hit its target without straying into 05f's.
+
+**Verified by reading** (the counts cannot show these):
+
+1. **Conditionality holds — the phase's one silent-failure risk.** Phase 1's
+   `let Some(chat_pane) = with_sessions(…) else { …; return; }` means a `get_mut`
+   miss returns *before* both the file write and the tmux call, exactly as the
+   original did nothing on a miss. An unconditional hoist would have appended to
+   the JSONL of a vanished session with every gate green.
+2. **Ordering preserved.** Phase 2's `append_session_message` still precedes
+   phase 3's in-memory push.
+3. **Log volume is right.** Two `log::info!` occurrences, mutually exclusive at
+   runtime — one on the early-return path, one at the end — so exactly one fires
+   per invocation, as before. The executor chose the duplicated form and said so.
+4. **`chat_pane` is cloned** in phase 1, and **phase 3 re-checks `get_mut`**.
+
+**One accepted trade-off, stated plainly.** The original held the lock across
+both the append and the push, so they were atomic with respect to the entry's
+existence. The restructure introduces a microsecond window in which the entry
+could be evicted between phase 1 and phase 2, appending one completion line to
+the JSONL of a session that has just gone. This is the identical trade-off
+`notify_session` made in 05a and is inherent to *any* collect-then-act fix — the
+alternative is the mechanism-A defect itself. Sessions evict on a 30-minute idle
+timer, and the JSONL is a durable log that a resumed session re-reads, so the
+consequence is a harmless extra line rather than lost or corrupted state.
+
+### Milestone state
+
+The closure audit now reports **one** remaining site across 115 `with_sessions`
+call sites:
+
+| Site | Blocking work under the guard |
+|---|---|
+| `server/ask.rs:97` | `read_session_meta` (file read) + `tmux::pane_exists` + `tmux::start_pipe_pane` (2 subprocesses) — **phase 05f** |
+
+**The third exit criterion is still not tickable.** Its enforcement half landed
+with 05d's newtype; its "no critical section performs blocking work" half needs
+05f. Tick it then, with the closure audit as the evidence.
