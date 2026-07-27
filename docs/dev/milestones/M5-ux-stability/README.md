@@ -94,7 +94,9 @@ take the socket.
 | 06c | tmux-off-runtime-foreground ([phase-06c-tmux-off-runtime-foreground.md](phase-06c-tmux-off-runtime-foreground.md)) — `foreground.rs` **slice 1**, lines ≤460, 10 sites. Re-split after a `hard_fail` on 29-at-once | done (approved_after_1) |
 | 06d | tmux-off-runtime-foreground-2 ([phase-06d-tmux-off-runtime-foreground-2.md](phase-06d-tmux-off-runtime-foreground-2.md)) — `foreground.rs` **slice 2**, poll & capture, 10 sites | done (approved_first_try) |
 | 06e | tmux-off-runtime-foreground-3 ([phase-06e-tmux-off-runtime-foreground-3.md](phase-06e-tmux-off-runtime-foreground-3.md)) — `foreground.rs` **slice 3**, exit status & cleanup, 9 sites. Finishes the file | done (approved_first_try) |
-| 06f–06h | tmux-off-runtime tail — `executor/knowledge/pane.rs` + `file_ops/` (17), `daemon/` core, `cli/`. Not drafted | todo |
+| 06f | tmux-off-runtime-executor-tail ([phase-06f-tmux-off-runtime-executor-tail.md](phase-06f-tmux-off-runtime-executor-tail.md)) — `knowledge/pane.rs` (7) + `file_ops/{mod,read}.rs` (5) = 12. Finishes `executor/` | todo |
+| 06g–06h | tmux-off-runtime tail — `daemon/` core (`mod.rs`, `scheduled.rs`, `background/`, `utils/sudo.rs`, `webhook/`), then `cli/`. **Survey first**: a large share of the raw hits sit in synchronous fns or are the `src/tmux/` helper bodies themselves, neither of which is a conversion. Not drafted | todo |
+| 06i | make-knowledge-fns-async — `close_bg_window` + `watch_pane` prologue: signature change + 2 call sites in `executor/mod.rs` + 2 unit tests. A restructure, split out of 06f. Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |

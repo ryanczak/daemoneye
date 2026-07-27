@@ -1,10 +1,101 @@
 # NEXT
 
-**Active phase: M5 phase-06e — tmux-off-runtime-foreground-3 (slice 3)**
+**Active phase: M5 phase-06f — tmux-off-runtime-executor-tail**
 (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06e-tmux-off-runtime-foreground-3.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06f-tmux-off-runtime-executor-tail.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06e-tmux-off-runtime-foreground-3`.
+Dispatch with `/rexymcp:dispatch phase-06f-tmux-off-runtime-executor-tail`.
+
+## `foreground.rs` is finished — three slices, 29 sites, zero net bounces
+
+06c (10, `approved_after_1`) → 06d (10, `approved_first_try`, 95 turns) → 06e
+(9, `approved_first_try`, 59 turns). The file is down to its two `Drop` calls.
+The slice size that works on this codebase is now well established at **9–12
+sites**.
+
+## The survey changed the phase — 17 raw hits, but only 12 are conversions
+
+The README had 06f as "`knowledge/pane.rs` + `file_ops/` (17)". Reading the
+sites found **three of them are inside *synchronous* functions**, which is a
+category this milestone has not hit before:
+
+| Hit | Enclosing fn |
+|---|---|
+| `pane.rs:46` `kill_job_window` | `pub fn close_bg_window` |
+| `pane.rs:196` `pane_current_command` | `pub fn watch_pane` (prologue) |
+| `pane.rs:209` inline `set-hook` | `pub fn watch_pane` (prologue) |
+
+`off_runtime` is `async`, so converting any of them is `E0728` — and the real
+fix changes the signature, both call sites in `executor/mod.rs`, and two unit
+tests. **That is a restructure, so it moved to its own phase (06i)**, on the
+same rule that moved the `background/` restructures out of the 04i sweep into
+05. A fourth hit is a `Drop` impl, and `read.rs:63`'s `tmux::wait_for` is
+**already `async`** — wrapping it would hand `spawn_blocking` a future nobody
+polls.
+
+`watch_pane` is only sync down to `:235`, where it calls
+`tokio::spawn(async move { … })`. Six of the phase's seven `pane.rs` sites live
+inside that task. The spec makes that boundary explicit and asks the executor to
+quote both lines back.
+
+**This is the fifth distinct species of "the count is not the scope" in this
+milestone**, after multi-line acquisitions, expressions spanning slices, `Drop`
+impls, and type-import false positives. The generalisation is holding: a raw hit
+count is a starting point for a survey, never a phase scope.
+
+## A shape with no in-tree precedent, so I compile-checked it
+
+The two `send_keys` sites propagate with `?`. After conversion there is no error
+to propagate on timeout — one has to be created, and a timeout must become
+`Err` rather than a silent success (otherwise `remote_run_and_capture` polls for
+a `__DE_DONE__` marker that can never arrive). Nothing in the tree does this
+yet, so the spec gives exact code:
+
+```rust
+.ok_or_else(|| anyhow::anyhow!("timed out sending keys to pane {pane_id}"))??;
+```
+
+**`??`, not `?`** — `.ok_or_else` produces `Result<Result<()>, _>`. I built the
+shape in a scratch crate and compiled it before pinning, including the detail
+that `pane_id` stays usable in the message because only its clone was moved.
+That is the "validate a criterion against the shape the phase will produce"
+refinement applied to a code snippet rather than a grep.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 0/0/0, 916/27 tests, the per-file scan's 4/0/1). Post-state
+values are floors with the arithmetic shown. Seven clean applications now.
+
+## Still open — four single-occurrence threads
+
+3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
+8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
+Plus, new from 06e: an **executor-side** prose miscount ("four `pane_pid` calls"
+where the code correctly converted three) — same failure mode as the
+architect-side thread, first occurrence, no action.
+
+Plus the fold refinements: import liveness is **per import scope**; a multi-line
+census obliges **every** criterion in that phase; a source-parsing criterion must
+be validated against **the shape the phase will produce**; reasoning checks should
+**demand quoted code**; and **phase size scales with sites-per-file-length**.
+
+## After 06f
+
+**06g–06h** (`daemon/` core — `mod.rs` 15 raw hits, `scheduled.rs` 7,
+`background/` 11, `utils/sudo.rs` 4, `webhook/` 1 — then `cli/`, ~19). **Survey
+each before scoping**: the whole-tree scan reports 147 raw hits, but that
+includes the `src/tmux/{pane,session,window,cache}.rs` helper *bodies* (59),
+which are stage A's to harden, not call sites at all. The `cli/` files are
+largely synchronous, so expect the 06f split again.
+
+Then **06i** (the async restructure), **stage A** (harden the sync helpers;
+also what bounds every `Drop` site), **07** (stall-instrumentation), and the
+drafted **08–11** set. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06e dispatch note
 
 ## 06d confirmed the re-split — three clean slices now
 
