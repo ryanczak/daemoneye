@@ -774,7 +774,55 @@ Two corollaries, both learned the hard way:
   pinning a criterion, ask what the instrument *cannot* see; where the type
   system can enforce the property instead, prefer that and retire the grep.
 
-*(Folded 2026-07-27 after four miscounts and two blind instruments across M5.)*
+**Re-run the block before dispatch, not only at drafting.** A number that was
+correct when the phase was written goes stale as soon as an earlier phase edits
+the file — one M5 phase had all eight of its sites shift by −3 between drafting
+and dispatch, and every line number in its spec was wrong before the executor
+ever read it. Numbers age; re-run, don't trust. For the same reason, a phase doc
+that lists line numbers should say they are current-as-of-drafting and point at
+the command that re-derives them.
+
+*(Folded 2026-07-27 after four miscounts and two blind instruments across M5.
+Staleness clause added the same day, after a fifth miscount **in a phase drafted
+under this rule** — the rule was not unclear, it was not followed. If a sixth
+occurs, the remedy is a mechanical pre-dispatch check, not stronger prose.)*
+
+### A sweep's scope is its convertible sites, not its matches
+
+When a phase applies one mechanical change to every instance of a pattern — a
+call wrapped in an adapter, an API migrated, a symbol renamed — the match count
+is where scoping **starts**, not where it ends. A hit can be real, correctly
+matched, and still not convertible:
+
+- **Its enclosing function is synchronous** and the conversion is `async`.
+  Converting it is `error[E0728]`, and the real fix changes a signature, every
+  call site, and any test that calls it directly.
+- **It is inside a `Drop` impl**, which cannot be `async` at all.
+- **It is already in the target form** — an `async fn` needs no off-runtime
+  wrapper, and wrapping one hands the blocking pool a future nobody polls.
+- **Its expression extends far past the line it starts on**, so a slice boundary
+  drawn by line number cuts a single site in half.
+
+Each of these mis-scoped a phase in M5's tmux sweep. The remedy is cheap:
+**write the classifier, not just the counter.** For every hit, report its
+enclosing function and whether that function is `async`; then put the
+unconvertible ones in the phase doc **by name**, as a do-not-convert list with
+the reason for each. That table costs a few lines and buys two things — the
+executor does not spend turns discovering `E0728` and then "fixing" it by adding
+`async`, and the finish condition can be an exact residue ("the scan reports 4,
+and all four are on the list") instead of an unreachable zero.
+
+**Sites needing a restructure go in a restructure phase**, not bundled into a
+mechanical sweep. Mixing the two is what makes a sweep stall: the phase looks
+uniform, so it gets sized as uniform, and then one site consumes the run. This
+is the same split that moved blocking-work sites out of the lock-conversion
+phases earlier in the same milestone.
+
+*(Folded 2026-07-27 after four mis-scopings in M5's tmux sweep — two sync
+enclosing fns, two `Drop` impls, one already-`async` helper, and one expression
+spanning a slice boundary. Distinct from the blind-instrument corollary above:
+there the instrument was wrong, here it was right and the site still was not in
+scope.)*
 
 ### Coverage claims are inadmissible without mutation proof
 

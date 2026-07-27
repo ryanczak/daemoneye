@@ -54,22 +54,45 @@ Every Pre-flight and criteria number came from the exact command beside it
 Post-state values are floors with the arithmetic shown. Nine clean
 applications.
 
-## Still open — the two candidate absolutes
+## Both candidate folds are RESOLVED (2026-07-27, PE-approved)
 
-Both are at or past the fold bar and **await your sign-off**; neither has
-touched `WORKFLOW.md`:
+### 1. Counting — no reword; a staleness clause instead
 
-> **A phase doc may not contain a number that was not produced by the exact
-> command written beside it.** (5 errors motivating it; 9 clean applications.)
+**The rule was already folded** as `WORKFLOW.md` § "Run every count criterion;
+never derive it" (commit `d9f5583`), and the fifth miscount happened in 06d's
+draft (`a7443bb`) — **after** it landed. So this was a compliance failure, not a
+doc gap, and the proposed absolute said the same thing the existing text already
+says, only sterner. Rewording a correct rule to look sterner is how docs get
+long without getting better.
 
-> **A raw hit count is the input to a survey, never the scope of a phase.**
-> (6 species now: multi-line acquisitions, expressions spanning slices, `Drop`
-> impls, type-import false positives, already-`async` helpers, sync-enclosing
-> fns.)
+What landed instead is a **distinct** failure mode the fold did not cover:
+numbers go **stale** between drafting and dispatch (04h's eight sites all
+shifted by −3 after 04g edited the top of the file). The clause says re-run the
+Pre-flight block before dispatch, not only at drafting, and the dated note
+records that a sixth occurrence should buy a *mechanical* pre-dispatch check
+rather than more prose.
 
-Four single-occurrence threads also remain: fixture defaults (resolved by 05g),
-partially-transcribed spec quotes, piping gates through `tail`, a refinement
-built on a harness-blocked command, plus 06e's executor-side prose miscount.
+### 2. Survey — folded, in the narrower form the evidence supports
+
+My six-species framing over-counted: multi-line acquisitions and type-import
+false positives are already covered by the existing fold's "the instrument can
+be blind" corollary. The genuinely new pattern is **four** occurrences and is
+sharper — the instrument is *right*, the hit is a real reference, and the site
+still is not convertible:
+
+sync enclosing fn (×2), `Drop` impl (×2), already-`async` helper, expression
+spanning a slice boundary.
+
+Landed as `WORKFLOW.md` § "A sweep's scope is its convertible sites, not its
+matches": write the classifier not just the counter, name the unconvertible hits
+in the doc with reasons, make the finish condition an exact residue rather than
+zero, and keep restructures out of mechanical sweeps.
+
+### Still open — five single-occurrence threads
+
+Fixture defaults (resolved by 05g), partially-transcribed spec quotes, piping
+gates through `tail`, a refinement built on a harness-blocked command, and 06e's
+executor-side prose miscount. **None at the fold bar.**
 
 ## After 06h
 
