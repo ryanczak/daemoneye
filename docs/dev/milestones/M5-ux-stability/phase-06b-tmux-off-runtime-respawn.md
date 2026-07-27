@@ -1,7 +1,7 @@
 # Phase 06b: Get `respawn.rs`'s tmux Calls Off the Async Runtime
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06a (the `off_runtime` adapter) — `done`
 **Estimated diff:** ~110 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -356,3 +356,127 @@ do not add a test to make it repeatable.
 ### Update — 2026-07-27 15:40 (progress)
 
 Converting all 11 tmux subprocess call sites in `respawn.rs` to use `tmux::off_runtime`. Left `tmux::pipe_log_path` (pure path builder) and the doc comment referencing `tmux::pane_exists` unwrapped as required.
+
+### Update — ts=1785167309777 (complete, server-authored)
+
+**Summary:** All 11 tmux subprocess call sites in `respawn.rs` are now wrapped with `tmux::off_runtime`. **Reasoning checks:**
+
+1. **Non-sites:** `tmux::pipe_log_path` (line 98) and the doc comment referencing `tmux::pane_exists` (line 23) were left unwrapped. Wrapping `pipe_log_path` would be wrong because it is a pure path builder — no subprocess is spawned, so `off_runtime` would add an unnecessary thread hop and a spurious timeout log.
+2. **Early returns:** Three sites return on failure — `respawn-pane` (line 41), `send_keys` (line 108), and both `kill_job_window` calls (lines 188, 285). All also return on timeout. If the `respawn-pane` timeout were treated as success, the daemon would send a command into an unknown shell state, potentially executing arbitrary output in a pane it doesn't control.
+3. **Cleanup on timeout:** The `send_keys` timeout arm (line 118) stops pipe-pane when `pipe_log.is_some()`, matching the existing error arm — no log writer leak.
+
+**Verification results:** span-matching script reports 0 unwrapped sites, `grep -c "off_runtime"` returns 15 (≥ 11), `pipe_log_path` count is 1 and outside any `off_runtime` closure, `spawn_blocking` count is 0, `run.rs` unchanged at 23, `foreground.rs` unchanged at 27. All gates pass: `cargo build`, `cargo clippy`, `cargo fmt`, `cargo test` (916 lib + 27 integration).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+t_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test manifest::tests::manifest_caps_at_1kb ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test memory::tests::update_memory_partial_update_preserves_other_fields ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 916 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06b-tmux-off-runtime-respawn.md` — +5 -1
+- `src/daemon/background/respawn.rs` — +100 -27
+
+**Commit:** eebbd32c1d14092c2c7cb1a855b2ef8e368b1b33
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
