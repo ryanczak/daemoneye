@@ -1,7 +1,7 @@
 # Phase 06j: tmux Calls Off the Runtime — the `daemon/` Tail
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06h — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -522,3 +522,65 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 046e4d677ab59ee03588fbe43d86d65ff748cb2f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (54 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing all four edited files — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at 916 lib + 27
+integration, unchanged).
+
+**The daemon's async surface is finished.** The per-file scan reports exactly
+`3 / 1 / 0 / 0`, and every remaining hit is on the do-not-convert list by name:
+`gc.rs`'s three inside the synchronous `gc_bg_windows`, and `ghost.rs`'s
+`use crate::tmux::ensure_incident_session;` import. `off_runtime` 2/1/1/2
+against a verified 0 across the board; `anyhow::bail!` in `hook.rs` **0**; both
+`String::new() // don't retry` paths present; `block_on`/`futures::executor`/
+`spawn_blocking` **0** in all four; four `src/` files in the code commit.
+
+**All three hazards — each a case where the neighbouring form is wrong — were
+navigated correctly:**
+
+- **`hook.rs`'s `None` arm logs and falls through.** It does not bail, despite
+  being structurally identical to `mod.rs:458`'s match, which does. Its message
+  matches its two neighbours' wording ("timed out" vs "failed"), and
+  `handle_notify_session_closed` still reaches
+  `send_response_split(tx, Response::Ok)`. A `bail!` here would have compiled
+  and silently turned a logged warning into a failed hook response — the single
+  most dangerous edit available in this phase, and it did not happen.
+- **`gc.rs`'s capture stayed inside the `else`.** It cannot run when
+  `create_dir_all` failed, so nothing archives into a directory that does not
+  exist. The `else if let` became a plain `else` block rather than being hoisted
+  above the `if`.
+- **Both `ask.rs` awaits are outside the `with_sessions` closure**, which still
+  contains only the synchronous `entry.pipe_source_pane = Some(resolved)`
+  write-back. The "Unlocked phase: the two blocking tmux calls" comment still
+  describes the code accurately.
+
+Also verified by reading:
+
+- **`ghost.rs` took `.unwrap_or(false)` under its `!`**, so a ghost shell that
+  cannot confirm its tmux session aborts rather than running autonomous
+  remediation against an unverified one. The `bail!` string is byte-identical
+  by `grep -cF` against the parent.
+- **`start_pipe_pane` stayed nested inside the `pane_exists` branch** — the two
+  calls were not merged, so a timeout on the existence check skips the pipe-pane
+  attempt entirely and takes the `else` path.
+- **The TOCTOU-race comment survives verbatim.** Both `log::debug!` format
+  strings are unchanged; only the argument moved from `pane_id` to the owned
+  `pid`, which renders identically.
+
+One incidental improvement worth noting rather than flagging: `Ok(_) => pid`
+now moves the owned `String` instead of allocating a second one via
+`pane_id.to_string()`. Same value, one less allocation, and it type-checks
+because the move happens in only one match arm.
+
+Test plan honoured: no new tests, no coverage claim — correct for four
+functions that need a live tmux server, and `handle_ask` an IPC peer besides.
+All three reasoning checks were answered and hold against the tree.
