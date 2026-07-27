@@ -57,15 +57,24 @@ async fn local_read_via_buffer(
     let buf_name = format!("de-rb-{}", idx);
     let cmd = build_local_buffer_read_cmd(path, start, end, pattern, &buf_name);
 
-    tmux::send_keys(pane_id, &cmd)?;
+    let p = pane_id.to_string();
+    let c = cmd.to_string();
+    tmux::off_runtime("send-keys", move || tmux::send_keys(&p, &c))
+        .await
+        .ok_or_else(|| anyhow::anyhow!("timed out sending keys to pane {pane_id}"))??;
 
     // Local pane → its shell shares our tmux server, so it can signal `buf_name`.
     let signalled = tmux::wait_for(&buf_name, std::time::Duration::from_secs(30)).await;
 
     // Read the buffer regardless: a lost or raced signal must not lose a load that
     // actually completed, and an empty buffer after a timeout is the real failure.
-    let bytes = tmux::save_buffer(&buf_name).unwrap_or_default();
-    tmux::delete_buffer(&buf_name);
+    let bn = buf_name.clone();
+    let bytes = tmux::off_runtime("save-buffer", move || tmux::save_buffer(&bn))
+        .await
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    let bn2 = buf_name.clone();
+    let _ = tmux::off_runtime("delete-buffer", move || tmux::delete_buffer(&bn2)).await;
 
     if !signalled && bytes.is_empty() {
         anyhow::bail!("Timed out waiting for buffer load in pane {}", pane_id);

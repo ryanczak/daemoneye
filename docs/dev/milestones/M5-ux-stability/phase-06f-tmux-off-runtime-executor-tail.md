@@ -1,7 +1,7 @@
 # Phase 06f: tmux Calls Off the Runtime — the `executor/` Tail
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06e — `done` (`foreground.rs` is finished)
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -345,3 +345,8 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 20:56 (started)
+
+**Executor:** Claude executor
+**Action:** Started phase 06f — converting 12 tmux calls in `knowledge/pane.rs` (7), `file_ops/mod.rs` (2), `file_ops/read.rs` (3) to `off_runtime`.

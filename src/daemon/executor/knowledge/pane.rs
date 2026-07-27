@@ -252,12 +252,20 @@ pub fn watch_pane(
                         result = wp_rx.recv() => {
                             if let Ok(notified_pane) = result
                                 && notified_pane == pane_id_owned {
-                                    let snap = crate::tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
+                                    let p = pane_id_owned.clone();
+                                    let snap = crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 200))
+                                        .await
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or_default();
                                     if re.is_match(&snap) { break; }
                                 }
                         }
                         _ = tokio::time::sleep(slow_poll) => {
-                            let snap = crate::tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
+                            let p = pane_id_owned.clone();
+                            let snap = crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 200))
+                                .await
+                                .and_then(|r| r.ok())
+                                .unwrap_or_default();
                             if re.is_match(&snap) { break; }
                         }
                     }
@@ -267,7 +275,11 @@ pub fn watch_pane(
                     let _ = tokio::time::timeout(start_wait, async {
                         loop {
                             tokio::time::sleep(slow_poll).await;
-                            let cur = crate::tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                            let p = pane_id_owned.clone();
+                            let cur = crate::tmux::off_runtime("pane-current-command", move || crate::tmux::pane_current_command(&p))
+                                .await
+                                .and_then(|r| r.ok())
+                                .unwrap_or_default();
                             if !super::super::foreground::is_shell_prompt(&cur) { break; }
                         }
                     }).await;
@@ -278,12 +290,20 @@ pub fn watch_pane(
                         result = wp_rx.recv() => {
                             if let Ok(notified_pane) = result
                                 && notified_pane == pane_id_owned {
-                                    let cur = crate::tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                                    let p = pane_id_owned.clone();
+                                    let cur = crate::tmux::off_runtime("pane-current-command", move || crate::tmux::pane_current_command(&p))
+                                        .await
+                                        .and_then(|r| r.ok())
+                                        .unwrap_or_default();
                                     if super::super::foreground::is_shell_prompt(&cur) { break; }
                                 }
                         }
                         _ = tokio::time::sleep(slow_poll) => {
-                            let cur = crate::tmux::pane_current_command(&pane_id_owned).unwrap_or_default();
+                            let p = pane_id_owned.clone();
+                            let cur = crate::tmux::off_runtime("pane-current-command", move || crate::tmux::pane_current_command(&p))
+                                .await
+                                .and_then(|r| r.ok())
+                                .unwrap_or_default();
                             if super::super::foreground::is_shell_prompt(&cur) { break; }
                         }
                     }
@@ -291,7 +311,12 @@ pub fn watch_pane(
             }
         }).await.is_ok();
 
-        let raw = crate::tmux::capture_pane(&pane_id_owned, 200).unwrap_or_default();
+        let p = pane_id_owned.clone();
+        let raw =
+            crate::tmux::off_runtime("capture-pane", move || crate::tmux::capture_pane(&p, 200))
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
         let mut body = mask_sensitive(&normalize_output(&raw));
         let hints = crate::manifest::related_knowledge_hints(&body);
         if !hints.is_empty() {
@@ -357,9 +382,13 @@ pub fn watch_pane(
             format!("Watched pane {} timed out", pane_id_owned)
         };
         if let Some(ref cp) = chat_pane {
-            let _ = std::process::Command::new("tmux")
-                .args(["display-message", "-d", "5000", "-t", cp, &alert])
-                .output();
+            let cp = cp.clone();
+            let _ = crate::tmux::off_runtime("display-message", move || {
+                std::process::Command::new("tmux")
+                    .args(["display-message", "-d", "5000", "-t", &cp, &alert])
+                    .output()
+            })
+            .await;
         }
         log::info!(
             "watch_pane {}: {}",

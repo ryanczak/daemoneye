@@ -42,14 +42,22 @@ async fn remote_run_and_capture(
     cmd: &str,
     timeout_secs: u64,
 ) -> anyhow::Result<String> {
-    tmux::send_keys(pane_id, cmd)?;
+    let p = pane_id.to_string();
+    let c = cmd.to_string();
+    tmux::off_runtime("send-keys", move || tmux::send_keys(&p, &c))
+        .await
+        .ok_or_else(|| anyhow::anyhow!("timed out sending keys to pane {pane_id}"))??;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     loop {
         tokio::time::sleep(Duration::from_millis(300)).await;
         if tokio::time::Instant::now() > deadline {
             anyhow::bail!("Timed out waiting for remote command in pane {}", pane_id);
         }
-        let snap = tmux::capture_pane(pane_id, 600).unwrap_or_default();
+        let p = pane_id.to_string();
+        let snap = tmux::off_runtime("capture-pane", move || tmux::capture_pane(&p, 600))
+            .await
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
         if snap.contains("__DE_DONE__") {
             return Ok(snap);
         }
