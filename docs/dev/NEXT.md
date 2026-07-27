@@ -1,81 +1,88 @@
 # NEXT
 
-**Active phase: M5 phase-06c — tmux-off-runtime-foreground** (`todo`, drafted
-2026-07-27).
+**Active phase: M5 phase-06c — tmux-off-runtime-foreground (slice 1)**
+(`todo`, re-scoped 2026-07-27 after a `hard_fail`).
 Doc: `docs/dev/milestones/M5-ux-stability/phase-06c-tmux-off-runtime-foreground.md`.
 
 Dispatch with `/rexymcp:dispatch phase-06c-tmux-off-runtime-foreground`.
 
-## 06c — the interactive execution path, 29 sites
+## 06c `hard_fail`ed on scope, and was re-split rather than resumed
 
-`executor/foreground.rs` injects a command into the user's own pane and polls it
-to completion. **29 tmux calls run in async context** there, more than any other
-single file. The pattern is established (06a's adapter, 06b's mechanical
-application), so this is volume rather than novelty.
+The first attempt took all **29** sites in `foreground.rs` — a **1228-line** file
+— at once. It converted 5, then spent **60 consecutive read-only turns** re-reading
+the file before `NoProgressStall` fired at 124 turns.
 
-### Three non-sites, each for a different reason
+**The cause was a type error whose symptom surfaced 470 lines from its cause.**
+The `send_keys` conversion at `:389` produced a mismatch the compiler reported at
+`:860`, where the binding was consumed. In a 1228-line function that is very hard
+to localise, and the executor thrashed on re-reads trying.
 
-Surveying found that **31** of the file's tmux-shaped hits are not all sites:
+**This was not a spec gap.** The spec was good — it caught three non-sites
+(`impl Drop`, a type import, a false-friend helper), gave two in-tree worked
+examples, and pinned the three behaviour-sensitive sites. It was simply **too
+big**, and `WORKFLOW.md`'s decision table names that case: *context-budget
+exhaustion on a phase that is not minimal → re-split*.
 
-| Hit | Why it is not a site |
-|---|---|
-| `:74`, `:79` — `Command::new("tmux")` in `impl Drop for FgHookGuard` | **`Drop::drop` cannot be `async`.** There is no way to `.await` in a destructor, so `off_runtime` is structurally unavailable. |
-| `:23` — `use crate::tmux::cache::SessionCache;` | a **type import**. Matches `tmux::`, spawns nothing. |
-| `:12`, `:563` — `wait_for_sudo_prompt_and_inject` | a local async helper, not `tmux::wait_for`. Same false friend as `run.rs`. |
+### What was done with the partial work
 
-**The `Drop` gap is real and acknowledged**, not hand-waved: hook teardown still
-blocks whatever thread drops the guard. The spec forbids a workaround —
-no `block_on`, no `futures::executor`, no detached `tokio::spawn` in `drop`, all
-of which are worse than the blocking call — and assigns the fix to the later
-sync-helper stage, where a timeout inside `src/tmux/` bounds it for every caller
-including destructors.
+The 5 converted sites **did not compile**. Rather than hand the next run a broken
+file to interpret — the state that produced a false completion earlier in this
+milestone — the work was **stashed** (`stash@{0}`, message records the exact type
+error) and the tree returned to a green baseline: 916 tests passing. Those 5 sites
+are redone as part of slice 1; redoing ten mechanical conversions is cheaper and
+safer than resuming from a broken tree.
 
-### Three behaviour-sensitive sites the spec pins
+### The new shape — three slices of ~10
 
-- **`pane_exists` must not read a timeout as `true`.** `.unwrap_or(false)`, or the
-  daemon sends keys into a pane that may be gone.
-- **highlight/unhighlight must stay balanced.** A highlight that is never cleared
-  leaves the user's pane tinted until they restart tmux. The unhighlight calls
-  must run on every path they run on today, timeout arms included.
-- **`read_pane_exit_status`** keeps whatever failure default it has now; the
-  timeout arm gets the same one rather than a new sentinel.
+| Phase | Region | Sites |
+|---|---|---|
+| **06c** | lines ≤ 460 (setup & send) | **10** |
+| 06d | lines 461–710 (poll & capture) | 10 |
+| 06e | lines > 710 (exit status & cleanup) | 9 |
 
-## The span script caught a third non-site during drafting
+Ten is the size that landed `approved_first_try` in 06a (16 sites) and 06b (11).
 
-Run with 06b's `PURE` set the script reported **32**; the expected total was 31.
-The extra was `use crate::tmux::cache::SessionCache;` — a type import. Corrected
-by adding `cache` to `PURE`, and the doc now names the import explicitly so the
-exclusion is visible rather than silent.
+### Two things the re-scoped spec adds
 
-That is the value of validating a criterion against the tree **before** shipping
-it: the same script has now found a structurally-unconvertible site (`Drop`), a
-false-friend helper, and a type import across three phases. Each would have read
-as a missed conversion.
+- **"Build after every site."** Not advice — a numbered step. Ten small builds
+  cost seconds each; one build at the end reports an error you then have to hunt
+  across 1228 lines. That is precisely what consumed the failed run.
+- **"Keep the binding's type identical."** If a converted form would change the
+  type of something used later, collapse `Option<Result<…>>` back at the site
+  rather than letting it leak downstream. That is the specific defect that broke
+  `send_keys`.
 
-## Reasoning checks now demand quoted code
+### One invariant now spans slices
 
-06a and 06b both produced an **inaccurate early-return reasoning check** — code
-correct, claim wrong, twice — because "name every site that returns" invites a
-plausible list. 06c's checks ask for **the line number and the surrounding match
-arm, quoted**. A quotation cannot be invented post hoc from the spec's framing.
+`highlight_pane` (`:376`, slice 1) is cleared by `unhighlight_pane` at `:602`
+(slice 2) and `:773` (slice 3). An uncleared highlight leaves the user's pane
+tinted until they restart tmux. Every conversion is behaviour-preserving so the
+pair stays balanced across the split — but each slice's doc says so, because
+"fixing" the imbalance from inside one slice would be wrong.
 
 ## Still open — four single-occurrence threads
 
 3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
 8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
 
-Plus four refinements to the folds: import liveness is **per import scope**; a
+Plus five refinements to the folds: import liveness is **per import scope**; a
 multi-line census obliges **every** criterion in that phase; a source-parsing
-criterion must be validated against **the shape the phase will produce**; and
-**a phase doc may not contain a number that was not produced by the exact command
-written beside it** — the last after three repeats of the same instrument mismatch.
+criterion must be validated against **the shape the phase will produce**; **a
+phase doc may not contain a number not produced by the exact command beside it**;
+and reasoning checks should **demand quoted code**, after two phases produced
+inaccurate early-return claims.
+
+**A sixth, from this failure — worth watching:** *phase size should be measured in
+sites-per-file-length, not sites alone.* 16 sites in a 500-line file succeeded; 29
+in a 1228-line file stalled at 5. If a third data point lands, that is a fold.
 
 ## After 06c
 
-**06d** (`executor/knowledge/pane.rs` 11 + `file_ops/` 6) → **06e** (`daemon/`
-core) → **06f** (`cli/`) → **stage A** (harden the sync helpers; this is also what
-bounds the `Drop` sites) → **07** (stall-instrumentation), plus the drafted
-**08–11** instance set. Four exit criteria remain open.
+**06d**, **06e** (the other two `foreground.rs` slices) → **06f–06h**
+(`executor/knowledge/pane.rs` + `file_ops/`, `daemon/` core, `cli/`) → **stage A**
+(harden the sync helpers; also what bounds the two `Drop` sites) → **07**
+(stall-instrumentation), plus the drafted **08–11** set. Four exit criteria
+remain open.
 
 ---
 

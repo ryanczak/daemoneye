@@ -91,8 +91,10 @@ take the socket.
 | 05h | test-home-guard ([phase-05h-test-home-guard.md](phase-05h-test-home-guard.md)) — one poison-recovering accessor for `TEST_HOME_LOCK`; 62 sites. Stops one failing test failing 47 others | done (approved_first_try) |
 | 06a | tmux-off-runtime ([phase-06a-tmux-off-runtime.md](phase-06a-tmux-off-runtime.md)) — the `off_runtime` adapter + `background/run.rs` (16 sites). **First of ~5** | done (approved_first_try) |
 | 06b | tmux-off-runtime-respawn ([phase-06b-tmux-off-runtime-respawn.md](phase-06b-tmux-off-runtime-respawn.md)) — `respawn.rs`, 11 sites (2 `tmux::` hits are non-sites) | done (approved_first_try) |
-| 06c | tmux-off-runtime-foreground ([phase-06c-tmux-off-runtime-foreground.md](phase-06c-tmux-off-runtime-foreground.md)) — `executor/foreground.rs`, 29 async sites; 2 `Drop` sites structurally unconvertible | todo |
-| 06d–06f | tmux-off-runtime tail — `executor/knowledge/pane.rs` + `file_ops/` (17), `daemon/` core, `cli/`. Not drafted | todo |
+| 06c | tmux-off-runtime-foreground ([phase-06c-tmux-off-runtime-foreground.md](phase-06c-tmux-off-runtime-foreground.md)) — `foreground.rs` **slice 1**, lines ≤460, 10 sites. Re-split after a `hard_fail` on 29-at-once | todo |
+| 06d | foreground slice 2 — lines 461–710, 10 sites. Not drafted | todo |
+| 06e | foreground slice 3 — lines >710, 9 sites. Not drafted | todo |
+| 06f–06h | tmux-off-runtime tail — `executor/knowledge/pane.rs` + `file_ops/` (17), `daemon/` core, `cli/`. Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
