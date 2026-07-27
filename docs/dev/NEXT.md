@@ -1,77 +1,81 @@
 # NEXT
 
-**Active phase: M5 phase-06b — tmux-off-runtime-respawn** (`todo`, drafted
+**Active phase: M5 phase-06c — tmux-off-runtime-foreground** (`todo`, drafted
 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06b-tmux-off-runtime-respawn.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06c-tmux-off-runtime-foreground.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06b-tmux-off-runtime-respawn`.
+Dispatch with `/rexymcp:dispatch phase-06c-tmux-off-runtime-foreground`.
 
-## The pattern is established; 06b applies it
+## 06c — the interactive execution path, 29 sites
 
-06a landed `tmux::off_runtime` (`spawn_blocking` + a 5 s `tokio::time::timeout`)
-and converted `background/run.rs`'s 16 sites. 06b does `respawn.rs` — **11 sites**
-— and 06c–06e finish `executor/`, the `daemon/` core and `cli/`.
+`executor/foreground.rs` injects a command into the user's own pane and polls it
+to completion. **29 tmux calls run in async context** there, more than any other
+single file. The pattern is established (06a's adapter, 06b's mechanical
+application), so this is volume rather than novelty.
 
-`respawn.rs` is a single `pub async fn` plus nested `tokio::spawn(async move …)`
-blocks, so every tmux call in it blocks a runtime worker.
+### Three non-sites, each for a different reason
 
-### Two `tmux::` hits are NOT sites — the spec names both
+Surveying found that **31** of the file's tmux-shaped hits are not all sites:
 
-`grep -c "tmux::"` returns 10, but only **8** are subprocess calls:
+| Hit | Why it is not a site |
+|---|---|
+| `:74`, `:79` — `Command::new("tmux")` in `impl Drop for FgHookGuard` | **`Drop::drop` cannot be `async`.** There is no way to `.await` in a destructor, so `off_runtime` is structurally unavailable. |
+| `:23` — `use crate::tmux::cache::SessionCache;` | a **type import**. Matches `tmux::`, spawns nothing. |
+| `:12`, `:563` — `wait_for_sudo_prompt_and_inject` | a local async helper, not `tmux::wait_for`. Same false friend as `run.rs`. |
 
-- **`:23`** is a doc comment mentioning `tmux::pane_exists`.
-- **`:85`** is `tmux::pipe_log_path`, a **pure path builder** (`pane.rs:244` —
-  trims a `%` and joins a filename; no subprocess). **Wrapping it would be a
-  defect**, adding a thread hop and a spurious timeout log to a string
-  concatenation.
+**The `Drop` gap is real and acknowledged**, not hand-waved: hook teardown still
+blocks whatever thread drops the guard. The spec forbids a workaround —
+no `block_on`, no `futures::executor`, no detached `tokio::spawn` in `drop`, all
+of which are worse than the blocking call — and assigns the fix to the later
+sync-helper stage, where a timeout inside `src/tmux/` bounds it for every caller
+including destructors.
 
-Plus 3 inline `Command::new("tmux")` → **11 sites**. One of them (`:41`,
-`respawn-pane`) is a new shape: `.status()` rather than `.output()`, with an early
-return, and **a timeout must count as failure** — proceeding would send a command
-into a shell that was never respawned.
+### Three behaviour-sensitive sites the spec pins
 
-### The span-matching criterion replaces the line heuristic
+- **`pane_exists` must not read a timeout as `true`.** `.unwrap_or(false)`, or the
+  daemon sends keys into a pane that may be gone.
+- **highlight/unhighlight must stay balanced.** A highlight that is never cleared
+  leaves the user's pane tinted until they restart tmux. The unhighlight calls
+  must run on every path they run on today, timeout arms included.
+- **`read_pane_exit_status`** keeps whatever failure default it has now; the
+  timeout arm gets the same one rather than a new sentinel.
 
-06a's acceptance script flagged **7 correctly-wrapped calls** as unwrapped,
-because it excluded lines containing `move ||` and rustfmt puts closure bodies on
-the next line. 06b ships the paren-matching version instead, and it is validated:
-run against the pre-phase tree it lists exactly the 11 sites and correctly skips
-`pipe_log_path` and the doc comment.
+## The span script caught a third non-site during drafting
 
-## I made the same counting mistake for the third time
+Run with 06b's `PURE` set the script reported **32**; the expected total was 31.
+The extra was `use crate::tmux::cache::SessionCache;` — a type import. Corrected
+by adding `cache` to `PURE`, and the doc now names the import explicitly so the
+exclusion is visible rather than silent.
 
-Two criteria in the first draft were wrong, both because I wrote `grep -c`
-expectations from an **earlier survey's numbers** rather than running the greps:
+That is the value of validating a criterion against the tree **before** shipping
+it: the same script has now found a structurally-unconvertible site (`Drop`), a
+false-friend helper, and a type import across three phases. Each would have read
+as a missed conversion.
 
-- `off_runtime` in `run.rs` — wrote 18 (the span count), measured **23** (lines).
-- `tmux::` in `foreground.rs` — wrote 15 (async-reachable *calls*), measured **27**
-  (lines).
+## Reasoning checks now demand quoted code
 
-This is the same instrument-mismatch as 06a's, and I had already written the
-refinement for it — *"running a command is not running the criterion"*. Writing
-the refinement did not stop me repeating the error; **only running each criterion
-at the moment I write it does.** The corrected `foreground.rs` criterion now says
-so inline, naming both instruments and which one it means.
-
-Sharper statement for the fold, if it recurs a fourth time: **a phase doc may not
-contain a number that was not produced by the exact command written beside it.**
+06a and 06b both produced an **inaccurate early-return reasoning check** — code
+correct, claim wrong, twice — because "name every site that returns" invites a
+plausible list. 06c's checks ask for **the line number and the surrounding match
+arm, quoted**. A quotation cannot be invented post hoc from the spec's framing.
 
 ## Still open — four single-occurrence threads
 
 3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
 8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
 
-Plus three refinements to the folds, from 05h and 06a: import liveness is
-**per import scope**, not per file; a multi-line census obliges **every** criterion
-in that phase; and **a source-parsing criterion must be validated against the shape
-the phase will produce**, not the shape it starts from — 06a's script was correct
-pre-dispatch and broke only once rustfmt reflowed the converted code.
+Plus four refinements to the folds: import liveness is **per import scope**; a
+multi-line census obliges **every** criterion in that phase; a source-parsing
+criterion must be validated against **the shape the phase will produce**; and
+**a phase doc may not contain a number that was not produced by the exact command
+written beside it** — the last after three repeats of the same instrument mismatch.
 
-## After 06b
+## After 06c
 
-**06c–06e** (the tmux tail) → **stage A** (harden the sync helpers so a wedged
-tmux cannot leak blocking-pool threads) → **07** (stall-instrumentation), plus the
-drafted **08–11** instance-hardening set. Four exit criteria remain open.
+**06d** (`executor/knowledge/pane.rs` 11 + `file_ops/` 6) → **06e** (`daemon/`
+core) → **06f** (`cli/`) → **stage A** (harden the sync helpers; this is also what
+bounds the `Drop` sites) → **07** (stall-instrumentation), plus the drafted
+**08–11** instance set. Four exit criteria remain open.
 
 ---
 
