@@ -1,98 +1,86 @@
 # NEXT
 
-**Active phase: M5 phase-05h — test-home-guard** (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05h-test-home-guard.md`.
+**Active phase: M5 phase-06a — tmux-off-runtime** (`todo`, drafted 2026-07-27).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06a-tmux-off-runtime.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05h-test-home-guard`.
+Dispatch with `/rexymcp:dispatch phase-06a-tmux-off-runtime`.
 
-## Four calibration threads were folded into WORKFLOW.md — 2026-07-27
+## Mechanism B is bigger than the milestone table implied
 
-**Approved by the PE.** They had accumulated in this file for fifteen phases,
-which is itself the finding: `WORKFLOW.md` § Calibration says *"there is no
-separate place for 'lessons learned for later'"*, and `NEXT.md` had become
-exactly that place. None of the eight threads had ever reached the docs.
+The survey found **88 tmux subprocess calls inside `async fn`s across 16 files**,
+not the single phase "06 — tmux-call-hardening" suggested. Every one blocks a
+tokio worker until tmux answers.
 
-Folded, each with its evidence and a dated note:
+| Population | Count |
+|---|---|
+| directly inside an `async fn` | **18** |
+| inside `src/tmux/` sync helpers, called from async code | 46 helpers, 33+ call paths |
+| sync-only callers (CLI) | ~18 — not a defect; blocking a CLI process is fine |
 
-| Thread | Occurrences | New `WORKFLOW.md` section |
-|---|---|---|
-| Count criteria — deriving instead of running | 4 miscounts, 2 blind instruments | *Run every count criterion; never derive it* |
-| Coverage claims without mutation proof | 3 false claims | *Coverage claims are inadmissible without mutation proof* |
-| Criteria the executor can't satisfy or verify | 2 hard-fails + 1 catch | *Every acceptance criterion must be satisfiable, and its mechanics pinned* |
-| Build-vs-clippy on test-module imports | 2 hard-fails | *A phase that exhausts a trait's uses must say what happens to its import* |
+**Approach (PE-decided): B first, then A.**
 
-**Held as data, not folded** (one occurrence each, per the rule): fixture
-defaults neutering assertions (resolved by 05g); partially-transcribed spec
-quotes; piping gates through `tail`; a refinement built on a harness-blocked
-command.
+- **B — get async callers off the runtime.** `spawn_blocking` + `tokio::time::timeout`
+  at the async sites. This is what the exit criterion literally specifies, and it
+  is what ticks it.
+- **A — harden the sync helpers** with a timeout inside `src/tmux/`, so a wedged
+  tmux cannot leak blocking-pool threads and future sync callers are bounded too.
+  A **later** stage, after B.
 
-**One caveat:** this is *daemoneye's* copy of `WORKFLOW.md`. The plugin embeds
-its own template, so these folds do not propagate to other rexyMCP projects
-until someone ports them there — out of scope from inside a project session.
+**06 is now ~5 phases**: 06a (adapter + `background/run.rs`) → 06b `respawn.rs`
+→ 06c `executor/` → 06d `daemon/` core → 06e `cli/`. Only 06a is drafted.
 
-### The folds paid for themselves within the hour
+### Why this is not a textual substitution
 
-Drafting 05h immediately afterwards, the new rules caught two errors before
-dispatch:
+`spawn_blocking` requires `F: 'static`, so **every borrowed argument at every call
+site must become owned first**. That is real per-site work, which is why 88 sites
+is five phases rather than one. 06a establishes the adapter and converts one file
+as the worked example the rest copy.
 
-- The import rule made me check which files lose `UnpoisonExt`. **Ten do; one
-  (`executor/mod.rs`) must keep it.** Without that check the phase would have
-  deleted an import that three surviving calls depend on.
-- The satisfiable-criteria rule made me re-read my own census criterion, which
-  demanded `{'unwrap': 0, 'unwrap_or_log': 0, 'other': 0}`. **The accessor's own
-  body is an acquisition**, so zero was impossible. Corrected to `'other': 1`.
+**No new dependency needed** — `tokio`'s `rt-multi-thread` and `time` features are
+already enabled, and `libc`/`nix` are present if stage A later needs them.
 
-## 05h — the fifth thread, which needed a phase rather than a fold
+**`spawn_blocking` appears nowhere in this codebase today.** 06a introduces the
+pattern, which makes it design-discovery rather than mechanical — hence the four
+worked shapes in its Spec.
 
-Thread 4 (Lock/HOME test hygiene) was never an architect-discipline problem. It
-is a codebase defect, and 05g's mutation runs measured its blast radius exactly:
+## Drafting caught three of my own criterion errors
 
-| Mutation | Target test holds `TestHome`? | Failures |
-|---|---|---|
-| `background.rs:119` | no | **1** |
-| the other three | yes | **48** |
+All three were mine, and two were the *same* mistake the folds warn about:
 
-`TEST_HOME_LOCK` is a `std::sync::Mutex`; a test that panics while holding it
-poisons it, and **41 of its 62 acquisition sites use `.lock().unwrap()`**, so
-every later HOME-dependent test panics too. One real failure, forty-seven
-fictional ones.
+1. **`grep -c "tmux::" run.rs` — I wrote 20, it is 14.** I had quoted numbers from
+   a python census (which counts *calls*, including inline
+   `Command::new("tmux")`) as though they were `grep -c` *line* counts. Two
+   instruments, one number. The census was right; the criterion was wrong.
+2. **`respawn.rs` — I wrote 12, it is 10 `tmux::` lines + 3 inline.** Same cause.
+3. **`grep -c "off_runtime" src/tmux/mod.rs` — I wrote 2, it is 1.** I assumed the
+   doc comment referenced the function by name; it references `TMUX_TIMEOUT`.
 
-**The codebase already discovered the fix twice and applied it inconsistently** —
-12 sites use `unwrap_or_log`, 9 use `unwrap_or_else(PoisonError::into_inner)`,
-41 use `unwrap()`. That is a convention nobody can enforce: the same shape this
-milestone solved for the session store with `with_sessions`, and 05h applies the
-same remedy — one accessor, every caller through it.
+Also corrected a **false premise**: the spec said to skip `tmux::wait_for` calls in
+`run.rs`. There are none — the two `wait_for` hits are
+`wait_for_sudo_prompt_and_inject`, not a tmux call at all. A spec instruction to
+avoid something that does not exist is the kind of trusted-but-wrong detail that
+sends an executor looking.
 
-**The accessor must not be `#[cfg(test)]`** — `tests/integration.rs` holds 11 of
-the 62 sites and is a separate crate. `lib.rs`'s existing doc comment says so
-explicitly, which is why it is quoted in the spec.
-
-**The end-to-end verification is the measurement itself:** insert a `panic!`
-probe in a HOME-holding test, count failures before (many) and after (1), remove
-the probe. A green suite cannot demonstrate this — it was green before.
+These are the third, fourth and fifth counting errors of the milestone, and the
+fold *"Run every count criterion; never derive it"* is exactly right — I ran the
+census but then wrote the criteria from it instead of running the criteria.
+**Refinement worth noting: running *a* command is not running *the* criterion.**
 
 ## Still open — four threads, all single occurrences
 
-3. **Fixture defaults neutering assertions** — resolved by 05g; held as data.
-5. **Partially-transcribed spec quotes** (05a).
-8. **Piping gate commands through `tail` masks the exit status** (05c). Every
-   phase doc since says to run gates bare; it is an executor-contract concern
-   rather than one for these docs.
-9. **A refinement that depends on a harness-blocked command is not a refinement**
-   (05g — `git checkout --` was blocked by the shell guard). Folded *into* thread
-   6's section as a closing sentence rather than as its own rule.
+3. Fixture defaults neutering assertions (resolved by 05g). 5. Partially-transcribed
+spec quotes. 8. Piping gates through `tail`. 9. A refinement built on a
+harness-blocked command.
 
-Per the rule, none of these changes the docs yet. Revisit at milestone close.
+Plus two refinements to the folds themselves, from 05h's review: import liveness
+must be checked **per import scope**, not per file; and when a phase needs a
+multi-line census, **every** count criterion in it needs the same treatment.
 
-## After 05h
+## After 06a
 
-**06** (tmux-call-hardening — mechanism B: the `tmux::` calls themselves
-non-blocking and timeout-bounded) → **07** (stall-instrumentation), plus the
-drafted **08–11** instance-hardening set. Five exit criteria remain open;
-criterion 3 was ticked at 05f.
-
-**Scoping note for 06:** 05f moved the tmux calls *out of* critical sections; 06
-changes *how they run*. A wedged tmux server still blocks the calling task today.
+06b–06e (the tmux tail) → **stage A** (harden the sync helpers) → **07**
+(stall-instrumentation), plus the drafted **08–11** instance-hardening set. Four
+exit criteria remain open; criterion 3 was ticked at 05f.
 
 ---
 
