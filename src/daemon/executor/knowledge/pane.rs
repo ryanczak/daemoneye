@@ -326,23 +326,41 @@ pub fn watch_pane(
             turn: None,
         };
 
+        // Phase 1 (locked): confirm the entry exists and take what the rest needs.
+        let Some(chat_pane) = with_sessions(&sessions_clone, |store| {
+            store
+                .get_mut(&session_id_owned)
+                .map(|entry| entry.chat_pane.clone())
+        }) else {
+            log::info!(
+                "watch_pane {}: {}",
+                pane_id_owned,
+                if completed { "completed" } else { "timed out" }
+            );
+            return;
+        };
+
+        // Phase 2 (unlocked): the file write.
+        append_session_message(&session_id_owned, &watch_msg);
+
+        // Phase 3 (locked): push the message into the in-memory history.
         with_sessions(&sessions_clone, |store| {
             if let Some(entry) = store.get_mut(&session_id_owned) {
-                append_session_message(&session_id_owned, &watch_msg);
                 entry.messages.push(watch_msg);
-
-                let alert = if completed {
-                    format!("Watched pane {} command completed", pane_id_owned)
-                } else {
-                    format!("Watched pane {} timed out", pane_id_owned)
-                };
-                if let Some(ref cp) = entry.chat_pane {
-                    let _ = std::process::Command::new("tmux")
-                        .args(["display-message", "-d", "5000", "-t", cp, &alert])
-                        .output();
-                }
             }
         });
+
+        // Phase 4 (unlocked): the tmux notification.
+        let alert = if completed {
+            format!("Watched pane {} command completed", pane_id_owned)
+        } else {
+            format!("Watched pane {} timed out", pane_id_owned)
+        };
+        if let Some(ref cp) = chat_pane {
+            let _ = std::process::Command::new("tmux")
+                .args(["display-message", "-d", "5000", "-t", cp, &alert])
+                .output();
+        }
         log::info!(
             "watch_pane {}: {}",
             pane_id_owned,

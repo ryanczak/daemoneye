@@ -1,7 +1,7 @@
 # Phase 05e: Get `watch_pane`'s Completion Callback Out of the Session Lock
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05d (the newtype) — `done`
 **Estimated diff:** ~40 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -361,3 +361,9 @@ verification.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 02:28 (started)
+
+**Executor:** Claude (Anthropic)
+
+Restructured `watch_pane`'s completion callback in `pane.rs` from a single `with_sessions` closure (holding the lock across file writes and a tmux subprocess spawn) into the four-phase collect-under-the-lock / act-outside-it shape. Phase 1 clones `chat_pane` under the lock, phase 2 writes the session file unlocked, phase 3 pushes the message into in-memory history under the lock (re-checking `get_mut`), and phase 4 sends the tmux notification unlocked. Chose the single-exit form for `log::info!` — one occurrence at the end, with a duplicate in phase 1's early-return `else` branch, so exactly one log line fires per invocation on every path. `grep -c 'watch_pane {}: {}'` returns 2.

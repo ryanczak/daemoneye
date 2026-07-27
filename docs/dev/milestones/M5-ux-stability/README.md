@@ -85,7 +85,7 @@ take the socket.
 | 05b | unlock-webhook-and-stream ([phase-05b-unlock-webhook-and-stream.md](phase-05b-unlock-webhook-and-stream.md)) — `webhook/process.rs` (2) + `stream.rs:722` = 3 restructures | done (approved_first_try) |
 | 05c | convert-stragglers-and-tests ([phase-05c-convert-stragglers-and-tests.md](phase-05c-convert-stragglers-and-tests.md)) — `ask.rs` (2, production) + `background.rs` (17, test) + `session.rs` (3, test) = 22 conversions | done (approved_after_1) |
 | 05d | sessionstore-newtype ([phase-05d-sessionstore-newtype.md](phase-05d-sessionstore-newtype.md)) — alias → newtype; 16 construction sites + 16 `Arc::clone` sites; `try_lock` `#[cfg(test)]`-gated | done (approved_first_try) |
-| 05e | unlock-watch-pane ([phase-05e-unlock-watch-pane.md](phase-05e-unlock-watch-pane.md)) — `pane.rs:329`: 2 file writes + a tmux spawn inside a `with_sessions` closure | todo |
+| 05e | unlock-watch-pane ([phase-05e-unlock-watch-pane.md](phase-05e-unlock-watch-pane.md)) — `pane.rs:329`: 2 file writes + a tmux spawn inside a `with_sessions` closure | in-progress |
 | 05f | unlock-ask-entry — `ask.rs:97`: `read_session_meta` (file read) + `tmux::pane_exists` / `start_pipe_pane` (2 subprocesses) inside one closure, in `handle_ask`. **Larger and more delicate than 05e** | todo |
 | 05g | compaction-coverage-followup — 04f's 3 vacuous `compaction_in_flight` assertions made real, mutation-checked. Independent; any order | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
