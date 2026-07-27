@@ -521,8 +521,13 @@ where
                                 break 'detect;
                             }
                             // "sudo" transitioned away — credentials were cached.
-                        } else if idle_pid != 0
-                            && tmux::pane_pid(target_str).unwrap_or(0) == idle_pid
+                        } else if idle_pid != 0 && {
+                            let t = target_str.to_string();
+                            tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t))
+                                .await
+                                .and_then(|r| r.ok())
+                                .unwrap_or(0)
+                        } == idle_pid
                         {
                             break 'detect;
                         }
@@ -564,7 +569,9 @@ where
                                 ),
                             )
                             .await?;
-                            let _ = tmux::select_pane(target_str);
+                            let t = target_str.to_string();
+                            let _ = tmux::off_runtime("select-pane", move || tmux::select_pane(&t))
+                                .await;
                             switched_to_working = true;
                         } else {
                             // P2: Prompt in the chat pane (no focus switch).
@@ -636,7 +643,11 @@ where
                                 if matches!(fail, SudoFail::Cancelled) {
                                     // sudo is still sitting at the password prompt — clear it so the
                                     // pane returns to a usable shell rather than a dangling prompt.
-                                    let _ = crate::tmux::send_cancel(target_str);
+                                    let t = target_str.to_string();
+                                    let _ = tmux::off_runtime("send-cancel", move || {
+                                        crate::tmux::send_cancel(&t)
+                                    })
+                                    .await;
                                 }
                                 let msg = match fail {
                                     SudoFail::Cancelled => format!(
@@ -657,7 +668,12 @@ where
                                     ),
                                 };
                                 drop(fg_hook_guard);
-                                tmux::unhighlight_pane(target_str, chat_pane);
+                                let t = target_str.to_string();
+                                let cp = chat_pane.map(|s| s.to_string());
+                                let _ = tmux::off_runtime("unhighlight-pane", move || {
+                                    tmux::unhighlight_pane(&t, cp.as_deref())
+                                })
+                                .await;
                                 crate::daemon::stats::finish_command(cmd_id, 1);
                                 send_response_split(tx, Response::ToolResult(msg.clone())).await?;
                                 log_command(
@@ -688,18 +704,34 @@ where
                         result = fg_rx.recv() => {
                             if let Ok(notified_pane) = result
                                 && notified_pane == target_str
-                                    && let Ok(snap) = tmux::capture_pane(target_str, 20)
-                                        && looks_like_shell_prompt(&snap) {
-                                            prompt_found = true;
-                                            break 'connect;
-                                        }
-                        }
-                        _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
-                            if let Ok(snap) = tmux::capture_pane(target_str, 20)
-                                && looks_like_shell_prompt(&snap) {
+                            {
+                                let t = target_str.to_string();
+                                let snap = tmux::off_runtime("capture-pane", move || {
+                                    tmux::capture_pane(&t, 20)
+                                })
+                                .await
+                                .and_then(|r| r.ok());
+                                if let Some(s) = snap
+                                    && looks_like_shell_prompt(&s)
+                                {
                                     prompt_found = true;
                                     break 'connect;
                                 }
+                            }
+                        }
+                        _ = tokio::time::sleep(INTERACTIVE_POLL_INTERVAL) => {
+                            let t = target_str.to_string();
+                            let snap = tmux::off_runtime("capture-pane", move || {
+                                tmux::capture_pane(&t, 20)
+                            })
+                            .await
+                            .and_then(|r| r.ok());
+                            if let Some(s) = snap
+                                && looks_like_shell_prompt(&s)
+                            {
+                                prompt_found = true;
+                                break 'connect;
+                            }
                         }
                     }
                 }
@@ -712,7 +744,12 @@ where
                             break;
                         }
                         tokio::time::sleep(INTERACTIVE_POLL_INTERVAL).await;
-                        let snap = tmux::capture_pane(target_str, 20).unwrap_or_default();
+                        let t = target_str.to_string();
+                        let snap =
+                            tmux::off_runtime("capture-pane", move || tmux::capture_pane(&t, 20))
+                                .await
+                                .and_then(|r| r.ok())
+                                .unwrap_or_default();
                         if snap == prev && !snap.is_empty() {
                             break;
                         }
@@ -734,7 +771,13 @@ where
                                 && notified_pane == target_str { stable_ticks = 0; }
                         }
                         _ = tokio::time::sleep(REMOTE_POLL_INTERVAL) => {
-                            let snap = tmux::capture_pane(target_str, 10).unwrap_or_default();
+                            let t = target_str.to_string();
+                            let snap = tmux::off_runtime("capture-pane", move || {
+                                tmux::capture_pane(&t, 10)
+                            })
+                            .await
+                            .and_then(|r| r.ok())
+                            .unwrap_or_default();
                             if snap == prev_snap && !snap.is_empty() {
                                 stable_ticks += 1;
                                 if stable_ticks >= 2 { break; }
@@ -748,24 +791,28 @@ where
             } else {
                 // N9: install monitor-silence + alert-silence as secondary completion signal.
                 let silence_hook_name = format!("alert-silence[@de_fg_{}]", hook_idx);
-                let _ = std::process::Command::new("tmux")
-                    .args([
-                        "set-hook",
-                        "-t",
-                        target_str,
-                        &silence_hook_name,
-                        &notify_cmd,
-                    ])
-                    .output();
-                let _ = std::process::Command::new("tmux")
-                    .args([
-                        "set-option",
-                        "-t",
-                        target_str,
-                        "monitor-silence",
-                        &SILENCE_MONITOR_SECS.to_string(),
-                    ])
-                    .output();
+                let shn = silence_hook_name.clone();
+                let th = target_str.to_string();
+                let nh = notify_cmd.clone();
+                let _ = tmux::off_runtime("set-hook", move || {
+                    std::process::Command::new("tmux")
+                        .args(["set-hook", "-t", &th, &shn, &nh])
+                        .output()
+                })
+                .await;
+                let th2 = target_str.to_string();
+                let _ = tmux::off_runtime("set-option", move || {
+                    std::process::Command::new("tmux")
+                        .args([
+                            "set-option",
+                            "-t",
+                            &th2,
+                            "monitor-silence",
+                            &SILENCE_MONITOR_SECS.to_string(),
+                        ])
+                        .output()
+                })
+                .await;
                 fg_hook_guard.add_silence(silence_hook_name.clone());
 
                 let deadline = tokio::time::Instant::now() + LOCAL_CMD_TIMEOUT;

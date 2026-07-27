@@ -1,7 +1,7 @@
 # Phase 06d: `foreground.rs` tmux Calls Off the Runtime — Slice 2 (poll & capture)
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06c (slice 1) — `done`
 **Estimated diff:** ~110 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -273,3 +273,7 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 19:00 (started)
+
+**Executor:** Claude (opus 4.6) — converting 10 tmux call sites in `foreground.rs` to `off_runtime`.
