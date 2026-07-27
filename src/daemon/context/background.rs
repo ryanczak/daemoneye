@@ -137,7 +137,7 @@ async fn run_compaction(
             }
         });
         return Ok(());
-    };
+    }
 
     // Build the epoch with narrative (this is the whole point of async).
     let span_start = prior

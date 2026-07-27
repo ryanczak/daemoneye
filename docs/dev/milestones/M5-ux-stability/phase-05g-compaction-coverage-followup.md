@@ -256,10 +256,17 @@ For **each** of the four production lines (`:119`, `:136`, `:232`, `:240` — li
 numbers will shift as you edit; find them by the surrounding comments quoted in
 § "The four production clearing sites"):
 
+**Commit your task 1–3 test work first**, so the tree is clean and every
+mutation starts from a known-good state. Then, for each site:
+
 1. Delete that single `entry.compaction_in_flight = false;` line.
 2. Run `cargo test`.
 3. Record **which test fails and its assertion message.**
-4. Restore the line. Confirm `cargo test` passes again.
+4. **Restore with `git checkout -- src/daemon/context/background.rs`** — never by
+   retyping the line. Hand-restoration is how run 1 left a stray `};` in
+   `run_compaction` that then cost turns to find. `git checkout --` restores the
+   file byte-for-byte.
+5. Confirm `cargo test` reports **916** again before mutating the next site.
 
 **Quote the fail/pass pair for all four in the Update Log**, in a table:
 
@@ -294,10 +301,14 @@ attributes to exactly one site. Leave the tree clean when you finish —
 - [ ] The Update Log contains the **four-row mutation table** from task 4, each
       row naming a real test and its assertion message.
 - [ ] `git diff --stat` shows **exactly one** `src/` file changed.
-- [ ] `git diff src/daemon/context/background.rs` touches **no line outside
-      `mod tests`** — the four production clearing sites must be byte-identical
-      to their current state when you finish. **Mutations are temporary; restore
-      every one.**
+- [ ] `git diff baaf476 -- src/daemon/context/background.rs` touches **no line
+      outside `mod tests`** — the four production clearing sites must be
+      byte-identical to their pre-phase state. **The baseline is the commit
+      `baaf476`** (the phase-draft commit; it changed docs only, so
+      `background.rs` there is the pre-phase original). Naming the baseline
+      matters: a bare `git diff` shows only *uncommitted* changes, which says
+      nothing about work you have already committed. **Corrected after run 1,
+      where an unpinned baseline caused a 60-turn stall.**
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
@@ -380,3 +391,59 @@ decorative.
 **Executor:** Claude
 
 **Work in progress:** Implementing tasks 1–4: making three vacuous `compaction_in_flight` assertions real, adding one new test for the stale-branch discard, and proving all four clearing sites by mutation.
+
+### Update — 2026-07-27 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** tasks 1–3 are already correct on disk with 916 tests green and the
+production code byte-identical; only the mutation table remains, and the stall
+was caused by two flaws in my spec that are now fixed — resume preserves the
+correct work where a fresh re-dispatch would re-derive it.
+
+### Notes for executor — 2026-07-27 (after run 1's `NoProgressStall`)
+
+**Your tasks 1–3 are correct and already on disk. Do not redo them.** Verified
+independently:
+
+| Check | Result |
+|---|---|
+| `cargo test` | **916** passed — the new test is in |
+| `cargo fmt` / `cargo clippy --all-targets` | both exit 0 |
+| `compaction_in_flight = false` | **4**, all production |
+| `compaction_in_flight = true` | **5** |
+| `#[tokio::test]` | **7** |
+| `git diff baaf476 -- src/daemon/context/background.rs` | **only** additions inside `mod tests` — zero production drift |
+
+**The stall was my spec's fault, in two ways, both now fixed:**
+
+1. **The diff criterion had no baseline.** It said "`git diff …` touches no line
+   outside `mod tests`", but you had already committed your work, so a bare
+   `git diff` showed nothing relevant and you spent ~60 turns trying to construct
+   the right invocation (`git diff HEAD~2 | grep …`, repeatedly). **The criterion
+   now names the baseline: `git diff baaf476 -- …`.**
+2. **The mutation procedure said "restore the line"** without saying how. Restoring
+   by hand left a stray `};` in `run_compaction` that then had to be hunted down.
+   **The procedure now says to restore with
+   `git checkout -- src/daemon/context/background.rs`.**
+
+**There are two things left:**
+
+1. **Commit the working tree.** It currently holds a one-character fix — `};` → `}`
+   at the end of the idempotency-guard block in `run_compaction` — which restores
+   that line to its pre-phase form. It is correct; commit it.
+2. **Do task 4 and write the four-row mutation table.** This is the phase's actual
+   deliverable and the only part still outstanding. From the now-clean tree,
+   mutate one production clear line at a time, record the failing test and its
+   assertion message, restore with `git checkout --`, confirm 916, and move on.
+
+**Finish condition:**
+
+- The Update Log contains the **four-row mutation table**, each row naming a real
+  test and its real assertion message.
+- `cargo test` reports **916**.
+- `git diff baaf476 -- src/daemon/context/background.rs` shows **only** additions
+  inside `mod tests`.
+- `git status` is clean.
+
+If any of the four mutations does **not** make a test fail, say so plainly and
+stop — that is a real finding, not a failure to report.
