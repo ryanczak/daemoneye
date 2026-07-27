@@ -1,7 +1,7 @@
 # Phase 05h: Stop One Failing Test From Failing Forty-Seven Others
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05g (which measured the cascade) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -451,3 +451,80 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8b62f17f5cf4ddf785805f001b5eca2ba25645cf
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (234 turns)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** one, and it was **correct** — see "Two of my criteria were
+  wrong" below.
+- **Calibration:** no new threads. Two refinements to folds made hours earlier.
+
+Gates re-run bare with exit codes captured: fmt 0, build 0 (zero warnings),
+clippy 0, test 0 — **916** lib-unit and **27** integration tests, both unchanged.
+`test_home_guard()` appears **63** times (62 call sites + the definition), files
+carrying `UnpoisonExt` dropped **25 → 15**, and `use crate::TEST_HOME_LOCK` is
+gone from `ghost_ws.rs`.
+
+**The census reports `{'unwrap': 0, 'unwrap_or_log': 0, 'other': 1}`** — exactly
+one acquisition left, the accessor's own body. The 41 `.unwrap()` sites that
+caused the cascade are gone.
+
+### ✅ The cascade measurement, run independently
+
+Inserted `panic!("cascade probe")` as the first statement of
+`background_swap_applies_when_unchanged`, ran `cargo test --lib`, restored from a
+copy (sha-verified identical):
+
+| | Failures |
+|---|---|
+| **Before** (measured on the pre-05h tree during 05g's review) | **48** |
+| **After** (this review, independently) | **1** — `915 passed; 1 failed` |
+
+One real failure now stays one failure. That is the phase's entire claim and it
+holds.
+
+**Also verified by reading:** all four **named** guard bindings survive as `lock`,
+not `_lock` — `background.rs:293`, `epochs.rs:1164`, `ghost_ws.rs:130`,
+`recall.rs:259`. Renaming any of them would have dropped the guard immediately and
+silently broken the serialisation those tests depend on, with every gate green.
+
+### Two of my criteria were wrong — both my own new folds, applied too shallowly
+
+The executor deviated from the spec twice. **Both times it was right and I was
+wrong**, and both are refinements to rules I folded into `WORKFLOW.md` hours
+before drafting this phase:
+
+1. **`grep -c "UnpoisonExt" src/daemon/executor/mod.rs` → I said 3, it is 1.**
+   The 3 was one module-level import plus **two function-scoped imports inside
+   individual test fns**, and those two existed solely to serve their own
+   `TEST_HOME_LOCK` call. Converting the call killed them; clippy would have
+   errored. The executor removed them and flagged the deviation explicitly.
+
+   *Refinement to the import fold:* liveness must be checked **per import scope**,
+   not per file. A file-level "does any use survive?" answers the wrong question
+   when a module-level import and a function-scoped one coexist.
+
+2. **`grep -rn "TEST_HOME_LOCK" … | grep -c "\.lock()"` → I said 1, it returns 0.**
+   The accessor is multi-line, so no single line contains both. The criterion was
+   blind in exactly the way the phase's own Pre-flight warns about — I wrote the
+   census *because* nine sites are multi-line, then wrote a line-oriented
+   criterion anyway.
+
+   *Refinement to the count fold:* when a phase's Pre-flight needs a multi-line
+   census, **every** count criterion in that phase needs the same treatment.
+   Reaching for `grep -c` in the acceptance criteria after building a scanner for
+   the Pre-flight is a real and repeatable slip — this is its third instance in
+   M5.
+
+Neither error affected the outcome: the multi-line census proves the true state,
+and the executor made the right call on the imports. But both are cases where the
+rule was correct and my application of it was not, which is worth more than
+another occurrence count.
+
+### What this phase actually bought
+
+Every future mutation, bisect, or flaky-test hunt in this repo now reads one
+failure instead of forty-eight. 05g's mutation table cost four full test runs to
+attribute precisely; the same work after 05h is unambiguous on the first run.
