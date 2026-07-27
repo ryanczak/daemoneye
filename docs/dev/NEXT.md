@@ -1,10 +1,80 @@
 # NEXT
 
-**Active phase: M5 phase-06h — tmux-off-runtime-daemon-mod**
+**Active phase: M5 phase-06j — tmux-off-runtime-daemon-tail**
 (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06h-tmux-off-runtime-daemon-mod.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06j-tmux-off-runtime-daemon-tail.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06h-tmux-off-runtime-daemon-mod`.
+Dispatch with `/rexymcp:dispatch phase-06j-tmux-off-runtime-daemon-tail`.
+
+## Six conversion phases in a row, no bounces
+
+06d (10) → 06e (9) → 06f (12) → 06g (11) → 06h (9), all `approved_first_try`.
+`foreground.rs`, the whole `executor/` subtree, `scheduled.rs`, `utils/sudo.rs`
+and `run_daemon` are finished.
+
+## The new fold earned its keep immediately
+
+06j was scoped by running the **classifier, not the counter** — the rule folded
+into `WORKFLOW.md` an hour earlier. The README had it as "~39 raw hits across
+`background/`, `session.rs`, `ghost.rs`, `hook.rs`, `server/`, `webhook/`, then
+`cli/`". Classifying every hit by enclosing-fn async-ness cut that to **6
+convertible**:
+
+| Outcome | Count | Where |
+|---|---|---|
+| **Convertible → 06j** | 6 | `gc.rs` 2, `ghost.rs` 1, `hook.rs` 1, `server/ask.rs` 2 |
+| Sync enclosing fn → restructure | 11 | `gc_bg_windows` 3, `helpers.rs` 4, `cleanup_bg_windows` 2, `webhook/process.rs` 1, `utils/host.rs` 1 |
+| Not a call at all | 2 | a `use` import; `pipe_log_path` is pure path-building |
+| **New species** → restructure | 1 | `handlers.rs:186` |
+| `cli/`, surveyed for later | 19 | 12 async (06k), 7 sync (restructure) |
+
+**A seventh species turned up**, and it is worth adding to the fold's list if it
+recurs: `handlers.rs:186` is in an **async fn but inside a synchronous
+`.filter()` closure** in an iterator chain. `.await` is illegal there, and
+converting it means rewriting the chain into a loop. Same conclusion as the
+sync-fn species — it is a restructure — but a distinct mechanism, and the
+classifier does **not** catch it (it reports the enclosing `fn`, which is
+async). I found it by reading. One occurrence; noted, not folded.
+
+## Three hazards, all "the neighbouring form is wrong"
+
+1. **`hook.rs:115` is the same three-arm `new-session` match `mod.rs:458` just
+   converted — but its `None` arm must `log::warn!`, not `bail!`.** `mod.rs`
+   bails because a daemon with no session cannot start; `hook.rs`'s failure arms
+   log and fall through to `send_response_split(tx, Response::Ok)`. Its function
+   returns `Result<()>`, so a copied `bail!` **compiles** and silently converts a
+   logged warning into a failed hook response. The spec pins the difference.
+2. **`gc.rs:53` is an `else if let`.** The capture only runs when
+   `create_dir_all` succeeded; an awaited value cannot stay in an `else if let`,
+   and the tempting fix — hoisting the capture above the `if` — would archive
+   into a directory that does not exist.
+3. **`ask.rs:246`/`:247` sit in the region 05f created** by hoisting exactly
+   these two calls out of a `with_sessions` closure. The comment still says
+   "Unlocked phase: the two blocking tmux calls". An acceptance criterion
+   requires quoting that closure and confirming both new awaits are outside it.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(four `off_runtime` 0s, the 3/1/0/0 residue, 916/27). Ten clean applications.
+
+Worth noting one instrument quirk found while surveying: the scan's
+`\btmux::(\w+)` captures the **module** segment for `tmux::pane::foo`, so
+`gc.rs:53` prints as `pane` rather than `capture_pane_to_file`. It never hides
+a site — the hit is still reported — but it makes the name column misleading,
+so the spec says so inline.
+
+## After 06j
+
+**06k** (`cli/`, 12 convertible) → **06i** (the restructure set, which the
+survey grew to ~26 sites across 11 files and **needs splitting when drafted**)
+→ **stage A** (harden the sync helpers; also what bounds every `Drop` site) →
+**07** (stall-instrumentation), plus the drafted **08–11** set. Four exit
+criteria remain open.
+
+---
+
+## Superseded: the 06h dispatch note
 
 ## Five conversion phases in a row, no bounces
 
