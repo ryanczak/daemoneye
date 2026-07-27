@@ -88,16 +88,30 @@ where
     // new, or refresh chat_pane and adopt client_target_pane if not yet set.
     // Also capture any pending catch-up brief (N15) and pane-drift notice to
     // send after SessionInfo.
-    let (catchup_brief, pane_drift_msg, session_cost_usd, has_untracked_cost): (
+    // Read persisted continuity state *before* taking the lock. It is a file read
+    // and must not run inside a critical section. Only needed when the session is
+    // not already resident — the probe below is a HashMap lookup, not blocking work.
+    let restored_meta = if let Some(ref id) = session_id {
+        if with_sessions(sessions, |store| store.contains_key(id)) {
+            None
+        } else {
+            crate::daemon::session::read_session_meta(id)
+        }
+    } else {
+        None
+    };
+
+    let (catchup_brief, pane_drift_msg, session_cost_usd, has_untracked_cost, pipe_candidate): (
         Option<String>,
         Option<String>,
         f64,
         bool,
+        Option<String>,
     ) = if let Some(ref id) = session_id {
         with_sessions(sessions, |store| {
             let entry = store.entry(id.clone()).or_insert_with(|| {
                 // Try to restore continuity state from persisted meta.
-                let meta = crate::daemon::session::read_session_meta(id);
+                let meta = restored_meta;
                 let (
                     started_at,
                     turn_count,
@@ -183,7 +197,11 @@ where
             // `pipe_source_pane = Some("")` is used as a "don't retry" sentinel:
             // it means we attempted and failed (or deliberately skipped), so we
             // fall back to capture-pane for all subsequent turns without retrying.
-            if entry.pipe_source_pane.is_none()
+            //
+            // `pane_exists` and `start_pipe_pane` are blocking subprocess spawns
+            // and run after the lock is released.  The same-as-chat-pane case needs
+            // no probe, so it is settled here.
+            let pipe_candidate: Option<String> = if entry.pipe_source_pane.is_none()
                 && let Some(ref pane_id) = client_pane
             {
                 // Skip if client_pane == chat_pane: the chat pane runs the
@@ -194,26 +212,13 @@ where
                 if is_chat_pane {
                     log::debug!("R1: skipping pipe-pane for {} — same as chat pane", pane_id);
                     entry.pipe_source_pane = Some(String::new()); // don't retry
-                } else if crate::tmux::pane_exists(pane_id) {
-                    match crate::tmux::start_pipe_pane(pane_id) {
-                        Ok(_) => {
-                            entry.pipe_source_pane = Some(pane_id.clone());
-                        }
-                        Err(e) => {
-                            // Pane existed at check time but was gone by the time
-                            // pipe-pane ran (TOCTOU race) — don't retry this session.
-                            log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
-                            entry.pipe_source_pane = Some(String::new()); // don't retry
-                        }
-                    }
+                    None
                 } else {
-                    log::debug!(
-                        "R1: skipping pipe-pane for {} — pane no longer exists",
-                        pane_id
-                    );
-                    entry.pipe_source_pane = Some(String::new()); // don't retry
+                    Some(pane_id.clone())
                 }
-            }
+            } else {
+                None
+            };
 
             // N15: generate a catch-up brief if the client was detached and new
             // messages arrived while no terminal was attached (background jobs,
@@ -230,11 +235,37 @@ where
 
             let cost_usd = entry.cost_usd;
             let has_untracked = entry.has_untracked_cost;
-            (brief, drift_msg, cost_usd, has_untracked)
+            (brief, drift_msg, cost_usd, has_untracked, pipe_candidate)
         })
     } else {
-        (None, None, 0.0, false)
+        (None, None, 0.0, false, None)
     };
+
+    // Unlocked phase: the two blocking tmux calls, then a short write-back.
+    if let (Some(id), Some(ref pane_id)) = (session_id.as_deref(), pipe_candidate.as_deref()) {
+        let resolved = if crate::tmux::pane_exists(pane_id) {
+            match crate::tmux::start_pipe_pane(pane_id) {
+                Ok(_) => pane_id.to_string(),
+                Err(e) => {
+                    // Pane existed at check time but was gone by the time
+                    // pipe-pane ran (TOCTOU race) — don't retry this session.
+                    log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                    String::new() // don't retry
+                }
+            }
+        } else {
+            log::debug!(
+                "R1: skipping pipe-pane for {} — pane no longer exists",
+                pane_id
+            );
+            String::new() // don't retry
+        };
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(id) {
+                entry.pipe_source_pane = Some(resolved);
+            }
+        });
+    }
 
     // Read the session's active model override once so it stays consistent for
     // the whole turn (including the budget line and every AI loop iteration).

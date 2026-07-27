@@ -1,7 +1,7 @@
 # Phase 05f: Get the Last Blocking Work Out of `handle_ask`'s Critical Section
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05e (watch_pane) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -456,3 +456,9 @@ it print nothing. Quote its output in the Update Log.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 02:47 (started)
+
+**Executor:** rexyMCP executor
+
+**Work:** Implementing Hoist A (read_session_meta before lock) and Hoist B (R1 pipe-pane decide-under-lock, spawn-outside, write-back).
