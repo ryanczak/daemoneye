@@ -1,103 +1,75 @@
 # NEXT
 
-**Active phase: M5 phase-05e — unlock-watch-pane** (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05e-unlock-watch-pane.md`.
+**Active phase: M5 phase-05f — unlock-ask-entry** (`todo`, drafted 2026-07-27).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05f-unlock-ask-entry.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05e-unlock-watch-pane`.
+Dispatch with `/rexymcp:dispatch phase-05f-unlock-ask-entry`.
 
-## ⚠ The milestone was measuring the wrong thing for fifteen phases
+## The last blocking-work site in the daemon
 
-05d's newtype found **three production `.lock()` sites** that every scan in
-04a–05c missed, and auditing what those conversions had produced found **two
-`with_sessions` closures still doing blocking work**. Both discoveries have the
-same root cause, and it is worth stating plainly:
+`ask.rs:97` is the **only** remaining `with_sessions` closure that does blocking
+work — one closure holding the global lock across a file read and two subprocess
+spawns:
 
-**Every instrument this milestone used counted *acquisitions*. None ever audited
-what ran *inside* a critical section.** The exit criterion was always "no
-`SessionStore` critical section performs blocking work" — and that was never once
-measured.
-
-Two compounding blind spots, both now closed:
-
-1. **The scan matched the literal `sessions.lock()`.** A store held in a
-   differently-named variable (`sessions_bg`, `sessions_clone`) was invisible.
-   The newtype closed this permanently: raw acquisition is now a **compile
-   error**, so the type system enforces what grep could not.
-2. **Converting a raw lock to `with_sessions` preserves whatever was inside it.**
-   A conversion phase that wrapped blocking work in a closure moved the defect
-   *into the construct that signals safety* — and every subsequent scan reported
-   the file clean.
-
-### The new instrument, and the full result
-
-`with_sessions` is now the only way in, so a complete audit is finally possible:
-brace-match every closure body and grep it for blocking calls. The script is
-inlined in 05e's Pre-flight. Across **115** `with_sessions` call sites it finds
-exactly **two**:
-
-| Site | Blocking work under the guard |
-|---|---|
-| `executor/knowledge/pane.rs:329` | `append_session_message` (2 file writes) + a `tmux display-message` spawn |
-| `server/ask.rs:97` | `read_session_meta` (file read) + `tmux::pane_exists` + `tmux::start_pipe_pane` (2 subprocesses) |
-
-113 of 115 are clean. That is the verification the milestone never had.
-
-## The split — 05e, then 05f, then 05g
-
-Different shapes, so different phases; the mixed-shape bundles are what forced
-the 04g/04h and 04i splits earlier.
-
-| # | Scope | Size |
+| Blocking call | Line | What it is |
 |---|---|---|
-| **05e** | `pane.rs:329` — a straight four-phase restructure with an exact in-tree worked example (`helpers.rs::notify_session`) | s |
-| **05f** | `ask.rs:97` — **two** independent hoists inside one closure, in `handle_ask` | m |
-| **05g** | 04f's coverage follow-up (was 05e) — independent, any order | s |
+| `read_session_meta(id)` | 100 | file read, inside `or_insert_with` |
+| `tmux::pane_exists(pane_id)` | 197 | subprocess spawn |
+| `tmux::start_pipe_pane(pane_id)` | 198 | subprocess spawn |
 
-**05f is the delicate one and is deliberately not drafted yet.** Its closure runs
-`store.entry(id).or_insert_with(…)`, so hoisting `read_session_meta` means
-splitting into *check → release → read → re-acquire → insert*, and the pipe-pane
-block needs *decide → release → spawn → re-acquire → record*. Both restructures
-live in the daemon's busiest handler. Draft it on its own, after 05e lands.
+**Finish condition: `audit_closures.py` prints nothing.** That empty output *is*
+the milestone's third exit criterion — no `SessionStore` critical section anywhere
+in the daemon performs blocking work. Tick the box when this lands, with the audit
+as the evidence.
 
-**Accuracy note:** both `ask.rs` sub-sites are **first-turn-only**, not per-turn —
-`read_session_meta` sits inside `or_insert_with`, and the pipe-pane block is
-guarded by `pipe_source_pane.is_none()` with a don't-retry sentinel. So it is
-session-creation cost, not every-turn cost. Still two subprocess spawns under the
-global lock, but do not overstate it when drafting.
+**Accuracy note:** both are **first-turn-only**, not per-turn — `read_session_meta`
+sits inside `or_insert_with`, and the R1 block is guarded by
+`pipe_source_pane.is_none()` with a don't-retry sentinel. Session-creation cost,
+not every-turn cost. The phase doc says so; do not let it get overstated.
 
-## Drafting 05e caught a self-contradiction in my own spec
+## Why this one is `size=m` and got its own phase
 
-My first draft pinned `grep -c 'watch_pane {}: {}'` at **2** while the prose
-immediately below said a single-`log::info!` shape was "acceptable and
-preferable." **That is the same defect that `hard_fail`ed 05c** — a criterion the
-spec's own text tells the executor to violate. Rewritten to accept 1 or 2 and to
-state the requirement behaviorally: one log line per invocation on every path,
-verified by reading.
+Two independent hoists, and the second changes the closure's return shape:
 
-Catching it required re-reading the criteria *against the spec body*, not just
-against the tree. Validating criteria against the code is now habit; validating
-them against the rest of the document is the gap this exposed.
+- **Hoist A** — probe `contains_key` under the lock, release, read the meta
+  unlocked, then `or_insert_with` consumes it. Adds one lock acquisition per turn,
+  which is a HashMap lookup with no I/O — the correct trade against a file read
+  inside a critical section.
+- **Hoist B** — decide under the lock (the same-as-chat-pane case needs no probe
+  and is settled there), return a `pipe_candidate`, run the two tmux calls
+  unlocked, then write the result back re-checking `get_mut`. **The tuple widens
+  from four elements to five**, so the type annotation and the `else` branch both
+  change.
 
-## ⛔ The third exit criterion stays unticked
+### The one silent-failure risk, pinned
 
-Its enforcement half — "enforced by a test or lint, not only by review" — is
-**done**, and better than designed: the type system, not a lint.
+`pipe_source_pane = Some("")` is a **"don't retry" sentinel**. Every path that
+skips or fails must still set it, so the probe happens once per session. If any
+restructured path leaves it `None`, the daemon re-probes tmux **on every
+subsequent turn of that session, forever** — and every gate stays green. The spec
+makes enumerating those paths a required reasoning check.
 
-Its first half — "no `SessionStore` critical section performs blocking work" — is
-**false today**, at the two sites above. It was believed true after 05b only
-because nothing had ever looked. **Tick it when 05f lands**, with the closure
-audit as the evidence.
+## Drafting caught one more error of mine
 
-## Still open for the PE — seven threads, two of them now trends
+I wrote that `ask.rs`'s two `unwrap_or_log` calls are "on `cache.panes`". They are
+not: `:71` is on **`bg_session`** (an `Arc<Mutex<String>>`) and `:511` is on
+`cache.panes` (an `RwLock`). Corrected before dispatch, and the criterion now
+names both so neither gets swept up.
 
-1. **Count criteria (4th occurrence, 10 clean confirmations).**
-2. **Specs asserting test coverage (3rd occurrence, 9 clean confirmations).**
+Small, but it is the same class as the errors that produced this milestone's two
+`hard_fail`s: **a spec stating something about the code that is not true.** The
+count was right; the explanation was wrong — and the explanation is what the
+executor reasons from.
+
+## Still open for the PE — seven threads, two of them trends
+
+1. **Count criteria (4th occurrence, 11 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 10 clean confirmations).**
 3. **Fixture defaults neutering assertions (1st, from 04f).** **05g** resolves it.
 4. **Lock/HOME test hygiene (3 deep).** Still unassigned.
 5. **Partially-transcribed spec quotes (1st, from 05a).**
-6. **Self-contradicting specs — 2nd occurrence, now a TREND.** 05c's `hard_fail`
-   (an import criterion the spec's own conversions made impossible) and 05e's
-   pre-dispatch catch above. **Proposed fold:** before dispatch, re-read every
+6. **Self-contradicting specs — 2nd occurrence, TREND.** 05c's `hard_fail` and
+   05e's pre-dispatch catch. **Proposed fold:** before dispatch, re-read every
    acceptance criterion against the spec body and confirm the spec does not
    instruct the executor to violate it.
 7. **Build-vs-clippy disagreement on test-module imports — 2nd occurrence, TREND.**
@@ -109,14 +81,19 @@ audit as the evidence.
 An eighth, from 05c: **piping gate commands through `tail` masks the exit
 status**. Every phase doc since says to run gates bare.
 
-**All await your sign-off.** Threads 6 and 7 are the two with a live cost —
-between them they account for both `hard_fail`s in this milestone.
+**All await your sign-off.** Threads 6 and 7 between them account for both
+`hard_fail`s in this milestone.
 
-## After 05e
+## After 05f
 
-**05f** (`ask.rs:97`, needs its own drafting pass) → **05g** (coverage) → **06**
-(tmux-call-hardening) → **07** (stall-instrumentation), plus the drafted 08–11
-instance-hardening set.
+**05g** (04f's coverage follow-up — independent, any order) → **06**
+(tmux-call-hardening: make the `tmux::` calls themselves non-blocking and
+timeout-bounded, mechanism B) → **07** (stall-instrumentation), plus the drafted
+08–11 instance-hardening set.
+
+Note the division of labour with **06**: 05f moves the two tmux calls *out of the
+critical section*; 06 changes *how they run*. A wedged tmux server will still
+block the calling task after 05f — it just will not take the whole daemon with it.
 
 ---
 
