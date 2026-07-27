@@ -1,7 +1,7 @@
 # Phase 05g: Make the `compaction_in_flight` Assertions Real
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04f (which found the gap) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=test, size=m
@@ -374,3 +374,9 @@ decorative.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 03:38 (started)
+
+**Executor:** Claude
+
+**Work in progress:** Implementing tasks 1–4: making three vacuous `compaction_in_flight` assertions real, adding one new test for the stale-branch discard, and proving all four clearing sites by mutation.

@@ -137,9 +137,7 @@ async fn run_compaction(
             }
         });
         return Ok(());
-    }
-
-    // Build the epoch with narrative (this is the whole point of async).
+    };
     let span_start = prior
         .last()
         .map(|e| e.ts_end)
@@ -495,6 +493,9 @@ mod tests {
         let mut entry = make_test_entry();
         entry.messages = msgs.clone();
         entry.turn_count = 5;
+        // `try_snapshot` sets this in production. The hand-built snapshot below
+        // bypasses it, so set it here or the flag assertion is tautological.
+        entry.compaction_in_flight = true;
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
         });
@@ -534,6 +535,52 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn swap_discards_when_turn_ran_during_build() {
+        let _home = TestHome::new();
+        let sessions: SessionStore = SessionStore::new();
+        let session_id = "swap-stale".to_string();
+
+        let msgs = make_turn_msgs(32);
+        let mut entry = make_test_entry();
+        entry.messages = msgs.clone();
+        entry.turn_count = 5;
+        entry.compaction_in_flight = true;
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.clone(), entry);
+        });
+
+        let snapshot = CompactionSnapshot {
+            session_id: session_id.clone(),
+            messages: msgs.clone(),
+            turn_count: 5,
+            msg_len: msgs.len(),
+            // Huge scale forces a budget cut, so the build reaches the swap.
+            token_scale: 1e9,
+        };
+
+        // A turn lands while the build is in flight — the snapshot is now stale.
+        with_sessions(&sessions, |store| {
+            store.get_mut(&session_id).unwrap().turn_count = 6;
+        });
+
+        let result = run_compaction(&snapshot, &sessions, &hermetic_config()).await;
+        assert!(result.is_ok());
+
+        with_sessions(&sessions, |store| {
+            let e = store.get(&session_id).unwrap();
+            assert!(
+                !e.compaction_in_flight,
+                "the stale-branch discard must clear the in-flight flag"
+            );
+            assert_eq!(
+                e.messages.len(),
+                32,
+                "a stale discard must leave the history untouched"
+            );
+        });
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn epoch_build_idempotent_after_discard() {
         let _home = TestHome::new();
         let sessions: SessionStore = SessionStore::new();
@@ -566,7 +613,8 @@ mod tests {
             let e = store.get_mut(&session_id).unwrap();
             e.messages = msgs.clone();
             e.turn_count = 5;
-            e.compaction_in_flight = false;
+            // In-flight, as `try_snapshot` would have left it before the build.
+            e.compaction_in_flight = true;
         });
 
         // Second build over the same snapshot: the guard must skip it.
@@ -576,6 +624,14 @@ mod tests {
             1,
             "no duplicate epoch after a re-run over the same snapshot"
         );
+
+        with_sessions(&sessions, |store| {
+            let e = store.get(&session_id).unwrap();
+            assert!(
+                !e.compaction_in_flight,
+                "the idempotency-guard discard must clear the in-flight flag"
+            );
+        });
     }
 
     #[tokio::test(start_paused = true)]
