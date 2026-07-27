@@ -1,99 +1,104 @@
 # NEXT
 
-**Active phase: M5 phase-05f — unlock-ask-entry** (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05f-unlock-ask-entry.md`.
+**Active phase: M5 phase-05g — compaction-coverage-followup** (`todo`, drafted
+2026-07-27).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05g-compaction-coverage-followup.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05f-unlock-ask-entry`.
+Dispatch with `/rexymcp:dispatch phase-05g-compaction-coverage-followup`.
 
-## The last blocking-work site in the daemon
+## The lock work is done; this is the debt 04f left behind
 
-`ask.rs:97` is the **only** remaining `with_sessions` closure that does blocking
-work — one closure holding the global lock across a file read and two subprocess
-spawns:
+**Exit criterion 3 was ticked when 05f landed.** `audit_closures.py` is clean
+across all 115 `with_sessions` call sites, and enforcement is the newtype — a
+compile error, stronger than the lint the criterion asked for. Fifteen phases,
+04a through 05f.
 
-| Blocking call | Line | What it is |
+05g is unrelated to locks. It closes **calibration thread 3**, opened by 04f: a
+shared fixture that defaults a field to the asserted-for value silently neuters
+every assertion on it.
+
+## Four clearing sites, one real test
+
+`run_compaction` clears `compaction_in_flight` on four paths. Mutation testing
+during 04f's review established that only one is guarded:
+
+| Site | Path | Guarded today? |
 |---|---|---|
-| `read_session_meta(id)` | 100 | file read, inside `or_insert_with` |
-| `tmux::pane_exists(pane_id)` | 197 | subprocess spawn |
-| `tmux::start_pipe_pane(pane_id)` | 198 | subprocess spawn |
+| `background.rs:119` | "no viable cut" discard | **yes** |
+| `background.rs:136` | idempotency-guard discard | no |
+| `background.rs:232` | stale-branch discard | **no test reaches it at all** |
+| `background.rs:240` | swap success | no — the assertion is vacuous |
 
-**Finish condition: `audit_closures.py` prints nothing.** That empty output *is*
-the milestone's third exit criterion — no `SessionStore` critical section anywhere
-in the daemon performs blocking work. Tick the box when this lands, with the audit
-as the evidence.
+**The mechanism:** `make_test_entry()` defaults `compaction_in_flight: false`.
+In production `try_snapshot` sets it `true` before `run_compaction` runs — but
+**three of the four tests hand-build their `CompactionSnapshot`** rather than
+calling `try_snapshot`, so the flag is never set and
+`assert!(!entry.compaction_in_flight)` cannot fail.
 
-**Accuracy note:** both are **first-turn-only**, not per-turn — `read_session_meta`
-sits inside `or_insert_with`, and the R1 block is guarded by
-`pipe_source_pane.is_none()` with a don't-retry sentinel. Session-creation cost,
-not every-turn cost. The phase doc says so; do not let it get overstated.
+The one test that gets it right (`background_swap_discards_on_new_turn`) routes
+through `try_snapshot`, and is quoted in the spec as the worked example.
 
-## Why this one is `size=m` and got its own phase
+**The hand-built snapshots stay.** They exist so a test can create a
+`turn_count`/`msg_len` mismatch that `try_snapshot` cannot produce. The fix is to
+set the flag explicitly per-test, mirroring what `try_snapshot` would have done —
+**not** to change the fixture default, which would silently break other tests
+that rely on it.
 
-Two independent hoists, and the second changes the closure's return shape:
+## The deliverable is the mutation table, not the green suite
 
-- **Hoist A** — probe `contains_key` under the lock, release, read the meta
-  unlocked, then `or_insert_with` consumes it. Adds one lock acquisition per turn,
-  which is a HashMap lookup with no I/O — the correct trade against a file read
-  inside a critical section.
-- **Hoist B** — decide under the lock (the same-as-chat-pane case needs no probe
-  and is settled there), return a `pipe_candidate`, run the two tmux calls
-  unlocked, then write the result back re-checking `get_mut`. **The tuple widens
-  from four elements to five**, so the type annotation and the `else` branch both
-  change.
+A green `cargo test` proves nothing here: the tests were green before, and three
+were decorative. Task 4 requires deleting each of the four production clear lines
+one at a time, recording which test fails and with what message, restoring, and
+quoting the fail/pass pair in a four-row table.
 
-### The one silent-failure risk, pinned
+**If any site's mutation does not make a test fail, the phase is not done.** That
+is the project rule from 04g, applied to the phase that motivated it: a claim
+about what a test guards is admissible only when demonstrated by mutation.
 
-`pipe_source_pane = Some("")` is a **"don't retry" sentinel**. Every path that
-skips or fails must still set it, so the probe happens once per session. If any
-restructured path leaves it `None`, the daemon re-probes tmux **on every
-subsequent turn of that session, forever** — and every gate stays green. The spec
-makes enumerating those paths a required reasoning check.
+## An inverted test-count criterion
 
-## Drafting caught one more error of mine
+Every phase in this milestone has said "**915**, and any other number means scope
+crept." 05g says **916, not 915** — it adds exactly one test, for the stale branch
+that nothing reaches today. 915 now means task 3 was skipped.
 
-I wrote that `ask.rs`'s two `unwrap_or_log` calls are "on `cache.panes`". They are
-not: `:71` is on **`bg_session`** (an `Arc<Mutex<String>>`) and `:511` is on
-`cache.panes` (an `RwLock`). Corrected before dispatch, and the criterion now
-names both so neither gets swept up.
+Two further criteria worth noting, both chosen to be self-checking:
 
-Small, but it is the same class as the errors that produced this milestone's two
-`hard_fail`s: **a spec stating something about the code that is not true.** The
-count was right; the explanation was wrong — and the explanation is what the
-executor reasons from.
+- `grep -c "compaction_in_flight = false"` must return **4**, down from 5, **and
+  all four must be production**. No test may set the flag `false` any more — that
+  is the fixture trap being closed, expressed as a count.
+- `git diff` must touch **no line outside `mod tests`**. Task 4 deletes production
+  lines temporarily; this criterion is what catches a mutation left in place.
 
 ## Still open for the PE — seven threads, two of them trends
 
-1. **Count criteria (4th occurrence, 11 clean confirmations).**
-2. **Specs asserting test coverage (3rd occurrence, 10 clean confirmations).**
-3. **Fixture defaults neutering assertions (1st, from 04f).** **05g** resolves it.
-4. **Lock/HOME test hygiene (3 deep).** Still unassigned.
+1. **Count criteria (4th occurrence, 12 clean confirmations).**
+2. **Specs asserting test coverage (3rd occurrence, 11 clean confirmations).**
+3. **Fixture defaults neutering assertions (1st, from 04f).** **05g resolves it** —
+   and the resolution is per-test explicitness, not a fixture change.
+4. **Lock/HOME test hygiene (3 deep).** Still unassigned; 05g explicitly leaves it.
 5. **Partially-transcribed spec quotes (1st, from 05a).**
-6. **Self-contradicting specs — 2nd occurrence, TREND.** 05c's `hard_fail` and
-   05e's pre-dispatch catch. **Proposed fold:** before dispatch, re-read every
-   acceptance criterion against the spec body and confirm the spec does not
-   instruct the executor to violate it.
+6. **Self-contradicting specs — 2nd occurrence, TREND.** **Proposed fold:** before
+   dispatch, re-read every acceptance criterion against the spec body and confirm
+   the spec does not instruct the executor to violate it.
 7. **Build-vs-clippy disagreement on test-module imports — 2nd occurrence, TREND.**
-   04f and 05c both `hard_fail`ed on it. **Proposed fold:** a phase that converts
-   every use of a trait must state what happens to its import, and must never
-   assert an import count without checking whether its own edits exhaust that
-   trait's uses.
+   **Proposed fold:** a phase that converts every use of a trait must state what
+   happens to its import, and must never assert an import count without checking
+   whether its own edits exhaust that trait's uses.
 
 An eighth, from 05c: **piping gate commands through `tail` masks the exit
 status**. Every phase doc since says to run gates bare.
 
-**All await your sign-off.** Threads 6 and 7 between them account for both
-`hard_fail`s in this milestone.
+**All await your sign-off.** Threads 6 and 7 account for both `hard_fail`s here.
 
-## After 05f
+## After 05g
 
-**05g** (04f's coverage follow-up — independent, any order) → **06**
-(tmux-call-hardening: make the `tmux::` calls themselves non-blocking and
-timeout-bounded, mechanism B) → **07** (stall-instrumentation), plus the drafted
-08–11 instance-hardening set.
+**06** (tmux-call-hardening — mechanism B: make the `tmux::` calls themselves
+non-blocking and timeout-bounded) → **07** (stall-instrumentation), plus the
+drafted **08–11** instance-hardening set. Five exit criteria remain open.
 
-Note the division of labour with **06**: 05f moves the two tmux calls *out of the
-critical section*; 06 changes *how they run*. A wedged tmux server will still
-block the calling task after 05f — it just will not take the whole daemon with it.
+**Scoping note for 06:** 05f moved the tmux calls *out of* critical sections; 06
+changes *how they run*. A wedged tmux server still blocks the calling task today —
+it just no longer takes the whole daemon with it.
 
 ---
 
