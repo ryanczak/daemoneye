@@ -1,7 +1,7 @@
 # Phase 06h: tmux Calls Off the Runtime — `daemon/mod.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06g — `done`
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -423,3 +423,9 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 22:15 (started)
+
+**Executor:** rexyMCP executor
+
+Converting 9 tmux calls in `run_daemon` to `off_runtime`. Sites 1–9 converted in order, building after each. All 6 sync-function hits left untouched.

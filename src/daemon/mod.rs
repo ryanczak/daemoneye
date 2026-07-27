@@ -451,24 +451,37 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         (Some(name), None)
     } else {
         let name = session_override.unwrap_or_else(|| startup_config.daemon.tmux_session.clone());
-        if crate::tmux::session_exists(&name) {
+        let n = name.clone();
+        let exists =
+            crate::tmux::off_runtime("session-exists", move || crate::tmux::session_exists(&n))
+                .await
+                .unwrap_or(false);
+        if exists {
             log::info!("Managed tmux session '{}' already exists — adopting.", name);
             (Some(name.clone()), Some(name))
         } else {
-            match std::process::Command::new("tmux")
-                .args(["new-session", "-d", "-s", &name])
-                .output()
-            {
-                Ok(o) if o.status.success() => {
+            let n = name.clone();
+            let created = crate::tmux::off_runtime("new-session", move || {
+                std::process::Command::new("tmux")
+                    .args(["new-session", "-d", "-s", &n])
+                    .output()
+            })
+            .await;
+
+            match created {
+                Some(Ok(o)) if o.status.success() => {
                     log::info!("Created managed tmux session '{}'.", name);
                     (Some(name.clone()), Some(name))
                 }
-                Ok(o) => {
+                Some(Ok(o)) => {
                     let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
                     anyhow::bail!("Failed to create tmux session '{}': {}", name, stderr);
                 }
-                Err(e) => {
+                Some(Err(e)) => {
                     anyhow::bail!("tmux new-session failed for '{}': {}", name, e);
+                }
+                None => {
+                    anyhow::bail!("timed out creating tmux session '{}'", name);
                 }
             }
         }
@@ -493,10 +506,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         "run-shell -b '{} notify activity #{{pane_id}} 0 #{{session_name}}'",
         hook_exe_path,
     );
-    if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-g", "pane-died", &global_notify_cmd])
-        .output()
-    {
+    let c = global_notify_cmd.clone();
+    let res = crate::tmux::off_runtime("set-hook-pane-died", move || {
+        std::process::Command::new("tmux")
+            .args(["set-hook", "-g", "pane-died", &c])
+            .output()
+    })
+    .await
+    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+    if let Err(e) = res {
         log::error!("Failed to register global tmux pane-died hook: {}", e);
     }
 
@@ -506,10 +524,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         "run-shell -b '{} notify session-created #{{session_name}}'",
         hook_exe_path,
     );
-    if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-g", "after-new-session", &session_created_cmd])
-        .output()
-    {
+    let c = session_created_cmd.clone();
+    let res = crate::tmux::off_runtime("set-hook-after-new-session", move || {
+        std::process::Command::new("tmux")
+            .args(["set-hook", "-g", "after-new-session", &c])
+            .output()
+    })
+    .await
+    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+    if let Err(e) = res {
         log::error!(
             "Failed to register global tmux after-new-session hook: {}",
             e
@@ -522,10 +545,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         "run-shell -b '{} notify client-attached #{{session_name}}'",
         hook_exe_path,
     );
-    if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-g", "client-attached", &client_attached_cmd])
-        .output()
-    {
+    let c = client_attached_cmd.clone();
+    let res = crate::tmux::off_runtime("set-hook-client-attached", move || {
+        std::process::Command::new("tmux")
+            .args(["set-hook", "-g", "client-attached", &c])
+            .output()
+    })
+    .await
+    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+    if let Err(e) = res {
         log::error!("Failed to register global tmux client-attached hook: {}", e);
     }
 
@@ -535,10 +563,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         "run-shell -b '{} notify client-detached #{{session_name}}'",
         hook_exe_path,
     );
-    if let Err(e) = std::process::Command::new("tmux")
-        .args(["set-hook", "-g", "client-detached", &client_detached_cmd])
-        .output()
-    {
+    let c = client_detached_cmd.clone();
+    let res = crate::tmux::off_runtime("set-hook-client-detached", move || {
+        std::process::Command::new("tmux")
+            .args(["set-hook", "-g", "client-detached", &c])
+            .output()
+    })
+    .await
+    .unwrap_or_else(|| Err(std::io::Error::other("timed out installing hook")));
+    if let Err(e) = res {
         log::error!("Failed to register global tmux client-detached hook: {}", e);
     }
 
@@ -560,7 +593,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // N7: seed the initial client viewport dimensions now that the cache exists.
     if let Some(ref sn) = initial_session {
-        let (w, h) = crate::tmux::client_dimensions(sn);
+        let s = sn.to_string();
+        let (w, h) = crate::tmux::off_runtime("client-dimensions", move || {
+            crate::tmux::client_dimensions(&s)
+        })
+        .await
+        .unwrap_or((0, 0));
         if w > 0 && h > 0 {
             cache.set_client_size(w, h);
             log::info!(
@@ -810,10 +848,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         "client-attached",
         "client-detached",
     ] {
-        if let Err(e) = std::process::Command::new("tmux")
-            .args(["set-hook", "-gu", hook])
-            .output()
-        {
+        let h = hook.to_string();
+        let res = crate::tmux::off_runtime("set-hook-unset", move || {
+            std::process::Command::new("tmux")
+                .args(["set-hook", "-gu", &h])
+                .output()
+        })
+        .await
+        .unwrap_or_else(|| Err(std::io::Error::other("timed out uninstalling hook")));
+        if let Err(e) = res {
             log::warn!("Failed to uninstall global tmux hook '{}': {}", hook, e);
         }
     }
@@ -833,7 +876,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 .collect()
         });
         for pane_id in &pipe_panes {
-            crate::tmux::stop_pipe_pane(pane_id);
+            let p = pane_id.clone();
+            let _ =
+                crate::tmux::off_runtime("stop-pipe-pane", move || crate::tmux::stop_pipe_pane(&p))
+                    .await;
         }
     }
 
