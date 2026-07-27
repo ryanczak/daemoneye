@@ -38,10 +38,17 @@ pub async fn respawn_background_in_pane(
         map.insert(pane_id.to_string(), cmd_id);
     }
     // Respawn: start a fresh shell in the pane, killing anything running.
-    let respawn_status = std::process::Command::new("tmux")
-        .args(["respawn-pane", "-k", "-t", pane_id])
-        .status();
-    if !respawn_status.map(|s| s.success()).unwrap_or(false) {
+    let p = pane_id.to_string();
+    let respawn_ok = tmux::off_runtime("respawn-pane", move || {
+        std::process::Command::new("tmux")
+            .args(["respawn-pane", "-k", "-t", &p])
+            .status()
+    })
+    .await
+    .and_then(|r| r.ok())
+    .map(|s| s.success())
+    .unwrap_or(false);
+    if !respawn_ok {
         return format!(
             "Error: failed to respawn pane {} (pane may no longer exist)",
             pane_id
@@ -54,7 +61,13 @@ pub async fn respawn_background_in_pane(
     let started_at = tokio::time::Instant::now();
 
     // Detect shell for exit-code variable selection.
-    let shell_name = tmux::pane_current_command(pane_id).unwrap_or_default();
+    let p2 = pane_id.to_string();
+    let shell_name = tmux::off_runtime("pane-current-command", move || {
+        tmux::pane_current_command(&p2)
+    })
+    .await
+    .and_then(|r| r.ok())
+    .unwrap_or_default();
     let exit_var = shell_exit_var(&shell_name);
 
     let exe_raw = std::env::current_exe()
@@ -83,18 +96,44 @@ pub async fn respawn_background_in_pane(
     // Fix B: clean up any leftover pipe log from the previous run of this pane,
     // then start a fresh pipe before the command fires.
     let _ = std::fs::remove_file(tmux::pipe_log_path(pane_id));
-    let pipe_log = tmux::start_pipe_pane(pane_id)
-        .map_err(|e| log::warn!("Failed to start pipe-pane for retry on {}: {}", pane_id, e))
-        .ok();
+    let p3 = pane_id.to_string();
+    let pipe_log =
+        match tmux::off_runtime("start-pipe-pane", move || tmux::start_pipe_pane(&p3)).await {
+            Some(Ok(path)) => Some(path),
+            Some(Err(e)) => {
+                log::warn!("Failed to start pipe-pane for retry on {}: {}", pane_id, e);
+                None
+            }
+            None => None, // already logged by off_runtime
+        };
 
-    if let Err(e) = tmux::send_keys(pane_id, &wrapped) {
-        if pipe_log.is_some() {
-            tmux::stop_pipe_pane(pane_id);
+    let p4 = pane_id.to_string();
+    let w = wrapped.clone();
+    match tmux::off_runtime("send-keys", move || tmux::send_keys(&p4, &w)).await {
+        Some(Err(e)) => {
+            if pipe_log.is_some() {
+                let p5 = pane_id.to_string();
+                let _ =
+                    tmux::off_runtime("stop-pipe-pane", move || tmux::stop_pipe_pane(&p5)).await;
+            }
+            return format!(
+                "Error: failed to send retry command to pane {}: {}",
+                pane_id, e
+            );
         }
-        return format!(
-            "Error: failed to send retry command to pane {}: {}",
-            pane_id, e
-        );
+        None => {
+            if pipe_log.is_some() {
+                let p5 = pane_id.to_string();
+                let _ =
+                    tmux::off_runtime("stop-pipe-pane", move || tmux::stop_pipe_pane(&p5)).await;
+            }
+            return format!(
+                "Error: failed to send retry command to pane {}: tmux timed out \
+                 (server may be wedged)",
+                pane_id
+            );
+        }
+        Some(Ok(_)) => {}
     }
 
     // Reset exit_code in bg_windows so the session knows it's running again.
@@ -129,7 +168,11 @@ pub async fn respawn_background_in_pane(
                 result = died_rx.recv() => {
                     if let Ok(pid) = result
                         && pid == pane_id_str {
-                            let code = tmux::pane_dead_status(&pane_id_str).unwrap_or(-1);
+                            let p_dead = pane_id_str.clone();
+                            let code = tmux::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p_dead))
+                                .await
+                                .flatten()
+                                .unwrap_or(-1);
                             return (code, false);
                         }
                 }
@@ -142,9 +185,13 @@ pub async fn respawn_background_in_pane(
         Ok((exit_code, pane_persists)) => {
             // Fast path: retry finished within 3 s — return output inline.
             if pipe_log.is_some() {
-                let _ = std::process::Command::new("tmux")
-                    .args(["pipe-pane", "-t", pane_id])
-                    .output();
+                let p6 = pane_id.to_string();
+                let _ = tmux::off_runtime("pipe-pane-stop", move || {
+                    std::process::Command::new("tmux")
+                        .args(["pipe-pane", "-t", &p6])
+                        .output()
+                })
+                .await;
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
             let body = capture_and_archive(pane_id, win_name, pipe_log);
@@ -185,8 +232,17 @@ pub async fn respawn_background_in_pane(
                         "reason": reason,
                     }),
                 );
-                if let Err(e) = tmux::kill_job_window(session, win_name) {
-                    log::error!("Failed to GC retried bg window {}: {}", win_name, e);
+                let (s_gc, wn_gc) = (session.to_string(), win_name.to_string());
+                match tmux::off_runtime("kill-job-window", move || {
+                    tmux::kill_job_window(&s_gc, &wn_gc)
+                })
+                .await
+                {
+                    Some(Err(e)) => {
+                        log::error!("Failed to GC retried bg window {}: {}", win_name, e);
+                    }
+                    None => {} // already logged by off_runtime
+                    Some(Ok(_)) => {}
                 }
                 if let Some(ref sid) = session_id {
                     with_sessions(&sessions, |store| {
@@ -236,7 +292,11 @@ pub async fn respawn_background_in_pane(
                                 result = died_rx.recv() => {
                                     if let Ok(pid) = result
                                         && pid == pane_id_bg {
-                                            let code = tmux::pane_dead_status(&pane_id_bg).unwrap_or(-1);
+                                            let p_dead = pane_id_bg.clone();
+                                            let code = tmux::off_runtime("pane-dead-status", move || tmux::pane_dead_status(&p_dead))
+                                                .await
+                                                .flatten()
+                                                .unwrap_or(-1);
                                             return (code, false);
                                         }
                                 }
@@ -246,9 +306,13 @@ pub async fn respawn_background_in_pane(
                 ).await.unwrap_or((124, false));
 
                 if pipe_log.is_some() {
-                    let _ = std::process::Command::new("tmux")
-                        .args(["pipe-pane", "-t", &pane_id_bg])
-                        .output();
+                    let p7 = pane_id_bg.clone();
+                    let _ = tmux::off_runtime("pipe-pane-stop", move || {
+                        std::process::Command::new("tmux")
+                            .args(["pipe-pane", "-t", &p7])
+                            .output()
+                    })
+                    .await;
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
 
@@ -282,8 +346,17 @@ pub async fn respawn_background_in_pane(
                 }
 
                 if !pane_persists {
-                    if let Err(e) = tmux::kill_job_window(&session_bg, &win_name_bg) {
-                        log::error!("Failed to GC retried bg window {}: {}", win_name_bg, e);
+                    let (s_gc, wn_gc) = (session_bg.clone(), win_name_bg.clone());
+                    match tmux::off_runtime("kill-job-window", move || {
+                        tmux::kill_job_window(&s_gc, &wn_gc)
+                    })
+                    .await
+                    {
+                        Some(Err(e)) => {
+                            log::error!("Failed to GC retried bg window {}: {}", win_name_bg, e);
+                        }
+                        None => {} // already logged by off_runtime
+                        Some(Ok(_)) => {}
                     }
                     if let Some(ref sid) = session_id_bg {
                         with_sessions(&sessions_bg, |store| {

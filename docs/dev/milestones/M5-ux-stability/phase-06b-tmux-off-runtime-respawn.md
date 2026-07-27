@@ -1,7 +1,7 @@
 # Phase 06b: Get `respawn.rs`'s tmux Calls Off the Async Runtime
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06a (the `off_runtime` adapter) — `done`
 **Estimated diff:** ~110 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -352,3 +352,7 @@ do not add a test to make it repeatable.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 15:40 (progress)
+
+Converting all 11 tmux subprocess call sites in `respawn.rs` to use `tmux::off_runtime`. Left `tmux::pipe_log_path` (pure path builder) and the doc comment referencing `tmux::pane_exists` unwrapped as required.

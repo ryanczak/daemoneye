@@ -90,7 +90,7 @@ take the socket.
 | 05g | compaction-coverage-followup ([phase-05g-compaction-coverage-followup.md](phase-05g-compaction-coverage-followup.md)) — 04f's 3 vacuous `compaction_in_flight` assertions made real, all 4 clearing sites mutation-checked. **Adds a test: 916** | done (approved_after_1) |
 | 05h | test-home-guard ([phase-05h-test-home-guard.md](phase-05h-test-home-guard.md)) — one poison-recovering accessor for `TEST_HOME_LOCK`; 62 sites. Stops one failing test failing 47 others | done (approved_first_try) |
 | 06a | tmux-off-runtime ([phase-06a-tmux-off-runtime.md](phase-06a-tmux-off-runtime.md)) — the `off_runtime` adapter + `background/run.rs` (16 sites). **First of ~5** | done (approved_first_try) |
-| 06b | tmux-off-runtime-respawn ([phase-06b-tmux-off-runtime-respawn.md](phase-06b-tmux-off-runtime-respawn.md)) — `respawn.rs`, 11 sites (2 `tmux::` hits are non-sites) | todo |
+| 06b | tmux-off-runtime-respawn ([phase-06b-tmux-off-runtime-respawn.md](phase-06b-tmux-off-runtime-respawn.md)) — `respawn.rs`, 11 sites (2 `tmux::` hits are non-sites) | in-progress |
 | 06c–06e | tmux-off-runtime tail — `executor/`, `daemon/` core, `cli/`. Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
