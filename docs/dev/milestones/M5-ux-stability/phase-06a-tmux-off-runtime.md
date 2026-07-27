@@ -1,7 +1,7 @@
 # Phase 06a: Get tmux Subprocess Calls Off the Async Runtime
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05h — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -390,3 +390,9 @@ permanent test to make this easier** — the phase adds none.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 14:21 (started)
+
+**Executor:** Claude (sonnet)
+
+Starting phase 06a: adding `off_runtime` adapter to `src/tmux/mod.rs` and converting 16 async tmux call sites in `background/run.rs`.
