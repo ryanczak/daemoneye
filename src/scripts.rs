@@ -379,7 +379,6 @@ pub fn remote_stream_cmd(content: &str, args: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::UnpoisonExt;
 
     #[test]
     fn validate_rejects_path_traversal() {
@@ -395,7 +394,7 @@ mod tests {
     }
 
     fn with_home<F: FnOnce()>(tmp: &std::path::Path, f: F) {
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let _guard = crate::test_home_guard();
         let old_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", tmp);

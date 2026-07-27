@@ -104,7 +104,6 @@ pub fn enforce_ghost_working_set(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TEST_HOME_LOCK;
     use crate::ai::ToolResult;
     use crate::config::ContextConfig;
 
@@ -128,9 +127,7 @@ mod tests {
     }
 
     fn setup_test_env() -> TestHome {
-        let lock = TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lock = crate::test_home_guard();
         let saved_home = std::env::var("HOME").ok();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {

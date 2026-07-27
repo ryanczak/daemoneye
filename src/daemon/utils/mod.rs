@@ -91,7 +91,7 @@ mod sweep_tests {
 
     #[test]
     fn sweep_archives_respects_active_and_zero() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 

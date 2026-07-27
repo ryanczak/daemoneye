@@ -286,7 +286,7 @@ mod tests {
     use std::io::Write;
 
     fn with_test_home<F: FnOnce()>(f: F) {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };

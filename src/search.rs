@@ -322,7 +322,6 @@ pub fn format_results(results: &[SearchResult]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::UnpoisonExt;
     use std::env;
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -350,7 +349,7 @@ mod tests {
     }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let _guard = crate::test_home_guard();
         let old = env::var("HOME").ok();
         unsafe {
             env::set_var("HOME", tmp.path());
@@ -435,7 +434,7 @@ mod tests {
 
     #[test]
     fn search_events_returns_tail_not_head_when_segment_exceeds_cap() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().unwrap();

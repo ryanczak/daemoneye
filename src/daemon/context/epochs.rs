@@ -857,9 +857,7 @@ mod tests {
     }
 
     fn with_test_home<F: FnOnce()>(f: F) {
-        let _lock = crate::TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe {
@@ -1163,9 +1161,7 @@ mod tests {
     }
 
     fn setup_test_env() -> TestHome {
-        let lock = crate::TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lock = crate::test_home_guard();
         let saved_home = std::env::var("HOME").ok();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {
@@ -1401,9 +1397,7 @@ mod tests {
 
     #[test]
     fn extract_parses_strict_json_and_writes() {
-        let _lock = crate::TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe {
@@ -1475,9 +1469,7 @@ mod tests {
 
     #[test]
     fn extract_rejects_malformed_and_excess() {
-        let _lock = crate::TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe {
@@ -1522,9 +1514,7 @@ mod tests {
 
     #[test]
     fn extract_skips_existing_name() {
-        let _lock = crate::TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe {
@@ -1583,9 +1573,7 @@ mod tests {
 
     #[test]
     fn extract_flag_off_writes_nothing() {
-        let _lock = crate::TEST_HOME_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         let saved_home = std::env::var("HOME").ok();
         unsafe {

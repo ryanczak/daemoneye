@@ -540,7 +540,7 @@ mod tests {
 
     #[test]
     fn compute_cost_today_returns_zero_on_missing_file() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn compute_cost_today_caches_result() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn daemon_total_cost_today_aggregates_events_jsonl() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();
@@ -589,7 +589,7 @@ mod tests {
 
     #[test]
     fn daemon_total_cost_today_excludes_yesterday() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn compute_cost_today_aggregates_by_provider() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn compute_cost_today_aggregates_by_agent() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn compute_cost_today_empty_events_shows_zero_breakdowns() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         reset_cost_today_cache();

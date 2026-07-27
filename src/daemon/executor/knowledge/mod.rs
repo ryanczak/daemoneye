@@ -54,7 +54,6 @@ fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
 
 #[cfg(test)]
 pub(crate) mod testutil {
-    use crate::util::UnpoisonExt;
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -79,7 +78,7 @@ pub(crate) mod testutil {
     }
 
     pub fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let _guard = crate::test_home_guard();
         let old = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", tmp.path());

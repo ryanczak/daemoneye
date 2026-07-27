@@ -2,7 +2,7 @@ use super::*;
 use crate::session_store::SaveSessionArgs;
 
 fn with_temp_home<F: FnOnce()>(f: F) {
-    let _guard = crate::TEST_HOME_LOCK.lock().unwrap();
+    let _guard = crate::test_home_guard();
     let dir = tempfile::tempdir().expect("tempdir");
     let old_home = std::env::var("HOME").ok();
     // SAFETY: single-threaded test context protected by HOME_LOCK.

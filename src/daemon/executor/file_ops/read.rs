@@ -235,7 +235,6 @@ pub async fn run_read_file(
 #[cfg(test)]
 mod tests {
     use crate::daemon::executor::ToolCallOutcome;
-    use crate::util::UnpoisonExt;
     use std::env;
 
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -256,7 +255,7 @@ mod tests {
     }
 
     fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let _guard = crate::test_home_guard();
         let old = env::var("HOME").ok();
         unsafe {
             env::set_var("HOME", &tmp.0);

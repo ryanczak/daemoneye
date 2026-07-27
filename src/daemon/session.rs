@@ -780,7 +780,7 @@ mod tests {
 
     #[test]
     fn archive_appends_survive_compaction_rewrite() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
@@ -836,7 +836,7 @@ mod tests {
 
     #[test]
     fn archive_seeds_from_existing_working_file() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
@@ -891,7 +891,7 @@ mod tests {
 
     #[test]
     fn archive_seed_absent_working_file() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
@@ -949,7 +949,7 @@ mod tests {
 
     #[test]
     fn meta_roundtrip() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let sessions_dir = crate::config::sessions_dir();
@@ -976,7 +976,7 @@ mod tests {
 
     #[test]
     fn meta_corrupt_returns_none() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let sessions_dir = crate::config::sessions_dir();
@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn entry_recreation_seeds_from_meta() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let sessions_dir = crate::config::sessions_dir();
@@ -1059,7 +1059,7 @@ mod tests {
 
     #[test]
     fn read_session_file_lands_on_clean_boundary() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let sessions_dir = crate::config::sessions_dir();
@@ -1110,7 +1110,7 @@ mod tests {
 
     #[test]
     fn read_session_file_repairs_when_no_boundary() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let sessions_dir = crate::config::sessions_dir();

@@ -1077,10 +1077,9 @@ mod tests {
     fn namespaces_ghost_excludes_foreign_namespace() {
         use crate::agents::AgentConfig;
         use crate::daemon::session::SessionEntry;
-        use crate::util::UnpoisonExt;
         use std::collections::HashMap;
 
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let _guard = crate::test_home_guard();
         let tmp = std::env::temp_dir().join(format!("de_ns_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let old = std::env::var("HOME").ok();
@@ -1177,10 +1176,9 @@ mod tests {
     fn build_memory_namespaces_does_not_hold_the_lock_across_load_agent() {
         use crate::agents::AgentConfig;
         use crate::daemon::session::SessionEntry;
-        use crate::util::UnpoisonExt;
         use std::collections::HashMap;
 
-        let _guard = crate::TEST_HOME_LOCK.lock().unwrap_or_log();
+        let _guard = crate::test_home_guard();
         let tmp = std::env::temp_dir().join(format!("de_lock_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp).unwrap();
         let old = std::env::var("HOME").ok();

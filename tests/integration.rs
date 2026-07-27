@@ -206,7 +206,7 @@ fn session_jsonl_round_trip() {
     use daemoneye::session_store::{SaveSessionArgs, load_session_messages, save_session};
 
     let home = temp_daemoneye_home();
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
@@ -267,7 +267,7 @@ fn session_index_persistence() {
     use daemoneye::session_store::{SaveSessionArgs, list_sessions, save_session};
 
     let home = temp_daemoneye_home();
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
@@ -313,7 +313,7 @@ fn event_log_entry_format() {
     use daemoneye::daemon::utils::log_event;
 
     let home = temp_daemoneye_home();
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
@@ -348,7 +348,7 @@ fn cost_record_serializes_to_events_jsonl_round_trip() {
     use daemoneye::daemon::utils::log_event;
 
     let home = temp_daemoneye_home();
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
@@ -413,7 +413,7 @@ fn event_log_append_read() {
     use daemoneye::daemon::utils::log_event;
 
     let home = temp_daemoneye_home();
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", home.to_str().unwrap());
@@ -682,7 +682,7 @@ fn webhook_alert_to_event_log() {
     daemoneye::ai::filter::init_masking(&[]);
 
     let tmp = tempfile::tempdir().expect("create tempdir");
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", tmp.path().to_str().unwrap());
@@ -971,7 +971,7 @@ fn g4_briefing_read_and_clear() {
     use daemoneye::agents;
     use daemoneye::daemon::briefing;
 
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let tmp = temp_daemoneye_home();
     let old_home = std::env::var("HOME").ok();
     unsafe {
@@ -1048,7 +1048,7 @@ fn g4_briefing_injects_on_next_run() {
     use daemoneye::daemon::SessionCache;
     use daemoneye::daemon::prompt::{PromptCtx, build_first_turn_prompt};
 
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let tmp = temp_daemoneye_home();
     let old_home = std::env::var("HOME").ok();
     unsafe {
@@ -1147,7 +1147,7 @@ fn g5_mailbox_write_and_read() {
         uuid::Uuid::new_v4().simple()
     ));
     std::fs::create_dir_all(&tmp).unwrap();
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let old_home = std::env::var("HOME").ok();
     unsafe {
         std::env::set_var("HOME", &tmp);
@@ -1300,7 +1300,7 @@ fn g6_agent_config_roundtrip() {
         AgentConfig, delete_agent, load_agent, save_agent, validate_agent_name,
     };
 
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let tmp = std::env::temp_dir().join(format!(
         "de_g6_agent_rt_{}_{}",
         std::process::id(),
@@ -1359,7 +1359,7 @@ fn g6_agent_config_roundtrip() {
 fn g6_agent_namespace_field_persisted() {
     use daemoneye::agents::{AgentConfig, delete_agent, save_agent};
 
-    let _lock = daemoneye::TEST_HOME_LOCK.lock().unwrap();
+    let _lock = daemoneye::test_home_guard();
     let tmp = std::env::temp_dir().join(format!(
         "de_g6_ns_field_{}_{}",
         std::process::id(),

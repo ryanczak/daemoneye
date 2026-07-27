@@ -1,7 +1,7 @@
 # Phase 05h: Stop One Failing Test From Failing Forty-Seven Others
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05g (which measured the cascade) — `done`
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -287,3 +287,12 @@ Restore the probe by reverting the file, not by retyping the line, and confirm
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 13:06 (started)
+
+**Executor:** Claude Sonnet 4.5 (headless)
+
+**Pre-flight census:** `{'unwrap': 41, 'unwrap_or_log': 12, 'other': 10} => acquisitions: 63`
+(The +1 vs spec's 62 is the accessor's own `TEST_HOME_LOCK.lock()` call.)
+
+Starting phase: adding `test_home_guard()` accessor and routing all 62 call sites through it.

@@ -88,7 +88,7 @@ take the socket.
 | 05e | unlock-watch-pane ([phase-05e-unlock-watch-pane.md](phase-05e-unlock-watch-pane.md)) — `pane.rs:329`: 2 file writes + a tmux spawn inside a `with_sessions` closure | done (approved_first_try) |
 | 05f | unlock-ask-entry ([phase-05f-unlock-ask-entry.md](phase-05f-unlock-ask-entry.md)) — `ask.rs:97`: hoist `read_session_meta` (file read) + `pane_exists`/`start_pipe_pane` (2 subprocesses) out of the closure. **Last blocking-work site** | done (approved_first_try) |
 | 05g | compaction-coverage-followup ([phase-05g-compaction-coverage-followup.md](phase-05g-compaction-coverage-followup.md)) — 04f's 3 vacuous `compaction_in_flight` assertions made real, all 4 clearing sites mutation-checked. **Adds a test: 916** | done (approved_after_1) |
-| 05h | test-home-guard ([phase-05h-test-home-guard.md](phase-05h-test-home-guard.md)) — one poison-recovering accessor for `TEST_HOME_LOCK`; 62 sites. Stops one failing test failing 47 others | todo |
+| 05h | test-home-guard ([phase-05h-test-home-guard.md](phase-05h-test-home-guard.md)) — one poison-recovering accessor for `TEST_HOME_LOCK`; 62 sites. Stops one failing test failing 47 others | in-progress |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |

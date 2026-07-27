@@ -290,9 +290,7 @@ mod tests {
 
     impl TestHome {
         fn new() -> Self {
-            let lock = crate::TEST_HOME_LOCK
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let lock = crate::test_home_guard();
             let saved = std::env::var("HOME").ok();
             let tmp = tempfile::tempdir().unwrap();
             unsafe {

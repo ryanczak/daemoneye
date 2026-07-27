@@ -683,7 +683,7 @@ mod tests {
 
     #[test]
     fn cli_costs_default_groups_by_day() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().unwrap();
@@ -718,7 +718,7 @@ mod tests {
 
     #[test]
     fn cli_costs_json_output_matches_schema() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().unwrap();
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn cli_costs_empty_events_file_shows_zero_total() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().unwrap();
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn cli_costs_missing_events_file_shows_zero_total() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
@@ -767,7 +767,7 @@ mod tests {
 
     #[test]
     fn cli_costs_multi_segment_groups_re_sorted_by_cost() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().unwrap();

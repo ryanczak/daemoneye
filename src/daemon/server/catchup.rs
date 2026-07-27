@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn catchup_brief_includes_cost_when_ghosts_ran() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn catchup_brief_omits_cost_line_when_no_ai_calls() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn catchup_brief_local_only_shows_zero_explicitly() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn catchup_brief_marks_untracked_spend() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn catchup_brief_cost_only_has_header_when_no_events() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn sum_cost_between_excludes_events_outside_window() {
-        let _lock = crate::TEST_HOME_LOCK.lock().unwrap();
+        let _lock = crate::test_home_guard();
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", dir.path()) };
 
