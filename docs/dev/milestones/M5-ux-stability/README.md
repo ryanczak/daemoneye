@@ -84,7 +84,7 @@ take the socket.
 | 05a | unlock-background-and-hook ([phase-05a-unlock-background-and-hook.md](phase-05a-unlock-background-and-hook.md)) — `helpers.rs::notify_session`, `gc.rs::gc_bg_windows`, `hook.rs:92` = 3 subprocess-under-lock restructures | done (approved_after_2) |
 | 05b | unlock-webhook-and-stream ([phase-05b-unlock-webhook-and-stream.md](phase-05b-unlock-webhook-and-stream.md)) — `webhook/process.rs` (2) + `stream.rs:722` = 3 restructures | done (approved_first_try) |
 | 05c | convert-stragglers-and-tests ([phase-05c-convert-stragglers-and-tests.md](phase-05c-convert-stragglers-and-tests.md)) — `ask.rs` (2, production) + `background.rs` (17, test) + `session.rs` (3, test) = 22 conversions | done (approved_after_1) |
-| 05d | sessionstore-newtype (enforce) — **runs after 05c.** Type change + `Clone` derive + 16 construction sites. Must expose `try_lock` (2 assertions depend on it) | todo |
+| 05d | sessionstore-newtype ([phase-05d-sessionstore-newtype.md](phase-05d-sessionstore-newtype.md)) — alias → newtype; 16 construction sites + 16 `Arc::clone` sites; `try_lock` `#[cfg(test)]`-gated | todo |
 | 05e | compaction-coverage-followup — 04f's 3 vacuous `compaction_in_flight` assertions made real, mutation-checked. Independent; any order | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
