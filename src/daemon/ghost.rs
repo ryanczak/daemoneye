@@ -397,7 +397,11 @@ async fn do_ghost_turn(
         agents_block,
     );
 
-    if !tmux::session_exists(&tmux_session) {
+    let s = tmux_session.clone();
+    let pane_alive = tmux::off_runtime("session-exists", move || tmux::session_exists(&s))
+        .await
+        .unwrap_or(false);
+    if !pane_alive {
         anyhow::bail!(
             "Ghost Shell {}: tmux session '{}' no longer exists",
             session_id,

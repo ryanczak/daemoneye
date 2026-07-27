@@ -243,13 +243,25 @@ where
 
     // Unlocked phase: the two blocking tmux calls, then a short write-back.
     if let (Some(id), Some(ref pane_id)) = (session_id.as_deref(), pipe_candidate.as_deref()) {
-        let resolved = if crate::tmux::pane_exists(pane_id) {
-            match crate::tmux::start_pipe_pane(pane_id) {
-                Ok(_) => pane_id.to_string(),
+        let pid = pane_id.to_string();
+        let pid_clone = pid.clone();
+        let pane_alive =
+            crate::tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&pid_clone))
+                .await
+                .unwrap_or(false);
+        let resolved = if pane_alive {
+            let pid2 = pid.clone();
+            match crate::tmux::off_runtime("start-pipe-pane", move || {
+                crate::tmux::start_pipe_pane(&pid2)
+            })
+            .await
+            .unwrap_or_else(|| Err(anyhow::anyhow!("timed out starting pipe-pane")))
+            {
+                Ok(_) => pid,
                 Err(e) => {
                     // Pane existed at check time but was gone by the time
                     // pipe-pane ran (TOCTOU race) — don't retry this session.
-                    log::debug!("R1: could not start pipe-pane for {}: {}", pane_id, e);
+                    log::debug!("R1: could not start pipe-pane for {}: {}", pid, e);
                     String::new() // don't retry
                 }
             }

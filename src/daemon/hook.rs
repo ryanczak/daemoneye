@@ -112,11 +112,15 @@ where
     }
 
     if managed_session.as_deref() == Some(session_name.as_str()) {
-        match std::process::Command::new("tmux")
-            .args(["new-session", "-d", "-s", &session_name])
-            .output()
-        {
-            Ok(o) if o.status.success() => {
+        let sn = session_name.clone();
+        let created = crate::tmux::off_runtime("new-session", move || {
+            std::process::Command::new("tmux")
+                .args(["new-session", "-d", "-s", &sn])
+                .output()
+        })
+        .await;
+        match created {
+            Some(Ok(o)) if o.status.success() => {
                 log::info!(
                     "Recreated managed tmux session '{}' after close.",
                     session_name
@@ -124,7 +128,7 @@ where
                 *bg_session.lock().unwrap_or_log() = session_name.clone();
                 cache.set_session(&session_name);
             }
-            Ok(o) => {
+            Some(Ok(o)) => {
                 let stderr = String::from_utf8_lossy(&o.stderr).trim().to_string();
                 log::warn!(
                     "Failed to recreate managed session '{}': {}",
@@ -132,11 +136,17 @@ where
                     stderr
                 );
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 log::warn!(
                     "tmux new-session for managed session '{}' failed: {}",
                     session_name,
                     e
+                );
+            }
+            None => {
+                log::warn!(
+                    "tmux new-session for managed session '{}' timed out",
+                    session_name
                 );
             }
         }

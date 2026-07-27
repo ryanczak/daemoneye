@@ -1,7 +1,7 @@
 # Phase 06j: tmux Calls Off the Runtime — the `daemon/` Tail
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06h — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -383,3 +383,9 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-27 22:54 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Converting the remaining 6 tmux calls under `src/daemon/` to `off_runtime`: `gc.rs` (2 sites in `notify_job_completion`), `ghost.rs` (1 site in `trigger_ghost_turn`), `hook.rs` (1 site in `handle_notify_session_closed`), `ask.rs` (2 sites in `handle_ask`).

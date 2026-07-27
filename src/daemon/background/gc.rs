@@ -49,10 +49,17 @@ pub async fn notify_job_completion(
     let logs_dir = crate::config::pane_logs_dir();
     if let Err(e) = std::fs::create_dir_all(&logs_dir) {
         log::error!("Failed to create pane_logs directory: {}", e);
-    } else if let Err(e) =
-        tmux::pane::capture_pane_to_file(&pane_id, &logs_dir.join(format!("{}.log", win_name)))
-    {
-        log::error!("Failed to archive pane logs for {}: {}", win_name, e);
+    } else {
+        let p = pane_id.clone();
+        let out = logs_dir.join(format!("{}.log", win_name));
+        let archived = tmux::off_runtime("capture-pane-to-file", move || {
+            tmux::pane::capture_pane_to_file(&p, &out)
+        })
+        .await
+        .unwrap_or_else(|| Err(anyhow::anyhow!("timed out archiving pane logs")));
+        if let Err(e) = archived {
+            log::error!("Failed to archive pane logs for {}: {}", win_name, e);
+        }
     }
 
     let status_word = if exit_code == 0 {
@@ -76,7 +83,12 @@ pub async fn notify_job_completion(
                 "reason": "done",
             }),
         );
-        if let Err(e) = tmux::kill_job_window(&session, &win_name) {
+        let s = session.clone();
+        let w = win_name.clone();
+        let killed = tmux::off_runtime("kill-job-window", move || tmux::kill_job_window(&s, &w))
+            .await
+            .unwrap_or_else(|| Err(anyhow::anyhow!("timed out killing window")));
+        if let Err(e) = killed {
             log::error!("Failed to GC scheduled job window {}: {}", win_name, e);
         }
     }
