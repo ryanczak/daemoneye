@@ -1,7 +1,7 @@
 # Phase 05f: Get the Last Blocking Work Out of `handle_ask`'s Critical Section
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-05e (watch_pane) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -462,3 +462,134 @@ it print nothing. Quote its output in the Update Log.
 **Executor:** rexyMCP executor
 
 **Work:** Implementing Hoist A (read_session_meta before lock) and Hoist B (R1 pipe-pane decide-under-lock, spawn-outside, write-back).
+
+### Update — ts=1785121488663 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified:
+
+- `python3 /tmp/audit_closures.py` prints **nothing** — the closure audit is clean
+- `with_sessions(` count: **15** (13 pre-existing + contains_key probe + pipe write-back)
+- `read_session_meta` count: **1** — moved, not duplicated
+- `tmux::pane_exists` count: **1**, `tmux::start_pipe_pane` count: **1** — both moved, neither duplicated
+- `R1: ` count: **4** — comment header + 3 debug messages, all surviving
+- `// don` count: **3** — all three sentinel comments survive
+- `pipe_source_pane` count: **5** — down from 7
+- `UnpoisonExt`: **0**, `unwrap_or_log`: **2** — unchanged
+- `git diff --stat`: exactly **1** `src/` file changed
+- `cargo build`, `cargo clippy`, `cargo fmt`, `cargo test` all pass clean
+
+**Summary + Notes for review:** Hoisted `read_session_meta` out of the `with_sessions` closure via a `contains_key` probe before the lock, and restructured the R1 pipe-pane block to decide under the lock (same-as-chat-pane settled inline, other cases yield a `pipe_candidate`) then perform the two blocking `tmux::` subprocess spawns outside the lock with a short `get_mut` write-back. The closure audit now prints nothing — this was the last blocking-work site inside any `SessionStore` critical section in the daemon. One adaptation: the unlocked `if let` pattern uses `session_id.as_deref()` / `pipe_candidate.as_deref()` to match against `&str` references, since `tmux::pane_exists` and `tmux::start_pipe_pane` take `&str`. All sentinel semantics, debug messages, and write-back safety (`get_mut` re-check) are preserved.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+ted ... ok
+test webhook::process::tests::severity_rank_case_insensitive ... ok
+test webhook::process::tests::severity_rank_ordering ... ok
+test webhook::server::tests::auth_empty_secret_always_allows ... ok
+test webhook::server::tests::auth_correct_token_allows ... ok
+test webhook::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test memory::tests::migrate_namespace_skips_already_migrated ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+
+test result: ok. 915 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ghost_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-05f-unlock-ask-entry.md` — +7 -1
+- `src/daemon/server/ask.rs` — +54 -23
+
+**Commit:** a6575c77c917d56bd2da8b97a9e9c120b38b3d0c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
