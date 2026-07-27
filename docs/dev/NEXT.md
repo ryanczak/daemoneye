@@ -1,124 +1,122 @@
 # NEXT
 
-**Active phase: M5 phase-05d — sessionstore-newtype** (`todo`, drafted
-2026-07-26).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05d-sessionstore-newtype.md`.
+**Active phase: M5 phase-05e — unlock-watch-pane** (`todo`, drafted 2026-07-27).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05e-unlock-watch-pane.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05d-sessionstore-newtype`.
+Dispatch with `/rexymcp:dispatch phase-05e-unlock-watch-pane`.
 
-## This is the phase that makes the invariant real
+## ⚠ The milestone was measuring the wrong thing for fifteen phases
 
-`SessionStore` stops being a type alias and becomes a newtype, so `.lock()` is
-unreachable outside `session.rs`. Today the "no blocking work under the session
-lock" rule is a convention enforced by review; after 05d it is a **compile
-error**. That is the second half of the milestone's third exit criterion —
-"enforced by a test or lint, not only by review" — and 05d is where it gets
-ticked.
+05d's newtype found **three production `.lock()` sites** that every scan in
+04a–05c missed, and auditing what those conversions had produced found **two
+`with_sessions` closures still doing blocking work**. Both discoveries have the
+same root cause, and it is worth stating plainly:
 
-| Change | Count |
+**Every instrument this milestone used counted *acquisitions*. None ever audited
+what ran *inside* a critical section.** The exit criterion was always "no
+`SessionStore` critical section performs blocking work" — and that was never once
+measured.
+
+Two compounding blind spots, both now closed:
+
+1. **The scan matched the literal `sessions.lock()`.** A store held in a
+   differently-named variable (`sessions_bg`, `sessions_clone`) was invisible.
+   The newtype closed this permanently: raw acquisition is now a **compile
+   error**, so the type system enforces what grep could not.
+2. **Converting a raw lock to `with_sessions` preserves whatever was inside it.**
+   A conversion phase that wrapped blocking work in a closure moved the defect
+   *into the construct that signals safety* — and every subsequent scan reported
+   the file clean.
+
+### The new instrument, and the full result
+
+`with_sessions` is now the only way in, so a complete audit is finally possible:
+brace-match every closure body and grep it for blocking calls. The script is
+inlined in 05e's Pre-flight. Across **115** `with_sessions` call sites it finds
+exactly **two**:
+
+| Site | Blocking work under the guard |
 |---|---|
-| the type definition | 1 |
-| `with_sessions`'s own body (`sessions.0.lock()`) | 1 |
-| `Arc::new(Mutex::new(HashMap::new()))` → `SessionStore::new()` | 16 |
-| `Arc::clone(&sessions…)` → `sessions.clone()` | 16 |
+| `executor/knowledge/pane.rs:329` | `append_session_message` (2 file writes) + a `tmux display-message` spawn |
+| `server/ask.rs:97` | `read_session_meta` (file read) + `tmux::pane_exists` + `tmux::start_pipe_pane` (2 subprocesses) |
 
-### ⚠ Correcting myself: the `Arc::clone` sites DO need changing
+113 of 115 are clean. That is the verification the milestone never had.
 
-When drafting 05c I wrote that "the 27 `.clone()` calls need no change at all"
-and dismissed the long-standing "13 `Arc::clone` sites" note as *measuring the
-wrong thing*. **I was wrong, and the original note was closer to right.**
+## The split — 05e, then 05f, then 05g
 
-Both halves are true of *different* call shapes, and I conflated them:
+Different shapes, so different phases; the mixed-shape bundles are what forced
+the 04g/04h and 04i splits earlier.
 
-- **`sessions.clone()`** — keeps working untouched, because the newtype derives
-  `Clone`. That part was right.
-- **`Arc::clone(&sessions)`** — **does not compile.** `Arc::clone` needs an
-  `&Arc<T>`, and `&SessionStore` is no longer one. All of these must become
-  `sessions.clone()`.
+| # | Scope | Size |
+|---|---|---|
+| **05e** | `pane.rs:329` — a straight four-phase restructure with an exact in-tree worked example (`helpers.rs::notify_session`) | s |
+| **05f** | `ask.rs:97` — **two** independent hoists inside one closure, in `handle_ask` | m |
+| **05g** | 04f's coverage follow-up (was 05e) — independent, any order | s |
 
-The real count is **16**, not 13 and not zero. A `grep "Arc::clone(&sessions"`
-finds only 13 — it misses `mod.rs:659` (`&wh_sessions_sup`) and two sites that
-pass a reference and so have no `&` at all (`ask.rs:721`,
-`knowledge/pane.rs:218`).
+**05f is the delicate one and is deliberately not drafted yet.** Its closure runs
+`store.entry(id).or_insert_with(…)`, so hoisting `read_session_meta` means
+splitting into *check → release → read → re-acquire → insert*, and the pipe-pane
+block needs *decide → release → spawn → re-acquire → record*. Both restructures
+live in the daemon's busiest handler. Draft it on its own, after 05e lands.
 
-### The compiler enumerates the work — that is the phase's method
+**Accuracy note:** both `ask.rs` sub-sites are **first-turn-only**, not per-turn —
+`read_session_meta` sits inside `or_insert_with`, and the pipe-pane block is
+guarded by `pipe_source_pane.is_none()` with a don't-retry sentinel. So it is
+session-creation cost, not every-turn cost. Still two subprocess spawns under the
+global lock, but do not overstate it when drafting.
 
-32 call sites is the largest count in the milestone, but **none of them has to be
-found**. The moment the alias becomes a struct, every one is a compile error. The
-spec makes the loop explicit: change the type, run `cargo build` bare, fix what it
-names, repeat. If the executor is grepping to *discover* work rather than verify
-it, something has gone wrong.
+## Drafting 05e caught a self-contradiction in my own spec
 
-### `try_lock` is `#[cfg(test)]`-gated — better than what I planned
+My first draft pinned `grep -c 'watch_pane {}: {}'` at **2** while the prose
+immediately below said a single-`log::info!` shape was "acceptable and
+preferable." **That is the same defect that `hard_fail`ed 05c** — a criterion the
+spec's own text tells the executor to violate. Rewritten to accept 1 or 2 and to
+state the requirement behaviorally: one log line per invocation on every path,
+verified by reading.
 
-While drafting 05c I recorded that "the newtype must expose `try_lock`" because
-two assertions depend on it. Measuring found **four** callers, and — the useful
-part — **all four are inside test modules** (`session.rs` ×3,
-`executor/mod.rs` ×1). So the accessor can be `#[cfg(test)]`-gated, which closes
-the hole *completely* in production rather than leaving a second way in.
+Catching it required re-reading the criteria *against the spec body*, not just
+against the tree. Validating criteria against the code is now habit; validating
+them against the rest of the document is the gap this exposed.
 
-It returns std's own `TryLockResult`, so every caller's `.is_ok()` and
-`.expect(…)` keeps working. One of the four (`session.rs:1216`) uses the guard
-(`remaining.len()`), not just `.is_ok()` — returning `Option` instead would have
-broken it.
+## ⛔ The third exit criterion stays unticked
 
-### Two look-alike `Arc`s that must not be swept up
+Its enforcement half — "enforced by a test or lint, not only by review" — is
+**done**, and better than designed: the type system, not a lint.
 
-`Arc::clone(` appears **60** times; only 16 are sessions. Two decoys read like
-sessions and are different types entirely:
+Its first half — "no `SessionStore` critical section performs blocking work" — is
+**false today**, at the two sites above. It was believed true after 05b only
+because nothing had ever looked. **Tick it when 05f lands**, with the closure
+audit as the evidence.
 
-```rust
-let managed_session: Arc<Option<String>> = …
-let bg_session: Arc<Mutex<String>> = …
-```
-
-Both are singular; every real target contains the plural `sessions`. The spec
-forbids blanket replacement and pins the total at **44** afterwards (60 − 16) so
-that sweeping up an unrelated `Arc` fails the criteria rather than passing
-quietly.
-
-## Drafting caught one more of my own errors
-
-`grep -cF "SessionsLockDepth::enter()" src/daemon/session.rs` returns **2**, not
-1 — one is the real guard at `:431`, the other is the name appearing inside a
-test's assertion message at `:1274`. Corrected before dispatch, with the reason
-inline.
-
-That is the **third** phase running where a text-based grep counted prose rather
-than code (`session.rs:443`'s doc comment, 05c's two `try_lock` assertions, now
-this). It is not an error in any one criterion so much as a property of the
-instrument, and every remaining phase should assume it.
-
-## Still open for the PE — seven calibration threads
+## Still open for the PE — seven threads, two of them now trends
 
 1. **Count criteria (4th occurrence, 10 clean confirmations).**
 2. **Specs asserting test coverage (3rd occurrence, 9 clean confirmations).**
-3. **Fixture defaults neutering assertions (1st, from 04f).** **05e** resolves it.
+3. **Fixture defaults neutering assertions (1st, from 04f).** **05g** resolves it.
 4. **Lock/HOME test hygiene (3 deep).** Still unassigned.
 5. **Partially-transcribed spec quotes (1st, from 05a).**
-6. **Criteria-sweep false completion (1st, from 05a).**
-7. **⚠ Build-vs-clippy disagreement on test-module imports — 2nd occurrence, now
-   a TREND.** 04f and 05c both `hard_fail`ed on it. `cargo build` reports zero
-   warnings while `cargo clippy --all-targets` errors on an unused test-module
-   import, because a plain build never compiles the test cfg. **Proposed fold,
-   awaiting your sign-off:** a phase that converts *every* use of a trait must
-   state what happens to its import, and must never assert an import count
-   without checking whether its own edits exhaust that trait's uses. 05d already
-   applies the lesson locally in its Authorizations and its "traps" section.
+6. **Self-contradicting specs — 2nd occurrence, now a TREND.** 05c's `hard_fail`
+   (an import criterion the spec's own conversions made impossible) and 05e's
+   pre-dispatch catch above. **Proposed fold:** before dispatch, re-read every
+   acceptance criterion against the spec body and confirm the spec does not
+   instruct the executor to violate it.
+7. **Build-vs-clippy disagreement on test-module imports — 2nd occurrence, TREND.**
+   04f and 05c both `hard_fail`ed on it. **Proposed fold:** a phase that converts
+   every use of a trait must state what happens to its import, and must never
+   assert an import count without checking whether its own edits exhaust that
+   trait's uses.
 
-A candidate eighth, from 05c's run 1: **piping gate commands through `tail` masks
-the exit status**, so a failing gate reads as passing. 1st occurrence; 05d tells
-the executor to run every gate bare.
+An eighth, from 05c: **piping gate commands through `tail` masks the exit
+status**. Every phase doc since says to run gates bare.
 
-## After 05d
+**All await your sign-off.** Threads 6 and 7 are the two with a live cost —
+between them they account for both `hard_fail`s in this milestone.
 
-**05e** — 04f's coverage follow-up (3 vacuous `compaction_in_flight` assertions
-made real, mutation-checked). Independent of everything else; can run in any
-order. Then **06** (tmux-call-hardening) → **07** (stall-instrumentation), plus
-the drafted 08–11 instance-hardening set.
+## After 05e
 
-**Tick the milestone's third exit criterion when 05d lands** — not before. Its
-first half has been true since 05b; the enforcement half is 05d's.
+**05f** (`ask.rs:97`, needs its own drafting pass) → **05g** (coverage) → **06**
+(tmux-call-hardening) → **07** (stall-instrumentation), plus the drafted 08–11
+instance-hardening set.
 
 ---
 
