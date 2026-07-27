@@ -1,10 +1,88 @@
 # NEXT
 
-**Active phase: M5 phase-06g — tmux-off-runtime-scheduled-sudo**
+**Active phase: M5 phase-06h — tmux-off-runtime-daemon-mod**
 (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06g-tmux-off-runtime-scheduled-sudo.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06h-tmux-off-runtime-daemon-mod.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06g-tmux-off-runtime-scheduled-sudo`.
+Dispatch with `/rexymcp:dispatch phase-06h-tmux-off-runtime-daemon-mod`.
+
+## Five conversion phases in a row, no bounces
+
+06d (10) → 06e (9) → 06f (12) → 06g (11), all `approved_first_try`, 95 / 59 /
+66 / 62 turns. `foreground.rs` and the whole `executor/` subtree are finished.
+
+## 06h is `run_daemon` — startup and shutdown, 9 sites
+
+Same sync-boundary shape as 06f: **6 of the file's 15 hits are in
+`detect_session` / `install_session_hooks`, both `pub fn`**, and
+`install_session_hooks` is called from `hook.rs:157` as well as `mod.rs:547`, so
+making it async is a restructure. Deferred with the other two.
+
+Three things make this phase different from its predecessors, and all three are
+"the obvious form does not compile or is wrong":
+
+1. **The five hook sites return `std::io::Result<Output>`, not `anyhow`.** They
+   use their `Err` in a `log::error!`, so they need 06g's
+   `.unwrap_or_else(|| Err(…))` collapse — but with
+   `std::io::Error::other("…")`, since `anyhow::anyhow!` will not type-check
+   there. Compile-checked.
+2. **`client_dimensions` returns a bare `(u16, u16)`.** Neither `.ok()` nor
+   `.flatten()` applies; the collapse is `.unwrap_or((0, 0))`, which the
+   existing `if w > 0 && h > 0` guard already handles correctly. That is a
+   **fifth** return shape in this family.
+3. **`:454`'s bool gate decides whether to create the tmux session.**
+   `.unwrap_or(false)` sends a timeout into the `new-session` path, whose own
+   converted `None` arm bails — so the daemon fails to start **with a real
+   reason**. `.unwrap_or(true)` would adopt an unconfirmed session and run
+   against a phantom for its whole lifetime. The spec walks both branches
+   because the correct answer looks like the riskier one.
+
+The `:458` `new-session` match also needs a fourth arm, and the spec pins all
+three existing arms — including the `if o.status.success()` guard — as
+byte-identical.
+
+**One inherited invariant gets an explicit guard.** The `stop_pipe_pane` loop at
+`:836` sits *outside* a `with_sessions` closure that collects the pane ids —
+the collect-under-lock / act-outside shape phase 05 established after a
+confirmed production hang. An acceptance criterion requires reading that closure
+and confirming no `.await` moved inside it.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 0, `io::Error::other` 0, `anyhow::bail!` **4** → ≥ 5, 916/27).
+Post-state values are floors with the arithmetic shown. Nine clean
+applications.
+
+## Still open — the two candidate absolutes
+
+Both are at or past the fold bar and **await your sign-off**; neither has
+touched `WORKFLOW.md`:
+
+> **A phase doc may not contain a number that was not produced by the exact
+> command written beside it.** (5 errors motivating it; 9 clean applications.)
+
+> **A raw hit count is the input to a survey, never the scope of a phase.**
+> (6 species now: multi-line acquisitions, expressions spanning slices, `Drop`
+> impls, type-import false positives, already-`async` helpers, sync-enclosing
+> fns.)
+
+Four single-occurrence threads also remain: fixture defaults (resolved by 05g),
+partially-transcribed spec quotes, piping gates through `tail`, a refinement
+built on a harness-blocked command, plus 06e's executor-side prose miscount.
+
+## After 06h
+
+**06j** (`background/` 11, `session.rs` 2, `ghost.rs` 2, `hook.rs` 1, `server/`
+3, `webhook/` 1, then `cli/` ~19 — survey each; `cli/` is largely sync) →
+**06i** (the async restructure: `close_bg_window`, `watch_pane`,
+`detect_session`, `install_session_hooks`) → **stage A** (harden the sync
+helpers; also what bounds every `Drop` site) → **07** (stall-instrumentation),
+plus the drafted **08–11** set. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06g dispatch note
 
 ## `executor/` is finished; four conversion phases in a row, no bounces
 
