@@ -1,88 +1,81 @@
 # NEXT
 
-**Active phase: M5 phase-06c — tmux-off-runtime-foreground (slice 1)**
-(`todo`, re-scoped 2026-07-27 after a `hard_fail`).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06c-tmux-off-runtime-foreground.md`.
+**Active phase: M5 phase-06d — tmux-off-runtime-foreground-2 (slice 2)**
+(`todo`, drafted 2026-07-27).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06d-tmux-off-runtime-foreground-2.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06c-tmux-off-runtime-foreground`.
+Dispatch with `/rexymcp:dispatch phase-06d-tmux-off-runtime-foreground-2`.
 
-## 06c `hard_fail`ed on scope, and was re-split rather than resumed
+## The re-split is working
 
-The first attempt took all **29** sites in `foreground.rs` — a **1228-line** file
-— at once. It converted 5, then spent **60 consecutive read-only turns** re-reading
-the file before `NoProgressStall` fired at 124 turns.
+06c landed **10 sites in 121 turns** after the 29-at-once attempt stalled at 5 in
+124. Slice 2 takes the next 10 (poll & capture); 9 remain for 06e.
 
-**The cause was a type error whose symptom surfaced 470 lines from its cause.**
-The `send_keys` conversion at `:389` produced a mismatch the compiler reported at
-`:860`, where the binding was consumed. In a 1228-line function that is very hard
-to localise, and the executor thrashed on re-reads trying.
+`foreground.rs` is now its own best worked example — 06c converted ten sites in
+the same function, so the spec points at those first.
 
-**This was not a spec gap.** The spec was good — it caught three non-sites
-(`impl Drop`, a type import, a false-friend helper), gave two in-tree worked
-examples, and pinned the three behaviour-sensitive sites. It was simply **too
-big**, and `WORKFLOW.md`'s decision table names that case: *context-budget
-exhaustion on a phase that is not minimal → re-split*.
+## Scope is defined by SITE, not by line — 06c's lesson, now explicit
 
-### What was done with the partial work
+06c's review found a site's expression can extend far past any line boundary: the
+`send_keys` match at `:374` had its arms at `:890+`, so converting it
+**necessarily** edited outside the nominal slice. That was correct, not creep.
 
-The 5 converted sites **did not compile**. Rather than hand the next run a broken
-file to interpret — the state that produced a false completion earlier in this
-milestone — the work was **stashed** (`stash@{0}`, message records the exact type
-error) and the tree returned to a green baseline: 916 tests passing. Those 5 sites
-are redone as part of slice 1; redoing ten mechanical conversions is cheaper and
-safer than resuming from a broken tree.
+06d therefore names its ten sites and says it owns **those sites and whatever
+their expressions require, wherever they extend** — and names 06e's nine so the
+boundary is a set of sites rather than a line number that shifts under editing.
 
-### The new shape — three slices of ~10
+## One shape that will not compile if copied blindly
 
-| Phase | Region | Sites |
-|---|---|---|
-| **06c** | lines ≤ 460 (setup & send) | **10** |
-| 06d | lines 461–710 (poll & capture) | 10 |
-| 06e | lines > 710 (exit status & cleanup) | 9 |
+`unhighlight_pane` returns **`()`**, not `Result`:
 
-Ten is the size that landed `approved_first_try` in 06a (16 sites) and 06b (11).
+```rust
+pub fn unhighlight_pane(pane_id: &str, restore_focus_to: Option<&str>) {
+```
 
-### Two things the re-scoped spec adds
+so `off_runtime` yields `Option<()>` and `.and_then(|r| r.ok())` — correct at the
+four `capture_pane` sites in the same slice — **will not compile** here. The spec
+quotes the right form and points at `highlight_pane`'s 06c conversion, which has
+the identical signature including the `Option<&str>` → owned → `.as_deref()`
+dance.
 
-- **"Build after every site."** Not advice — a numbered step. Ten small builds
-  cost seconds each; one build at the end reports an error you then have to hunt
-  across 1228 lines. That is precisely what consumed the failed run.
-- **"Keep the binding's type identical."** If a converted form would change the
-  type of something used later, collapse `Option<Result<…>>` back at the site
-  rather than letting it leak downstream. That is the specific defect that broke
-  `send_keys`.
+## The highlight/unhighlight pair still spans slices
 
-### One invariant now spans slices
+`highlight_pane` was converted in 06c; this slice converts one `unhighlight_pane`
+and 06e converts the other. Behaviour-preserving conversions keep the pair
+balanced — but an uncleared highlight leaves the user's pane tinted until they
+restart tmux, so each doc says not to "fix" the apparent imbalance from inside one
+slice.
 
-`highlight_pane` (`:376`, slice 1) is cleared by `unhighlight_pane` at `:602`
-(slice 2) and `:773` (slice 3). An uncleared highlight leaves the user's pane
-tinted until they restart tmux. Every conversion is behaviour-preserving so the
-pair stays balanced across the split — but each slice's doc says so, because
-"fixing" the imbalance from inside one slice would be wrong.
+## A fifth counting error, same root
+
+The first draft pinned `grep -c "off_runtime" foreground.rs` at **24**; it is
+**10**. I wrote the number instead of running the command — the fifth instance in
+this phase family and the reason the proposed fold is worded as an absolute:
+
+> **A phase doc may not contain a number that was not produced by the exact
+> command written beside it.**
+
+Five occurrences is well past the "three is a fix" bar. Worth folding at milestone
+close if not sooner.
 
 ## Still open — four single-occurrence threads
 
 3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
 8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
 
-Plus five refinements to the folds: import liveness is **per import scope**; a
-multi-line census obliges **every** criterion in that phase; a source-parsing
-criterion must be validated against **the shape the phase will produce**; **a
-phase doc may not contain a number not produced by the exact command beside it**;
-and reasoning checks should **demand quoted code**, after two phases produced
-inaccurate early-return claims.
+Plus the fold refinements: import liveness is **per import scope**; a multi-line
+census obliges **every** criterion in that phase; a source-parsing criterion must
+be validated against **the shape the phase will produce**; reasoning checks should
+**demand quoted code**; and **phase size scales with sites-per-file-length**, not
+sites alone — 10–16 sites succeed, 29 in a 1228-line file stalled at 5.
 
-**A sixth, from this failure — worth watching:** *phase size should be measured in
-sites-per-file-length, not sites alone.* 16 sites in a 500-line file succeeded; 29
-in a 1228-line file stalled at 5. If a third data point lands, that is a fold.
+## After 06d
 
-## After 06c
-
-**06d**, **06e** (the other two `foreground.rs` slices) → **06f–06h**
+**06e** (`foreground.rs` slice 3, 9 sites) → **06f–06h**
 (`executor/knowledge/pane.rs` + `file_ops/`, `daemon/` core, `cli/`) → **stage A**
 (harden the sync helpers; also what bounds the two `Drop` sites) → **07**
-(stall-instrumentation), plus the drafted **08–11** set. Four exit criteria
-remain open.
+(stall-instrumentation), plus the drafted **08–11** set. Four exit criteria remain
+open.
 
 ---
 
