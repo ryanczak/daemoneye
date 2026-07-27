@@ -279,3 +279,7 @@ broken state.
 
 `foreground.rs` is now three phases of ~10 sites — the size that landed
 `approved_first_try` in 06a (16) and 06b (11).
+
+### Update — 2026-07-27 17:27 (started)
+
+**Executor:** Claude (Sonnet 4.5)
