@@ -1,7 +1,7 @@
 # Phase 06j: tmux Calls Off the Runtime — the `daemon/` Tail
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06h — `done`
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -389,3 +389,136 @@ machinery. **Do not repeat that demonstration.**
 **Executor:** Claude (Sonnet 4.5)
 
 Converting the remaining 6 tmux calls under `src/daemon/` to `off_runtime`: `gc.rs` (2 sites in `notify_job_completion`), `ghost.rs` (1 site in `trigger_ghost_turn`), `hook.rs` (1 site in `handle_notify_session_closed`), `ask.rs` (2 sites in `handle_ask`).
+
+### Update — ts=1785193319517 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified. Here's the summary:
+
+**Summary + Notes for review:**
+
+Converted all 6 remaining convertible tmux calls under `src/daemon/` to `off_runtime`, finishing the daemon's async surface. The per-file scan reports `gc.rs: 3`, `ghost.rs: 1`, `hook.rs: 0`, `ask.rs: 0` — all remaining hits are on the do-not-convert list (3 in sync `gc_bg_windows`, 1 import in `ghost.rs`).
+
+**Reasoning checks:**
+1. **`gc.rs` else-if short-circuit:** The capture is inside the `else` block, so it only runs when `create_dir_all` succeeded — the directory is guaranteed to exist before archiving.
+2. **`hook.rs` None arm:** Logs a warning and falls through (no `bail!`) because `handle_notify_session_closed` must continue to `send_response_split(tx, Response::Ok).await?` after the match — bailing would turn a recoverable timeout into a failed hook response.
+3. **Lock boundary:** Both `off_runtime` awaits in `ask.rs` are outside the `with_sessions(sessions, |store| { entry.pipe_source_pane = Some(resolved); })` closure — the closure contains only a synchronous write-back.
+
+All gates pass: `cargo build` (0 warnings), `clippy` (clean), `fmt` (clean), `cargo test` (916 lib, 27 integration).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.01s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+et_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test memory::tests::session_memory_block_respects_cap ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test memory::tests::update_memory_creates_new_entry ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 916 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_ask_round_trip ... ok
+test event_log_append_read ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06j-tmux-off-runtime-daemon-tail.md` — +7 -1
+- `src/daemon/background/gc.rs` — +17 -5
+- `src/daemon/ghost.rs` — +5 -1
+- `src/daemon/hook.rs` — +17 -7
+- `src/daemon/server/ask.rs` — +16 -4
+
+**Commit:** 046e4d677ab59ee03588fbe43d86d65ff748cb2f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
