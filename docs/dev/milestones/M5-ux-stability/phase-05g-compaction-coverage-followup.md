@@ -447,3 +447,30 @@ independently:
 
 If any of the four mutations does **not** make a test fail, say so plainly and
 stop — that is a real finding, not a failure to report.
+
+### Update — 2026-07-27 12:21 (complete)
+
+**Executor:** Claude
+
+**Mutation table (task 4):**
+
+| Site | Mutation | Test that failed | Restored → passes |
+|---|---|---|---|
+| no viable cut (`:119`) | deleted `entry.compaction_in_flight = false` | `background_swap_discards_on_new_turn` — `assertion failed: !entry.compaction_in_flight` | ✓ |
+| idempotency guard (`:136`) | deleted `entry.compaction_in_flight = false` | `epoch_build_idempotent_after_discard` — `assertion failed: !e.compaction_in_flight, "the idempotency-guard discard must clear the in-flight flag"` | ✓ |
+| stale branch (`:232`) | deleted `entry.compaction_in_flight = false` | `swap_discards_when_turn_ran_during_build` — `assertion failed: !e.compaction_in_flight, "the stale-branch discard must clear the in-flight flag"` | ✓ |
+| swap success (`:240`) | deleted `entry.compaction_in_flight = false` | `background_swap_applies_when_unchanged` — `assertion failed: !entry.compaction_in_flight` | ✓ |
+
+**Reasoning check 1 — why the fixture default made three assertions vacuous:**
+`make_test_entry()` defaults `compaction_in_flight` to `false`, so any test that hand-builds its `CompactionSnapshot` (bypassing `try_snapshot`, which sets it to `true`) will see the flag already `false` when `run_compaction` finishes — making `assert!(!entry.compaction_in_flight)` pass regardless of whether the clearing code actually ran. This affected `background_swap_applies_when_unchanged` (task 1), `epoch_build_idempotent_after_discard` (task 2), and the pre-existing assertion in `background_swap_discards_on_new_turn` was the only one already guarded by `try_snapshot`.
+
+**Reasoning check 2 — why `token_scale: 1e9` is load-bearing in the new test:**
+Without `token_scale: 1e9`, the budget would be large enough that no cut is needed, and `run_compaction` would exit through the "no viable cut" branch (`:119`) — never reaching the swap closure where the stale-branch check at `:232` lives. The huge scale forces a budget cut, pushing execution past the early return and into the swap, where the turn_count mismatch triggers the stale-branch discard.
+
+**Verification:**
+- `cargo test` → 916 passed
+- `grep -c "compaction_in_flight = false" src/daemon/context/background.rs` → 4 (all production)
+- `grep -c "compaction_in_flight = true" src/daemon/context/background.rs` → 5
+- `grep -c "#\[tokio::test" src/daemon/context/background.rs` → 7
+- `git diff baaf476 -- src/daemon/context/background.rs` → only additions inside `mod tests`
+- `git status` → clean
