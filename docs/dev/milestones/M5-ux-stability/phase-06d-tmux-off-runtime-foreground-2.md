@@ -1,7 +1,7 @@
 # Phase 06d: `foreground.rs` tmux Calls Off the Runtime — Slice 2 (poll & capture)
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06c (slice 1) — `done`
 **Estimated diff:** ~110 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -277,3 +277,127 @@ machinery. **Do not repeat that demonstration.**
 ### Update — 2026-07-27 19:00 (started)
 
 **Executor:** Claude (opus 4.6) — converting 10 tmux call sites in `foreground.rs` to `off_runtime`.
+
+### Update — ts=1785179570246 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+Converted all 10 tmux call sites in `foreground.rs` (slice 2: poll & capture) to use `tmux::off_runtime`. The span-matching script reports exactly `UNWRAPPED: 11` — the 2 `Drop` sites plus the 9 on 06e's list (`read_pane_exit_status` ×2, `pane_pid` ×3, `unhighlight_pane`, `capture_pane`, `select_pane`, `pane_exists`) — confirming the correct set was touched. `grep -c "off_runtime"` returns 20 (10 from 06c + 10 here). All acceptance criteria pass: `cargo build`, `cargo clippy`, `cargo fmt`, and `cargo test` (916 lib + 27 integration) all clean.
+
+**Reasoning check 1 — `unhighlight_pane`:** The converted site at line ~673 uses `let _ = tmux::off_runtime("unhighlight-pane", move || { tmux::unhighlight_pane(&t, cp.as_deref()) }).await;` with no `.and_then(|r| r.ok())` — that would not compile because `unhighlight_pane` returns `()`, so `off_runtime` yields `Option<()>`, and `Result`-specific methods like `.ok()` don't exist on `()`.
+
+**Reasoning check 2 — failure defaults:** `pane_pid` at line ~525: before was `tmux::pane_pid(target_str).unwrap_or(0)`, after is `tmux::off_runtime("pane-pid", move || tmux::pane_pid(&t)).await.and_then(|r| r.ok()).unwrap_or(0)` — timeout yields `None` → `.unwrap_or(0)` = `0`, identical to the original. `capture_pane` at line ~747: before was `tmux::capture_pane(target_str, 20).unwrap_or_default()`, after is `tmux::off_runtime("capture-pane", move || tmux::capture_pane(&t, 20)).await.and_then(|r| r.ok()).unwrap_or_default()` — timeout yields `None` → `.unwrap_or_default()` = `String::new()`, identical.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+de_annotated ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_background_panes_sorted ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_dead_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test memory::tests::session_memory_block_respects_cap ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test memory::tests::update_memory_partial_update_preserves_other_fields ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 916 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.23s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06d-tmux-off-runtime-foreground-2.md` — +5 -1
+- `src/daemon/executor/foreground.rs` — +81 -34
+
+**Commit:** ccbcfc3dfacfc783ef9c8deec8e0ee42014fdc9d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
