@@ -1,7 +1,7 @@
 # Phase 05d: Make the Session Lock Unreachable — the `SessionStore` Newtype
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05c (all 22 conversions) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -518,3 +518,140 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ca46ad4fecbad070de62276b487ca824fefec826
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (189 turns)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** four, **all of them corrections to an incomplete spec**,
+  every one forced by the compiler and correctly scoped. See below.
+- **Calibration:** one major instrument finding, one new mechanism-A site.
+
+The newtype landed exactly as specified: `#[derive(Clone, Default)]`,
+`SessionStore::new()`, a `#[cfg(test)]`-gated `try_lock` returning
+`TryLockResult`, no `lock()` method, and `with_sessions` reaching the field via
+`sessions.0.lock()`. Gates re-run bare with exit codes captured: fmt 0, build 0
+(zero warnings), clippy 0, test 0 with **915** tests unchanged.
+
+**`Arc::clone` landed at exactly 44** — 60 minus the 16 sessions sites, with no
+unrelated `Arc` swept up. The decoys (`bg_session: Arc<Mutex<String>>`,
+`managed_session: Arc<Option<String>>`) are untouched.
+
+### ⚠ The scan instrument was blind for the entire milestone
+
+**This is the finding that matters most.** The compiler found **four production
+`.lock()` sites that every scan in phases 04a–05c missed**:
+
+| Site | Variable |
+|---|---|
+| `background/run.rs:412` | `sessions_bg.lock()` |
+| `background/respawn.rs:288` | `sessions_bg.lock()` |
+| `executor/knowledge/pane.rs:330` | `sessions_clone.lock()` |
+
+The scan matched the literal string `sessions.lock()` (plus its multi-line
+split). **A `SessionStore` held in a differently-named variable was invisible to
+it.** `sessions_bg.lock()` does not contain `sessions.lock()`.
+
+Every "0 raw acquisitions" claim in this milestone was therefore made with an
+instrument that could only see one variable name. This is the second and worse
+instrument failure here — 04f found it could not see multi-line splits; this one
+was never suspected, and unlike the multi-line gap it had no symptom.
+
+**The good news is that it no longer matters.** After this phase, any `.lock()`
+on a `SessionStore` outside `session.rs` is a **compile error**, so the end state
+is now guaranteed by the type system rather than asserted by grep. That is
+precisely why this phase existed, and it justified itself by finding three real
+sites on the way in.
+
+### ⚠ A live mechanism-A/B site, newly visible — `pane.rs`
+
+`executor/knowledge/pane.rs`'s `watch_pane` callback now reads:
+
+```rust
+        with_sessions(&sessions_clone, |store| {
+            if let Some(entry) = store.get_mut(&session_id_owned) {
+                append_session_message(&session_id_owned, &watch_msg);   // 2 file writes
+                entry.messages.push(watch_msg);
+                …
+                if let Some(ref cp) = entry.chat_pane {
+                    let _ = std::process::Command::new("tmux")           // subprocess spawn
+                        .args(["display-message", "-d", "5000", "-t", cp, &alert])
+                        .output();
+                }
+            }
+        });
+```
+
+**Two file writes and a tmux subprocess, under the global session lock.** This is
+mechanism A + B — the exact shape 05a and 05b spent two phases removing.
+
+**The executor did not introduce it.** The same work sat under
+`sessions_clone.lock()` before; the conversion is behavior-preserving, which is
+what the spec required ("No behavior changes. This is a visibility change only").
+The site was simply never triaged into 05a/05b **because the scan could not see
+it**. Restructuring it here would have been scope creep and a behavior change the
+spec forbade — declining to do so was correct.
+
+But it now sits inside a `with_sessions` closure, which is the construct this
+milestone uses to mark *"this critical section is safe"*. It is not.
+
+**Follow-up required — a new phase.** Same shape as 05a task 3: collect
+`chat_pane` under the lock, release, then write and spawn. `respawn.rs` and
+`run.rs` need no such follow-up — their closures hold only
+`entry.bg_windows.retain(…)`, and `tmux::kill_job_window` is outside.
+
+### ⛔ Do not tick the milestone's third exit criterion yet
+
+Its enforcement half — "enforced by a test or lint, not only by review" — is
+**done**, and done better than planned: the type system, not a lint.
+
+Its first half — "no `SessionStore` critical section performs blocking work" — is
+**now known to be false**, at `pane.rs`. It was believed true after 05b only
+because the site was invisible. Tick the criterion when the `pane.rs` follow-up
+lands.
+
+### The four scope deviations, each necessary
+
+1. **Three extra `.lock()` conversions** (`run.rs`, `respawn.rs`, `pane.rs`) —
+   compiler-forced; the spec's inventory missed them.
+2. **Two extra construction sites** (`knowledge/memory.rs`, `knowledge/pane.rs`)
+   — my pre-flight grep matched `Arc::new(Mutex::new(HashMap::new()))` and the
+   `std::sync::Mutex` variant, but **not** the fully-qualified
+   `std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))`.
+   So the criterion "**4** files with `SessionStore::new()`" is wrong; **6** is
+   correct.
+3. **`hook.rs`'s shadowing `type SessionStore` alias removed.** Under the alias
+   regime 04j deliberately kept it (it expanded to the identical type). Under a
+   newtype it expands to a *different* type and cannot stay. Correct call.
+4. **Unused `HashMap` / `Mutex` / `Arc` imports removed** from test modules —
+   explicitly authorized, and required by `cargo clippy --all-targets`.
+
+### Verified by reading
+
+- **Clone semantics.** `#[derive(Clone)]` on a newtype over `Arc` clones the
+  handle, so every clone still points at one shared map. A deep copy would give
+  each handler an isolated map and session state would silently stop being
+  shared — no test would catch it, since each test builds its own store.
+- **The re-entrancy guard is intact.** `SessionsLockDepth::enter()` is still the
+  first statement in `with_sessions`, before the acquisition, and
+  `with_sessions_rejects_reentrant_call` still passes.
+- **`respawn.rs` / `run.rs` closures hold no blocking work** —
+  `entry.bg_windows.retain(…)` only, with `kill_job_window` outside.
+- **The task 5 experiment was performed and reverted**; the tree is clean and the
+  quoted error is `no method named 'lock' found for struct SessionStore`.
+
+### Two criteria of mine that were wrong, both from counting prose
+
+- **`grep -c "cfg(test)" src/daemon/session.rs` returns 3, not 2** — the third is
+  the phrase `#[cfg(test)]` inside the doc comment *my own spec told the executor
+  to write*.
+- **`scan_all` now reports `prod=0 test=1`**, not `prod=1`. The `#[cfg(test)]`
+  attribute on `try_lock` sits near the top of the file, and the scan treats the
+  first `#[cfg(test)]` as the start of the test module — so it misclassifies
+  everything below. The one hit is still the `cleanup_pass` doc comment, now at
+  `:467`.
+
+That is the **fourth** phase running where a text-based grep counted prose rather
+than code. The instrument is retired by this phase for `.lock()` detection; the
+compiler replaces it.
