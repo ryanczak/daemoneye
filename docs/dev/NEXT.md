@@ -1,104 +1,98 @@
 # NEXT
 
-**Active phase: M5 phase-05g — compaction-coverage-followup** (`todo`, drafted
-2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-05g-compaction-coverage-followup.md`.
+**Active phase: M5 phase-05h — test-home-guard** (`todo`, drafted 2026-07-27).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-05h-test-home-guard.md`.
 
-Dispatch with `/rexymcp:dispatch phase-05g-compaction-coverage-followup`.
+Dispatch with `/rexymcp:dispatch phase-05h-test-home-guard`.
 
-## The lock work is done; this is the debt 04f left behind
+## Four calibration threads were folded into WORKFLOW.md — 2026-07-27
 
-**Exit criterion 3 was ticked when 05f landed.** `audit_closures.py` is clean
-across all 115 `with_sessions` call sites, and enforcement is the newtype — a
-compile error, stronger than the lint the criterion asked for. Fifteen phases,
-04a through 05f.
+**Approved by the PE.** They had accumulated in this file for fifteen phases,
+which is itself the finding: `WORKFLOW.md` § Calibration says *"there is no
+separate place for 'lessons learned for later'"*, and `NEXT.md` had become
+exactly that place. None of the eight threads had ever reached the docs.
 
-05g is unrelated to locks. It closes **calibration thread 3**, opened by 04f: a
-shared fixture that defaults a field to the asserted-for value silently neuters
-every assertion on it.
+Folded, each with its evidence and a dated note:
 
-## Four clearing sites, one real test
-
-`run_compaction` clears `compaction_in_flight` on four paths. Mutation testing
-during 04f's review established that only one is guarded:
-
-| Site | Path | Guarded today? |
+| Thread | Occurrences | New `WORKFLOW.md` section |
 |---|---|---|
-| `background.rs:119` | "no viable cut" discard | **yes** |
-| `background.rs:136` | idempotency-guard discard | no |
-| `background.rs:232` | stale-branch discard | **no test reaches it at all** |
-| `background.rs:240` | swap success | no — the assertion is vacuous |
+| Count criteria — deriving instead of running | 4 miscounts, 2 blind instruments | *Run every count criterion; never derive it* |
+| Coverage claims without mutation proof | 3 false claims | *Coverage claims are inadmissible without mutation proof* |
+| Criteria the executor can't satisfy or verify | 2 hard-fails + 1 catch | *Every acceptance criterion must be satisfiable, and its mechanics pinned* |
+| Build-vs-clippy on test-module imports | 2 hard-fails | *A phase that exhausts a trait's uses must say what happens to its import* |
 
-**The mechanism:** `make_test_entry()` defaults `compaction_in_flight: false`.
-In production `try_snapshot` sets it `true` before `run_compaction` runs — but
-**three of the four tests hand-build their `CompactionSnapshot`** rather than
-calling `try_snapshot`, so the flag is never set and
-`assert!(!entry.compaction_in_flight)` cannot fail.
+**Held as data, not folded** (one occurrence each, per the rule): fixture
+defaults neutering assertions (resolved by 05g); partially-transcribed spec
+quotes; piping gates through `tail`; a refinement built on a harness-blocked
+command.
 
-The one test that gets it right (`background_swap_discards_on_new_turn`) routes
-through `try_snapshot`, and is quoted in the spec as the worked example.
+**One caveat:** this is *daemoneye's* copy of `WORKFLOW.md`. The plugin embeds
+its own template, so these folds do not propagate to other rexyMCP projects
+until someone ports them there — out of scope from inside a project session.
 
-**The hand-built snapshots stay.** They exist so a test can create a
-`turn_count`/`msg_len` mismatch that `try_snapshot` cannot produce. The fix is to
-set the flag explicitly per-test, mirroring what `try_snapshot` would have done —
-**not** to change the fixture default, which would silently break other tests
-that rely on it.
+### The folds paid for themselves within the hour
 
-## The deliverable is the mutation table, not the green suite
+Drafting 05h immediately afterwards, the new rules caught two errors before
+dispatch:
 
-A green `cargo test` proves nothing here: the tests were green before, and three
-were decorative. Task 4 requires deleting each of the four production clear lines
-one at a time, recording which test fails and with what message, restoring, and
-quoting the fail/pass pair in a four-row table.
+- The import rule made me check which files lose `UnpoisonExt`. **Ten do; one
+  (`executor/mod.rs`) must keep it.** Without that check the phase would have
+  deleted an import that three surviving calls depend on.
+- The satisfiable-criteria rule made me re-read my own census criterion, which
+  demanded `{'unwrap': 0, 'unwrap_or_log': 0, 'other': 0}`. **The accessor's own
+  body is an acquisition**, so zero was impossible. Corrected to `'other': 1`.
 
-**If any site's mutation does not make a test fail, the phase is not done.** That
-is the project rule from 04g, applied to the phase that motivated it: a claim
-about what a test guards is admissible only when demonstrated by mutation.
+## 05h — the fifth thread, which needed a phase rather than a fold
 
-## An inverted test-count criterion
+Thread 4 (Lock/HOME test hygiene) was never an architect-discipline problem. It
+is a codebase defect, and 05g's mutation runs measured its blast radius exactly:
 
-Every phase in this milestone has said "**915**, and any other number means scope
-crept." 05g says **916, not 915** — it adds exactly one test, for the stale branch
-that nothing reaches today. 915 now means task 3 was skipped.
+| Mutation | Target test holds `TestHome`? | Failures |
+|---|---|---|
+| `background.rs:119` | no | **1** |
+| the other three | yes | **48** |
 
-Two further criteria worth noting, both chosen to be self-checking:
+`TEST_HOME_LOCK` is a `std::sync::Mutex`; a test that panics while holding it
+poisons it, and **41 of its 62 acquisition sites use `.lock().unwrap()`**, so
+every later HOME-dependent test panics too. One real failure, forty-seven
+fictional ones.
 
-- `grep -c "compaction_in_flight = false"` must return **4**, down from 5, **and
-  all four must be production**. No test may set the flag `false` any more — that
-  is the fixture trap being closed, expressed as a count.
-- `git diff` must touch **no line outside `mod tests`**. Task 4 deletes production
-  lines temporarily; this criterion is what catches a mutation left in place.
+**The codebase already discovered the fix twice and applied it inconsistently** —
+12 sites use `unwrap_or_log`, 9 use `unwrap_or_else(PoisonError::into_inner)`,
+41 use `unwrap()`. That is a convention nobody can enforce: the same shape this
+milestone solved for the session store with `with_sessions`, and 05h applies the
+same remedy — one accessor, every caller through it.
 
-## Still open for the PE — seven threads, two of them trends
+**The accessor must not be `#[cfg(test)]`** — `tests/integration.rs` holds 11 of
+the 62 sites and is a separate crate. `lib.rs`'s existing doc comment says so
+explicitly, which is why it is quoted in the spec.
 
-1. **Count criteria (4th occurrence, 12 clean confirmations).**
-2. **Specs asserting test coverage (3rd occurrence, 11 clean confirmations).**
-3. **Fixture defaults neutering assertions (1st, from 04f).** **05g resolves it** —
-   and the resolution is per-test explicitness, not a fixture change.
-4. **Lock/HOME test hygiene (3 deep).** Still unassigned; 05g explicitly leaves it.
-5. **Partially-transcribed spec quotes (1st, from 05a).**
-6. **Self-contradicting specs — 2nd occurrence, TREND.** **Proposed fold:** before
-   dispatch, re-read every acceptance criterion against the spec body and confirm
-   the spec does not instruct the executor to violate it.
-7. **Build-vs-clippy disagreement on test-module imports — 2nd occurrence, TREND.**
-   **Proposed fold:** a phase that converts every use of a trait must state what
-   happens to its import, and must never assert an import count without checking
-   whether its own edits exhaust that trait's uses.
+**The end-to-end verification is the measurement itself:** insert a `panic!`
+probe in a HOME-holding test, count failures before (many) and after (1), remove
+the probe. A green suite cannot demonstrate this — it was green before.
 
-An eighth, from 05c: **piping gate commands through `tail` masks the exit
-status**. Every phase doc since says to run gates bare.
+## Still open — four threads, all single occurrences
 
-**All await your sign-off.** Threads 6 and 7 account for both `hard_fail`s here.
+3. **Fixture defaults neutering assertions** — resolved by 05g; held as data.
+5. **Partially-transcribed spec quotes** (05a).
+8. **Piping gate commands through `tail` masks the exit status** (05c). Every
+   phase doc since says to run gates bare; it is an executor-contract concern
+   rather than one for these docs.
+9. **A refinement that depends on a harness-blocked command is not a refinement**
+   (05g — `git checkout --` was blocked by the shell guard). Folded *into* thread
+   6's section as a closing sentence rather than as its own rule.
 
-## After 05g
+Per the rule, none of these changes the docs yet. Revisit at milestone close.
 
-**06** (tmux-call-hardening — mechanism B: make the `tmux::` calls themselves
+## After 05h
+
+**06** (tmux-call-hardening — mechanism B: the `tmux::` calls themselves
 non-blocking and timeout-bounded) → **07** (stall-instrumentation), plus the
-drafted **08–11** instance-hardening set. Five exit criteria remain open.
+drafted **08–11** instance-hardening set. Five exit criteria remain open;
+criterion 3 was ticked at 05f.
 
 **Scoping note for 06:** 05f moved the tmux calls *out of* critical sections; 06
-changes *how they run*. A wedged tmux server still blocks the calling task today —
-it just no longer takes the whole daemon with it.
+changes *how they run*. A wedged tmux server still blocks the calling task today.
 
 ---
 

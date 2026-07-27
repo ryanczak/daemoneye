@@ -750,3 +750,101 @@ language, inform the user with a resolution plan before shipping a feature that
 would only degrade; (4) pin the missing-binary runtime behavior in the phase doc
 as a named advisory, per the rule above. Record the feature's toolchain
 dependencies in the phase doc (Pre-flight or a "Toolchain dependencies" line).
+
+### Run every count criterion; never derive it
+
+A phase doc that pins a count (`grep -c … returns 4`) is making a claim about the
+tree. **Run the command and paste its answer. Never compute the number by
+reasoning about the code.** Derived counts are wrong often enough that the
+practice of running them has caught an error in roughly a third of the phases
+that used it — while the phases whose counts were reasoned out produced four
+separate miscounts, one of which reported success against an unmet goal.
+
+Two corollaries, both learned the hard way:
+
+- **Text-based greps count prose.** A doc comment, an assertion message, or a
+  phrase inside the spec you are writing will match. Four separate criteria in
+  this project were off by one for exactly this reason — including one where the
+  spec instructed the executor to write a comment that then broke the spec's own
+  count. When a count comes back higher than expected, look for prose before
+  assuming code.
+- **The instrument can be blind.** `grep -c "sessions\.lock()"` cannot see a
+  multi-line split, and it cannot see the same call on a differently-named
+  variable. Both blind spots reported clean while real sites remained. Before
+  pinning a criterion, ask what the instrument *cannot* see; where the type
+  system can enforce the property instead, prefer that and retire the grep.
+
+*(Folded 2026-07-27 after four miscounts and two blind instruments across M5.)*
+
+### Coverage claims are inadmissible without mutation proof
+
+**Never write "test X guards line Y" in a spec, a review, or an Update Log unless
+the claim has been demonstrated by mutation** — break the line, watch that test
+fail, restore it, watch it pass, and quote the pair.
+
+This project produced three false coverage claims before the rule existed. All
+three were plausible, all three were wrong, and one took a mutation at review to
+disprove. The mechanism is usually a **fixture default**: a shared `make_*`
+helper that initialises a field to the value the assertion checks for makes every
+assertion on that field tautological, and nothing in the gate set can see it.
+
+Two rules follow:
+
+- **A spec must not name the discriminating test.** Naming it plants the
+  conclusion; the executor then reports what the spec suggested rather than what
+  it observed. Require the demonstration instead.
+- **"The tests pass" is admissible. "The tests would catch a regression here" is
+  not** — unless the mutation pair is quoted alongside it.
+
+When reviewing a phase whose deliverable *is* coverage, **re-run the mutations
+independently.** A claimed mutation check is not one.
+
+*(Folded 2026-07-27 after three false coverage claims and one confirmed
+fixture-default trap.)*
+
+### Every acceptance criterion must be satisfiable, and its mechanics pinned
+
+Both `NoProgressStall` hard-fails in M5 were caused by a criterion the executor
+could not satisfy or could not verify — not by an implementation it could not
+write. In each case the executor did the work correctly and then burned sixty
+read-only turns fighting the criterion.
+
+Before dispatch, **re-read every acceptance criterion against the body of your own
+spec** and confirm the spec does not instruct the executor to violate it. The two
+failures:
+
+- **Contradiction.** A criterion required an import count to stay at 1 while the
+  spec's own tasks converted the only things that used it. Green was impossible.
+- **Under-specification.** A criterion said "`git diff` touches no line outside
+  `mod tests`" without naming a baseline — but the executor commits as it works,
+  so a bare `git diff` said nothing about committed work.
+
+So: **if a criterion asks the executor to prove a property of its own diff, pin
+the baseline commit and the exact command.** And if the criterion depends on a
+particular mechanism (restore this file, compare against that commit), **name the
+mechanism and confirm the harness permits it** — a refinement built around a
+command the shell guard blocks is not a refinement. That one cost a run even after
+the diagnosis was correct.
+
+*(Folded 2026-07-27 after two hard-fails and one pre-dispatch catch.)*
+
+### A phase that exhausts a trait's uses must say what happens to its import
+
+When a phase converts *every* call site of a trait method, the trait's import
+becomes unused — and **`cargo build` and `cargo clippy --all-targets` disagree
+about whether that matters.** For a test-module import, build reports zero
+warnings while clippy errors. Two hard-fails in this project trace to that
+disagreement.
+
+**Never assert an import count without first checking whether the phase's own
+edits exhaust that trait's uses.** Count the remaining uses *after* the planned
+conversions, not before. If the count reaches zero, authorise the deletion
+explicitly; if it does not, say which surviving uses keep it alive and where they
+are, so the executor does not delete it on the "last five phases ended in a
+deletion" prior.
+
+**Treat clippy as authoritative for import liveness**, and run gates bare — a
+command piped through `tail` exits with `tail`'s status, so a failing gate reads
+as passing.
+
+*(Folded 2026-07-27 after two hard-fails on the same disagreement.)*
