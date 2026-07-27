@@ -1,7 +1,7 @@
 # Phase 06b: Get `respawn.rs`'s tmux Calls Off the Async Runtime
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a (the `off_runtime` adapter) — `done`
 **Estimated diff:** ~110 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -480,3 +480,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** eebbd32c1d14092c2c7cb1a855b2ef8e368b1b33
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (60 turns — the fastest phase of the milestone)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. One `src/` file changed; `run.rs` still at 23
+  `off_runtime` lines and `foreground.rs` at 27 `tmux::` lines, both untouched.
+- **Calibration:** one recurring inaccuracy in the executor's reasoning checks —
+  now a 2nd occurrence, see below. No code defect.
+
+Gates re-run bare with exit codes captured: fmt 0, build 0 (zero warnings),
+clippy 0, test 0 — **916** lib-unit and **27** integration tests, unchanged.
+
+**The span-matching check reports `UNWRAPPED: 0`** across **12** `off_runtime`
+call spans (11 sites plus the duplicated `stop-pipe-pane` in the `send_keys`
+timeout arm). That script — written for this phase after 06a's line heuristic
+produced seven false positives — was validated against the pre-phase tree, where
+it listed exactly the 11 sites. It is the durable form and 06c–06e should reuse it.
+
+### The three things no gate could show
+
+1. **`pipe_log_path` was correctly left alone.** Verified by span-matching that
+   line 98 sits **outside** every `off_runtime` closure. It is a pure path builder
+   (`pane.rs:244` — trims a `%`, joins a filename); wrapping it would have added a
+   thread hop and a spurious timeout log to a string concatenation. The doc
+   comment at `:23` is likewise untouched.
+2. **A `respawn-pane` timeout is a failure, not a success.**
+   `.and_then(|r| r.ok()).map(|s| s.success()).unwrap_or(false)` makes both a
+   tmux error and a timeout yield `respawn_ok = false`, so the existing early
+   return fires. Had a timeout mapped to success, the daemon would have sent a
+   command into a shell that was never respawned — the one silent-failure risk in
+   this phase.
+3. **Cleanup survives on the timeout path.** The `send_keys` `None` arm stops
+   pipe-pane when `pipe_log.is_some()`, exactly as its `Err` arm does, so a wedged
+   tmux cannot leak a log writer.
+
+No new `unwrap`/`expect`/`panic!`/`unsafe`/`TODO`/`println!`.
+
+### ⚠ Calibration — the executor's early-return reasoning check was wrong again
+
+Its check #2 states:
+
+> Three sites return on failure — `respawn-pane` (41), `send_keys` (108), and
+> **both `kill_job_window` calls** (188, 285). All also return on timeout.
+
+Two errors: it says "three" and lists four, and **the `kill_job_window` sites do
+not return in either arm** — they log and continue, then and now. The real set is
+**two**: `respawn-pane` and `send_keys`.
+
+**The code is correct; the claim about it is not.** This is the **second
+consecutive phase** with this exact inaccuracy — 06a claimed three early returns
+where there were two, adding `rename_window`. Two occurrences makes it a trend
+worth naming, and the shape is specific: *the executor over-counts early-return
+sites in its reasoning checks*, apparently answering from the spec's framing
+rather than from the converted code.
+
+**Implication for how I write reasoning checks**, not for the executor's work:
+asking "name every site that returns" invites a plausible list. Asking for the
+**line number and the quoted `None` arm** for each would make a post-hoc answer
+much harder to produce. That is the refinement to carry into 06c–06e — the
+reasoning check should demand evidence, the same way the coverage rule demands
+mutation.
