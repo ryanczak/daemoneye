@@ -1,10 +1,96 @@
 # NEXT
 
-**Active phase: M5 phase-06d — tmux-off-runtime-foreground-2 (slice 2)**
+**Active phase: M5 phase-06e — tmux-off-runtime-foreground-3 (slice 3)**
 (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06d-tmux-off-runtime-foreground-2.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06e-tmux-off-runtime-foreground-3.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06d-tmux-off-runtime-foreground-2`.
+Dispatch with `/rexymcp:dispatch phase-06e-tmux-off-runtime-foreground-3`.
+
+## 06d confirmed the re-split — three clean slices now
+
+06c landed 10 sites in 121 turns, 06d 10 more in **95 turns,
+`approved_first_try`, zero bounces**, after the 29-at-once attempt stalled at 5
+in 124. 06e takes the last **9** and finishes the file.
+
+**Finish condition is `UNWRAPPED: 2`** — the two `Drop` sites, which are
+structurally unconvertible (`Drop::drop` cannot be `async`) and bounded by stage
+A rather than by any 06x slice.
+
+## The headline hazard is a *third* return shape
+
+Each slice has had one shape that will not compile if the neighbouring site's
+form is copied. 06d's was `unhighlight_pane` returning `()`. 06e's is
+`read_pane_exit_status` returning **`Option<i32>`** — `.and_then(|r| r.ok())`
+fails because `Option` has no `.ok()`. The collapse is `.flatten()`.
+
+So the spec carries an explicit four-row table (`Result` → `.ok()`, `Option` →
+`.flatten()`, `bool` → `.unwrap_or(false)`, `()` → discard) and names shape
+confusion as the most likely way to lose the run — this is the first slice where
+**three different collapses appear within nine sites**.
+
+**The worked example already exists in-tree and is exact.** `run.rs:307` and
+`respawn.rs:171` convert `pane_dead_status`, which is `Option<i32>` — the
+identical signature — with `.flatten()`. Quoted verbatim rather than referenced.
+
+## Two traps where the *correct* code looks wrong
+
+Both are cases where an executor "fixing" what it sees would introduce a defect
+that no gate catches:
+
+1. **`pane_exists` sits under a `!`.** `.unwrap_or(false)` still applies — a
+   timeout then refuses the retry with the existing error rather than respawning
+   into an unconfirmed pane. `.unwrap_or(true)` reads more natural and is wrong.
+   The spec spells out both branches.
+2. **One `pane_pid` site tests `!=`, not `==`.** A timeout → `0` → `saw_child =
+   true`. That is exactly what an error does there today, so preserving
+   `.unwrap_or(0)` is behaviour-preserving; changing the sentinel is a separate
+   decision and is out of scope.
+
+## The site-not-line rule earns its keep again
+
+06e's `capture_pane` site is a **33-line `match` with three arms**, and
+converting it means rewriting every arm pattern from `Ok`/`Err` to `Some`/`None`
+while leaving all three bodies untouched. Under a line-based boundary that would
+read as scope creep; under the site rule it is simply the site. The spec pins the
+guard's position on the first arm and the fallback string's bytes, because
+swapping the arms would route every capture down the interactive branch and no
+test would notice.
+
+## Counting discipline held
+
+Every number in 06e's Pre-flight and Acceptance criteria was produced by running
+the exact command written beside it (`off_runtime` 20, `flatten()` 0, 916/27
+tests, `UNWRAPPED` 11 → 2). Post-state values that cannot be run in advance are
+written as **floors with the arithmetic shown**, not as invented identities —
+the shape 06d used successfully.
+
+That makes **six** clean applications against five counting errors. The proposed
+absolute is unchanged and still awaits sign-off:
+
+> **A phase doc may not contain a number that was not produced by the exact
+> command written beside it.**
+
+## Still open — four single-occurrence threads
+
+3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
+8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
+
+Plus the fold refinements: import liveness is **per import scope**; a multi-line
+census obliges **every** criterion in that phase; a source-parsing criterion must
+be validated against **the shape the phase will produce**; reasoning checks should
+**demand quoted code**; and **phase size scales with sites-per-file-length**, not
+sites alone — 9–16 sites succeed, 29 in a 1228-line file stalled at 5.
+
+## After 06e
+
+`foreground.rs` is finished. **06f–06h** (`executor/knowledge/pane.rs` +
+`file_ops/` (17), `daemon/` core, `cli/`) → **stage A** (harden the sync helpers;
+also what bounds the two `Drop` sites) → **07** (stall-instrumentation), plus the
+drafted **08–11** set. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06d dispatch note
 
 ## The re-split is working
 
@@ -50,32 +136,7 @@ slice.
 
 The first draft pinned `grep -c "off_runtime" foreground.rs` at **24**; it is
 **10**. I wrote the number instead of running the command — the fifth instance in
-this phase family and the reason the proposed fold is worded as an absolute:
-
-> **A phase doc may not contain a number that was not produced by the exact
-> command written beside it.**
-
-Five occurrences is well past the "three is a fix" bar. Worth folding at milestone
-close if not sooner.
-
-## Still open — four single-occurrence threads
-
-3. Fixture defaults (resolved by 05g). 5. Partially-transcribed spec quotes.
-8. Piping gates through `tail`. 9. A refinement built on a harness-blocked command.
-
-Plus the fold refinements: import liveness is **per import scope**; a multi-line
-census obliges **every** criterion in that phase; a source-parsing criterion must
-be validated against **the shape the phase will produce**; reasoning checks should
-**demand quoted code**; and **phase size scales with sites-per-file-length**, not
-sites alone — 10–16 sites succeed, 29 in a 1228-line file stalled at 5.
-
-## After 06d
-
-**06e** (`foreground.rs` slice 3, 9 sites) → **06f–06h**
-(`executor/knowledge/pane.rs` + `file_ops/`, `daemon/` core, `cli/`) → **stage A**
-(harden the sync helpers; also what bounds the two `Drop` sites) → **07**
-(stall-instrumentation), plus the drafted **08–11** set. Four exit criteria remain
-open.
+this phase family and the reason the proposed fold is worded as an absolute.
 
 ---
 
