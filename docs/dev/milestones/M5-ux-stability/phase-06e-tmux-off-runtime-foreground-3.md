@@ -1,7 +1,7 @@
 # Phase 06e: `foreground.rs` tmux Calls Off the Runtime — Slice 3 (exit status & cleanup)
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06d (slice 2) — `done`
 **Estimated diff:** ~100 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -524,3 +524,70 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9c052999a241a305b23c660bcea0d7c033e128a4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (59 turns)
+- **Scope deviations:** none
+- **Calibration:** one non-blocking note (see bottom)
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing the edited file — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+**`foreground.rs` is finished.** The span check reports `UNWRAPPED: 2` and both
+lines are `Command::new("tmux")` inside `impl Drop for FgHookGuard` (`:74`,
+`:79`) — nothing else remains. `off_runtime` 29, `flatten()` 2,
+`block_on`/`futures::executor`/`spawn_blocking` all 0, exactly one `src/` file in
+the code commit, and the `Drop` block diffs clean against the parent.
+
+**The three-shape hazard was navigated correctly at every site.** Mapping each
+`off_runtime` call to its collapse:
+
+| Site | Helper returns | Collapse | Correct |
+|---|---|---|---|
+| `:833`, `:867` | `Option<i32>` | `.flatten()` | ✅ |
+| `:844`, `:881`, `:890` | `Result<u32>` | `.and_then(\|r\| r.ok()).unwrap_or(0)` | ✅ |
+| `:906` | `()` | discarded, no collapse | ✅ |
+| `:912` | `Result<String>` | `.and_then(\|r\| r.ok())` | ✅ |
+| `:951` | `Result<()>` | discarded | ✅ |
+| `:1038` | `bool` | `.unwrap_or(false)` | ✅ |
+
+Every `and_then(|r| r.ok())` in the file sits on `capture_pane`,
+`pane_current_command` or `pane_pid`. None on `read_pane_exit_status`,
+`unhighlight_pane` or `pane_exists` — the three that would not compile with one.
+
+Verified by reading, since counts cannot show these:
+
+- **Both traps where the correct code looks wrong were left correct.**
+  `pane_exists` is `.unwrap_or(false)` under its `!`, so a timeout refuses the
+  retry rather than respawning into an unconfirmed pane. The `:844` `pane_pid`
+  still tests `!=`, not `==`, and kept `.unwrap_or(0)` — the same thing an error
+  does there today. Neither was "improved".
+- **The 33-line `match` was rewritten, not mangled.** Arms are
+  `Some(snap) if is_interactive` (`:916`) → `Some(snap)` (`:936`) → `None`
+  (`:946`) — original order, guard still on the first arm, all three bodies
+  untouched. Swapping the first two would route every capture down the
+  interactive branch silently; it did not happen. The fallback string is
+  byte-identical by literal `grep -cF`.
+- **The `read_pane_exit_status` hoists preserved statement order.** Both moved
+  the call out of the `if let` scrutinee into a preceding `let`, leaving the
+  `if let Some(code) { exit_status = …; break; }` shape and its position
+  relative to the deadline check and the `sleep` unchanged. A timeout reads as
+  "latch not set yet" and the loop keeps polling to its deadline.
+- **`unhighlight_pane` still precedes the capture** and still runs on the same
+  path, so no exit route leaves the pane tinted.
+
+Test plan honoured: no new tests, no coverage claim. All three required
+reasoning checks were answered and all three hold against the tree.
+
+**Calibration note (non-blocking, first occurrence in an executor summary).**
+The completion summary says "the four `pane_pid` calls"; this phase converted
+**three** (`:844`, `:881`, `:890`) — the other two `pane_pid` sites in the file
+came from 06c and 06d. The code is right and every criterion passed; only the
+prose count is wrong. Worth noting because it is the same failure mode as the
+architect-side counting thread — a number written rather than run — now
+appearing on the executor side. One occurrence; no action.

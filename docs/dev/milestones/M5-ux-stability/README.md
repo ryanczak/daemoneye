@@ -93,7 +93,7 @@ take the socket.
 | 06b | tmux-off-runtime-respawn ([phase-06b-tmux-off-runtime-respawn.md](phase-06b-tmux-off-runtime-respawn.md)) — `respawn.rs`, 11 sites (2 `tmux::` hits are non-sites) | done (approved_first_try) |
 | 06c | tmux-off-runtime-foreground ([phase-06c-tmux-off-runtime-foreground.md](phase-06c-tmux-off-runtime-foreground.md)) — `foreground.rs` **slice 1**, lines ≤460, 10 sites. Re-split after a `hard_fail` on 29-at-once | done (approved_after_1) |
 | 06d | tmux-off-runtime-foreground-2 ([phase-06d-tmux-off-runtime-foreground-2.md](phase-06d-tmux-off-runtime-foreground-2.md)) — `foreground.rs` **slice 2**, poll & capture, 10 sites | done (approved_first_try) |
-| 06e | tmux-off-runtime-foreground-3 ([phase-06e-tmux-off-runtime-foreground-3.md](phase-06e-tmux-off-runtime-foreground-3.md)) — `foreground.rs` **slice 3**, exit status & cleanup, 9 sites. Finishes the file | review      |
+| 06e | tmux-off-runtime-foreground-3 ([phase-06e-tmux-off-runtime-foreground-3.md](phase-06e-tmux-off-runtime-foreground-3.md)) — `foreground.rs` **slice 3**, exit status & cleanup, 9 sites. Finishes the file | done (approved_first_try) |
 | 06f–06h | tmux-off-runtime tail — `executor/knowledge/pane.rs` + `file_ops/` (17), `daemon/` core, `cli/`. Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
