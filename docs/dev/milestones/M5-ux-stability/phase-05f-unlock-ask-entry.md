@@ -1,7 +1,7 @@
 # Phase 05f: Get the Last Blocking Work Out of `handle_ask`'s Critical Section
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-05e (watch_pane) — `done`
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -593,3 +593,81 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** a6575c77c917d56bd2da8b97a9e9c120b38b3d0c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (117 turns)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. One `src/` file changed; both hoists exactly as
+  specified. One **correct adaptation**: the unlocked phase destructures
+  `session_id.as_deref()` / `pipe_candidate.as_deref()` because
+  `tmux::pane_exists` and `start_pipe_pane` take `&str`. My snippet used owned
+  bindings; the executor adapted to the real signatures rather than transcribing.
+- **Calibration:** none new.
+
+Gates re-run bare with exit codes captured: fmt 0, build 0 (zero warnings),
+clippy 0, test 0 with **915** tests unchanged. Every count criterion exact —
+`with_sessions` 15, `read_session_meta` 1, `tmux::pane_exists` 1,
+`start_pipe_pane` 1, `R1: ` 4, sentinel comments 3, `pipe_source_pane` 5,
+`UnpoisonExt` 0, `unwrap_or_log` 2.
+
+### 🎯 `audit_closures.py` prints nothing
+
+That empty output is the phase's finish condition and the milestone's third exit
+criterion. **No `SessionStore` critical section anywhere in the daemon performs
+blocking work.**
+
+### Sentinel completeness — the phase's one silent-failure risk
+
+Enumerated every path through the restructured R1 code and confirmed each ends
+where it did before:
+
+| Path | `pipe_source_pane` after | Same as before? |
+|---|---|---|
+| already `Some(…)` | untouched | ✓ |
+| `client_pane` is `None` | stays `None` — retries next turn | ✓ **pre-existing**, not introduced |
+| same-as-chat-pane | `Some("")` set **under the lock** (no probe needed) | ✓ |
+| `pane_exists` → `start_pipe_pane` `Ok` | `Some(pane_id)` via write-back | ✓ |
+| `start_pipe_pane` `Err` (TOCTOU) | `Some("")` via write-back | ✓ |
+| `pane_exists` false | `Some("")` via write-back | ✓ |
+
+Every path that previously set the sentinel still sets it, so the probe still
+happens **once per session**. The one path leaving it `None` — `client_pane`
+absent — behaved identically before this phase.
+
+The residual case is the write-back's `get_mut` missing because the entry was
+evicted while the subprocesses ran; then the flag stays `None`. Harmless: the
+session it would have applied to no longer exists.
+
+**Also verified by reading:**
+
+- **Hoist A's conditionality.** `read_session_meta` runs only when the
+  `contains_key` probe says the session is not resident. Running it
+  unconditionally would add a file read to **every turn** — a per-turn regression
+  in exchange for removing a first-turn one.
+- **The write-back re-checks `get_mut`.**
+- **All three `log::debug!` messages survive byte-identical** by literal
+  `grep -cF`, em-dashes included — one inside the closure, two outside.
+- **The re-entrancy enforcement is untouched**: `SessionsLockDepth::enter()` is
+  still `with_sessions`'s first statement and
+  `with_sessions_rejects_reentrant_call` still passes.
+- **The four pre-existing tuple elements keep their meaning and order**;
+  `pipe_candidate` is appended fifth.
+
+### Milestone exit criterion 3 — now ticked
+
+> No `SessionStore` critical section performs blocking work: no file I/O, no
+> subprocess spawn, no `.await`, **and no re-entrant re-acquisition** while the
+> guard is held. Enforced by a test or lint, not only by review.
+
+Every clause is now satisfied, and by construction rather than by review:
+
+| Clause | How it is enforced |
+|---|---|
+| no file I/O, no subprocess spawn | the closure audit, clean across **115** `with_sessions` call sites |
+| no `.await` | structurally impossible — `with_sessions` takes a sync `FnOnce` |
+| no re-entrant re-acquisition | `SessionsLockDepth` runtime assertion + two tests |
+| **enforced by a test or lint** | the **newtype** (05d) — `.lock()` outside `session.rs` is a compile error, which is stronger than the lint the criterion asked for |
+
+The lock work of this milestone is complete.

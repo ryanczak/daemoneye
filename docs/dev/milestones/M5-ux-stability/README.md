@@ -28,7 +28,7 @@ take the socket.
       same `commit_panel()` element used for tool output, before the response
       streams. Scrolling back through a finished conversation shows both
       sides.
-- [ ] No `SessionStore` critical section performs blocking work: no file I/O,
+- [x] No `SessionStore` critical section performs blocking work: no file I/O,
       no subprocess spawn, no `.await`, **and no re-entrant re-acquisition**
       while the guard is held. Enforced by a test or lint, not only by review.
       (The re-entrancy clause was added 2026-07-25: the confirmed root cause of
@@ -86,7 +86,7 @@ take the socket.
 | 05c | convert-stragglers-and-tests ([phase-05c-convert-stragglers-and-tests.md](phase-05c-convert-stragglers-and-tests.md)) — `ask.rs` (2, production) + `background.rs` (17, test) + `session.rs` (3, test) = 22 conversions | done (approved_after_1) |
 | 05d | sessionstore-newtype ([phase-05d-sessionstore-newtype.md](phase-05d-sessionstore-newtype.md)) — alias → newtype; 16 construction sites + 16 `Arc::clone` sites; `try_lock` `#[cfg(test)]`-gated | done (approved_first_try) |
 | 05e | unlock-watch-pane ([phase-05e-unlock-watch-pane.md](phase-05e-unlock-watch-pane.md)) — `pane.rs:329`: 2 file writes + a tmux spawn inside a `with_sessions` closure | done (approved_first_try) |
-| 05f | unlock-ask-entry ([phase-05f-unlock-ask-entry.md](phase-05f-unlock-ask-entry.md)) — `ask.rs:97`: hoist `read_session_meta` (file read) + `pane_exists`/`start_pipe_pane` (2 subprocesses) out of the closure. **Last blocking-work site** | review      |
+| 05f | unlock-ask-entry ([phase-05f-unlock-ask-entry.md](phase-05f-unlock-ask-entry.md)) — `ask.rs:97`: hoist `read_session_meta` (file read) + `pane_exists`/`start_pipe_pane` (2 subprocesses) out of the closure. **Last blocking-work site** | done (approved_first_try) |
 | 05g | compaction-coverage-followup — 04f's 3 vacuous `compaction_in_flight` assertions made real, mutation-checked. Independent; any order | todo |
 | 06 | tmux-call-hardening (mechanism B)                                       | todo   |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
