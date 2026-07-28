@@ -77,7 +77,8 @@ pub async fn spawn_ghost(
                     "[Ghost Shell Started] AI-requested ghost shell started for runbook: {} (job_id: {})",
                     rb_name, job_id
                 ),
-            );
+            )
+            .await;
             let tool_result = format!(
                 "Ghost shell started (session: {}, job_id: {}, agent: {}). It will run autonomously in the background \
                  and inject [Ghost Shell Completed] or [Ghost Shell Failed] events when done. \

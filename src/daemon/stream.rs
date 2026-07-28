@@ -1060,7 +1060,8 @@ where
                                                     "[Ghost Shell Completed] AI-requested ghost shell finished for runbook: {} — session log: {}",
                                                     ghost_rb2, session_log
                                                 ),
-                                            );
+                                            )
+                                            .await;
                                         }
                                         Err(e) => {
                                             log::error!(
@@ -1075,7 +1076,8 @@ where
                                                     "[Ghost Shell Failed] AI-requested ghost shell error for runbook: {} — {} — session log: {}",
                                                     ghost_rb2, e, session_log
                                                 ),
-                                            );
+                                            )
+                                            .await;
                                         }
                                     }
                                 });

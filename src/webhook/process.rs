@@ -179,7 +179,7 @@ pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
 ///
 /// The `content` string is stored in session history so it shows up in the
 /// N15 catch-up brief when the user re-attaches after being away.
-pub(crate) fn inject_ghost_event(sessions: &SessionStore, content: &str) {
+pub(crate) async fn inject_ghost_event(sessions: &SessionStore, content: &str) {
     let msg = crate::ai::Message {
         role: "user".to_string(),
         content: content.to_string(),
@@ -190,7 +190,12 @@ pub(crate) fn inject_ghost_event(sessions: &SessionStore, content: &str) {
     inject_into_sessions(sessions, &msg);
     // One-liner for the tmux display-message overlay (strip newlines).
     let one_liner = content.lines().next().unwrap_or(content);
-    notify_chat_panes(sessions, one_liner);
+    let s_ncp = sessions.clone();
+    let line = one_liner.to_string();
+    let _ = crate::tmux::off_runtime("notify-chat-panes", move || {
+        notify_chat_panes(&s_ncp, &line)
+    })
+    .await;
     // Always mirror ghost lifecycle events to events.jsonl for troubleshooting.
     crate::daemon::utils::log_event("ghost_lifecycle", serde_json::json!({ "content": content }));
 }
@@ -386,7 +391,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                         "[Ghost Shell Skipped] Concurrency limit reached for alert: {}",
                         alert.alert_name
                     ),
-                );
+                )
+                .await;
             } else {
                 log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
                 let sessions = state.sessions.clone();
@@ -418,7 +424,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                                     "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
                                     rb_clone.name, session_log
                                 ),
-                            );
+                            )
+                            .await;
 
                             match crate::daemon::ghost::trigger_ghost_turn(
                                 &sid,
@@ -436,7 +443,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                                             "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
                                             rb_clone.name, session_log
                                         ),
-                                    );
+                                    )
+                                    .await;
                                 }
                                 Err(e) => {
                                     log::error!("Ghost Turn: failed for {}: {}", sid, e);
@@ -447,7 +455,8 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                                             "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
                                             rb_clone.name, e, session_log
                                         ),
-                                    );
+                                    )
+                                    .await;
                                 }
                             }
                         }

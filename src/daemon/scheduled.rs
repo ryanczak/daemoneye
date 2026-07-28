@@ -49,7 +49,8 @@ pub async fn run_scheduled_job(
                     "[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached",
                     job.name
                 ),
-            );
+            )
+            .await;
             store.mark_done(
                 &job.id,
                 false,
@@ -96,7 +97,8 @@ pub async fn run_scheduled_job(
                                 "[Ghost Shell Failed] Scheduled job '{}' could not start: {}",
                                 job.name, e
                             ),
-                        );
+                        )
+                        .await;
                         store.mark_done(&job.id, false, Some(msg));
                     }
                     Ok(sid) => {
@@ -109,7 +111,8 @@ pub async fn run_scheduled_job(
                                 "[Ghost Shell Started] Scheduled job '{}' started autonomous session — session log: {}",
                                 job.name, session_log
                             ),
-                        );
+                        )
+                        .await;
                         let result = trigger_ghost_turn(
                             &sid,
                             &sessions,
@@ -126,7 +129,8 @@ pub async fn run_scheduled_job(
                                         "[Ghost Shell Completed] Scheduled job '{}' finished — session log: {}",
                                         job.name, session_log
                                     ),
-                                );
+                                )
+                                .await;
                                 store.mark_done(&job.id, true, None);
                             }
                             Err(e) => {
@@ -137,7 +141,8 @@ pub async fn run_scheduled_job(
                                         "[Ghost Shell Failed] Scheduled job '{}' error: {} — session log: {}",
                                         job.name, e, session_log
                                     ),
-                                );
+                                )
+                                .await;
                                 store.mark_done(
                                     &job.id,
                                     false,

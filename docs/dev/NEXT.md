@@ -1,10 +1,89 @@
 # NEXT
 
-**Active phase: M5 phase-06q — unlock-list-panes**
+**Active phase: M5 phase-06r — async-inject-ghost-event**
 (`todo`, drafted 2026-07-28).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06q-unlock-list-panes.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06r-async-inject-ghost-event.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06q-unlock-list-panes`.
+Dispatch with `/rexymcp:dispatch phase-06r-async-inject-ghost-event`.
+
+## Twelve phases, no bounces — and 06r is the last mechanism-B site
+
+06i (5) → 06m (7) → 06p (2) → 06n (4 + two type changes) → 06q (the cache-lock
+double defect), all `approved_first_try`. After 06r, **every tmux subprocess
+reachable from the daemon's async contexts is off the runtime**, which closes the
+milestone's fourth exit criterion.
+
+## The cascade the README feared cannot actually strike out
+
+06r was split out of 06n as "a 13-site ordered cascade, far past the ≤3-site
+blast radius `WORKFLOW.md` bounds a mutation to." Checking it changed the
+picture, and the correction matters more than the phase does.
+
+**Adding `async` to the definition produces 0 errors and 12 warnings.** Calling
+an `async fn` without `.await` is an *unused-`Future`* warning, not a type error
+— so `cargo build` keeps succeeding at every intermediate step, and the verifier's
+consecutive-failure limit has nothing to fire on. Only `clippy -D warnings` fails
+until the last site is awaited.
+
+That inverts the usual guidance for this shape. The fold's remedy for an
+unavoidable cascade is a hand-authored leaf-first edit order; here **the compiler
+is the ordered list**, and it stays current as line numbers shift. The spec gives
+the 12 locations for orientation but explicitly tells the executor to work from
+`cargo build`'s warnings instead — and names re-reading files to hunt for call
+sites as the way runs stall.
+
+It also produces an unusually strong completeness criterion:
+
+> `cargo build 2>&1 | grep -c "^warning"` returns **0**
+
+A green build alone proves nothing here, because the failure mode *is* a warning.
+That one grep is what closes the loop.
+
+**Worth carrying to the milestone retrospective:** `WORKFLOW.md`'s multi-site
+guidance treats all mutations as break-the-world, but Rust's async-fn change is a
+*warn*-the-world mutation, which needs the opposite advice. That is a candidate
+refinement, not a fold — one occurrence.
+
+## All 12 sites are already async, and none is in a sync closure
+
+Verified by reading each enclosing function: `maybe_analyze_alert` (4),
+`run_scheduled_job` (5), `run_conversation_loop` (2), `spawn_ghost` (1). The
+`stream.rs` and `process.rs` sites sit in `match … .await { … }` arms — ordinary
+async context, not the synchronous-closure species that forced restructures
+earlier. **So `.await` is legal at every site with no further cascade.**
+
+## The whole change was applied, verified, and reverted
+
+Build, clippy, `fmt --all` and the full 916+27 suite all green, **no test
+edited**, tree reverted clean. `fmt` moves `.await;` onto its own line at the
+multi-line call sites — pinned, since this project has no `format_fix` hook.
+
+The criteria greps were run against the applied tree too (the 06n refinement),
+which confirmed the one that is easiest to get wrong: **`notify_chat_panes(`
+stays at 4**, not 3 or 5 — the phase wraps a call, it does not add or remove one.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`off_runtime` 2→3, the bare
+`notify_chat_panes` call 1→0, `notify_chat_panes(` 4→4, `inject_ghost_event(`
+5/5/2/1 unchanged, warnings 12→0, 916/27). Sixteen clean applications.
+
+## Calibration
+
+The apply-verify-revert fold is at **four consecutive payoffs** and still awaits
+PE sign-off; wording unchanged from 06n's review. New at one occurrence: the
+warn-vs-error cascade distinction above.
+
+## After 06r
+
+**Stage A** (helper timeouts — closes the fifth exit criterion and bounds every
+`Drop` site and all 19 CLI hits) → **07** (stall-instrumentation), plus the
+drafted **08–11** set. Four exit criteria remain open after 06r lands.
+
+---
+
+## Superseded: the 06q dispatch note
 
 ## Eleven phases, no bounces
 
