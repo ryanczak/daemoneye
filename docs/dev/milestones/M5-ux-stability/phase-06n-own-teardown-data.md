@@ -1,7 +1,7 @@
 # Phase 06n: Own the Data So the Teardown Can Cross `spawn_blocking`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06p — `done` (wrap slices 1–3)
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -507,3 +507,84 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b5c44577ab79830e9edad94bebd2a9afdd586d21
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (57 turns)
+- **Scope deviations:** none
+- **Calibration:** one architect-side spec flaw — an acceptance criterion this
+  doc's own Spec made unsatisfiable. See below.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `session.rs` and `helpers.rs` — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at 916 lib + 27
+integration, unchanged).
+
+Every criterion is exact: `off_runtime` **26 / 18 / 3 / 13** against a verified
+25 / 17 / 2 / 12; `BgJobInfo<'…>` **0**; the owned struct declaration **1**;
+`related_knowledge_hints(&body)` **1**; `cleanup_bg_windows` **1** in
+`session.rs` (the surviving wrapper) and **0** in both `hook.rs` and `mod.rs`;
+the `&& !pane_id.is_empty()` sentinel guard **1**; six `src/` files in the code
+commit. No test file was touched.
+
+**The diff is identical to the spec's blocks** — second phase running where
+apply-verify-revert produced a zero-adaptation implementation.
+
+Verified by reading:
+
+- **`run_bg_teardown` is behaviour-identical to the old body.** Same windows, in
+  the same order (the snapshot preserves `bg_windows` iteration order), same
+  `(tmux_session, window_name)` arguments, same sentinel guard, same log text.
+- **The additive shape held.** `cleanup_bg_windows` survives as
+  `run_bg_teardown(self.bg_teardown())`, and — unlike phase 05a's `GcKill` bug —
+  its pre-existing doc comment ("Kill all background windows … Called when the
+  session is evicted") stayed attached to it rather than migrating onto the new
+  struct.
+- **No `#[derive(Clone)]` was added** to `SessionEntry` or `BgWindowInfo`. Zero
+  `derive.*Clone` lines in the added diff, which is the whole point of the owned
+  snapshot.
+- **The locked phase did not move.** `cleanup_pass` still sits above the
+  `for entry in &evicted` loop in `mod.rs`, and both new `.await`s are outside
+  it — the collect-under-lock / act-outside shape phase 05 established after a
+  confirmed production hang.
+- **06q and 06r scope untouched** — no edit to `server/handlers.rs` or
+  `src/webhook/`.
+
+### Calibration — an acceptance criterion contradicted its own Spec (architect error)
+
+The criterion read:
+
+> `grep -c "block_on\|futures::executor\|spawn_blocking"` returns **0** in all
+> six edited files.
+
+But this doc's own Task 3 supplies a doc comment containing the words "cannot
+cross `spawn_blocking`", so `session.rs` necessarily greps **1**:
+
+```
+$ grep -n "block_on\|futures::executor\|spawn_blocking" src/daemon/session.rs
+394:    /// cannot cross `spawn_blocking`. This hands the teardown its data by value
+```
+
+**The criterion was unsatisfiable as literally written, by construction.** This
+is precisely the failure `WORKFLOW.md` § "Derive every spec fact from its source"
+names: "an acceptance criterion that contradicts its own Spec … cannot be met at
+all." The executor caught it, adapted, and **declared it plainly** in its Notes
+for review ("only in a doc comment, not code") — the declare-deviations
+discipline working exactly as intended. No code defect; not bounced.
+
+**The actionable refinement is to the apply-verify-revert practice itself.** The
+whole diff was applied and verified at draft time, but only the four *gates* were
+run against the applied tree — not the doc's own *acceptance greps*. Running
+those too would have caught this in seconds. That is a cheap addition to a
+practice that has now prevented three would-be bounces (06p's private-module
+path, 06n's `&body`, and — had the greps been run — this one).
+
+Counting this, the "spec detail that does not survive contact with the tree"
+family is at **three occurrences** by a generous reading, though by three
+different mechanisms (a path from memory, a type-driven compile error, a
+self-contradicting criterion). That makes it a genuine fold candidate at
+milestone close — the natural landing spot being to promote apply-verify-revert
+*including the criteria greps* into `WORKFLOW.md` alongside § "Run every count
+criterion; never derive it". **No doc change made; this needs PE sign-off.**
