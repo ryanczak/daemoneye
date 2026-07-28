@@ -1,10 +1,97 @@
 # NEXT
 
-**Active phase: M5 phase-06n — own-teardown-data**
+**Active phase: M5 phase-06q — unlock-list-panes**
 (`todo`, drafted 2026-07-28).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06n-own-teardown-data.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06q-unlock-list-panes.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06n-own-teardown-data`.
+Dispatch with `/rexymcp:dispatch phase-06q-unlock-list-panes`.
+
+## Eleven phases, no bounces
+
+06i (5) → 06m (7) → 06p (2) → 06n (4 + two type changes), all
+`approved_first_try`. The wrap set is finished; 06q and 06r are the last two
+mechanism-B sites in the daemon.
+
+## 06q is the milestone's first phase on a lock that is not `SessionStore`
+
+`handle_list_panes` calls `tmux::pane_exists` — **one subprocess per pane** —
+inside a `.filter()` closure **while holding the `cache.panes` read guard**. That
+is mechanism A *and* mechanism B in a single expression, and the A half is on a
+`std::sync::RwLock` in `SessionCache`, not the session store.
+
+The practical consequence for the spec: **`with_sessions` does not apply**, and
+neither do the re-entrancy assertion or the depth counter that every earlier lock
+phase leaned on. The fix is the same *shape* — `cleanup_pass`'s collect-then-act
+— but there is no accessor to route it through, so the doc says so outright and
+forbids reaching for `with_sessions`.
+
+## Three semantics that look like changes and are not
+
+Pinned as reasoning checks, because each would read as a regression to someone
+reviewing the diff cold:
+
+1. **`.map()` moves ahead of the liveness filter.** It is pure — five clones and
+   a comparison — so the resulting `Vec` is identical; only the number of
+   discarded tuples changes.
+2. **A timeout drops the pane from the list.** `pane_exists` already ends with
+   `.unwrap_or(false)`, so `false` on timeout is exactly what the current code
+   does on a failed tmux call. `.unwrap_or(true)` would list panes that may not
+   exist.
+3. **The sort stays after the filter**, once.
+
+## The 06n refinement was applied here, and it immediately paid
+
+06n's review found an acceptance criterion my own Spec had made unsatisfiable,
+because apply-verify-revert ran the *gates* but never the doc's own *criteria
+greps*. This draft ran both. It caught **three** would-be-wrong criteria before
+dispatch:
+
+| I would have pinned | Truth | Why |
+|---|---|---|
+| `.filter(` → 2 | **3** | `handle_status:246` has one out of scope |
+| `cache.panes.read()` → 1 | **2** (unchanged) | `handle_set_pane:136` has its own |
+| `pane_exists` → 1 | **2** | one is the new comment I wrote |
+
+All three would have been unsatisfiable-as-written, the same defect 06n shipped.
+The doc now pins **3** and **2** deliberately, and says why, so an over-eager
+sweep into the neighbouring handlers fails the phase.
+
+It also caught that **`cargo fmt` rewrites the `off_runtime` closure to one
+line** — worth having, since this project has no `format_fix` hook and the
+executor must produce fmt-clean code itself.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against **both** the clean and the applied tree (`off_runtime` 0→1, `pane_exists`
+1→2, `cache.panes.read()` 2→2, `.filter(` 4→3, `sort_by_key` 1→1, the bare filter
+line 1→0, 916/27). Fifteen clean applications.
+
+## Calibration
+
+**The apply-verify-revert fold is now the strongest open candidate**, and this
+draft is its third consecutive payoff (06p's private-module path, 06n's `&body`,
+and 06q's three bad criteria + the fmt rewrite). The proposed wording, for PE
+sign-off at milestone close:
+
+> **Apply the phase's own diff to the tree before dispatch; run the gates *and*
+> the doc's acceptance criteria against it; then revert.** A criterion that
+> cannot be satisfied is as expensive as a fact that is wrong.
+
+Everything else is unchanged: ledger empty at the fold bar, five long-standing
+single-occurrence threads, the seventh and eighth species at one each, and the
+executor's self-authored "started" entry misnaming its own model (now 3× — 06m,
+06p, 06n — but a runtime prompt matter, not a spec one).
+
+## After 06q
+
+**06r** (the `inject_ghost_event` 13-site cascade) → **stage A** (helper
+timeouts — load-bearing for an exit criterion) → **07** (stall-instrumentation),
+plus the drafted **08–11** set. Five exit criteria remain open.
+
+---
+
+## Superseded: the 06n dispatch note
 
 ## Ten phases, no bounces — and the wrap set's easy sites are all done
 

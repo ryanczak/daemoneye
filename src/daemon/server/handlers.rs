@@ -171,9 +171,12 @@ where
             entry.and_then(|e| e.chat_pane.clone()),
         )
     });
-    let panes_snapshot = {
+    // Phase 1 (locked): snapshot the candidates. No blocking work under the
+    // read guard — `pane_exists` spawns a tmux subprocess per pane and used to
+    // run here, holding the cache lock for the whole sweep.
+    let candidates: Vec<(String, String, String, usize, bool)> = {
         let panes = cache.panes.read().unwrap_or_log();
-        let mut entries: Vec<_> = panes
+        panes
             .iter()
             .filter(|(id, _)| chat_pane_id.as_deref() != Some(id.as_str()))
             .filter(|(_, s)| {
@@ -183,7 +186,6 @@ where
                     && !s.window_name.starts_with("de-gs-sj-")
                     && !s.window_name.starts_with("de-gs-ir-")
             })
-            .filter(|(id, _)| crate::tmux::pane_exists(id))
             .map(|(id, s)| {
                 let is_target = current_target.as_deref() == Some(id.as_str());
                 (
@@ -194,10 +196,22 @@ where
                     is_target,
                 )
             })
-            .collect();
-        entries.sort_by_key(|(_, _, win, idx, _)| (win.clone(), *idx));
-        entries
+            .collect()
     };
+
+    // Phase 2 (unlocked): the liveness probe, one bounded tmux call per
+    // candidate, off the runtime.
+    let mut panes_snapshot = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let id = candidate.0.clone();
+        let exists = crate::tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&id))
+            .await
+            .unwrap_or(false);
+        if exists {
+            panes_snapshot.push(candidate);
+        }
+    }
+    panes_snapshot.sort_by_key(|(_, _, win, idx, _)| (win.clone(), *idx));
     send_response_split(
         tx,
         Response::PaneList {
