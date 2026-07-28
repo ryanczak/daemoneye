@@ -137,7 +137,13 @@ pub async fn run_read_file(
         let start = offset_n + 1;
         let end = offset_n + limit_n;
 
-        let (content, is_remote) = if get_pane_remote_host(pane).is_none() {
+        let p = pane.to_string();
+        let is_remote = tmux::off_runtime("pane-remote-host", move || get_pane_remote_host(&p))
+            .await
+            .flatten()
+            .is_none();
+
+        let (content, is_remote) = if is_remote {
             let raw = match local_read_via_buffer(pane, path, start, end, pattern).await {
                 Ok(s) => s,
                 Err(e) => return Ok(ToolCallOutcome::Result(format!("Error: {}", e))),

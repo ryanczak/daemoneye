@@ -1,7 +1,7 @@
 # Phase 06m: Wrap Blocking Sync Functions — Slice 2
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06i — `done` (established wrap-the-caller)
 **Estimated diff:** ~100 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -341,3 +341,8 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-28 03:59 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Action:** Started phase 06m — wrapping 7 call sites across 5 files.

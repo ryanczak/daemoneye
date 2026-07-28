@@ -443,7 +443,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     //      create it with `tmux new-session -d -s <name>` and bail on failure.
     //
     // A tmux session is always required — there is no degraded "no session" mode.
-    let inside_session = detect_session();
+    let inside_session = crate::tmux::off_runtime("detect-session", detect_session)
+        .await
+        .flatten();
     let (initial_session, managed_session): (Option<String>, Option<String>) = if let Some(name) =
         inside_session
     {
@@ -577,7 +579,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // Install per-session hooks if we already know the session.
     if let Some(ref sn) = initial_session {
-        install_session_hooks(sn, &hook_exe_path);
+        let sn = sn.clone();
+        let hp = hook_exe_path.clone();
+        let _ = crate::tmux::off_runtime("install-session-hooks", move || {
+            install_session_hooks(&sn, &hp)
+        })
+        .await;
     }
 
     // Wrap managed_session in an Arc so it can be shared cheaply across

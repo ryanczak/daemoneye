@@ -164,7 +164,12 @@ where
     let hook_exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "daemoneye".to_string());
-    crate::daemon::install_session_hooks(&session_name, &hook_exe);
+    let sn = session_name.clone();
+    let he = hook_exe.clone();
+    let _ = crate::tmux::off_runtime("install-session-hooks", move || {
+        crate::daemon::install_session_hooks(&sn, &he)
+    })
+    .await;
     send_response_split(tx, Response::Ok).await?;
     Ok(())
 }

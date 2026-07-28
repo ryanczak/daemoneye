@@ -6,10 +6,9 @@ use crate::ai::mask_sensitive;
 use crate::daemon::background::{respawn_background_in_pane, run_background_in_window};
 use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe, with_sessions};
 use crate::daemon::utils::{
-    command_has_sudo, extract_command_output, fingerprint_pam_configured, get_pane_remote_host,
-    interactive_destination, is_fingerprint_prompt, is_interactive_command, log_command,
-    normalize_output, shell_escape_arg, sudo_auth_failed, sudo_credentials_cached,
-    wait_for_sudo_prompt_and_inject,
+    command_has_sudo, extract_command_output, fingerprint_pam_configured, interactive_destination,
+    is_fingerprint_prompt, is_interactive_command, log_command, normalize_output, shell_escape_arg,
+    sudo_auth_failed, sudo_credentials_cached, wait_for_sudo_prompt_and_inject,
 };
 use crate::ipc::{Request, Response};
 use crate::tmux;
@@ -308,7 +307,13 @@ where
         .await
         .and_then(|r| r.ok())
         .unwrap_or(0);
-    let is_remote_pane = get_pane_remote_host(target_str).is_some();
+    let t = target_str.to_string();
+    let is_remote_pane = crate::tmux::off_runtime("pane-remote-host", move || {
+        crate::daemon::utils::get_pane_remote_host(&t)
+    })
+    .await
+    .flatten()
+    .is_some();
 
     // § 2.4 remote execution: when the foreground target is a remote (SSH/mosh) pane and
     // the command invokes a daemon-host script, the bare name does not exist on the remote.

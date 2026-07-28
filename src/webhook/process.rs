@@ -127,7 +127,10 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
 
     // 6. Notify chat panes via tmux display-message.
     let first_line = formatted.lines().next().unwrap_or(&formatted).to_string();
-    notify_chat_panes(&state.sessions, &first_line);
+    let s = state.sessions.clone();
+    let line = first_line.clone();
+    let _ =
+        crate::tmux::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line)).await;
 
     // 7. Severity gate: fire notification + optionally trigger AI analysis.
     let threshold_rank = severity_rank(&cfg.severity_threshold);
@@ -468,7 +471,10 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         };
         inject_into_sessions(&state.sessions, &analysis_msg);
         let first_line = analysis.lines().next().unwrap_or(&analysis).to_string();
-        notify_chat_panes(&state.sessions, &first_line);
+        let s = state.sessions.clone();
+        let line = first_line.clone();
+        let _ = crate::tmux::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
+            .await;
         fire_notification(&alert.alert_name, &analysis, &state.config);
     }
 }
