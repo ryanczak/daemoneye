@@ -1,10 +1,97 @@
 # NEXT
 
-**Active phase: M5 phase-06j — tmux-off-runtime-daemon-tail**
+**Active phase: M5 phase-06i — wrap-sync-fns-at-call-sites**
 (`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06j-tmux-off-runtime-daemon-tail.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06i-wrap-sync-fns-at-call-sites.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06j-tmux-off-runtime-daemon-tail`.
+Dispatch with `/rexymcp:dispatch phase-06i-wrap-sync-fns-at-call-sites`.
+
+## Seven conversion phases, no bounces — and the direct-call sweep is done
+
+06d (10) → 06e (9) → 06f (12) → 06g (11) → 06h (9) → 06j (6), all
+`approved_first_try`. Every tmux call sitting **directly** in a daemon `async fn`
+is now off the runtime.
+
+## 06k was DROPPED, and the exit criterion reworded (PE-approved 2026-07-27)
+
+Surveying `cli/` before drafting found something that changed the plan:
+**`src/cli/` has no concurrency at all** — no `tokio::spawn`, no `thread::spawn`,
+no `JoinHandle`. The `tokio::select!` blocks in `chat.rs:607` and
+`stream.rs:685` are intra-task. All 12 candidate sites are in startup paths.
+
+So **mechanism B does not apply there.** Blocking the CLI's single task is
+behaviourally identical to a synchronous call; there is nothing to starve.
+Converting would buy only the `TMUX_TIMEOUT` bound — and **stage A delivers that
+more cheaply**, by putting the timeout inside the `src/tmux/` helpers, which
+bounds all 19 CLI hits (including the 7 in sync fns that `off_runtime` cannot
+reach) plus the `Drop` sites, with zero call-site churn.
+
+The M5 exit criterion now says "reachable from **the daemon's** async contexts"
+and gains a second bullet requiring the sync helpers to carry their own timeout.
+
+## The restructure set turned out to be much smaller than billed
+
+The README had 06i as "make-sync-fns-async … ~26 sites, needs splitting". That
+framing was wrong. `SessionStore` is a `#[derive(Clone)]` newtype over
+`Arc<Mutex<…>>` (`session.rs:122`), so it is `Send + 'static` and cheap to
+clone — which means these helpers can be **wrapped at the call site** instead of
+made async:
+
+| | make-async | wrap-the-caller |
+|---|---|---|
+| Signature change | yes | **no** |
+| Internal sites to convert | all of them | **none** |
+| Test churn | yes (`close_bg_window` has 2 direct unit tests) | **none** |
+| Call sites touched | all of them | one wrap each |
+
+One wrap moves the helper's *whole* body — tmux subprocesses **and** file I/O —
+onto the blocking pool. So the set is ~13 call sites, not ~26 internal sites,
+and it needs no signature or test changes at all.
+
+**06i is slice 1 and is deliberately small (5 wraps)** — the same reason the
+`off_runtime` adapter landed on one file first. It establishes the shape; 06m
+applies it to the remaining seven call sites.
+
+## Two helpers need a shape change before they can be wrapped
+
+Found while surveying, and split out into 06n so they cannot silently derail a
+mechanical slice:
+
+- **`notify_session`** takes `job: BgJobInfo<'_>`. The lifetime means it is not
+  `'static` and **cannot cross `spawn_blocking`** — it needs an owned
+  `BgJobInfo` first. It sits next to `capture_and_archive` and is called from
+  the same two files, so 06i names it explicitly as do-not-touch.
+- **`handlers.rs:186`** is the seventh species: an async fn, but the call is
+  inside a synchronous `.filter()` closure in an iterator chain. Needs the chain
+  rewritten as a loop.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 23 / 15 / 9, `capture_and_archive(` 1, 916/27). Post-state values
+are floors with the arithmetic shown. Eleven clean applications.
+
+## Calibration
+
+Both candidate absolutes were folded into `WORKFLOW.md` on 2026-07-27 and the
+ledger is now **empty at the fold bar** — five single-occurrence threads remain
+(fixture defaults, partially-transcribed spec quotes, piping gates through
+`tail`, a refinement built on a harness-blocked command, 06e's executor-side
+prose miscount), plus the seventh species above. None at two occurrences.
+
+Worth noting for the milestone retrospective: the sweep-scoping fold paid for
+itself twice within an hour of landing — 06j (39 raw hits → 6) and the 06k drop.
+
+## After 06i
+
+**06m** (wrap slice 2, 7 call sites) → **06n** (the two shape changes) →
+**stage A** (helper timeouts — now load-bearing for an exit criterion, not just
+cleanup) → **07** (stall-instrumentation), plus the drafted **08–11** set.
+Four exit criteria remain open, one of them newly split in two.
+
+---
+
+## Superseded: the 06j dispatch note
 
 ## Six conversion phases in a row, no bounces
 

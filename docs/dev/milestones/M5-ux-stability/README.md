@@ -34,10 +34,19 @@ take the socket.
       (The re-entrancy clause was added 2026-07-25: the confirmed root cause of
       the hang was a double-lock with no blocking work between the two
       acquisitions, which no existing lint catches.)
-- [ ] Every tmux subprocess call made from an async context is either
-      non-blocking (`tokio::process`) or off the runtime
-      (`spawn_blocking`), and carries a timeout. A wedged tmux server
+- [ ] Every tmux subprocess call reachable from **the daemon's** async contexts
+      is either non-blocking (`tokio::process`) or off the runtime
+      (`spawn_blocking`), and carries a timeout — whether the call sits directly
+      in an `async fn` or inside a synchronous helper that async code calls
+      (in which case the **call site** is wrapped). A wedged tmux server
       degrades one operation instead of the whole daemon.
+- [ ] The synchronous tmux helpers in `src/tmux/` carry their **own** timeout,
+      so every remaining caller is bounded without call-site churn — the `Drop`
+      impls (which cannot be `async`), the CLI, and any sync path not worth
+      restructuring. (Added 2026-07-27: `src/cli/` has **no concurrency** — no
+      `tokio::spawn`, no threads — so mechanism B does not apply there and
+      converting its call sites would buy only the timeout this criterion
+      already delivers.)
 - [ ] The daemon self-reports a stall: if a shared lock is held or an IPC
       request goes unanswered beyond a threshold, `daemon.log` records what
       was holding it and where. A future wedge identifies itself without a
@@ -98,8 +107,10 @@ take the socket.
 | 06g | tmux-off-runtime-scheduled-sudo ([phase-06g-tmux-off-runtime-scheduled-sudo.md](phase-06g-tmux-off-runtime-scheduled-sudo.md)) — `scheduled.rs` (7) + `utils/sudo.rs` (4) = 11. All async; introduces the `Err`-preserving collapse | done (approved_first_try) |
 | 06h | tmux-off-runtime-daemon-mod ([phase-06h-tmux-off-runtime-daemon-mod.md](phase-06h-tmux-off-runtime-daemon-mod.md)) — `daemon/mod.rs`: 9 convertible in `run_daemon`; the 6 in `detect_session`/`install_session_hooks` are **sync** (startup path) and are not conversions | done (approved_first_try) |
 | 06j | tmux-off-runtime-daemon-tail ([phase-06j-tmux-off-runtime-daemon-tail.md](phase-06j-tmux-off-runtime-daemon-tail.md)) — `gc.rs` (2) + `ghost.rs` (1) + `hook.rs` (1) + `server/ask.rs` (2) = 6. Finishes the daemon's async surface | done (approved_first_try) |
-| 06k | tmux-off-runtime-cli — surveyed: `commands/ask.rs` (2) + `commands/chat.rs` (10) = 12 async/convertible; `commands/pane.rs` (6) + `local_cmds.rs` (1) are sync. Not drafted | todo |
-| 06i | make-sync-fns-async — the restructure set, grown by survey: `close_bg_window`, `watch_pane` prologue, `detect_session`, `install_session_hooks`, `gc_bg_windows` (3), `helpers.rs` (4), `session.rs::cleanup_bg_windows` (2), `webhook/process.rs` (1), `utils/host.rs` (1), `cli/` sync (7), plus `handlers.rs:186`'s `.filter()` closure. **Needs splitting when drafted.** Not drafted | todo |
+| ~~06k~~ | ~~tmux-off-runtime-cli~~ — **dropped 2026-07-27.** `src/cli/` has no concurrency (no `tokio::spawn`, no threads), so mechanism B does not apply; converting its 12 async call sites would buy only a timeout, which stage A delivers to all 19 CLI hits — including the 7 in sync fns — with no call-site churn | dropped |
+| 06i | wrap-sync-fns-at-call-sites ([phase-06i-wrap-sync-fns-at-call-sites.md](phase-06i-wrap-sync-fns-at-call-sites.md)) — **slice 1** of the wrap set: `capture_and_archive` (4 call sites) + `gc_bg_windows` (1) = 5 wraps. Establishes wrap-the-caller, which needs no signature or test change | todo |
+| 06m | wrap set, slice 2 — `close_bg_window` (1 call site), `watch_pane` (1), `detect_session` (1), `install_session_hooks` (2), `cleanup_bg_windows` (2, both inside `with_sessions` closures — care), `webhook/process.rs` (1), `utils/host.rs` (1). Not drafted | todo |
+| 06n | the two that need a shape change first — `notify_session` (needs an owned `BgJobInfo`; `BgJobInfo<'_>` is not `'static`) and `handlers.rs:186` (a sync `.filter()` closure in an iterator chain, needs rewriting as a loop). Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
