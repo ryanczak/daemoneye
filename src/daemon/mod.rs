@@ -765,7 +765,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(60)).await;
-                    crate::daemon::background::gc_bg_windows(&sessions_gc);
+                    let s = sessions_gc.clone();
+                    let _ = crate::tmux::off_runtime("gc-bg-windows", move || {
+                        crate::daemon::background::gc_bg_windows(&s)
+                    })
+                    .await;
                 }
             }
         },

@@ -194,7 +194,13 @@ pub async fn respawn_background_in_pane(
                 .await;
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            let body = capture_and_archive(pane_id, win_name, pipe_log);
+            let p = pane_id.to_string();
+            let w = win_name.to_string();
+            let body = tmux::off_runtime("capture-and-archive", move || {
+                capture_and_archive(&p, &w, pipe_log)
+            })
+            .await
+            .unwrap_or_default();
 
             log_event(
                 "job_complete",
@@ -316,7 +322,13 @@ pub async fn respawn_background_in_pane(
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
 
-                let body = capture_and_archive(&pane_id_bg, &win_name_bg, pipe_log);
+                let p = pane_id_bg.to_string();
+                let w = win_name_bg.to_string();
+                let body = tmux::off_runtime("capture-and-archive", move || {
+                    capture_and_archive(&p, &w, pipe_log)
+                })
+                .await
+                .unwrap_or_default();
 
                 log_event(
                     "job_complete",

@@ -1,7 +1,7 @@
 # Phase 06i: Wrap Blocking Sync Functions at Their Async Call Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06j — `done` (the daemon's direct call sites are finished)
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -300,3 +300,8 @@ machinery. **Do not repeat that demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-28 02:21 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Work:** Wrapping 5 sync helper call sites with `off_runtime` in `run.rs`, `respawn.rs`, and `daemon/mod.rs`.
