@@ -1,10 +1,85 @@
 # NEXT
 
-**Active phase: M5 phase-06i — wrap-sync-fns-at-call-sites**
-(`todo`, drafted 2026-07-27).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06i-wrap-sync-fns-at-call-sites.md`.
+**Active phase: M5 phase-06m — wrap-sync-fns-slice-2**
+(`todo`, drafted 2026-07-28).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06m-wrap-sync-fns-slice-2.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06i-wrap-sync-fns-at-call-sites`.
+Dispatch with `/rexymcp:dispatch phase-06m-wrap-sync-fns-slice-2`.
+
+## Eight phases, no bounces; wrap-the-caller is proven
+
+06i wrapped 5 call sites and came back with `git diff --stat` on both helpers
+**completely empty** — no signature change, no test change, same blocking work
+moved off the runtime. 06m applies the shape to 7 more.
+
+## ⚠ 06m found a tmux call every previous scan was blind to
+
+`daemon::utils::host::get_pane_remote_host` spawns
+`tmux display-message`, but its **name contains no `tmux::`**, so the
+span-matching scan never flagged its call sites. `foreground.rs` has been
+reporting `UNWRAPPED: 2` — only its two `Drop` calls — while still making this
+blocking call at `:311`. `read.rs:140` is the second.
+
+**This is an eighth species, and unlike the others it means an already-approved
+finish condition was incomplete.** No previous verdict was wrong — every phase
+converted the sites its spec named, and the scan's `Command::new("tmux")` arm
+did flag the helper *body* in `utils/host.rs` — but the *call sites* of
+tmux-spawning helpers whose names don't say `tmux` are invisible to it.
+
+**Worth a sweep before milestone close:** find every function that contains
+`Command::new("tmux")` (or calls one that does) and check its callers, not just
+its body. `daemon_hostname` in the same file is fine — it reads `/proc`. The
+wrap set already covers the ones found so far, but the search has not been done
+systematically.
+
+## The slice split, and why three groups came out of one row
+
+The README had 06m as one row of nine call sites. Reading them split it three
+ways:
+
+- **06m — 7 clean wraps.** `detect_session` (1), `install_session_hooks` (2),
+  `get_pane_remote_host` (2), `notify_chat_panes` (2). All uniform; the
+  `notify_chat_panes` pair is the highest-value wrap in the set, moving **N
+  subprocesses — one per active chat pane** — per call.
+- **06p — the executor two.** `close_bg_window` and `watch_pane` both return a
+  string **the model reads**, so their timeout text is a product decision rather
+  than a mechanical default. `watch_pane` also calls `tokio::spawn` internally,
+  which needs verifying against `spawn_blocking` before it is specced.
+- **06n — the four that need a shape change first.** `cleanup_bg_windows` ×2
+  turned out **not** to be "inside `with_sessions` closures" as the README
+  claimed — 05a already hoisted them out. The real blocker is that
+  `SessionEntry` is **not `Clone`** (and neither is `BgWindowInfo`), so `&self`
+  cannot cross `spawn_blocking`. Plus `process.rs:190`, whose caller
+  `inject_ghost_event` is synchronous, so the wrap moves up its chain.
+
+That is two README claims corrected by reading the code — the `with_sessions`
+one and the nine-in-one-slice one.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 10 / 1 / 3 / 29 / 0, 916/27). Post-state values are floors with
+the arithmetic shown. Twelve clean applications.
+
+## Calibration
+
+Ledger is empty at the fold bar. Five single-occurrence threads plus the
+seventh species (sync closure in an async fn) and now the **eighth** (a tmux
+call behind a non-`tmux`-named helper). The eighth is the more consequential of
+the two because it means the scan under-reports; if a systematic sweep finds
+more, that is a second occurrence and worth folding into the
+sweep-scoping section.
+
+## After 06m
+
+**06p** (the executor two) → **06n** (the four shape changes) → **stage A**
+(helper timeouts — load-bearing for an exit criterion) → **07**
+(stall-instrumentation), plus the drafted **08–11** set. Five exit criteria
+remain open.
+
+---
+
+## Superseded: the 06i dispatch note
 
 ## Seven conversion phases, no bounces — and the direct-call sweep is done
 
