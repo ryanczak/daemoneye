@@ -1,10 +1,99 @@
 # NEXT
 
-**Active phase: M5 phase-06p — wrap-sync-fns-slice-3**
+**Active phase: M5 phase-06n — own-teardown-data**
 (`todo`, drafted 2026-07-28).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06p-wrap-sync-fns-slice-3.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06n-own-teardown-data.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06p-wrap-sync-fns-slice-3`.
+Dispatch with `/rexymcp:dispatch phase-06n-own-teardown-data`.
+
+## Ten phases, no bounces — and the wrap set's easy sites are all done
+
+06i (5) → 06m (7) → 06p (2), all `approved_first_try`, all with an **empty diff
+on every helper**. What is left needs a shape change first, which is what 06n
+starts.
+
+## Reading the four "shape change" sites split them three ways
+
+The README had 06n as one row of four. They are not one job:
+
+- **06n — the two that share a shape.** `notify_session` and
+  `cleanup_bg_windows` both fail for the *same* reason (`spawn_blocking` needs
+  `F: 'static`, and their data is borrowed) and take the *same* fix (make the
+  data owned, then wrap). 4 call sites, one theme, one worked example.
+- **06q — `handlers.rs:186`, and it is worse than recorded.** The README had it
+  as "a sync `.filter()` closure in an iterator chain". It is that, **and** the
+  enclosing block holds a `cache.panes.read()` **RwLock guard** across
+  `pane_exists` for every pane — a mechanism-A defect on the *cache* lock, which
+  no phase in this milestone has touched (all the lock work has been on
+  `SessionStore`). Two defects, one site, its own fix.
+- **06r — `inject_ghost_event` has 13 call sites across 5 files.** Making it
+  `async` is an ordered leaf-first cascade, not a wrap — far past the ≤3-site
+  blast radius `WORKFLOW.md` § "Prefer additive change shapes" bounds a mutation
+  to. It needs a phase with a grep-verified ordered site list and build
+  checkpoints.
+
+That is a third README claim corrected by reading rather than counting, after
+06m's `with_sessions` and nine-in-one-slice corrections.
+
+## The whole 06n diff was applied, verified, and reverted
+
+Every code block in the spec was applied to the tree, then `cargo build`,
+`clippy --all-targets --all-features -D warnings`, `cargo fmt --all` and the full
+916+27 suite were run — all green, **no test edited** — and the tree reverted
+clean. `fmt` made **no changes** to any block, which matters here because this
+project has **no `format_fix` hook** (`rexymcp.toml` leaves it commented out), so
+the executor must produce fmt-clean code itself.
+
+This also caught the phase's one real compile error in advance: once `body` is a
+`String`, `related_knowledge_hints(body)` stops compiling and needs `&body`. That
+is now a named trap rather than a bounce.
+
+Second phase drafted with apply-verify-revert; 06p's diff came back
+byte-identical to the spec.
+
+## The additive shape was chosen deliberately
+
+`cleanup_bg_windows` is **kept** as a thin synchronous wrapper over the new
+`run_bg_teardown(self.bg_teardown())`, rather than deleted. Nothing that calls it
+today breaks, and the phase stays additive — `WORKFLOW.md` § "Prefer additive
+change shapes". The alternative considered and rejected was deriving `Clone` on
+`SessionEntry`, which would have pushed a derive onto a large shared type to
+solve a two-call-site problem.
+
+`BgJobInfo` *is* mutated rather than twinned, because its blast radius is exactly
+3 (the struct, the destructure, 2 construction sites) — inside the bound.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 25 / 17 / 2 / 12, `BgJobInfo<'…>` 2, `cleanup_bg_windows` 1 / 1 /
+1, 916/27). Post-state values are floors with the arithmetic shown. Fourteen
+clean applications.
+
+## Calibration
+
+Ledger is empty at the fold bar. The "unverified code details in spec snippets"
+thread stays at **two** — apply-verify-revert has now prevented a third twice
+(06p's private-module class of error, and 06n's `&body`). If the practice keeps
+holding, the fold to consider at milestone close is promoting it from a habit to
+a `WORKFLOW.md` line, rather than generalising the counting rule.
+
+One new single-occurrence note: the executor's *self-authored* "started" Update
+Log entry has now misnamed the executor twice (06m, 06p — both said "Claude
+(Sonnet 4.5)" for a Qwen run). Harmless, since the server-authored completion
+entry is authoritative, and it is a runtime prompt matter rather than anything a
+spec can fix.
+
+## After 06n
+
+**06q** (the handlers.rs double defect) → **06r** (the `inject_ghost_event`
+cascade) → **stage A** (helper timeouts — load-bearing for an exit criterion) →
+**07** (stall-instrumentation), plus the drafted **08–11** set. Five exit criteria
+remain open.
+
+---
+
+## Superseded: the 06p dispatch note
 
 ## Nine phases, no bounces; the wrap set is down to its last two clean sites
 

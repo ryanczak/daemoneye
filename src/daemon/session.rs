@@ -385,22 +385,49 @@ impl SessionEntry {
     /// Kill all background windows that are still open for this session.
     /// Called when the session is evicted from the store.
     pub fn cleanup_bg_windows(&self) {
-        for win in &self.bg_windows {
-            if let Err(e) = crate::tmux::kill_job_window(&win.tmux_session, &win.window_name) {
-                log::warn!(
-                    "GC bg window {} on session eviction: {}",
-                    win.window_name,
-                    e
-                );
-            }
+        run_bg_teardown(self.bg_teardown());
+    }
+
+    /// Owned snapshot of everything [`run_bg_teardown`] needs.
+    ///
+    /// `SessionEntry` is not `Clone` (and neither is `BgWindowInfo`), so `&self`
+    /// cannot cross `spawn_blocking`. This hands the teardown its data by value
+    /// so the caller can wrap it in `off_runtime`.
+    pub fn bg_teardown(&self) -> BgTeardown {
+        BgTeardown {
+            windows: self
+                .bg_windows
+                .iter()
+                .map(|w| (w.tmux_session.clone(), w.window_name.clone()))
+                .collect(),
+            pipe_source_pane: self.pipe_source_pane.clone(),
         }
-        // R1: stop pipe-pane and remove the log file if one was started for this session.
-        // An empty string is the "failed / skipped" sentinel — nothing to clean up.
-        if let Some(ref pane_id) = self.pipe_source_pane
-            && !pane_id.is_empty()
-        {
-            crate::tmux::stop_pipe_pane(pane_id);
+    }
+}
+
+/// Owned teardown data for a session being evicted. See [`SessionEntry::bg_teardown`].
+pub struct BgTeardown {
+    /// `(tmux_session, window_name)` for each background window to kill.
+    pub windows: Vec<(String, String)>,
+    /// The pipe-pane source, if one was started for this session.
+    pub pipe_source_pane: Option<String>,
+}
+
+/// The blocking half of session teardown: one `kill_job_window` per background
+/// window, plus `stop_pipe_pane`. Takes owned data so it can run on the
+/// blocking pool.
+pub fn run_bg_teardown(teardown: BgTeardown) {
+    for (tmux_session, window_name) in &teardown.windows {
+        if let Err(e) = crate::tmux::kill_job_window(tmux_session, window_name) {
+            log::warn!("GC bg window {} on session eviction: {}", window_name, e);
         }
+    }
+    // R1: stop pipe-pane and remove the log file if one was started for this session.
+    // An empty string is the "failed / skipped" sentinel — nothing to clean up.
+    if let Some(ref pane_id) = teardown.pipe_source_pane
+        && !pane_id.is_empty()
+    {
+        crate::tmux::stop_pipe_pane(pane_id);
     }
 }
 

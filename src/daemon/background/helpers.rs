@@ -130,12 +130,12 @@ pub(super) fn capture_and_archive(
     body
 }
 
-pub(super) struct BgJobInfo<'a> {
-    pub(super) pane_id: &'a str,
-    pub(super) cmd: &'a str,
-    pub(super) win_name: &'a str,
+pub(super) struct BgJobInfo {
+    pub(super) pane_id: String,
+    pub(super) cmd: String,
+    pub(super) win_name: String,
     pub(super) exit_code: i32,
-    pub(super) body: &'a str,
+    pub(super) body: String,
     pub(super) pane_persists: bool,
 }
 
@@ -143,7 +143,7 @@ pub(super) struct BgJobInfo<'a> {
 /// update `exit_code` in `bg_windows`, and flash a `tmux display-message`.
 ///
 /// `pane_persists` — if true, the window is still open and the AI can reuse it.
-pub(super) fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJobInfo<'_>) {
+pub(super) fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJobInfo) {
     let BgJobInfo {
         pane_id,
         cmd,
@@ -178,7 +178,7 @@ pub(super) fn notify_session(sessions: &SessionStore, session_id: &str, job: BgJ
         format!("The window was closed. Full log: ~/.daemoneye/var/log/panes/{win_name}.log")
     };
 
-    let hints = crate::manifest::related_knowledge_hints(body);
+    let hints = crate::manifest::related_knowledge_hints(&body);
     let hints_section = if !hints.is_empty() {
         format!("\n{}", hints)
     } else {

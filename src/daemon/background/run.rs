@@ -480,18 +480,20 @@ pub async fn run_background_in_window(
                 );
 
                 if let Some(ref sid) = session_id_bg {
-                    notify_session(
-                        &sessions_bg,
-                        sid,
-                        BgJobInfo {
-                            pane_id: &pane_id_bg,
-                            cmd: &cmd_bg,
-                            win_name: &win_name_bg,
-                            exit_code,
-                            body: &body,
-                            pane_persists,
-                        },
-                    );
+                    let s_ns = sessions_bg.clone();
+                    let sid_ns = sid.clone();
+                    let job = BgJobInfo {
+                        pane_id: pane_id_bg.clone(),
+                        cmd: cmd_bg.clone(),
+                        win_name: win_name_bg.clone(),
+                        exit_code,
+                        body: body.clone(),
+                        pane_persists,
+                    };
+                    let _ = tmux::off_runtime("notify-session", move || {
+                        notify_session(&s_ns, &sid_ns, job)
+                    })
+                    .await;
                 }
 
                 if !pane_persists {

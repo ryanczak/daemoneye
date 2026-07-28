@@ -104,7 +104,11 @@ where
 
     // Unlocked phase: everything blocking happens out here.
     for entry in &closed {
-        entry.cleanup_bg_windows();
+        let teardown = entry.bg_teardown();
+        let _ = crate::tmux::off_runtime("bg-teardown", move || {
+            crate::daemon::session::run_bg_teardown(teardown)
+        })
+        .await;
         log::info!(
             "Cleaned up session '{}' on tmux session-closed.",
             session_name

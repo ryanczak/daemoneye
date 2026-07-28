@@ -744,7 +744,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
                     // Unlocked phase: everything blocking happens out here.
                     for entry in &evicted {
-                        entry.cleanup_bg_windows();
+                        let teardown = entry.bg_teardown();
+                        let _ = crate::tmux::off_runtime("bg-teardown", move || {
+                            crate::daemon::session::run_bg_teardown(teardown)
+                        })
+                        .await;
                     }
 
                     sweep_counter = sweep_counter.wrapping_add(1);
