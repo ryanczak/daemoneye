@@ -1,7 +1,7 @@
 # Phase 06m: Wrap Blocking Sync Functions — Slice 2
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06i — `done` (established wrap-the-caller)
 **Estimated diff:** ~100 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -475,3 +475,98 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d5b9c648ed44698c7cf68730360d55464eaae906
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (59 turns)
+- **Scope deviations:** one, correct and self-reported (see below)
+- **Calibration:** one architect-side drafting flaw, 2nd occurrence — see below
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing all five edited files — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at 916 lib + 27
+integration, unchanged).
+
+Every criterion is exact: `off_runtime` **12 / 2 / 30 / 4 / 2** against a
+verified 10 / 1 / 29 / 3 / 0; all four helper signature greps return **1**;
+`notify_chat_panes(` is **4** with `:193` still a bare call;
+`cleanup_bg_windows()` still bare in both files; `block_on`/`spawn_blocking`
+**0** in all five; five `src/` files in the code commit. And the defining one:
+
+```
+$ git diff --stat HEAD~2 HEAD -- src/daemon/utils/host.rs
+$
+```
+
+**Empty — the helper file was not touched at all.**
+
+The three deliberately-skipped sites were all left alone, including the two that
+would not have compiled (`cleanup_bg_windows`, where `SessionEntry` is not
+`Clone`). Naming them as hazards rather than leaving them to be discovered was
+worth the paragraphs.
+
+Verified by reading:
+
+- **The `notify_chat_panes` pair is the real win.** Each wrap now moves the
+  helper's entire `for pane in &panes` loop — one `tmux display-message`
+  subprocess **per active chat pane** — onto the blocking pool in a single
+  bounded call. Its internal `with_sessions` collect-then-act shape is
+  untouched.
+- **Neither boolean test was inverted.** `foreground.rs:311` still asks
+  `.is_some()`, `read.rs` still asks `.is_none()`, and both now sit behind
+  `.flatten()`, so a timeout reads as "not remote" — which is exactly what the
+  helper already returns when its own `tmux` call fails (`.ok()?` → `None`).
+- **`detect_session` was passed as a function item**, no closure, and collapses
+  with `.flatten()`.
+
+### Scope deviation — correct, and the spec was wrong
+
+The executor used `crate::daemon::utils::get_pane_remote_host` where the spec
+wrote `crate::daemon::utils::host::get_pane_remote_host`, reporting that `host`
+is a private module. **Confirmed:** `src/daemon/utils/mod.rs:4` declares
+`mod host;` without `pub`, so the spec's path would not have compiled. The
+executor adapted correctly and said so plainly.
+
+It also dropped `get_pane_remote_host` from `foreground.rs`'s `use` block, which
+the fully-qualified call made unused — a required consequence, not creep.
+
+### Nit, not bounced — a misleading binding name in `read.rs`
+
+```rust
+let is_remote = tmux::off_runtime("pane-remote-host", move || get_pane_remote_host(&p))
+    .await
+    .flatten()
+    .is_none();
+
+let (content, is_remote) = if is_remote { … local_read_via_buffer … };
+```
+
+The first `is_remote` holds `.is_none()` — it is **true when the pane is
+local**, the inverse of its name — and is shadowed five lines later by a
+correctly-signed binding of the same name. **The behaviour is right**: the
+local branch runs for local panes and the outer tuple binds `false`/`true`
+correctly, which the `label` below depends on. Nothing is broken and no gate
+could see it.
+
+Not bounced, because a re-dispatch cycle for a variable name is
+disproportionate and the spec's actual requirement — "do not invert either
+test" — was met. **But it is a live trap**: anyone editing between those two
+lines would reasonably read `if is_remote { local_read… }` as inverted logic.
+Rename the inner binding to `is_local` in whichever phase next touches
+`file_ops/read.rs`.
+
+### Calibration — unverified code details in spec snippets (2nd occurrence)
+
+The private-module path is an **architect** error of the same species as an
+earlier one in this project, where a quoted snippet used a receiver convention
+from the wrong function and the executor had to adapt it. Both are the same
+root: **a code detail written into a spec from memory rather than checked
+against the tree** — the counting fold's logic applied to paths and types
+instead of numbers.
+
+Two occurrences is a trend, not yet a fix. Worth watching for a third; if one
+appears, the natural home is `WORKFLOW.md` § "Run every count criterion; never
+derive it", generalised from numbers to any verifiable fact in a spec.
+**No doc change made.**
