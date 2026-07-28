@@ -1,7 +1,7 @@
 # Phase 06p: Wrap Blocking Sync Functions — Slice 3 (the executor two)
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06m — `done` (wrap-the-caller, slices 1–2)
 **Estimated diff:** ~35 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -494,3 +494,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bbdac9ff45ef001462f76486adcc660f89253575
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (48 turns)
+- **Scope deviations:** none
+- **Calibration:** the compile-checked-snippet practice produced a byte-identical
+  diff — see below
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing the edited file — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+Every criterion is exact: `off_runtime` **2** in `executor/mod.rs` (0 before) and
+still **7** in `pane.rs`; `watch_pane(` **1**; `close_bg_window(` **1** in
+`mod.rs` and **3** in `pane.rs`; both signature greps **1**; all four
+fallback-string greps **1**; `block_on`/`spawn_blocking` **0**; `tokio::spawn` in
+`pane.rs` still **1**; one `src/` file in the code commit. And the defining one:
+
+```
+$ git diff --stat HEAD~2 HEAD -- src/daemon/executor/knowledge/pane.rs
+$
+```
+
+**Empty — the helper file was not touched at all.** That is three consecutive
+wrap phases (06i, 06m, 06p) with an empty diff on every helper, which is the
+whole claim of wrap-the-caller.
+
+`close_bg_window`'s two direct unit tests (`close_bg_window_no_session`,
+`close_bg_window_unknown_session`) pass **unchanged** — re-run in isolation, both
+green. No test file was touched.
+
+### The diff is byte-identical to the spec's compile-checked blocks
+
+Diffed against the phase doc: the executor used both blocks verbatim, including
+the `.map(str::to_string)` / `.as_deref()` round-trip for `session_id` and
+keeping `pane_id` (not the moved clone `p`) in each `format!`. Zero adaptation
+needed — which is the point of applying-and-reverting the snippet at draft time.
+
+### Verified by reading, not counting
+
+- **The re-entrancy guard is per-thread, so moving these calls to the blocking
+  pool is safe.** `SESSIONS_LOCK_DEPTH` is a `thread_local!`
+  (`src/daemon/session.rs:407`), so `close_bg_window`'s two `with_sessions`
+  acquisitions start at depth 0 on a fresh pool thread — correct, since the
+  caller holds nothing — and cannot false-positive against a runtime worker
+  concurrently holding the lock; that thread simply contends on the mutex as
+  normal. This is **strictly safer than before**: the blocking acquisition no
+  longer happens on a runtime worker.
+- **`watch_pane`'s detached task survives.** Its `tokio::spawn` is untouched, and
+  the wrap bounds only the two-call prologue — a `watch_pane(timeout_secs=300)`
+  still watches for 300 s.
+- **The fallback text is honest.** Neither string asserts the operation failed to
+  happen, which matters because `off_runtime` times out the `JoinHandle`, not the
+  blocking closure.
+
+### Nit, not bounced — the "started" Update Log entry misnames the executor
+
+The executor-authored started entry says `**Executor:** claude (Sonnet 4.5)`; the
+actual executor was `Qwen/Qwen3.6-27B-FP8`, as the server-authored completion
+entry correctly records. **2nd occurrence** — 06m's started entry said the same.
+Harmless (the server-authored entry is authoritative and is what telemetry
+reads), and not worth a re-dispatch. Noted as calibration data; if it recurs it
+is a runtime-side prompt fix, not a spec fix. **No doc change made.**
