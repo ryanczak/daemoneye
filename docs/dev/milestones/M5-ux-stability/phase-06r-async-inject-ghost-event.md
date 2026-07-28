@@ -1,7 +1,7 @@
 # Phase 06r: Make `inject_ghost_event` Async — the Last Mechanism-B Site
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06q — `done`
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -410,3 +410,85 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** d6cd5122ec50cc664ac788cc3c28252814727678
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (65 turns)
+- **Scope deviations:** none
+- **Calibration:** none for the executor; one `WORKFLOW.md` refinement candidate
+  (below)
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing all four edited files, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+**The completeness criterion reads 0:**
+
+```
+$ touch <the four files> && cargo build 2>&1 | grep -c "^warning"
+0
+```
+
+That is the one that matters here — a green build proves nothing when the
+failure mode is a warning.
+
+Every other criterion is exact: the `async` declaration **1** and the old sync
+declaration **0**; `off_runtime` in `process.rs` **3** (2 before); the bare
+`notify_chat_panes(sessions, one_liner);` **0**; `notify_chat_panes(` **4** —
+unchanged, neither 3 nor 5; all four `inject_ghost_event(` counts unchanged at
+**5 / 5 / 2 / 1**; `block_on`/`spawn_blocking` **0** in all four; four `src/`
+files in the code commit.
+
+Verified by reading:
+
+- **Every one of the 12 sites is a pure `.await` append.** `);` → `)\n.await;`
+  and nothing else — no reflow, no restructuring, no argument changes. The added
+  diff contains **13** lines that are exactly `.await;`: the 12 call sites plus
+  the one closing the new `off_runtime` wrap.
+- **Exactly one function became `async`.** The only `+…async fn` line in the diff
+  is `inject_ghost_event` itself; the cascade did not leak into any other
+  signature.
+- **`notify_chat_panes` is untouched** — no `[-+]` line matches its signature or
+  its `Command::new` loop. Its `with_sessions` collect-then-act shape is intact,
+  and the wrap goes around the whole call.
+- **`one_liner` was correctly copied** to an owned `String` (`line`) before the
+  `move` closure, since it borrows from `content` and `spawn_blocking` needs
+  `F: 'static`. `inject_into_sessions` and the trailing `log_event` are unchanged.
+- **No test was touched.**
+
+### This closes the milestone's fourth exit criterion
+
+Every tmux subprocess reachable from the daemon's async contexts is now either
+off the runtime or wrapped at its call site — whether it sat directly in an
+`async fn` (04x/06a–06j), inside a synchronous helper an async caller invokes
+(06i/06m/06p/06n), under a lock guard (05x/06q), or behind a synchronous function
+that had to become `async` (this phase).
+
+### Calibration — a `WORKFLOW.md` refinement candidate, at one occurrence
+
+`WORKFLOW.md` § "Prefer additive change shapes" treats every multi-site mutation
+as break-the-world: it warns that the tree stops compiling the moment the
+definition changes and prescribes a hand-authored leaf-first edit order with
+build checkpoints.
+
+**A Rust `fn` → `async fn` change does not behave that way.** Calling an
+`async fn` without `.await` is an unused-`Future` *warning*, so the build stays
+green at every intermediate step and the verifier's consecutive-failure limit has
+nothing to fire on. This run confirms it end to end: 65 turns, zero bounces, no
+stall, across what the README had classified as a 13-site cascade well past the
+≤3-site blast radius the fold bounds mutations to.
+
+That inverts the remedy. For a warn-the-world mutation the *compiler* is the
+ordered site list — and a better one than the architect's, because it stays
+current as line numbers shift. The spec said so explicitly and forbade hunting
+call sites by re-reading files, which is the behaviour that stalls runs.
+
+**One occurrence — noted, not folded.** If a second warn-the-world cascade
+appears, the natural landing spot is a short carve-out in § "Prefer additive
+change shapes" distinguishing *break*-the-world mutations (required fields,
+derive graphs, signature/type changes) from *warn*-the-world ones
+(`fn` → `async fn`), with "let the compiler enumerate the sites, and pin a
+zero-warning criterion" as the latter's remedy. **No doc change made.**

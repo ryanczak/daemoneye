@@ -34,12 +34,20 @@ take the socket.
       (The re-entrancy clause was added 2026-07-25: the confirmed root cause of
       the hang was a double-lock with no blocking work between the two
       acquisitions, which no existing lint catches.)
-- [ ] Every tmux subprocess call reachable from **the daemon's** async contexts
+- [x] Every tmux subprocess call reachable from **the daemon's** async contexts
       is either non-blocking (`tokio::process`) or off the runtime
       (`spawn_blocking`), and carries a timeout — whether the call sits directly
       in an `async fn` or inside a synchronous helper that async code calls
       (in which case the **call site** is wrapped). A wedged tmux server
       degrades one operation instead of the whole daemon.
+      (Met 2026-07-28 by 06r. Verified by scanning every `Command::new("tmux")`
+      outside `src/tmux/` and `src/cli/`: each remaining raw spawn is either
+      already inside an `off_runtime` closure, or sits in a **helper body** whose
+      every call site is wrapped — `notify_chat_panes` (3), `detect_session` (1),
+      `install_session_hooks` (2), `get_pane_remote_host` (2), `notify_session`
+      (2), `watch_pane`'s prologue (1). The only calls wrapped at **no** level
+      are the three `Drop` impls, which cannot be `async`; those are the next
+      criterion's.)
 - [ ] The synchronous tmux helpers in `src/tmux/` carry their **own** timeout,
       so every remaining caller is bounded without call-site churn — the `Drop`
       impls (which cannot be `async`), the CLI, and any sync path not worth
@@ -113,7 +121,7 @@ take the socket.
 | 06p | wrap-sync-fns-slice-3 ([phase-06p-wrap-sync-fns-slice-3.md](phase-06p-wrap-sync-fns-slice-3.md)) — `watch_pane` (1) + `close_bg_window` (1) in `executor/mod.rs`. Both return a model-visible string, so the timeout text is pinned as a product decision. `tokio::spawn`-inside-`spawn_blocking` **verified working**; the 5 s bound covers only `watch_pane`'s prologue | done (approved_first_try) |
 | 06n | own-teardown-data ([phase-06n-own-teardown-data.md](phase-06n-own-teardown-data.md)) — the two that share the "make the data owned, then wrap" shape: `notify_session` (owned `BgJobInfo`, 2 call sites) + `cleanup_bg_windows` ×2 (additive `BgTeardown` + `run_bg_teardown`, since `SessionEntry` is **not `Clone`**). Whole change compile/clippy/fmt/test-checked at draft time | done (approved_first_try) |
 | 06q | unlock-list-panes ([phase-06q-unlock-list-panes.md](phase-06q-unlock-list-panes.md)) — `handle_list_panes`: `pane_exists` in a synchronous `.filter()` closure **while holding the `cache.panes` RwLock read guard**. Mechanism A **and** B in one site, and the milestone's first phase on a lock other than `SessionStore`. Whole change compile/clippy/fmt/test-checked at draft time | done (approved_first_try) |
-| 06r | async-inject-ghost-event ([phase-06r-async-inject-ghost-event.md](phase-06r-async-inject-ghost-event.md)) — make `inject_ghost_event` `async`, `.await` its **12** call sites across 4 files, wrap `notify_chat_panes`. **The last mechanism-B site in the daemon.** Cascade verified non-breaking: an unawaited async call warns rather than errors, so the build stays green and the compiler enumerates the sites | review      |
+| 06r | async-inject-ghost-event ([phase-06r-async-inject-ghost-event.md](phase-06r-async-inject-ghost-event.md)) — make `inject_ghost_event` `async`, `.await` its **12** call sites across 4 files, wrap `notify_chat_panes`. **The last mechanism-B site in the daemon.** Cascade verified non-breaking: an unawaited async call warns rather than errors, so the build stays green and the compiler enumerates the sites | done (approved_first_try) |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
