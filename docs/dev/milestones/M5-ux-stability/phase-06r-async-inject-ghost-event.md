@@ -1,7 +1,7 @@
 # Phase 06r: Make `inject_ghost_event` Async — the Last Mechanism-B Site
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06q — `done`
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -287,3 +287,126 @@ machinery. **Do not repeat that demonstration.**
 **Executor:** Claude (Anthropic)
 
 Making `inject_ghost_event` async, wrapping `notify_chat_panes` in `off_runtime`, and `.await`-ing all 12 call sites across 4 files.
+
+### Update — ts=1785266807751 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Made `inject_ghost_event` async, wrapped its `notify_chat_panes` call in `off_runtime` (spawn_blocking), and `.await`-ed all 12 call sites across 4 files (`webhook/process.rs`, `daemon/scheduled.rs`, `daemon/stream.rs`, `daemon/executor/knowledge/ghost.rs`). No restructuring was needed — every call site was already in an async context. The build stayed green throughout because calling an async fn without `.await` produces an unused-Future warning, not an error, so the compiler enumerated all 12 sites. All acceptance criteria verified: `off_runtime` count is 3 (was 2), bare `notify_chat_panes(sessions, one_liner)` is gone, `notify_chat_panes(` stays at 4, all inject counts unchanged, 0 warnings, 916 lib + 27 integration tests pass, `clippy -D warnings` clean, `fmt` clean. Working tree is clean.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ne_noted ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_absent_when_zero ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_client_viewport_shown_when_known ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_copy_mode_annotated ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test memory::tests::memory_without_frontmatter_has_no_tags ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 916 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_ask_round_trip ... ok
+test event_log_entry_format ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06r-async-inject-ghost-event.md` — +7 -1
+- `src/daemon/executor/knowledge/ghost.rs` — +2 -1
+- `src/daemon/scheduled.rs` — +10 -5
+- `src/daemon/stream.rs` — +4 -2
+- `src/webhook/process.rs` — +15 -6
+
+**Commit:** d6cd5122ec50cc664ac788cc3c28252814727678
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
