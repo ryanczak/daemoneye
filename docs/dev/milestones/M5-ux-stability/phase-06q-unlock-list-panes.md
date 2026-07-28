@@ -1,7 +1,7 @@
 # Phase 06q: Unlock `handle_list_panes` — a tmux Sweep Under the Cache Read Guard
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06n — `done`
 **Estimated diff:** ~35 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -452,3 +452,70 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 32ee0919ad38f4fa5f17e7cbb17727d30a1fa7cd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (36 turns)
+- **Scope deviations:** none
+- **Calibration:** none — and the apply-verify-revert refinement worked (below)
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `handlers.rs` — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at 916 lib + 27 integration,
+unchanged).
+
+Every criterion is exact, **including the two deliberately-non-zero guards**:
+`off_runtime` **1** (0 before); the bare synchronous filter **0**;
+`crate::tmux::pane_exists(&id)` **1**; `.filter(` **3** — *not* 2, so
+`handle_status:246` was left alone; `cache.panes.read()` **2** — unchanged, so
+`handle_set_pane:136` kept its own guard; `sort_by_key` **1**;
+`unwrap_or(false)` **1** with `unwrap_or(true)` **0**;
+`block_on`/`spawn_blocking` **0**; one `src/` file. **The diff is identical to
+the spec's post-`fmt` block.**
+
+Verified by reading:
+
+- **The guard is released before any tmux call.** The `candidates` block closes
+  with `};` at `:200`, and the `for candidate in candidates` loop opens at
+  `:203` — the `RwLockReadGuard` from `cache.panes.read()` lives only inside that
+  block, so every `off_runtime` probe runs unlocked. This was the phase's whole
+  point and it is structurally, not incidentally, true.
+- **No `with_sessions` was added.** The file's 14 occurrences are all
+  pre-existing `SessionStore` uses in other handlers; zero appear in the added
+  diff. The wrong-accessor trap was avoided.
+- **The diff is confined to `handle_list_panes`.** All three hunks fall in
+  `:171–:218`; `handle_set_pane` (`:108–156`) and `handle_status` (`:246+`) are
+  untouched.
+- **The timeout arm is not inverted** and the sort still runs once, after the
+  filter, on the filtered vector.
+
+The executor answered all three reasoning checks correctly with quoted code,
+including the non-obvious one — that `.map()` moving ahead of the liveness check
+cannot change the result set because `.map()` is pure.
+
+### Calibration — the apply-verify-revert refinement did its job
+
+06n's review found an acceptance criterion made unsatisfiable by its own Spec,
+and the fix proposed there was to run the doc's **acceptance greps** against the
+applied tree, not just the four gates. This was the first phase drafted that
+way, and it caught **three** would-be-unsatisfiable criteria before dispatch
+(`.filter(` is 3 not 2; `cache.panes.read()` is 2 not 1; `pane_exists` is 2 not
+1, one being the new comment) plus the fact that `cargo fmt` collapses the
+`off_runtime` closure to one line.
+
+Two of those three became the phase's most useful criteria — the non-zero guards
+that would have caught a sweep into the neighbouring handlers. **A criterion that
+is correct *because* it is non-obvious is worth more than one that is trivially
+zero.**
+
+That is the third consecutive payoff for the practice (06p, 06n, 06q). The fold
+proposed at 06n's review stands unchanged and still awaits PE sign-off at
+milestone close:
+
+> **Apply the phase's own diff to the tree before dispatch; run the gates *and*
+> the doc's acceptance criteria against it; then revert.** A criterion that
+> cannot be satisfied is as expensive as a fact that is wrong.
+
+**No doc change made.**
