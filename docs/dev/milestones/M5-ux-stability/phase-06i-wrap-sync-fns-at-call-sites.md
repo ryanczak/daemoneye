@@ -1,7 +1,7 @@
 # Phase 06i: Wrap Blocking Sync Functions at Their Async Call Sites
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06j — `done` (the daemon's direct call sites are finished)
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -428,3 +428,67 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7e911975a6dbe9075e3b5f0dfd9de8b6cc940b44
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (58 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing all three edited files — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at 916 lib + 27
+integration, unchanged).
+
+**The wrap-the-caller pattern is established, and its defining property holds:**
+
+```
+$ git diff --stat HEAD~2 HEAD -- src/daemon/background/helpers.rs src/daemon/background/gc.rs
+$
+```
+
+Empty. **Neither helper was touched — not one line** — and both keep their
+synchronous signatures (`pub(super) fn capture_and_archive(`,
+`pub fn gc_bg_windows(`, one occurrence each). No test changed. That is the
+whole point of the approach: the same blocking work moved off the runtime that
+making these `async` would have achieved, but with zero signature churn and
+`close_bg_window`-style direct unit tests left intact for the later slices.
+
+`off_runtime` counts are 25 / 17 / 10 against a verified 23 / 15 / 9 — exactly
++2 / +2 / +1. Three `src/` files in the code commit.
+
+Verified by reading, since counts cannot show these:
+
+- **All four `capture_and_archive` calls are inside `off_runtime` closures.**
+  The four remaining textual matches in `run.rs`/`respawn.rs` are the calls
+  *within* the closure bodies, at `:337`, `:466`, `:200` and `:328` — there is
+  no bare call left in an `async fn`. Each collapses with
+  `.unwrap_or_default()`, correct for a `String`-returning helper, so a timeout
+  yields the empty body the helper already produces when it can neither read the
+  pipe log nor capture the pane.
+- **`respawn.rs:197` was owned without an extra `&`.** It passed `pane_id` and
+  `win_name` as existing references; the conversion took `.to_string()` on each
+  and passes `&p`/`&w` inside — matching the other three sites' final shape
+  without double-referencing.
+- **`pipe_log` is moved, not cloned**, at all four sites — correct, since it is
+  already an owned `Option<PathBuf>`.
+- **The GC clone is inside the `loop`**, not hoisted above it, so `sessions_gc`
+  survives for the next tick 60 s later. `gc_bg_windows` returns `()`, so the
+  result is plainly discarded, and a timeout skips exactly one idempotent GC
+  pass with no retry added.
+- **`notify_session` was left alone** — one call site each in `run.rs` and
+  `respawn.rs`, neither wrapped. It sits directly beside `capture_and_archive`
+  and would not have compiled (`BgJobInfo<'_>` is not `'static`); naming it as a
+  do-not-touch hazard rather than leaving it to be discovered was worth the
+  paragraph.
+
+Test plan honoured, and its stronger form was satisfied: the phase said *"if any
+test needs editing, stop and report a blocker"*, and none did.
+
+**Note for the later slices.** The wrap approach means the span-matching scan is
+no longer the finish condition — the `Command::new("tmux")` calls stay inside the
+helpers, so the scan output is unchanged by design. 06m and 06n should keep
+using call-site-shaped criteria (`off_runtime` floors plus a `git diff --stat`
+showing the helper untouched), as this phase did.
