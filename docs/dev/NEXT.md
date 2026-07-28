@@ -1,10 +1,91 @@
 # NEXT
 
-**Active phase: M5 phase-06m — wrap-sync-fns-slice-2**
+**Active phase: M5 phase-06p — wrap-sync-fns-slice-3**
 (`todo`, drafted 2026-07-28).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06m-wrap-sync-fns-slice-2.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06p-wrap-sync-fns-slice-3.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06m-wrap-sync-fns-slice-2`.
+Dispatch with `/rexymcp:dispatch phase-06p-wrap-sync-fns-slice-3`.
+
+## Nine phases, no bounces; the wrap set is down to its last two clean sites
+
+06i (5 wraps) → 06m (7 wraps), both `approved_first_try`, both with an
+**empty diff on every helper**. 06p is the last two wraps that need no shape
+change, after which only 06n's four restructures remain.
+
+## The two open questions on these sites are both answered — and both by running something
+
+The README flagged 06p as needing two things checked before it could be specced.
+Both were checked while drafting rather than deferred into the spec:
+
+1. **`watch_pane` calls `tokio::spawn` internally — does that survive
+   `spawn_blocking`?** **Yes.** Verified in a scratch crate: a sync fn calling
+   `tokio::spawn`, run through an `off_runtime`-shaped wrapper on a multi-thread
+   runtime, returned its `String` *and* the detached task was scheduled and ran
+   to completion. Blocking-pool threads carry the runtime context. The spec says
+   so explicitly and forbids "fixing" the spawn.
+2. **What should the timeout text say?** Both helpers return a string the model
+   reads, which is why this phase was split out. The deciding fact is that
+   **`spawn_blocking` is not cancellable** — `off_runtime` times out the
+   `JoinHandle`, not the work, so on timeout the hook may still be installed and
+   the window may still be killed. Text asserting the operation did **not**
+   happen would be a lie the model acts on. Both strings are pinned byte-exact
+   and are honest about the uncertainty.
+
+A third fact worth having up front: **the 5 s `TMUX_TIMEOUT` does not shorten a
+watch.** Only `watch_pane`'s two-call prologue runs inside the wrap;
+`timeout_secs` lives in the detached task. A `watch_pane(timeout_secs=300)` still
+watches for 300 s. That reads like a regression if you don't check it, so the
+spec pins it as a reasoning check.
+
+## The whole diff was compile-checked, not sketched
+
+Both match-arm blocks in the spec were applied to `src/daemon/executor/mod.rs`,
+built, `clippy`-ed and `cargo fmt --all --check`-ed clean, then reverted (tree
+confirmed clean). They are known to compile **and** to need no reformatting.
+
+That is deliberate: the 06m review recorded a **2nd occurrence** of "unverified
+code details in spec snippets" (a private-module path that would not have
+compiled). Applying-and-reverting is the cheapest way to make a snippet a fact
+rather than a claim, and this is the first phase drafted with it.
+
+## The tmux-behind-a-non-`tmux`-name sweep — partially done, and it is quiet
+
+06m found `get_pane_remote_host` (a `tmux display-message` whose name says
+nothing about tmux) hiding from the span-matching scan. The suggested sweep was
+run over `Command::new("tmux")` outside `src/tmux/`: **36 hits, and the enclosing
+context of every one outside `src/cli/` is already either wrapped in
+`off_runtime` or a known 06n site** (`helpers.rs:215` is inside
+`notify_session`). No new species surfaced.
+
+So the eighth species stays at **one occurrence**, not two — no fold. The `cli/`
+hits remain stage A's, as the dropped 06k decided.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it
+(`off_runtime` 0 / 7, `watch_pane(` 1, `close_bg_window(` 1 / 3, both signature
+greps 1, `tokio::spawn` 1, 916/27). Post-state values are floors with the
+arithmetic shown. Thirteen clean applications.
+
+## Calibration
+
+Ledger is empty at the fold bar. Open at one occurrence: the five long-standing
+single-occurrence threads, the seventh species (sync closure in an async fn), and
+the eighth (tmux behind a non-`tmux` name — **investigated above and still at
+one**). At two: **unverified code details in spec snippets**, which this draft
+answers with a practice rather than a doc change. If a third appears, the home is
+`WORKFLOW.md` § "Run every count criterion; never derive it", generalised from
+numbers to any verifiable fact.
+
+## After 06p
+
+**06n** (the four shape changes) → **stage A** (helper timeouts — load-bearing
+for an exit criterion) → **07** (stall-instrumentation), plus the drafted
+**08–11** set. Five exit criteria remain open.
+
+---
+
+## Superseded: the 06m dispatch note
 
 ## Eight phases, no bounces; wrap-the-caller is proven
 
