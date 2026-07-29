@@ -34,12 +34,12 @@ impl WindowState {
 /// Single tmux call; tab-separated format string (7 fields):
 /// window_id, window_name, active, pane_count, zoomed_flag, last_flag, window_flags
 pub fn list_windows(session: &str) -> Result<Vec<WindowState>> {
-    let output = Command::new("tmux")
-        .args([
+    let output = crate::tmux::bounded_output(
+        Command::new("tmux").args([
             "list-windows", "-t", session, "-F",
             "#{window_id}\t#{window_name}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{window_last_flag}\t#{window_flags}",
-        ])
-        .output()?;
+        ]),
+    )?;
 
     if !output.status.success() {
         anyhow::bail!("Failed to list windows for session '{}'", session);
@@ -71,26 +71,26 @@ pub fn list_windows(session: &str) -> Result<Vec<WindowState>> {
 /// Returns the pane ID of the new window (e.g. `%12`).
 pub fn create_job_window(session: &str, name: &str) -> Result<String> {
     // Silently kill any pre-existing window with that name.
-    let _ = Command::new("tmux")
-        .args(["kill-window", "-t", &format!("{}:{}", session, name)])
-        .output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args([
+        "kill-window",
+        "-t",
+        &format!("{}:{}", session, name),
+    ]));
 
     // Use "session:" (trailing colon) so tmux picks the next available window
     // index rather than defaulting to 0 and colliding with existing windows.
     let target = format!("{}:", session);
-    let output = Command::new("tmux")
-        .args([
-            "new-window",
-            "-d",
-            "-n",
-            name,
-            "-t",
-            &target,
-            "-P",
-            "-F",
-            "#{pane_id}",
-        ])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "new-window",
+        "-d",
+        "-n",
+        name,
+        "-t",
+        &target,
+        "-P",
+        "-F",
+        "#{pane_id}",
+    ]))?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
@@ -103,9 +103,12 @@ pub fn create_job_window(session: &str, name: &str) -> Result<String> {
 /// Rename an existing tmux window.
 pub fn rename_window(session: &str, old_name: &str, new_name: &str) -> Result<()> {
     let target = format!("{}:{}", session, old_name);
-    let output = Command::new("tmux")
-        .args(["rename-window", "-t", &target, new_name])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "rename-window",
+        "-t",
+        &target,
+        new_name,
+    ]))?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(
@@ -120,17 +123,23 @@ pub fn rename_window(session: &str, old_name: &str, new_name: &str) -> Result<()
 
 /// Kill a background window by name.  Silently ignores missing windows.
 pub fn kill_job_window(session: &str, name: &str) -> Result<()> {
-    let _ = Command::new("tmux")
-        .args(["kill-window", "-t", &format!("{}:{}", session, name)])
-        .output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args([
+        "kill-window",
+        "-t",
+        &format!("{}:{}", session, name),
+    ]));
     Ok(())
 }
 
 /// Query the width of the window containing a pane in columns.
 pub fn query_window_width(pane_id: &str) -> Result<usize> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{window_width}"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{window_width}",
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to query window width for '{}'", pane_id);
     }

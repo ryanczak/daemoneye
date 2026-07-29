@@ -1,10 +1,99 @@
 # NEXT
 
-**Active phase: M5 phase-06r — async-inject-ghost-event**
+**Active phase: M5 phase-06s — bounded-output**
 (`todo`, drafted 2026-07-28).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06r-async-inject-ghost-event.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06s-bounded-output.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06r-async-inject-ghost-event`.
+Dispatch with `/rexymcp:dispatch phase-06s-bounded-output`.
+
+## The async side is finished; stage A begins
+
+06r closed the **fourth exit criterion** — every tmux subprocess reachable from
+the daemon's async contexts is now off the runtime. Thirteen phases, no bounces.
+
+What remains unbounded is what `off_runtime` structurally cannot reach: the three
+`Drop` impls (`Drop::drop` cannot be `async`) and `src/cli/` (no runtime to
+protect). Stage A bounds them from the **helper side**, with no call-site churn.
+That is the fifth criterion.
+
+## The design question had a real answer, and the obvious implementation is wrong
+
+A synchronous timeout around `Command::output()` looks like a ten-line job: spawn
+with piped stdio, poll `try_wait()` to a deadline, read the output. **That
+deadlocks.** The child blocks writing into a full pipe (~64 KiB), so it never
+exits, so `try_wait` never returns `Some`, so a perfectly healthy command "times
+out".
+
+**It is not hypothetical here.** `src/tmux/pane.rs:214` runs `capture-pane -S -`
+— the entire scrollback — which routinely exceeds 64 KiB.
+
+Both behaviours were measured while drafting, in a scratch crate:
+
+| Implementation | 1 MiB of output |
+|---|---|
+| poll `try_wait`, read afterwards | **spuriously times out** |
+| drain both pipes on their own threads | **succeeds, 1 048 576 bytes** |
+
+So the spec pins the threaded implementation *and* ships the 1 MiB case as a
+regression test. Writing the naive version fails that test rather than shipping a
+latent hang — which is the whole point of proving the wrong answer as well as the
+right one.
+
+## This is the first 06x phase with real unit coverage
+
+Every phase since 06a has ended with "these sites have no unit coverage; do not
+claim otherwise" — because they all need a live tmux server. A **timeout helper
+does not**. It can be tested hermetically against `sh`, `printf`, `yes`, `head`
+and `sleep`, with no `HOME` mutation and so no `TEST_HOME_LOCK`.
+
+Five tests, all written and passing at draft time: stdout round-trip, non-zero
+exit preserved, stderr captured, **1 MiB without timing out**, and a 30 s sleep
+bounded at 200 ms returning `ErrorKind::TimedOut`. Suite goes 916 → **921**.
+
+## Stage A is three slices, not one
+
+46 raw spawns live in `src/tmux/`: `window.rs` 6, `session.rs` 9, `pane.rs` 30
+(the 31st is `wait_for`, already `tokio::process` and not an `.output()` call at
+all). 06s takes the helper, the tests, and `window.rs` — deliberately the
+smallest file, because the helper is the design-critical part and worth landing
+on its own. **06t** = `session.rs`, **06u** = `pane.rs` (needs splitting when
+drafted).
+
+## One pinning decision worth noting
+
+`cargo fmt` **reflows the converted call sites heavily** — changing the
+expression's nesting depth makes it re-wrap the `.args([…])` arrays, sometimes
+exploding a one-line array to one element per line. Pinning a post-`fmt` layout
+per site would be pinning rendering, not behaviour. So the spec pins the
+*transformation rule* plus one worked example, and tells the executor to run
+`cargo fmt --all` and accept its output — with an explicit note that the reflow
+is expected, not a mistake.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`bounded_output` 0→16 in `mod.rs`,
+`.output()` in `window.rs` 6→0, `session.rs` 9→9, `pane.rs` 30→30, five test
+fns, 916→921). Seventeen clean applications.
+
+## Calibration
+
+Apply-verify-revert is at **five** consecutive payoffs and still awaits PE
+sign-off; this run it settled a genuine design question (threads vs poll) that
+the executor would otherwise have had to discover by shipping a hang. Wording
+unchanged from 06n's review.
+
+Also open at one occurrence: the warn-vs-error cascade distinction from 06r.
+
+## After 06s
+
+**06t** (`session.rs`, 9) → **06u** (`pane.rs`, 30 — split when drafted), which
+together close the fifth exit criterion → **07** (stall-instrumentation), plus
+the drafted **08–11** set. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06r dispatch note
 
 ## Twelve phases, no bounces — and 06r is the last mechanism-B site
 
