@@ -1,10 +1,103 @@
 # NEXT
 
-**Active phase: M5 phase-06u — bounded-output-pane-1**
+**Active phase: M5 phase-06v — bounded-output-pane-2**
 (`todo`, drafted 2026-07-29).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06u-bounded-output-pane-1.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06v-bounded-output-pane-2.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06u-bounded-output-pane-1`.
+Dispatch with `/rexymcp:dispatch phase-06v-bounded-output-pane-2`.
+
+## Sixteen phases, no bounces; 06v finishes `src/tmux/`
+
+`window.rs` (6), `session.rs` (9) and `pane.rs`'s first 15 are converted. 06v
+takes the last **14**, after which every synchronous tmux spawn in `src/tmux/` is
+bounded — **44** of them — and the directory's residue is **1**: `wait_for`'s
+`tokio::process` call, already async and already bounded by
+`tokio::time::timeout`.
+
+## ⚠ 06v does *not* close the fifth exit criterion — the criterion's premise was wrong
+
+This is the draft's most consequential finding, and it came from reading the code
+rather than counting it.
+
+The criterion said bounding the `src/tmux/` helpers would bound "every remaining
+caller … **without call-site churn** — the `Drop` impls, the CLI, and any sync
+path not worth restructuring." **It will not.** Those callers do not call the
+helpers:
+
+```rust
+// src/daemon/executor/foreground.rs:73 — FgHookGuard::drop
+        let _ = std::process::Command::new("tmux")
+            .args(["set-hook", "-u", "-t", &self.target, hook])
+            .output();
+```
+
+Ten sites spawn tmux **directly**, bypassing `src/tmux/` entirely: `FgHookGuard`
+(2), `WatchHookGuard` (1), and seven in `src/cli/` (`local_cmds.rs` 1,
+`commands/pane.rs` 2, `commands/chat.rs` 4). No helper-side timeout reaches any
+of them.
+
+Stage A is still correct and still worth having — it bounds the 44 helper spawns
+**and** the 12 `tmux::` helper calls `src/cli/` *does* make. But the "19 CLI hits"
+figure recorded when 06k was dropped conflated the two kinds. **06w** — added to
+the README — bounds the ten direct spawns, and only then is the criterion met.
+The criterion has been reworded to say both halves explicitly.
+
+This is a ninth appearance of "the raw count is not the scope", and the first
+where the miscount was in an **exit criterion** rather than a phase spec.
+
+## 06v is uniform in a way 06u was not
+
+All 14 sites are bare `Command::new("tmux")`. The two fully-qualified
+`std::process::`-prefixed sites — the `E0433` hazard that dominated 06u — are at
+`:250`/`:271`, **already converted**, and above this slice's boundary. The spec
+pins their count at **2, unchanged**, so a sweep that wanders upward fails.
+
+The four surrounding shapes here (`?`, `.ok()?`, `let _ =`,
+`.map(…).unwrap_or(false)`) are all **pure substitutions** — `bounded_output`
+returns the same `io::Result<Output>` — so the spec gives the table only so the
+executor can confirm it disturbed nothing, and names "adding a collapse" as the
+first trap.
+
+## One pinning decision worth noting
+
+`fmt` does something to `pane_exists` that reads as a mistake: it explodes the
+`.args([…])` array *and* de-indents the trailing `.map(…)/.unwrap_or(false)`
+chain back to column 4. Pinned as a worked example with "that is `rustfmt`'s
+output, not a mistake. Leave it." — the executor must produce fmt-clean code
+itself, since this project has no `format_fix` hook.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`.output()` in `pane.rs` 15 → 1,
+`bounded_output(` 15 → 29, fully-qualified 2 → 2, `tokio::process::Command`
+2 → 2, `session.rs` 9 and `window.rs` 6 unchanged, whole-directory residue 1,
+921/27 throughout). Twenty clean applications.
+
+Worth noting one blind instrument found while surveying: a same-line
+`grep 'Command::new("tmux")' | grep -v bounded_output` reports `window.rs:38` as
+unbounded. It is not — `fmt` split its `bounded_output(` onto the previous line.
+The whole-directory criterion is therefore phrased on `.output()`, which cannot
+be split that way, rather than on the spawn expression.
+
+## Calibration
+
+The apply-verify-revert fold is at its strongest evidence yet and **still awaits
+PE sign-off**; wording unchanged from 06s's review. This run it did not catch a
+bad pin — it caught a bad **exit criterion**, which is a scope larger than the
+fold currently claims. Worth widening the proposed wording at milestone close.
+
+Also open at one occurrence: the warn-vs-error cascade distinction from 06r.
+
+## After 06v
+
+**06w** (the ten direct spawns) closes the **fifth exit criterion**. Then **07**
+(stall-instrumentation), plus the drafted **08–11** set. Four exit criteria remain
+open.
+
+---
+
+## Superseded: the 06u dispatch note
 
 ## Fifteen phases, no bounces; `pane.rs` is the last file in stage A
 

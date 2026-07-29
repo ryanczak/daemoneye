@@ -48,13 +48,26 @@ take the socket.
       (2), `watch_pane`'s prologue (1). The only calls wrapped at **no** level
       are the three `Drop` impls, which cannot be `async`; those are the next
       criterion's.)
-- [ ] The synchronous tmux helpers in `src/tmux/` carry their **own** timeout,
-      so every remaining caller is bounded without call-site churn — the `Drop`
-      impls (which cannot be `async`), the CLI, and any sync path not worth
-      restructuring. (Added 2026-07-27: `src/cli/` has **no concurrency** — no
-      `tokio::spawn`, no threads — so mechanism B does not apply there and
-      converting its call sites would buy only the timeout this criterion
-      already delivers.)
+- [ ] Every synchronous tmux spawn reachable from a path that cannot be wrapped
+      in `off_runtime` is timeout-bounded: the `src/tmux/` helpers carry their
+      **own** timeout (`bounded_output`), **and** the raw spawns that bypass
+      those helpers entirely — the two `Drop` impls (which cannot be `async`)
+      and `src/cli/` — call `bounded_output` directly. (Added 2026-07-27:
+      `src/cli/` has **no concurrency** — no `tokio::spawn`, no threads — so
+      mechanism B does not apply there and converting its call sites would buy
+      only the timeout this criterion delivers.)
+      **⚠ Reworded 2026-07-29 while drafting 06v.** The previous wording said
+      bounding the `src/tmux/` helpers would bound "every remaining caller …
+      without call-site churn". **That premise is false**, and reading the code
+      rather than assuming it is what caught it: `FgHookGuard::drop`
+      (`executor/foreground.rs:73`, `:78`), `WatchHookGuard::drop`
+      (`executor/knowledge/pane.rs:182`) and seven sites in `src/cli/`
+      (`local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`) spawn
+      `std::process::Command::new("tmux")` **directly** — they never call a
+      `src/tmux/` helper, so no helper-side timeout can reach them. Stage A
+      (06s–06v) bounds the 44 helper spawns and therefore the 12 `tmux::` calls
+      `src/cli/` *does* make; **06w** bounds the ~10 direct ones. The criterion
+      is met when both halves land.
 - [ ] The daemon self-reports a stall: if a shared lock is held or an IPC
       request goes unanswered beyond a threshold, `daemon.log` records what
       was holding it and where. A future wedge identifies itself without a
@@ -125,7 +138,8 @@ take the socket.
 | 06s | bounded-output ([phase-06s-bounded-output.md](phase-06s-bounded-output.md)) — **stage A slice 1**: add `bounded_output` (std-only, timeout-bounded `Command::output()`) + **5 unit tests**, convert `src/tmux/window.rs` (6). Pipes are drained on threads — a `try_wait`-only loop deadlocks past 64 KiB, and `capture-pane -S -` exceeds that. First 06x phase with real test coverage | done (approved_first_try) |
 | 06t | bounded-output-session ([phase-06t-bounded-output-session.md](phase-06t-bounded-output-session.md)) — **stage A slice 2**: `src/tmux/session.rs` (9 sites). Five different surrounding shapes, all a **pure substitution** — `bounded_output` returns the same `io::Result<Output>`, so no collapse is needed anywhere | done (approved_first_try) |
 | 06u | bounded-output-pane-1 ([phase-06u-bounded-output-pane-1.md](phase-06u-bounded-output-pane-1.md)) — **stage A slice 3a**: `src/tmux/pane.rs` first **15** sites (top → `select_pane`). Carries the file's **two fully-qualified `std::process::Command::new` sites**, where a naive replace is `error[E0433]` | done (approved_first_try) |
-| 06v | stage A slice 3b — `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Closes the **fifth exit criterion**. File residue is **1**, not 0 — `wait_for` is `tokio::process`, already async and already bounded. Not drafted | todo |
+| 06v | bounded-output-pane-2 ([phase-06v-bounded-output-pane-2.md](phase-06v-bounded-output-pane-2.md)) — **stage A slice 3b**: `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Finishes `src/tmux/` — 44 bounded spawns, directory residue **1** (`wait_for`, `tokio::process`, already bounded). All four surrounding shapes are pure substitutions | todo |
+| 06w | bounded-output-direct-spawns — the **~10 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (7, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **This is what actually closes the fifth exit criterion** — see the correction below. Not drafted | todo |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
