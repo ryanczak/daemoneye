@@ -1,7 +1,7 @@
 # Phase 06s: `bounded_output` — Give the Sync tmux Helpers Their Own Timeout
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06r — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -535,3 +535,88 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6aa533e439787a6e182f3d3214346a57aa9dce8d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (60 turns)
+- **Scope deviations:** none
+- **Calibration:** one architect-side spec flaw, 3rd of its family — see below
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing both edited files — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at **921** lib + 27 integration).
+
+Criteria: both declarations **1**; `.output()` in `window.rs` **0** (6 before)
+with `bounded_output(` **6**; `session.rs` **9** and `pane.rs` **30** both
+**unchanged**, so neither later slice was touched; five test fns; `Cargo.toml`
+**not in the commit at all**; two `src/` files. The helper is byte-identical to
+the spec, threading intact.
+
+### The regression test is real — mutation-checked
+
+Per STANDARDS §3 and the review skill's spot-check, I replaced the threaded drain
+with the naive `try_wait`-then-read shape the spec warns against and re-ran:
+
+```
+test bounded_output_captures_stderr ... ok
+test bounded_output_returns_stdout_and_success ... ok
+test bounded_output_preserves_failure_status ... ok
+test bounded_output_times_out_and_kills_the_child ... ok
+test bounded_output_handles_output_larger_than_pipe_buffer ... FAILED
+test result: FAILED. 4 passed; 1 failed; finished in 10.01s
+```
+
+**Exactly one test fails, and it is the one that guards the hazard** — burning
+its full 10 s timeout, which is the deadlock signature. The other four pass under
+the broken implementation, which is why they alone would not have caught it. The
+helper was restored and the suite re-verified green.
+
+That is the strongest coverage this milestone has produced: every prior 06x phase
+shipped with an explicit "no unit coverage" note.
+
+Also verified by reading:
+
+- **`.unwrap()` is test-only.** The test module starts at `mod.rs:129`; production
+  lines 1–128 contain zero `unwrap`/`expect`/`panic!`. The two `join()` results
+  use `.unwrap_or_default()`, which degrades a panicked reader thread to empty
+  output rather than propagating the panic.
+- **No dependency was added.** `Cargo.toml` does not appear in the commit.
+- **`fmt` reflowed the call sites as predicted** — the `.args([…])` arrays
+  re-wrapped to one element per line at four of the six sites. Expected, and the
+  reason the spec pinned the transformation rule rather than a per-site layout.
+
+### Calibration — a word-match criterion caught prose again (3rd occurrence)
+
+The criterion
+
+> `grep -c "wait_timeout\|subprocess\|shell_timeout" src/tmux/mod.rs` returns **0**
+
+returns **1**, and always would have: `src/tmux/mod.rs:11` has carried
+`/// Ceiling for a single tmux subprocess call made from async code.` since 06a.
+**The criterion was unsatisfiable before the phase began.** The executor
+identified it as a false positive, quoted the offending line, and said so
+plainly — declare-deviations working for the third phase running.
+
+This is the **third** instance of the same architect error: a `grep` criterion
+whose pattern matches prose rather than code (06n's `spawn_blocking`, 06q's three
+caught pre-dispatch, now this). It is also a **failure of my own practice**: I ran
+the criteria greps against the applied tree, which is what caught 06q's three —
+but I wrote this one late, after that pass, and never re-ran the set.
+
+So the refinement the fold needs is sharper than "run the criteria": **run them
+last, after the criteria list is final, and run every one.** A partial sweep is
+what let this through.
+
+Three occurrences puts this at `WORKFLOW.md` § Calibration's "the doc was wrong —
+fold immediately" bar. Proposed wording, unchanged in substance from 06n's review
+but with the ordering clause added:
+
+> **Apply the phase's own diff to the tree before dispatch; then, with the
+> acceptance-criteria list final, run *every* criterion against it; then revert.**
+> A criterion that cannot be satisfied is as expensive as a fact that is wrong,
+> and a word-match pattern will match prose.
+
+**No doc change made — this needs PE sign-off**, and it is now the milestone's
+top calibration item.
