@@ -365,10 +365,8 @@ pub fn select_pane(pane_id: &str) -> Result<()> {
 /// or the value cannot be parsed.
 pub fn read_pane_exit_status(pane_id: &str) -> Option<i32> {
     let key = format!("DE_EXIT_{}", pane_id.trim_start_matches('%'));
-    let output = Command::new("tmux")
-        .args(["show-environment", &key])
-        .output()
-        .ok()?;
+    let output =
+        crate::tmux::bounded_output(Command::new("tmux").args(["show-environment", &key])).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -386,16 +384,18 @@ pub fn read_pane_exit_status(pane_id: &str) -> Option<i32> {
 /// caller falls back to PID-return completion.
 pub fn clear_pane_exit_status(pane_id: &str) {
     let key = format!("DE_EXIT_{}", pane_id.trim_start_matches('%'));
-    let _ = Command::new("tmux")
-        .args(["set-environment", "-u", &key])
-        .output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args(["set-environment", "-u", &key]));
 }
 
 /// Send keys (a command) to a specific pane.
 pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
-    let output = Command::new("tmux")
-        .args(["send-keys", "-t", pane_id, cmd, "C-m"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "send-keys",
+        "-t",
+        pane_id,
+        cmd,
+        "C-m",
+    ]))?;
 
     if !output.status.success() {
         anyhow::bail!("Failed to send keys to pane '{}'", pane_id);
@@ -407,9 +407,12 @@ pub fn send_keys(pane_id: &str, cmd: &str) -> Result<()> {
 /// Send a `C-c` (SIGINT) to a pane without a trailing Enter, to cancel a process
 /// waiting at a prompt (e.g. a sudo password prompt the user let time out).
 pub fn send_cancel(pane_id: &str) -> Result<()> {
-    let output = Command::new("tmux")
-        .args(["send-keys", "-t", pane_id, "C-c"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "send-keys",
+        "-t",
+        pane_id,
+        "C-c",
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to send C-c to pane '{}'", pane_id);
     }
@@ -419,9 +422,13 @@ pub fn send_cancel(pane_id: &str) -> Result<()> {
 /// Set the `remain-on-exit` option for a specific pane.
 /// Get the global window ID (`#{window_id}`, e.g. `@3`) of the window containing a pane.
 pub fn pane_window_id(pane_id: &str) -> Result<String> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{window_id}"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{window_id}",
+    ]))?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -429,9 +436,13 @@ pub fn pane_window_id(pane_id: &str) -> Result<String> {
 ///
 /// `window_id` is the global window ID (e.g. `@3`), not the session-relative index.
 pub fn list_panes_in_window(window_id: &str) -> Result<Vec<String>> {
-    let output = Command::new("tmux")
-        .args(["list-panes", "-t", window_id, "-F", "#{pane_id}"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "list-panes",
+        "-t",
+        window_id,
+        "-F",
+        "#{pane_id}",
+    ]))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout
         .lines()
@@ -442,11 +453,15 @@ pub fn list_panes_in_window(window_id: &str) -> Result<Vec<String>> {
 
 /// Returns true if the given pane ID still exists in any tmux session.
 pub fn pane_exists(pane_id: &str) -> bool {
-    Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_id}"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{pane_id}",
+    ]))
+    .map(|o| o.status.success())
+    .unwrap_or(false)
 }
 
 /// Apply a visual highlight to a pane so the user can identify it as the
@@ -457,13 +472,16 @@ pub fn pane_exists(pane_id: &str) -> bool {
 /// `restore_focus_to` — if provided, focus is immediately returned to that
 /// pane after setting the style, so the user's active pane is not disturbed.
 pub fn highlight_pane(pane_id: &str, restore_focus_to: Option<&str>) {
-    let _ = Command::new("tmux")
-        .args(["select-pane", "-t", pane_id, "-P", "bg=colour17"])
-        .output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args([
+        "select-pane",
+        "-t",
+        pane_id,
+        "-P",
+        "bg=colour17",
+    ]));
     if let Some(restore) = restore_focus_to {
-        let _ = Command::new("tmux")
-            .args(["select-pane", "-t", restore])
-            .output();
+        let _ =
+            crate::tmux::bounded_output(Command::new("tmux").args(["select-pane", "-t", restore]));
     }
 }
 
@@ -473,21 +491,28 @@ pub fn highlight_pane(pane_id: &str, restore_focus_to: Option<&str>) {
 /// `restore_focus_to` — if provided, focus is immediately returned to that
 /// pane after clearing the style.
 pub fn unhighlight_pane(pane_id: &str, restore_focus_to: Option<&str>) {
-    let _ = Command::new("tmux")
-        .args(["select-pane", "-t", pane_id, "-P", "default"])
-        .output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args([
+        "select-pane",
+        "-t",
+        pane_id,
+        "-P",
+        "default",
+    ]));
     if let Some(restore) = restore_focus_to {
-        let _ = Command::new("tmux")
-            .args(["select-pane", "-t", restore])
-            .output();
+        let _ =
+            crate::tmux::bounded_output(Command::new("tmux").args(["select-pane", "-t", restore]));
     }
 }
 
 pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {
     let value = if enable { "on" } else { "off" };
-    let output = Command::new("tmux")
-        .args(["set-option", "-t", pane_id, "remain-on-exit", value])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "set-option",
+        "-t",
+        pane_id,
+        "remain-on-exit",
+        value,
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to set remain-on-exit for pane '{}'", pane_id);
     }
@@ -497,9 +522,8 @@ pub fn set_remain_on_exit(pane_id: &str, enable: bool) -> Result<()> {
 /// Read a named tmux buffer's contents to bytes (`tmux save-buffer -b <name> -`).
 /// Returns the raw bytes; the buffer is NOT deleted (caller decides).
 pub fn save_buffer(name: &str) -> Result<Vec<u8>> {
-    let output = Command::new("tmux")
-        .args(["save-buffer", "-b", name, "-"])
-        .output()?;
+    let output =
+        crate::tmux::bounded_output(Command::new("tmux").args(["save-buffer", "-b", name, "-"]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to save tmux buffer '{}'", name);
     }
@@ -509,9 +533,7 @@ pub fn save_buffer(name: &str) -> Result<Vec<u8>> {
 /// Best-effort delete of a named tmux buffer (`tmux delete-buffer -b <name>`).
 /// Errors are swallowed — a missing buffer is not a failure.
 pub fn delete_buffer(name: &str) {
-    let _ = Command::new("tmux")
-        .args(["delete-buffer", "-b", name])
-        .output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args(["delete-buffer", "-b", name]));
 }
 
 /// Block until `channel` is signalled with `tmux wait-for -S <channel>`, or until

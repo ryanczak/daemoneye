@@ -1,7 +1,7 @@
 # Phase 06v: `bounded_output` — Stage A Slice 3b, `src/tmux/pane.rs` (last 14)
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06u — `done`
 **Estimated diff:** ~95 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -263,3 +263,8 @@ tests. **Do not attempt a live-tmux demonstration.**
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-29 18:03 (started)
+
+**Executor:** Claude
+**Action:** Started phase 06v — converting the remaining 14 `.output()` sites in `src/tmux/pane.rs` to `bounded_output`.
