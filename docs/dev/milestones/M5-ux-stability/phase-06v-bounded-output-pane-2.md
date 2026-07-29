@@ -1,7 +1,7 @@
 # Phase 06v: `bounded_output` — Stage A Slice 3b, `src/tmux/pane.rs` (last 14)
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06u — `done`
 **Estimated diff:** ~95 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -388,3 +388,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8dd0885c2e36fedf33753f56e770625acb355069
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (66 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `pane.rs` — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at **921** lib + 27 integration,
+unchanged).
+
+**The diff is byte-identical to the one I applied, verified and reverted while
+drafting** — including every `fmt` reflow. Nineteen of the twenty applications
+of that practice have now come back clean.
+
+Every criterion is exact, including all five deliberate non-zeros: `.output()`
+**1** (15 before — *not* 0); `bounded_output(` **29**;
+`std::process::Command::new("tmux")` **2** unchanged (06u's sites, above the
+boundary); `tokio::process::Command` **2**; whole-directory residue **one line**;
+`session.rs` **9** and `window.rs` **6** untouched; `mod.rs` not in the commit; no
+`Cargo` file; one `src/` file; zero `#[allow]`/`unsafe`/`TODO`/`dbg!`.
+
+### The boundary held positionally, not just by count
+
+The boundary comment sits at line **360**, and **every one of the 14 diff hunks
+opens at line 368 or later** — nothing above it was touched. Fourteen hunks for
+fourteen sites (`highlight_pane` and `unhighlight_pane` each split into two,
+being two sites apiece).
+
+### No collapse, and the residue is right
+
+`git diff -U0 | grep '^+'` adds **zero** `unwrap()`/`expect(`/`panic!` and **zero**
+`async`/`.await`. All four surrounding shapes survived byte-identical — the `?`
+sites, `read_pane_exit_status`'s `.ok()?`, the six `let _ =` sites, and
+`pane_exists`, which kept its chain intact through `fmt`'s de-indent to column 4:
+
+```rust
+    crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{pane_id}",
+    ]))
+    .map(|o| o.status.success())
+    .unwrap_or(false)
+```
+
+The one surviving `.output()` is `wait_for`'s, at `:560`, directly above its
+`.await;` — `tokio::process`, already bounded, never a target. The executor's
+summary identified it correctly and unprompted.
+
+### Stage A is complete
+
+`window.rs` (6) + `session.rs` (9) + `pane.rs` (29) = **44** synchronous tmux
+spawns in `src/tmux/`, all timeout-bounded. The directory's residue is 1.
+
+**This does not close the fifth exit criterion** — see the correction recorded in
+the milestone README. Ten raw spawns bypass `src/tmux/` entirely (two `Drop`
+impls, seven in `src/cli/`) and are **06w**'s.
