@@ -1,10 +1,94 @@
 # NEXT
 
-**Active phase: M5 phase-06t — bounded-output-session**
+**Active phase: M5 phase-06u — bounded-output-pane-1**
 (`todo`, drafted 2026-07-29).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06t-bounded-output-session.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06u-bounded-output-pane-1.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06t-bounded-output-session`.
+Dispatch with `/rexymcp:dispatch phase-06u-bounded-output-pane-1`.
+
+## Fifteen phases, no bounces; `pane.rs` is the last file in stage A
+
+`window.rs` (6) and `session.rs` (9) are converted. `pane.rs` is the big one and
+splits in two: **06u** takes the first 15 sites, **06v** the remaining 14 and
+closes the fifth exit criterion.
+
+## `pane.rs` has 30 `.output()` calls and **29** convertible sites
+
+The 30th is `wait_for`'s `tokio::process::Command…output().await` — **already
+async and already bounded** by `tokio::time::timeout`, and `bounded_output` takes
+`&mut std::process::Command` so it would not compile anyway.
+
+So **the file's final residue is 1, not 0.** That is pinned in both slices: 06u's
+finish condition is `.output()` → **15**, and 06v's will be → **1**. A zero
+anywhere means someone converted something that cannot be converted.
+
+This is the ninth appearance of "the raw count is not the scope" in this
+milestone, and the first where the non-convertible site is non-convertible for a
+*good* reason rather than a structural obstacle.
+
+## Applying the change found a compile error the earlier slices could not have
+
+`pane.rs` is the first stage-A file with **fully-qualified** call sites:
+
+```rust
+// src/tmux/pane.rs:257 and :274
+    let out = std::process::Command::new("tmux")
+```
+
+`window.rs` and `session.rs` have **zero** of these, which is why slices 1 and 2
+never met the hazard. Replacing the substring `Command::new("tmux")` — the
+obvious mechanical edit, and the one my own transform script did — yields
+
+```
+std::process::crate::tmux::bounded_output(…)
+error[E0433]: `crate` in paths can only be used in start position
+```
+
+**I hit that error for real while drafting**, which is why the spec names it,
+shows both post-`fmt` forms, and pins `grep -c 'std::process::Command::new("tmux")'`
+at **2 afterwards** — the prefix stays where it is; only the wrapper goes around
+the whole expression. Both sites are in 06u.
+
+## The split boundary is a doc comment, not a line number
+
+06u ends at `/// Read the last exit status recorded by the shell hook`, the
+comment immediately above `read_pane_exit_status`. Naming a stable string rather
+than a line number matters here because `fmt` reflows every converted site, so
+line numbers move under the executor as it works — the same reason 06r pointed at
+the compiler's warning list instead of a fixed one.
+
+Worth noting for whoever reads the diff: `capture_pane_at_scroll_with_escapes`
+(`:197`, in 06u) is the `capture-pane -S -` call that dumps the entire
+scrollback. It is *why* `bounded_output` drains its pipes on threads. Nothing
+special to do — it just stops being a hazard once bounded.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`.output()` 30 → 15 after slice 3a and
+→ 1 after the full conversion; `bounded_output(` 0 → 15 → 29; fully-qualified
+sites 2 → 2; `tokio::process::Command` 2 → 2; `session.rs` 9, `window.rs` 6
+unchanged; 921/27 throughout). Nineteen clean applications.
+
+## Calibration
+
+The apply-verify-revert fold earned its keep hardest yet this draft: it did not
+just correct a pin, it **surfaced a compile error** that the two prior slices'
+experience would have argued did not exist. Still at the fold-immediately bar,
+still awaiting PE sign-off, wording unchanged from 06s's review.
+
+Also open at one occurrence: the warn-vs-error cascade distinction from 06r.
+
+## After 06u
+
+**06v** (`pane.rs` tail, 14 sites) closes the **fifth exit criterion** — every
+sync tmux helper bounded, which in turn bounds the three `Drop` impls and all 19
+CLI hits. Then **07** (stall-instrumentation), plus the drafted **08–11** set.
+Four exit criteria remain open.
+
+---
+
+## Superseded: the 06t dispatch note
 
 ## Fourteen phases, no bounces; stage A is one file from its last slice
 

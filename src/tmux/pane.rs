@@ -43,12 +43,10 @@ pub struct RichPaneInfo {
 /// Fields are tab-separated in the format string.  Tab characters cannot appear
 /// in pane paths or command names, making `\t` a safe delimiter.
 pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
-    let output = Command::new("tmux")
-        .args([
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
             "list-panes", "-a", "-F",
             "#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_title}\t#{pane_dead}\t#{pane_dead_status}\t#{scroll_position}\t#{history_size}\t#{pane_in_mode}\t#{pane_synchronized}\t#{pane_activity}\t#{pane_start_command}\t#{pane_index}\t#{pane_pid}",
-        ])
-        .output()?;
+        ]))?;
 
     if !output.status.success() {
         anyhow::bail!("Failed to list all panes");
@@ -112,16 +110,14 @@ pub fn list_panes_detailed() -> Result<Vec<RichPaneInfo>> {
 /// Returns `Some(code)` if the pane's foreground process has exited, `None`
 /// if the pane is still alive or the status cannot be determined.
 pub fn pane_dead_status(pane_id: &str) -> Option<i32> {
-    let output = Command::new("tmux")
-        .args([
-            "display-message",
-            "-t",
-            pane_id,
-            "-p",
-            "#{pane_dead}\t#{pane_dead_status}",
-        ])
-        .output()
-        .ok()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{pane_dead}\t#{pane_dead_status}",
+    ]))
+    .ok()?;
     let s = String::from_utf8_lossy(&output.stdout);
     let mut parts = s.trim().splitn(2, '\t');
     let dead = parts.next()? == "1";
@@ -133,16 +129,14 @@ pub fn pane_dead_status(pane_id: &str) -> Option<i32> {
 
 /// Capture the content of a specific pane.
 pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
-    let output = Command::new("tmux")
-        .args([
-            "capture-pane",
-            "-p",
-            "-t",
-            pane_id,
-            "-S",
-            &format!("-{}", depth),
-        ])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "capture-pane",
+        "-p",
+        "-t",
+        pane_id,
+        "-S",
+        &format!("-{}", depth),
+    ]))?;
 
     if !output.status.success() {
         anyhow::bail!("Failed to capture pane '{}'", pane_id);
@@ -157,17 +151,15 @@ pub fn capture_pane(pane_id: &str, depth: usize) -> Result<String> {
 /// tmux retain colour and attribute escape codes in the output.  Used for
 /// semantic annotation when no pipe log is available.
 pub fn capture_pane_with_escapes(pane_id: &str, depth: usize) -> Result<String> {
-    let output = Command::new("tmux")
-        .args([
-            "capture-pane",
-            "-p",
-            "-e",
-            "-t",
-            pane_id,
-            "-S",
-            &format!("-{}", depth),
-        ])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "capture-pane",
+        "-p",
+        "-e",
+        "-t",
+        pane_id,
+        "-S",
+        &format!("-{}", depth),
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to capture pane '{}' with escapes", pane_id);
     }
@@ -182,19 +174,17 @@ pub fn capture_pane_at_scroll_with_escapes(
 ) -> Result<String> {
     let end: i64 = -(scroll_pos as i64);
     let start: i64 = end - depth as i64;
-    let output = Command::new("tmux")
-        .args([
-            "capture-pane",
-            "-p",
-            "-e",
-            "-t",
-            pane_id,
-            "-S",
-            &start.to_string(),
-            "-E",
-            &end.to_string(),
-        ])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "capture-pane",
+        "-p",
+        "-e",
+        "-t",
+        pane_id,
+        "-S",
+        &start.to_string(),
+        "-E",
+        &end.to_string(),
+    ]))?;
     if !output.status.success() {
         anyhow::bail!(
             "Failed to capture pane '{}' at scroll {} with escapes",
@@ -210,17 +200,20 @@ pub fn capture_pane_at_scroll_with_escapes(
 pub fn capture_pane_to_file(pane_id: &str, out_path: &std::path::Path) -> Result<()> {
     let out_path_str = out_path.to_string_lossy().into_owned();
     // Using `tmux capture-pane -S -` captures from the very beginning of the scrollback buffer
-    let output = Command::new("tmux")
-        .args(["capture-pane", "-S", "-", "-t", pane_id])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "capture-pane",
+        "-S",
+        "-",
+        "-t",
+        pane_id,
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to capture pane '{}' into buffer", pane_id);
     }
 
     // Save to the specified file path by piping the buffer out
-    let output_save = Command::new("tmux")
-        .args(["save-buffer", &out_path_str])
-        .output()?;
+    let output_save =
+        crate::tmux::bounded_output(Command::new("tmux").args(["save-buffer", &out_path_str]))?;
     if !output_save.status.success() {
         anyhow::bail!(
             "Failed to save captured buffer from pane '{}' to file",
@@ -229,7 +222,7 @@ pub fn capture_pane_to_file(pane_id: &str, out_path: &std::path::Path) -> Result
     }
 
     // Clean up the tmux internal buffer
-    let _ = Command::new("tmux").args(["delete-buffer"]).output();
+    let _ = crate::tmux::bounded_output(Command::new("tmux").args(["delete-buffer"]));
     Ok(())
 }
 
@@ -254,9 +247,13 @@ pub fn pipe_log_path(pane_id: &str) -> std::path::PathBuf {
 pub fn start_pipe_pane(pane_id: &str) -> Result<std::path::PathBuf> {
     let path = pipe_log_path(pane_id);
     let cmd = format!("cat >> {}", path.to_string_lossy());
-    let out = std::process::Command::new("tmux")
-        .args(["pipe-pane", "-O", "-t", pane_id, &cmd])
-        .output()?;
+    let out = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+        "pipe-pane",
+        "-O",
+        "-t",
+        pane_id,
+        &cmd,
+    ]))?;
     if !out.status.success() {
         anyhow::bail!(
             "pipe-pane failed for {}: {}",
@@ -271,23 +268,23 @@ pub fn start_pipe_pane(pane_id: &str) -> Result<std::path::PathBuf> {
 ///
 /// An empty shell-command argument stops the pipe without error.
 pub fn stop_pipe_pane(pane_id: &str) {
-    let _ = std::process::Command::new("tmux")
-        .args(["pipe-pane", "-t", pane_id])
-        .output();
+    let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+        "pipe-pane",
+        "-t",
+        pane_id,
+    ]));
     let _ = std::fs::remove_file(pipe_log_path(pane_id));
 }
 
 /// Return the name of the foreground process running in a pane.
 pub fn pane_current_command(pane_id: &str) -> Result<String> {
-    let output = Command::new("tmux")
-        .args([
-            "display-message",
-            "-t",
-            pane_id,
-            "-p",
-            "#{pane_current_command}",
-        ])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{pane_current_command}",
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to query pane_current_command for '{}'", pane_id);
     }
@@ -300,9 +297,13 @@ pub fn pane_current_command(pane_id: &str) -> Result<String> {
 /// is running.  Used for completion detection: when `pane_pid` returns to the
 /// value captured before a command was sent, the command has finished.
 pub fn pane_pid(pane_id: &str) -> Result<u32> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_pid}"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{pane_pid}",
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to query pane_pid for '{}'", pane_id);
     }
@@ -315,9 +316,13 @@ pub fn pane_pid(pane_id: &str) -> Result<u32> {
 
 /// Query the current width of a pane in columns.
 pub fn query_pane_width(pane_id: &str) -> Result<usize> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", pane_id, "-p", "#{pane_width}"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        pane_id,
+        "-p",
+        "#{pane_width}",
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to query pane width for '{}'", pane_id);
     }
@@ -329,9 +334,13 @@ pub fn query_pane_width(pane_id: &str) -> Result<usize> {
 
 /// Resize a pane to the given number of columns.
 pub fn resize_pane_width(pane_id: &str, width: usize) -> Result<()> {
-    let output = Command::new("tmux")
-        .args(["resize-pane", "-t", pane_id, "-x", &width.to_string()])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "resize-pane",
+        "-t",
+        pane_id,
+        "-x",
+        &width.to_string(),
+    ]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to resize pane '{}'", pane_id);
     }
@@ -340,9 +349,8 @@ pub fn resize_pane_width(pane_id: &str, width: usize) -> Result<()> {
 
 /// Switch tmux focus to the specified pane.
 pub fn select_pane(pane_id: &str) -> Result<()> {
-    let output = Command::new("tmux")
-        .args(["select-pane", "-t", pane_id])
-        .output()?;
+    let output =
+        crate::tmux::bounded_output(Command::new("tmux").args(["select-pane", "-t", pane_id]))?;
     if !output.status.success() {
         anyhow::bail!("Failed to select pane '{}'", pane_id);
     }
