@@ -1,10 +1,95 @@
 # NEXT
 
-**Active phase: M5 phase-06v — bounded-output-pane-2**
+**Active phase: M5 phase-06w — bounded-output-direct-spawns**
 (`todo`, drafted 2026-07-29).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06v-bounded-output-pane-2.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06w-bounded-output-direct-spawns.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06v-bounded-output-pane-2`.
+Dispatch with `/rexymcp:dispatch phase-06w-bounded-output-direct-spawns`.
+
+## Seventeen phases, no bounces; 06w closes the fifth exit criterion
+
+Stage A is done — 44 bounded spawns across `src/tmux/`. 06w is the other half of
+the criterion 06v's draft uncovered: the **9** raw spawns that never route
+through a `src/tmux/` helper, so no helper-side timeout can reach them.
+
+## The `Drop` half is the load-bearing half
+
+Six of the nine are in `src/cli/`, which has no concurrency — blocking there
+stalls only the process that made the call, and what it buys is that a wedged
+tmux server makes `daemoneye chat` *report* a failure instead of hanging the
+user's terminal.
+
+The other three are the real ones. `FgHookGuard` and `WatchHookGuard` are dropped
+**on tokio worker threads**, and `Drop::drop` cannot be `async` — so `off_runtime`
+structurally cannot reach them. That is mechanism B surviving in the one place
+the rest of the milestone could not fix, and a synchronous `bounded_output` is
+the only shape that closes it.
+
+## ⚠ The count was 10 and is 9 — the tenth is `.exec()`
+
+```rust
+// src/cli/commands/chat.rs — DO NOT CONVERT
+                let err = std::process::Command::new("tmux")
+                    .args(["attach-session", "-t", sname])
+                    .exec();
+```
+
+`CommandExt::exec()` replaces the process image: it does not return on success,
+there is no child to time out, and it yields `io::Error` rather than `Output`, so
+`bounded_output` would not type-check. **It stays unbounded permanently**, and
+the closing criterion is written to allow exactly one such residue rather than
+demanding zero.
+
+This is the **tenth** appearance of "the raw count is not the scope" in this
+milestone — and the second in two drafts where the wrong number was one **I**
+had written down (06v's draft recorded "~10 / seven in `src/cli/`"). Both were
+caught by reading the sites rather than re-running the grep. Also stated in the
+spec so the executor does not go hunting: `background/respawn.rs`'s `.status()`
+call is likewise not an `.output()` site, but it is already inside `off_runtime`.
+
+## The hazard that makes this not a blind sweep
+
+**Three of the five files contain both in-scope and out-of-scope sites.**
+`foreground.rs` has 5 raw spawns and only the 2 in `impl Drop for FgHookGuard`
+are targets; `knowledge/pane.rs` has 3 and only the 1 in `impl Drop for
+WatchHookGuard`; `chat.rs` has 4 and only 3. A whole-file find-and-replace
+rewrites already-bounded `off_runtime` code.
+
+So the spec gives the discriminator explicitly — convert only a site that ends in
+`.output()` **and** is not lexically inside an `off_runtime(…)` closure — quotes
+one in-scope and one out-of-scope site from the same file side by side, and pins
+`off_runtime(` at **30 / 7 unchanged** plus `Command::new("tmux")` at **5 / 3
+unchanged** so an over-eager sweep fails.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`bounded_output(` 0 → 2 / 1 / 1 / 2 / 3
+across the five files, `off_runtime(` 30 / 7 unchanged, `Command::new("tmux")`
+5 / 3 unchanged, `src/cli/` unbounded raw 7 → **1**, both `Drop` bodies' residue
+→ 0, `src/tmux/pane.rs` 1 / 29 untouched, 921/27 throughout). Twenty-one clean
+applications.
+
+## Calibration
+
+The apply-verify-revert fold caught the `.exec()` miscount before dispatch — its
+sixth consecutive payoff, and the second in a row where what it corrected was
+**my own prior write-up** rather than a fresh pin. **Still awaits PE sign-off**;
+worth widening the proposed wording at milestone close to cover exit criteria and
+carried-forward notes, not just the phase doc being drafted.
+
+Also open at one occurrence: the warn-vs-error cascade distinction from 06r, and
+the executor's self-authored "started" entry misnaming its own model (now 4×, but
+a runtime-prompt matter no spec can fix).
+
+## After 06w
+
+The fifth exit criterion closes. Remaining: **07** (stall-instrumentation) plus
+the drafted **08–11** set. Three exit criteria remain open after 06w lands.
+
+---
+
+## Superseded: the 06v dispatch note
 
 ## Sixteen phases, no bounces; 06v finishes `src/tmux/`
 
