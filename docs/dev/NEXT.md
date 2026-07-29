@@ -1,10 +1,76 @@
 # NEXT
 
-**Active phase: M5 phase-06w — bounded-output-direct-spawns**
-(`todo`, drafted 2026-07-29).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06w-bounded-output-direct-spawns.md`.
+**Active phase: M5 phase-08 — instance-lock**
+(`todo`, drafted 2026-07-26 — **already on disk, not yet dispatched**).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-08-instance-lock.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06w-bounded-output-direct-spawns`.
+Dispatch with `/rexymcp:dispatch phase-08-instance-lock`.
+
+**Nothing needs drafting first.** 08 was written on 2026-07-26 alongside 09–11
+and depends on nothing. **Re-run its Pre-flight block before dispatch** — it was
+drafted three days and twenty-odd phases ago, and `WORKFLOW.md` § "Run every
+count criterion" is explicit that numbers go stale between drafting and dispatch.
+Nothing in the 06x sweep touched `daemon/mod.rs`'s startup ordering, but the line
+numbers in its spec are unverified as of today.
+
+## The tmux-stall axis is finished; 07 is deferred
+
+**06w closed the fifth exit criterion** — every raw tmux spawn in the tree is
+bounded except one permanent `.exec()` residue (44 in `src/tmux/` via
+`bounded_output`, 26 via `off_runtime`, 9 direct). Five of nine exit criteria are
+ticked. Eighteen phases in the 06x/lock sequence, no bounces since 06c.
+
+**Phase 07 (stall-instrumentation) was deferred by PE decision on 2026-07-29**,
+to be revisited after 08 completes. It is not dropped and not scheduled. Full
+rationale in the milestone README § "Phase 07 deferred"; the short version is that
+its original justification — make an unattributable wedge attributable — is spent
+now that the wedge was root-caused and fixed in 02, and that **08 changes what 07
+would need to observe**: until the `flock` lands, a stall and two daemons fighting
+over one tree can present identically in the logs.
+
+## Why 08 is the right next phase
+
+`daemon-instance.md` § 1 records a live incident: on 2026-07-25 two daemons ran
+concurrently against one `~/.daemoneye/` tree for ~64 seconds, serving two
+different chat sessions, and the second unlinked the first's socket to bind its
+own. **08 is the only one of 08–11 that closes the hijack**; 09–11 make the next
+occurrence diagnosable in minutes rather than the several hours the forensics took.
+
+Three findings from the design read are already pre-injected into its spec, and
+the first is the one that shapes the phase:
+
+- **The existing guard, even when it fires, is too late.** It sits at
+  `mod.rs:739`, but a duplicate reaching it has already deleted the live daemon's
+  `de-pipe-*.log` files, repointed all four global tmux hooks at its own binary,
+  run a memory migration, and spawned three pollers — and `anyhow::bail!` restores
+  none of it. So **08's central task is *ordering*, not just adding a lock.**
+- A second unambiguous duplicate signal was already being swallowed: the webhook
+  `TcpListener::bind` returns `EADDRINUSE`, but it sits inside `supervise(...)`,
+  which retries forever with backoff. That is 09's.
+- **`flock`, not a bare PID file** — the kernel releases it on `SIGKILL`, so there
+  is no stale-lock recovery path to get wrong.
+
+## Calibration still open at the milestone boundary
+
+Two items need PE sign-off at close, neither folded:
+
+1. **Apply-verify-revert** — pending since 06n, now six consecutive payoffs.
+2. **Three shipped-unsatisfiable acceptance criteria** (06n's import count, 06s's
+   pre-existing doc comment, 06w's per-file `unsafe` count). All three trace to
+   criteria written *after* the verification batch ran, which the proposed wording
+   already forbids. So the remedy is a **mechanical pre-dispatch criteria-runner**,
+   not more prose — the same conclusion the counting fold's dated note reached.
+
+Also open at one occurrence: the warn-vs-error cascade distinction from 06r.
+
+## After 08
+
+Revisit 07 (draft as specified / narrow it / close it as unneeded and strike the
+sixth exit criterion), then **09–11**. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06w dispatch note
 
 ## Seventeen phases, no bounces; 06w closes the fifth exit criterion
 

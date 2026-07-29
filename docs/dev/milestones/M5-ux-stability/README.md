@@ -154,7 +154,7 @@ take the socket.
 | 06u | bounded-output-pane-1 ([phase-06u-bounded-output-pane-1.md](phase-06u-bounded-output-pane-1.md)) — **stage A slice 3a**: `src/tmux/pane.rs` first **15** sites (top → `select_pane`). Carries the file's **two fully-qualified `std::process::Command::new` sites**, where a naive replace is `error[E0433]` | done (approved_first_try) |
 | 06v | bounded-output-pane-2 ([phase-06v-bounded-output-pane-2.md](phase-06v-bounded-output-pane-2.md)) — **stage A slice 3b**: `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Finishes `src/tmux/` — 44 bounded spawns, directory residue **1** (`wait_for`, `tokio::process`, already bounded). All four surrounding shapes are pure substitutions. **Stage A complete: 44 bounded spawns** | done (approved_first_try) |
 | 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target. **Closed the fifth exit criterion** | done (approved_first_try) |
-| 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
+| 07 | stall-instrumentation (rescoped — see Notes) — **deferred 2026-07-29 (PE decision); revisit after 08 completes.** Not drafted | deferred |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
@@ -229,9 +229,45 @@ takes the daemon down every hour, and it is small and fully specified.
 Instrumentation, originally phase 03, drops to phase 06 and is rescoped: its
 purpose was to make an unattributable wedge attributable, and this one is now
 attributed. What remains for it is narrower — a watchdog for *future* wedges —
-and it should only be drafted if phases 04–05 leave a real gap.
+and it should only be drafted if phases 04–05 leave a real gap. **Those phases
+are now done and 07 was deferred rather than drafted (2026-07-29)** — see Notes
+§ "Phase 07 deferred".
 
 ## Notes
+
+**Phase 07 deferred (2026-07-29, PE decision) — revisit after 08 completes.**
+
+The stall-instrumentation phase was rescoped on 2026-07-25 with the standing
+condition that it "should only be drafted if phases 04–05 leave a real gap."
+Those phases, plus the whole 06x sweep, are now `done`, and the PE elected to
+**defer rather than draft**: 07 is not dropped, and it is not scheduled — it is
+revisited once **08 (instance-lock)** is complete.
+
+The reasoning that makes deferral the cheap choice, and 08 the right thing to
+learn from first:
+
+- **07's original justification is spent.** It existed to make an
+  unattributable wedge attributable. The wedge was attributed — a re-entrant
+  `SessionStore` acquisition (`daemon-stalls.md` § 1.5b) — and fixed in 02. What
+  remains is a watchdog for *future* wedges, which is speculative work against a
+  failure mode the milestone has since closed structurally: mechanism A by the
+  `with_sessions` accessor and the newtype, mechanism B by 06a–06w.
+- **08 changes what 07 would need to observe.** `daemon-instance.md` § 1.3 is
+  explicit that a stalled daemon is what lets a second instance take the socket,
+  so the two axes meet. Until the `flock` lands, a "stall" and "two daemons
+  fighting over one tree" can present identically in the logs — and instrumenting
+  before that ambiguity is removed risks building a watchdog that reports the
+  wrong cause.
+- **09–11 may cover the diagnostic need outright.** Honest liveness (09) and
+  lifecycle observability (10) are what turn "alive but not answering" into a
+  distinguishable state. If they land and the next incident is diagnosable
+  without a dedicated watchdog, 07 is not a gap — it is a phase the milestone
+  correctly did not need.
+
+**Decision to make after 08:** draft 07 as specified, narrow it further against
+whatever 08 (and possibly 09–10) leave unobservable, or close it as unneeded and
+strike the sixth exit criterion. That is a PE call at the next boundary, not an
+architect default.
 
 **Phase 05 split in two, and the newtype moved behind it (2026-07-26, PE
 decision).** The numbering had `04k` (newtype) sorting before `05` (the
