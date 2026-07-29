@@ -31,10 +31,34 @@ Read before starting:
 2. Read the architecture references above.
 3. Read this entire phase doc before touching any code.
 4. Confirm the repo is on a clean branch with no uncommitted changes.
+5. Verify the starting state:
+
+```bash
+grep -c "daemon_is_running" src/daemon/mod.rs        # expect 2 (definition + the call task 5 deletes)
+grep -n "^nix" Cargo.toml                           # expect line 23: nix = "0.31.1"
+grep -rc '\bnix::' src/ | grep -v ":0" | wc -l      # expect 0 — nothing uses nix today
+                                                    # (the \b matters: a bare `nix::`
+                                                    # also matches std::os::unix:: — 10 hits)
+ls src/daemon/instance.rs 2>&1                      # expect "No such file" — task 2 creates it
+cargo test 2>&1 | grep "^test result" | head -3     # expect 921 lib, 0, 27 integration
+```
+
+**Every number above was produced by running that exact command against the tree
+on 2026-07-29, immediately before dispatch.** If one differs, **stop and report a
+blocker**.
 
 ## Current state
 
-### The guard and the unlink, `src/daemon/mod.rs:737-760`
+> **⚠ Line numbers in this section were refreshed 2026-07-29 before dispatch.**
+> The phase was drafted 2026-07-26; phase 06h then converted 9 tmux call sites in
+> this same file, shifting everything below them by up to **+52** (the guard moved
+> `739` → `791`). **Every code quote below is byte-identical to the tree as of the
+> refresh** — only the numbers changed. If a number is still off, re-derive with
+> the grep beside it and trust the tree, not the doc.
+
+### The guard and the unlink, `src/daemon/mod.rs:789-812`
+
+Re-derive with `grep -n 'daemon_is_running()\|symlink_metadata' src/daemon/mod.rs`.
 
 ```rust
     let socket_path: PathBuf = default_socket_path();
@@ -68,7 +92,9 @@ The `symlink_metadata` → `remove_file` pair is the hijack: reached whenever
 within 2 s". **Keep the S3 symlink behavior** — it is a real fix for a real
 issue; only its *authorization* changes.
 
-### Unconditional teardown, `src/daemon/mod.rs:803-814`
+### Unconditional teardown, `src/daemon/mod.rs:855-866`
+
+Re-derive with `grep -n 'Graceful shutdown' src/daemon/mod.rs`.
 
 ```rust
     // ── Graceful shutdown ────────────────────────────────────────────────────
@@ -86,23 +112,35 @@ issue; only its *authorization* changes.
 
 ### The startup ordering problem
 
-`run_daemon` (`src/daemon/mod.rs:328`) performs these in this order. The guard is
-at **739** — everything numbered below it happens *first*:
+`run_daemon` (`src/daemon/mod.rs:327`) performs these in this order. The guard is
+at **791** — everything numbered above it happens *first*:
 
 | Line | What happens |
 |---|---|
-| 336 | `env_logger` init |
-| 345 | `log_file` → `dup2` onto stdout/stderr |
-| 372 | `Config::load()` |
-| 387 | `crate::memory::migrate_namespace()` |
-| 397 | deletes `de-pipe-*.log` files |
-| 478 | `log_event("daemon_start", …)` |
-| 498, 513, 527, 541 | four `tmux set-hook -g` calls |
-| 548 | `install_session_hooks(sn, …)` |
-| ~580 | cache poller spawned |
-| ~620 | scheduler spawned |
-| ~651 | webhook spawned |
-| **739** | **`daemon_is_running()` guard** |
+| 335 | `env_logger` init |
+| 355 | `log_file` → `dup2` onto stdout/stderr |
+| 371 | `Config::load()` |
+| 386 | `crate::memory::migrate_namespace()` |
+| 396 | deletes `de-pipe-*.log` files |
+| 492 | `log_event("daemon_start", …)` |
+| 514, 532, 553, 571 | four `tmux set-hook -g` calls |
+| 585 | `install_session_hooks(&sn, &hp)` |
+| 626 | cache poller spawned (`supervise`) |
+| 664 | scheduler spawned |
+| 701 | webhook spawned |
+| 727, 771 | two further `supervise` tasks |
+| **791** | **`daemon_is_running()` guard** |
+
+**These numbers are current as of 2026-07-29.** Re-derive the whole table with:
+
+```bash
+grep -n 'env_logger::Builder\|dup2(fd, 1)\|Config::load\|migrate_namespace\|de-pipe-\|log_event(\|"set-hook", "-g"\|install_session_hooks(&sn\|tokio::spawn(supervise(\|daemon_is_running()' src/daemon/mod.rs
+```
+
+The point of the table is the **ordering**, not the exact integers: eleven-plus
+side effects, several of them destructive and none of them reversible by
+`anyhow::bail!`, all run *before* the only duplicate check. That is what task 4
+fixes, and it stays true regardless of how the numbers drift.
 
 ### `var_run_dir()` already anticipates this
 
@@ -163,6 +201,15 @@ unsafe impl Flockable for std::fs::File {}
 `FlockArg::LockExclusiveNonblock` maps to `LOCK_EX | LOCK_NB`
 (`fcntl.rs:1091`). Import path: `nix::fcntl::{Flock, FlockArg}`; the errno type
 is `nix::errno::Errno`.
+
+**This API shape was compile-verified against the real crate on 2026-07-29**, in
+this tree with `features = ["fs"]` added: `Flock::lock(file,
+FlockArg::LockExclusiveNonblock)`, the `Err((back, Errno::EWOULDBLOCK))`
+destructuring with `back` usable as a `File` afterwards, and `set_len(0)` /
+`rewind()` / `writeln!(&mut *guard, …)` / `flush()` through `DerefMut` all compile
+with **zero warnings**. Without the `fs` feature the import alone is
+`error[E0432]: unresolved imports nix::fcntl::Flock, nix::fcntl::FlockArg` — which
+is what you will see if you skip task 1.
 
 Three properties that matter for the spec below:
 
@@ -282,7 +329,8 @@ not add it speculatively.
 ### 5. Delete the `daemon_is_running()` guard from the startup path
 
 Remove the whole `if daemon_is_running().await { … }` block at
-`src/daemon/mod.rs:739-745`. The lock from task 4 replaces it.
+`src/daemon/mod.rs:791-797` (`grep -n 'if daemon_is_running()' src/daemon/mod.rs`).
+The lock from task 4 replaces it.
 
 **Do not delete the `daemon_is_running()` function itself.** Phase 09 reshapes
 it.
@@ -295,7 +343,7 @@ callers by inventing one.
 
 ### 6. License the socket unlink on ownership
 
-Replace the comment above the `symlink_metadata` match (`mod.rs:747-748`) so the
+Replace the comment above the `symlink_metadata` match (`mod.rs:799-800`) so the
 invariant is stated, and leave the matching logic itself unchanged:
 
 ```rust
@@ -307,7 +355,7 @@ invariant is stated, and leave the matching logic itself unchanged:
 
 ### 7. Identity-checked teardown
 
-Immediately after the successful `UnixListener::bind` (`mod.rs:757`), record the
+Immediately after the successful `UnixListener::bind` (`mod.rs:809`), record the
 bound socket's identity:
 
 ```rust
@@ -317,7 +365,8 @@ bound socket's identity:
         .map(|m| (std::os::unix::fs::MetadataExt::dev(&m), std::os::unix::fs::MetadataExt::ino(&m)));
 ```
 
-Then at the shutdown unlink (`mod.rs:805`), replace
+Then at the shutdown unlink (`mod.rs:857`, under the `── Graceful shutdown ──`
+banner), replace
 `let _ = std::fs::remove_file(&socket_path);` with a version that only removes
 the socket it actually bound:
 
@@ -338,9 +387,15 @@ the socket it actually bound:
     }
 ```
 
-The four `tmux set-hook -gu` calls that follow (`mod.rs:808-814`) stay exactly as
-they are. Reaching shutdown now implies this process owned the instance, because
-task 4 bails before any hook is installed.
+The `tmux set-hook -gu` teardown loop that follows (`mod.rs:859`, four hook names)
+stays exactly as it is. Reaching shutdown now implies this process owned the
+instance, because task 4 bails before any hook is installed.
+
+**Note the loop's current shape**, which changed after this phase was drafted:
+phase 06h wrapped it in `crate::tmux::off_runtime("set-hook-unset", …)` with an
+`.unwrap_or_else(|| Err(std::io::Error::other("timed out uninstalling hook")))`
+collapse. **That wrapper is correct and pre-existing — leave it alone.** Do not
+remove it, and do not treat it as something this phase introduced.
 
 ### 8. Document the invariant in `CLAUDE.md`
 
@@ -366,10 +421,16 @@ Also add the `src/daemon/instance.rs` row to the "Key files" table:
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
-- [ ] `cargo test` passes: the 914 existing lib-unit tests plus the 6 new ones
-      from the Test plan, and the 27 integration tests.
-- [ ] `grep -n "daemon_is_running" src/daemon/mod.rs` shows the function
-      definition but **no** call inside `run_daemon`.
+- [ ] `cargo test` passes: the **921** existing lib-unit tests plus the 6 new
+      ones from the Test plan = **927**, and the **27** integration tests.
+      **⚠ Baseline refreshed 2026-07-29 before dispatch** — the phase was drafted
+      against 914; phase 06s then added 5 `bounded_output` tests and 05g/05h added
+      others. Verify the starting point with
+      `cargo test 2>&1 | grep "^test result" | head -3` (expect 921 / 0 / 27) and
+      **report a blocker if it is not 921** rather than adjusting the target.
+- [ ] `grep -c "daemon_is_running" src/daemon/mod.rs` returns **1** — the
+      function definition survives (line 292) and its only call, inside
+      `run_daemon`, is gone. It reads **2** before this phase.
 - [ ] `grep -rn "unsafe" src/daemon/instance.rs` returns nothing.
 - [ ] Starting a second daemon against a running first fails, and the running
       daemon keeps working (End-to-end verification below).
