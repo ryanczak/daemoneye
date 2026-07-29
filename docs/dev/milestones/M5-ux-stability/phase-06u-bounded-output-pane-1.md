@@ -1,7 +1,7 @@
 # Phase 06u: `bounded_output` — Stage A Slice 3a, `src/tmux/pane.rs` (first 15)
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06t — `done`
 **Estimated diff:** ~100 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -425,3 +425,68 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9be638a45883b81b2449f9abea83e36719f3220a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (80 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `pane.rs` — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at **921** lib + 27 integration,
+unchanged).
+
+Every criterion is exact, including all four deliberate non-zeros: `.output()`
+**15** (30 before — *not* 0); `bounded_output(` **15**;
+`std::process::Command::new("tmux")` **2** unchanged; `tokio::process::Command`
+**2**; `read_pane_exit_status`'s signature **1** and still holding a bare
+`.output()`; `session.rs` **9** and `window.rs` **6** untouched; `mod.rs` not in
+the commit; no `Cargo` file; one `src/` file.
+
+### Both hazards handled correctly
+
+**Hazard 1 — the `E0433` malformation is absent.** `grep -cF
+"std::process::crate::"` returns **0**, and both fully-qualified sites are
+wrapped whole with the prefix intact, byte-identical to the spec's post-`fmt`
+form:
+
+```rust
+    let out = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+        "pipe-pane",
+        "-O",
+        "-t",
+        pane_id,
+        &cmd,
+    ]))?;
+```
+
+Neither was "tidied" to the bare `Command::new`. This is the hazard I hit for
+real while drafting, and naming it with the exact error text was what made it a
+non-event.
+
+**Hazard 2 — `wait_for` untouched**, both its `tokio::process::Command` calls
+intact.
+
+### The slice boundary held exactly
+
+Verified positionally rather than by count: the boundary comment sits at line
+**360**, and **all 15 residual `.output()` calls are after it — zero before**.
+So the executor converted precisely its slice and stopped, with nothing
+straddling the line.
+
+Also verified: no collapse added (zero `.flatten()`/`.and_then(` in the added
+lines), no new `unwrap`/`expect`/`panic!`, no `#[allow]`/`unsafe`, no test
+touched. `pane_dead_status`'s `.ok()?` and `capture_pane_to_file`'s three
+sequential calls all kept their surrounding expressions.
+
+The executor's own summary correctly identified the residue's composition — 14
+in the 3b slice plus the one `wait_for` call that will never be converted.
+
+### Stage A is one phase from done
+
+`window.rs` (6) + `session.rs` (9) + `pane.rs` first 15 = **30 of 44** sync tmux
+helper calls now bounded. **06v** takes the last 14 and closes the fifth exit
+criterion.
