@@ -48,7 +48,7 @@ take the socket.
       (2), `watch_pane`'s prologue (1). The only calls wrapped at **no** level
       are the three `Drop` impls, which cannot be `async`; those are the next
       criterion's.)
-- [ ] Every synchronous tmux spawn reachable from a path that cannot be wrapped
+- [x] Every synchronous tmux spawn reachable from a path that cannot be wrapped
       in `off_runtime` is timeout-bounded: the `src/tmux/` helpers carry their
       **own** timeout (`bounded_output`), **and** the raw spawns that bypass
       those helpers entirely — the two `Drop` impls (which cannot be `async`)
@@ -76,6 +76,12 @@ take the socket.
       unbounded in `src/cli/` permanently, and the criterion is written to allow
       it. (`background/respawn.rs`'s `.status()` call is likewise not an
       `.output()` site, but it is already inside `off_runtime`.)
+      **Met 2026-07-29 by 06w.** Verified with
+      `grep -rn 'Command::new("tmux")' src/cli/ | grep -v bounded_output`, which
+      returns exactly one line — the `.exec()` site. Totals across the tree: **44**
+      bounded in `src/tmux/` via `bounded_output` (06s–06v), **26** via
+      `off_runtime` (06a–06r), **9** direct (06w), **1** permanent `.exec()`
+      residue.
 - [ ] The daemon self-reports a stall: if a shared lock is held or an IPC
       request goes unanswered beyond a threshold, `daemon.log` records what
       was holding it and where. A future wedge identifies itself without a
@@ -147,7 +153,7 @@ take the socket.
 | 06t | bounded-output-session ([phase-06t-bounded-output-session.md](phase-06t-bounded-output-session.md)) — **stage A slice 2**: `src/tmux/session.rs` (9 sites). Five different surrounding shapes, all a **pure substitution** — `bounded_output` returns the same `io::Result<Output>`, so no collapse is needed anywhere | done (approved_first_try) |
 | 06u | bounded-output-pane-1 ([phase-06u-bounded-output-pane-1.md](phase-06u-bounded-output-pane-1.md)) — **stage A slice 3a**: `src/tmux/pane.rs` first **15** sites (top → `select_pane`). Carries the file's **two fully-qualified `std::process::Command::new` sites**, where a naive replace is `error[E0433]` | done (approved_first_try) |
 | 06v | bounded-output-pane-2 ([phase-06v-bounded-output-pane-2.md](phase-06v-bounded-output-pane-2.md)) — **stage A slice 3b**: `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Finishes `src/tmux/` — 44 bounded spawns, directory residue **1** (`wait_for`, `tokio::process`, already bounded). All four surrounding shapes are pure substitutions. **Stage A complete: 44 bounded spawns** | done (approved_first_try) |
-| 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target | review      |
+| 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target. **Closed the fifth exit criterion** | done (approved_first_try) |
 | 07 | stall-instrumentation (rescoped — see Notes)                            | todo   |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | todo   |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |

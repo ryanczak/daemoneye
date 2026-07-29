@@ -1,7 +1,7 @@
 # Phase 06w: `bounded_output` — the direct spawns that bypass `src/tmux/`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06v — `done`
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -291,8 +291,15 @@ it.**
 - [ ] `git diff -U0 -- src/ | grep '^+' | grep -cE '\basync\b|\.await'` returns
       **0** — this phase adds no async. `Drop::drop` cannot be `async`; that is
       the whole reason this phase exists.
-- [ ] `grep -rcE '#\[allow|unsafe' src/cli/local_cmds.rs src/cli/commands/pane.rs src/cli/commands/chat.rs`
-      shows **0** for each.
+- [ ] `git diff -U0 -- src/ | grep '^+' | grep -cE '#\[allow|unsafe'` returns
+      **0** — no `#[allow]` or `unsafe` **added**.
+      **⚠ Corrected at review, 2026-07-29.** This criterion was drafted as
+      `grep -rcE '#\[allow|unsafe' <the three cli files>` → "**0** for each",
+      which is **unsatisfiable**: `src/cli/commands/pane.rs` has **3
+      pre-existing** `unsafe { libc::fcntl(…) }` blocks in `sync_read_line`,
+      untouched by this phase (3 before, 3 after, 0 added). The criterion is now
+      phrased on the **diff** rather than the file, which is what it always meant
+      to check. My error, not the executor's.
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
@@ -511,3 +518,99 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b4266f4e649dd9ff0127e9d81d4f2d04b9b71567
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (68 turns)
+- **Scope deviations:** none
+- **Calibration:** one defective acceptance criterion of mine, corrected above —
+  see "The one thing that went wrong was mine" below.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing two of the five files — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at **921** lib + 27
+integration, unchanged).
+
+**The diff is byte-identical to the one I applied, verified and reverted while
+drafting**, including every `fmt` reflow.
+
+### The fifth exit criterion is closed
+
+```
+$ grep -rn 'Command::new("tmux")' src/cli/ | grep -v bounded_output
+src/cli/commands/chat.rs:67:                let err = std::process::Command::new("tmux")
+```
+
+One line, and it is the `.exec()` site — exactly the residue the criterion was
+written to allow. Every other raw tmux spawn in the tree is now bounded at some
+level: 44 in `src/tmux/` via `bounded_output` (06s–06v), 26 via `off_runtime`
+(06a–06r), and these 9 directly.
+
+**The `Drop` half is verified converted in full** — both guard bodies read clean:
+
+```rust
+impl Drop for WatchHookGuard {
+    fn drop(&mut self) {
+        let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            "set-hook",
+            "-u",
+            "-t",
+            &self.pane_id,
+            &self.hook_name,
+        ]));
+    }
+}
+```
+
+Zero bare `.output()` in either `impl Drop`. Mechanism B is now closed in the one
+place `off_runtime` structurally could not reach.
+
+### Hazard 1 handled — no already-bounded site was rewritten
+
+This was the phase's real risk, and the discriminator held. `off_runtime(` stays
+at **30** in `foreground.rs` and **7** in `knowledge/pane.rs`;
+`Command::new("tmux")` stays at **5** and **3** — the phase wrapped calls without
+adding or removing one. So the 3 out-of-scope spawns in `foreground.rs` and the 2
+in `knowledge/pane.rs` (including `watch_pane`'s prologue, bounded at its call
+site) were left alone, as were `src/tmux/` (1 `.output()`, 29 `bounded_output`)
+and the `.exec()` site.
+
+`grep -rlF "std::process::crate::" src/` returns nothing — the `E0433`
+malformation is absent, on all nine fully-qualified sites.
+
+### No collapse, no async
+
+`git diff -U0 | grep '^+'` adds **zero** matches for
+`unwrap()|expect(|panic!|async|.await|TODO|FIXME|XXX|dbg!`. Every surrounding
+expression survived: the six `let _ =` sites, `local_cmds.rs`'s `match output`,
+`pane.rs`'s `.ok()?` and `.map(…).unwrap_or_default()`, `chat.rs:268`'s
+`.ok().and_then(…).unwrap_or(1)` chain. Exactly five `src/` files in the commit,
+no `Cargo` file, no test touched.
+
+### The one thing that went wrong was mine
+
+The `#[allow]`/`unsafe` criterion as drafted was **unsatisfiable**: it asked for a
+per-file count of 0 across the three `src/cli/` files, but
+`src/cli/commands/pane.rs` carries 3 pre-existing `unsafe { libc::fcntl(…) }`
+blocks in `sync_read_line`. Verified pre-existing — 3 before, 3 after, **0
+added** — so the property the criterion meant to check is met, and it has been
+rephrased on the diff.
+
+**Diagnosis: I wrote that criterion after running the batch against the applied
+tree, so it never went through the check.** That is a compliance failure against
+the apply-verify-revert practice's own ordering clause ("with the
+acceptance-criteria list *final*, run *every* criterion against it"), not a gap in
+it — the same shape as the counting fold's dated note.
+
+**Third occurrence of a shipped-unsatisfiable criterion in M5** (06n's import
+count, 06s's pre-existing doc comment, this). All three trace to the same cause,
+and the proposed wording already covers all three. So the calibration this
+strengthens is not more prose but a **mechanical pre-dispatch criteria-runner** —
+carried to the milestone retrospective for PE decision.
+
+One minor note: the executor's completion summary asserted "All acceptance
+criteria verified", which cannot have been literally true for the defective one.
+It reported no false *count*, so nothing was misrepresented, but the blanket
+phrasing glossed a criterion it could not have satisfied.
