@@ -1,7 +1,7 @@
 # Phase 06s: `bounded_output` — Give the Sync tmux Helpers Their Own Timeout
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06r — `done`
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -411,3 +411,127 @@ fires.
 **Executor:** model (claude)
 
 Added `bounded_output_with` and `bounded_output` to `src/tmux/mod.rs` with 5 unit tests, and converted all 6 `.output()` call sites in `src/tmux/window.rs`.
+
+### Update — ts=1785284400840 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified. The `subprocess` match in the grep is a false positive — it's the word "subprocess" in an existing doc comment (`/// Ceiling for a single tmux subprocess call made from async code.`), not a new dependency.
+
+**Summary + Notes for review:**
+
+Added `bounded_output_with` (configurable timeout) and `bounded_output` (at `TMUX_TIMEOUT`) to `src/tmux/mod.rs` as a std-only drop-in replacement for `Command::output()`. stdout and stderr are drained on separate threads to prevent deadlock when output exceeds the OS pipe buffer (~64 KiB) — the 1 MiB regression test proves this works. Converted all 6 `.output()` call sites in `src/tmux/window.rs` to `bounded_output`. All 5 unit tests pass, the full suite is at 921 lib tests + 27 integration tests, `session.rs` stays at 9 and `pane.rs` at 30 `.output()` calls. No new dependencies, no clippy warnings, working tree is clean.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.92s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+_bearer_prefix_denies ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_captures_stderr ... ok
+test tmux::bounded_output_tests::bounded_output_handles_output_larger_than_pipe_buffer ... ok
+test tmux::bounded_output_tests::bounded_output_returns_stdout_and_success ... ok
+test tmux::bounded_output_tests::bounded_output_preserves_failure_status ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test manifest::tests::manifest_mixed_stores ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 921 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.45s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_append_read ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_masking_applied ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06s-bounded-output.md` — +7 -1
+- `src/tmux/mod.rs` — +148 -0
+- `src/tmux/window.rs` — +38 -29
+
+**Commit:** 6aa533e439787a6e182f3d3214346a57aa9dce8d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
