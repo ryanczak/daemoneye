@@ -104,18 +104,16 @@ fn offer_no_sibling_options(chat_pane: &str, session: &str) -> Option<String> {
 
     match choice.as_str() {
         "" | "s" => {
-            let out = std::process::Command::new("tmux")
-                .args([
-                    "split-window",
-                    "-h",
-                    "-t",
-                    chat_pane,
-                    "-P",
-                    "-F",
-                    "#{pane_id}",
-                ])
-                .output()
-                .ok()?;
+            let out = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+                "split-window",
+                "-h",
+                "-t",
+                chat_pane,
+                "-P",
+                "-F",
+                "#{pane_id}",
+            ]))
+            .ok()?;
             let new_pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if new_pane.is_empty() || !out.status.success() {
                 eprintln!("Failed to split window.");
@@ -140,17 +138,15 @@ fn pick_sibling_pane(_chat_pane: &str, candidates: Vec<String>, session: &str) -
     println!();
     println!("Multiple panes available. Which should I use for foreground commands?");
     for (i, pane_id) in candidates.iter().enumerate() {
-        let info = std::process::Command::new("tmux")
-            .args([
-                "display-message",
-                "-t",
-                pane_id,
-                "-p",
-                "#{pane_current_command}  #{pane_current_path}",
-            ])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-            .unwrap_or_default();
+        let info = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            "display-message",
+            "-t",
+            pane_id,
+            "-p",
+            "#{pane_current_command}  #{pane_current_path}",
+        ]))
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
         println!("  [{}]  {}  {}", i + 1, pane_id, info);
     }
     println!("  [N]  No foreground target");

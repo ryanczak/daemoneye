@@ -1,7 +1,7 @@
 # Phase 06w: `bounded_output` — the direct spawns that bypass `src/tmux/`
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06v — `done`
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -381,3 +381,9 @@ to exercise a `Drop` impl by hand.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-29 19:03 (started)
+
+**Executor:** model (phase-06w executor)
+
+Converted 9 raw `std::process::Command::new("tmux")` `.output()` sites across 5 files to call `crate::tmux::bounded_output()` directly. Sites: 2 in `impl Drop for FgHookGuard` (foreground.rs), 1 in `impl Drop for WatchHookGuard` (knowledge/pane.rs), 1 in `local_cmds.rs`, 2 in `commands/pane.rs`, 3 in `commands/chat.rs`. Left `.exec()` site in chat.rs untouched. No `off_runtime` sites were touched.

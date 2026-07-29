@@ -200,9 +200,12 @@ pub fn run_sched_delete(id: String) -> Result<()> {
 /// List leftover de-* tmux windows (from failed scheduled jobs).
 pub fn run_sched_windows() -> Result<()> {
     // Use tmux list-windows to find de-* windows
-    let output = std::process::Command::new("tmux")
-        .args(["list-windows", "-a", "-F", "#{session_name}:#{window_name}"])
-        .output();
+    let output = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+        "list-windows",
+        "-a",
+        "-F",
+        "#{session_name}:#{window_name}",
+    ]));
     match output {
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout);

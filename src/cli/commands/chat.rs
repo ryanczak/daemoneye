@@ -54,9 +54,14 @@ pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<(
                 let chat_cmd = std::env::current_exe()
                     .map(|p| format!("{} chat", p.display()))
                     .unwrap_or_else(|_| "daemoneye chat".to_string());
-                let _ = std::process::Command::new("tmux")
-                    .args(["new-window", "-t", sname, "-n", "chat", &chat_cmd])
-                    .output();
+                let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+                    "new-window",
+                    "-t",
+                    sname,
+                    "-n",
+                    "chat",
+                    &chat_cmd,
+                ]));
                 // Replace this process with `tmux attach-session`.  The user's
                 // terminal is now "inside" the session where the chat window lives.
                 let err = std::process::Command::new("tmux")
@@ -142,9 +147,12 @@ pub(super) async fn run_chat_inner(session_override: Option<String>) -> Result<(
     // and can re-pin the input box to the bottom.  Best-effort; harmless if tmux
     // is absent or the option is already set.
     if pane_id_opt.is_some() {
-        let _ = std::process::Command::new("tmux")
-            .args(["set", "-g", "focus-events", "on"])
-            .output();
+        let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            "set",
+            "-g",
+            "focus-events",
+            "on",
+        ]));
     }
 
     // Ratatui path: create the inline-viewport renderer (enters raw mode
@@ -265,13 +273,15 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
 
     // Wait for tmux client attachment.
     loop {
-        let attached = std::process::Command::new("tmux")
-            .args(["display-message", "-p", "#{session_attached}"])
-            .output()
-            .ok()
-            .and_then(|o| String::from_utf8(o.stdout).ok())
-            .and_then(|s| s.trim().parse::<u32>().ok())
-            .unwrap_or(1);
+        let attached = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            "display-message",
+            "-p",
+            "#{session_attached}",
+        ]))
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .unwrap_or(1);
         if attached > 0 {
             break;
         }

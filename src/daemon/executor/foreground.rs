@@ -70,14 +70,22 @@ impl FgHookGuard {
 impl Drop for FgHookGuard {
     fn drop(&mut self) {
         for hook in &self.hooks {
-            let _ = std::process::Command::new("tmux")
-                .args(["set-hook", "-u", "-t", &self.target, hook])
-                .output();
+            let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+                "set-hook",
+                "-u",
+                "-t",
+                &self.target,
+                hook,
+            ]));
         }
         if self.monitor_silence {
-            let _ = std::process::Command::new("tmux")
-                .args(["set-option", "-u", "-t", &self.target, "monitor-silence"])
-                .output();
+            let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+                "set-option",
+                "-u",
+                "-t",
+                &self.target,
+                "monitor-silence",
+            ]));
         }
     }
 }

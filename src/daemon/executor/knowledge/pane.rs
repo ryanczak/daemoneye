@@ -179,9 +179,13 @@ struct WatchHookGuard {
 
 impl Drop for WatchHookGuard {
     fn drop(&mut self) {
-        let _ = std::process::Command::new("tmux")
-            .args(["set-hook", "-u", "-t", &self.pane_id, &self.hook_name])
-            .output();
+        let _ = crate::tmux::bounded_output(std::process::Command::new("tmux").args([
+            "set-hook",
+            "-u",
+            "-t",
+            &self.pane_id,
+            &self.hook_name,
+        ]));
     }
 }
 
