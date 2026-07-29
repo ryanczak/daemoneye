@@ -1,7 +1,7 @@
 # Phase 06t: `bounded_output` — Stage A Slice 2, `src/tmux/session.rs`
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-06s — `done` (introduced `bounded_output`)
 **Estimated diff:** ~60 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -378,3 +378,60 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8b5d53313c54495118f05f80f7c0d8749ceedc72
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (42 turns)
+- **Scope deviations:** none
+- **Calibration:** none
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `session.rs` — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at **921** lib + 27 integration,
+**unchanged** as specced).
+
+Every criterion is exact: `.output()` in `session.rs` **0** (9 before) with
+`bounded_output(` **9**; `pane.rs` **30** and `window.rs` **0**, both unchanged so
+neither neighbouring slice was touched; both helper declarations **1**, and
+`src/tmux/mod.rs` does not appear in the commit at all; no `Cargo` file in the
+commit; `#[allow]`/`unsafe` **0**; exactly one `src/` file.
+
+**All five surrounding shapes survive at 1 each** — the criterion this phase
+existed to guard:
+
+```
+Err(_) => return Vec::new(),   1
+_ => return HashMap::new(),    1
+.ok()?;                        1
+_ => return (0, 0),            1
+.map(|o| o.status.success())   1
+```
+
+Verified by reading:
+
+- **No collapse was added anywhere.** Zero `.flatten()` or `.and_then(` in the
+  added lines. `))?;` appears **4** times, matching the four `?` sites exactly.
+  This was the phase's one real temptation — every `off_runtime` slice in this
+  milestone needed a collapse, and this type-preserving conversion needs none.
+- **`session_exists` is untouched below the terminator:**
+
+  ```rust
+  pub fn session_exists(name: &str) -> bool {
+      crate::tmux::bounded_output(Command::new("tmux").args(["has-session", "-t", name]))
+          .map(|o| o.status.success())
+          .unwrap_or(false)
+  }
+  ```
+
+  `.unwrap_or(false)` intact — not "improved" to `true`.
+- **Both `match` fallback arms kept their distinct forms** — `list_sessions`'s
+  `Err(_) =>` and `list_session_flags`'s guard-plus-`_ =>`. Collapsing them to a
+  single shape would have been a plausible tidy-up and is not what the code says.
+- The executor answered both reasoning checks with quoted code, including the
+  correct account of why `session_exists` returning `false` on timeout is what it
+  already does when tmux fails to spawn.
+
+Stage A is now one file from complete: `pane.rs` (30 sites) is all that remains
+before the fifth exit criterion closes.
