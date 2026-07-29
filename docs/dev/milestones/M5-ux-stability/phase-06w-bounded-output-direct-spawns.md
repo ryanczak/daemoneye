@@ -1,7 +1,7 @@
 # Phase 06w: `bounded_output` — the direct spawns that bypass `src/tmux/`
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-06v — `done`
 **Estimated diff:** ~70 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -387,3 +387,127 @@ to exercise a `Drop` impl by hand.
 **Executor:** model (phase-06w executor)
 
 Converted 9 raw `std::process::Command::new("tmux")` `.output()` sites across 5 files to call `crate::tmux::bounded_output()` directly. Sites: 2 in `impl Drop for FgHookGuard` (foreground.rs), 1 in `impl Drop for WatchHookGuard` (knowledge/pane.rs), 1 in `local_cmds.rs`, 2 in `commands/pane.rs`, 3 in `commands/chat.rs`. Left `.exec()` site in chat.rs untouched. No `off_runtime` sites were touched.
+
+### Update — ts=1785352325291 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Converted all 9 raw `std::process::Command::new("tmux")` `.output()` sites that bypass `src/tmux/` to call `crate::tmux::bounded_output()` directly, across 5 files: 2 in `FgHookGuard::drop`, 1 in `WatchHookGuard::drop`, 1 in `local_cmds.rs`, 2 in `commands/pane.rs`, and 3 in `commands/chat.rs`. The `.exec()` site in `chat.rs` was left untouched as specified. No `off_runtime` sites were touched (foreground.rs: 30 unchanged, knowledge/pane.rs: 7 unchanged). All acceptance criteria verified — `grep` counts match exactly, no `E0433` malformations, no collapses, no new `async`, no `Cargo.toml` changes, and only the 5 expected source files are in the diff. `cargo build`, `cargo clippy`, `cargo fmt`, and `cargo test` all pass clean (921 lib + 27 integration tests unchanged).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+::server::tests::auth_missing_header_denies ... ok
+test webhook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 921 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.33s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-02078a4e6496e4bf)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-a516fbd17ae98770)
+     Running tests/integration.rs (target/debug/deps/integration-ce8aee7d32f385fa)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-06w-bounded-output-direct-spawns.md` — +7 -1
+- `src/cli/commands/chat.rs` — +23 -13
+- `src/cli/commands/pane.rs` — +19 -23
+- `src/cli/local_cmds.rs` — +6 -3
+- `src/daemon/executor/foreground.rs` — +14 -6
+- `src/daemon/executor/knowledge/pane.rs` — +7 -3
+
+**Commit:** b4266f4e649dd9ff0127e9d81d4f2d04b9b71567
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
