@@ -86,12 +86,23 @@ take the socket.
       request goes unanswered beyond a threshold, `daemon.log` records what
       was holding it and where. A future wedge identifies itself without a
       live debugger.
-- [ ] Only one daemon can run per `$HOME`, enforced by an exclusive `flock`
+- [x] Only one daemon can run per `$HOME`, enforced by an exclusive `flock`
       acquired before any startup side effect. A second launch cannot unlink,
       overwrite, or delete anything belonging to a running daemon — including its
       socket, its pipe logs, and its global tmux hooks — whether or not the
       running daemon is answering IPC. (Added 2026-07-26; see
       `docs/design/daemon-instance.md` § 2.)
+      **Met 2026-07-29 by 08.** `InstanceLock` (`src/daemon/instance.rs`) is
+      acquired at `mod.rs:372`, immediately after the log redirect and **before
+      `Config::load()` at `:382`** — so every § 2.3 side effect is downstream of
+      it. The Ping-based `daemon_is_running()` guard is gone from the startup path
+      (definition retained for 09, zero call sites). Verified end-to-end against
+      the release binary under an isolated `HOME`: a contended start exits **1**
+      with `another daemon is already running (PID …)` and creates **no** socket;
+      the incumbent's PID payload survives a failed acquisition; and `SIGKILL` on
+      the holder releases the lock via the kernel, so the next start proceeds with
+      no manual cleanup. Both core properties (exclusivity, payload preservation)
+      are mutation-proved — see the phase's Review verdict.
 - [ ] `daemoneye ping` / `status` distinguish "not running" from "alive but not
       answering", and `daemoneye daemon` exits non-zero with the real reason when
       the forked child fails to start.
@@ -155,7 +166,7 @@ take the socket.
 | 06v | bounded-output-pane-2 ([phase-06v-bounded-output-pane-2.md](phase-06v-bounded-output-pane-2.md)) — **stage A slice 3b**: `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Finishes `src/tmux/` — 44 bounded spawns, directory residue **1** (`wait_for`, `tokio::process`, already bounded). All four surrounding shapes are pure substitutions. **Stage A complete: 44 bounded spawns** | done (approved_first_try) |
 | 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target. **Closed the fifth exit criterion** | done (approved_first_try) |
 | 07 | stall-instrumentation (rescoped — see Notes) — **deferred 2026-07-29 (PE decision); revisit after 08 completes.** Not drafted | deferred |
-| 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md))  | review        |
+| 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md)) — `InstanceLock`: exclusive `flock` on `var/run/daemoneye.pid`, acquired at `mod.rs:372` **before every startup side effect**; Ping-based guard deleted; identity-checked (dev/inode) socket teardown. 6 new tests, both core properties mutation-proved | done (approved_first_try) |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |

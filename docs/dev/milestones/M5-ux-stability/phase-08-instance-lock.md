@@ -1,7 +1,7 @@
 # Phase 08: Instance Lock — One Daemon, Enforced by the Kernel
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** none (independent of the 04x lock-conversion sequence)
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -680,3 +680,129 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c69400e077be8d4bebcb63aef2be6a875a5c0e7c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (124 turns)
+- **Scope deviations:** one, forced and correct — `_instance` instead of the
+  spec's `instance`. See "The spec was wrong about the binding name" below.
+- **Calibration:** two spec errors of mine, both recorded below; neither cost a
+  bounce.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing both changed source files — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at **927** lib
+(921 + 6 new) + **27** integration).
+
+### Every acceptance criterion verified
+
+`grep -c "daemon_is_running" src/daemon/mod.rs` returns **1** — the definition
+survives at `:293` for phase 09, zero call sites, and no `#[allow(dead_code)]` was
+added. `src/daemon/instance.rs` has **0** `unsafe`, **0** `#[allow]`/`#[ignore]`/
+`TODO`/`dbg!`/`println!`, and **0** `unwrap`/`expect`/`panic!` in its production
+half. No `impl Drop` was added — as the spec required, the field drop is what
+releases. The `Cargo.toml` diff is exactly the authorized one line.
+
+**Task 4's ordering is exact.** The acquisition sits at `mod.rs:372`, immediately
+after the `dup2` block closes at `:369` and before `Config::load()` at `:382`. So
+every § 2.3 side effect — memory migration, pipe-log deletion, `daemon_start`, the
+four global `set-hook -g` calls, per-session hooks, all supervisor spawns — is
+downstream of the lock, and a failure still lands in `daemon.log` because the log
+redirect precedes it.
+
+`_instance` appears exactly once, with no `drop()` or `mem::drop` anywhere, so the
+lock is held across the accept loop and released only when `run_daemon` returns.
+
+### Coverage is real — two independent mutation proofs
+
+Per STANDARDS § "Coverage claims are inadmissible without mutation proof", I broke
+the implementation twice and watched which tests died:
+
+| Mutation | Result |
+|---|---|
+| `.truncate(false)` → `.truncate(true)` | **2 failed**, 4 passed |
+| `FlockArg::LockExclusiveNonblock` → `LockSharedNonblock` | **2 failed**, 4 passed |
+
+Both mutations kill exactly `failed_acquire_preserves_incumbent_payload`
+("incumbent PID must survive a failed acquisition") and
+`second_acquire_is_held_with_pid`. The other four pass under either broken
+implementation, which is why those two alone are load-bearing. The first mutation
+is the interesting one: it proves the test suite actually guards the subtle
+`truncate(false)` design decision rather than merely restating it.
+
+### End-to-end verified against the real release binary
+
+Run under an **isolated `HOME`** rather than the live tree, so the user's real
+config and global tmux hooks were never touched. Four properties, real output:
+
+**1. Duplicate rejection, byte-exact to the pinned `Display` string** — with a
+*planted* payload of `999001`, so this proves the read path rather than a
+coincidence:
+
+```
+2026-07-29T22:19:40Z ERROR another daemon is already running (PID 999001) — stop it with: daemoneye stop
+Error: another daemon is already running (PID 999001) — stop it with: daemoneye stop
+```
+
+Both the `log::error!` and the `bail!` fire, as task 4 specified.
+
+**2. Non-zero exit, and no side effect ran.** True exit code **1** (measured
+unpiped — piping through `tail` reported `0`, which is `tail`'s status; the exact
+hazard `WORKFLOW.md` names). No socket was created at the isolated path.
+
+**3. The incumbent's payload survived the failed acquisition** — still `999001`
+afterwards. This is the `truncate(false)` property confirmed at the binary level,
+not just in unit tests.
+
+**4. `SIGKILL` releases the lock via the kernel, with no recovery path.** With the
+lock held directly by another process, the daemon was rejected (`exit=1`); after
+`kill -9`, the same binary got **past** the lock — failing later and differently,
+on API-key validation — and rewrote the payload `999001` → its own PID `2916239`.
+That is § 2.1's motivation for `flock` over a bare PID file, demonstrated.
+
+**What I did not re-run live:** step 3's full two-daemon "incumbent keeps serving,
+tmux hooks intact" pair. A daemon cannot stay alive under an isolated `HOME`
+without an API key, and running it against the real tree would restart the user's
+daemon and repoint their global tmux hooks. The executor did run it and quoted
+real output (incumbent PID 2882122, `ping` → "Daemon is running.", hooks intact).
+I accept that on two grounds: the property follows structurally from the lock
+preceding every side effect, which I verified by reading `:372` against `:382`+;
+and the rejection path itself is now proven to exit before creating anything.
+
+### The spec was wrong about the binding name
+
+Task 4 said "Bind `instance` to a named variable, not `_`" and asserted the
+compiler "will not" warn that the binding is unused. **I checked, and it does:**
+
+```
+warning: unused variable: `instance`
+   --> src/daemon/mod.rs:372:9
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_instance`
+```
+
+Under `clippy -D warnings` that is a **gate failure**, so the executor's
+`_instance` was not a stylistic choice — it was required, and it is the fix the
+compiler itself suggests. It also preserves the semantics the spec cared about:
+`let _name = v` binds and drops at end of scope, unlike `let _ = v`, which drops
+immediately. The executor picked the right adaptation over the spec's own
+suggested workaround (`let _ = &instance;`).
+
+**It should have been declared.** Per WORKFLOW.md's declare-deviations
+discipline, a clean adaptation still gets named in "Notes for review"; the
+completion summary does not mention it. Minor — nothing was misreported, and the
+code is right.
+
+**Second spec error, harmless:** the § 2.3 reference excerpt cites the vendored
+`nix-0.31.1/src/fcntl.rs:1038-1100`. The API shape it describes is correct — I
+compile-verified all of it before dispatch — but the line range was never
+re-checked against the actual crate source and should be treated as approximate.
+
+### Notes
+
+The `held_error_reports_none_for_unparsable_payload` test is worth flagging as
+sound-but-subtle: it takes a second `flock` on the same path **from within the
+same process**. That works because `flock` is per-open-file-description, not
+per-process — a distinction that would be easy to "correct" wrongly later. Leave
+it.
