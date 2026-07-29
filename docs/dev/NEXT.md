@@ -1,10 +1,87 @@
 # NEXT
 
-**Active phase: M5 phase-06s — bounded-output**
-(`todo`, drafted 2026-07-28).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-06s-bounded-output.md`.
+**Active phase: M5 phase-06t — bounded-output-session**
+(`todo`, drafted 2026-07-29).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-06t-bounded-output-session.md`.
 
-Dispatch with `/rexymcp:dispatch phase-06s-bounded-output`.
+Dispatch with `/rexymcp:dispatch phase-06t-bounded-output-session`.
+
+## Fourteen phases, no bounces; stage A is one file from its last slice
+
+06s landed `bounded_output` with the milestone's **first real unit coverage** —
+and the review mutation-checked it: swapping in the naive `try_wait`-then-read
+implementation fails exactly one test, the 1 MiB pipe-buffer case, burning its
+full 10 s timeout. The other four pass under the broken helper, which is why they
+alone would not have caught it.
+
+## 06t is nine sites and five surrounding shapes — but the shapes do not matter
+
+`session.rs`'s nine calls sit inside five different expressions: two `match`es
+(with *different* fallback arms), three bare `?`, a `.ok()?`, and a
+`.map(…).unwrap_or(false)`. That looked like the setup for a per-site collapse
+table, the way every `off_runtime` slice in this milestone needed one.
+
+**It is not.** `bounded_output` returns the *same*
+`std::io::Result<std::process::Output>` that `.output()` returns, so the
+conversion is type-preserving and **every surrounding expression stays byte-
+identical**. The spec says so once, gives the table only so the executor can
+confirm it disturbed nothing, and names "adding a collapse" as the first trap.
+
+The five shapes do matter for one thing — **what a timeout now produces**: empty
+list, empty map, propagated `Err`, `None`, `(0, 0)`, `false`. Each is already
+what that site yields when tmux fails today, because `.output()` already returns
+`Err` on spawn failure. So the change replaces "hang forever" with "fail the way
+this site already fails". The two that look riskiest are called out explicitly:
+`session_exists` → `false` (the caller's duplicate-session error arm handles it)
+and `client_dimensions` → `(0, 0)` (callers already guard `w > 0 && h > 0`).
+
+## The fold I proposed at 06s's review was applied here, and it caught two bad pins
+
+06s shipped a criterion that matched a **pre-existing doc comment** rather than
+code — third of its family — and the diagnosis was that I ran the criteria greps
+before the criteria list was final. So this draft ran **every** criterion against
+the applied tree, last, after the list was settled. Two would have been wrong:
+
+| I assumed | Truth |
+|---|---|
+| `Err(_) => return Vec::new(),` → **2** (both `match` sites) | **1** — `list_session_flags` uses a guard arm, `_ => return HashMap::new(),` |
+| a `subprocess`-style word-match for "no new dependency" | replaced with `git diff --name-only \| grep -c Cargo` → 0, which cannot match prose |
+
+The second is the direct lesson from 06s: **pin the artifact, not a word.** A
+dependency change shows up as a changed `Cargo.toml`, so check for that instead
+of grepping source text for crate-ish nouns.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`.output()` in `session.rs` 9→0,
+`bounded_output(` 0→9, `window.rs` 0→0, `pane.rs` 30→30, all five shape greps
+1→1, 921/27 unchanged). Eighteen clean applications.
+
+## Calibration
+
+**The apply-verify-revert fold is at three occurrences and the "fold immediately"
+bar**, with the ordering clause added at 06s's review. It has now caught bad pins
+in three consecutive drafts (06q ×3, 06s missed one, 06t ×2). Proposed wording,
+unchanged:
+
+> **Apply the phase's own diff to the tree before dispatch; then, with the
+> acceptance-criteria list final, run *every* criterion against it; then revert.**
+> A criterion that cannot be satisfied is as expensive as a fact that is wrong,
+> and a word-match pattern will match prose.
+
+Still open at one occurrence: the warn-vs-error cascade distinction from 06r.
+
+## After 06t
+
+**06u** (`pane.rs`, 30 sites — needs splitting when drafted; it also contains the
+`capture-pane -S -` call that motivated the threaded drain) closes the **fifth
+exit criterion** → **07** (stall-instrumentation), plus the drafted **08–11**
+set. Four exit criteria remain open.
+
+---
+
+## Superseded: the 06s dispatch note
 
 ## The async side is finished; stage A begins
 

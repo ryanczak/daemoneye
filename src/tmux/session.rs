@@ -21,14 +21,11 @@ pub struct OtherSessionInfo {
 /// Uses a single `list-sessions` call.  Returns an empty Vec when tmux is
 /// unavailable or no sessions exist.
 pub fn list_sessions() -> Vec<OtherSessionInfo> {
-    let out = match Command::new("tmux")
-        .args([
-            "list-sessions",
-            "-F",
-            "#{session_name}\t#{session_windows}\t#{session_activity}\t#{session_attached}",
-        ])
-        .output()
-    {
+    let out = match crate::tmux::bounded_output(Command::new("tmux").args([
+        "list-sessions",
+        "-F",
+        "#{session_name}\t#{session_windows}\t#{session_activity}\t#{session_attached}",
+    ])) {
         Ok(o) => o,
         Err(_) => return Vec::new(),
     };
@@ -60,15 +57,12 @@ pub fn list_sessions() -> Vec<OtherSessionInfo> {
 /// Returns a map of `session_name → (has_bell, has_activity)`.
 /// Empty map when tmux is unavailable.
 fn list_session_flags() -> HashMap<String, (bool, bool)> {
-    let out = match Command::new("tmux")
-        .args([
-            "list-windows",
-            "-a",
-            "-F",
-            "#{session_name}\t#{window_flags}",
-        ])
-        .output()
-    {
+    let out = match crate::tmux::bounded_output(Command::new("tmux").args([
+        "list-windows",
+        "-a",
+        "-F",
+        "#{session_name}\t#{window_flags}",
+    ])) {
         Ok(o) if o.status.success() => o,
         _ => return HashMap::new(),
     };
@@ -203,9 +197,11 @@ pub fn session_environment(session: &str) -> Result<HashMap<String, String>> {
         "LC_ALL",
     ];
 
-    let output = Command::new("tmux")
-        .args(["show-environment", "-t", session])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "show-environment",
+        "-t",
+        session,
+    ]))?;
 
     // Not a hard error if unavailable (e.g. session not found).
     if !output.status.success() {
@@ -231,9 +227,13 @@ pub fn session_environment(session: &str) -> Result<HashMap<String, String>> {
 
 /// Get the active pane ID in `#{pane_id}` format (e.g. `%5`).
 pub fn get_active_pane(session_name: &str) -> Result<String> {
-    let output = Command::new("tmux")
-        .args(["display-message", "-t", session_name, "-p", "#{pane_id}"])
-        .output()?;
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        session_name,
+        "-p",
+        "#{pane_id}",
+    ]))?;
 
     if !output.status.success() {
         anyhow::bail!("Failed to get active pane for session '{}'", session_name);
@@ -244,10 +244,9 @@ pub fn get_active_pane(session_name: &str) -> Result<String> {
 
 /// Return the name of the current tmux session, or `None` if not inside tmux.
 pub fn current_session_name() -> Option<String> {
-    let out = Command::new("tmux")
-        .args(["display-message", "-p", "#S"])
-        .output()
-        .ok()?;
+    let out =
+        crate::tmux::bounded_output(Command::new("tmux").args(["display-message", "-p", "#S"]))
+            .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if s.is_empty() { None } else { Some(s) }
 }
@@ -258,15 +257,13 @@ pub fn current_session_name() -> Option<String> {
 /// client is attached or when tmux is unavailable — callers should treat
 /// `(0, 0)` as "unknown" and skip viewport-sensitive formatting.
 pub fn client_dimensions(session_name: &str) -> (u16, u16) {
-    let out = Command::new("tmux")
-        .args([
-            "display-message",
-            "-t",
-            session_name,
-            "-p",
-            "#{client_width}\t#{client_height}",
-        ])
-        .output();
+    let out = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-t",
+        session_name,
+        "-p",
+        "#{client_width}\t#{client_height}",
+    ]));
     let out = match out {
         Ok(o) if o.status.success() => o,
         _ => return (0, 0),
@@ -309,9 +306,12 @@ pub fn ensure_incident_session() -> Result<String> {
         "No active tmux sessions found. Creating detached session: {}",
         INCIDENT_SESSION_NAME
     );
-    let out = Command::new("tmux")
-        .args(["new-session", "-d", "-s", INCIDENT_SESSION_NAME])
-        .output()?;
+    let out = crate::tmux::bounded_output(Command::new("tmux").args([
+        "new-session",
+        "-d",
+        "-s",
+        INCIDENT_SESSION_NAME,
+    ]))?;
 
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -323,18 +323,21 @@ pub fn ensure_incident_session() -> Result<String> {
 
 /// Return `true` if a tmux session with this name currently exists.
 pub fn session_exists(name: &str) -> bool {
-    Command::new("tmux")
-        .args(["has-session", "-t", name])
-        .output()
+    crate::tmux::bounded_output(Command::new("tmux").args(["has-session", "-t", name]))
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 /// List all pane IDs in a tmux session (across all windows).
 pub fn list_pane_ids_in_session(session: &str) -> Result<Vec<String>> {
-    let out = Command::new("tmux")
-        .args(["list-panes", "-s", "-t", session, "-F", "#{pane_id}"])
-        .output()?;
+    let out = crate::tmux::bounded_output(Command::new("tmux").args([
+        "list-panes",
+        "-s",
+        "-t",
+        session,
+        "-F",
+        "#{pane_id}",
+    ]))?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     Ok(stdout
         .lines()
