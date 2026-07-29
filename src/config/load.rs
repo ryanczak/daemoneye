@@ -59,6 +59,12 @@ pub fn default_socket_path() -> PathBuf {
     var_run_dir().join("daemoneye.sock")
 }
 
+/// Default path for the instance lock / PID file:
+/// `~/.daemoneye/var/run/daemoneye.pid`.
+pub fn default_pid_path() -> PathBuf {
+    var_run_dir().join("daemoneye.pid")
+}
+
 /// Path for the structured event log: `~/.daemoneye/var/log/events.jsonl`.
 pub fn events_path() -> PathBuf {
     var_log_dir().join("events.jsonl")

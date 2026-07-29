@@ -1,7 +1,7 @@
 # Phase 08: Instance Lock — One Daemon, Enforced by the Kernel
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (independent of the 04x lock-conversion sequence)
 **Estimated diff:** ~260 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -539,3 +539,11 @@ other than "Daemon is running.", the phase is **not** done.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-29 21:30 (started)
+
+**Executor:** Claude (sonnet)
+
+Started phase 08: Instance Lock. Implementing `InstanceLock` module, acquiring
+the lock before startup side effects, removing `daemon_is_running()` guard,
+identity-checked socket teardown, and CLAUDE.md documentation.

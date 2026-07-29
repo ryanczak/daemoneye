@@ -32,6 +32,7 @@ pub mod digest;
 pub mod executor;
 pub mod ghost;
 pub mod hook;
+pub mod instance;
 pub mod memory_prompt;
 pub mod policy;
 pub mod prompt;
@@ -366,6 +367,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             }
         }
     }
+    // Acquire the instance lock before any startup side effect. The lock is
+    // held for the lifetime of the daemon — the kernel releases it on death.
+    let _instance = match instance::InstanceLock::acquire(&crate::config::default_pid_path()) {
+        Ok(lock) => lock,
+        Err(e) => {
+            log::error!("{e}");
+            anyhow::bail!("{e}");
+        }
+    };
+
     // Validate API key before binding the socket so the error is immediate
     // and obvious rather than surfacing as a cryptic 401 mid-conversation.
     let startup_config = match Config::load() {
@@ -788,16 +799,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     let socket_path: PathBuf = default_socket_path();
 
-    if daemon_is_running().await {
-        anyhow::bail!(
-            "A daemon is already running on {}.\n\
-             Stop it with:  daemoneye stop",
-            socket_path.display(),
-        );
-    }
-
-    // Use symlink_metadata() (does not follow symlinks) so a symlink at the
-    // socket path removes the symlink itself rather than its target (S3).
+    // The instance lock is held, so no other daemon is alive: any socket file at
+    // this path is definitionally stale and safe to remove. symlink_metadata()
+    // (does not follow symlinks) so a symlink at the socket path removes the
+    // symlink itself rather than its target (S3).
     match socket_path.symlink_metadata() {
         Ok(_) => {
             std::fs::remove_file(&socket_path).context("Failed to remove stale socket file")?;
@@ -808,6 +813,14 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind to socket at {}", socket_path.display()))?;
+
+    // Record the bound socket's identity for identity-checked teardown below.
+    let socket_id = socket_path.symlink_metadata().ok().map(|m| {
+        (
+            std::os::unix::fs::MetadataExt::dev(&m),
+            std::os::unix::fs::MetadataExt::ino(&m),
+        )
+    });
 
     log::info!("Daemon listening on {}", socket_path.display());
 
@@ -854,7 +867,22 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // ── Graceful shutdown ────────────────────────────────────────────────────
     // 1. Remove the socket so new clients get a clean "not running" error.
-    let _ = std::fs::remove_file(&socket_path);
+    // Only unlink the socket this daemon bound. If the identity differs, another
+    // process replaced the path and removing it would strip a successor's address.
+    let current_id = socket_path.symlink_metadata().ok().map(|m| {
+        (
+            std::os::unix::fs::MetadataExt::dev(&m),
+            std::os::unix::fs::MetadataExt::ino(&m),
+        )
+    });
+    if socket_id.is_some() && current_id == socket_id {
+        let _ = std::fs::remove_file(&socket_path);
+    } else {
+        log::warn!(
+            "socket at {} is not the one this daemon bound — leaving it in place",
+            socket_path.display()
+        );
+    }
 
     // 2. Uninstall global tmux hooks so they don't fire against a dead daemon.
     for hook in &[

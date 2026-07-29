@@ -20,7 +20,7 @@ env_logger = { version = "0.11", default-features = false, features = ["auto-col
 futures-util = "0.3"
 libc = "0.2"
 log = "0.4"
-nix = "0.31.1"
+nix = { version = "0.31.1", features = ["fs"] }
 regex = "1"
 reqwest = { version = "0.13.2", features = ["json", "stream"] }
 # `scrolling-regions` makes the inline viewport's `insert_before` scroll new
