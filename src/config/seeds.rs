@@ -160,17 +160,19 @@ pub(crate) const SRE_PROMPT_TOML: &str = include_str!("../../assets/prompts/sre.
 // Seeded knowledge memories (written to ~/.daemoneye/memory/knowledge/ on first run)
 // ---------------------------------------------------------------------------
 
-const WEBHOOK_SETUP_MEMORY: &str = include_str!("../../assets/memory/knowledge/webhook-setup.md");
-const RUNBOOK_FORMAT_MEMORY: &str = include_str!("../../assets/memory/knowledge/runbook-format.md");
-const RUNBOOK_GHOST_TEMPLATE_MEMORY: &str =
+pub(crate) const WEBHOOK_SETUP_MEMORY: &str =
+    include_str!("../../assets/memory/knowledge/webhook-setup.md");
+pub(crate) const RUNBOOK_FORMAT_MEMORY: &str =
+    include_str!("../../assets/memory/knowledge/runbook-format.md");
+pub(crate) const RUNBOOK_GHOST_TEMPLATE_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/runbook-ghost-template.md");
-const GHOST_SHELL_GUIDE_MEMORY: &str =
+pub(crate) const GHOST_SHELL_GUIDE_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/ghost-shell-guide.md");
-const SCHEDULING_GUIDE_MEMORY: &str =
+pub(crate) const SCHEDULING_GUIDE_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/scheduling-guide.md");
-const SCRIPTS_AND_SUDOERS_MEMORY: &str =
+pub(crate) const SCRIPTS_AND_SUDOERS_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/scripts-and-sudoers.md");
-const AGENT_RUNTIME_LAYOUT_MEMORY: &str =
+pub(crate) const AGENT_RUNTIME_LAYOUT_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/agent-runtime-layout.md");
 
 // ---------------------------------------------------------------------------

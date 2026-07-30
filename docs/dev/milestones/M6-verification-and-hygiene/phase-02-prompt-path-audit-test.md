@@ -1,7 +1,7 @@
 # Phase 02: Prompt-Path Audit Test
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=test, size=m
@@ -363,3 +363,54 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 16:10 (started)
+
+**Executor:** Claude executor
+
+**Work:** Implement `src/config/path_audit.rs` — path extractor, inventory, and audit gate.
+
+### Update — 2026-07-30 16:15 (red run — task 5 step 2)
+
+**First test run (no PENDING_FIX) — RED, as expected.**
+
+Findings reported by the audit:
+
+```
+SRE_PROMPT_TOML has findings:
+  var/log/events.jsonl → Legacy { reason: "superseded by dated segments (current_event_segment_path); retained only as a compatibility read at event_log.rs:93" }
+
+knowledge memory 'webhook-setup' has findings:
+  ~/.daemoneye/config.toml → Unknown
+  ~/.daemoneye/events.jsonl → Unknown
+
+knowledge memory 'ghost-shell-guide' has findings:
+  ~/.daemoneye/pane_logs/ → Unknown (normalised: pane_logs)
+  ~/.daemoneye/daemon.log → Unknown (normalised: daemon.log)
+  ~/.daemoneye/events.jsonl → Unknown (normalised: events.jsonl)
+  ~/.daemoneye/sessions/ghost-<name>-<uuid>.jsonl → Unknown (normalised: sessions)
+  ~/.daemoneye/pane_logs/<win_name>.log → Unknown (normalised: pane_logs)
+
+knowledge memory 'scheduling-guide' has findings:
+  ~/.daemoneye/schedules.json → Unknown (normalised: schedules.json)
+```
+
+7 unique normalised paths flagged. All are real defects: the knowledge memories use
+`~/.daemoneye/`-prefixed paths that do not match the actual runtime layout (e.g.
+`~/.daemoneye/config.toml` should be `etc/config.toml`; `~/.daemoneye/pane_logs/`
+should be `var/log/panes/`).
+
+### Update — 2026-07-30 16:20 (green run — task 5 step 4)
+
+**After adding PENDING_FIX with the 7 flagged paths — GREEN.**
+
+```
+test result: ok. 955 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.29s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+```
+
+Lib count: 955 (above 947 baseline, +8 new tests). Integration: 27. Isolation: 3. All unchanged.
+
+PENDING_FIX contains exactly 7 entries, each matching a finding from the red run.

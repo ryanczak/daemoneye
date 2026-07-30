@@ -3,6 +3,7 @@
 //! public surface is re-exported here.
 
 mod load;
+mod path_audit;
 mod seeds;
 mod types;
 
