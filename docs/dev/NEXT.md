@@ -1,91 +1,62 @@
 # NEXT
 
-**Active phase: 01 — test-isolation-harness.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-01-test-isolation-harness.md`
-Status: `in-progress` — dispatched and bounced once on 2026-07-30. Four bugs open
-in `bugs/`: bug-01-1 (blocker), bug-01-2, bug-01-3, bug-01-4.
+**Active phase: none — phase 01 is `done`; phase 02 is named but not drafted.**
 
-The harness itself landed clean — `tests/harness/mod.rs` + `tests/isolation.rs`,
-no `src/` changes, all gates green. The bounce is about **evidence**: the test
-that was supposed to prove the daemon reached the private server asserts a string
-tmux prints unconditionally, and the recorded mutation proof does not reproduce.
-Two of the four bugs are **spec bugs charged to the architect**; that spec text is
-corrected in place.
+Phase 01 (test-isolation-harness) was approved 2026-07-30 as `approved_after_1`.
+Draft the next phase with `/rexymcp:architect next`.
 
-## What phase 01 does
+## What phase 01 shipped
 
-Builds the environment every other M6 phase needs: a throwaway `HOME` **and** a
-private tmux server, so an end-to-end scenario can run a real `daemoneye` daemon
-without touching the operator's `~/.daemoneye/` or their default tmux server.
+`tests/harness/mod.rs` (`IsolatedEnv`) and `tests/isolation.rs` (three scenarios).
+No `src/` changes across either round. Every remaining M6 phase can now run a real
+`daemoneye` daemon against a throwaway `HOME` and a private tmux server without
+touching the operator's `~/.daemoneye/` or their default tmux server.
 
-Deliverables: `tests/harness/mod.rs` (an `IsolatedEnv` type) and
-`tests/isolation.rs` (three scenarios). No `src/` changes.
+The mechanism, for phases 02–12 that will build on it: isolation is **per-`Command`
+environment construction**, not argument plumbing. `HOME` → throwaway root under
+`/tmp`, `TMUX_TMPDIR` → same root, `TMUX`/`TMUX_PANE` removed. That covers all 82
+`Command::new("tmux")` sites with no source changes. The harness never calls
+`std::env::set_var`, so these tests need no `test_home_guard()` serialization and
+run in parallel with everything else.
 
-## The design question, and why it is already answered in the doc
+Two things later phases should know:
 
-M6's README flagged 01 as design-discovery, with the load-bearing unknown being
-"how a private tmux server is addressed by every `Command::new("tmux")` in the
-tree — there is no `-L` plumbing today."
+- **Teardown is pinned to an explicit socket path** (`tmux -S <root>/tmux-<uid>/default
+  kill-server`), deliberately *not* routed through the env helper. It fails closed:
+  a broken `apply_env` makes teardown a no-op rather than killing the operator's
+  server. Do not "simplify" it back.
+- **`start_daemon` writes `config.toml` after `daemoneye setup`**, because setup's
+  `ensure_dirs()` overwrites any pre-existing config with the bundled default.
 
-**That is settled and pre-injected into the phase doc.** tmux resolves its server
-socket from `$TMUX_TMPDIR`, and `std::process::Command` children inherit the
-environment, so setting `TMUX_TMPDIR` on the spawned daemon gives all **82** call
-sites a private server with **zero** changes under `src/`. Verified live during
-drafting; the probe transcript is quoted in the phase doc. Plumbing `-L` is now
-an explicit scope violation rather than an open question.
+## Cost of the round trip, and what it says
 
-Two gotchas are pre-injected alongside it: the ~108-byte `sun_path` cap (hit
-during drafting — the throwaway root must be under `/tmp`, not
-`std::env::temp_dir()`, which honours a possibly-long `$TMPDIR`), and the fact
-that `daemoneye daemon` forks, so the parent's exit status *is* the readiness
-signal and the daemon outlives the test process.
+One bounce, four bugs, all closed. **Two of the four were spec bugs charged to the
+architect**, not executor faults:
 
-## What the bounce found
+- The spec named `pane-died` + `show-hooks -g` for an assertion that could not
+  fail — `tmux show-hooks -g <name>` echoes the hook's *name* whether or not it is
+  set, so the test that was supposed to prove the daemon reached the private server
+  passed on any running tmux server.
+- The spec specified a `Drop` teardown whose safety argument was circular ("safe
+  precisely because `TMUX_TMPDIR` scopes it"), which made the phase's own required
+  mutation destructive. It destroyed a live session on the operator's default
+  server during review round 1.
 
-Task 5 is a **required mutation**: remove `TMUX_TMPDIR` from the harness, watch
-the suite fail, restore it, watch it pass, quote both. Per `WORKFLOW.md`
-§ "Coverage claims are inadmissible without mutation proof" — a harness whose
-isolation has never been demonstrated to fail is not evidence of isolation, and
-this phase's entire deliverable is that evidence.
-
-That mutation is exactly what the review re-ran, and it did not hold up:
-
-- `tmux show-hooks -g pane-died` prints the literal `pane-died` on a bare server
-  with no daemon, so the hooks test's assertion cannot fail (bug-01-1).
-- The recorded mutation fails 2 of 3 tests, not 3, and both die on
-  `duplicate session: de-test` inside `start_daemon` — before any snapshot
-  comparison runs (bug-01-2). Re-tested alone, `default_server_unchanged` *does*
-  discriminate; the test is sound, the recorded evidence was not.
-- The mutation destroyed a live session on the operator's default server, because
-  `Drop` routes `kill-server` through the very helper under test (bug-01-3).
-
-**Ordering matters on re-dispatch:** bug-01-3 and bug-01-4 must be fixed before
-the mutation is re-run, or it is both destructive and unable to reach the
-assertion it is meant to exercise. The phase doc's task 5 now says so.
-
-## Field note from 2026-07-30 — this problem is not hypothetical
-
-While drafting, the operator's tmux server exited repeatedly and the daemon died
-with it: `var/run/daemoneye.pid` and `daemoneye.sock` were both still on disk
-with no `daemoneye` process alive, and `tmux ls` reported no server.
-
-The mechanism is the one phase 01 contains. The daemon installs **four
-server-wide `-g` hooks** — `pane-died`, `after-new-session`, `client-attached`,
-`client-detached` (`src/daemon/mod.rs:563`–`:620`) — on whatever tmux server it
-can reach, and those hooks keep firing `daemoneye notify …` at a socket that may
-no longer be there. This is defect 13 in the inventory, observed live rather than
-inferred. It is also the reason the architect is currently running outside tmux.
+Both are the fold the phase doc itself cited at the executor — `WORKFLOW.md`
+§ "Confirm the property is observable before pinning it". **The architect quoted
+the rule and broke it in the same document.** That is the third architect-authored
+unobservable property in this project, so the fold is not the missing piece; a
+mechanical pre-dispatch criteria check is. See `docs/dev/TODO.md` § 1, and note
+that M6 phase 02 is a narrower instance of the same idea — worth designing the two
+together.
 
 ## Where things stand
 
-- Working tree was clean at drafting; the only change is this file plus the new
-  phase doc.
-- No daemon currently running (see the field note above).
-- `cargo clippy --all-targets --all-features -- -D warnings` clean at M5 close;
-  **947** lib + **27** integration, zero failures — the baseline phase 01 must
-  not regress.
+- `cargo clippy --all-targets --all-features -- -D warnings` clean; 947 lib + 27
+  integration (2 ignored, pre-existing) + **3 isolation**, zero failures.
+- Working tree clean. No daemon running; no tmux server running.
 - Milestone README:
   `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 02–12 are
-  named, not drafted; draft each with `/rexymcp:architect next` once its
-  predecessor is `done`.
+  named, not drafted. Re-verify each phase's "Current state" against the tree
+  before dispatching it — phase 01 changed what `tests/` looks like.
 - Standing backlog: `docs/dev/TODO.md`.

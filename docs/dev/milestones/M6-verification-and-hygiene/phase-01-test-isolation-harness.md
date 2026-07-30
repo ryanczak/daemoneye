@@ -1,8 +1,8 @@
 # Phase 01: Test-Isolation Harness
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
-**Bugs open:** bug-01-1 (blocker), bug-01-2, bug-01-3, bug-01-4 — see `bugs/` (all fixed)
+**Status:** done
+**Bugs:** bug-01-1 … bug-01-4 — all closed 2026-07-30, see `bugs/`
 **Depends on:** none
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=test, size=m
@@ -684,3 +684,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b4b75151ef45b4ac062df00670a8f7fef5dcf475
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30 (round 2)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Bugs filed:** 4, all closed (bug-01-1 blocker, bug-01-2, bug-01-3, bug-01-4)
+- **Scope deviations:** none — diff confined to `tests/`, no `src/` changes, no
+  `-L` plumbing across either round.
+- **Gates:** all four re-run independently. Clippy forced to re-check, exits zero.
+  947 lib + 27 integration (2 ignored, pre-existing) + 3 isolation.
+- **Calibration:** the round-1 bounce was half architect-caused (two spec bugs).
+  Round 2 needed no further correction. See the round-1 verdict for the fold
+  argument — third architect-authored unobservable property, pointing at
+  `docs/dev/TODO.md` § 1 rather than a new fold.
+
+**Each fix verified independently, not taken on report:**
+
+- **bug-01-1 — assertion now discriminates.** Probed on a bare tmux server with
+  no daemon: `show-hooks -g pane-died` prints bare `pane-died`, and
+  `show-hooks -g client-attached` prints bare `client-attached`. Both new
+  predicates are absent — `pane-died[` → 0 matches, `daemoneye notify` → 0
+  matches, `client-attached[` → 0 matches. The test now fails when the daemon
+  never reached the server, which is what round 1 could not do.
+- **bug-01-2 — mutation report reproduces exactly.** Re-ran the mutation with a
+  live `de-op-probe` on the default server. Observed, matching the Update Log
+  claim item for item: `daemon_boots_in_throwaway_root` **passes** (observes only
+  `HOME`), `hooks_land_on_private_server` **passes** (the daemon reached the
+  default server and installed hooks there), `default_server_unchanged`
+  **fails on its snapshot assertion** — `left` holds `de-op-probe` alone with bare
+  `client-attached` / `client-detached`, `right` gains `de-test-boot`,
+  `de-test-default`, `de-test-hooks` and `client-attached[0] run-shell -b
+  ".../daemoneye notify client-attached …"`. Distinct session names let the
+  mutation reach the assertion instead of dying on `duplicate session`.
+- **bug-01-3 — teardown fails closed.** The same mutation that destroyed the
+  operator's server in round 1 left it intact this time:
+
+  ```
+  BEFORE  de-op-probe: 1 windows (created Thu Jul 30 08:56:49 2026)   hooks=57
+  AFTER   de-op-probe: 1 windows (created Thu Jul 30 08:56:49 2026)   hooks=57
+  ```
+
+- **bug-01-4 — mechanical checks.** `grep -c set_var` → 0, `grep -c 'sk-ant'` → 0,
+  config literal appears once, three distinct session names.
+
+**Warning (not a bounce):** the Update Log asserts "Default server unchanged
+before/after" without quoting the before/after pair that bug-01-3's verification
+section asked for. The property holds — the evidence is quoted above from the
+reviewer's own run — but the executor's record does not stand on its own.
+
+**Observation for phase 06, not a defect:** an *aborted or mutated* run leaks its
+`de-test-*` sessions onto whichever server they landed on, because teardown now
+correctly declines to kill a server it cannot identify as private. Leaking is the
+right trade against destroying, and normal runs clean up. The reviewer removed
+three such sessions by hand after the mutation. If later phases run this harness
+frequently, a stale-session sweep keyed on the `de-test-` prefix may be worth it.
