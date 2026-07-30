@@ -114,10 +114,43 @@ pub trait AiClient: Send + Sync {
     ) -> Result<()>;
 }
 
+/// Idle ceiling for a single read from an in-flight AI response stream.
+///
+/// `Client::timeout` bounds the *whole* request; it cannot tell a slow-but-alive
+/// provider from one that accepted the connection and went silent. Without a
+/// per-read bound, a quiet provider freezes the turn for the full total timeout
+/// with no diagnostic — `docs/design/daemon-stalls.md` § 1.5 (mechanism C).
+pub const STREAM_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Normalise one chunk of an AI response stream, converting an idle-read
+/// timeout into a diagnosable error and logging it.
+///
+/// Generic over the chunk payload so the `bytes` crate need not be a direct
+/// dependency.
+pub fn stream_chunk<T>(chunk: reqwest::Result<T>) -> Result<T> {
+    chunk.map_err(|e| {
+        if e.is_timeout() {
+            log::error!(
+                "AI stream stalled: no data for {}s — provider accepted the \
+                 connection then went silent (mechanism C)",
+                STREAM_IDLE_TIMEOUT.as_secs()
+            );
+            anyhow::anyhow!(
+                "AI stream stalled: the provider sent no data for {}s",
+                STREAM_IDLE_TIMEOUT.as_secs()
+            )
+        } else {
+            log::error!("AI stream read failed: {e}");
+            anyhow::anyhow!("AI stream read failed: {e}")
+        }
+    })
+}
+
 pub fn http() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
+            .read_timeout(STREAM_IDLE_TIMEOUT)
             .build()
             // INVARIANT: default reqwest client config is always valid
             .unwrap()
@@ -302,6 +335,61 @@ mod tests {
             "local".to_string(),
             "some-model".to_string(),
             "http://localhost:1234/v1".to_string(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod stream_idle_tests {
+    use futures_util::StreamExt;
+
+    /// Serve HTTP 200 + one SSE chunk, then go silent without closing the
+    /// socket — the exact mechanism-C shape. Returns the bound address.
+    async fn silent_after_first_chunk() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                use tokio::io::AsyncWriteExt;
+                let _ = sock
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\n\
+                          Content-Type: text/event-stream\r\n\
+                          Transfer-Encoding: chunked\r\n\r\n\
+                          5\r\nhello\r\n",
+                    )
+                    .await;
+                let _ = sock.flush().await;
+                // Hold the connection open, sending nothing further.
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn idle_stream_times_out_and_reports_a_stall() {
+        let url = silent_after_first_chunk().await;
+        let client = reqwest::Client::builder()
+            .read_timeout(std::time::Duration::from_millis(300))
+            .build()
+            .unwrap();
+        let resp = client.get(&url).send().await.unwrap();
+        let mut stream = resp.bytes_stream();
+
+        let first = stream.next().await.expect("first chunk");
+        assert!(
+            super::stream_chunk(first).is_ok(),
+            "first chunk must arrive"
+        );
+
+        let second = stream.next().await.expect("a second stream item");
+        assert!(second.is_err(), "second read must time out, not succeed");
+        let err = super::stream_chunk(second).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("stalled"),
+            "idle timeout must be reported as a stall, got: {msg}"
         );
     }
 }

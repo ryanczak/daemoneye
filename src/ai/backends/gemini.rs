@@ -203,7 +203,7 @@ impl AiClient for GeminiClient {
         let mut usage = TokenBreakdown::default();
 
         while let Some(chunk) = stream.next().await {
-            let bytes = chunk?;
+            let bytes = crate::ai::stream_chunk(chunk)?;
             leftover.push_str(&String::from_utf8_lossy(&bytes));
 
             while let Some(pos) = leftover.find('\n') {

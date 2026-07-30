@@ -144,7 +144,7 @@ impl AiClient for OpenAiClient {
         const MAX_LEFTOVER_BYTES: usize = 1 << 20;
 
         'outer: while let Some(chunk) = stream.next().await {
-            let bytes = chunk?;
+            let bytes = crate::ai::stream_chunk(chunk)?;
             leftover.push_str(&String::from_utf8_lossy(&bytes));
             if leftover.len() > MAX_LEFTOVER_BYTES {
                 return Err(anyhow::anyhow!(
