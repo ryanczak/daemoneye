@@ -7,6 +7,17 @@
 use std::process::Command;
 use tempfile::TempDir;
 
+/// Minimal config.toml written after `daemoneye setup` (which overwrites it).
+const TEST_CONFIG_TOML: &str = r#"[models.default]
+provider = "anthropic"
+api_key  = "test-key-not-a-real-credential"
+model    = "claude-sonnet-4-6"
+input_cost_per_mtok       = 3.00
+output_cost_per_mtok      = 15.00
+cache_read_cost_per_mtok  = 0.30
+cache_write_cost_per_mtok = 3.75
+"#;
+
 /// An isolated test environment with a throwaway `$HOME` and private tmux server.
 pub struct IsolatedEnv {
     root: TempDir,
@@ -31,32 +42,35 @@ impl IsolatedEnv {
             socket_path.display()
         );
 
-        // Create the etc directory and write a minimal config.toml.
-        let etc_dir = root.path().join(".daemoneye/etc");
-        std::fs::create_dir_all(&etc_dir).expect("create etc dir");
-        std::fs::write(
-            etc_dir.join("config.toml"),
-            // Minimal config — a dummy API key so the daemon boots without
-            // needing a real key.  The spec says "no AI-dependent scenarios"
-            // so this key is never used in flight.
-            r#"[models.default]
-provider = "anthropic"
-api_key  = "sk-ant-test0000000000000000000000000000000000000000000000000000000000000000"
-model    = "claude-sonnet-4-6"
-input_cost_per_mtok       = 3.00
-output_cost_per_mtok      = 15.00
-cache_read_cost_per_mtok  = 0.30
-cache_write_cost_per_mtok = 3.75
-"#,
-        )
-        .expect("write config.toml");
-
         Self { root }
     }
 
     /// Return the throwaway root path (used as `$HOME`).
     pub fn root(&self) -> &std::path::Path {
         self.root.path()
+    }
+
+    /// Return the explicit socket path of the private tmux server.
+    ///
+    /// Used by `Drop` to pin `kill-server` to a specific socket rather than
+    /// relying on `TMUX_TMPDIR` — teardown must be safe independently of
+    /// whether `apply_env` is correct.
+    ///
+    /// Discovers the socket by scanning for the `tmux-*` directory tmux
+    /// creates under `TMUX_TMPDIR`. If none exists (server never started),
+    /// returns a path that will not exist, making teardown a no-op.
+    fn private_tmux_socket(&self) -> std::path::PathBuf {
+        let root = self.root.path();
+        if let Ok(entries) = std::fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with("tmux-") {
+                    return entry.path().join("default");
+                }
+            }
+        }
+        root.join("tmux-0/default")
     }
 
     // -----------------------------------------------------------------------
@@ -160,19 +174,7 @@ cache_write_cost_per_mtok = 3.75
     fn write_test_config(&self) {
         let etc_dir = self.root.path().join(".daemoneye/etc");
         std::fs::create_dir_all(&etc_dir).expect("create etc dir");
-        std::fs::write(
-            etc_dir.join("config.toml"),
-            r#"[models.default]
-provider = "anthropic"
-api_key  = "sk-ant-test0000000000000000000000000000000000000000000000000000000000000000"
-model    = "claude-sonnet-4-6"
-input_cost_per_mtok       = 3.00
-output_cost_per_mtok      = 15.00
-cache_read_cost_per_mtok  = 0.30
-cache_write_cost_per_mtok = 3.75
-"#,
-        )
-        .expect("write config.toml");
+        std::fs::write(etc_dir.join("config.toml"), TEST_CONFIG_TOML).expect("write config.toml");
     }
 
     /// Stop the daemon (best-effort).
@@ -191,7 +193,17 @@ impl Drop for IsolatedEnv {
     fn drop(&mut self) {
         // Best-effort cleanup: stop the daemon, then kill the private tmux server.
         let _ = self.daemoneye(&["stop"]).output();
-        let _ = self.tmux(&["kill-server"]).output();
+
+        // Pin kill-server to the explicit socket path rather than going through
+        // self.tmux() (which depends on TMUX_TMPDIR). Teardown must be safe
+        // independently of whether apply_env is correct — a broken apply_env
+        // should make teardown a no-op, not a catastrophe.
+        let socket = self.private_tmux_socket();
+        if socket.exists() {
+            let _ = Command::new("tmux")
+                .args(["-S", socket.to_str().unwrap(), "kill-server"])
+                .output();
+        }
         // TempDir's own drop removes the root.
     }
 }

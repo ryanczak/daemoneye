@@ -55,7 +55,7 @@ fn daemon_boots_in_throwaway_root() {
     }
 
     let env = IsolatedEnv::new();
-    env.start_daemon("de-test");
+    env.start_daemon("de-test-boot");
 
     // Verify socket and PID file exist under the throwaway root.
     let run_dir = env.root().join(".daemoneye/var/run");
@@ -84,10 +84,17 @@ fn daemon_boots_in_throwaway_root() {
 
 /// The daemon's global hooks land on the private server.
 ///
-/// After `start_daemon`, `tmux show-hooks -g` on the **private** server
-/// mentions `pane-died`. This proves the daemon really did reach a tmux
-/// server, so that the negative half (default server unchanged) is not
+/// After `start_daemon`, the private server carries hooks whose **values**
+/// invoke `daemoneye notify`. This is the positive half — proving the daemon
+/// really did reach a tmux server, so that the negative half below is not
 /// passing vacuously.
+///
+/// We assert on the hook's value (not just its name) because `show-hooks -g
+/// <name>` echoes the name even when the hook is unset. A set hook renders as
+/// `pane-died[0] run-shell -b '.../daemoneye notify activity ...'`.
+///
+/// We also check `client-attached`, which appears in the general `show-hooks -g`
+/// listing, to verify via a second hook that does appear in the full listing.
 #[test]
 fn hooks_land_on_private_server() {
     if !tmux_available() {
@@ -96,20 +103,31 @@ fn hooks_land_on_private_server() {
     }
 
     let env = IsolatedEnv::new();
-    env.start_daemon("de-test");
+    env.start_daemon("de-test-hooks");
 
-    // Check that the private server has the daemon's hooks.
-    // pane-died is a built-in event hook that does not appear in the
-    // general `show-hooks -g` listing — it must be queried by name.
-    let hooks_out = env
+    // Check pane-died hook value on the private server (while daemon is live).
+    let pane_died_out = env
         .tmux(&["show-hooks", "-g", "pane-died"])
         .output()
         .expect("run show-hooks -g pane-died");
-    let hooks = String::from_utf8_lossy(&hooks_out.stdout);
+    let pane_died = String::from_utf8_lossy(&pane_died_out.stdout);
     assert!(
-        hooks.contains("pane-died"),
-        "private server does not have pane-died hook:\n{}",
-        hooks
+        pane_died.contains("pane-died[") && pane_died.contains("daemoneye notify"),
+        "private server pane-died hook does not contain daemoneye notify:\n{}",
+        pane_died
+    );
+
+    // Check client-attached hook value on the private server (while daemon is live).
+    let client_attached_out = env
+        .tmux(&["show-hooks", "-g", "client-attached"])
+        .output()
+        .expect("run show-hooks -g client-attached");
+    let client_attached = String::from_utf8_lossy(&client_attached_out.stdout);
+    assert!(
+        client_attached.contains("client-attached[")
+            && client_attached.contains("daemoneye notify"),
+        "private server client-attached hook does not contain daemoneye notify:\n{}",
+        client_attached
     );
 }
 
@@ -118,6 +136,10 @@ fn hooks_land_on_private_server() {
 /// Snapshot the default server **before** and **after** the full scenario
 /// and assert the two snapshots are byte-equal. The property is *unchanged*,
 /// not *nonexistent* — the operator may have a server running.
+///
+/// Must-NOT: assert the default server is absent, or that its session list is
+/// empty. Must-NOT call `kill-server`, `kill-session`, or any `set-hook`
+/// through `default_tmux`.
 #[test]
 fn default_server_unchanged() {
     if !tmux_available() {
@@ -131,7 +153,7 @@ fn default_server_unchanged() {
     let before = snapshot_default_server(&env);
 
     // Start and stop the daemon in the isolated environment.
-    env.start_daemon("de-test");
+    env.start_daemon("de-test-default");
     env.stop_daemon();
 
     // Snapshot the default server after the daemon has been torn down.

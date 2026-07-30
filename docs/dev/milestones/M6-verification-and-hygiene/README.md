@@ -86,7 +86,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [test-isolation-harness](phase-01-test-isolation-harness.md) — throwaway `HOME` + private tmux server; one scenario proving the operator's live server is untouched | in-progress (bounced, 4 bugs) |
+| 01 | [test-isolation-harness](phase-01-test-isolation-harness.md) — throwaway `HOME` + private tmux server; one scenario proving the operator's live server is untouched | in-progress |
 | 02 | prompt-path-audit-test — repo-side test that fails on any unresolvable path literal in the prompt and knowledge-memory assets | todo |
 | 03 | fix-stale-prompt-paths — correct the three known stale `events.jsonl` references; whatever else 02 surfaces | todo |
 | 04 | audit-prompts-command — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | todo |

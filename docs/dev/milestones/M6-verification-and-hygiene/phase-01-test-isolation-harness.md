@@ -2,7 +2,7 @@
 
 **Milestone:** M6 — Verification & Hygiene
 **Status:** in-progress
-**Bugs open:** bug-01-1 (blocker), bug-01-2, bug-01-3, bug-01-4 — see `bugs/`
+**Bugs open:** bug-01-1 (blocker), bug-01-2, bug-01-3, bug-01-4 — see `bugs/` (all fixed)
 **Depends on:** none
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=test, size=m
