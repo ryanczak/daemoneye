@@ -258,6 +258,85 @@ No new dependencies. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green, the working tree is clean, and every line of code you
+wrote is CORRECT and ACCEPTED.** That is expected here and is NOT evidence this
+phase is done. The reviewer independently mutation-checked your gate: breaking
+the `(None, _) => true` arm made `webhook_alert_no_severity_passes_gate` and
+`webhook_alert_unrankable_severity_passes_gate` fail, exactly as they should.
+Your work is sound.
+
+**Do NOT touch any code. Approved and frozen:**
+
+- `severity_rank -> Option<u8>` and the three-arm gate. Verified by mutation.
+- All four `webhook_discarded` sites, their `reason` values, and their log
+  levels (dedup staying at `log::debug!` is a deliberate, documented decision).
+- No call site passes `pid` — confirmed.
+- The three new integration tests, the rewritten `severity_rank_ordering`, and
+  the untouched `webhook_alert_to_event_log`.
+- Test counts: **964 lib / 30 integration (2 ignored) / 3 isolation.**
+
+**There is exactly ONE thing left: an End-to-end verification entry in this
+doc's Update Log.**
+
+**Why the last run missed it — read this, it is the whole point.** You *did* run
+the commands; the session log shows it. The output never reached the Update Log.
+The likely cause: the server writes a `(complete)` entry containing a **"Command
+output tails"** block with the format/build/lint/test output, and that block
+looks like captured evidence. **It is not.** It is the standard gate capture that
+every phase gets automatically. It does **not** satisfy `STANDARDS.md` §1's
+mechanical-capture box, which requires the *phase-specific* End-to-end commands.
+You must author your own Update Log entry, with your own pasted transcripts,
+**before** reporting complete.
+
+**Run exactly this:**
+
+```sh
+cargo test --test integration webhook_alert -- --nocapture \
+  > /tmp/e2e-gate.txt 2>&1; echo "exit=$?" >> /tmp/e2e-gate.txt
+
+grep -n "webhook_alert_no_severity_passes_gate ... ok" /tmp/e2e-gate.txt \
+  > /tmp/e2e-nosev.txt 2>&1; echo "grep-exit=$?" >> /tmp/e2e-nosev.txt
+
+grep -n "webhook_alert_below_threshold_discarded ... ok" /tmp/e2e-gate.txt \
+  > /tmp/e2e-discard.txt 2>&1; echo "grep-exit=$?" >> /tmp/e2e-discard.txt
+```
+
+Then add one Update Log entry titled `### Update — <date> (end-to-end
+verification)` containing three fenced blocks: the **contents** of
+`/tmp/e2e-gate.txt`, of `/tmp/e2e-nosev.txt`, and of `/tmp/e2e-discard.txt`.
+
+The `grep-exit=0` lines are the point. A grep that matches prints its match; a
+grep that finds nothing prints nothing, and an empty block proves nothing on its
+own — the exit code is what makes the result observable either way. This is the
+same discipline that closed phase 04's `diff-exit=0`.
+
+Do not retype, summarise, or reconstruct any of it. Do not copy lines out of this
+doc.
+
+**Scope note — the architect narrowing this requirement, not you.** The phase
+doc originally asked for a pasted `webhook_discarded` line straight out of
+`events.jsonl`. That is not obtainable here: the integration tests scope `HOME`
+to a `tempfile::tempdir()` that is deleted when the test ends, and the only other
+producer of these records is a live daemon, which this phase's Out-of-scope
+section defers to phase 06. So the captured test transcript above is phase 05's
+end-to-end evidence, and the daemon-level capture of a real `webhook_discarded`
+record is **phase 06's** to produce. State that limitation in one line in your
+Update Log entry. This narrowing is the architect's, recorded for the human — do
+not read it as licence to narrow anything else.
+
+**Finish condition — this fix must change no code.**
+
+- `cargo test` must still report **964** lib, **30** integration (2 ignored),
+  **3** isolation. Any change means you touched code.
+- `git diff --name-only` must list **exactly one** path: this phase doc.
+  Anything under `src/` or `tests/` is a scope violation.
+- All four gates still green.
+
+
 ### Update — 2026-07-30 19:52 (started)
 
 **Executor:** rexyMCP executor
@@ -432,3 +511,17 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - Spot-checked the three new integration tests: `webhook_alert_no_severity_passes_gate` and `webhook_alert_unrankable_severity_passes_gate` scan the full event segment for absence of any `webhook_discarded` record (positive proof, not merely no panic); `webhook_alert_below_threshold_discarded` uses `find_map` over all lines (not `lines().last()`) and asserts `reason`, `alert_name`, `severity`, `threshold`, and presence of a server-stamped `pid`. All three are real per the mutation check above.
 
 **Conclusion:** the code is sound — verified independently by mutation, gate re-run, and diff — but the phase doc's mechanical-capture Definition-of-Done box (STANDARDS.md §1) is not satisfied: no E2E transcript was pasted into the Update Log. Per that box, "a green `cargo test` run … is not by itself sufficient" and a missing transcript fails "even when every claim in it is true." Bounced for bug-05-1 (transcript capture only); no code changes required to close it.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce with the code independently mutation-verified, so a
+plain re-dispatch would find nothing to do. The refinement freezes the code,
+names the single remaining artifact, and — new this round — states explicitly
+that the server-authored "Command output tails" block does **not** satisfy the
+mechanical-capture box, which is the most likely reason the executor ran the
+commands but never pasted them. It also resolves an unachievable requirement the
+architect had written into the E2E section (a `webhook_discarded` line from an
+`events.jsonl` that lives in a tempdir the test deletes), deferring the
+daemon-level capture to phase 06 where the harness exists.
