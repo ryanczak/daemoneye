@@ -1,7 +1,7 @@
 # Phase 04: `daemoneye audit-prompts`
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (done), phase-03 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1273,3 +1273,73 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3afe47e89b7ec5c4f79d73f7283eb2914b2a0a60
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30 (round 3)
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bugs: bug-04-1 blocker, bug-04-2 major, bug-04-3 minor,
+  bug-04-4 blocker — 4 filed total across both bounces)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (refined re-dispatch, bounce-2 fix)
+- **Independent re-verification performed this round:**
+  - All four gates re-run as separate invocations: `cargo fmt --all --
+    --check` clean, `cargo build` 0 warnings, `cargo clippy --all-targets
+    --all-features -- -D warnings` 0 warnings, `cargo test` lib 964 /
+    integration 27 (2 ignored) / isolation 3 — all green, matching the
+    executor's reported counts exactly.
+  - **Diff scope confirmed:** `git diff --name-only` between the round-2
+    bounce commit (`b2b42ec`) and the fix commit (`3afe47e89b7`) touches
+    only `docs/dev/milestones/M6-verification-and-hygiene/phase-04-audit-prompts-command.md`
+    (+92/-3). No file under `src/` changed. `cargo test` still reports 964
+    lib tests, unchanged.
+  - **Transcript 3 re-run and diffed (WORKFLOW.md step 4), hard:** ran the
+    architect's exact literal command sequence (`export H=$(mktemp -d)`;
+    `HOME=$H daemoneye setup`; `find "$H/.daemoneye" -exec stat -c '%n %Y'
+    {} \; | sort` before and after `audit-prompts`; `diff … ; echo
+    "diff-exit=$?"`; `wc -l`) in a fresh `mktemp -d` HOME
+    (`/tmp/tmp.fjsCV6AgHy`), independent of the executor's tmpdir
+    (`/tmp/tmp.CuqSSh9I0v`). **Match.** My before/after listings each had
+    35 entries, identical in content and structure to the pasted transcript
+    (same 35 paths in the same order, same convention — only the tmpdir
+    prefix differs, as expected for a genuinely separate run); a direct
+    `diff` between my before/after files was byte-for-byte empty (exit 0);
+    my `diff-exit=0` marker matched the pasted `/tmp/e2e-diff.txt` content
+    exactly (the single line `diff-exit=0`, nothing else — a real `diff`
+    on identical input prints nothing, so this is the only line a
+    mechanical capture of this exact command can produce). No discrepancy
+    found.
+  - **Line-count consistency, verified independently:** counted the pasted
+    before-listing block (phase doc lines 791–825 inclusive at review
+    time) — 35 lines; the pasted after-listing block (831–865) — 35
+    lines. Matches the pasted `wc -l` output (`35 … before.txt`, `35 …
+    after.txt`, `70 total`) exactly. My own fresh re-run independently
+    produced 35/35/70 via the real `wc -l` command (not derived). No
+    dropped-line mismatch found.
+  - **Mtime plausibility:** all 35 pasted entries (both before and after
+    listings) carry the identical epoch `1785440176`, which converts to
+    2026-07-30 12:36:16 PDT — consistent with this milestone's active
+    working session (my independent re-run, executed minutes later in the
+    same session, produced entries at `1785440530`, i.e. 2026-07-30
+    12:42:10 PDT). The before-listing and after-listing epochs are
+    identical entry-for-entry — that equality, not merely their
+    plausibility, is the actual no-write property the transcript exists to
+    prove, and it holds in both the pasted transcript and my independent
+    re-run.
+  - **Working-tree hygiene:** `git status --short` was empty before and
+    after this review's re-runs; no stray `.daemoneye/` tree, tmpdir, or
+    build artifact was present in the repo root or got staged. Only
+    `find . -maxdepth 2 -iname ".daemoneye"` was run to confirm — nothing
+    found. Staged and committed only the phase doc, this milestone's
+    README, and the four bug docs (no `git add -A`). `.gitignore` still has
+    no `.daemoneye/` entry — round 2's recommendation is carried forward
+    again, not made unilaterally, consistent with being outside phase 04's
+    Authorizations.
+  - Transcripts 1 and 2 were not regenerated this round (confirmed via the
+    fix commit's diff, which touches only the transcript-3 section) and
+    were already independently re-run and matched at round 2 — accepted as
+    of round 2, not re-verified line-by-line again this round per the
+    orchestrator's instruction not to re-litigate them.
+- **Scope deviations:** none.
+- **Calibration:** none folded this round — the human/architect should
+  weigh the E2E-transcript-omission pattern (4 occurrences across bug-03-1,
+  bug-03-2, bug-04-1, bug-04-4 — past WORKFLOW.md's own three-occurrence
+  fold threshold) at milestone close, as flagged by round 2's review.

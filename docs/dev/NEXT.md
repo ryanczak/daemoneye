@@ -1,11 +1,10 @@
 # NEXT
 
-**Active phase: 04 — audit-prompts-command.**
+**Phase 04 — audit-prompts-command — done** (approved_after_2, 2026-07-30).
 Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-04-audit-prompts-command.md`
-Status: `in-progress` — bounced at review 2026-07-30 (see bug-04-1, bug-04-2,
-bug-04-3).
 
-Re-dispatch with `/rexymcp:dispatch phase-04` once the bugs are fixed.
+Phases 01–04 of M6 are now `done`. Phase 05 (severity-gate-honesty) is named
+but not yet drafted — draft it with `/rexymcp:architect next` when ready.
 
 ## What phase 04 does
 
