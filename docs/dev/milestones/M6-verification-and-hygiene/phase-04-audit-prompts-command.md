@@ -206,6 +206,80 @@ No new dependencies. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 2)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and the working tree is clean. Expected. NOT evidence
+this phase is done.**
+
+**Everything except one transcript is now accepted.** Do not touch any of it:
+
+- bug-04-2 (the `drop(_lock)` move) — **verified closed**.
+- bug-04-3 (the glob re-export removal + imports) — **verified closed**.
+- E2E transcripts **1 and 2** — the reviewer re-ran both in fresh tmpdirs and got
+  byte-identical results. They are accepted. **Do not regenerate them.**
+- All code, all tests, the 964 count. Nothing in `src/` changes this round.
+
+**There is exactly ONE thing left: E2E transcript 3, the no-write proof.**
+
+**What went wrong — and it was the spec's fault, not yours.** For transcripts 1
+and 2 you were given a literal command to run and you produced real captures. For
+transcript 3 you were given a prose description, and you wrote a summary:
+
+```
+DIFF:
+(empty - no changes)
+```
+
+That cannot be `diff` output. **A real `diff` over identical inputs prints
+nothing at all** — so "(empty - no changes)" is necessarily hand-typed, which
+fails the mechanical-capture box in `STANDARDS.md` §1 even though the underlying
+no-write claim is true (the reviewer independently confirmed it is true). The
+emptiness has to be made *observable* rather than asserted, and the spec never
+told you how. Here is the command.
+
+**Run exactly this**, substituting your throwaway HOME for `$H`:
+
+```sh
+export H=$(mktemp -d)
+HOME=$H daemoneye setup >/dev/null 2>&1
+
+find "$H/.daemoneye" -exec stat -c '%n %Y' {} \; | sort > /tmp/e2e-before.txt
+HOME=$H daemoneye audit-prompts > /tmp/e2e-audit.txt 2>&1; echo "exit=$?" >> /tmp/e2e-audit.txt
+find "$H/.daemoneye" -exec stat -c '%n %Y' {} \; | sort > /tmp/e2e-after.txt
+
+diff /tmp/e2e-before.txt /tmp/e2e-after.txt > /tmp/e2e-diff.txt; echo "diff-exit=$?" >> /tmp/e2e-diff.txt
+
+wc -l /tmp/e2e-before.txt /tmp/e2e-after.txt
+```
+
+Then paste, as four separate fenced blocks, the **actual file contents**:
+
+1. `/tmp/e2e-before.txt` — the before listing (paths + mtimes).
+2. `/tmp/e2e-after.txt` — the after listing.
+3. `/tmp/e2e-diff.txt` — which will contain **only** the line `diff-exit=0`.
+   That line is the whole point: it is what makes "no changes" observable
+   instead of asserted.
+4. The `wc -l` output, showing both listings are non-empty and the same length.
+
+Take the snapshots around the **`audit-prompts` invocation only**. Do not wrap
+them around a `setup` or an injection edit — your own edit would show as a write.
+
+Do not retype any of it, do not summarise, do not copy from this doc.
+
+**Finish condition — this fix must change no code at all.**
+
+- `cargo test` must still report **964** lib tests. Not 963, not 965.
+- `git diff --name-only` must list **exactly one** path: this phase doc.
+  Anything under `src/` in that list is a scope violation.
+- All four gates still green.
+
+**One hygiene note:** run your throwaway HOME under `mktemp -d`, never the repo
+directory. A seeded `.daemoneye/` tree was found untracked in the repo root
+earlier today and had to be moved out before it got committed.
+
+
 ### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
 
 **READ THIS BEFORE ANYTHING ELSE.**
@@ -974,3 +1048,16 @@ Phase doc's `Status:` line flipped back from `review` to `in-progress`.
 Bounced on `bug-04-4` (blocker). Re-dispatch via `/rexymcp:dispatch phase-04`
 once the transcript-3 fix is made — no code changes required, only a
 correctly captured no-write-proof transcript.
+
+### Update — 2026-07-30 (escalation, bounce 2)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** The failure traces to a spec asymmetry, not to executor capability:
+transcripts 1 and 2 were specified as literal commands and both came back as
+genuine captures; transcript 3 was specified in prose and came back as a summary.
+The untried fix is to give transcript 3 the same literal-command treatment, plus
+the `diff-exit=$?` marker that makes an empty diff observable — a real `diff`
+prints nothing on identical input, so emptiness could not previously be shown at
+all. Takeover was rejected: this is assist 2 of 3, no code is in question, and
+there is an obvious unexercised spec improvement.
