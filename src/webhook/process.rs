@@ -11,12 +11,12 @@ use super::*;
 // Severity ranking
 // ---------------------------------------------------------------------------
 
-fn severity_rank(s: &str) -> u8 {
+fn severity_rank(s: &str) -> Option<u8> {
     match s.to_lowercase().as_str() {
-        "critical" => 3,
-        "warning" | "warn" => 2,
-        "info" | "informational" => 1,
-        _ => 0,
+        "critical" => Some(3),
+        "warning" | "warn" => Some(2),
+        "info" | "informational" => Some(1),
+        _ => None,
     }
 }
 
@@ -51,6 +51,14 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
                 "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
                 alert.alert_name,
                 &alert.fingerprint[..alert.fingerprint.len().min(16)]
+            );
+            crate::daemon::utils::log_event(
+                "webhook_discarded",
+                serde_json::json!({
+                    "reason": "duplicate",
+                    "alert_name": alert.alert_name,
+                    "fingerprint": &alert.fingerprint[..alert.fingerprint.len().min(16)],
+                }),
             );
             return;
         }
@@ -136,12 +144,34 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
     let threshold_rank = severity_rank(&cfg.severity_threshold);
     let alert_rank = severity_rank(&alert.severity);
 
-    if alert_rank >= threshold_rank || threshold_rank == 0 {
+    let should_fire = match (alert_rank, threshold_rank) {
+        (None, _) => true, // unrankable severity → fail open
+        (_, None) => true, // unrankable threshold → fail open
+        (Some(a), Some(t)) => a >= t,
+    };
+
+    if should_fire {
         fire_notification(&alert.alert_name, &formatted, &state.config);
 
         if cfg.auto_analyze {
             maybe_analyze_alert(&alert, &formatted, &state).await;
         }
+    } else {
+        log::warn!(
+            "Webhook: alert '{}' discarded — severity '{}' below threshold '{}'",
+            alert.alert_name,
+            alert.severity,
+            cfg.severity_threshold
+        );
+        crate::daemon::utils::log_event(
+            "webhook_discarded",
+            serde_json::json!({
+                "reason": "below_threshold",
+                "alert_name": alert.alert_name,
+                "severity": alert.severity,
+                "threshold": cfg.severity_threshold,
+            }),
+        );
     }
 }
 
@@ -500,15 +530,22 @@ mod tests {
 
     #[test]
     fn severity_rank_ordering() {
-        assert!(severity_rank("critical") > severity_rank("warning"));
-        assert!(severity_rank("warning") > severity_rank("info"));
-        assert!(severity_rank("info") > severity_rank("unknown"));
+        assert_eq!(severity_rank("critical"), Some(3));
+        assert_eq!(severity_rank("warning"), Some(2));
+        assert_eq!(severity_rank("warn"), Some(2));
+        assert_eq!(severity_rank("info"), Some(1));
+        assert_eq!(severity_rank("informational"), Some(1));
+        assert_eq!(severity_rank("unknown"), None);
+        assert_eq!(severity_rank(""), None);
+        assert_eq!(severity_rank("  "), None);
+        assert_eq!(severity_rank("banana"), None);
     }
 
     #[test]
     fn severity_rank_case_insensitive() {
-        assert_eq!(severity_rank("CRITICAL"), severity_rank("critical"));
-        assert_eq!(severity_rank("Warning"), severity_rank("warning"));
+        assert_eq!(severity_rank("CRITICAL"), Some(3));
+        assert_eq!(severity_rank("Warning"), Some(2));
+        assert_eq!(severity_rank("INFO"), Some(1));
     }
 
     // ── camel_to_kebab ────────────────────────────────────────────────────

@@ -102,7 +102,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 02 | [prompt-path-audit-test](phase-02-prompt-path-audit-test.md) — repo-side test that fails on any wrong or superseded path literal in the prompt and knowledge-memory assets | done |
 | 03 | [fix-stale-prompt-paths](phase-03-fix-stale-prompt-paths.md) — correct the stale `events.jsonl` references **and the six-path pre-`var/` generation in the knowledge memories** (see defect 5); empty `PENDING_FIX`; fix the two spans the gate cannot see | done |
 | 04 | [audit-prompts-command](phase-04-audit-prompts-command.md) — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | done                            |
-| 05 | [severity-gate-honesty](phase-05-severity-gate-honesty.md) — an absent severity is not the lowest severity; every discard logs and emits | todo |
+| 05 | [severity-gate-honesty](phase-05-severity-gate-honesty.md) — an absent severity is not the lowest severity; every discard logs and emits | in-progress |
 | 06 | webhook-to-ghost-e2e — the pipeline scenario in the 01 harness, severity-less payload through to a `ghost_*` event | todo |
 | 07 | artifact-lifecycle-policy — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | todo |
 | 08 | daemon-log-rotation — bound the 25.8 MB unrotated log under the 07 policy | todo |

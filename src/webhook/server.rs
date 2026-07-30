@@ -56,12 +56,26 @@ async fn handle_webhook(
     if !is_authorized(&state.config.webhook.secret, &headers) {
         log::warn!("Webhook: rejected request — invalid or missing Bearer token");
         crate::daemon::stats::record_webhook_rejected();
+        crate::daemon::utils::log_event(
+            "webhook_discarded",
+            serde_json::json!({
+                "reason": "unauthorized",
+                "alert_name": "-",
+            }),
+        );
         return StatusCode::UNAUTHORIZED;
     }
 
     let alerts = parse_payload(&body);
     if alerts.is_empty() {
         log::warn!("Webhook: received payload with no parseable alerts");
+        crate::daemon::utils::log_event(
+            "webhook_discarded",
+            serde_json::json!({
+                "reason": "unparseable",
+                "alert_name": "-",
+            }),
+        );
         return StatusCode::BAD_REQUEST;
     }
 

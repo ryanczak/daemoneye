@@ -746,6 +746,232 @@ fn webhook_alert_to_event_log() {
     }
 }
 
+// ── M6 Phase 05: Severity-Gate Honesty ─────────────────────────────────────
+
+/// An alert with no severity label passes the gate under the default
+/// threshold ("warning"). This is the defect-1 regression test.
+#[test]
+fn webhook_alert_no_severity_passes_gate() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    // Payload with no severity label at all
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "NoSeverityAlert",
+                "instance": "web-02"
+            },
+            "annotations": {
+                "summary": "No severity label present"
+            },
+            "fingerprint": "test-fp-no-sev"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+    let alert = &alerts[0];
+    assert_eq!(alert.alert_name, "NoSeverityAlert");
+    assert_eq!(alert.severity, ""); // absent severity → empty string
+
+    let config = daemoneye::config::Config::default();
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
+    let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions,
+        cache,
+        schedule_store,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alert.clone(), state));
+
+    // The alert should NOT have been discarded — no webhook_discarded event
+    let path = daemoneye::config::current_event_segment_path();
+    let content = fs::read_to_string(&path).expect("read event segment");
+    for line in content.lines() {
+        let v: serde_json::Value = serde_json::from_str(line).expect("parse line");
+        if v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded") {
+            panic!("Alert with no severity was discarded; event: {:?}", v);
+        }
+    }
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// An alert with severity "banana" (unrankable) also passes the gate.
+#[test]
+fn webhook_alert_unrankable_severity_passes_gate() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "BananaAlert",
+                "severity": "banana",
+                "instance": "web-03"
+            },
+            "annotations": {
+                "summary": "Unrankable severity"
+            },
+            "fingerprint": "test-fp-banana"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+    let alert = &alerts[0];
+    assert_eq!(alert.severity, "banana");
+
+    let config = daemoneye::config::Config::default();
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
+    let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions,
+        cache,
+        schedule_store,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alert.clone(), state));
+
+    let path = daemoneye::config::current_event_segment_path();
+    let content = fs::read_to_string(&path).expect("read event segment");
+    for line in content.lines() {
+        let v: serde_json::Value = serde_json::from_str(line).expect("parse line");
+        if v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded") {
+            panic!(
+                "Alert with unrankable severity was discarded; event: {:?}",
+                v
+            );
+        }
+    }
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// An alert with severity "info" under threshold "warning" is discarded
+/// and emits a webhook_discarded event with the right fields.
+#[test]
+fn webhook_alert_below_threshold_discarded() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "LowPriorityAlert",
+                "severity": "info",
+                "instance": "web-04"
+            },
+            "annotations": {
+                "summary": "Below threshold"
+            },
+            "fingerprint": "test-fp-low"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+    let alert = &alerts[0];
+    assert_eq!(alert.severity, "info");
+
+    let config = daemoneye::config::Config::default();
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
+    let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions,
+        cache,
+        schedule_store,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alert.clone(), state));
+
+    let path = daemoneye::config::current_event_segment_path();
+    let content = fs::read_to_string(&path).expect("read event segment");
+
+    // Search for the webhook_discarded record (do not use lines.last())
+    let discarded: Option<serde_json::Value> = content.lines().find_map(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        (v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded")).then_some(v)
+    });
+
+    let discarded = discarded.expect("webhook_discarded event not found");
+    assert_eq!(discarded["reason"], "below_threshold");
+    assert_eq!(discarded["alert_name"], "LowPriorityAlert");
+    assert_eq!(discarded["severity"], "info");
+    assert_eq!(discarded["threshold"], "warning");
+    // pid is stamped by log_event, not by the caller
+    assert!(discarded.get("pid").is_some());
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+// ── G1 Named Agents ──────────────────────────────────────────────────────────
+
 // ── G1 Named Agents ──────────────────────────────────────────────────────────
 
 /// Verify that `merge_runbook_ghost_config` propagates all agent fields into the

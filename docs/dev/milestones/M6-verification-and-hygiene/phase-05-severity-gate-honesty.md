@@ -1,7 +1,7 @@
 # Phase 05: Severity-Gate Honesty
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -257,3 +257,11 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 19:52 (started)
+
+**Executor:** rexyMCP executor
+
+**Work started:** Implementing severity-gate honesty: `severity_rank` now returns
+`Option<u8>` with `None` for unrankable values; gate fails open on unrankable
+severity or threshold; all four discard sites emit `webhook_discarded` events.
