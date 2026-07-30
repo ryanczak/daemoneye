@@ -1,7 +1,7 @@
 # Phase 09: Fatal Webhook Bind + Honest Liveness Reporting
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-08 (instance lock) — the PID file this phase reads is
 created there
 **Estimated diff:** ~210 lines
@@ -637,3 +637,134 @@ Test baseline is **928**; this phase adds 9, giving **937**. Count with
 `cargo test 2>&1 | grep "^test result"` — once. If a number disagrees with this
 doc, the doc is wrong: report a blocker naming what you measured rather than
 re-running.
+
+### Update — ts=1785386319070 (complete, server-authored)
+
+**Summary:** All tasks complete. Here is the summary:
+
+**Summary + Notes for review:**
+
+Implemented all 7 spec tasks: replaced `daemon_is_running()` with a `DaemonLiveness` enum (`NotRunning`, `Unresponsive`, `Confused`, `Running`) in `src/daemon/mod.rs`, added a shared `liveness_line()` helper in `src/cli/commands/lifecycle.rs`, rewired `run_ping`, `run_stop`, and `run_status` to use the new probe, split `webhook::start` into `bind` + `serve` with eager fatal bind in `run_daemon`, and updated `CLAUDE.md` with the two new invariants. Added 9 tests (4 `liveness_line` pure-function tests + 5 `daemon_liveness` async tests using `TestHome` RAII guard with temp sockets).
+
+All acceptance criteria verified: 937 lib tests (928 + 9), clippy clean, fmt clean, `daemon_is_running` fully removed, `bind`/`serve` replacing `start`, and E2E scenarios A (fatal bind), B (wedged daemon report), and C (stale PID file) all confirmed against real artifacts. The `unsafe` in the diff is exclusively in the test module's `TestHome` guard for `std::env::set_var` as authorized.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.01s
+
+
+LINT
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.12s
+
+
+TEST
+ook::server::tests::auth_token_without_bearer_prefix_denies ... ok
+test webhook::server::tests::auth_wrong_token_denies ... ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test memory::tests::migrate_namespace_adds_missing ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 937 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test session_index_persistence ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test event_log_append_read ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.55s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-652de6e8e49133dd)
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +5 -0
+- `docs/dev/milestones/M5-ux-stability/README.md` — +1 -1
+- `docs/dev/milestones/M5-ux-stability/phase-09-fatal-bind-honest-liveness.md` — +20 -1
+- `src/cli/commands/lifecycle.rs` — +77 -17
+- `src/cli/commands/mod.rs` — +1 -1
+- `src/cli/status.rs` — +7 -2
+- `src/daemon/mod.rs` — +183 -23
+- `src/webhook/server.rs` — +29 -9
+
+**Commit:** fd42f601db833dfa4f5d7fd69e0680a0667c2d11
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
