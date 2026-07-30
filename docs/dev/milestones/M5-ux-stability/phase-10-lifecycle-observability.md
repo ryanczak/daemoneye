@@ -1,7 +1,7 @@
 # Phase 10: Lifecycle Observability — Attribute Every Event to a Process
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-08 (instance lock) — the startup identity line reports the
 lock outcome
 **Estimated diff:** ~130 lines
@@ -842,3 +842,90 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 72c4086f105393501bc2aaa97076dbc1ce3fdf34
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-10-1, `minor` — false "leading prefix" claim in an invariant
+  and a vacuous ordering test; **root cause was my spec**)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (83 turns first pass, then the fix)
+- **Scope deviations:** none on the fix run. On the first pass the executor
+  **correctly declared** that `serde_json` sorts keys and adapted the test — that
+  was right, and it is what surfaced my error.
+- **Calibration:** third occurrence of architect-authored vacuous coverage. See
+  below.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `src/daemon/utils/event_log.rs` — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at **940** lib + **27**
+integration).
+
+### The count held: 940, not 941
+
+A rename, not an addition. The inverted finish condition did its job again.
+
+### Both bug-10-1 edits landed
+
+**The `CLAUDE.md` invariant now states what is true:**
+
+```markdown
+- Every `events.jsonl` record carries `ts`, `event`, and `pid`; `log_event` stamps
+  `pid` itself, so call sites must not pass one. Key **order** in the serialized
+  line is `serde_json`'s (alphabetical — this crate does not enable
+  `preserve_order`), so never rely on field position when parsing a record.
+```
+
+`grep -c 'leading' CLAUDE.md` → **0**; `grep -c 'preserve_order' CLAUDE.md` → **1**.
+
+**The test is renamed and rewritten**: `log_event_prefix_order_is_ts_event_pid` →
+`log_event_always_stamps_ts_event_and_pid`, byte-offset assertions replaced with
+presence assertions plus the caller's own field.
+
+*(Note for the record: `CLAUDE.md` is in `.gitignore:5` and deliberately untracked
+since commit `a793e4d`, so this edit — like phase 08's and 09's — lives in the
+working tree only and does not appear in the phase's commit. That is a
+pre-existing project decision, not a defect of this phase.)*
+
+### Two mutations, run independently
+
+Not taken on the executor's word.
+
+| Mutation | `always_stamps` | `caller_pid_overrides` | `stamps_emitting_pid` |
+|---|---|---|---|
+| move `pid` insert **after** the drain | ok | **FAILED** ✓ | ok |
+| delete the `pid` insert entirely | **FAILED** ✓ | ok | **FAILED** ✓ |
+
+The first row is what bug-10-1 required: the insert-before-drain position is still
+guarded, by `log_event_caller_pid_overrides_stamp`, after the file was edited. The
+second row is the check I added: **the renamed test is not vacuous** — remove the
+stamp and it fails. The old test passed under *both* mutations, which is exactly
+why it had to go.
+
+### The bounce was mine, and it is the third of its species
+
+Task 1's rationale claimed insertion order gives `ts`/`event`/`pid` a "leading
+prefix". Without `preserve_order` — which this crate does not enable —
+`serde_json::Map` is a `BTreeMap`, so keys serialize alphabetically and insertion
+order is **not observable in the output at all**. A real record from the first
+pass's E2E has `ts` fifth of six. I wrote the words "`preserve_order` … which this
+crate does not enable" in my own Test plan and drew the opposite conclusion.
+
+**The lesson is sharper than "run your criteria":** when a spec pins an *observable*
+property, confirm the property is observable. No test could have distinguished
+insertion order here, because the serializer discards it — so the spec asked for a
+test that could not exist, and what came back was a test that passed on the
+alphabet.
+
+**Third occurrence** (fixture-default trap → the existing coverage fold; 09's
+bug-09-1; this), and the second in consecutive phases. That is `WORKFLOW.md`'s
+fold-immediately bar. Recommend folding at milestone close alongside the
+pre-dispatch criteria-runner (six occurrences, two caught pre-dispatch).
+
+### Everything from the first pass still holds
+
+Re-verified: all five tasks present; `"pid"` in `mod.rs` **0** and in
+`event_log.rs` **≥1**; `let _ =`-before-builder **0**; `logger already initialised`
+**1**; `starting — PID` **1**; `try_init` **1** unchanged. The first pass's E2E
+stands — the identity line and the now-attributable `daemon_stop` record are quoted
+in the bounce review above — and the fix run correctly did **not** re-run it. Daemon
+left stopped.
