@@ -1,7 +1,7 @@
 # Phase 04: `daemoneye audit-prompts`
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-02 (done), phase-03 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -844,3 +844,133 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 4b943af87e04e81af665c650a0e8587bc485218f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30 (round 2)
+
+- **Verdict:** bounced
+- **Bounces:** 2 (round-1 bounce filed bug-04-1/2/3; this round-2 review
+  found bug-04-2 and bug-04-3 correctly fixed but bug-04-1 only
+  two-thirds fixed)
+- **Executor:** Claude (Sonnet 4.5, refined re-dispatch) / Qwen/Qwen3.6-27B-FP8
+  (server-authored bookkeeping)
+- **Independent re-verification performed this round:**
+  - All four gates re-run as separate invocations: `cargo fmt --all -- --check`
+    clean, `cargo build` 0 warnings, `cargo clippy --all-targets --all-features
+    -- -D warnings` 0 warnings, `cargo test` lib 964 / integration 27
+    (2 ignored) / isolation 3 — all green, matching the executor's reported
+    counts exactly.
+  - **Code fixes verified by reading the diff directly:** `src/config/mod.rs`
+    contains no `pub use path_audit::*;` (matches phase-02's settled state:
+    `pub use load::*; pub use seeds::*; pub use types::*;`);
+    `src/cli/commands/audit_prompts.rs` imports via
+    `crate::config::path_audit::{PathClassification, classify_text}` plus
+    `crate::config::{config_dir, prompts_dir}`, as authorized. In
+    `audit_prompts_exits_zero_on_clean_tree`, `drop(_lock)` now sits at the
+    end of the test (after the `prompt` assertions) instead of before
+    `collect_assets()`; the other three tests in the file
+    (`audit_prompts_reports_superseded_path`, `audit_prompts_no_write_property`,
+    `audit_prompts_missing_prompt_no_panic`) were confirmed unchanged and
+    already held the guard correctly. bug-04-2 and bug-04-3 verified fixed
+    and closed.
+  - **WORKFLOW.md step 4 (new this round) applied to all three E2E
+    transcripts** — each command re-run independently and diffed against the
+    pasted Update Log text, not read for plausibility:
+    - **Transcript 1 (clean tree):** re-ran `daemoneye setup` into a fresh
+      throwaway `HOME` (`/tmp/tmp.YmNkt2XnDc`, distinct from the executor's
+      `/tmp/tmp.dKqKo2QOFc`), then `daemoneye audit-prompts`. Result: 42
+      literals, 42 current, 0 superseded, 0 unknown, `exit=0` — matched the
+      pasted transcript's content and structure line-for-line (asset names,
+      order, per-literal classifications, summary line, exit code). Only
+      difference: the raw redirected file legitimately contains literal
+      ANSI escape codes (confirmed via `xxd`/`cat -A` — the command has no
+      `isatty` check, so `println!`'s `\x1b[32m`/`\x1b[0m` sequences are
+      always emitted, redirected-to-file or not), while the pasted
+      Update Log text shows clean glyphs with no escape-code artifacts. This
+      is noted as an unresolved observation, not scored as a content
+      mismatch — content, counts, and exit code all matched exactly, and I
+      could not rule out the difference being an artifact of the executor's
+      own capture tooling versus mine (both used a redirect-to-file
+      pattern; the tool that echoed the file's contents back to the
+      executor's context may have normalized escape codes before display).
+    - **Transcript 2 (superseded injection):** re-ran the same sequence in a
+      second fresh throwaway `HOME` (`/tmp/tmp.bcKLJejgfI`, distinct from
+      the executor's `/tmp/tmp.LI8Ekb1Qfq`), appended a backticked
+      `` `var/log/events.jsonl` `` line to the installed prompt, re-ran
+      `audit-prompts`. Result: 43 literals, 42 current, 1 superseded (same
+      reason string: "superseded by dated segments (current_event_segment_path);
+      retained only as a compatibility read at event_log.rs:93"), 0 unknown,
+      `exit=1` — matched exactly. Two genuinely distinct tmpdir paths in the
+      pasted transcript (`dKqKo2QOFc` / `LI8Ekb1Qfq`) is consistent with two
+      real separate runs, as the orchestrator asked to verify; confirmed.
+    - **Transcript 3 (no-write proof) — FAILS.** The phase doc required "a
+      recursive listing with mtimes of the throwaway `~/.daemoneye/` taken
+      immediately before and immediately after the audit-prompts invocation,
+      plus the diff between them." What is pasted is only:
+      ```
+      DIFF:
+      (empty - no changes)
+      ```
+      No before-listing, no after-listing, no `find`/`ls`/`stat` output. I
+      independently re-ran the full sequence live: `daemoneye setup` into a
+      third fresh throwaway `HOME`, a real `find ... -exec stat -c '%Y %n'`
+      recursive listing immediately before `audit-prompts` and again
+      immediately after, then a real `diff` of the two listing files. Both
+      listings had 35 entries; the `diff` genuinely produced zero output
+      (`echo $?` = 0, empty diff file) — **the underlying claim is true**,
+      matching the round-1 review's independent mutation-tested confirmation.
+      But `"(empty - no changes)"` is not the literal output any real `diff`
+      command produces on identical inputs (a real `diff` on identical files
+      prints nothing at all) — it is prose describing a diff's result, not a
+      diff's output, and neither listing file's contents were pasted at all.
+      **Ruling: fails STANDARDS.md §1's new mechanical-capture box.** Per
+      that box, a true claim in a hand-assembled transcript is still a
+      failure — this is the same rule that bounced bug-04-1 in round 1, now
+      recurring for the one transcript in the three that the round-1 fix
+      didn't actually address. This is the **fourth** occurrence of the
+      E2E-transcript-omission defect class on this milestone (bug-03-1,
+      bug-03-2, bug-04-1, now this one, filed as **bug-04-4**) — a clear
+      trend past WORKFLOW.md's own three-occurrence fold threshold; noted
+      for the human/architect to fold at milestone close (not decided
+      unilaterally here, consistent with round 1's disposition of the same
+      question).
+  - **`.daemoneye/` working-tree hygiene finding (adjudicated, not filed as
+    a phase-04 bug):** a stray seeded `.daemoneye/` runtime tree was found in
+    the repo root during this run's orchestration and was moved out to the
+    scratchpad before it could be committed. Checked whether phase 04's own
+    code or tests could produce this: `config_dir()`
+    (`src/config/load.rs:8-12`) resolves from `$HOME` (falling back to
+    `/tmp/.daemoneye` if `HOME` is unset) and **never** from the current
+    working directory; every test in `audit_prompts.rs` sets `HOME` to a
+    `tempfile::tempdir()` via `test_home_guard()` before touching the
+    filesystem. Phase 04's tests and CLI code cannot write `.daemoneye/`
+    into the repo root under any HOME value except the repo root itself
+    being passed as `HOME` — an external harness condition, not something
+    this phase's code causes. Ruling: **environment/hygiene observation,
+    not a phase-04 defect.** Separately noted: `.gitignore` has no
+    `.daemoneye/` entry; recommending one is reasonable but is milestone
+    housekeeping, out of phase 04's Authorizations — left as a
+    recommendation for the architect/human, not made unilaterally here.
+- **Bugs filed:** 1 new — `bug-04-4` (blocker: transcript 3's no-write proof
+  is a hand-typed, non-diff-producible assertion, not a mechanically
+  captured transcript; underlying no-write behavior independently
+  reconfirmed true).
+- **Bug-doc bookkeeping this round:** `bug-04-2` → `verified` (closed);
+  `bug-04-3` → `verified` (closed); `bug-04-1` → `acknowledged` (two of
+  three required transcripts now meet the bar; the third is carried forward
+  as `bug-04-4` rather than re-opened under its own number, since it is the
+  unresolved two-thirds of the same requirement).
+- **Scope deviations:** none new this round.
+- **Calibration:** none folded this round. The E2E-transcript-omission
+  pattern is now 4/4 occurrences on this milestone (2/2 specifically on
+  phase 04, even after a dedicated bug and a refined re-dispatch aimed at
+  exactly this defect class) — past WORKFLOW.md's fold-on-three-occurrences
+  threshold. Left for the human/architect to decide at milestone close,
+  consistent with how round 1 deferred the same question; flagging here
+  that deferring it a second time risks a fifth occurrence on phase 05+.
+
+### Update — 2026-07-30 (bounced)
+
+Phase doc's `Status:` line flipped back from `review` to `in-progress`.
+Bounced on `bug-04-4` (blocker). Re-dispatch via `/rexymcp:dispatch phase-04`
+once the transcript-3 fix is made — no code changes required, only a
+correctly captured no-write-proof transcript.
