@@ -1,7 +1,7 @@
 # Phase 06b: Webhook → Ghost End-to-End
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done), phase-05 (done), phase-06a (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=test, size=m
@@ -513,3 +513,29 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b9e46609646fe1752f49b46e31b2c726a80a8f95
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** approved_first_try (0 bounces, 0 bugs filed — 1 assist spent via `continue_phase` resume after a `NoProgressStall` hard_fail; the resume was an assist, not a bounce, per the escalation entry above)
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (resumed session)
+- **Scope deviations:** none — the seam is exactly `process_alert` / `maybe_analyze_alert` returning `Option<tokio::task::JoinHandle<()>>`; `server.rs` binds and drops `_handle` without awaiting, comment present; no task registry, cancellation, shutdown-join, or stats plumbing added; no new dependencies; `docs/architecture.md` untouched.
+- **Calibration:** none
+
+**Independent re-verification performed:**
+
+1. **Tmux/daemon pollution:** `tmux list-sessions` reported "no server running on /tmp/tmux-1000/default" before and after 3 full `cargo test --test isolation` reruns — the operator's default server was never created. `pgrep -af daemoneye` showed no daemon process before or after. One pre-existing leaked private tmux server (PID 400026, `HOME=TMUX_TMPDIR=/tmp/.tmpHpYrAc`, its directory already removed) was present before my runs and did not grow across 3 reruns — no new leaks accumulated from this phase's tests. The deterministic test's `crate::test_home_guard()` usage sets both `HOME` and `TMUX_TMPDIR`, holds the guard through all env-dependent work, restores both variables, and drops the guard last (`tests/isolation.rs:328,497-506`) — matches the phase-04-bug-avoidance requirement.
+2. **Mutation check (independent):** changed `src/webhook/process.rs:151` from `(None, _) => true` to `(None, _) => false`, ran `cargo test --test isolation webhook_ghost_e2e_deterministic` — FAILED with `process_alert returned None — no ghost spawned` (panic at `tests/isolation.rs:422`). Reverted via `git checkout -- src/webhook/process.rs`, confirmed clean `git status`, clean `cargo build`, and the test passing again. The headline assertion is genuine, not vacuous.
+3. **Vacuity scrutiny:** `webhook_ghost_e2e_deterministic` contains no `sleep`/polling; it `.await`s the returned `JoinHandle` (`tests/isolation.rs:419-429`). The earlier soft-skip (`tmux -V` / `eprintln!("SKIP")`) is absent from both new tests — confirmed by full read of `tests/isolation.rs:321-597`; that pattern exists only in phase-01/06a's pre-existing tests (`daemon_boots_in_throwaway_root`, `hooks_land_on_private_server`, `default_server_unchanged`, `daemon_webhook_returns_200`), not in the 06b additions. All three records are found via `content.lines().find_map(...)` over the whole segment, never `.last()`. `alerts[0].severity` is asserted `== ""` explicitly (`tests/isolation.rs:417`) before the payload is sent.
+4. **Step-4 rerun-and-diff:** reran both mechanical-capture commands. Output shape, the `ghost_start` record shape, and grep match set are identical to the pasted transcript (test execution order varies harmlessly). Manually recounted the pasted `/tmp/e2e-06b.txt` transcript's own lines: `ghost` substring appears only on lines 5 (`webhook_ghost_e2e_http`), 8 (`ghost_start record: {`), 10 (`"event": "ghost_start"`), 13 (`session_id` containing `ghost-disk-full-...`), and 19 (`webhook_ghost_e2e_deterministic ... ok`) — exactly the 5 lines the pasted `/tmp/e2e-06b-grep.txt` claims. Internally consistent.
+5. **Seam verification:** `process_alert` (`src/webhook/process.rs:35`) and `maybe_analyze_alert` (`:319`) both return `Option<tokio::task::JoinHandle<()>>`; every discard path (dedup, rate-limit, no runbook, capacity reached, `should_act == false`) returns `None`; only the ghost-trigger branch returns `Some(handle)` around the unchanged `tokio::spawn` body. `server.rs:83-90` still loops over alerts in an outer `tokio::spawn`, returns `StatusCode::OK` synchronously without waiting on it, and the inner `_handle` is bound-and-dropped with the required comment. `maybe_analyze_alert`'s signature change is a direct, necessary consequence of propagating the handle up from the ghost-trigger branch — in spec, not scope creep.
+6. **Ignored stopgap:** exactly one `#[ignore]` in the diff (`webhook_ghost_e2e_http`, `tests/isolation.rs:522-523`), with a justification comment (`:515-521`) stating why it's ignored, what it covers the deterministic test doesn't, and how to run it. Its bounded `sleep` loop (`:591`, 30 s deadline, 500 ms poll) is the only `sleep` anywhere in `tests/isolation.rs`. It does **not** retain the tmux-missing soft-skip (verified absent by direct read) — better than the minimum bar.
+7. Confirmed `grep -n "mod harness" tests/integration.rs` returns nothing. Phase 01's 3 tests (`daemon_boots_in_throwaway_root`, `hooks_land_on_private_server`, `default_server_unchanged`) and phase 06a's 4 (`webhook_ports_differ_between_environments`, `config_contains_webhook_and_stub_url`, `stub_returns_canned_response_via_make_client`, `daemon_webhook_returns_200`) all pass unchanged alongside the 2 new tests (9 total in `tests/isolation.rs`).
+8. **Determinism:** ran `cargo test --test isolation` 3 times independently — identical `8 passed; 0 failed; 1 ignored` each time, no flake.
+9. `git status --short` was clean before starting and clean after the mutation-check revert; only the intended files from commit `b9e4660` are in the tree.
+
+**Independent gate re-runs (all green):**
+- `cargo fmt --all -- --check` → exit 0
+- `cargo build` → exit 0, zero warnings
+- `cargo clippy --all-targets --all-features -- -D warnings` → exit 0
+- `cargo test` → lib 964 passed, integration 30 passed/2 ignored, isolation 8 passed/1 ignored, doc-tests 0 — exit 0

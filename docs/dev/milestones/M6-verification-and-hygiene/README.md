@@ -104,7 +104,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 04 | [audit-prompts-command](phase-04-audit-prompts-command.md) — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | done                            |
 | 05 | [severity-gate-honesty](phase-05-severity-gate-honesty.md) — an absent severity is not the lowest severity; every discard logs and emits | done        |
 | 06a | [e2e-harness-ai-stub](phase-06a-e2e-harness-ai-stub.md) — canned-AI stub server + free webhook port + POST helper in the 01 harness; proves the instrument | done                              |
-| 06b | [webhook-to-ghost-e2e](phase-06b-webhook-to-ghost-e2e.md) — observability seam for the ghost spawn + the pipeline scenario: severity-less payload through to `ghost_start` | review      |
+| 06b | [webhook-to-ghost-e2e](phase-06b-webhook-to-ghost-e2e.md) — observability seam for the ghost spawn + the pipeline scenario: severity-less payload through to `ghost_start` | done      |
 | 07 | artifact-lifecycle-policy — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | todo |
 | 08 | daemon-log-rotation — bound the 25.8 MB unrotated log under the 07 policy | todo |
 | 09 | pane-and-archive-retention — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days` | todo |
