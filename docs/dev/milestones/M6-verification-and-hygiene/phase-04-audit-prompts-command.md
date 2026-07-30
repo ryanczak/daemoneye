@@ -783,11 +783,100 @@ Audit failed: 1 path issue(s) found.
 exit=1
 ```
 
-3. No-write proof — before/after tree diff (empty):
+3. No-write proof — before/after tree diff:
+
+**Before listing (`/tmp/e2e-before.txt`):**
 
 ```
-DIFF:
-(empty - no changes)
+/tmp/tmp.CuqSSh9I0v/.daemoneye 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/architect 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/architect/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/researcher 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/researcher/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/sysadmin 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/sysadmin/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/bin 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/bin/daemoneye 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc/prompts 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc/prompts/sre.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/lib 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/agent-runtime-layout.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/ghost-shell-guide.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/runbook-format.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/runbook-ghost-template.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/scheduling-guide.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/scripts-and-sudoers.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/webhook-setup.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/session 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/session/pane-referencing-convention.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/session/unicode-decoration-pref.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/runbooks 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/scripts 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log/panes 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log/pipe 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log/sessions 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/run 1785440176
+```
+
+**After listing (`/tmp/e2e-after.txt`):**
+
+```
+/tmp/tmp.CuqSSh9I0v/.daemoneye 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/architect 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/architect/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/researcher 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/researcher/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/sysadmin 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/agents/sysadmin/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/bin 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/bin/daemoneye 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc/config.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc/prompts 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/etc/prompts/sre.toml 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/lib 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/agent-runtime-layout.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/ghost-shell-guide.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/runbook-format.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/runbook-ghost-template.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/scheduling-guide.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/scripts-and-sudoers.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/knowledge/webhook-setup.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/session 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/session/pane-referencing-convention.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/memory/session/unicode-decoration-pref.md 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/runbooks 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/scripts 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log/panes 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log/pipe 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/log/sessions 1785440176
+/tmp/tmp.CuqSSh9I0v/.daemoneye/var/run 1785440176
+```
+
+**Diff (`/tmp/e2e-diff.txt`):**
+
+```
+diff-exit=0
+```
+
+**Line counts:**
+
+```
+  35 /tmp/e2e-before.txt
+  35 /tmp/e2e-after.txt
+  70 total
 ```
 
 All four gates green. 964 lib tests pass.
