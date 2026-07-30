@@ -2,9 +2,15 @@
 
 **Active phase: 01 — test-isolation-harness.**
 Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-01-test-isolation-harness.md`
-Status: `todo` — drafted 2026-07-30, not yet dispatched.
+Status: `in-progress` — dispatched and bounced once on 2026-07-30. Four bugs open
+in `bugs/`: bug-01-1 (blocker), bug-01-2, bug-01-3, bug-01-4.
 
-Dispatch with `/rexymcp:dispatch phase-01-test-isolation-harness`.
+The harness itself landed clean — `tests/harness/mod.rs` + `tests/isolation.rs`,
+no `src/` changes, all gates green. The bounce is about **evidence**: the test
+that was supposed to prove the daemon reached the private server asserts a string
+tmux prints unconditionally, and the recorded mutation proof does not reproduce.
+Two of the four bugs are **spec bugs charged to the architect**; that spec text is
+corrected in place.
 
 ## What phase 01 does
 
@@ -34,13 +40,28 @@ during drafting — the throwaway root must be under `/tmp`, not
 that `daemoneye daemon` forks, so the parent's exit status *is* the readiness
 signal and the daemon outlives the test process.
 
-## The one thing to look at before dispatching
+## What the bounce found
 
 Task 5 is a **required mutation**: remove `TMUX_TMPDIR` from the harness, watch
 the suite fail, restore it, watch it pass, quote both. Per `WORKFLOW.md`
 § "Coverage claims are inadmissible without mutation proof" — a harness whose
 isolation has never been demonstrated to fail is not evidence of isolation, and
 this phase's entire deliverable is that evidence.
+
+That mutation is exactly what the review re-ran, and it did not hold up:
+
+- `tmux show-hooks -g pane-died` prints the literal `pane-died` on a bare server
+  with no daemon, so the hooks test's assertion cannot fail (bug-01-1).
+- The recorded mutation fails 2 of 3 tests, not 3, and both die on
+  `duplicate session: de-test` inside `start_daemon` — before any snapshot
+  comparison runs (bug-01-2). Re-tested alone, `default_server_unchanged` *does*
+  discriminate; the test is sound, the recorded evidence was not.
+- The mutation destroyed a live session on the operator's default server, because
+  `Drop` routes `kill-server` through the very helper under test (bug-01-3).
+
+**Ordering matters on re-dispatch:** bug-01-3 and bug-01-4 must be fixed before
+the mutation is re-run, or it is both destructive and unable to reach the
+assertion it is meant to exercise. The phase doc's task 5 now says so.
 
 ## Field note from 2026-07-30 — this problem is not hypothetical
 
