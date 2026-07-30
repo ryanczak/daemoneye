@@ -1,7 +1,7 @@
 # Phase 07: Artifact Lifecycle Policy
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=design, size=m
@@ -649,5 +649,15 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `docs/dev/milestones/M6-verification-and-hygiene/phase-07-artifact-lifecycle-policy.md` — +54 -0
 
 **Commit:** 51ded4c66332879d7e9c1b5ea0cf16c4ed0df501
+
+### Review verdict — 2026-07-30 (round 2)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug: bug-07-1 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. `git diff 6017526 HEAD -- src/` is empty — `src/` is byte-identical to the round-1 work commit; the only change across both rounds is the phase doc itself (+54 -0 this round: one new `### Update — 2026-07-30 (end-to-end verification)` entry).
+- **Calibration:** none filed this round — same class as before (6th occurrence of "pasted transcript is a claim, not evidence" on M6), already folded.
+
+**Round-2 verification (bug-07-1 close-out):** independently reproduced the mutation against a throwaway `HOME`: injected `var/log/rogue-uncovered-dir` into the `every_existing_directory_has_a_policy_entry` fixture, ran `cargo test --lib config::lifecycle` under `pipefail` — genuine failure naming the directory, `exit=101`, matching the phase doc's RED transcript verbatim (module path, panic message, directory name, `2 passed; 1 failed`, `exit=101`). Reverted with `git checkout -- src/config/lifecycle.rs`; `git status --short` and `git diff --stat` both empty. Re-ran — GREEN, `3 passed; 0 failed`, `exit=0`, matching the phase doc's GREEN transcript. Independently counted the phase doc's pasted RED block and confirmed line 11 is `  var/log/rogue-uncovered-dir`, consistent with the grep block's claim. All four gates (`cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`) re-run clean: 967 lib / 30 integration (2 ignored) / 8 isolation (1 ignored), matching the executor's counts. The `### Update — 2026-07-30 (end-to-end verification)` entry is executor-authored and distinct from the server-authored "(complete)" entry's "Command output tails" block. bug-07-1 verification checklist satisfied; closed.
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
