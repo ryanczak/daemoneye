@@ -123,6 +123,12 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Audit installed prompt and knowledge memory files for stale path references.
+    ///
+    /// Reads the files directly from ~/.daemoneye/ and checks every path literal
+    /// against the known inventory. Exits non-zero if any path is superseded or
+    /// unknown. Never writes or modifies any file.
+    AuditPrompts,
 }
 
 #[derive(Subcommand)]
@@ -474,6 +480,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             json,
         } => {
             cli::run_costs(since, until, by, agent, json)?;
+        }
+        Commands::AuditPrompts => {
+            cli::run_audit_prompts();
         }
     }
 

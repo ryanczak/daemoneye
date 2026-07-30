@@ -645,11 +645,11 @@ mod tests {
 
     #[test]
     fn classify_text_returns_superseded_with_reason() {
-        // `~/.daemoneye/events.jsonl` normalises to `events.jsonl` which is Legacy.
-        let text = "see `~/.daemoneye/events.jsonl` for details";
+        // `var/log/events.jsonl` is the Legacy entry in INVENTORY.
+        let text = "see `var/log/events.jsonl` for details";
         let results = classify_text(text);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, "~/.daemoneye/events.jsonl");
+        assert_eq!(results[0].0, "var/log/events.jsonl");
         assert!(matches!(
             results[0].1,
             PathClassification::Superseded { .. }
@@ -683,19 +683,19 @@ mod tests {
         // Mix of current, superseded, and unknown
         let text = concat!(
             "see `var/log/daemon.log` ",
-            "and `~/.daemoneye/events.jsonl` ",
+            "and `var/log/events.jsonl` ",
             "and `var/log/does-not-exist.log`"
         );
         let results = classify_text(text);
         assert_eq!(results.len(), 3);
 
         // Current
-        let current = results.iter().find(|(l, _)| l == &"var/log/daemon.log");
+        let current = results.iter().find(|(l, _)| l == "var/log/daemon.log");
         assert!(current.is_some(), "current literal missing");
         assert_eq!(current.unwrap().1, PathClassification::Current);
 
         // Superseded
-        let superseded = results.iter().find(|(l, _)| l == &"~/.daemoneye/events.jsonl");
+        let superseded = results.iter().find(|(l, _)| l == "var/log/events.jsonl");
         assert!(superseded.is_some(), "superseded literal missing");
         assert!(matches!(
             superseded.unwrap().1,
@@ -703,7 +703,9 @@ mod tests {
         ));
 
         // Unknown
-        let unknown = results.iter().find(|(l, _)| l == &"var/log/does-not-exist.log");
+        let unknown = results
+            .iter()
+            .find(|(l, _)| l == "var/log/does-not-exist.log");
         assert!(unknown.is_some(), "unknown literal missing");
         assert_eq!(unknown.unwrap().1, PathClassification::Unknown);
     }

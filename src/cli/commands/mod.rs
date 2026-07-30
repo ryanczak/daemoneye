@@ -2,6 +2,7 @@ use anyhow::Result;
 
 mod approval;
 mod ask;
+mod audit_prompts;
 mod chat;
 mod costs;
 mod interrupt;
@@ -13,6 +14,7 @@ mod slash;
 mod stream;
 
 pub use ask::run_ask;
+pub use audit_prompts::run_audit_prompts;
 pub use costs::{GroupBy, run_costs};
 pub use interrupt::InterruptState;
 pub use ipc_client::{connect, recv, send_request};
