@@ -33,10 +33,34 @@ Read before starting:
 4. Confirm the repo is on a clean branch with no uncommitted changes.
 5. Confirm phases 08 and 09 landed: `InstanceLock::acquire` is called in
    `run_daemon`, and `webhook::bind` is called with `?` there.
+6. Verify the starting state:
+
+```bash
+ls src/daemon/ready.rs 2>&1                              # expect "No such file" — task 1 creates it
+grep -c 'libc::fork()' src/main.rs                       # expect 1
+grep -c 'libc::close' src/main.rs                        # expect 1 (the pre-existing devnull close)
+grep -c 'Daemon listening on' src/daemon/mod.rs          # expect 1  (task 3's anchor)
+grep -c 'InstanceLock::acquire' src/daemon/mod.rs        # expect 1  (phase 08 landed)
+grep -c 'webhook::bind' src/daemon/mod.rs                # expect 1  (phase 09 landed)
+grep -n '^libc' Cargo.toml                               # expect line 21: libc = "0.2"
+cargo test 2>&1 | grep "^test result" | head -3   # expect 940 lib, 0, 27 integration
+```
+
+**Every number above was produced by running that exact command against the tree
+on 2026-07-30, immediately before dispatch.** If one differs, **stop and report a
+blocker**.
+
+> **Use `cargo test`, not `cargo test --lib`.** The full command prints **three**
+> `test result` lines; `--lib` prints only the first.
 
 ## Current state
 
-### The fork — `src/main.rs:254-294`
+### The fork — `src/main.rs:256-296`
+
+> **⚠ Line numbers refreshed 2026-07-30 before dispatch.** Drafted 2026-07-26;
+> phases 07–10 have edited `src/daemon/mod.rs` heavily since, shifting its
+> references by **+118**. `src/main.rs` moved by only +2. Every code quote is
+> byte-identical to the tree as of the refresh.
 
 ```rust
     // For `daemon` without `--console`, fork into the background before
@@ -82,14 +106,14 @@ does can influence it.
 |---|---|
 | another daemon holds the instance lock | phase 08, `InstanceLock::acquire` |
 | webhook port already bound | phase 09, `webhook::bind` |
-| no API key configured | pre-existing, `mod.rs:~407` |
-| tmux session could not be created | pre-existing, `mod.rs:~460` |
-| socket bind failed | pre-existing, `mod.rs:757` |
+| no API key configured | pre-existing, `mod.rs:456` |
+| tmux session could not be created | pre-existing, `mod.rs:~515` (the `new-session` arm) |
+| socket bind failed | pre-existing, `mod.rs:868` |
 
 Every one of these currently reaches the user as `started (PID n)`, exit `0`,
 and a line in a log file they have no reason to open.
 
-### `async_main`'s daemon arm — `src/main.rs:304-318`
+### `async_main`'s daemon arm — `src/main.rs:304-316`
 
 ```rust
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
@@ -186,8 +210,27 @@ pub fn create_pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
 }
 ```
 
-Use `std::os::fd::{OwnedFd, FromRawFd, AsRawFd}`. `OwnedFd` closes on drop, so
-there is no manual `libc::close` anywhere in this phase — do not add any.
+Import **exactly** `use std::os::fd::{FromRawFd, OwnedFd};`.
+
+**⚠ Do NOT import `AsRawFd`.** An earlier draft of this doc told you to, and it is
+wrong: nothing in this module calls `as_raw_fd()`, and under
+`cargo clippy --all-targets --all-features -- -D warnings` an **unused import is an
+error, not a warning** — so importing it fails the lint gate. Verified at the
+refresh:
+
+```
+error: unused import: `AsRawFd`
+ --> src/daemon/ready.rs:2:19
+error: could not compile `daemoneye` (lib) due to 1 previous error
+```
+
+`OwnedFd` closes on drop, so there is no manual `libc::close` anywhere in this
+phase — do not add any.
+
+**The whole module as specified here was compile-verified at the refresh** (build
+clean, clippy `-D warnings` clean) with that one import correction. `std::fs::File`
+implements `From<OwnedFd>`, so `File::from(fd)` works; `UnpoisonExt` comes from
+`use crate::util::UnpoisonExt;`.
 
 The reporter is a module-level `static REPORTER: Mutex<Option<OwnedFd>>`. Lock it
 with `.unwrap_or_log()` (the `UnpoisonExt` trait from `src/util.rs`) — that is a
@@ -290,7 +333,8 @@ Keep both existing `// SAFETY:` comments; they are still accurate.
 
 In `src/daemon/mod.rs`, immediately after the
 `log::info!("Daemon listening on {}", socket_path.display());` line (currently
-`mod.rs:760`) and before the accept loop:
+**`mod.rs:878`** — re-derive with `grep -n 'Daemon listening on' src/daemon/mod.rs`)
+and before the accept loop:
 
 ```rust
     ready::report_ready();
@@ -341,14 +385,46 @@ And to `## Important Invariants`:
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
-- [ ] `cargo test` passes: existing tests plus the 7 new ones below.
-- [ ] `grep -c "unsafe" src/daemon/ready.rs` returns `2` — both inside
-      `create_pipe`, and no other `unsafe` anywhere in the phase's diff.
-- [ ] `grep -n "libc::close" src/daemon/ready.rs src/main.rs` shows no new
-      occurrence (`OwnedFd` handles closing; the pre-existing
-      `libc::close(devnull)` in `main.rs` stays).
+- [ ] `cargo test 2>&1 | grep "^test result"` shows the lib count at **947**
+      (940 + 7 new) and integration at **27**. Equivalently, and this is the check
+      that matters: the lib count is **exactly 7 higher** than the 940 you recorded
+      in Pre-flight. **If it is anything else, stop and report a blocker naming the
+      number you measured — do not re-run the command hoping for a different
+      answer.**
+- [ ] `grep -c "unsafe" src/daemon/ready.rs` returns **2** — both inside
+      `create_pipe`. *(Verified satisfiable at the refresh against a
+      spec-following implementation.)*
+- [ ] `git diff -U0 -- src/ | grep '^+' | grep -c unsafe` returns **2** — the only
+      `unsafe` **added** anywhere in the phase is those two lines.
+- [ ] `grep -c 'libc::close' src/main.rs` returns **1** — the pre-existing
+      `libc::close(devnull)` at `main.rs:291`, unchanged — and
+      `grep -c 'libc::close' src/daemon/ready.rs` returns **0**.
+      **⚠ Phrased as counts deliberately.** The earlier wording, "shows no new
+      occurrence", is unverifiable: the grep *will* match the pre-existing line, so
+      there is no output that distinguishes pass from fail.
+- [ ] `grep -c 'AsRawFd' src/daemon/ready.rs` returns **0** — see the import note
+      in task 1; importing it is a lint-gate error.
+- [ ] `grep -c 'pub mod ready' src/daemon/mod.rs` returns **1**.
+- [ ] `grep -c 'report_ready()' src/daemon/mod.rs` returns **1** and
+      `grep -c 'report_failure(' src/main.rs` returns **1** — one report site each,
+      as Out-of-scope requires.
 - [ ] A duplicate `daemoneye daemon` exits non-zero with the instance-lock
       message on **stderr** (End-to-end verification).
+
+### ⚠ How to check the test count — read this before checking it
+
+Two commands, once each:
+
+```bash
+cargo test 2>&1 | grep "^test result"     # three lines; lib is the first
+cargo test 2>&1 | grep -E 'parses_|await_report|report_ready_without'   # the 7 new tests
+```
+
+**Do not count tests by grepping the per-test `^test ` lines** — those totals do
+not agree with the summary. The summary line is authoritative. **A number that
+disagrees with this doc means the doc is wrong; say so and report a blocker.**
+Re-running a read-only command that already answered makes no progress and will
+trip the governor.
 
 ## Test plan
 
@@ -437,7 +513,7 @@ before this phase the parent returned before the socket existed, so an immediate
       this phase. Any other `unsafe` is a blocker.
 - [x] May add the new file `src/daemon/ready.rs`.
 - [x] May edit `CLAUDE.md` § "Key files" and § "Important Invariants" (task 5).
-- [x] May restructure the existing `unsafe` block in `src/main.rs:256-294` as
+- [x] May restructure the existing `unsafe` block in `src/main.rs:256-296` as
       described in task 2, keeping both `// SAFETY:` comments.
 - [ ] No new dependencies. `libc` is already a dependency (`Cargo.toml:21`).
 
@@ -467,3 +543,50 @@ before this phase the parent returned before the socket existed, so an immediate
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-30 (pre-dispatch refresh)
+
+Drafted 2026-07-26; phases 07–10 have edited `src/daemon/mod.rs` heavily since, so
+the architect re-derived every fact and **compile-verified the new module**. Four
+corrections, one of which would have failed a gate outright:
+
+1. **⚠ Do NOT import `AsRawFd`.** The original task-1 text said
+   `use std::os::fd::{OwnedFd, FromRawFd, AsRawFd};`, but nothing in this module
+   calls `as_raw_fd()` — and under `clippy -D warnings` an **unused import is an
+   error**. Following the doc literally would have failed the lint gate. Import
+   exactly `use std::os::fd::{FromRawFd, OwnedFd};`.
+2. **The whole module was compile-verified at the refresh** — written as this doc
+   specifies (with the import fixed), `cargo build` and
+   `cargo clippy --all-targets --all-features -- -D warnings` both came back clean.
+   `std::fs::File` implements `From<OwnedFd>`, so `File::from(fd)` works, and
+   `UnpoisonExt` is `use crate::util::UnpoisonExt;`. The `grep -c "unsafe"
+   src/daemon/ready.rs` → **2** criterion was checked against that implementation
+   and is satisfiable.
+3. **`src/daemon/mod.rs` line numbers moved by +118.** Task 3's anchor —
+   `log::info!("Daemon listening on …")` — is at **`:878`**, not `:760`. The socket
+   bind is `:868`, the API-key bail `:456`. `src/main.rs` moved by only +2: the
+   fork block is `256-296`, `async_main` still `:304`, its `run_daemon` call `:316`.
+4. **⚠ An acceptance criterion was unverifiable and is now a count.** It said
+   `grep -n "libc::close" …` "shows no new occurrence" — but that grep *will* match
+   the pre-existing `libc::close(devnull)` at `main.rs:291`, so no output
+   distinguishes pass from fail. It now pins `main.rs` at **1 unchanged** and
+   `ready.rs` at **0**.
+
+Test baseline is **940**; this phase adds 7, giving **947**. Count with
+`cargo test 2>&1 | grep "^test result"` — once. If a number disagrees with this
+doc, the doc is wrong: report a blocker naming what you measured rather than
+re-running.
+
+**Two hazards this phase's design turns on — do not "simplify" either:**
+
+- **`drop(write_end)` in the parent** before reading. Keep a copy and the pipe
+  never reaches EOF, so a child that dies silently hangs the parent **forever**.
+  There is no timeout to save you, deliberately.
+- **`read_line`, not `read_to_string`.** On success the child never closes its
+  write end, so reading to EOF blocks for the daemon's whole lifetime. The test
+  `await_report_reads_ready_then_returns` keeps the write end alive precisely so a
+  `read_to_string` mutation **hangs** rather than fails — the hang is the signal.
+
+**On the E2E:** it starts, duplicates, and stops a real daemon and repoints global
+tmux hooks. No daemon is running as of this refresh. Step 4 uses a throwaway
+`HOME`, so it will not touch the real config. State what you leave behind.
