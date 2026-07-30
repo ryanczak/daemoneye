@@ -103,7 +103,8 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 03 | [fix-stale-prompt-paths](phase-03-fix-stale-prompt-paths.md) — correct the stale `events.jsonl` references **and the six-path pre-`var/` generation in the knowledge memories** (see defect 5); empty `PENDING_FIX`; fix the two spans the gate cannot see | done |
 | 04 | [audit-prompts-command](phase-04-audit-prompts-command.md) — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | done                            |
 | 05 | [severity-gate-honesty](phase-05-severity-gate-honesty.md) — an absent severity is not the lowest severity; every discard logs and emits | done        |
-| 06 | webhook-to-ghost-e2e — the pipeline scenario in the 01 harness, severity-less payload through to a `ghost_*` event | todo |
+| 06a | [e2e-harness-ai-stub](phase-06a-e2e-harness-ai-stub.md) — canned-AI stub server + free webhook port + POST helper in the 01 harness; proves the instrument | todo |
+| 06b | webhook-to-ghost-e2e — the pipeline scenario itself: severity-less payload through to a `ghost_*` event | todo |
 | 07 | artifact-lifecycle-policy — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | todo |
 | 08 | daemon-log-rotation — bound the 25.8 MB unrotated log under the 07 policy | todo |
 | 09 | pane-and-archive-retention — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days` | todo |
@@ -263,6 +264,24 @@ this week. The failing run *is* the mutation proof.
 
 **04 after 02/03**, because the operator-facing command should reuse whatever
 path-extraction the test establishes rather than inventing a second one.
+
+**06 split into 06a/06b (2026-07-30, at drafting).** The scenario needs a
+canned-AI stub server, free-port allocation, config plumbing, a runbook fixture
+*and* the assertion — more than one executor session. 06a ships the instrument
+and proves it; 06b writes the scenario. The README's open design question for 06
+("what a passing scenario asserts on when the ghost's own behaviour depends on a
+live AI call") is **now closed**: `maybe_analyze_alert` builds its client from
+`model_entry.effective_base_url()` (`webhook/process.rs:349-354`), and
+`ModelConfig.base_url` is an `Option<String>` that takes precedence
+(`config/types.rs:586`, `:661`) — so pointing the test config at a local stub
+makes the whole pipeline deterministic and offline, with no Rust-level mocking
+and no network. The watchdog call is `use_tools=false` and its result is consumed
+as plain `AiEvent::Token`s, so the stub only has to stream tokens.
+
+**A constraint 06a must respect:** the webhook listener binds eagerly and a bind
+failure is **fatal** (`CLAUDE.md`), so an isolated daemon asking for the default
+9393 will fail to start whenever the operator's own daemon holds it. Every
+`IsolatedEnv` needs its own free port.
 
 **05 before 06.** The gate fix is small and fully understood; the E2E scenario is
 the thing that proves it *and* opens the unexplored ground behind it. Doing 06 first
