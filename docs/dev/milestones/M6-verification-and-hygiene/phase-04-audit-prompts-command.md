@@ -1,7 +1,7 @@
 # Phase 04: `daemoneye audit-prompts`
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** in-progress (bounced — see bug-04-1, bug-04-2, bug-04-3)
+**Status:** review
 **Depends on:** phase-02 (done), phase-03 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -543,3 +543,304 @@ complete with an empty diff. The refinement freezes the approved work, names the
 three remaining edits, supplies both code fixes as architect-verified worked
 examples, and points at the newly folded STANDARDS §1 box that now governs the
 transcript requirement bug-04-1 is about.
+
+### Update — 2026-07-30 19:14 (started)
+
+**Executor:** Claude (Sonnet 4.5, refined re-dispatch)
+**Action:** Fixed bug-04-2 (moved `drop(_lock)` to end of test), bug-04-3
+(removed unauthorized `pub use path_audit::*` from `config/mod.rs` and fixed
+imports in `audit_prompts.rs`), and bug-04-1 (captured E2E transcripts).
+
+### Update — 2026-07-30 19:14 (complete)
+
+**Summary + Notes for review:**
+
+Three bugs fixed from the review bounce. Bug-04-2: moved `drop(_lock)` from
+line ~219 to the end of `audit_prompts_exits_zero_on_clean_tree` so the HOME
+guard is held through `collect_assets()`. Bug-04-3: removed the unauthorized
+`pub use path_audit::*` from `src/config/mod.rs` and updated
+`audit_prompts.rs` to import via explicit `crate::config::path_audit::` path.
+Bug-04-1: captured all three E2E transcripts mechanically via redirected output.
+
+**End-to-end verification (captured mechanically):**
+
+1. Clean seeded tree — 42 literals, all current, exit=0:
+
+```
+SRE prompt
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/etc/prompts/sre.toml
+  ✓ `~/.daemoneye/var/log/panes/<win>.log` — current
+  ✓ `etc/config.toml` — current
+  ✓ `etc/prompts/sre.toml` — current
+  ✓ `~/.daemoneye/agents/<name>/briefing.md` — current
+  ✓ `etc/config.toml` — current
+  ✓ `etc/prompts/sre.toml` — current
+  ✓ `scripts/` — current
+  ✓ `runbooks/` — current
+  ✓ `memory/` — current
+  ✓ `var/log/panes/<name>.log` — current
+  ✓ `var/log/events/events-<date>.jsonl` — current
+  ✓ `bin/` — current
+  ✓ `lib/` — current
+  ✓ `var/run/` — current
+  ✓ `var/log/pipe/` — current
+
+agent-runtime-layout
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/agent-runtime-layout.md
+  ✓ `etc/config.toml` — current
+  ✓ `etc/prompts/sre.toml` — current
+  ✓ `var/log/panes/<name>.log` — current
+  ✓ `var/log/events/events-<date>.jsonl` — current
+  ✓ `var/log/daemon.log` — current
+  ✓ `var/log/pipe/<id>.log` — current
+  ✓ `var/log/sessions/<id>.jsonl` — current
+  ✓ `var/run/schedules.json` — current
+  ✓ `agents/<name>/mailbox/<job_id>.json` — current
+  ✓ `var/sessions/<name>/` — current
+  ✓ `var/log/sessions/<id>.jsonl` — current
+  ✓ `var/sessions/index.json` — current
+
+ghost-shell-guide
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/ghost-shell-guide.md
+  ✓ `~/.daemoneye/scripts/` — current
+  ✓ `~/.daemoneye/var/log/panes/` — current
+  ✓ `~/.daemoneye/var/log/daemon.log` — current
+  ✓ `~/.daemoneye/var/log/events/events-<date>.jsonl` — current
+  ✓ `~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl` — current
+  ✓ `~/.daemoneye/var/log/panes/<win_name>.log` — current
+
+runbook-format
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/runbook-format.md
+  ✓ `~/.daemoneye/scripts/` — current
+
+runbook-ghost-template
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/runbook-ghost-template.md
+  ✓ `~/.daemoneye/scripts/` — current
+
+scheduling-guide
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/scheduling-guide.md
+  ✓ `~/.daemoneye/var/run/schedules.json` — current
+  ✓ `~/.daemoneye/scripts/` — current
+
+scripts-and-sudoers
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/scripts-and-sudoers.md
+  ✓ `~/.daemoneye/scripts/` — current (x2)
+
+webhook-setup
+  /tmp/tmp.dKqKo2QOFc/.daemoneye/memory/knowledge/webhook-setup.md
+  ✓ `~/.daemoneye/etc/config.toml` — current (x2)
+  ✓ `~/.daemoneye/var/log/events/events-<date>.jsonl` — current
+
+Summary: 42 literals checked — 42 current, 0 superseded, 0 unknown
+exit=0
+```
+
+2. Superseded injection — 43 literals, 1 superseded, exit=1:
+
+```
+SRE prompt
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/etc/prompts/sre.toml
+  ✓ `~/.daemoneye/var/log/panes/<win>.log` — current
+  ✓ `etc/config.toml` — current
+  ✓ `etc/prompts/sre.toml` — current
+  ✓ `~/.daemoneye/agents/<name>/briefing.md` — current
+  ✓ `etc/config.toml` — current
+  ✓ `etc/prompts/sre.toml` — current
+  ✓ `scripts/` — current
+  ✓ `runbooks/` — current
+  ✓ `memory/` — current
+  ✓ `var/log/panes/<name>.log` — current
+  ✓ `var/log/events/events-<date>.jsonl` — current
+  ✓ `bin/` — current
+  ✓ `lib/` — current
+  ✓ `var/run/` — current
+  ✓ `var/log/pipe/` — current
+  ⚠ `var/log/events.jsonl` — superseded: superseded by dated segments (current_event_segment_path); retained only as a compatibility read at event_log.rs:93
+
+agent-runtime-layout
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/agent-runtime-layout.md
+  ✓ `etc/config.toml` — current
+  ✓ `etc/prompts/sre.toml` — current
+  ✓ `var/log/panes/<name>.log` — current
+  ✓ `var/log/events/events-<date>.jsonl` — current
+  ✓ `var/log/daemon.log` — current
+  ✓ `var/log/pipe/<id>.log` — current
+  ✓ `var/log/sessions/<id>.jsonl` — current
+  ✓ `var/run/schedules.json` — current
+  ✓ `agents/<name>/mailbox/<job_id>.json` — current
+  ✓ `var/sessions/<name>/` — current
+  ✓ `var/log/sessions/<id>.jsonl` — current
+  ✓ `var/sessions/index.json` — current
+
+ghost-shell-guide
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/ghost-shell-guide.md
+  ✓ `~/.daemoneye/scripts/` — current
+  ✓ `~/.daemoneye/var/log/panes/` — current
+  ✓ `~/.daemoneye/var/log/daemon.log` — current
+  ✓ `~/.daemoneye/var/log/events/events-<date>.jsonl` — current
+  ✓ `~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl` — current
+  ✓ `~/.daemoneye/var/log/panes/<win_name>.log` — current
+
+runbook-format
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/runbook-format.md
+  ✓ `~/.daemoneye/scripts/` — current
+
+runbook-ghost-template
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/runbook-ghost-template.md
+  ✓ `~/.daemoneye/scripts/` — current
+
+scheduling-guide
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/scheduling-guide.md
+  ✓ `~/.daemoneye/var/run/schedules.json` — current
+  ✓ `~/.daemoneye/scripts/` — current
+
+scripts-and-sudoers
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/scripts-and-sudoers.md
+  ✓ `~/.daemoneye/scripts/` — current (x2)
+
+webhook-setup
+  /tmp/tmp.LI8Ekb1Qfq/.daemoneye/memory/knowledge/webhook-setup.md
+  ✓ `~/.daemoneye/etc/config.toml` — current (x2)
+  ✓ `~/.daemoneye/var/log/events/events-<date>.jsonl` — current
+
+Summary: 43 literals checked — 42 current, 1 superseded, 0 unknown
+
+Audit failed: 1 path issue(s) found.
+exit=1
+```
+
+3. No-write proof — before/after tree diff (empty):
+
+```
+DIFF:
+(empty - no changes)
+```
+
+All four gates green. 964 lib tests pass.
+
+### Update — ts=1785439469322 (complete, server-authored)
+
+**Summary:** The working tree is clean for source files — the only uncommitted change is the phase doc Update Log, which the server will commit separately.
+
+**Summary + Notes for review:**
+
+Fixed three bugs from the review bounce. **Bug-04-2:** moved `drop(_lock)` from before `collect_assets()` to the end of `audit_prompts_exits_zero_on_clean_tree`, so the HOME guard is held through all HOME-dependent work. **Bug-04-3:** removed the unauthorized `pub use path_audit::*` from `src/config/mod.rs` and updated `audit_prompts.rs` to import via explicit `crate::config::path_audit::` path. **Bug-04-1:** captured all three E2E transcripts mechanically via redirected output — clean tree exits 0 with 42 current literals, superseded injection exits 1 with 1 superseded finding, and the before/after tree diff is empty proving no writes. All four gates green, 964 lib tests pass.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+.. ok
+test tmux::cache::tests::get_labeled_context_pane_classification ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test memory::tests::list_memories_with_tags_returns_all ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test memory::tests::memory_without_frontmatter_has_empty_metadata ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 964 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.43s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_tool_call_response_round_trip ... ok
+test event_log_entry_format ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 3 tests
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-652de6e8e49133dd)
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M6-verification-and-hygiene/phase-04-audit-prompts-command.md` — +174 -0
+- `src/cli/commands/audit_prompts.rs` — +3 -2
+- `src/config/mod.rs` — +0 -1
+
+**Commit:** 4b943af87e04e81af665c650a0e8587bc485218f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
