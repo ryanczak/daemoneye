@@ -1,7 +1,7 @@
 # Phase 11: Fork Readiness Handshake — Make `daemoneye daemon` Tell the Truth
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-08 (instance lock — the failure this most needs to report),
 phase-09 (fatal webhook bind — the second such failure)
 **Estimated diff:** ~220 lines
@@ -805,3 +805,133 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** be0a69e1aff5dfc2c94743c85c28c613d0bb3666
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`hard_fail`, `NoProgressStall` at 60 read-only turns — **caused by
+  an architect criterion that was unsatisfiable two ways over**; no bug doc, handled
+  via escalation → resume)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (109 turns to a complete implementation, then
+  **33** on resume to finish the E2E)
+- **Scope deviations:** none by the executor. **One by the architect** — see
+  "Commit hygiene" below.
+- **Calibration:** eighth architect criterion defect in M5; third to cost a run.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build` after
+`touch`ing `src/daemon/ready.rs` and `src/main.rs` — zero warnings, `cargo clippy
+--all-targets --all-features -- -D warnings`, `cargo test` at **947** lib (940 + 7)
++ **27** integration).
+
+### Every acceptance criterion verified
+
+`unsafe` in `ready.rs` **2**; added `unsafe` vs the pre-phase baseline **3** and
+exactly the three expected lines; `libc::close` **1** in `main.rs` (pre-existing) and
+**0** in `ready.rs`; `AsRawFd` **0**; `pub mod ready` **1**; `report_ready()` **1** in
+`mod.rs` and `report_failure(` **1** in `main.rs` — one report site each, as
+Out-of-scope required; zero `TODO`/`dbg!`/`#[allow]`/`#[ignore]`; and **zero**
+`unwrap`/`expect`/`panic!` in `ready.rs`'s production half.
+
+### Both load-bearing hazards are implemented correctly
+
+`drop(write_end)` sits in the parent before the read, with the comment explaining
+why, and `drop(read_end)` in the child. `read_line` at `ready.rs:73`, never
+`read_to_string`.
+
+### The unusual mutation behaves as predicted — and there is a second layer
+
+The spec warned that a `read_to_string` mutation manifests as a **hang**, not an
+assertion failure, because the child never closes its write end on success. Both
+halves checked:
+
+| Mutation | Result |
+|---|---|
+| `read_line` → `read_to_string` as-is | **compile error** — `Read` is not imported, so the method is not in scope |
+| same, with `use std::io::Read` added | **hangs**; killed by `timeout 40` (`Terminated`) |
+
+Restored, the test passes in 0.00 s. So the import list gives an accidental but real
+first line of defence, and the prediction holds underneath it.
+
+### End-to-end: one scenario re-run by me, four accepted from the executor's run
+
+I re-ran **scenario 4** (config failure under a throwaway `HOME`) because it proves
+the whole mechanism — parent waits, child reports `ERR`, parent relays and exits
+non-zero — with **zero blast radius**:
+
+```
+exit=1
+--- STDOUT (must NOT say 'started') ---
+                                          ← empty
+--- STDERR ---
+daemoneye: daemon failed to start: No API key found for provider 'anthropic'. Set 'api_key' in [models.default] in ~/.daemoneye/etc/config.toml  or  export ANTHROPIC_API_KEY=<your-key>
+```
+
+Under the old code this printed `daemoneye daemon started (PID n)` and exited **0**.
+That is the defect this phase existed to fix, and it is fixed.
+
+**Scenarios 1, 2, 3 and 5 I accept from the executor's run**, which quoted real
+output for each: the immediate `ping` succeeding with no sleep (the proof the parent
+waits for the bind), the duplicate exiting 1 with the instance-lock message on stderr
+and nothing on stdout, the original daemon healthy afterwards, and `--console`
+unchanged at exit 124. Re-running them myself would start, duplicate and kill a real
+daemon and repoint global tmux hooks on the live server — disproportionate for a
+success path already covered in-process by
+`await_report_reads_ready_then_returns`. The executor reported no daemon left
+running; confirmed.
+
+### ⚠ Commit hygiene — an architect error, unresolved by design
+
+**`be0a69e`, labelled `docs: escalate M5 phase-11 …`, actually contains the entire
+implementation:**
+
+```
+ phase-11-fork-readiness-handshake.md  | 100 +++++-
+ src/daemon/mod.rs                     |   2 +
+ src/daemon/ready.rs                   | 168 +++++++++++++
+ src/main.rs                           |  51 ++++--
+```
+
+Cause: the stalled run had `git add -A`'d its work, so it sat in the index; I then
+ran `git add -A docs/` followed by a plain `git commit`, which commits **everything
+staged**. A ~220-line feature landed under a `docs:` message.
+
+This violates the DoD's "one conventional commit per logical change." Nothing is
+lost and the content is correct. **Not bounced** — the executor cannot fix an
+architect's commit, and the remedy (soft-reset and re-commit as `feat:` + `docs:`)
+rewrites published history, which needs the PE's decision. Recorded here and raised
+with the PE; left as-is pending that call.
+
+**Lesson, and it is a small one worth keeping:** after an escalation that touches a
+tree the executor has already staged, `git commit -- <paths>` or a check of
+`git diff --cached --name-only` before committing. `git add <subset>` does not narrow
+what a following `git commit` picks up.
+
+### The bounce: my criterion, unsatisfiable two ways over
+
+```
+git diff -U0 -- src/ | grep '^+' | grep -c unsafe    → expected 2
+```
+
+- **Wrong mechanism.** A bare `git diff` shows only *unstaged* changes, so it returned
+  **0** once the executor staged. `WORKFLOW.md` § "Every acceptance criterion must be
+  satisfiable, and its mechanics pinned" already folded this exact lesson — *pin the
+  baseline commit* — and I did not.
+- **Wrong number.** The truth is **3**; the third `unsafe` line is one *my own task 2*
+  instructs the executor to create by pulling `libc::fork()` out of the big block.
+
+The executor could not have made that command print 2 by any route. It thrashed
+between `git diff` and `git diff --cached` for 60 turns until the governor stopped it
+— having already finished the implementation and passed every gate.
+
+**Eighth criterion defect of mine in M5, third to cost a run, and the second of the
+three that was a diff-based criterion with no pinned baseline** — a species the
+workflow had already folded. That it recurred anyway is the argument for a mechanical
+check rather than more prose.
+
+### The resume lever was the right call
+
+Re-dispatching would have discarded 220 lines of correct fd/fork work — the most
+delicate code in the milestone — to re-derive it. Resume kept it, the corrected
+criterion removed the loop's cause, and the outstanding E2E finished in **33 turns**.
+It also preserved the model's telemetry data point, which a takeover would have
+forfeited.

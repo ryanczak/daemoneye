@@ -129,7 +129,7 @@ take the socket.
       the holder releases the lock via the kernel, so the next start proceeds with
       no manual cleanup. Both core properties (exclusivity, payload preservation)
       are mutation-proved — see the phase's Review verdict.
-- [ ] `daemoneye ping` / `status` distinguish "not running" from "alive but not
+- [x] `daemoneye ping` / `status` distinguish "not running" from "alive but not
       answering", and `daemoneye daemon` exits non-zero with the real reason when
       the forked child fails to start.
       **Half met 2026-07-29 by 09**: `DaemonLiveness` splits the probe into
@@ -139,9 +139,16 @@ take the socket.
       with a leftover PID file reads `Daemon is not running (stale PID file names
       PID <n>).` Verified E2E via `SIGSTOP`. The webhook bind is also fatal now, so
       `EADDRINUSE` is no longer retried forever.
-      **Still open: the `daemoneye daemon` clause.** The parent still exits 0 after
-      `fork()` regardless of the child's fate — that is **phase 11**'s readiness
-      handshake.
+      **Met in full 2026-07-30 by 11.** The `daemoneye daemon` clause is closed:
+      the parent creates a pipe before `fork()`, drops its copy of the write end,
+      and blocks on the child's one-line report (`READY` / `ERR <msg>` / EOF ⇒
+      died) — so it now exits **1** with the child's real reason instead of
+      `started (PID n)` and exit 0. Verified end-to-end against the release binary
+      under a throwaway `HOME`: exit **1**, **nothing on stdout**, and
+      `daemoneye: daemon failed to start: No API key found for provider
+      'anthropic'…` on stderr. The success path is equally honest — an immediate
+      `ping` with no sleep now succeeds, because the parent does not return until
+      the child has bound its socket.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
       `cargo test` green; no regression in the ~928 existing tests.
 
@@ -205,7 +212,7 @@ take the socket.
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md)) — `InstanceLock`: exclusive `flock` on `var/run/daemoneye.pid`, acquired at `mod.rs:372` **before every startup side effect**; Ping-based guard deleted; identity-checked (dev/inode) socket teardown. 6 new tests, both core properties mutation-proved | done (approved_first_try) |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) — `DaemonLiveness` (4 variants) replacing the `bool` probe, `liveness_line` for `ping`/`stop`/`status`, `webhook::start` → eager fatal `bind` + `serve`. 9 tests; all 8 pinned strings verified exact. Bounced on [bug-09-1](bugs/bug-09-1.md): the EOF-branch test passes via the `write_all` arm instead — mutation-proved; fixed and re-verified in 37 turns | done (approved_after_1) |
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) — `pid` stamped on every `events.jsonl` record, redundant explicit `pid` removed, logger-init failure surfaced, startup identity line. 3 tests. Bounced on [bug-10-1](bugs/bug-10-1.md): my spec claimed insertion order gives a `ts,event,pid` "leading prefix", but `serde_json::Map` is a `BTreeMap` here so keys serialize **alphabetically** — the invariant and one test both assert a property that cannot exist. Fixed and re-verified; the replacement test is mutation-proved non-vacuous | done (approved_after_1) |
-| 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | review |
+| 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) — `src/daemon/ready.rs`: pipe-based `READY`/`ERR <msg>` handshake so the parent relays the child's real outcome and exits non-zero. 7 tests; the `read_to_string` mutation hangs rather than fails, as specced. Stalled once on an **architect** criterion that was unsatisfiable two ways over (bare `git diff` → 0 once staged; true count 3, not 2) — resumed, E2E done in 33 turns | done (approved_after_1) |
 
 Phases 05b–07 are named but **not yet drafted**. Draft each with
 `/rexymcp:architect next` when its predecessor is `done`.
