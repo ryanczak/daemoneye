@@ -1,5 +1,116 @@
 # NEXT
 
+**Active phase: M5 phase-07 — stream-idle-timeout**
+(`todo`, drafted 2026-07-29).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-07-stream-idle-timeout.md`.
+
+Dispatch with `/rexymcp:dispatch phase-07-stream-idle-timeout`.
+
+## The 07 revisit resolved: narrowed, not built as specified
+
+08 is `done` (`approved_first_try`, 124 turns) and the seventh exit criterion is
+met. That triggered the revisit you scheduled, and it changed what 07 is.
+
+**07 was a watchdog for a problem that no longer exists.** The sixth criterion
+asked for "if a shared lock is held or an IPC request goes unanswered beyond a
+threshold, `daemon.log` records what was holding it and where" — written when the
+wedge was unattributed. Since then:
+
+| Mechanism | State |
+|---|---|
+| A — lock held / re-entrant | **structurally closed** — `SessionsLockDepth`'s assertion is *always-on* and panics rather than deadlocking |
+| B — blocking tmux subprocess | **closed** — 44 + 26 + 9 spawns bounded, each timeout logging `tmux server may be wedged` |
+
+Building the watchdog would have instrumented a failure mode that can no longer
+occur the way it did.
+
+## What the revisit found still open — mechanism C
+
+```rust
+// src/ai/mod.rs:120 — the entire bound on an AI response stream
+            .timeout(std::time::Duration::from_secs(300))
+```
+
+`grep -rn 'tokio::time::timeout' src/ai/` → **0 hits.** A total-request timeout
+cannot tell a slow-but-alive provider from one that accepted the connection and
+went silent, so a quiet provider **freezes the user's chat turn for five minutes
+with no diagnostic**. `daemon-stalls.md` § 1.5 flagged it as "worth fixing (an
+idle-read timeout gives a much better error than a 5-minute freeze)" and nothing
+in 04x/05x/06x/08 touched it.
+
+So 07 is now that fix, and the sixth criterion was reworded around the stalls that
+actually exist. It was never struck.
+
+## The fix is one line — and one line more than that
+
+`reqwest::Client::builder().read_timeout(…)` bounds **each read**, which is exactly
+mechanism C's shape, and it covers all three backends and all seven `.chat(…)` call
+sites at once. **Compile-verified against this project's reqwest 0.13.2 while
+drafting.**
+
+But `read_timeout` alone gives the right behaviour with a **misdirecting message**.
+Measured at draft time, raw reqwest reports a stalled stream as:
+
+```
+error decoding response body
+```
+
+That points at parsing, not at a silent provider — worse than useless in a log. So
+the spec adds a `stream_chunk` helper that translates and logs it, and routes the
+three backends' `let bytes = chunk?;` lines (byte-identical across all three files)
+through it. The `log::error!` **is** the deliverable, since the criterion is about
+`daemon.log`.
+
+## The test is the highest-value pre-injection here
+
+"How do you test an idle timeout hermetically" is exactly where this would have
+stalled, so the spec ships a working one rather than describing it: an in-process
+`TcpListener` that serves HTTP 200 + one SSE chunk and then **holds the socket open
+while sending nothing**. Written and passing at draft time in **0.32 s**, no
+network, no `HOME`, so no `TEST_HOME_LOCK`.
+
+Three properties are pinned with reasons, because each is a way to pass for the
+wrong reason: the server must **not** close the socket (closing gives EOF, a
+different path); the test builds its **own** client at 300 ms rather than using
+`http()` (a `OnceLock` at 120 s); and it asserts the **first** chunk succeeds
+before asserting the second times out.
+
+**Mutation-proved:** replacing `if e.is_timeout() {` with `if false {` fails the
+test with `got: AI stream read failed: error decoding response body` — so the test
+guards the diagnostic, not just the timeout.
+
+## Counting discipline
+
+Every Pre-flight and criteria number came from the exact command beside it, run
+against both the clean and applied trees (`read_timeout` 0 → 2, `STREAM_IDLE_TIMEOUT`
+0 → 4, `stream_chunk` 0 → 2 in `mod.rs` and 1 per backend, `let bytes = chunk?;`
+3 → 0, `from_secs(300)` 1 → 1 unchanged, four files, no `Cargo` change, 928 → 929).
+Twenty-two clean applications.
+
+## Calibration
+
+**The deferral paid for itself** — that is the finding worth carrying. Had 07 been
+drafted on schedule, before 06s–06w and 08 closed mechanisms A and B, it would have
+been built as specified: a watchdog for a solved problem. Deferring a
+speculative-instrumentation phase until the thing it observes is known is
+generalisable, and a candidate fold if it recurs. One occurrence.
+
+Still open and unchanged: apply-verify-revert (pending PE sign-off, seventh
+consecutive payoff — this draft it settled the `read_timeout`-vs-wrapper design
+question and produced a working test); the mechanical pre-dispatch criteria-runner
+(three shipped-unsatisfiable criteria, plus 08's stale line numbers caught only by
+a manual refresh); and the warn-vs-error cascade distinction from 06r.
+
+## After 07
+
+**09** (fatal webhook bind + honest liveness — drafted, `todo`) closes the eighth
+criterion, then the drafted **10** and **11**. Two exit criteria remain open after
+07 lands.
+
+---
+
+## Superseded: the 08 dispatch note
+
 **Active phase: M5 phase-08 — instance-lock**
 (`todo`, drafted 2026-07-26 — **already on disk, not yet dispatched**).
 Doc: `docs/dev/milestones/M5-ux-stability/phase-08-instance-lock.md`.

@@ -82,10 +82,27 @@ take the socket.
       bounded in `src/tmux/` via `bounded_output` (06s–06v), **26** via
       `off_runtime` (06a–06r), **9** direct (06w), **1** permanent `.exec()`
       residue.
-- [ ] The daemon self-reports a stall: if a shared lock is held or an IPC
-      request goes unanswered beyond a threshold, `daemon.log` records what
-      was holding it and where. A future wedge identifies itself without a
-      live debugger.
+- [ ] Every stall path the daemon still has self-reports into `daemon.log` rather
+      than presenting as a silent freeze. Concretely: a wedged tmux server logs
+      `tmux server may be wedged` at its 5 s bound; a re-entrant `SessionStore`
+      acquisition panics on an always-on assertion instead of deadlocking; and a
+      provider that accepts an AI connection then goes silent fails at a bounded
+      idle-read with a log line naming the cause.
+      **⚠ Reworded 2026-07-29 (PE decision) at the 07 revisit.** The previous
+      wording asked for a *watchdog* — "if a shared lock is held or an IPC request
+      goes unanswered beyond a threshold, `daemon.log` records what was holding it
+      and where". That was written when the wedge was unattributed. It is now
+      largely **obviated rather than unmet**: mechanism A cannot recur silently
+      (the `SessionsLockDepth` re-entrancy assertion is deliberately always-on and
+      panics), and mechanism B is bounded everywhere with each timeout already
+      logging. Instrumenting a failure mode that can no longer occur the way it
+      did would have been the wrong build.
+      What the revisit **did** find still open is **mechanism C**
+      (`daemon-stalls.md` § 1.5): `src/ai/mod.rs` had only a 300 s total-request
+      timeout and zero `tokio::time::timeout` in `src/ai/`, so a silent provider
+      froze the user's turn for five minutes with no diagnostic. That is what
+      phase **07** now fixes, and this criterion is worded around the stalls that
+      actually exist.
 - [x] Only one daemon can run per `$HOME`, enforced by an exclusive `flock`
       acquired before any startup side effect. A second launch cannot unlink,
       overwrite, or delete anything belonging to a running daemon — including its
@@ -165,7 +182,7 @@ take the socket.
 | 06u | bounded-output-pane-1 ([phase-06u-bounded-output-pane-1.md](phase-06u-bounded-output-pane-1.md)) — **stage A slice 3a**: `src/tmux/pane.rs` first **15** sites (top → `select_pane`). Carries the file's **two fully-qualified `std::process::Command::new` sites**, where a naive replace is `error[E0433]` | done (approved_first_try) |
 | 06v | bounded-output-pane-2 ([phase-06v-bounded-output-pane-2.md](phase-06v-bounded-output-pane-2.md)) — **stage A slice 3b**: `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Finishes `src/tmux/` — 44 bounded spawns, directory residue **1** (`wait_for`, `tokio::process`, already bounded). All four surrounding shapes are pure substitutions. **Stage A complete: 44 bounded spawns** | done (approved_first_try) |
 | 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target. **Closed the fifth exit criterion** | done (approved_first_try) |
-| 07 | stall-instrumentation (rescoped — see Notes) — **deferred 2026-07-29 (PE decision); revisit after 08 completes.** Not drafted | deferred |
+| 07 | stream-idle-timeout ([phase-07-stream-idle-timeout.md](phase-07-stream-idle-timeout.md)) — **rescoped 2026-07-29 (PE decision) from "stall instrumentation" to mechanism C**: a `read_timeout` on the shared AI client + a `stream_chunk` helper that translates an idle-read timeout into a logged, diagnosable stall. Raw reqwest calls it `error decoding response body`, which misdirects. 1 hermetic test, mutation-proved | todo |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md)) — `InstanceLock`: exclusive `flock` on `var/run/daemoneye.pid`, acquired at `mod.rs:372` **before every startup side effect**; Ping-based guard deleted; identity-checked (dev/inode) socket teardown. 6 new tests, both core properties mutation-proved | done (approved_first_try) |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
@@ -279,6 +296,26 @@ learn from first:
 whatever 08 (and possibly 09–10) leave unobservable, or close it as unneeded and
 strike the sixth exit criterion. That is a PE call at the next boundary, not an
 architect default.
+
+**RESOLVED 2026-07-29 (PE decision): narrowed.** 08 landed, the revisit ran, and
+the middle option won. The survey behind it:
+
+| Mechanism | State | Evidence |
+|---|---|---|
+| A — lock held / re-entrant | **structurally closed** | `with_sessions` + newtype + `SessionsLockDepth`, whose assertion is *deliberately always-on* and panics rather than deadlocking |
+| B — blocking tmux subprocess | **closed** | 44 bounded in `src/tmux/`, 26 via `off_runtime`, 9 direct; every timeout logs `tmux server may be wedged` |
+| C — AI stream stall | **OPEN** | `src/ai/mod.rs:120` had only `.timeout(from_secs(300))`; `grep -rn 'tokio::time::timeout' src/ai/` → **0 hits** |
+
+So the watchdog 07 was written for would have instrumented a failure mode that can
+no longer occur the way it did, while leaving the one live stall path untouched.
+07 is now **mechanism C**: a `read_timeout` on the shared client plus a translating
+helper. The sixth exit criterion was reworded to match; it was never struck.
+
+Worth recording for the retrospective: the deferral **paid for itself**. Had 07
+been drafted on schedule, before 06s–06w and 08 closed A and B, it would have been
+built as specified — a watchdog for a solved problem. Deferring a
+speculative-instrumentation phase until the thing it observes is known is a
+generalisable move, and a candidate fold if it recurs.
 
 **Phase 05 split in two, and the newtype moved behind it (2026-07-26, PE
 decision).** The numbering had `04k` (newtype) sorting before `05` (the
