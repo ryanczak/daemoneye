@@ -1,7 +1,7 @@
 # Phase 10: Lifecycle Observability — Attribute Every Event to a Process
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08 (instance lock) — the startup identity line reports the
 lock outcome
 **Estimated diff:** ~130 lines
@@ -423,3 +423,13 @@ re-running.
 **On the E2E:** it starts and stops a real daemon, which repoints global tmux
 hooks. No daemon is running as of this refresh (phase 09's E2E left it stopped),
 so `daemoneye daemon` should start cleanly. State what you leave behind.
+
+## Update Log
+
+### Update — 2026-07-30 05:02 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Implementing all 5 tasks: PID stamp on every event record, removing redundant
+explicit pid from daemon_start, surfacing logger-init failure, startup identity
+line, and documenting the invariant in CLAUDE.md.

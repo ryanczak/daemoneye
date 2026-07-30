@@ -2,9 +2,9 @@
 /// `~/.daemoneye/var/log/events/events-YYYYMMDD.jsonl`.
 ///
 /// Each call appends one JSON object per line.  The top-level fields
-/// `ts` (ISO-8601 UTC) and `event` (event type name) are always present.
-/// Additional fields are provided by the caller as a `serde_json::Value`
-/// object and merged in.
+/// `ts` (ISO-8601 UTC), `event` (event type name), and `pid` (the emitting
+/// process) are always present.  Additional fields are provided by the caller
+/// as a `serde_json::Value` object and merged in.
 ///
 /// Errors are silently discarded — logging must never crash the daemon.
 pub fn log_event(event: &str, mut fields: serde_json::Value) {
@@ -14,12 +14,16 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
     let ts = chrono::Utc::now().to_rfc3339();
 
     if let Some(obj) = fields.as_object_mut() {
-        // Prepend ts + event so they appear first in the line.
+        // Prepend ts + event + pid so they appear first in the line.
         let mut record = serde_json::Map::new();
         record.insert("ts".to_string(), serde_json::Value::String(ts));
         record.insert(
             "event".to_string(),
             serde_json::Value::String(event.to_string()),
+        );
+        record.insert(
+            "pid".to_string(),
+            serde_json::Value::from(std::process::id()),
         );
 
         // Take ownership of the fields from the caller's object
@@ -521,6 +525,55 @@ mod tests {
             assert_eq!(value["event"], "test_event");
             assert_eq!(value["key"], "value");
             assert!(value.get("ts").is_some());
+        });
+    }
+
+    #[test]
+    fn log_event_stamps_emitting_pid() {
+        with_test_home(|| {
+            log_event("pid_test", serde_json::json!({}));
+            let seg = crate::config::current_event_segment_path();
+            let content = std::fs::read_to_string(&seg).unwrap();
+            let line = content.lines().next().unwrap();
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(record["pid"], serde_json::Value::from(std::process::id()));
+        });
+    }
+
+    #[test]
+    fn log_event_prefix_order_is_ts_event_pid() {
+        with_test_home(|| {
+            log_event("order_test", serde_json::json!({"z_custom": "val"}));
+            let seg = crate::config::current_event_segment_path();
+            let content = std::fs::read_to_string(&seg).unwrap();
+            let line = content.lines().next().unwrap();
+            // Verify all three stamp keys appear before any caller-supplied key.
+            // serde_json::Map (without preserve_order) serializes in sorted key
+            // order, so the actual byte order is "event" < "pid" < "ts".
+            let event_pos = line.find("\"event\"").expect("missing event key");
+            let pid_pos = line.find("\"pid\"").expect("missing pid key");
+            let ts_pos = line.find("\"ts\"").expect("missing ts key");
+            let custom_pos = line.find("\"z_custom\"").expect("missing custom key");
+            assert!(
+                event_pos < pid_pos && pid_pos < ts_pos && ts_pos < custom_pos,
+                "expected stamp keys before caller keys, got event@{} pid@{} ts@{} custom@{}",
+                event_pos,
+                pid_pos,
+                ts_pos,
+                custom_pos,
+            );
+        });
+    }
+
+    #[test]
+    fn log_event_caller_pid_overrides_stamp() {
+        with_test_home(|| {
+            log_event("override_test", serde_json::json!({"pid": 999_999}));
+            let seg = crate::config::current_event_segment_path();
+            let content = std::fs::read_to_string(&seg).unwrap();
+            let line = content.lines().next().unwrap();
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(record["pid"], 999_999);
         });
     }
 }

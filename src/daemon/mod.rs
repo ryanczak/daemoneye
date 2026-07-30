@@ -352,7 +352,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Initialise env_logger once.  DAEMONEYE_LOG=debug|info|warn|error controls verbosity.
     // Default is `info` which shows lifecycle events, connections, and command execution.
     // Color is disabled and a human-readable UTC timestamp is prepended to every line.
-    let _ =
+    if let Err(e) =
         env_logger::Builder::from_env(env_logger::Env::new().filter_or("DAEMONEYE_LOG", "info"))
             .write_style(env_logger::WriteStyle::Never)
             .format(|buf, record| {
@@ -360,7 +360,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
                 writeln!(buf, "{} {:5} {}", ts, record.level(), record.args())
             })
-            .try_init();
+            .try_init()
+    {
+        eprintln!(
+            "daemoneye: logger already initialised: {e} — continuing with the existing logger"
+        );
+    }
 
     if let Some(ref path) = log_file {
         let file = std::fs::OpenOptions::new()
@@ -396,6 +401,19 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             anyhow::bail!("{e}");
         }
     };
+
+    log::info!(
+        "daemoneye {} starting — PID {}, exe {}, log {}",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id(),
+        std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string()),
+        log_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<stdout>".to_string()),
+    );
 
     // Validate API key before binding the socket so the error is immediate
     // and obvious rather than surfacing as a cryptic 401 mid-conversation.
@@ -525,7 +543,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             "session": initial_session.as_deref().unwrap_or(""),
-            "pid":     std::process::id(),
             "socket":  default_socket_path().display().to_string(),
         }),
     );
