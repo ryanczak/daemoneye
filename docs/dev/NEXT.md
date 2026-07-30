@@ -1,10 +1,85 @@
 # NEXT
 
-**Active phase: M5 phase-09 — fatal-bind-honest-liveness**
+**Active phase: M5 phase-10 — lifecycle-observability**
 (`todo`, drafted 2026-07-26, **pre-dispatch refresh applied 2026-07-29**).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-09-fatal-bind-honest-liveness.md`.
+Doc: `docs/dev/milestones/M5-ux-stability/phase-10-lifecycle-observability.md`.
 
-Dispatch with `/rexymcp:dispatch phase-09-fatal-bind-honest-liveness`.
+Dispatch with `/rexymcp:dispatch phase-10-lifecycle-observability`.
+
+## 09 landed `approved_after_1`; 10 and 11 are the last two phases
+
+09 delivered the wedged-vs-dead split and the fatal webhook bind. **I marked its
+exit criterion half-met, not met** — the criterion also requires `daemoneye daemon`
+to exit non-zero when the forked child fails, and the parent still exits 0
+regardless. That is **11**'s readiness handshake, so the box stays unchecked with
+both halves spelled out rather than ticked on a partial.
+
+## 10 is small, and its risk is bookkeeping rather than design
+
+Three tiny production edits (a `pid` insert in `log_event`, deleting the now-
+redundant explicit one, rebinding `try_init`'s result), one `log::info!` identity
+line, one `CLAUDE.md` bullet, three tests. ~130 lines.
+
+The interesting property: `log_event` inserts `pid` **before** draining the
+caller's fields, so an explicit caller `pid` still wins. That is what makes task 2
+a cleanup rather than a behavior change, and one of the three tests
+(`log_event_caller_pid_overrides_stamp`) exists purely to pin the ordering — a
+mutation moving the insert after the drain must fail it.
+
+## The refresh caught an ambiguous criterion, and `event_log.rs` had not moved at all
+
+**`src/daemon/mod.rs` shifted by up to +46** (`daemon_start`'s `log_event`
+`478` → `523-529`, logger init `334` → `355-363`, and 08's `InstanceLock` — task
+4's anchor — now `:392`). But `src/daemon/utils/event_log.rs` was untouched by
+every intervening phase: `log_event` still `:10`, `with_test_home` `:288`,
+`log_event_writes_today_segment` `:506`. Worth noting because it is the first
+refresh where half the references were already correct.
+
+**The bad criterion:** `grep -n "let _ =" src/daemon/mod.rs` "does not match the
+`try_init` call". That grep has **8** hits, seven of them legitimate and required
+to stay, so read as "returns nothing" it is unsatisfiable and read as "eyeball it"
+it is unverifiable. Replaced with a check on the line *immediately preceding*
+`env_logger::Builder::from_env` (1 → 0) plus the presence of the new message
+(0 → 1), both run against the tree.
+
+That is the **sixth** criterion defect of mine in M5 and the **second** the
+pre-dispatch run caught before dispatch. The practice is now clearly load-bearing,
+not optional.
+
+## Two claims re-verified because 08 and 09 could have invalidated them
+
+- **`"pid"` is still a singleton.** `grep -rn '"pid"' --include=*.rs src/` returns
+  exactly one line (`mod.rs:528`), so task 2's deletion breaks no consumer. Phase
+  09 added `instance::read_pid`, but that reads the **PID file**, not an event
+  field.
+- **The `with_test_home` deadlock warning is right**, and the doc now quotes the
+  helper showing it already takes `crate::test_home_guard()`. Re-locking inside a
+  test body deadlocks — `std::sync::Mutex` is not reentrant. This is the same
+  accessor whose location I had wrong in 09's draft.
+
+## Counting discipline
+
+Every Pre-flight and criteria value run against the tree at refresh time
+(`"pid"` in `mod.rs` 1, in `event_log.rs` 0, the `let _ =`-before-builder 1,
+`logger already initialised` 0, `starting — PID` 0, `try_init` 1,
+`fn with_test_home` 1, 937/0/27). Baseline **937**, target **940** (+3), with the
+delta phrasing and anti-loop guard.
+
+## Calibration
+
+Unchanged and still open: the mechanical pre-dispatch criteria-runner (now six
+defects, two caught pre-dispatch — recommend promoting at milestone close);
+apply-verify-revert (pending PE sign-off); the warn-vs-error cascade distinction
+from 06r; and, new at two occurrences, **architect-authored vacuous coverage** —
+09's bug-09-1 test named a branch it could not reach, the same shape as the
+fixture-default trap behind the existing coverage fold. A Test plan that names a
+branch must describe a sequence that *reaches* it, not just the value it expects.
+
+## After 10
+
+**11** (fork readiness handshake) is the last drafted phase and closes the second
+half of the eighth exit criterion. Then the milestone boundary — where the folds
+above want deciding.
 
 ## Eight of nine exit criteria are met
 
