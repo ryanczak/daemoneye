@@ -99,7 +99,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [test-isolation-harness](phase-01-test-isolation-harness.md) — throwaway `HOME` + private tmux server; one scenario proving the operator's live server is untouched | done |
-| 02 | [prompt-path-audit-test](phase-02-prompt-path-audit-test.md) — repo-side test that fails on any wrong or superseded path literal in the prompt and knowledge-memory assets | review      |
+| 02 | [prompt-path-audit-test](phase-02-prompt-path-audit-test.md) — repo-side test that fails on any wrong or superseded path literal in the prompt and knowledge-memory assets | done |
 | 03 | fix-stale-prompt-paths — correct the stale `events.jsonl` references **and the six-path pre-`var/` generation in the knowledge memories** (see defect 5); whatever else 02 surfaces | todo |
 | 04 | audit-prompts-command — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | todo |
 | 05 | severity-gate-honesty — an absent severity is not the lowest severity; every discard logs and emits | todo |

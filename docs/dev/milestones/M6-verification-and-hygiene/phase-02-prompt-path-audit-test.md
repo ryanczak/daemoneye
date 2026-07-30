@@ -1,7 +1,7 @@
 # Phase 02: Prompt-Path Audit Test
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=test, size=m
@@ -851,3 +851,71 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7ecdc4f60cbd7257eefd47cbe7fc41b689ecaa44
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30 (round 2)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none in this round. (Round 1's four extra `INVENTORY`
+  entries — `etc/prompts/sre.toml`, `var/run/daemoneye.sock`,
+  `var/run/daemoneye.pid`, `var/sessions/index.json` — were already reviewed
+  and accepted as legitimate source-verified corrections; re-diffed this round
+  and confirmed untouched.)
+- **Independent re-run of all four gates** (separate invocations, not
+  chained): `cargo fmt --all -- --check` exit 0; `cargo build` exit 0 (0.07s,
+  no new warnings); `cargo clippy --all-targets --all-features -- -D
+  warnings` exit 0 (bare, no `tail` pipe masking the exit code); `cargo test`
+  exit 0 — 956 lib passed / 0 failed, 27 integration passed / 2 ignored,
+  3 isolation passed. All four match the executor's claimed output.
+- **Independent mutation check:** stubbed the `Legacy`-arm body in
+  `audit_text_with` (`Some(entry) => { ... }` → `Some(_entry) => {}`) and ran
+  `cargo test --lib config::path_audit`. Result: 7 passed, **2 failed**
+  (`legacy_entry_is_reported`, `red_run_is_reproducible`) — exactly the two
+  tests the executor claimed. Restored the file via `git checkout --`,
+  confirmed `git status --porcelain` clean, and reran `cargo build` — exit 0.
+  The claimed mutation check is verified, not merely trusted.
+- **`red_run_is_reproducible` tautology check:** not tautological.
+  `PENDING_FIX` is a hand-written `static` constant defined independently of
+  the test (populated once, from the original red-run output, back in task 5
+  of round 1) — the test does not re-derive its expected set from the same
+  audit call it is checking; it compares the audit's *live* output against
+  that frozen constant. The `normalise()` call on the test's `flagged` vec is
+  necessary and correct, not masking a mismatch: `Finding.literal` stores the
+  literal as it appeared in text (pre-normalisation, e.g.
+  `~/.daemoneye/config.toml`), while `PENDING_FIX` stores post-normalisation
+  forms (e.g. `config.toml`) — the test's own `normalise()` call converts one
+  side to be comparable with the other, and the mutation run above confirms
+  the assertion is sensitive to real breakage (it caught the exact literal
+  `var/log/events.jsonl` going missing from `flagged` when the Legacy arm was
+  disabled).
+- **Bug-doc closure:** both `bugs/bug-02-1.md` and `bugs/bug-02-2.md` were
+  left at `Status: open` with unticked Verification boxes despite verified
+  fixes — closed out as part of this review (`Status: verified`, boxes
+  ticked, fix commit and independent-reverification notes added to each).
+- **Scope-creep check (diff against pre-re-dispatch commit `2ca6688`):**
+  `git diff --numstat 2ca6688 7ecdc4f` → `src/config/mod.rs` +1/-1,
+  `src/config/path_audit.rs` +55/-19 — matches the executor's claimed
+  `files_changed` exactly. `git diff 9d07174 7ecdc4f -- assets/` is empty —
+  assets untouched. `PENDING_FIX` still exactly 7 entries (unchanged content).
+  `INVENTORY` still 24 entries (unchanged content from the already-accepted
+  round-1 table). No `daemoneye audit-prompts` CLI anywhere in `src/cli/`.
+- **`pub mod path_audit;` check:** `src/config/mod.rs` still uses targeted
+  `pub use load::*; pub use seeds::*; pub use types::*;` — no
+  `pub use path_audit::*;` was added (correctly avoided per the bounce-1
+  authorization note), so there is no glob-collision risk. The module's
+  public items are reached via `config::path_audit::…`, not re-exported at
+  `config::` top level.
+- **DoD sweep:** no `unwrap()`/`expect()`/`panic!()` outside the
+  `#[cfg(test)]` module (one `unwrap()` at line ~524, inside `mod tests`, is
+  exempt); `grep -c 'test_home_guard\|set_var' src/config/path_audit.rs` → 0;
+  no `#[allow(...)]` anywhere in the file; no TODO/FIXME/XXX; no
+  `dbg!`/`println!`; no `#[ignore]`; no `unsafe`. Acceptance-criteria
+  checklist and Update Log's red/green run quotes verified against the
+  shipped file and reproduced independently.
+- **Calibration:** none folded. Round 1's root cause (a `Legacy` inventory
+  entry quarantined into `PENDING_FIX` simultaneously, silently orphaning its
+  own test coverage) did not recur — the fix is structurally sound
+  (`audit_text_with(text, pending)` seam lets tests bypass the standing
+  quarantine entirely), so this looks like a one-off rather than a pattern
+  worth a WORKFLOW.md fold.
