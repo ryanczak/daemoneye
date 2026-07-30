@@ -1,89 +1,70 @@
 # NEXT
 
-**Active phase: none — M6 is scoped but no phase is drafted.**
+**Active phase: 01 — test-isolation-harness.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-01-test-isolation-harness.md`
+Status: `todo` — drafted 2026-07-30, not yet dispatched.
 
-M6 — Verification & Hygiene was scoped 2026-07-30. Milestone README:
-`docs/dev/milestones/M6-verification-and-hygiene/README.md`. Twelve phases are
-**named, not drafted**, with a sixteen-item defect inventory behind them, all of it
-verified against the tree or the live runtime during scoping.
+Dispatch with `/rexymcp:dispatch phase-01-test-isolation-harness`.
 
-**This is a human gate.** Review the milestone README — particularly the exit
-criteria and the phase ordering — then draft phase 01 with
-`/rexymcp:architect next`.
+## What phase 01 does
 
-## Why this milestone exists
+Builds the environment every other M6 phase needs: a throwaway `HOME` **and** a
+private tmux server, so an end-to-end scenario can run a real `daemoneye` daemon
+without touching the operator's `~/.daemoneye/` or their default tmux server.
 
-A live webhook→ghost-shell test produced three reported symptoms. **Two were
-measurement errors and one was a real defect.** That ratio is the thesis: the system
-was partly working, and the tooling could not tell the difference.
+Deliverables: `tests/harness/mod.rs` (an `IsolatedEnv` type) and
+`tests/isolation.rs` (three scenarios). No `src/` changes.
 
-- The event log *was* written — to `events/events-<date>.jsonl`. The grep went to
-  `var/log/events.jsonl`, dead since July 9.
-- The `[Webhook Alert]` block *was* injected — three times, on disk.
-- The ghost shell genuinely never fired: an alert with **no severity** ranks 0,
-  the default threshold is `warning` (rank 2), and the gate discards it **with no
-  log line and no event**.
+## The design question, and why it is already answered in the doc
 
-And the reason the first conclusion was wrong is itself a defect: the agent's own
-prompt names `var/log/events.jsonl` in the same sentence as the correct tool
-(`search_repository(kind:"events")`, which reads the segments properly). The agent
-followed the path.
+M6's README flagged 01 as design-discovery, with the load-bearing unknown being
+"how a private tmux server is addressed by every `Command::new("tmux")` in the
+tree — there is no `-L` plumbing today."
 
-## The five axes
+**That is settled and pre-injected into the phase doc.** tmux resolves its server
+socket from `$TMUX_TMPDIR`, and `std::process::Command` children inherit the
+environment, so setting `TMUX_TMPDIR` on the spawned daemon gives all **82** call
+sites a private server with **zero** changes under `src/`. Verified live during
+drafting; the probe transcript is quoted in the phase doc. Plumbing `-L` is now
+an explicit scope violation rather than an open question.
 
-1. **Test isolation** — throwaway `HOME` **and** a private tmux server. Phase 01,
-   first because everything else needs it. Across M5, every real-artifact check
-   disrupted the operator's live daemon and tmux hooks, and one scenario could not be
-   re-run at review for that reason.
-2. **Agent-belief accuracy** — a repo test that fails on any unresolvable path
-   literal in the prompt and knowledge memories, then the fixes, then an operator
-   `daemoneye audit-prompts`. **Report-only by PE constraint: auto-refresh is ruled
-   out because it would clobber local prompt edits.**
-3. **Pipeline correctness** — the severity gate, and then whatever the end-to-end
-   scenario surfaces behind it. Everything downstream of that gate
-   (`maybe_analyze_alert`, the `GHOST_TRIGGER` parse, `check_ghost_capacity`,
-   `GhostManager::start_session`) has never run for a severity-less alert.
-4. **Artifact lifecycle and tree hygiene** — *expanded 2026-07-30 on your
-   instruction.* **Only two sweep functions exist in the whole codebase.** Measured
-   against your live tree: `daemon.log` 25.8 MB with no rotation logic anywhere;
-   `panes/` 264 files back to May 9, unswept; agent mailboxes accumulate one per
-   ghost exit, unswept; and `sessions/` has a sweep that is **off by default**
-   (`archive_retention_days = 0`) while events defaults to 90 — opposite defaults,
-   nothing surfacing it. Phase 07 states one policy and lands a test that fails on
-   any class not covered; 08–09 implement against it.
-5. **Pane preferences, re-specified** — *added 2026-07-30 on your instruction.* Not
-   just the orphaned file: **both sides of the `session_name → pane_id` mapping are
-   unstable identities.** Your live file holds `{"0":"%0","1":"%1","2":"%5",…}` —
-   default numeric tmux session names that collide across unrelated sessions, mapped
-   to pane IDs that recycle across server restarts. `pane_exists` proves *a* pane has
-   that ID, not that it is the one you picked. The preference is therefore reliable
-   only within one continuous tmux server lifetime, which is when persistence matters
-   least. Phase 10 is design-discovery, with one hard constraint: never silently run a
-   foreground command in a pane the user did not choose.
+Two gotchas are pre-injected alongside it: the ~108-byte `sun_path` cap (hit
+during drafting — the throwaway root must be under `/tmp`, not
+`std::env::temp_dir()`, which honours a possibly-long `$TMPDIR`), and the fact
+that `daemoneye daemon` forks, so the parent's exit status *is* the readiness
+signal and the daemon outlives the test process.
 
-## Not an M5 regression
+## The one thing to look at before dispatching
 
-Worth stating plainly since it was the initial hypothesis: `severity_rank` and the
-gate were last touched in `3fde6cd` (2026-03-07), four months before M5 opened.
-`ae4e833` (the phase-11 fork handshake) is exonerated, and M5's close stands.
+Task 5 is a **required mutation**: remove `TMUX_TMPDIR` from the harness, watch
+the suite fail, restore it, watch it pass, quote both. Per `WORKFLOW.md`
+§ "Coverage claims are inadmissible without mutation proof" — a harness whose
+isolation has never been demonstrated to fail is not evidence of isolation, and
+this phase's entire deliverable is that evidence.
 
-## Two things I did not do
+## Field note from 2026-07-30 — this problem is not hypothetical
 
-- **Did not draft phase 01.** Milestone boundaries are a human gate; the README is
-  for your review first.
-- **Did not fix any defect.** All sixteen are inventory, not work-in-progress. The
-  severity gate is a two-line change and tempting, but it belongs in phase 05 behind
-  the harness that can prove it.
+While drafting, the operator's tmux server exited repeatedly and the daemon died
+with it: `var/run/daemoneye.pid` and `daemoneye.sock` were both still on disk
+with no `daemoneye` process alive, and `tmux ls` reported no server.
+
+The mechanism is the one phase 01 contains. The daemon installs **four
+server-wide `-g` hooks** — `pane-died`, `after-new-session`, `client-attached`,
+`client-detached` (`src/daemon/mod.rs:563`–`:620`) — on whatever tmux server it
+can reach, and those hooks keep firing `daemoneye notify …` at a socket that may
+no longer be there. This is defect 13 in the inventory, observed live rather than
+inferred. It is also the reason the architect is currently running outside tmux.
 
 ## Where things stand
 
-- `docs/architecture.md` § 5 updated: M4 and M5 moved to shipped, M6 recorded as
-  active. It had still named M4 — the same drift class the milestone is about.
-- `cargo clippy --all-targets --all-features -- -D warnings` clean; **947** lib +
-  **27** integration, zero failures.
-- Working tree clean. `CLAUDE.md` is now tracked (`51dff3e`) and no longer ignored.
-- **A daemon is running** (PID in `var/run/daemoneye.pid`, socket present) — you
-  restarted it for the webhook test.
-- Standing backlog: `docs/dev/TODO.md` — one entry, the pre-dispatch criteria-check
-  mechanisation parked at the M5 close. M6 phase 02 is a narrower instance of the
-  same idea and worth reading against it.
+- Working tree was clean at drafting; the only change is this file plus the new
+  phase doc.
+- No daemon currently running (see the field note above).
+- `cargo clippy --all-targets --all-features -- -D warnings` clean at M5 close;
+  **947** lib + **27** integration, zero failures — the baseline phase 01 must
+  not regress.
+- Milestone README:
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 02–12 are
+  named, not drafted; draft each with `/rexymcp:architect next` once its
+  predecessor is `done`.
+- Standing backlog: `docs/dev/TODO.md`.

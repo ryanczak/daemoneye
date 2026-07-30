@@ -86,7 +86,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | test-isolation-harness — throwaway `HOME` + private tmux server; one scenario proving the operator's live server is untouched | todo |
+| 01 | [test-isolation-harness](phase-01-test-isolation-harness.md) — throwaway `HOME` + private tmux server; one scenario proving the operator's live server is untouched | todo (drafted) |
 | 02 | prompt-path-audit-test — repo-side test that fails on any unresolvable path literal in the prompt and knowledge-memory assets | todo |
 | 03 | fix-stale-prompt-paths — correct the three known stale `events.jsonl` references; whatever else 02 surfaces | todo |
 | 04 | audit-prompts-command — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | todo |
@@ -248,6 +248,19 @@ a private tmux server is addressed by every `Command::new("tmux")` in the tree
 (there is no `-L` plumbing today — that is the design question, not a detail), and
 for 06 it is what a passing scenario asserts on when the ghost's own behaviour
 depends on a live AI call.
+
+**01's constraint was resolved at drafting (2026-07-30) and is no longer open.**
+tmux takes its server socket from `$TMUX_TMPDIR` and `std::process::Command`
+children inherit the environment, so setting it on the spawned daemon gives all
+**82** call sites a private server with zero `src/` changes. Verified live; the
+probe transcript is quoted in the phase doc, and plumbing `-L` is now an explicit
+scope violation rather than a design option. 06 remains genuinely open.
+
+**Defect 13 was then observed live rather than inferred.** During drafting the
+operator's tmux server exited repeatedly, taking the daemon with it — stale
+`daemoneye.pid` and `daemoneye.sock` on disk, no process, no tmux server. The
+four server-wide `-g` hooks (`src/daemon/mod.rs:563`–`:620`) keep firing
+`daemoneye notify …` at a socket that may be gone. Phase 01 contains exactly this.
 
 **Expect the inventory to grow.** Thirteen items came from one afternoon aimed at a
 single webhook. Phases 01 and 06 are the ones most likely to add to it, and the
