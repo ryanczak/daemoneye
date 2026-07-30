@@ -1,7 +1,7 @@
 # Phase 03: Fix Stale Prompt Paths
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-02 (done)
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -220,3 +220,133 @@ No new dependencies. No changes to `docs/architecture.md`.
 **Executor:** Claude (Anthropic)
 
 Correcting all 9 audited path literals across 6 asset files, fixing the 2 unaudited spans (ASCII tree in agent-runtime-layout.md and grep in webhook-setup.md), emptying `PENDING_FIX`, and splitting the red-run test into `all_assets_audit_clean_with_empty_quarantine` and `extractor_detects_historical_stale_literals`.
+
+### Update — ts=1785431735540 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Corrected all 9 audited stale path literals across 6 asset files and fixed the 2 unaudited spans (ASCII directory tree and grep command). `PENDING_FIX` is now `&[]`. The `red_run_is_reproducible` test was split into `all_assets_audit_clean_with_empty_quarantine` (verifies all 8 assets pass with empty quarantine) and `extractor_detects_historical_stale_literals` (verifies the extractor still detects all 7 historical defects from a frozen synthetic corpus). Mutation check confirmed: replacing `normalise()` to return `None` unconditionally causes the synthetic-corpus test to fail with `expected 7 findings, got 0`. All 4 gates green (fmt, build, clippy, test). `grep -rn '~/\.daemoneye/' assets/` shows only correct paths remain — all `~/.daemoneye/var/`, `~/.daemoneye/scripts/`, `~/.daemoneye/etc/`, and bare root references are legitimate. The `INVENTORY` entry for `var/log/events.jsonl` as `Legacy` is preserved. Test count: 8 path_audit tests (2 replaced, 1 added net vs. original 7).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+.. ok
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test memory::tests::update_memory_sets_updated_timestamp ... ok
+
+test result: ok. 955 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.31s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ghost_config_parsing ... ok
+test event_log_append_read ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test session_index_persistence ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test session_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 3 tests
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-652de6e8e49133dd)
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `assets/memory/knowledge/agent-runtime-layout.md` — +3 -2
+- `assets/memory/knowledge/ghost-shell-guide.md` — +5 -5
+- `assets/memory/knowledge/scheduling-guide.md` — +1 -1
+- `assets/memory/knowledge/webhook-setup.md` — +4 -4
+- `assets/prompts/sre.toml` — +1 -1
+- `docs/dev/milestones/M6-verification-and-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M6-verification-and-hygiene/phase-03-fix-stale-prompt-paths.md` — +7 -1
+- `src/config/path_audit.rs` — +51 -70
+
+**Commit:** 6fbe13b0d65986de3a8d4ac2ce92dc4638e6fd3a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
