@@ -8,10 +8,18 @@ phases approved, retrospective written in
 
 **This is a human gate.** Two things need the PE before any M6 work begins.
 
-## 1. Two folds are proposed for `WORKFLOW.md` and not applied
+## 1. Folds — one applied, one parked (PE decisions, 2026-07-30)
 
-Neither has been written into `WORKFLOW.md` — the architect contract requires
-explicit sign-off, and these are process changes, not project work.
+**Fold 2 is applied.** "Confirm the property is observable before pinning it" now
+sits in `docs/dev/WORKFLOW.md` § "Coverage claims are inadmissible without mutation
+proof". Three occurrences, all architect-authored.
+
+**Fold 1 is parked as tooling, not prose** — see `docs/dev/TODO.md` § 1. The PE's
+call was to explore a mechanical realisation later rather than add another paragraph;
+the existing counting fold already stated the rule and already predicted that prose
+would not be the remedy. Evidence and a design sketch are in the TODO.
+
+The original proposals, retained for reference:
 
 **a. A mechanical pre-dispatch criteria check.** Eight defective acceptance
 criteria in M5, three of which cost a run (110 turns on 07, 60 on 11, plus 06n).
@@ -31,6 +39,9 @@ sequence that *reaches* it.
 
 Full evidence for both is in the retrospective. Not proposed, held at one
 occurrence: the warn-vs-error cascade distinction from 06r.
+
+**Standing backlog:** `docs/dev/TODO.md` — cross-milestone items parked with their
+evidence. Currently one entry (the criteria-check mechanisation).
 
 ## 2. M6 has no design and no scope
 

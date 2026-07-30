@@ -850,6 +850,30 @@ independently.** A claimed mutation check is not one.
 *(Folded 2026-07-27 after three false coverage claims and one confirmed
 fixture-default trap.)*
 
+**Confirm the property is observable before pinning it.** The mutation rule above
+assumes a broken line *can* be detected. Sometimes it cannot — and then the spec
+has asked for a test that cannot exist, so what comes back is a test that passes on
+unrelated grounds:
+
+- **When a spec names a branch, describe a sequence that reaches it** — not merely
+  the value it returns. If two branches return the same value, a test asserting that
+  value proves nothing about which one ran. One such test was named for an EOF
+  branch and passed via a write-failure arm returning the same variant; the branch it
+  named was never executed.
+- **When a spec pins an observable property, verify it is observable at all.**
+  Insertion order into a `BTreeMap`-backed map is not visible in its serialized
+  output, so a spec pinning "these keys lead the line" pinned nothing; the test that
+  "asserted" it passed on alphabetical ordering the serializer applies regardless.
+
+Both failures look like satisfied criteria and pass every gate. **The tell is that
+the mutation does not fail the test** — which is why the mutation must be run, and
+run by the reviewer.
+
+*(Folded 2026-07-30 after a third occurrence. The three: a fixture default making
+assertions tautological; a test named for a branch it could not reach; a spec
+pinning a key order the serializer discards. All three were architect-authored — the
+executor implemented what was specified in each case.)*
+
 ### Every acceptance criterion must be satisfiable, and its mechanics pinned
 
 Both `NoProgressStall` hard-fails in M5 were caused by a criterion the executor
