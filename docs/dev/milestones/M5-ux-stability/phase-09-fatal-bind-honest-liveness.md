@@ -1,7 +1,7 @@
 # Phase 09: Fatal Webhook Bind + Honest Liveness Reporting
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress (bug-09-1 open)
+**Status:** in-progress
 **Depends on:** phase-08 (instance lock) — the PID file this phase reads is
 created there
 **Estimated diff:** ~210 lines
@@ -916,3 +916,7 @@ is not demonstrated will be re-run at review and will bounce again.
   test, which is why the bug was invisible). Renaming is optional, not required.
 - Do not re-run the E2E scenarios. They were verified last run and they SIGKILL a
   real daemon; there is no need to disturb the host again for a test-only fix.
+
+### Update — 2026-07-30 04:47 (started, re-dispatch for bug-09-1)
+
+**Executor:** Claude executor
