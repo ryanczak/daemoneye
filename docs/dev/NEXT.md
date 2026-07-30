@@ -1,67 +1,72 @@
 # NEXT
 
-**Active phase: 06b — webhook-to-ghost-e2e.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-06b-webhook-to-ghost-e2e.md`
+**Active phase: 07 — artifact-lifecycle-policy.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-07-artifact-lifecycle-policy.md`
 Status: `todo` — drafted 2026-07-30, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-06b`.
+Dispatch with `/rexymcp:dispatch phase-07`.
 
-## The blocker is resolved
+## M6's headline verification now exists and passes
 
-The PE chose **option 3 (production observability seam) with option 1 (an
-ignored full-daemon test) as a stopgap**. Phase 06b is drafted against that
-decision.
+Phase 06b landed `approved_first_try`. A payload with **no severity field** now
+provably reaches a ghost shell, observable end-to-end. The real record, captured
+from the event log during the run:
 
-**The seam:** `process_alert` returns `Option<JoinHandle<()>>` instead of
-discarding the spawned ghost task's handle. Production behaviour is unchanged —
-the HTTP handler still returns 200 without awaiting — but the handle now exists,
-so a test can await it and assert `ghost_start` with no wall-clock waiting, and
-production can finally answer "did that alert's ghost actually start?". The phase
-explicitly forbids growing this into a task registry, cancellation, or stats
-plumbing.
+```json
+{"alert_name": "disk-full", "event": "ghost_start",
+ "session_id": "ghost-disk-full-a2123d98…", "tmux_session": "daemoneye-incidents",
+ "spawn_depth": 0, "trigger": "de-gs-bg-"}
+```
 
-**The stopgap:** one `#[ignore]`d test drives the real HTTP path
-(`start_daemon` → `post_webhook`), which cannot be deterministic because the
-daemon spawns per alert, with §3.3's required justification in a comment.
+That is defect 1 — the milestone's motivating bug — demonstrated rather than
+argued. The review reproduced the mutation check independently: breaking the
+fail-open arm makes the scenario fail with `process_alert returned None — no
+ghost spawned`.
 
-## The hazard 06b must not trip
+**The PE-approved seam shipped with it.** `process_alert` returns
+`Option<JoinHandle<()>>` instead of discarding the spawned ghost's handle;
+production behaviour is unchanged (`server.rs:86` still returns 200 without
+awaiting), but the spawn is now observable. `maybe_analyze_alert`'s signature
+changed to propagate it — the review judged that in-spec.
 
-`start_session_with_config` calls `ensure_incident_session()`
-(`src/tmux/session.rs:287`), which shells out to tmux and **creates a session
-when none exists**. `Command` children inherit the parent environment, so an
-in-process test that does not set `TMUX_TMPDIR` **will create a session on the
-operator's live tmux server** — precisely M6 defect 13, the thing phase 01 was
-built to prevent. The phase pins this and requires the test to assert the
-default server is unchanged, using phase 01's `default_server_unchanged` as the
-worked example.
+## What phase 07 does
 
-## What the scenario proves
+States, in one place, what happens to **every** artifact class under
+`~/.daemoneye/`, and lands the test that fails when a class exists with no stated
+policy. It writes **no rotation code** — phases 08 and 09 implement against the
+table.
 
-The chain `webhook_alert` → `webhook_analysis{ghost_trigger:true}` →
-`ghost_start`, from a payload with **no severity field**. The middle assertion is
-the load-bearing one: it proves phase 05's fail-open actually carried a
-severity-less alert through the gate, which is the defect that motivated the
-whole milestone.
+## The design decision this phase turns on
 
-The phase requires a mutation check on it — break the fail-open arm, confirm the
-scenario fails, revert — because a scenario that passes while the pipeline is
-broken is worth nothing.
+The exit criterion says *"no class is unmanaged by omission"* — **omission** is
+the sin, not unmanagement. So the table records an *intended* lifecycle (rotate /
+delete / archive / keep-forever), its default, **and whether that intent is
+implemented yet, with the owning phase**. `daemon.log`'s policy is "rotate — not
+yet implemented, phase 08". That is a stated policy; recording nothing is not.
+Without this distinction the test would fail on day one for three classes and
+tempt whoever hits it into writing rotation code here, producing exactly the
+fourth independent convention the 07→08→09 ordering exists to prevent.
+
+The phase is the structural sibling of phase 02: an explicit table plus a test
+checked in **both** directions (no class escapes the policy; no entry is
+fiction). It points the executor at `src/config/path_audit.rs` as the pattern,
+which it has now succeeded with twice.
 
 ## Where things stand
 
-- Phases 01–06a `done`. 06a closed `approved_after_1`; its AI stub was
-  mutation-verified twice (breaking the emitted token failed the test; moving the
-  bind back inside the spawned task failed it 8/8), so 06b starts from a
-  trustworthy instrument.
-- `cargo clippy --all-targets --all-features -- -D warnings` clean; 964 lib + 30
-  integration (2 ignored, pre-existing) + 7 isolation, zero failures.
-- Working tree clean. No daemon running; no tmux server running.
+- Phases 01–06b `done`. 964 lib + 30 integration (2 ignored) + 8 isolation
+  (1 ignored, the full-daemon HTTP stopgap), zero failures.
+- `cargo clippy --all-targets --all-features -- -D warnings` clean.
+- Working tree clean. No daemon running; no tmux server running. An orphaned
+  private tmux server left by an early 06b run was terminated; the operator's
+  default server was never touched.
 - Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 07–12
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 08–12
   named, not drafted. Re-verify each phase's "Current state" against the tree
   before dispatching.
 
 ## Carried forward for milestone close
+
 
 
 - **A pre-existing `tokio::time::sleep` at `tests/integration.rs:615`** violates
