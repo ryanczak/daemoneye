@@ -1,7 +1,8 @@
 # Phase 01: Test-Isolation Harness
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress
+**Bugs open:** bug-01-1 (blocker), bug-01-2, bug-01-3, bug-01-4 — see `bugs/`
 **Depends on:** none
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=test, size=m
@@ -200,12 +201,17 @@ Do not give it the throwaway `HOME`; it must observe the real environment.
 - `fn daemon_log(&self) -> String` — read the log, empty string if absent. Used
   in failure messages and by later phases.
 - `impl Drop` — best-effort, ignoring all errors, in this order: `daemoneye stop`,
-  then `tmux kill-server` **on the private server** (via `self.tmux`, never
-  `default_tmux`). `TempDir`'s own drop removes the root.
+  then `kill-server` against the private server's **explicit socket path**
+  (`tmux -S <root>/tmux-<uid>/default kill-server`), guarded on that path
+  existing. `TempDir`'s own drop removes the root.
 
-`Drop` running `kill-server` is safe here precisely because `TMUX_TMPDIR` scopes
-it. Getting this wrong kills the operator's tmux server, so keep the two builders
-visibly distinct at every call site.
+**Corrected 2026-07-30 (bug-01-3).** This bullet originally said to route
+teardown through `self.tmux`, on the reasoning that "`Drop` running `kill-server`
+is safe precisely because `TMUX_TMPDIR` scopes it." That reasoning is circular:
+it makes the suite's most destructive command safe only while the property under
+test holds. Running the task-5 mutation during review destroyed a live session on
+the operator's default server. Teardown must fail closed — naming the socket
+directly makes a broken `apply_env` a no-op instead of a catastrophe.
 
 ### 4. The scenario — `tests/isolation.rs`
 
@@ -222,10 +228,21 @@ Write three tests. Names are yours to pick; these are the behaviours:
   `start_daemon`, the socket and PID file exist under `<root>/.daemoneye/var/run/`,
   and `daemoneye ping` through the harness succeeds.
 - **The daemon's global hooks land on the private server.** After
-  `start_daemon`, `tmux show-hooks -g` on the **private** server mentions
-  `pane-died`. This is the positive half — proving the daemon really did reach
-  a tmux server, so that the negative half below is not passing vacuously
+  `start_daemon`, the private server carries hooks whose **values** invoke
+  `daemoneye notify`. This is the positive half — proving the daemon really did
+  reach a tmux server, so that the negative half below is not passing vacuously
   (a daemon that reached *no* server would also leave the default one clean).
+
+  **Corrected 2026-07-30 (bug-01-1).** This bullet originally said `tmux
+  show-hooks -g` on the private server "mentions `pane-died`". Both halves were
+  wrong: `pane-died` does not appear in the general `show-hooks -g` listing at
+  all, and `show-hooks -g pane-died` echoes the hook's **name** whether or not it
+  is set — so a name-substring assertion holds on any running tmux server and can
+  never fail. Assert on the hook's value (`pane-died[` plus `daemoneye notify`),
+  and check at least one hook that does appear in the plain listing
+  (`client-attached` / `client-detached` both do). Assert while the daemon is
+  live: it unsets all four global hooks on shutdown
+  (`src/daemon/mod.rs:942`–`:960`).
 - **The default tmux server is unchanged.** Snapshot the default server
   **before** and **after** the full scenario and assert the two snapshots are
   byte-equal. Snapshot = the combined stdout, stderr, and exit status of
@@ -256,6 +273,24 @@ the suite is green, do this and record it in the completion Update Log:
 Run this mutation with a tmux server live on the default server (create one for
 the purpose — see End-to-end verification), or the mutated harness will simply
 start its own default-socket server and the failure will be less informative.
+
+**Two corrections from the 2026-07-30 review.** Fix bug-01-3 and bug-01-4 *before*
+running this mutation, or it will not measure what it is supposed to:
+
+- **Teardown must be pinned to an explicit socket path first (bug-01-3).**
+  Otherwise this mutation points the harness's `kill-server` at the operator's
+  default server. That is what happened at review.
+- **Session names must be distinct first (bug-01-4).** With all three tests
+  requesting `de-test`, the mutation makes them share one server and they collide
+  with `duplicate session: de-test` inside `start_daemon` — panicking before any
+  assertion runs. The recorded proof mistook that startup panic for the snapshot
+  assertion firing.
+
+Report the mutation **per test**, naming the assertion each failure lands on. Some
+tests are expected to survive it: `daemon_boots_in_throwaway_root` observes only
+`HOME`, so it passes under a `TMUX_TMPDIR` mutation and should be reported as
+passing, not treated as a defect. Do not describe a mechanism you did not observe
+in the output.
 
 If the mutation does **not** fail the suite, do not paper over it: the tests are
 not observing what this phase claims. File that in the Update Log as a blocker
@@ -479,3 +514,37 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2b7b2f86456a2605ac10bdc7d2fafb7eb967fc9f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** bounced
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Bugs filed:** bug-01-1 (blocker), bug-01-2 (major), bug-01-3 (major), bug-01-4 (minor)
+- **Scope deviations:** none — the diff is confined to `tests/`, no `src/` changes,
+  no `-L` plumbing. Scope discipline was good.
+- **Gates:** all four re-run independently and green. 947 lib + 27 integration
+  (2 ignored, pre-existing) + 3 isolation. Clippy forced to re-check, exits zero.
+- **Calibration:** two of the four bugs are **spec bugs, charged to the architect**.
+  The phase doc named `pane-died` + `show-hooks -g` for an assertion that cannot
+  fail, and specified a `Drop` teardown whose safety argument was circular. Both
+  are instances of the fold the phase doc itself cited at the executor
+  (`WORKFLOW.md` § "Confirm the property is observable before pinning it") — the
+  architect quoted the rule and then broke it in the same document. Third
+  occurrence of an architect-authored unobservable property; the fold already
+  exists, so this is evidence it needs a pre-dispatch mechanical check
+  (`docs/dev/TODO.md` § 1) rather than a new fold.
+
+**What was verified, not taken on report:**
+
+- `tmux show-hooks -g pane-died` probed on a bare server with no daemon: prints
+  `pane-died`, exit 0. The committed assertion cannot fail. → bug-01-1.
+- Task-5 mutation re-run independently: 2 of 3 tests fail, both inside
+  `start_daemon` on `duplicate session: de-test`, never reaching the snapshot
+  assertion. The recorded proof's mechanism did not occur. → bug-01-2.
+- `default_server_unchanged` re-tested **alone** under the same mutation: it does
+  discriminate, failing on the real comparison with `de-test` and daemoneye's
+  `client-attached[0]` / `client-detached[0]` hooks visible on the default server.
+  The test is sound; only the recorded evidence was wrong.
+- The mutation destroyed a live session on the operator's default server
+  (`de-op-probe`, 57 hooks → no server running). → bug-01-3.
