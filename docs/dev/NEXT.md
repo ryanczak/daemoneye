@@ -1,65 +1,88 @@
 # NEXT
 
-**Active phase: 05 — severity-gate-honesty.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-05-severity-gate-honesty.md`
+**Active phase: 06a — e2e-harness-ai-stub.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-06a-e2e-harness-ai-stub.md`
 Status: `todo` — drafted 2026-07-30, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-05`.
+Dispatch with `/rexymcp:dispatch phase-06a`.
 
-## What phase 05 does
+## What phase 06a does
 
-Stops the webhook path discarding alerts in silence. An alert with no severity
-label currently ranks `0`, falls under the shipped `warning` threshold, and is
-dropped with **no log line and no event** — while everything before the gate
-still runs, so `daemon.log` shows `Webhook alert: '…' [firing]` and the operator
-concludes it was processed. Phase 05 makes unrankable a distinct outcome that
-fails open, and makes every discard emit a `webhook_discarded` event.
+Gives the phase-01 harness the two things the webhook→ghost scenario needs and
+does not have: a **canned-AI stub server** the daemon can be pointed at, and
+**webhook plumbing** (a collision-free port plus a POST helper). It ships no
+scenario — it ships the instrument and proves the instrument works. 06b writes
+the scenario.
 
-## What drafting established
+## The milestone's open design question for 06 is now closed
 
-**All four discard points were located, not assumed.** Bearer-token rejection
-(`server.rs:57`) and unparseable payloads (`:63`) already log at WARN but emit no
-event; dedup (`process.rs:50`) logs only at DEBUG; the severity gate
-(`process.rs:139`) has **no `else` at all**. The exit criterion is "no alert is
-dropped silently", so all four are in scope for the event.
+The README said 06 was genuinely design-discovery: *what does a passing scenario
+assert on when the ghost's own behaviour depends on a live AI call?*
 
-**One deliberate narrowing, flagged for confirmation at milestone close.** The
-criterion says every discarding gate logs at WARN. That is right for three of
-them, but dedup suppression is *intended* behaviour and WARN-per-duplicate during
-a flapping-alert storm would flood a log that stays unbounded until phase 08. So
-all four emit the event; three log at WARN; dedup keeps `log::debug!`. The event
-is the durable trace the criterion is actually protecting. Recorded in the phase
-doc — worth a yes/no at close.
+Answered at drafting, from source: `maybe_analyze_alert`
+(`webhook/process.rs:349-354`) builds its client from
+`model_entry.effective_base_url()`, and `ModelConfig.base_url` is an
+`Option<String>` that takes precedence over the provider default
+(`config/types.rs:586`, `:661`). **Pointing the test config at a local stub makes
+the whole pipeline deterministic and offline** — no Rust-level mocking, no
+network. The watchdog call is `use_tools=false` and its result is consumed as
+plain `AiEvent::Token`s, so the stub only has to stream tokens; it never needs to
+support tool calls.
 
-**An existing unit test asserts the bug.** `severity_rank_ordering`
-(`process.rs:501`) asserts `severity_rank("info") > severity_rank("unknown")` —
-exactly the "unrankable is the lowest severity" belief being removed. Rewriting
-it is required and explicitly not scope creep.
+Two further constraints found while drafting:
 
-**The test pattern already exists.** `tests/integration.rs:679-746` drives the
-real path — throwaway `HOME`, hand-built `WebhookState`, current-thread runtime,
-`block_on(process_alert(...))`, then reads the event segment. The phase points at
-it rather than leaving the executor to invent one.
+- **The webhook listener binds eagerly and a bind failure is fatal**
+  (`CLAUDE.md`). An isolated daemon asking for the default 9393 will fail to
+  start whenever the operator's own daemon holds it, so every `IsolatedEnv` needs
+  its own free port.
+- **No new dependency is required.** `axum` and `tokio` are in `[dependencies]`,
+  which Cargo makes available to test targets. Adding a dependency would be a
+  blocker; the phase says so explicitly.
+
+## Why 06 was split
+
+The scenario needs a stub server, free-port allocation, config plumbing, a
+runbook fixture *and* the assertion — more than one executor session
+(`WORKFLOW.md` § Phases). 06a is the infrastructure; 06b is the assertion. The
+split also means that if 06b's scenario fails, the instrument is already proven,
+so the failure localises.
+
+## What to look at before dispatching
+
+- **06a's key acceptance criterion is that the stub is proven without the
+  daemon**: a test drives `make_client(...)` directly — the same four arguments
+  `maybe_analyze_alert` passes — and asserts the concatenated token text equals
+  the canned string. Without that, a 06b failure is ambiguous between a broken
+  stub and a broken scenario.
+- **`maybe_analyze_alert` has a gate 06b will need to satisfy**: it returns early
+  when no runbook name-matches the alert (`find_runbook_for_alert`, debug-log
+  only). 06b's fixture must supply a matching runbook with ghosts enabled.
 
 ## Where things stand
 
-- Phases 01–04 `done`. 04 closed `approved_after_2` after two bounces and four
-  bugs — all now `verified`.
-- **The E2E-transcript fold is working.** `STANDARDS.md` §1 gained a
-  mechanical-capture box and `WORKFLOW.md` § "Review and Bug-Report Cycle" gained
-  step 4 (re-run and diff). bug-04-4 was raised *after* that fold and caught *by*
-  it: the review observed that a real `diff` prints nothing on identical input,
-  so `"(empty - no changes)"` could only have been hand-typed. Worth recording in
-  the retrospective as a validated fold rather than a pending one.
-- `cargo clippy --all-targets --all-features -- -D warnings` clean; 964 lib + 27
+- Phases 01–05 `done`. 05 closed `approved_after_1`; its code was
+  mutation-verified at review (breaking the fail-open arm failed exactly the two
+  tests that should fail).
+- `cargo clippy --all-targets --all-features -- -D warnings` clean; 964 lib + 30
   integration (2 ignored, pre-existing) + 3 isolation, zero failures.
 - Working tree clean. No daemon running; no tmux server running.
 - Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 06–12
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 06b–12
   named, not drafted. Re-verify each phase's "Current state" against the tree
   before dispatching.
 
 ## Carried forward for milestone close
+
+- **A second E2E-transcript fold is worth considering.** The first fold
+  (`STANDARDS.md` §1 capture box + `WORKFLOW.md` step 4) is working — it caught
+  bug-04-4, where a real `diff` prints nothing on identical input so
+  `"(empty - no changes)"` could only have been hand-typed. But the requirement
+  still failed on phase 05, and the likely structural cause is that the
+  **server-authored `(complete)` entry** carries a "Command output tails" block
+  that looks like captured evidence while being the standard gate capture every
+  phase gets. Naming that explicitly in the refinement unblocked the executor
+  immediately. Candidate fold: the E2E block must be a distinct executor-authored
+  entry, and the server-authored gate tails do not satisfy it.
 
 - **`.gitignore` has no `.daemoneye/` entry.** A full seeded 168K runtime tree
   was found untracked in the repo root during phase 04 and had to be moved out
