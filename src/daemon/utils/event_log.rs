@@ -541,27 +541,21 @@ mod tests {
     }
 
     #[test]
-    fn log_event_prefix_order_is_ts_event_pid() {
+    fn log_event_always_stamps_ts_event_and_pid() {
         with_test_home(|| {
-            log_event("order_test", serde_json::json!({"z_custom": "val"}));
+            log_event("presence_test", serde_json::json!({"custom": "val"}));
             let seg = crate::config::current_event_segment_path();
             let content = std::fs::read_to_string(&seg).unwrap();
             let line = content.lines().next().unwrap();
-            // Verify all three stamp keys appear before any caller-supplied key.
-            // serde_json::Map (without preserve_order) serializes in sorted key
-            // order, so the actual byte order is "event" < "pid" < "ts".
-            let event_pos = line.find("\"event\"").expect("missing event key");
-            let pid_pos = line.find("\"pid\"").expect("missing pid key");
-            let ts_pos = line.find("\"ts\"").expect("missing ts key");
-            let custom_pos = line.find("\"z_custom\"").expect("missing custom key");
-            assert!(
-                event_pos < pid_pos && pid_pos < ts_pos && ts_pos < custom_pos,
-                "expected stamp keys before caller keys, got event@{} pid@{} ts@{} custom@{}",
-                event_pos,
-                pid_pos,
-                ts_pos,
-                custom_pos,
-            );
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            // Presence, not position: serde_json::Map is a BTreeMap here
+            // (no `preserve_order`), so serialized key order is alphabetical
+            // and insertion order is not observable in the output.
+            assert!(record.get("ts").is_some(), "ts missing");
+            assert!(record.get("event").is_some(), "event missing");
+            assert!(record.get("pid").is_some(), "pid missing");
+            assert_eq!(record["event"], "presence_test");
+            assert_eq!(record["custom"], "val");
         });
     }
 

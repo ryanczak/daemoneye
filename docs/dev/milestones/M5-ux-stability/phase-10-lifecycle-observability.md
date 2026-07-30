@@ -1,7 +1,7 @@
 # Phase 10: Lifecycle Observability — Attribute Every Event to a Process
 
 **Milestone:** M5 — UX & Stability
-**Status:** in-progress (bug-10-1 open)
+**Status:** in-progress (bug-10-1 re-dispatch)
 **Depends on:** phase-08 (instance lock) — the startup identity line reports the
 lock outcome
 **Estimated diff:** ~130 lines
@@ -433,6 +433,13 @@ so `daemoneye daemon` should start cleanly. State what you leave behind.
 Implementing all 5 tasks: PID stamp on every event record, removing redundant
 explicit pid from daemon_start, surfacing logger-init failure, startup identity
 line, and documenting the invariant in CLAUDE.md.
+
+### Update — 2026-07-30 11:36 (re-dispatch started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Re-dispatch for bug-10-1: correcting the false "leading prefix" claim in
+CLAUDE.md and replacing the vacuous ordering test with a presence test.
 
 ### Update — ts=1785388642172 (complete, server-authored)
 
