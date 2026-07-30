@@ -1,7 +1,7 @@
 # Phase 07: Artifact Lifecycle Policy
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=design, size=m
@@ -215,3 +215,13 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 22:48 (started)
+
+**Executor:** local model
+
+Created `src/config/lifecycle.rs` with the `POLICY_TABLE` (15 entries covering all artifact classes from the survey), `LifecycleIntent` enum (Rotate, Sweep, ClearAtStartup, KeepForever), `ImplementationStatus` enum (Implemented, Pending), and `LifecycleEntry` struct. Declared the module from `src/config/mod.rs`.
+
+Three tests: Direction A (every existing directory has a policy entry), Direction B (every policy entry corresponds to a real path), and the mutation check (rogue directory triggers Direction A failure naming it).
+
+Two known asymmetries recorded in the table: `var/log/sessions` default retention is 0 (keep forever) vs `var/log/events` default 90; `agents/*/mailbox` has no sweep and grows one file per ghost exit forever.
