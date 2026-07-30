@@ -1,10 +1,96 @@
 # NEXT
 
-**Active phase: M5 phase-10 — lifecycle-observability**
-(`todo`, drafted 2026-07-26, **pre-dispatch refresh applied 2026-07-29**).
-Doc: `docs/dev/milestones/M5-ux-stability/phase-10-lifecycle-observability.md`.
+**Active phase: M5 phase-11 — fork-readiness-handshake**
+(`todo`, drafted 2026-07-26, **pre-dispatch refresh applied 2026-07-30**).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-11-fork-readiness-handshake.md`.
 
-Dispatch with `/rexymcp:dispatch phase-10-lifecycle-observability`.
+Dispatch with `/rexymcp:dispatch phase-11-fork-readiness-handshake`.
+
+## This is the last drafted phase in M5
+
+11 closes the second half of the eighth exit criterion — `daemoneye daemon` exiting
+non-zero with the real reason when the forked child fails. 09 delivered the
+`ping`/`status` half; the parent still exits 0 after `fork()` regardless of what the
+child does, so every failure phases 08 and 09 added currently reaches the user as
+`started (PID n)` and a line in a log they have no reason to open.
+
+**After 11 the milestone is at its boundary**, where the two folds below want your
+sign-off.
+
+## The refresh caught a gate-failing trap, and I compile-verified the new module
+
+**⚠ The spec told the executor to import `AsRawFd`, which nothing in the module
+uses.** Under `clippy -D warnings` an unused import is an **error**, not a warning:
+
+```
+error: unused import: `AsRawFd`
+error: could not compile `daemoneye` (lib) due to 1 previous error
+```
+
+Following the doc literally would have failed the lint gate. Corrected to
+`use std::os::fd::{FromRawFd, OwnedFd};`, with the error text quoted inline so the
+reason is obvious.
+
+Because this phase adds a **new module with an `unsafe` block and a novel fd
+protocol**, I wrote it out as specified and built it — `cargo build` and
+`cargo clippy --all-targets --all-features -- -D warnings` both clean. That also
+confirmed `std::fs::File: From<OwnedFd>` works and that the
+`grep -c "unsafe" src/daemon/ready.rs` → **2** criterion is satisfiable. Same
+verification I did for 08's `nix` `Flock` sketch, and it earned its keep the same way.
+
+## A second unverifiable criterion, same species as 10's
+
+It said `grep -n "libc::close" …` "shows **no new** occurrence" — but that grep
+*will* match the pre-existing `libc::close(devnull)` at `main.rs:291`, so no output
+distinguishes pass from fail. Now pinned as counts: `main.rs` **1 unchanged**,
+`ready.rs` **0**.
+
+That is the **seventh** criterion defect of mine in M5 and the **third** caught
+pre-dispatch. Three of the seven were this exact shape — a negative phrased over a
+grep that legitimately matches something.
+
+## `mod.rs` has moved +118 since this was drafted
+
+Task 3's anchor, `log::info!("Daemon listening on …")`, is at **`:878`** not `:760`;
+socket bind `:868`, API-key bail `:456`. `src/main.rs` moved only +2 — fork block
+`256-296`, `async_main` `:304`, its `run_daemon` call `:316`.
+
+## Two design hazards the spec now guards explicitly
+
+Both are load-bearing and both look like things a tidy-minded implementer would
+"simplify":
+
+- **`drop(write_end)` in the parent before reading.** Keep a copy and the pipe never
+  reaches EOF, so a child that dies silently hangs the parent **forever**. There is
+  deliberately no timeout.
+- **`read_line`, not `read_to_string`.** On success the child never closes its write
+  end, so reading to EOF would block for the daemon's whole lifetime. The test
+  `await_report_reads_ready_then_returns` keeps the write end alive precisely so a
+  `read_to_string` mutation **hangs** rather than fails — the hang is the signal,
+  which is unusual enough that the spec says so in a comment.
+
+## Counting discipline
+
+Every Pre-flight and criteria value run against the tree at refresh time
+(`ready.rs` absent, `libc::fork()` 1, `libc::close` 1, `Daemon listening on` 1,
+`InstanceLock::acquire` 1, `webhook::bind` 1, `libc` at `Cargo.toml:21`, 940/0/27,
+and the four 0→1 criteria confirmed 0 on a clean tree). Baseline **940**, target
+**947** (+7), with the delta phrasing and anti-loop guard.
+
+## Calibration — two folds want deciding at the boundary
+
+1. **The mechanical pre-dispatch criteria-runner.** Seven defects, three caught
+   before dispatch. No longer a candidate — it has prevented failures, not just
+   explained them.
+2. **Architect-authored vacuous coverage**, at three occurrences and so at the
+   fold-immediately bar: the fixture-default trap behind the existing coverage
+   fold, 09's bug-09-1 (a test naming a branch it could not reach), and 10's
+   bug-10-1 (a spec pinning a property the serializer discards). The sharpened
+   rule: **when a spec pins an observable property, confirm the property is
+   observable**, and when it names a branch, describe a sequence that *reaches* it.
+
+Also still open at one occurrence: the warn-vs-error cascade distinction from 06r,
+and apply-verify-revert (long-pending PE sign-off, and arguably subsumed by fold 1).
 
 ## 09 landed `approved_after_1`; 10 and 11 are the last two phases
 
