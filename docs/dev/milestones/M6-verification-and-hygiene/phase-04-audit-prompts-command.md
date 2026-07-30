@@ -229,3 +229,11 @@ at all — phase 03 emptied `PENDING_FIX`, and the `Legacy` entry has always bee
 `var/log/events.jsonl`. So `~/.daemoneye/events.jsonl` normalises to
 `events.jsonl` and classifies as `Unknown`, not `Superseded`, and the assertion
 fails. Verified directly against the `INVENTORY` table.
+
+### Update — 2026-07-30 18:05 (started)
+
+**Executor:** Claude (Sonnet 4.5, resume)
+**Action:** Resumed phase after NoProgressStall. Fixed two test assertions in
+path_audit.rs (wrong literal for superseded test), then implemented Tasks 2 and
+3: created audit_prompts.rs, wired up Commands::AuditPrompts in main.rs, and
+exported path_audit items from config::mod.rs.
