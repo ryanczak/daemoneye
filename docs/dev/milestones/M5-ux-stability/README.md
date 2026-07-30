@@ -82,7 +82,7 @@ take the socket.
       bounded in `src/tmux/` via `bounded_output` (06s–06v), **26** via
       `off_runtime` (06a–06r), **9** direct (06w), **1** permanent `.exec()`
       residue.
-- [ ] Every stall path the daemon still has self-reports into `daemon.log` rather
+- [x] Every stall path the daemon still has self-reports into `daemon.log` rather
       than presenting as a silent freeze. Concretely: a wedged tmux server logs
       `tmux server may be wedged` at its 5 s bound; a re-entrant `SessionStore`
       acquisition panics on an always-on assertion instead of deadlocking; and a
@@ -103,6 +103,15 @@ take the socket.
       froze the user's turn for five minutes with no diagnostic. That is what
       phase **07** now fixes, and this criterion is worded around the stalls that
       actually exist.
+      **Met 2026-07-29 by 07.** `read_timeout(STREAM_IDLE_TIMEOUT)` (120 s) on the
+      shared client bounds every read for all three backends and all seven
+      `.chat(…)` call sites; `stream_chunk` translates the timeout into
+      `AI stream stalled: no data for 120s — provider accepted the connection then
+      went silent (mechanism C)` and logs it at ERROR. Mutation-proved: without the
+      `is_timeout()` branch the reported message is reqwest's own
+      `error decoding response body`, which misdirects at parsing. All three
+      mechanisms now self-report — A panics on an always-on assertion, B logs
+      `tmux server may be wedged` at 5 s, C logs the stall at 120 s.
 - [x] Only one daemon can run per `$HOME`, enforced by an exclusive `flock`
       acquired before any startup side effect. A second launch cannot unlink,
       overwrite, or delete anything belonging to a running daemon — including its
@@ -182,7 +191,7 @@ take the socket.
 | 06u | bounded-output-pane-1 ([phase-06u-bounded-output-pane-1.md](phase-06u-bounded-output-pane-1.md)) — **stage A slice 3a**: `src/tmux/pane.rs` first **15** sites (top → `select_pane`). Carries the file's **two fully-qualified `std::process::Command::new` sites**, where a naive replace is `error[E0433]` | done (approved_first_try) |
 | 06v | bounded-output-pane-2 ([phase-06v-bounded-output-pane-2.md](phase-06v-bounded-output-pane-2.md)) — **stage A slice 3b**: `src/tmux/pane.rs` from `read_pane_exit_status` to end (**14** sites). Finishes `src/tmux/` — 44 bounded spawns, directory residue **1** (`wait_for`, `tokio::process`, already bounded). All four surrounding shapes are pure substitutions. **Stage A complete: 44 bounded spawns** | done (approved_first_try) |
 | 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target. **Closed the fifth exit criterion** | done (approved_first_try) |
-| 07 | stream-idle-timeout ([phase-07-stream-idle-timeout.md](phase-07-stream-idle-timeout.md)) — **rescoped 2026-07-29 (PE decision) from "stall instrumentation" to mechanism C**: a `read_timeout` on the shared AI client + a `stream_chunk` helper that translates an idle-read timeout into a logged, diagnosable stall. Raw reqwest calls it `error decoding response body`, which misdirects. 1 hermetic test, mutation-proved | review      |
+| 07 | stream-idle-timeout ([phase-07-stream-idle-timeout.md](phase-07-stream-idle-timeout.md)) — **rescoped 2026-07-29 (PE decision) from "stall instrumentation" to mechanism C**: a `read_timeout` on the shared AI client + a `stream_chunk` helper that translates an idle-read timeout into a logged, diagnosable stall. Raw reqwest calls it `error decoding response body`, which misdirects. 1 hermetic test, mutation-proved. Bounced once on an **architect** arithmetic error (criterion demanded 929 tests; true count 928) — 110 turns `NoProgressStall`, then 30 clean | done (approved_after_1) |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md)) — `InstanceLock`: exclusive `flock` on `var/run/daemoneye.pid`, acquired at `mod.rs:372` **before every startup side effect**; Ping-based guard deleted; identity-checked (dev/inode) socket teardown. 6 new tests, both core properties mutation-proved | done (approved_first_try) |
 | 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) | todo |
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |

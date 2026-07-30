@@ -1,7 +1,7 @@
 # Phase 07: Bound the AI Stream — Mechanism C's Idle Read
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** none (independent of the lock, tmux, and instance sequences)
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -569,3 +569,90 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** be88e3fb3f0155ae91d28b16949c7d3087910659
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (no bug doc — the failure was a spec defect, escalated and
+  refined; `NoProgressStall` at 60 consecutive read-only turns)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (110 turns hard_fail, then **30** turns clean)
+- **Scope deviations:** none
+- **Calibration:** the bounce was **entirely my arithmetic** — fourth defective
+  criterion in M5. See "The bounce was mine" below.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `src/ai/mod.rs` — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at **928** lib (927 + 1) + **27**
+integration).
+
+### Every acceptance criterion verified
+
+`read_timeout` **2** in `src/ai/mod.rs` (one in `http()`, one in the test's own
+client); `STREAM_IDLE_TIMEOUT` **4**; `from_secs(300)` **1 — unchanged**, so total
+and per-read bounds coexist as intended; bare `let bytes = chunk?;` **0** across
+the backends (3 before) with `stream_chunk(` **1** in each of `anthropic.rs`,
+`openai.rs`, `gemini.rs`; **0** added `tokio::time::timeout`, so the fix is at the
+client and not a wrapper; no `Cargo` change, and in particular no `bytes`
+dependency — the generic signature held; exactly **four** `src/` files; zero
+`#[allow]`/`unsafe`/`TODO`/`dbg!`; zero added `unwrap`/`expect`/`panic!` in the
+backends. (`http()`'s pre-existing `.unwrap()` with its `INVARIANT` comment is
+untouched.)
+
+**The diff is byte-for-byte what I applied, verified and reverted while drafting**
+— including the fmt-driven reflow of the test's `assert!(super::stream_chunk(first)
+.is_ok(), …)` onto three lines.
+
+### Coverage is real — mutation re-run independently
+
+Per STANDARDS § "Coverage claims are inadmissible without mutation proof", and
+because a claimed mutation check is not one, I re-ran it myself. Replacing
+`if e.is_timeout() {` with `if false {`:
+
+```
+test ai::stream_idle_tests::idle_stream_times_out_and_reports_a_stall ... FAILED
+idle timeout must be reported as a stall, got: AI stream read failed: error decoding response body
+```
+
+Restored → passes in 0.32 s. So the test guards the **diagnostic**, not merely the
+timeout — and the failure message is itself the argument for the helper's
+existence: `error decoding response body` is what reqwest says about a stalled
+stream, which points at parsing rather than at a silent provider.
+
+### The bounce was mine, and it is a pattern
+
+The first run implemented this phase **byte-for-byte correctly** and passed all
+four gates, then spent 60 read-only turns re-counting tests because the criterion
+demanded **929** and the true number is **928**. I had measured 928 with the change
+already applied, recorded it as the *pre-change* baseline, and derived 929 from it.
+Green was impossible. I even wrote `921 + 6` in a note and did not notice it equals
+927.
+
+Two distinct defects, both mine:
+
+1. **A derived count.** "Run every count criterion; never derive it" exists for
+   exactly this; I ran the command but attributed its output to the wrong tree
+   state, then did arithmetic on top.
+2. **A criterion phrased over an output the executor was reading with a different
+   command.** It used `cargo test --lib`, which prints one `test result` line where
+   the criterion spoke of three.
+
+The refinement fixed both numbers, restated the count check as **baseline + 1** so
+an arithmetic slip cannot make it unreachable again, named the `--lib` trap, and
+added an explicit "a number that disagrees with this doc means the doc is wrong —
+report a blocker, do not re-run". **Result: 110 turns → 30.**
+
+**This is the third `NoProgressStall` of this species in M5 and my fourth defective
+criterion** (06n contradiction, 06s prose-match, 06w unsatisfiable-as-written, 07
+derived-and-impossible). Every one was written or derived *outside* the
+apply-verify-revert pass. The mechanical pre-dispatch criteria-runner carried as a
+candidate fold since 06q would have caught all four; recommend promoting it at
+milestone close rather than holding it further.
+
+### Note on the governor
+
+The identical-call detector (threshold 6) did **not** fire despite ~20 byte-identical
+invocations of `cargo test --lib 2>&1 | grep "^test " | grep -v "result" | tail -3`,
+because a few near-identical variants early on broke the exact-match streak. The
+read-only stall detector caught it at 60. That is the near-identical-call gap
+`WORKFLOW.md` already records as a runtime feature request; this run is a further
+data point for it, not a new finding.
