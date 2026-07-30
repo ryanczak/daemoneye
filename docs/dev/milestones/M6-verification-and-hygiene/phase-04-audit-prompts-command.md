@@ -206,6 +206,118 @@ No new dependencies. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and the working tree is clean. That is EXPECTED here
+and is NOT evidence this phase is done.** The command you built works — the
+reviewer ran all three end-to-end scenarios independently and confirmed every
+number. Three bugs were filed against the *deliverable*, not the behaviour.
+
+**Already approved — do NOT redo, re-derive, or "improve" any of this:**
+
+- `classify_text` / `PathClassification` in `path_audit.rs`, and the five tests
+  around them. Correct as written.
+- `src/cli/commands/audit_prompts.rs`'s logic — `collect_assets`,
+  `print_report`, `run_audit_prompts`. The reviewer mutation-checked the no-write
+  test (injected a stray `fs::write`, the test failed as it should).
+- The `Commands::AuditPrompts` variant and its dispatch in `main.rs`.
+- `process::exit(1)` in `run_audit_prompts` — judged acceptable for a binary
+  report command.
+
+**There are exactly three edits left.**
+
+---
+
+**Bug-04-2 (major) — test-isolation race. One line moves.**
+
+In `audit_prompts_exits_zero_on_clean_tree`, `drop(_lock)` currently sits at
+line ~219, **before** `collect_assets()` at line ~224. That releases the
+`test_home_guard()` HOME lock while the test still depends on `HOME`, so a
+concurrent test can repoint `HOME` underneath this one. The other three tests in
+the file already do it right: they hold the guard through all HOME-dependent work
+and drop at the end.
+
+Fix: delete the early `drop(_lock);` and drop at the end of the test, matching
+its siblings. Nothing else in the test changes.
+
+---
+
+**Bug-04-3 (minor) — unauthorized glob re-export. Two lines.**
+
+`src/config/mod.rs:11` gained `pub use path_audit::*;`. Phase 04 never authorized
+touching that file, and phase 02 explicitly decided against this glob — its
+approved review verdict records the avoidance. It is also unnecessary:
+`pub mod path_audit;` already exists on line 6.
+
+Fix, verified by the architect to compile clean at zero warnings:
+
+```rust
+// src/config/mod.rs — delete this line entirely:
+pub use path_audit::*;
+```
+
+```rust
+// src/cli/commands/audit_prompts.rs — replace the single config import:
+use crate::config::path_audit::{PathClassification, classify_text};
+use crate::config::{config_dir, prompts_dir};
+```
+
+---
+
+**Bug-04-1 (blocker) — the End-to-end transcripts are missing.**
+
+The Update Log has two "(started)" stubs and a completion entry that *asserts*
+the E2E results in prose. The phase doc requires three pasted transcripts.
+
+**The contract changed while this phase was bounced — re-read
+`docs/dev/STANDARDS.md` §1.** There is now an explicit Definition-of-Done box:
+end-to-end transcripts must be **captured mechanically** — redirect each
+command's output to a file and paste that file's contents. A transcript that is
+retyped, paraphrased, summarised into prose, or assembled from more than one run
+fails that box **even when every claim in it is true**. `WORKFLOW.md` § "A pasted
+transcript is a claim, not evidence" explains why, and the reviewer will now
+re-run each command and diff it against what you pasted.
+
+So, literally:
+
+```
+daemoneye audit-prompts > /tmp/e2e-clean.txt 2>&1; echo "exit=$?" >> /tmp/e2e-clean.txt
+```
+
+then paste the contents of `/tmp/e2e-clean.txt`. Same pattern for all three:
+
+1. **Clean tree** — a throwaway `HOME` seeded via `daemoneye setup`, then
+   `daemoneye audit-prompts`, capturing output **and** the exit code. Expect 0.
+2. **Superseded injection** — append a backticked `` `var/log/events.jsonl` `` to
+   the installed prompt, re-run, capture output and exit code. Expect non-zero
+   and one superseded finding.
+3. **No-write proof** — a recursive listing with mtimes of the throwaway
+   `~/.daemoneye/` taken immediately before and immediately after the
+   `audit-prompts` invocation, plus the diff between them (expected: empty).
+   Take the snapshots around the *audit run only*, not around the injection edit
+   in step 2 — otherwise your own edit shows up as a write.
+
+Do not reconstruct any of this by hand, and do not copy lines out of this phase
+doc, the bug reports, or a previous Update Log entry.
+
+---
+
+**Finish condition.**
+
+- `cargo test` must report **964** lib tests — unchanged. All three fixes are a
+  moved line, a deleted line, and an import; none of them adds or removes a test.
+  A count of 965 means scope creep; 963 means you deleted one.
+- `git diff --name-only` should list `src/cli/commands/audit_prompts.rs`,
+  `src/config/mod.rs`, and this phase doc. Nothing else.
+- All four gates green.
+
+**Still out of scope:** everything in the Out of scope section, unchanged. In
+particular do not touch `setup.rs`, the overwrite functions, `pane_prefs.rs`, the
+stale `daemon.log` help strings in `main.rs`, or `INVENTORY` contents.
+
+
 ### Update — 2026-07-30 17:40 (started)
 
 **Executor:** Claude (Sonnet 4.5)
@@ -420,3 +532,14 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   pattern (now 3/3 occurrences on this milestone) is a repeat and may
   warrant a WORKFLOW.md fold once phase 04 lands; left for the human/architect
   to decide, not decided unilaterally here.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce — the command's behaviour was independently
+verified correct, so a plain re-dispatch would find nothing to do and report
+complete with an empty diff. The refinement freezes the approved work, names the
+three remaining edits, supplies both code fixes as architect-verified worked
+examples, and points at the newly folded STANDARDS §1 box that now governs the
+transcript requirement bug-04-1 is about.
