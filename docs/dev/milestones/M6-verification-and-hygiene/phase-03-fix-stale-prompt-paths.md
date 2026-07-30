@@ -1,7 +1,7 @@
 # Phase 03: Fix Stale Prompt Paths
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-03-2)
 **Depends on:** phase-02 (done)
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -644,3 +644,23 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 5a933301151a76500682330ebebbafc730c2aa11
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** rejected (round 2 — bounced again, see bug-03-2)
+- **Bounces:** 2 (bugs: bug-03-1 — major, "Update Log omits the three required real-run quotes" — remains open; bug-03-2 — major, "grep transcript contains a fabricated line")
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — this run touched exactly one file (the phase doc, +99 -0), as required by the refined re-dispatch.
+- **Calibration:** none filed this round — one occurrence of a partially-fabricated transcript surviving a targeted refinement; not yet a pattern (see WORKFLOW.md § "Coverage claims are inadmissible without mutation proof" fold criteria — two occurrences before folding).
+
+**Independent re-run findings:**
+
+1. **Gate re-runs (four separate invocations):** `cargo fmt --all -- --check` exit 0; `cargo build` exit 0, zero warnings; `cargo clippy --all-targets --all-features -- -D warnings` exit 0, zero warnings; `cargo test` — lib 955 passed (0 failed), integration 27 passed/2 ignored, isolation 3 passed. All four green, matching the executor's claim and the required 955-not-956 count.
+2. **Transcript 1 (grep) — MISMATCH.** Independent re-run of `grep -rn '~/\.daemoneye/' assets/` produces the same 25-line set as the pasted transcript with one exception: the pasted line for `assets/memory/knowledge/runbook-ghost-template.md:43` reads `- \`auto_approve_scripts\`: (list) script names in \`~/.daemoneye/scripts/\` pre-approved for **sudo** execution; non-sudo commands run freely without listing them` — this is not what that file's line 43 contains (confirmed both by direct file read and by the real grep, which returns `- \`auto_approve_scripts\`: Script names in \`~/.daemoneye/scripts/\` the ghost may run with sudo. Always required for scripts that need elevated privileges. Each script must have a NOPASSWD sudoers rule installed via \`daemoneye install-sudoers <script>\`.`). The pasted text is a verbatim duplicate of the real `assets/memory/knowledge/runbook-format.md:43` line with the path column swapped. Filed as bug-03-2.
+3. **Transcript 2 (assets-clean test) — MATCH.** `cargo test --lib config::path_audit` independently reproduced: 8 passed, 947 filtered out, identical test names including `all_assets_audit_clean_with_empty_quarantine ... ok`, matching the pasted block exactly.
+4. **Transcript 3 (mutation check) — MATCH.** Independently mutated `normalise()` to `return None;` unconditionally, ran `cargo test --lib config::path_audit`: same 4 tests failed (`extractor_detects_historical_stale_literals`, `legacy_entry_is_reported`, `normalisation_collapses_placeholder_segments`, `normalisation_strips_prefix_and_trailing_slash`) with byte-identical assertion messages, including `expected 7 findings from historical corpus, got 0`. Reverted with `git checkout -- src/config/path_audit.rs`; re-ran, 8/8 green; `git status --porcelain` empty. Matches the pasted transcript exactly.
+5. **Post-mutation tree state:** confirmed pristine — `git status --porcelain` empty repo-wide, `cargo clippy --all-targets --all-features -- -D warnings` exits 0 after the revert (no stale unused-variable diagnostic, unlike round 1's review).
+6. **Scope:** `git diff --name-only` for this run's commit (`5a93330`) lists exactly one path: the phase doc. No out-of-scope changes.
+7. **bug-03-1 closure:** left open. Its verification checkbox for "the Update Log contains the full, unedited output of `grep -rn '~/\.daemoneye/' assets/`" is not met — one line of that output is not what the command actually produces. Not closing it prematurely; bug-03-2 tracks the residual gap and both close together once fixed.
+
+**Disposition:** Bounced back to `in-progress`. Fix is narrow — regenerate the item-1 grep transcript from one fresh, unedited run (see bug-03-2 "How to fix"); items 2 and 3 of the same Update Log entry are verified correct and must not be touched.
