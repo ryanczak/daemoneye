@@ -1,7 +1,7 @@
 # Bug 1 on phase-06a: Sleeps mask the exact races the phase doc forbade masking
 
 **Severity:** major
-**Status:** open
+**Status:** closed (fixed in `637d303`, verified in review round 2, 2026-07-30)
 **Filed:** 2026-07-30
 
 ## What's wrong
@@ -78,6 +78,19 @@ accepting — no sleep needed at all.
 
 ## Verification
 
-- [ ] `grep -n "tokio::time::sleep" tests/harness/mod.rs tests/isolation.rs` returns nothing.
-- [ ] `cargo test --test isolation -- --nocapture` still passes all 7 tests (or however many remain) with the sleeps removed.
-- [ ] `stub_returns_canned_response_via_make_client` still passes, proving `start_stub`'s synchronous bind is sufficient without a sleep.
+- [x] `grep -n "tokio::time::sleep" tests/harness/mod.rs tests/isolation.rs` returns nothing.
+- [x] `cargo test --test isolation -- --nocapture` still passes all 7 tests (or however many remain) with the sleeps removed.
+- [x] `stub_returns_canned_response_via_make_client` still passes, proving `start_stub`'s synchronous bind is sufficient without a sleep.
+
+**Closure notes (review round 2, 2026-07-30):** Fixed in commit `637d303`.
+Both sleeps confirmed removed with nothing substituted in their place (no
+retry/poll/backoff). `cargo test --test isolation` run 5x in a row: 7/7 every
+time, no flake. The `start_daemon()`-implies-bound-listener ordering claim
+was verified against source: `crate::webhook::bind(...).await?` at
+`src/daemon/mod.rs:746` runs synchronously (not spawned) before
+`ready::report_ready()` at `:880`, and `webhook::bind` itself
+`.await`s the real `TcpListener::bind` (`src/webhook/server.rs:100-115`).
+Mutation check: reverted the `start_stub()` bind-hoist (moved bind back
+inside the spawned task, no sleep re-added) — `stub_returns_canned_response_via_make_client`
+failed on 8/8 runs, confirming the fix is load-bearing. Change reverted via
+`git checkout --` after observation.

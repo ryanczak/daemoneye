@@ -1,7 +1,7 @@
 # Phase 06a: E2E Harness — Canned-AI Stub and Webhook Plumbing
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done), phase-05 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=test-infra, size=m
@@ -714,3 +714,85 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 637d303ea2a402e97351ba2352b2e8b1693be519
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30 (round 2)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug: bug-06a-1 — major)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** none
+
+**Findings:**
+
+- Both forbidden `tokio::time::sleep` calls are gone and nothing replaced them.
+  `grep -n "sleep" tests/harness/mod.rs tests/isolation.rs` matches only a
+  comment ("no readiness sleep is needed"). `start_stub()` now binds the
+  `TcpListener` before spawning the serve loop; `daemon_webhook_returns_200`'s
+  200ms sleep was deleted outright with no retry, poll, or readiness-wait
+  helper substituted for it.
+- Source-verified the ordering claim the fix rests on:
+  `crate::webhook::bind(&startup_config).await?` (`src/daemon/mod.rs:746`)
+  runs synchronously in `run_daemon`'s body — not inside a spawned task — and
+  `webhook::bind` (`src/webhook/server.rs:100-115`) itself
+  `.await`s `TcpListener::bind(...)` directly, so the `?` only returns once
+  the kernel bind succeeds. `ready::report_ready()` runs later, at
+  `src/daemon/mod.rs:880`. Since `daemoneye daemon` (non-`--console`) does not
+  report success until the child signals READY (per `CLAUDE.md`), a
+  successful `start_daemon()` return provably implies a bound webhook
+  listener. The claim holds.
+- Determinism: `cargo test --test isolation` run 5 times in a row — 7/7 pass
+  every time, no flake (0.14–0.15s each run).
+- Mutation check on the bind-hoist itself: reintroduced the original race by
+  moving `TcpListener::bind` back inside the spawned task in `start_stub()`
+  with **no** sleep added back. Ran `cargo test --test isolation` 8 times —
+  `stub_returns_canned_response_via_make_client` failed on **all 8** runs
+  (client connects before the listener is bound). Restored the file via
+  `git checkout -- tests/harness/mod.rs`; rebuild clean, `git status --short`
+  empty. The hoist is load-bearing, not cosmetic.
+- Step 4 (E2E entry re-run and diff): the phase doc's
+  `### Update — 2026-07-30 20:59 (end-to-end verification)` entry (7/7 @
+  0.15s) reflects the post-fix state — its figures match the
+  server-authored `(complete)` entry for commit `637d303` further down the
+  doc (same 7/7 @ 0.15s), not the earlier pre-fix entry (7/7 @ 0.38s, commit
+  `b2d9ad4`). Note that entries in this doc's Update Log are not in strict
+  chronological line order (the pre-fix, round-1 entries at lines 392–439
+  sit below the round-2 entries at lines 249–286 in the file) — content, not
+  position, is what was checked. Independently re-ran both commands myself
+  (`cargo test --test isolation -- --nocapture` and the `grep -n
+  "stub\|webhook"` pipeline): 7/7 pass, `exit=0`, `grep-exit=0`, matches at
+  lines 5, 6, 7, 11 — identical positions to the phase doc's own transcript
+  (test order was stable across my re-run, though the spec only requires
+  internal consistency, not equality). Hand-counted the pasted transcript's
+  own lines: line 5 = `webhook_ports_differ_between_environments`
+  (contains "webhook"), line 6 = `stub_returns_canned_response_via_make_client`
+  (contains "stub"), line 7 = `config_contains_webhook_and_stub_url` (contains
+  both), line 11 = `daemon_webhook_returns_200` (contains "webhook"). Lines
+  8–10 (`default_server_unchanged`, `hooks_land_on_private_server`,
+  `daemon_boots_in_throwaway_root`) correctly contain neither substring and
+  are correctly absent from the grep block. Internally consistent.
+- No leaked processes or sessions: `pgrep -af daemoneye` and `pgrep -af
+  "tmux.*tmux-"` after the full re-run matched only the grep command's own
+  text (no real daemoneye/tmux processes); `tmux list-sessions` on the
+  operator's default server reports "no server running" — unchanged.
+- `git status --short` was empty before and after this round's re-runs; only
+  intended files (this phase doc) were touched by the reviewer, and the
+  mutation-check edit to `tests/harness/mod.rs` was reverted via `git
+  checkout --` before concluding.
+- All four gates re-run independently and green: `cargo fmt --all -- --check`
+  (exit=0), `cargo build` (exit=0), `cargo clippy --all-targets
+  --all-features -- -D warnings` (exit=0), `cargo test` (964 lib / 30
+  integration, 2 ignored / 7 isolation / 0 doc, exit=0).
+- **Out of scope, noted for the record:** `tests/integration.rs:615` has a
+  pre-existing `tokio::time::sleep(100ms)` that predates this phase and is
+  not in phase-06a's Authorizations. Not filed against 06a per the phase
+  doc's explicit scope boundary — standing `STANDARDS.md` §3.3 violation for
+  the human to weigh at milestone close.
+
+**Verdict rationale:** bug-06a-1's sole defect — the two sleeps — is fixed
+with no replacement race-masking mechanism, the source-derived ordering
+guarantee it relies on checks out against `src/daemon/mod.rs` and
+`src/webhook/server.rs`, a live mutation reproduces the original race 8/8
+times when the fix is reverted (proving it load-bearing), determinism holds
+across 5 repeated runs, and the E2E transcript is both freshly re-run and
+internally consistent. bug-06a-1 is closed.
