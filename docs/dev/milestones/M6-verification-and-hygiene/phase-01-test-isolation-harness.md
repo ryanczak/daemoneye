@@ -1,7 +1,7 @@
 # Phase 01: Test-Isolation Harness
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=test, size=m
@@ -340,3 +340,9 @@ No new dependencies: `tempfile` is already in `[dev-dependencies]`. No changes t
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 14:57 (started)
+
+**Executor:** rexyMCP executor
+
+Implementing `tests/harness/mod.rs` (`IsolatedEnv`) and `tests/isolation.rs` (three end-to-end tests). The harness uses `TempDir::new_in("/tmp")` for the throwaway root, sets `HOME` and `TMUX_TMPDIR` on every spawned `Command`, and removes `TMUX`/`TMUX_PANE`. The `daemoneye setup` command overwrites pre-existing `config.toml`, so the test config is written after setup.
