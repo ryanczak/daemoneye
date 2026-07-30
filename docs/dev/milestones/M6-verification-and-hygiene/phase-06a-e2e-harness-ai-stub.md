@@ -1,7 +1,7 @@
 # Phase 06a: E2E Harness — Canned-AI Stub and Webhook Plumbing
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-06a-1)
 **Depends on:** phase-01 (done), phase-05 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=test-infra, size=m
@@ -411,3 +411,23 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b2d9ad4361421a070f42d66ffe0d5728acf2dab6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** rejected
+- **Bounces:** 1 (bug: bug-06a-1 — major)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** none
+
+**Findings:**
+
+- Mutation check on the headline test (`stub_returns_canned_response_via_make_client`): appended `"-MUTATED"` to the SSE `delta.content` payload in `build_sse_events` (`tests/harness/mod.rs`). The test failed as expected — `assertion left == right failed: ... left: "GHOST_TRIGGER: YES-MUTATED" right: "GHOST_TRIGGER: YES"`. Reverted via `git checkout --`; rebuild clean. The instrument is real.
+- Phase 01's three isolation tests (`hooks_land_on_private_server`, `daemon_boots_in_throwaway_root`, `default_server_unchanged`) are byte-for-byte unchanged: `git diff 26a369e b2d9ad4 -- tests/isolation.rs` shows `+137 -0`, all additions after the pre-existing content, zero deletions. The `private_tmux_socket` refactor into a free function + thin method wrapper preserves identical behavior (same body, same lookup logic).
+- **Bug found:** two `tokio::time::sleep` calls mask races the phase doc explicitly forbade masking — `start_stub()`'s 50ms sleep after spawning the axum task, and `daemon_webhook_returns_200`'s 200ms sleep before POSTing, the latter being the *literal* port race task 1 names. Both also violate `STANDARDS.md` §3.3 (tests must be deterministic, no `sleep`). Filed as bug-06a-1 (major).
+- No other leaks found: `stub_handle` is `.abort()`-ed in `Drop`; `alloc_free_port` binds-then-drops before handing out the port number; no daemoneye or private tmux processes remained after the full re-run (`pgrep -af daemoneye`, `pgrep -af "tmux.*tmux-"` both empty post-run).
+- Step-4 re-run: `cargo test --test isolation -- --nocapture` reproduced 7/7 passing, `exit=0`, matching the pasted transcript's counts (test order differs, which is expected — no `--test-threads=1` pin). `grep -n "stub\|webhook"` reproduced `grep-exit=0` with 4 matches. Line-number consistency check on the *pasted* transcript: pasted grep block claims matches at lines 5, 6, 10, 11; counting the pasted command-output block by hand, line 5 is `webhook_ports_differ_between_environments`, line 6 is `stub_returns_canned_response_via_make_client`, line 10 is `config_contains_webhook_and_stub_url`, line 11 is `daemon_webhook_returns_200` — all four match the grep block's own claim. Internally consistent.
+- Independent `git diff --name-only 26a369e b2d9ad4`: `docs/.../phase-06a-e2e-harness-ai-stub.md`, `tests/harness/mod.rs`, `tests/isolation.rs` only. `git diff 26a369e b2d9ad4 -- Cargo.toml Cargo.lock` is empty — no dependency added.
+- All four gates re-run independently and green: `cargo fmt --all -- --check` (exit=0), `cargo build` (exit=0), `cargo clippy --all-targets --all-features -- -D warnings` (exit=0), `cargo test` (964 lib / 30 integration, 2 ignored / 7 isolation / 0 doc, exit=0) — matching the executor's counts.
+
+**Verdict rationale:** every acceptance criterion and gate is independently met, and the transcript evidence is real (not fabricated — re-run matched). The bounce is solely for the two sleeps, which the phase doc named as an explicit out-of-scope anti-pattern by name (task 1's race) and which STANDARDS.md §3.3 independently forbids. Re-dispatch via `/rexymcp:dispatch phase-06a` once bug-06a-1 is fixed.
