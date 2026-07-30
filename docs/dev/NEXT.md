@@ -1,64 +1,66 @@
 # NEXT
 
-**Active phase: 03 — fix-stale-prompt-paths.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-03-fix-stale-prompt-paths.md`
+**Active phase: 04 — audit-prompts-command.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-04-audit-prompts-command.md`
 Status: `todo` — drafted 2026-07-30, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-03`.
+Dispatch with `/rexymcp:dispatch phase-04`.
 
-## What phase 03 does
+## What phase 04 does
 
-Empties `PENDING_FIX`. Corrects every stale path literal in the shipped prompt
-and knowledge memories so the phase-02 audit passes with no quarantine, and
-fixes the two stale spans the audit is structurally blind to.
+Ships the operator-facing `daemoneye audit-prompts`: reads the **installed**
+prompt and knowledge memories from `~/.daemoneye/`, classifies every path literal
+as current / superseded / unknown against the phase-02 inventory, prints a
+report, and exits non-zero if anything is not current. It never writes.
 
-Phase 02 built the gate and proved it fires. This phase makes the assets clean
-and takes the scaffolding down.
+## Two things from drafting that shape the phase
 
-## Two things found while drafting that shape the phase
+**1. It must audit the installed copies, not the embedded assets.** That is the
+whole point of defect 6 — `overwrite_sre_prompt()` / `overwrite_knowledge_memories()`
+are only called from `setup.rs`, and first-run seeding is `if !exists`, so an
+install predating a change keeps the stale copy forever. Auditing the
+`include_str!` consts would always pass and tell the operator nothing about their
+own tree. Phase 03 just made the shipped assets clean; the operator's installed
+copies are still whatever they were.
 
-**1. The gate cannot see two of the defects it is meant to cover.**
-`extract_path_literals` is backtick-delimited by design — a "contains a slash"
-rule produces false failures on `/clear`, `/limits reset` and shebangs. So the
-**ASCII directory tree** in `agent-runtime-layout.md` (which still shows `log/`
-holding a flat `events.jsonl`) and the `grep` command at `webhook-setup.md:24`
-are both wrong and both invisible to the audit — they live inside code fences.
-They are fixed by hand here; widening the extractor is explicitly out of scope.
-
-**2. Emptying `PENDING_FIX` makes phase 02's best test vacuous.**
-`red_run_is_reproducible` asserts the unquarantined audit flags exactly the
-literals in `PENDING_FIX`. Empty that list and the assertion becomes
-`assert_eq!(empty, empty)` — passing regardless of what the extractor does. The
-fix would *introduce* the exact vacuous coverage this milestone exists to
-eliminate. Task 4 splits it into two properties: the assets are clean, and the
-extractor still flags all 7 historical literals from a frozen synthetic corpus
-(test data, so it stays red-proof once the assets are fixed).
+**2. `audit_text` alone is not enough.** It returns only the *bad* literals, and
+the exit criterion wants every path reported with its status so the operator can
+see what was checked. Task 1 adds `classify_text` to the same module — reusing
+the extractor, not growing a second one.
 
 ## What to look at before dispatching
 
-- **Every replacement path in the spec's table was verified against its
-  constructor**, not copied from the milestone README. One correction came out
-  of that: the ghost session log's *filename* `ghost-<name>-<uuid>.jsonl` is
-  **right** (`ghost.rs:185` + `session.rs:180`); only its directory is wrong.
-  The README's summary table would have led to specifying `<id>.jsonl`.
-- The phase is small (~150 lines) and mechanical apart from task 4, which is the
-  one place judgment is needed and is spelled out.
+- **The end-to-end quoting requirement is the risk.** It bounced phase 03 twice:
+  once for paraphrasing instead of quoting, once for a 25-line transcript in
+  which 24 lines were real and one was spliced in from another file. Phase 03 was
+  finished by architect takeover for that reason. Phase 04's End-to-end section
+  now says to redirect each command to a file and paste that file.
+- The no-write contract is testable and is pinned as an acceptance criterion
+  (tree listing + mtimes before and after), not left as prose.
 
 ## Where things stand
 
-- Phases 01 and 02 `done` (01 approved_after_1, 02 approved_after_1). Phase 02's
-  bounce was a green bounce — four green gates, clean tree, bounced on an
-  untested `Legacy` branch proven dead by mutation, plus an unauthorized
-  `#![allow(dead_code)]`. Both fixed on one refined re-dispatch.
-- `src/config/path_audit.rs` ships the extractor, a 24-entry `INVENTORY` with
-  `Current`/`Legacy` status, `audit_text_with(text, pending)` + `audit_text`, and
-  `PENDING_FIX` holding exactly 7 quarantined literals.
-- `cargo clippy --all-targets --all-features -- -D warnings` clean; 956 lib + 27
+- Phases 01–03 `done`. 01 approved_after_1; 02 approved_after_1; **03
+  escalated** — completed by architect takeover after two bounces of the same
+  class (`false_completion`).
+- **Open calibration item for the milestone close:** two occurrences of the
+  executor emitting plausible-but-unreal evidence (bug-03-1, bug-03-2). Per
+  `WORKFLOW.md` § "Calibration", two occurrences is a trend worth folding.
+  Recommended fold: the review must diff any pasted transcript against a live
+  re-run rather than reading it for plausibility — round 2 caught the splice only
+  because it re-ran the command, and a 24-of-25-real transcript is
+  indistinguishable from a real one by inspection. **Not folded** — contract-doc
+  changes are a human gate.
+- `src/config/path_audit.rs` ships the extractor, a 24-entry `INVENTORY`,
+  `audit_text_with` / `audit_text`, and `PENDING_FIX` now empty. The shipped
+  assets audit clean.
+- `cargo clippy --all-targets --all-features -- -D warnings` clean; 955 lib + 27
   integration (2 ignored, pre-existing) + 3 isolation, zero failures.
 - Working tree clean. No daemon running; no tmux server running.
 - Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 04–12
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 05–12
   named, not drafted. Re-verify each phase's "Current state" against the tree
   before dispatching.
-- Standing backlog: `docs/dev/TODO.md` § 1, the pre-dispatch criteria check.
-  Worth deciding at the milestone close.
+- Noted for phase 11: `src/main.rs:17` and `:30` still say the daemon log
+  defaults to `~/.daemoneye/daemon.log`; the real path is `var/log/daemon.log`.
+  Same drift class as the prompt, in CLI help text the asset gate does not cover.
