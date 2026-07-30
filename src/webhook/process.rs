@@ -32,7 +32,10 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
-pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
+pub async fn process_alert(
+    alert: InternalAlert,
+    state: Arc<WebhookState>,
+) -> Option<tokio::task::JoinHandle<()>> {
     crate::daemon::stats::record_webhook();
     let cfg = &state.config.webhook;
 
@@ -60,7 +63,7 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
                     "fingerprint": &alert.fingerprint[..alert.fingerprint.len().min(16)],
                 }),
             );
-            return;
+            return None;
         }
         // Cap the dedup map to 10,000 entries. When the cap is reached, evict
         // the oldest entry (smallest timestamp) to prevent unbounded growth
@@ -154,8 +157,9 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
         fire_notification(&alert.alert_name, &formatted, &state.config);
 
         if cfg.auto_analyze {
-            maybe_analyze_alert(&alert, &formatted, &state).await;
+            return maybe_analyze_alert(&alert, &formatted, &state).await;
         }
+        return None;
     } else {
         log::warn!(
             "Webhook: alert '{}' discarded — severity '{}' below threshold '{}'",
@@ -173,6 +177,7 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
             }),
         );
     }
+    None
 }
 
 /// Append the alert message to every active session — both the on-disk JSONL
@@ -309,7 +314,13 @@ fn find_runbook_for_alert(alert_name: &str) -> Option<crate::runbook::Runbook> {
 }
 
 /// Run runbook-based AI analysis for the alert, rate-limited per alert name.
-async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: &WebhookState) {
+///
+/// Returns `Some(handle)` when a ghost was spawned; `None` otherwise.
+async fn maybe_analyze_alert(
+    alert: &InternalAlert,
+    formatted_msg: &str,
+    state: &WebhookState,
+) -> Option<tokio::task::JoinHandle<()>> {
     // Rate limit: skip if we analysed the same alert_name within dedup_window_secs.
     {
         let mut rl = state.rate_limit.lock().unwrap_or_log();
@@ -317,7 +328,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
         if let Some(&last) = rl.get(&alert.alert_name)
             && now.saturating_sub(last) < state.config.webhook.dedup_window_secs
         {
-            return;
+            return None;
         }
         rl.insert(alert.alert_name.clone(), now);
     }
@@ -327,7 +338,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             "Webhook: no runbook found for alert '{}' (tried kebab-case, lowercase, exact match) — skipping analysis",
             alert.alert_name
         );
-        return;
+        return None;
     };
 
     log::info!(
@@ -423,77 +434,78 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
                     ),
                 )
                 .await;
-            } else {
-                log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
-                let sessions = state.sessions.clone();
-                let alert_msg = formatted_msg.to_string();
-                let rb_clone = rb.clone();
-                let config_clone = state.config.clone();
-                let cache_clone = state.cache.clone();
-                let schedule_store_clone = state.schedule_store.clone();
+                return None;
+            }
+            log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
+            let sessions = state.sessions.clone();
+            let alert_msg = formatted_msg.to_string();
+            let rb_clone = rb.clone();
+            let config_clone = state.config.clone();
+            let cache_clone = state.cache.clone();
+            let schedule_store_clone = state.schedule_store.clone();
 
-                tokio::spawn(async move {
-                    let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
-                    match GhostManager::start_session_with_config(
-                        sessions.clone(),
-                        &rb_clone,
-                        &merged_config,
-                        &alert_msg,
-                        crate::daemon::GS_BG_WINDOW_PREFIX,
-                        config_clone.approvals.ghost_commands,
-                    )
-                    .await
-                    {
-                        Ok(sid) => {
-                            let session_log = crate::daemon::session::session_file(&sid)
-                                .display()
-                                .to_string();
-                            inject_ghost_event(
-                                &sessions,
-                                &format!(
-                                    "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
-                                    rb_clone.name, session_log
-                                ),
-                            )
-                            .await;
+            let handle = tokio::spawn(async move {
+                let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
+                match GhostManager::start_session_with_config(
+                    sessions.clone(),
+                    &rb_clone,
+                    &merged_config,
+                    &alert_msg,
+                    crate::daemon::GS_BG_WINDOW_PREFIX,
+                    config_clone.approvals.ghost_commands,
+                )
+                .await
+                {
+                    Ok(sid) => {
+                        let session_log = crate::daemon::session::session_file(&sid)
+                            .display()
+                            .to_string();
+                        inject_ghost_event(
+                            &sessions,
+                            &format!(
+                                "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
+                                rb_clone.name, session_log
+                            ),
+                        )
+                        .await;
 
-                            match crate::daemon::ghost::trigger_ghost_turn(
-                                &sid,
-                                &sessions,
-                                &config_clone,
-                                &cache_clone,
-                                &schedule_store_clone,
-                            )
-                            .await
-                            {
-                                Ok(()) => {
-                                    inject_ghost_event(
-                                        &sessions,
-                                        &format!(
-                                            "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
-                                            rb_clone.name, session_log
-                                        ),
-                                    )
-                                    .await;
-                                }
-                                Err(e) => {
-                                    log::error!("Ghost Turn: failed for {}: {}", sid, e);
-                                    crate::daemon::stats::inc_ghosts_failed();
-                                    inject_ghost_event(
-                                        &sessions,
-                                        &format!(
-                                            "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
-                                            rb_clone.name, e, session_log
-                                        ),
-                                    )
-                                    .await;
-                                }
+                        match crate::daemon::ghost::trigger_ghost_turn(
+                            &sid,
+                            &sessions,
+                            &config_clone,
+                            &cache_clone,
+                            &schedule_store_clone,
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                inject_ghost_event(
+                                    &sessions,
+                                    &format!(
+                                        "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
+                                        rb_clone.name, session_log
+                                    ),
+                                )
+                                .await;
+                            }
+                            Err(e) => {
+                                log::error!("Ghost Turn: failed for {}: {}", sid, e);
+                                crate::daemon::stats::inc_ghosts_failed();
+                                inject_ghost_event(
+                                    &sessions,
+                                    &format!(
+                                        "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
+                                        rb_clone.name, e, session_log
+                                    ),
+                                )
+                                .await;
                             }
                         }
-                        Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
                     }
-                });
-            } // end else (capacity check)
+                    Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
+                }
+            });
+            return Some(handle);
         }
 
         let analysis = format!(
@@ -516,6 +528,7 @@ async fn maybe_analyze_alert(alert: &InternalAlert, formatted_msg: &str, state: 
             .await;
         fire_notification(&alert.alert_name, &analysis, &state.config);
     }
+    None
 }
 
 // ---------------------------------------------------------------------------

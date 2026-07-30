@@ -83,7 +83,9 @@ async fn handle_webhook(
     for alert in alerts {
         let state2 = Arc::clone(&state);
         tokio::spawn(async move {
-            process_alert(alert, state2).await;
+            let _handle = process_alert(alert, state2).await;
+            // Handle is dropped here — the HTTP handler must return 200
+            // without waiting for the ghost to finish.
         });
     }
 

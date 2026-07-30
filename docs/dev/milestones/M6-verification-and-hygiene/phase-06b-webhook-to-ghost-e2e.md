@@ -1,7 +1,7 @@
 # Phase 06b: Webhook → Ghost End-to-End
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done), phase-05 (done), phase-06a (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=test, size=m
@@ -279,3 +279,106 @@ hand-rolls its own `TcpListener` + `std::thread` SSE stub instead of phase 06a's
 mutation-verified one; and it silently `return`s when tmux is missing, which
 would let it pass vacuously. Takeover was rejected — this is assist 1 of 3, the
 work is sound, and a fresh context is what the stall calls for.
+
+### Update — 2026-07-30 22:30 (progress)
+
+**Executor:** resume-assist (continuing prior run's work)
+
+Moved both tests from `tests/integration.rs` to `tests/isolation.rs` where `mod harness;` already exists and all harness methods are used, fixing the `dead_code` clippy error. Replaced the hand-rolled `TcpListener` SSE stub with the harness's mutation-verified `IsolatedEnv::start_stub()` / `stub_base_url()`. Removed the vacuous `tmux -V` early-return guard. Kept the seam (`process_alert` → `Option<JoinHandle<()>>`) and server.rs `_handle` drop unchanged — they were already correct.
+
+### Update — 2026-07-30 22:32 (end-to-end verification)
+
+**End-to-end verification — mechanical capture:**
+
+```
+cargo test --test isolation -- --nocapture > /tmp/e2e-06b.txt 2>&1; echo "exit=$?" >> /tmp/e2e-06b.txt
+
+/tmp/e2e-06b.txt contents:
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+ghost_start record: {
+  "alert_name": "disk-full",
+  "event": "ghost_start",
+  "parent_job_id": null,
+  "pid": 407684,
+  "session_id": "ghost-disk-full-a2123d988ddb4147b439be4b2f439c77",
+  "spawn_depth": 0,
+  "tmux_session": "daemoneye-incidents",
+  "trigger": "de-gs-bg-",
+  "ts": "2026-07-30T22:31:50.370443655+00:00"
+}
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+exit=0
+```
+
+```
+grep -n "ghost_start\|webhook_analysis\|ghost" /tmp/e2e-06b.txt > /tmp/e2e-06b-grep.txt 2>&1; echo "grep-exit=$?" >> /tmp/e2e-06b-grep.txt
+
+/tmp/e2e-06b-grep.txt contents:
+
+5:test webhook_ghost_e2e_http ... ignored
+8:ghost_start record: {
+10:  "event": "ghost_start",
+13:  "session_id": "ghost-disk-full-a2123d988ddb4147b439be4b2f439c77",
+19:test webhook_ghost_e2e_deterministic ... ok
+grep-exit=0
+```
+
+**Actual `ghost_start` JSONL record:**
+```json
+{
+  "alert_name": "disk-full",
+  "event": "ghost_start",
+  "parent_job_id": null,
+  "pid": 407684,
+  "session_id": "ghost-disk-full-a2123d988ddb4147b439be4b2f439c77",
+  "spawn_depth": 0,
+  "tmux_session": "daemoneye-incidents",
+  "trigger": "de-gs-bg-",
+  "ts": "2026-07-30T22:31:50.370443655+00:00"
+}
+```
+
+**Mutation-check transcript:**
+
+Broke the fail-open arm in `severity_rank` (changed `(None, _) => true` to `(None, _) => false`), ran the deterministic test:
+
+```
+cargo test --test isolation webhook_ghost_e2e_deterministic -- --nocapture 2>&1 | tail -10
+
+test webhook_ghost_e2e_deterministic ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--test isolation`
+```
+
+Reverted the mutation, ran again:
+
+```
+cargo test --test isolation webhook_ghost_e2e_deterministic -- --nocapture 2>&1 | tail -10
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.10s
+```
+
+The test correctly fails when the fail-open arm is broken and passes when restored — it guards the headline pipeline.
+
+**Files changed:**
+- `src/webhook/process.rs` — seam: `process_alert` / `maybe_analyze_alert` return `Option<JoinHandle<()>>`
+- `src/webhook/server.rs` — bind `_handle` and drop with comment
+- `tests/isolation.rs` — added `webhook_ghost_e2e_deterministic` and `webhook_ghost_e2e_http` (ignored)
+- `tests/integration.rs` — removed `mod harness;` and the two tests moved to isolation.rs
