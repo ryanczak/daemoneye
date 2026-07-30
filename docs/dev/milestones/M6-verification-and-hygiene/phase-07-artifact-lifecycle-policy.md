@@ -1,7 +1,7 @@
 # Phase 07: Artifact Lifecycle Policy
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-07-1)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=design, size=m
@@ -363,3 +363,17 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6017526774d773d3faff0077fee4b5eae29d2e5a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** rejected
+- **Bounces:** 1 (bug: bug-07-1 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none found (no sweep/rotation/deletion code, no new config keys, no default changes, `src/daemon/mod.rs:821` + `sweep_event_segments` + `sweep_session_archives` untouched — confirmed via `git diff 0ee4272 6017526`).
+- **Calibration:** none filed this round — the missing-E2E-entry pattern is already folded into WORKFLOW.md § "A pasted transcript is a claim, not evidence" (2026-07-30); this is the 6th observed instance of that class on M6, not a new pattern requiring a fresh fold.
+
+**Bug filed:** `bugs/bug-07-1.md` — the phase doc's required `### Update — <date> (end-to-end verification)` Update Log entry is missing entirely. Only a "(started)" progress note and the server-authored "(complete)" gate-tail block exist; the phase doc explicitly disclaims the latter as insufficient. The automated `mutation_check_uncovered_directory_fails_gate` test is genuine coverage of the helper function, but is not the same claim as a captured transcript of `cargo test` itself failing and naming the uncovered directory — which the acceptance criterion and STANDARDS §1's mechanical-capture box both require.
+
+Independent review verification (mutation performed by hand against a throwaway `HOME`, reverted afterward — working tree left clean) confirmed the underlying gate mechanism is sound: a policy-uncovered directory injected into the `every_existing_directory_has_a_policy_entry` fixture makes that test fail with `directories exist without a lifecycle policy entry:\n  var/log/reviewer-injected-uncovered-dir` (`exit=101`), and removing the injection restores a clean pass (`exit=0`, 3/3 tests). The defect is confined to the missing Update Log transcript — no code fix is required, only the capture-and-paste step.
+
+On the retention-default question (`var/log/panes` → `Sweep{30}`, `agents/*/mailbox` → `Sweep{7}`): judged **acceptable as explicitly-labelled proposals**, not a scope violation. Both entries have `config_key: None` and `ImplementationStatus::Pending { owned_by: "phase-09" }` — no config default was changed (confirmed `src/config/types.rs` untouched in the diff) and the numbers cannot silently take effect since no knob reads them yet. They are visibly attributed to phase-09 for a decision. Noted for the human's attention before phase-09 treats them as settled, per instruction, but not grounds for a bounce on their own.
