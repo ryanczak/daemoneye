@@ -34,6 +34,8 @@ pub struct Config {
     pub sessions: SessionsConfig,
     #[serde(default)]
     pub events: EventsConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 impl Default for Config {
@@ -53,6 +55,7 @@ impl Default for Config {
             compaction: CompactionConfig::default(),
             sessions: SessionsConfig::default(),
             events: EventsConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -113,6 +116,42 @@ impl Default for SessionsConfig {
             auto_name_enabled: true,
             load_recent_turns: default_load_recent_turns(),
             archive_retention_days: 0,
+        }
+    }
+}
+
+/// Daemon log rotation configuration (`[logging]` in config.toml).
+///
+/// The live `var/log/daemon.log` reached 25.8 MB in ~12 weeks (May–Aug 2025).
+/// A 5 MB bound with 5 kept rotations caps total disk usage at ~25 MB while
+/// preserving enough history for debugging.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct LoggingConfig {
+    /// Rotate `daemon.log` when it exceeds this many bytes.
+    /// Default: 5 MB (0x500000).
+    #[serde(default = "default_log_max_bytes")]
+    pub log_max_bytes: u64,
+    /// Number of rotated files to keep (`daemon.log.1` … `daemon.log.N`).
+    /// Default: 5.
+    #[serde(default = "default_log_keep_count")]
+    pub log_keep_count: u32,
+}
+
+/// 5 MB — bounds the observed 25.8 MB growth to a single rotation cycle.
+fn default_log_max_bytes() -> u64 {
+    5 * 1024 * 1024
+}
+
+/// Keep 5 rotated copies, giving ~25 MB total on disk at default size.
+fn default_log_keep_count() -> u32 {
+    5
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            log_max_bytes: default_log_max_bytes(),
+            log_keep_count: default_log_keep_count(),
         }
     }
 }

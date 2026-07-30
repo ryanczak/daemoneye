@@ -789,11 +789,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // Prune chat sessions idle for more than 30 minutes.
     let sessions_cleanup_sup = sessions.clone();
+    let log_path_sup = log_file.clone();
     tokio::spawn(supervise(
         "session-cleanup",
         Arc::clone(&shutdown),
         move || {
             let sessions_cleanup = sessions_cleanup_sup.clone();
+            let log_path = log_path_sup.clone();
             async move {
                 let mut sweep_counter = 0u32;
                 loop {
@@ -825,6 +827,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             startup_config.sessions.archive_retention_days,
                             &active_ids,
                         );
+                        if let Some(ref lp) = log_path
+                            && crate::daemon::utils::rotate_log_file(
+                                lp,
+                                startup_config.logging.log_max_bytes,
+                                startup_config.logging.log_keep_count,
+                            )
+                        {
+                            crate::daemon::utils::reattach_log_fds(lp);
+                        }
                     }
                 }
             }

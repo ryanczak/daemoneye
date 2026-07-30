@@ -62,11 +62,10 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
     LifecycleEntry {
         path: "var/log/daemon.log",
         intent: LifecycleIntent::Rotate,
-        config_key: None,
-        implemented: ImplementationStatus::Pending {
-            owned_by: "phase-08",
-        },
-        note: "25.8 MB unrotated log; no rotation logic exists anywhere",
+        config_key: Some("logging.log_max_bytes"),
+        implemented: ImplementationStatus::Implemented,
+        note: "rotated by rotate_log_file() from the cleanup tick; \
+               logging.log_max_bytes bound, logging.log_keep_count copies",
         lazy: false,
     },
     LifecycleEntry {

@@ -2,6 +2,7 @@ pub use crate::util::UnpoisonExt;
 
 mod event_log;
 mod host;
+mod log_rotation;
 mod output;
 mod response;
 mod shell;
@@ -9,6 +10,7 @@ mod sudo;
 
 pub use event_log::*;
 pub use host::*;
+pub use log_rotation::*;
 pub use output::*;
 pub use response::*;
 pub use shell::*;

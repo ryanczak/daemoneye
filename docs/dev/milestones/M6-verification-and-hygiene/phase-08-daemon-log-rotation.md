@@ -1,7 +1,7 @@
 # Phase 08: Daemon-Log Rotation
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** done
 **Depends on:** phase-07 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -216,3 +216,137 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 (architect takeover)
+
+**Lever:** session takeover, after a `NoProgressStall` hard-fail at turn 94.
+
+**Why not a resume.** This is the **third** `NoProgressStall` on this milestone
+(after phases 04 and 06b), and the stall was specifically on the file the
+remaining work needed: 68 consecutive `read_file` calls on `src/daemon/mod.rs`
+with no intervening write. Resume unblocked the previous two because the
+architect could supply a missing *diagnosis*; here the missing piece was the
+daemon-side patch itself, which the executor had open in front of it 68 times
+without producing. Verifying a patch precisely enough to specify it safely meant
+writing it, at which point handing it back to be retyped adds risk and yields no
+model-vs-spec data point. Per `escalate` § "Session takeover": the executor lost
+track of state in a way a re-dispatch would re-encounter.
+
+**What the executor got right and what was kept.** `rotate_log_file` is exactly
+the testable seam task 1 demanded — `(path, max_size_bytes, max_keep) -> bool`,
+no globals, no `dup2`, driven from `tempdir()` tests. `LoggingConfig` and its
+defaults were kept as written. Both are the executor's work, unchanged.
+
+**Two defects in the landed code, found by the architect after the stall:**
+
+1. `drops_files_beyond_keep_count` was **self-contradictory** — it asserted
+   `!daemon.log.3.exists()` and then read `daemon.log.3` expecting `"old2"`.
+   Both cannot hold. `rotate_log_file` is correct (with `max_keep=3`: drop `.3`,
+   shift `.2`→`.3`, `.1`→`.2`, log→`.1`), so the assertion was the bug and was
+   removed.
+2. An unused `use std::io::Write;` import failed `-D warnings`.
+
+**What the architect implemented (the missing half):**
+
+- `reattach_log_fds(path)` in `log_rotation.rs` — re-opens the rotated path and
+  `dup2`s the fresh descriptor onto fds 1 and 2. **This is the whole point of the
+  phase's headline constraint:** the daemon logs through fds `dup2`'d from the
+  log file at `daemon/mod.rs:371-394`, so after a rename those fds still refer to
+  the renamed inode. Without the re-attach, logging silently continues into
+  `daemon.log.1` while the live log stays empty — a rotation that looks like it
+  worked and did not. It is kept **out** of `rotate_log_file` so that function
+  stays pure and testable.
+- Wiring into the existing cleanup tick (`daemon/mod.rs`), beside the two sweeps,
+  using a cloned `log_path` captured through the supervisor closure. No new
+  timer, task or thread.
+- Flipped `var/log/daemon.log` in the phase-07 policy table to
+  `ImplementationStatus::Implemented` with `config_key:
+  Some("logging.log_max_bytes")`. No other entry touched — `var/log/panes` and
+  `agents/*/mailbox` remain `Pending { owned_by: "phase-09" }`.
+
+**Config defaults (the executor's numbers, kept):** `log_max_bytes` = 5 MiB,
+`log_keep_count` = 5 — capping total on-disk log at ~25 MB, against an observed
+25.8 MB accumulated in ~12 weeks.
+
+### Update — 2026-07-30 (end-to-end verification)
+
+**Mutation — rotation disabled (`if true {` in place of the size comparison),
+`/tmp/e2e-08-red.txt`:**
+
+```
+
+failures:
+
+failures:
+    daemon::utils::log_rotation::tests::drops_files_beyond_keep_count
+    daemon::utils::log_rotation::tests::multiple_rotations_chain_correctly
+    daemon::utils::log_rotation::tests::rotates_file_over_bound
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 967 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+```
+
+**Reverted, `/tmp/e2e-08-green.txt`:**
+
+```
+test daemon::utils::log_rotation::tests::leaves_file_under_bound_alone ... ok
+test daemon::utils::log_rotation::tests::drops_files_beyond_keep_count ... ok
+test daemon::utils::log_rotation::tests::rotates_file_over_bound ... ok
+test daemon::utils::log_rotation::tests::multiple_rotations_chain_correctly ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 967 filtered out; finished in 0.00s
+
+exit=0
+```
+
+**Real rotated set** — four rotations at a 100-byte bound with `keep=3`, printed
+from a `tempdir()` by a temporary test that was removed afterwards
+(`/tmp/e2e-08-listing.txt`):
+
+```
+     0  daemon.log
+   520  daemon.log.1
+   520  daemon.log.2
+   520  daemon.log.3
+test daemon::utils::log_rotation::tests::demo_listing_of_rotated_set ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 972 filtered out; finished in 0.00s
+
+exit=0
+```
+
+Note `daemon.log` is a fresh 0-byte file and there is **no `daemon.log.4`** — the
+keep bound holds.
+
+**Gates re-run by the architect, separately:**
+
+```
+cargo fmt --all                                          → exit 0
+cargo build                                              → exit 0
+cargo clippy --all-targets --all-features -- -D warnings → exit 0
+cargo test                                               → exit 0
+  lib          972 passed (967 + 5 rotation tests)
+  integration   30 passed; 2 ignored
+  isolation      8 passed; 1 ignored
+```
+
+### Review verdict — 2026-07-30 (takeover)
+
+- **Verdict:** escalated
+- **Bounces:** none (hard_fail → takeover; 1 assist)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 for `rotate_log_file` + `LoggingConfig`;
+  Claude (direct) for the `dup2` re-attach, tick wiring, the two test/import
+  fixes, and the policy-table flip.
+- **Scope deviations:** none. No second timer, no new dependency, only the
+  `var/log/daemon.log` policy entry changed, `sweep_event_segments` /
+  `sweep_session_archives` untouched.
+- **Calibration:** **third `NoProgressStall` on this milestone** (04, 06b, 08) —
+  past `WORKFLOW.md`'s three-occurrence fold threshold. All three share a shape:
+  the executor writes most of a phase, then loops re-reading one file instead of
+  running a gate. Worth folding at milestone close — candidate: an explicit
+  "after each edit, run the one command that checks it; never re-read a file you
+  just wrote" instruction in the executor contract, which is what the 06b resume
+  guidance used successfully. **Not folded** — contract-doc changes are a human
+  gate.
