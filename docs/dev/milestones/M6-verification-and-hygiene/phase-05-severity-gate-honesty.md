@@ -1,7 +1,7 @@
 # Phase 05: Severity-Gate Honesty
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-05-1)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -414,3 +414,21 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 5c2df0d16d773e1b3682653522a5fee21bd96ae0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** rejected
+- **Bounces:** 1 (bugs: bug-05-1 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — the code change is correct, complete, and independently mutation-verified (see below); the only defect is the missing E2E transcript evidence.
+- **Calibration:** none — already folded (this is the 5th M6 occurrence of the missing/hand-made-transcript pattern; the fold is in place in WORKFLOW.md § "A pasted transcript is a claim, not evidence").
+
+**Independent verification performed at review (not part of the bounced Update Log):**
+
+- Re-ran all four gates independently: `cargo fmt --all -- --check` (exit 0), `cargo build` (exit 0), `cargo clippy --all-targets --all-features -- -D warnings` (exit 0), `cargo test` (964 lib + 0 doc + 30 integration/2 ignored + 3 isolation, all passed) — matches the executor's reported counts.
+- Mutation-checked the fail-open arm: changed `(None, _) => true` to `(None, _) => false` in `src/webhook/process.rs`, re-ran `cargo test --test integration webhook_alert`. Result: `webhook_alert_no_severity_passes_gate` and `webhook_alert_unrankable_severity_passes_gate` both FAILED (correctly), while `webhook_alert_below_threshold_discarded` and `webhook_alert_to_event_log` still passed (correctly unaffected). Restored via `git checkout -- src/webhook/process.rs`; clean rebuild confirmed (`cargo build` exit 0, `git status --short` empty).
+- Verified all four discard sites (`server.rs`: unauthorized, unparseable; `process.rs`: duplicate, below_threshold) emit `webhook_discarded` via `crate::daemon::utils::log_event`, none passing a caller-supplied `pid`. Log levels match spec: WARN for unauthorized/unparseable/below_threshold, `log::debug!` retained for duplicate (deliberate narrowing, confirmed per phase doc's flagged note — not filed as a bug).
+- Confirmed the pre-existing `webhook_alert_to_event_log` test body is byte-for-byte unchanged — `git show 5c2df0d -- tests/integration.rs` is a single purely-additive hunk starting at line 746 (`+226/-0`), nothing before it touched.
+- Spot-checked the three new integration tests: `webhook_alert_no_severity_passes_gate` and `webhook_alert_unrankable_severity_passes_gate` scan the full event segment for absence of any `webhook_discarded` record (positive proof, not merely no panic); `webhook_alert_below_threshold_discarded` uses `find_map` over all lines (not `lines().last()`) and asserts `reason`, `alert_name`, `severity`, `threshold`, and presence of a server-stamped `pid`. All three are real per the mutation check above.
+
+**Conclusion:** the code is sound — verified independently by mutation, gate re-run, and diff — but the phase doc's mechanical-capture Definition-of-Done box (STANDARDS.md §1) is not satisfied: no E2E transcript was pasted into the Update Log. Per that box, "a green `cargo test` run … is not by itself sufficient" and a missing transcript fails "even when every claim in it is true." Bounced for bug-05-1 (transcript capture only); no code changes required to close it.
