@@ -273,17 +273,58 @@ fn normalise(literal: &str) -> Option<String> {
         Some(normalised)
     }
 }
-/// Audit `text` against the inventory, skipping literals listed in `pending`.
+/// Classification of a single path literal against the inventory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathClassification {
+    /// The literal normalises to a `Current` inventory entry.
+    Current,
+    /// The literal normalises to a `Legacy` inventory entry.
+    Superseded { reason: &'static str },
+    /// The literal normalises to something not in the inventory at all.
+    Unknown,
+}
+
+/// Classify every extracted path literal in `text` against the inventory.
 ///
-/// Tests pass `&[]` to reproduce the unquarantined (red) audit.
-pub fn audit_text_with(text: &str, pending: &[&str]) -> Vec<Finding> {
+/// Returns one entry per extracted literal — including the good ones — so the
+/// caller can render a full report. Literals that normalise to `None` (the bare
+/// runtime root, e.g. `~/.daemoneye`) are omitted because they are always valid.
+pub fn classify_text(text: &str) -> Vec<(String, PathClassification)> {
     let literals = extract_path_literals(text);
-    let mut findings = Vec::new();
+    let mut results = Vec::new();
 
     for literal in literals {
         let normalised = match normalise(&literal) {
             Some(n) => n,
-            None => continue, // runtime root — always valid
+            None => continue, // runtime root — always valid, omitted
+        };
+
+        let classification = match INVENTORY.iter().find(|e| e.path == normalised) {
+            None => PathClassification::Unknown,
+            Some(entry) => match entry.status {
+                PathStatus::Current => PathClassification::Current,
+                PathStatus::Legacy { reason } => PathClassification::Superseded { reason },
+            },
+        };
+
+        results.push((literal, classification));
+    }
+
+    results
+}
+
+/// Audit `text` against the inventory, skipping literals listed in `pending`.
+///
+/// Tests pass `&[]` to reproduce the unquarantined (red) audit.
+pub fn audit_text_with(text: &str, pending: &[&str]) -> Vec<Finding> {
+    let classified = classify_text(text);
+    let mut findings = Vec::new();
+
+    for (literal, classification) in classified {
+        // Determine the normalised form for quarantine lookup
+        let normalised = match normalise(&literal) {
+            Some(n) => n,
+            None => continue,
         };
 
         // Skip literals in the quarantine list (owned by phase 03)
@@ -291,21 +332,19 @@ pub fn audit_text_with(text: &str, pending: &[&str]) -> Vec<Finding> {
             continue;
         }
 
-        // Check against inventory
-        match INVENTORY.iter().find(|e| e.path == normalised) {
-            None => {
+        match classification {
+            PathClassification::Current => {}
+            PathClassification::Superseded { reason } => {
+                findings.push(Finding {
+                    literal,
+                    reason: FindingReason::Legacy { reason },
+                });
+            }
+            PathClassification::Unknown => {
                 findings.push(Finding {
                     literal,
                     reason: FindingReason::Unknown,
                 });
-            }
-            Some(entry) => {
-                if let PathStatus::Legacy { reason } = entry.status {
-                    findings.push(Finding {
-                        literal,
-                        reason: FindingReason::Legacy { reason },
-                    });
-                }
             }
         }
     }
@@ -591,5 +630,81 @@ mod tests {
             flagged, expected,
             "flagged normalised literals must match the 7 historical defects"
         );
+    }
+
+    // ── classify_text ────────────────────────────────────────────────────────
+
+    #[test]
+    fn classify_text_returns_current_for_good_literal() {
+        let text = "see `var/log/daemon.log` for details";
+        let results = classify_text(text);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "var/log/daemon.log");
+        assert_eq!(results[0].1, PathClassification::Current);
+    }
+
+    #[test]
+    fn classify_text_returns_superseded_with_reason() {
+        // `~/.daemoneye/events.jsonl` normalises to `events.jsonl` which is Legacy.
+        let text = "see `~/.daemoneye/events.jsonl` for details";
+        let results = classify_text(text);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "~/.daemoneye/events.jsonl");
+        assert!(matches!(
+            results[0].1,
+            PathClassification::Superseded { .. }
+        ));
+        if let PathClassification::Superseded { reason } = results[0].1 {
+            assert!(!reason.is_empty(), "superseded reason must not be empty");
+        }
+    }
+
+    #[test]
+    fn classify_text_returns_unknown_for_invented_path() {
+        let text = "see `var/log/does-not-exist.log` for details";
+        let results = classify_text(text);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "var/log/does-not-exist.log");
+        assert_eq!(results[0].1, PathClassification::Unknown);
+    }
+
+    #[test]
+    fn classify_text_omits_bare_runtime_root() {
+        let text = "see `~/.daemoneye` for details";
+        let results = classify_text(text);
+        assert!(
+            results.is_empty(),
+            "bare runtime root should be omitted, got {results:?}",
+        );
+    }
+
+    #[test]
+    fn classify_text_reports_all_literals_including_good_ones() {
+        // Mix of current, superseded, and unknown
+        let text = concat!(
+            "see `var/log/daemon.log` ",
+            "and `~/.daemoneye/events.jsonl` ",
+            "and `var/log/does-not-exist.log`"
+        );
+        let results = classify_text(text);
+        assert_eq!(results.len(), 3);
+
+        // Current
+        let current = results.iter().find(|(l, _)| l == &"var/log/daemon.log");
+        assert!(current.is_some(), "current literal missing");
+        assert_eq!(current.unwrap().1, PathClassification::Current);
+
+        // Superseded
+        let superseded = results.iter().find(|(l, _)| l == &"~/.daemoneye/events.jsonl");
+        assert!(superseded.is_some(), "superseded literal missing");
+        assert!(matches!(
+            superseded.unwrap().1,
+            PathClassification::Superseded { .. }
+        ));
+
+        // Unknown
+        let unknown = results.iter().find(|(l, _)| l == &"var/log/does-not-exist.log");
+        assert!(unknown.is_some(), "unknown literal missing");
+        assert_eq!(unknown.unwrap().1, PathClassification::Unknown);
     }
 }

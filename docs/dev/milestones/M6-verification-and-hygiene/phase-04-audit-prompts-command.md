@@ -1,7 +1,7 @@
 # Phase 04: `daemoneye audit-prompts`
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (done), phase-03 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -205,3 +205,27 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 17:40 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Action:** Started implementing `daemoneye audit-prompts` command.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+
+**Rationale:** The spec was not the problem — the executor completed Task 1,
+tripped on a wrong assumption inside its own new tests, and then burned 60
+consecutive read-only calls re-reading `path_audit.rs` until the
+`read_only_stall_threshold` governor fired at turn 120. The wall is precisely
+diagnosable (below) and Tasks 2–3 are untouched real work the executor can do,
+so resume preserves the landed Task 1 rather than restarting it, and takeover
+would be premature on a first assist.
+
+**The wall, diagnosed by the architect:** `classify_text` is **correct**. Two of
+its new tests assert the wrong literal. `events.jsonl` is **not** in `INVENTORY`
+at all — phase 03 emptied `PENDING_FIX`, and the `Legacy` entry has always been
+`var/log/events.jsonl`. So `~/.daemoneye/events.jsonl` normalises to
+`events.jsonl` and classifies as `Unknown`, not `Superseded`, and the assertion
+fails. Verified directly against the `INVENTORY` table.
