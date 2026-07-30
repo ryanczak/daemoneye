@@ -35,6 +35,11 @@ the phase's Update Log — never silently mark a phase done.
       a unit-test fake — and the actual output is quoted in the completion
       Update Log entry under "End-to-end verification." A green `cargo test`
       run that exercises a temp-directory-scoped fake is **not** by itself sufficient.
+- [ ] Every end-to-end transcript is **captured mechanically** — redirect the
+      command's output to a file and paste that file's contents. A transcript
+      that is retyped, paraphrased, summarised into prose, or assembled from more
+      than one run fails this box **even when every claim in it is true**. The
+      deliverable is the evidence, not the conclusion.
 - [ ] `cargo build` succeeds with **zero new warnings**.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.

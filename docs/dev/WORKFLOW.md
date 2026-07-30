@@ -186,6 +186,12 @@ checked-in file, a CLI behavior, a binary entrypoint, a config the running binar
 loads), verify against that real artifact before reporting complete, and quote
 the actual output in the completion Update Log.
 
+**Capture mechanically, never by hand.** Redirect each command's output to a file
+and paste that file's contents. Do not retype a transcript, reconstruct one from
+memory, summarise the results into prose, or copy lines out of the phase doc or a
+previous Update Log entry — those are the four ways an untrue line gets into an
+otherwise-real transcript. See § "A pasted transcript is a claim, not evidence."
+
 If the phase ships **no** runtime-loadable real artifact (a pure internal
 refactor, a new private type, a test-only helper), write:
 
@@ -290,10 +296,14 @@ When the executor marks a phase **review**, the architect:
 1. Reads the phase doc + diff + Update Log completion entry.
 2. Runs the commands themselves to confirm they actually pass.
 3. Spot-checks the tests are real (not passing via assertion omission).
-4. Either **approves** (flips to `done`, updates the milestone README's phase
+4. **Re-runs every command in the phase doc's End-to-end section and diffs the
+   output against the transcript pasted in the Update Log.** Reading it for
+   plausibility does not count — see § "A pasted transcript is a claim, not
+   evidence."
+5. Either **approves** (flips to `done`, updates the milestone README's phase
    table) or **rejects** (writes bug reports in the milestone's `bugs/`
    directory and flips the phase back to `in-progress`).
-5. **Records a structured review verdict** (below) — at every approval, not just
+6. **Records a structured review verdict** (below) — at every approval, not just
    when something went wrong. This is the supervision label for model evaluation
    *and* the substrate for human project review. One write, two consumers.
 
@@ -873,6 +883,51 @@ run by the reviewer.
 assertions tautological; a test named for a branch it could not reach; a spec
 pinning a key order the serializer discards. All three were architect-authored — the
 executor implemented what was specified in each case.)*
+
+### A pasted transcript is a claim, not evidence
+
+**At review, re-run every command in the phase doc's End-to-end section and diff
+the result against what was pasted.** Reading a transcript for plausibility is not
+verification: a fabricated transcript is *built* to read as plausible, and the
+gate set cannot see it — all four gates stay green, because nothing the executor
+wrote into a markdown file affects a build.
+
+The three shapes this takes, all observed:
+
+- **Paraphrase in place of a quote.** The Update Log describes what the command
+  showed instead of showing it. Cheapest to spot: grep the entry for the command
+  string and for a prompt/exit-code marker; if neither is there, no transcript was
+  pasted.
+- **A splice inside an otherwise-real transcript.** The dangerous one. A 25-line
+  block where 24 lines came from a real run and one was copied from a neighbouring
+  file with a field swapped. There is **no** reading of that block that reveals
+  the bad line — only re-running and diffing does.
+- **Results asserted in the completion summary** while the Update Log has only a
+  "(started)" stub. Looks complete in the summary the reviewer reads first.
+
+**A true claim in a hand-made transcript is still a failure.** In every observed
+case the underlying behavior was correct and the numbers were accurate — the
+command worked. What was missing was the evidence chain, which is the only part
+that survives to the next reader. Approving on "the claims check out" trains the
+next transcript to be written rather than captured.
+
+**Two rules follow:**
+
+- **Executor:** capture mechanically (§ "End-to-end verification"). Never
+  hand-assemble.
+- **Reviewer:** re-run and diff. "The transcript looks right" is inadmissible;
+  "I re-ran it and it matched" is the finding. This is the same discipline as
+  § "Coverage claims are inadmissible without mutation proof" — and for the same
+  reason: the check that matters is the one the author cannot fake by writing
+  more convincingly.
+
+*(Folded 2026-07-30 after three occurrences in M6, all in the same two phases.
+Phase 03 bounced twice — first for paraphrase, then for a spliced line — and had
+to be finished by architect takeover; phase 04 then asserted its E2E results in
+prose with no transcript at all. Each occurrence cost a full dispatch-and-review
+round trip. The splice was caught only because that review had been told
+out-of-band to re-run and compare; nothing in these docs required it, which is
+what this fold repairs.)*
 
 ### Every acceptance criterion must be satisfiable, and its mechanics pinned
 
