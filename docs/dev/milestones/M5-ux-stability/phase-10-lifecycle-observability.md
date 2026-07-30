@@ -647,3 +647,64 @@ because the serializer discards it.
 At three occurrences this is at `WORKFLOW.md`'s fold-immediately bar. Recommend
 folding at milestone close alongside the pre-dispatch criteria-runner, which is
 now at six.
+
+### Notes for executor — 2026-07-30 (re-dispatch after bug-10-1)
+
+## ⚠ READ THIS FIRST: green gates are EXPECTED here and are NOT evidence the phase is done
+
+When you start, `cargo build`, `cargo clippy`, `cargo fmt` and `cargo test` will
+**all pass** and `git status` will be **clean**. That is the expected state. **It
+does not mean there is no work.** The bounce is on a **false documented claim** and
+a **vacuous test**, neither of which any gate can detect.
+
+**You were right, and you said so — that is why this is small.** Your summary
+correctly reported that `serde_json::Map` without `preserve_order` serializes keys
+in sorted order, so the spec's "leading prefix" was wrong. The architect confirmed
+it against a real record. What is left is only to propagate that correction into
+the two places that still assert the false property.
+
+**Already approved — do NOT redo, re-derive, or re-verify any of it:**
+
+- The `pid` stamp in `log_event` and its **insert-before-drain position** — correct,
+  and mutation-proved at review. **Do not move or modify it.**
+- The deleted explicit `"pid"` in `daemon_start`.
+- The `try_init` rebinding and its `eprintln!`.
+- The startup identity line.
+- `log_event_stamps_emitting_pid` and `log_event_caller_pid_overrides_stamp` —
+  both genuine. **Leave them alone.**
+- The E2E. **Do not re-run it** — it starts and stops a real daemon, and it was
+  already verified. The daemon is currently stopped; leave it that way.
+
+## There are exactly TWO edits left
+
+Both are spelled out verbatim in `bugs/bug-10-1.md`. In summary:
+
+1. **`CLAUDE.md`** — replace the invariant bullet that says records carry
+   `ts`/`event`/`pid` "as a **leading prefix**" with the corrected wording, which
+   states *presence* and warns that serialized key order is `serde_json`'s
+   alphabetical order (no `preserve_order`), so nothing may rely on field position.
+2. **`src/daemon/utils/event_log.rs`** — rename
+   `log_event_prefix_order_is_ts_event_pid` to
+   `log_event_always_stamps_ts_event_and_pid` and replace its byte-offset
+   assertions with presence assertions. The old test asserts
+   `event < pid < ts < z_custom`, which holds by the alphabet alone and therefore
+   cannot fail no matter what the code does.
+
+## Falsifiable finish condition — the count must NOT change
+
+This is a **rename**, not an addition. `cargo test 2>&1 | grep "^test result"` must
+still report **940** lib and **27** integration — **940, not 941.** A rising count
+means you added a test and the scope crept.
+
+Also checkable, and all in the bug doc's Verification list: `grep -c 'leading'
+CLAUDE.md` → **0**; `grep -c 'preserve_order' CLAUDE.md` → **1**;
+`grep -c 'log_event_prefix_order_is_ts_event_pid' src/daemon/utils/event_log.rs`
+→ **0**.
+
+## Then mutation-check and state both halves
+
+Move the `pid` insert to **after** the drain loop in `log_event`; confirm
+`log_event_caller_pid_overrides_stamp` **FAILS**; restore; confirm it passes. Quote
+both. This is not about your edits — it is to show the genuine ordering test still
+guards the insert position after you touch the file. A claimed mutation check that
+is not demonstrated will be re-run at review and will bounce again.
