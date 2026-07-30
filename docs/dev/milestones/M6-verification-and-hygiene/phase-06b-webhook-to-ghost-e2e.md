@@ -256,3 +256,26 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+
+**Rationale:** The executor wrote the whole phase and then stalled re-reading
+files, hard-failing on `NoProgressStall` at turn 234 before running a single
+gate. The spec was not the problem and the work is not lost — the architect
+verified the partial tree directly: it **builds**, and
+`webhook_ghost_e2e_deterministic` **passes**, asserting the full chain
+`webhook_alert` → `webhook_analysis{ghost_trigger,ghost_enabled}` →
+`ghost_start{alert_name}` plus an unchanged default tmux server. The operator's
+live tmux server was **not** polluted, so the phase's headline hazard did not
+fire.
+
+Three defects remain, all found by the architect after the stall: `cargo clippy`
+fails (`mod harness;` in `tests/integration.rs` compiles the harness into a
+binary that uses none of `webhook_port` / `stub_port` / `tmux` / `default_tmux` /
+`stop_daemon`, so `-D warnings` turns dead_code into an error); the test
+hand-rolls its own `TcpListener` + `std::thread` SSE stub instead of phase 06a's
+mutation-verified one; and it silently `return`s when tmux is missing, which
+would let it pass vacuously. Takeover was rejected — this is assist 1 of 3, the
+work is sound, and a fresh context is what the stall calls for.
