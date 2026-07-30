@@ -215,6 +215,68 @@ No new dependencies. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green, the working tree is clean, and every code and asset
+edit you made is CORRECT and ACCEPTED. That is expected here and is NOT evidence
+this phase is done.** The reviewer independently reproduced all three of your
+claims and found them true. What is missing is the *evidence* in the Update Log,
+which STANDARDS.md §1 makes a hard completion requirement, not a formality.
+
+**Do not change a single line of code or asset text.** Everything below is
+already approved and must be left exactly as it is:
+
+- All 9 audited literal corrections across the 6 asset files — verified against
+  their constructors. The ghost session log correctly kept its
+  `ghost-<name>-<uuid>.jsonl` filename shape.
+- Both unaudited spans (the ASCII tree, the fenced `grep` at
+  `webhook-setup.md:24`).
+- `PENDING_FIX = &[]` and the updated doc comment.
+- `INVENTORY` unchanged, `var/log/events.jsonl` still `Legacy`.
+- The two replacement tests. The 956 → 955 delta is accounted for and accepted.
+
+**There is exactly one edit left, in exactly one file: this phase doc's Update
+Log.**
+
+Append one `### Update — 2026-07-30 (end-to-end verification)` entry containing
+three transcripts. **Run each command once and paste its real stdout.** Do not
+copy the quotes out of this doc, out of the bug report, or out of your previous
+Update Log entry — they must come from a run you just performed.
+
+1. **The grep.** Run `grep -rn '~/\.daemoneye/' assets/` and paste the **full**
+   output. Add one line noting that every surviving occurrence is correct today.
+
+2. **The assets-clean test.** Run `cargo test --lib config::path_audit` and paste
+   the result block showing `all_assets_audit_clean_with_empty_quarantine`
+   passing.
+
+3. **The mutation check — actually perform it again.** In this order:
+   - Edit `normalise()` to `return None;` unconditionally.
+   - Run `cargo test --lib config::path_audit`. Paste the **failure output**,
+     including the real assertion message.
+   - `git checkout -- src/config/path_audit.rs`.
+   - Re-run `cargo test --lib config::path_audit` and paste the green result.
+   - Confirm in prose that `git status --porcelain` is empty for `src/`
+     afterwards.
+
+Shape it like phase-02's red-run / green-run entries, which met this same
+requirement correctly — look at
+`phase-02-prompt-path-audit-test.md`'s Update Log for the format.
+
+**Finish condition (inverted — this fix must add nothing).**
+
+- `cargo test` must still report **955** lib tests — **not 956**. A *rising*
+  count means you added a test that was not asked for.
+- `git diff --name-only` against the current HEAD must list **exactly one**
+  path: this phase doc. Anything else in that list is a scope violation.
+- All four gates still green.
+
+Run each command **once**. If a command's output is what you expected, paste it
+and move on — do not re-run it to double-check, and do not grep the output
+looking for confirmation. The transcripts are the deliverable.
+
 ### Update — 2026-07-30 17:03 (started)
 
 **Executor:** Claude (Anthropic)
@@ -350,3 +412,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 6fbe13b0d65986de3a8d4ac2ce92dc4638e6fd3a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce with all code and asset work already verified
+correct — the only gap is the three required end-to-end transcripts, so the
+refinement names the single file to touch, spells out the three commands, and
+inverts the finish condition (955 lib tests, not 956; exactly one changed path)
+so that adding anything is the signal for scope creep.
