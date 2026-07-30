@@ -5,22 +5,16 @@
 //! default tmux server.
 
 use std::process::Command;
+use std::sync::Arc;
 use tempfile::TempDir;
-
-/// Minimal config.toml written after `daemoneye setup` (which overwrites it).
-const TEST_CONFIG_TOML: &str = r#"[models.default]
-provider = "anthropic"
-api_key  = "test-key-not-a-real-credential"
-model    = "claude-sonnet-4-6"
-input_cost_per_mtok       = 3.00
-output_cost_per_mtok      = 15.00
-cache_read_cost_per_mtok  = 0.30
-cache_write_cost_per_mtok = 3.75
-"#;
 
 /// An isolated test environment with a throwaway `$HOME` and private tmux server.
 pub struct IsolatedEnv {
     root: TempDir,
+    webhook_port: u16,
+    stub_handle: Option<tokio::task::JoinHandle<()>>,
+    stub_port: u16,
+    stub_response: Arc<std::sync::Mutex<String>>,
 }
 
 impl IsolatedEnv {
@@ -42,7 +36,16 @@ impl IsolatedEnv {
             socket_path.display()
         );
 
-        Self { root }
+        let webhook_port = alloc_free_port();
+        let stub_port = alloc_free_port();
+
+        Self {
+            root,
+            webhook_port,
+            stub_handle: None,
+            stub_port,
+            stub_response: Arc::new(std::sync::Mutex::new(String::new())),
+        }
     }
 
     /// Return the throwaway root path (used as `$HOME`).
@@ -50,27 +53,90 @@ impl IsolatedEnv {
         self.root.path()
     }
 
-    /// Return the explicit socket path of the private tmux server.
+    /// Return the webhook port allocated for this environment.
+    pub fn webhook_port(&self) -> u16 {
+        self.webhook_port
+    }
+
+    /// Return the stub server port.
+    pub fn stub_port(&self) -> u16 {
+        self.stub_port
+    }
+
+    /// Set the canned response the stub server will return.
+    pub fn set_stub_response(&mut self, response: String) {
+        let mut guard = self.stub_response.lock().unwrap();
+        *guard = response;
+    }
+
+    /// Start the canned-AI stub server.
     ///
-    /// Used by `Drop` to pin `kill-server` to a specific socket rather than
-    /// relying on `TMUX_TMPDIR` — teardown must be safe independently of
-    /// whether `apply_env` is correct.
-    ///
-    /// Discovers the socket by scanning for the `tmux-*` directory tmux
-    /// creates under `TMUX_TMPDIR`. If none exists (server never started),
-    /// returns a path that will not exist, making teardown a no-op.
-    fn private_tmux_socket(&self) -> std::path::PathBuf {
-        let root = self.root.path();
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                if name_str.starts_with("tmux-") {
-                    return entry.path().join("default");
-                }
-            }
-        }
-        root.join("tmux-0/default")
+    /// // Chose OpenAI-compatible wire format because it is simpler to emit
+    /// // faithfully than Anthropic's: a single SSE stream with
+    /// // `choices[0].delta.content` tokens and a `[DONE]` terminator.
+    /// // The Anthropic format requires `message_start`, `content_block_start`,
+    /// // `content_block_delta`, `content_block_stop`, `message_delta`,
+    /// // `message_stop` — more moving parts for the same test goal.
+    pub async fn start_stub(&mut self) {
+        let response = Arc::clone(&self.stub_response);
+        let port = self.stub_port;
+
+        let handle = tokio::spawn(async move {
+            let response = Arc::clone(&response);
+
+            let app = axum::Router::new().route(
+                "/chat/completions",
+                axum::routing::post(
+                    move |axum::Json(_body): axum::Json<serde_json::Value>| async move {
+                        let canned: String = {
+                            let guard = response.lock().unwrap();
+                            guard.clone()
+                        };
+                        let events: Vec<
+                            Result<axum::response::sse::Event, std::convert::Infallible>,
+                        > = build_sse_events(canned);
+                        axum::response::Sse::new(futures_util::stream::iter(events))
+                    },
+                ),
+            );
+
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+                .await
+                .expect("bind stub server");
+            axum::serve(listener, app).await.expect("serve stub");
+        });
+
+        self.stub_handle = Some(handle);
+        // Give the stub a moment to bind.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    /// Return the stub's base URL (including `/v1` suffix).
+    pub fn stub_base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.stub_port)
+    }
+
+    /// Build the test config TOML with webhook and stub settings.
+    fn build_test_config(&self) -> String {
+        format!(
+            r#"[models.default]
+provider = "openai"
+api_key  = "test-key-not-a-real-credential"
+model    = "claude-sonnet-4-6"
+base_url = "{}"
+input_cost_per_mtok       = 3.00
+output_cost_per_mtok      = 15.00
+cache_read_cost_per_mtok  = 0.30
+cache_write_cost_per_mtok = 3.75
+
+[webhook]
+enabled = true
+port = {}
+bind_addr = "127.0.0.1"
+"#,
+            self.stub_base_url(),
+            self.webhook_port
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -174,7 +240,8 @@ impl IsolatedEnv {
     fn write_test_config(&self) {
         let etc_dir = self.root.path().join(".daemoneye/etc");
         std::fs::create_dir_all(&etc_dir).expect("create etc dir");
-        std::fs::write(etc_dir.join("config.toml"), TEST_CONFIG_TOML).expect("write config.toml");
+        std::fs::write(etc_dir.join("config.toml"), self.build_test_config())
+            .expect("write config.toml");
     }
 
     /// Stop the daemon (best-effort).
@@ -187,10 +254,32 @@ impl IsolatedEnv {
         let log_path = self.root.path().join(".daemoneye/var/log/daemon.log");
         std::fs::read_to_string(&log_path).unwrap_or_default()
     }
+
+    /// POST a JSON body to the environment's webhook endpoint.
+    ///
+    /// Returns the HTTP status code and response body.
+    pub async fn post_webhook(&self, body: &serde_json::Value) -> (u16, String) {
+        let url = format!("http://127.0.0.1:{}/webhook", self.webhook_port);
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .json(body)
+            .send()
+            .await
+            .expect("POST to webhook");
+        (
+            resp.status().as_u16(),
+            resp.text().await.expect("read webhook response"),
+        )
+    }
 }
 
 impl Drop for IsolatedEnv {
     fn drop(&mut self) {
+        // Shut down the stub server.
+        if let Some(handle) = self.stub_handle.take() {
+            handle.abort();
+        }
+
         // Best-effort cleanup: stop the daemon, then kill the private tmux server.
         let _ = self.daemoneye(&["stop"]).output();
 
@@ -206,4 +295,99 @@ impl Drop for IsolatedEnv {
         }
         // TempDir's own drop removes the root.
     }
+}
+
+/// Return the explicit socket path of the private tmux server.
+///
+/// Used by `Drop` to pin `kill-server` to a specific socket rather than
+/// relying on `TMUX_TMPDIR` — teardown must be safe independently of
+/// whether `apply_env` is correct.
+///
+/// Discovers the socket by scanning for the `tmux-*` directory tmux
+/// creates under `TMUX_TMPDIR`. If none exists (server never started),
+/// returns a path that will not exist, making teardown a no-op.
+fn private_tmux_socket(root: &std::path::Path) -> std::path::PathBuf {
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("tmux-") {
+                return entry.path().join("default");
+            }
+        }
+    }
+    root.join("tmux-0/default")
+}
+
+impl IsolatedEnv {
+    fn private_tmux_socket(&self) -> std::path::PathBuf {
+        private_tmux_socket(self.root.path())
+    }
+}
+
+/// Allocate a free TCP port by binding to port 0 and reading the assigned port.
+fn alloc_free_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind to port 0");
+    let port = listener.local_addr().expect("local addr").port();
+    drop(listener);
+    port
+}
+
+/// Build SSE events for an OpenAI-compatible chat completion response.
+///
+/// Chose OpenAI-compatible wire format because it is simpler to emit faithfully
+/// than Anthropic's: a single SSE stream with `choices[0].delta.content` tokens
+/// and a `[DONE]` terminator. The Anthropic format requires `message_start`,
+/// `content_block_start`, `content_block_delta`, `content_block_stop`,
+/// `message_delta`, `message_stop` — more moving parts for the same test goal.
+fn build_sse_events(
+    text: String,
+) -> Vec<Result<axum::response::sse::Event, std::convert::Infallible>> {
+    let mut events = Vec::new();
+
+    // Send the entire text as a single token. Splitting by word boundaries
+    // loses spaces when the client trims empty deltas, so a single chunk
+    // preserves the exact string.
+    let payload = serde_json::json!({
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": { "content": &text },
+                "finish_reason": null
+            }
+        ]
+    });
+    let event = axum::response::sse::Event::default().data(format!("{}\n", payload));
+    events.push(Ok(event));
+
+    // Final chunk with finish_reason.
+    let final_payload = serde_json::json!({
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "created": 0,
+        "model": "test-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": text.split_whitespace().count(),
+            "total_tokens": 10 + text.split_whitespace().count()
+        }
+    });
+    let final_event = axum::response::sse::Event::default().data(format!("{}\n", final_payload));
+    events.push(Ok(final_event));
+
+    // [DONE] terminator.
+    events.push(Ok(axum::response::sse::Event::default().data("[DONE]")));
+
+    events
 }

@@ -1,7 +1,7 @@
 # Phase 06a: E2E Harness — Canned-AI Stub and Webhook Plumbing
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done), phase-05 (done)
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=test-infra, size=m
@@ -245,3 +245,41 @@ No changes to `src/`. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 20:23 (started)
+
+**Executor:** model
+
+Implemented canned-AI stub server, free webhook port allocation, config plumbing, POST helper, and verification tests. Chose OpenAI-compatible wire format for the stub (simpler SSE format than Anthropic). All 7 isolation tests pass (3 original + 4 new).
+
+### Update — 2026-07-30 20:23 (end-to-end verification)
+
+**Command output:**
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+
+running 7 tests
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+exit=0
+```
+
+**Grep for stub/webhook:**
+
+```
+5:test webhook_ports_differ_between_environments ... ok
+6:test stub_returns_canned_response_via_make_client ... ok
+10:test config_contains_webhook_and_stub_url ... ok
+11:test daemon_webhook_returns_200 ... ok
+grep-exit=0
+```

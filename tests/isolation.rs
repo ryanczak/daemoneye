@@ -166,3 +166,140 @@ fn default_server_unchanged() {
         before, after
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 06a tests: stub server, webhook plumbing, port allocation
+// ---------------------------------------------------------------------------
+
+/// Two environments constructed in the same process get different webhook ports.
+#[test]
+fn webhook_ports_differ_between_environments() {
+    let env_a = IsolatedEnv::new();
+    let env_b = IsolatedEnv::new();
+    assert_ne!(
+        env_a.webhook_port(),
+        env_b.webhook_port(),
+        "two environments should get different webhook ports"
+    );
+    assert_ne!(
+        env_a.stub_port(),
+        env_b.stub_port(),
+        "two environments should get different stub ports"
+    );
+}
+
+/// The written config.toml contains the webhook section with the allocated port
+/// and a base_url pointing at the stub.
+#[tokio::test]
+async fn config_contains_webhook_and_stub_url() {
+    let mut env = IsolatedEnv::new();
+    env.start_stub().await;
+    env.start_daemon("de-test-config");
+
+    let config_path = env.root().join(".daemoneye/etc/config.toml");
+    let config_text = std::fs::read_to_string(&config_path).expect("read config.toml");
+
+    assert!(
+        config_text.contains("[webhook]"),
+        "config.toml missing [webhook] section"
+    );
+    assert!(
+        config_text.contains("enabled = true"),
+        "config.toml missing webhook enabled = true"
+    );
+    assert!(
+        config_text.contains(&format!("port = {}", env.webhook_port())),
+        "config.toml missing webhook port"
+    );
+    assert!(
+        config_text.contains(&env.stub_base_url()),
+        "config.toml missing stub base_url"
+    );
+}
+
+/// Drive `make_client(...)` directly against the stub and assert the
+/// concatenated `AiEvent::Token` text equals the supplied canned string.
+#[tokio::test]
+async fn stub_returns_canned_response_via_make_client() {
+    let mut env = IsolatedEnv::new();
+    let canned = "GHOST_TRIGGER: YES";
+    env.set_stub_response(canned.to_string());
+    env.start_stub().await;
+
+    // Verify the stub is reachable before calling through make_client.
+    let chat_url = format!("{}/chat/completions", env.stub_base_url());
+    let resp = reqwest::get(&chat_url).await.expect("health check to stub");
+    // 405 Method Not Allowed is expected for GET on POST-only route.
+    assert!(
+        resp.status() == 405 || resp.status() == 404,
+        "stub should be reachable at {}",
+        chat_url
+    );
+
+    let client = daemoneye::ai::make_client(
+        "openai",
+        "test-key".to_string(),
+        "test-model".to_string(),
+        env.stub_base_url(),
+    );
+
+    let system = "You are a watchdog.";
+    let messages = vec![daemoneye::ai::Message {
+        role: "user".to_string(),
+        content: "test".to_string(),
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    }];
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    client
+        .chat(system, messages, tx, false, Vec::new())
+        .await
+        .expect("chat call to stub succeeded");
+
+    let mut response = String::new();
+    while let Some(ev) = rx.recv().await {
+        if let daemoneye::ai::AiEvent::Token(t) = ev {
+            response.push_str(&t);
+        }
+    }
+
+    assert_eq!(
+        response, canned,
+        "stub response mismatch: got {:?}, expected {:?}",
+        response, canned
+    );
+}
+
+/// A started daemon accepts a POST to the allocated webhook port and returns 200.
+#[tokio::test]
+async fn daemon_webhook_returns_200() {
+    if !tmux_available() {
+        eprintln!("SKIP: tmux not available");
+        return;
+    }
+
+    let mut env = IsolatedEnv::new();
+    env.set_stub_response("ok".to_string());
+    env.start_stub().await;
+    env.start_daemon("de-test-webhook");
+
+    // Give the daemon's webhook listener a moment to bind.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let body = serde_json::json!({
+        "alerts": [{
+            "status": "firing",
+            "alertname": "test-alert",
+            "labels": {}
+        }]
+    });
+
+    let (status, _body_text) = env.post_webhook(&body).await;
+    assert_eq!(
+        status, 200,
+        "webhook POST returned status {} instead of 200",
+        status
+    );
+}
