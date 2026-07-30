@@ -895,11 +895,24 @@ Cause: the stalled run had `git add -A`'d its work, so it sat in the index; I th
 ran `git add -A docs/` followed by a plain `git commit`, which commits **everything
 staged**. A ~220-line feature landed under a `docs:` message.
 
-This violates the DoD's "one conventional commit per logical change." Nothing is
-lost and the content is correct. **Not bounced** — the executor cannot fix an
-architect's commit, and the remedy (soft-reset and re-commit as `feat:` + `docs:`)
-rewrites published history, which needs the PE's decision. Recorded here and raised
-with the PE; left as-is pending that call.
+This violated the DoD's "one conventional commit per logical change." **Not
+bounced** — the executor cannot fix an architect's commit.
+
+**RESOLVED 2026-07-30 on PE instruction: history rewritten.** `be0a69e` was split,
+and the two docs commits that followed it were replayed unchanged, giving:
+
+| Commit | Message | Contents |
+|---|---|---|
+| `ae4e833` | `feat: fork readiness handshake — parent relays the child's real startup outcome` | `src/` only (3 files, +209 −12) |
+| `a477f22` | `docs: escalate M5 phase-11 — correct doubly-unsatisfiable unsafe-diff criterion …` | docs only |
+| `53ff4c1` | `docs: server-authored completion bookkeeping` | docs only |
+| `c30f5b8` | `docs: approve M5 phase-11 (done, approved_after_1); eighth exit criterion met` | docs only |
+
+No commit now mixes `src/` and `docs/`. **Verified content-identical to the
+pre-rewrite state**: the final tree hash is `b1eda0d…` before and after, and
+`git diff <old-HEAD> HEAD` is empty. `cargo build` and `cargo test` (947 + 27) still
+green afterwards. The rewrite was safe to do because `src/` was touched by *only*
+`be0a69e` in the replayed range, so the split needed no content reconstruction.
 
 **Lesson, and it is a small one worth keeping:** after an escalation that touches a
 tree the executor has already staged, `git commit -- <paths>` or a check of
