@@ -336,6 +336,13 @@ report the count of literals extracted per asset, and confirm each of the seven
 - [ ] May widen the visibility of the knowledge-memory consts in
       `src/config/seeds.rs` from private to `pub(crate)` **only** if the audit
       module cannot otherwise reach them. Do not change their contents.
+- [ ] **(added on bounce 1)** May change `src/config/mod.rs:6` from
+      `mod path_audit;` to `pub mod path_audit;`. This is the authorized fix for
+      bug-02-2 — it makes the module publicly reachable so `dead_code` does not
+      fire, instead of suppressing the lint.
+- [ ] **(added on bounce 1)** May split `audit_text` into `audit_text_with(text,
+      pending)` + a thin `audit_text(text)` wrapper, to create a testable seam
+      for the quarantine list. This is the authorized fix for bug-02-1.
 
 No new dependencies. No changes to `docs/architecture.md`.
 
@@ -363,6 +370,124 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and the working tree is clean. That is EXPECTED here
+and is NOT evidence this phase is done.** Your previous run landed and was
+reviewed; two bugs were filed against it. `cargo test` passing does not mean
+there is no work — the remaining work is *test-quality* and a *standards*
+violation, neither of which turns a gate red. Do not report `complete` with an
+empty diff.
+
+**Already approved — do NOT redo, re-derive, or "improve" any of this:**
+
+- `extract_path_literals` + the `PATH_PREFIXES` leading-segment allowlist.
+  Independently verified to reject `` `/clear` ``, `` `/limits reset` ``,
+  `` `/session save <name> [desc]` `` and `` `#!/usr/bin/env python3` ``.
+- The `INVENTORY` table, **including** the four entries you added beyond the
+  spec (`etc/prompts/sre.toml`, `var/run/daemoneye.sock`,
+  `var/run/daemoneye.pid`, `var/sessions/index.json`). All four were verified
+  against source and **accepted**. Leave them.
+- `PENDING_FIX`'s 7 entries — exactly right. **Do not add or remove any.**
+- The red-run and green-run Update Log entries.
+- The `pub(crate)` widening in `src/config/seeds.rs`.
+
+**There are exactly two edits left.**
+
+---
+
+**Bug-02-1 (blocker) — the `Legacy` branch of `audit_text` is dead under test.**
+
+`var/log/events.jsonl` is the only `Legacy` entry in `INVENTORY`, and it is also
+in `PENDING_FIX` — so the quarantine check at line ~306 skips it *before* the
+`INVENTORY` lookup ever runs. No test reaches lines 318-325. Stubbing that arm to
+a no-op leaves all 8 tests green. `legacy_entry_is_reported` asserts on
+`INVENTORY` data and never calls `audit_text`; its own comment concedes this.
+
+Fix — introduce a pending-list seam. Today:
+
+```rust
+pub fn audit_text(text: &str) -> Vec<Finding> {
+    let literals = extract_path_literals(text);
+    // ...
+        if PENDING_FIX.iter().any(|&p| p == normalised) {
+            continue;
+        }
+```
+
+Becomes:
+
+```rust
+/// Audit `text` against the inventory, skipping literals listed in `pending`.
+///
+/// Tests pass `&[]` to reproduce the unquarantined (red) audit.
+pub fn audit_text_with(text: &str, pending: &[&str]) -> Vec<Finding> {
+    // body of today's audit_text, with the quarantine check reading:
+    //     if pending.iter().any(|&p| p == normalised) { continue; }
+}
+
+/// Audit `text` with the standing quarantine list applied.
+pub fn audit_text(text: &str) -> Vec<Finding> {
+    audit_text_with(text, PENDING_FIX)
+}
+```
+
+Then two test changes — **one rewritten in place, one added**:
+
+1. Rewrite `legacy_entry_is_reported` (line ~464) so it *drives the audit*:
+
+```rust
+#[test]
+fn legacy_entry_is_reported() {
+    let findings = audit_text_with("see `var/log/events.jsonl` for events", &[]);
+    assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
+    assert!(
+        matches!(findings[0].reason, FindingReason::Legacy { .. }),
+        "expected Legacy, got {:?}",
+        findings[0].reason
+    );
+}
+```
+
+2. Add **one** new test, `red_run_is_reproducible`: call `audit_text_with(asset,
+   &[])` across the same 8 assets the audit covers (`SRE_PROMPT_TOML` + the 7
+   knowledge memories) and assert the set of normalised flagged literals equals
+   exactly the 7 in `PENDING_FIX`. This makes the red run a permanent regression
+   test rather than a one-off paragraph in the log — which is the whole point of
+   this milestone.
+
+**Mutation-check your own fix before reporting:** stub the `Legacy` arm (lines
+318-325) to a no-op, run `cargo test --lib config::path_audit`, confirm at least
+one test now **fails**, revert, and state the result in the Update Log. The
+review will redo this independently — a claimed mutation check is not one.
+
+---
+
+**Bug-02-2 (minor) — unauthorized `#![allow(dead_code)]`.**
+
+Delete `#![allow(dead_code)]` at `src/config/path_audit.rs:10`, and change
+`src/config/mod.rs:6` from `mod path_audit;` to `pub mod path_audit;`. Do **not**
+add `pub use path_audit::*;` — the sibling glob re-exports would collide.
+
+This exact pair is verified: with both changes applied,
+`cargo clippy --all-targets --all-features -- -D warnings` finishes clean with
+zero warnings. The module is production code that phase 04 consumes, so making it
+publicly reachable is the *correct* fix — not a suppression. Suppressing a
+warning is never yours to decide (WORKFLOW.md § "What Executors Never Decide");
+if a lint ever seems to need silencing, report a blocker instead.
+
+---
+
+**Finish condition (check this yourself before reporting):** `cargo test` must
+report **956** lib tests — **not 955**. Exactly one net-new test: one rewritten
+in place, one added. Integration must stay **27** (2 ignored) and isolation **3**.
+A lib count above 956 means scope creep; 955 means the new test never landed.
+
+**Still out of scope:** do not edit any asset, do not change `PENDING_FIX` or
+`INVENTORY` contents, do not build the `daemoneye audit-prompts` CLI.
 
 ### Update — 2026-07-30 16:10 (started)
 
@@ -587,3 +712,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - **Calibration:** none folded yet — pending a fix-and-reverify pass to see
   whether the root cause (adding a `Legacy` inventory entry to `PENDING_FIX`
   simultaneously, silently orphaning its own test coverage) recurs elsewhere.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce — four green gates and a clean tree — so a plain
+re-dispatch would return `complete` with an empty diff; the refinement supplies
+the loud header, the two enumerated edits, both fixes as source-verified worked
+examples, and a falsifiable test count (956, not 955). Takeover was rejected:
+this is the first assist and the executor can plainly reach this work.
