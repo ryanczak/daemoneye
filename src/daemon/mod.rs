@@ -1118,8 +1118,13 @@ mod tests {
 
         let probe = tokio::spawn(async { daemon_liveness().await });
 
-        // Accept then immediately drop the stream — EOF.
-        let (stream, _) = listener.accept().await.unwrap();
+        // Read the probe's Ping first so its write_all succeeds, THEN close —
+        // otherwise the close races the write and the probe fails on the write
+        // instead of reading EOF, leaving the Ok(Ok(0)) arm uncovered.
+        let (mut stream, _) = listener.accept().await.unwrap();
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; 256];
+        let _ = stream.read(&mut buf).await;
         drop(stream);
 
         let liveness = probe.await.unwrap();
