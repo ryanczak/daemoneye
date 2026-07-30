@@ -842,3 +842,77 @@ SIGKILLed at the end and needs restarting.**
 1.3 s → 4.2 s, from the deliberate 3 s hold in
 `liveness_is_unresponsive_when_peer_never_replies`. Expected — the spec forbids
 shortening the probe's 2 s timeout for tests. Not a finding.
+
+### Notes for executor — 2026-07-29 (re-dispatch after bug-09-1)
+
+## ⚠ READ THIS FIRST: green gates are EXPECTED here and are NOT evidence the phase is done
+
+When you start, `cargo build`, `cargo clippy`, `cargo fmt` and `cargo test` will
+**all pass** and `git status` will be **clean**. That is the expected state. **It
+does not mean there is no work.** The bounce is on **test quality**, which no gate
+can detect.
+
+**Already approved — do NOT redo, re-derive, or re-verify any of it:**
+
+- `DaemonLiveness` and `daemon_liveness()` in `src/daemon/mod.rs` — the mapping is
+  **correct**. Do not touch this function.
+- `liveness_line` in `src/cli/commands/lifecycle.rs` — all eight strings verified
+  character-for-character at review.
+- `run_ping` / `run_stop` / `run_status` rewiring.
+- `webhook::bind` + `webhook::serve` and the `run_daemon` eager-bind restructure.
+- Both `CLAUDE.md` invariants.
+- All nine tests exist and pass. **Do not add a tenth.**
+
+## There is exactly ONE edit left
+
+In `src/daemon/mod.rs`, inside `#[cfg(test)] mod tests`, in the body of
+**`liveness_is_not_running_when_peer_closes_immediately`** — and nowhere else.
+
+The problem: the test drops the peer stream before the probe's `write_all`
+finishes, so it exercises the **write-failure** arm instead of the **EOF** arm.
+Both return `NotRunning`, so it passes while leaving `Ok(Ok(0)) => NotRunning`
+completely uncovered. Proven by mutation at review — see `bugs/bug-09-1.md` for
+the three-run table.
+
+**The fix, verbatim** — read the request first so `write_all` succeeds, *then*
+close:
+
+```rust
+        let probe = tokio::spawn(async { daemon_liveness().await });
+
+        // Read the probe's Ping first so its write_all succeeds, THEN close —
+        // otherwise the close races the write and the probe fails on the write
+        // instead of reading EOF, leaving the Ok(Ok(0)) arm uncovered.
+        let (mut stream, _) = listener.accept().await.unwrap();
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; 256];
+        let _ = stream.read(&mut buf).await;
+        drop(stream);
+
+        let liveness = probe.await.unwrap();
+        assert_eq!(liveness, DaemonLiveness::NotRunning);
+```
+
+## Falsifiable finish condition — the count must NOT change
+
+This fix **adds no tests**. `cargo test 2>&1 | grep "^test result"` must still
+report **937** lib and **27** integration — **937, not 938.** A rising count means
+you added something and the scope crept.
+
+**Then mutation-check your own fix and state both halves in your summary:**
+
+1. Change `Ok(Ok(0)) => DaemonLiveness::NotRunning` to `=> DaemonLiveness::Confused`.
+2. Run `cargo test liveness_is_not_running_when_peer_closes_immediately`.
+3. It must now **FAIL**. *(Before this fix it passed — that is the whole defect.)*
+4. Restore the arm; confirm it passes again.
+
+Quote the failing assertion and the restored pass. A claimed mutation check that
+is not demonstrated will be re-run at review and will bounce again.
+
+## Do not
+
+- Do not modify `daemon_liveness()` itself — its mapping is correct.
+- Do not add a test for the write-failure arm; it is already covered (by this very
+  test, which is why the bug was invisible). Renaming is optional, not required.
+- Do not re-run the E2E scenarios. They were verified last run and they SIGKILL a
+  real daemon; there is no need to disturb the host again for a test-only fix.
