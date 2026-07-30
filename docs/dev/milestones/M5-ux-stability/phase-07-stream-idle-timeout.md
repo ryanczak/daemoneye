@@ -1,7 +1,7 @@
 # Phase 07: Bound the AI Stream — Mechanism C's Idle Read
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (independent of the lock, tmux, and instance sequences)
 **Estimated diff:** ~90 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -46,14 +46,19 @@ grep -rc "STREAM_IDLE_TIMEOUT" src/ | grep -v ":0" | wc -l   # expect 0
 grep -rc "stream_chunk" src/ | grep -v ":0" | wc -l          # expect 0
 grep -rn "let bytes = chunk?;" src/ai/backends/              # expect 3 lines
 grep -c "from_secs(300)" src/ai/mod.rs                       # expect 1
-cargo test 2>&1 | grep "^test result" | head -3   # expect 928 lib, 0, 27 integration
+cargo test 2>&1 | grep "^test result" | head -3   # expect 927 lib, 0, 27 integration
 ```
 
 **Every number above was produced by running that exact command against the tree
-while drafting.** If one differs, **stop and report a blocker**.
+on 2026-07-29 (re-measured at the refinement).** If one differs, **stop and report
+a blocker**.
 
-> Note the baseline is **928**, not 921 — phase 08 added 6 instance-lock tests and
-> this count already includes them.
+> **Use `cargo test`, not `cargo test --lib`.** The full command prints **three**
+> `test result` lines (lib / bin / integration); `--lib` prints only the first, so
+> a criterion phrased over three lines cannot be checked with it.
+>
+> Baseline arithmetic, for the record: 921 after phase 06w, **+6** from phase 08's
+> instance-lock tests = **927**. This phase adds **1**, giving **928**.
 
 ## Current state
 
@@ -288,12 +293,36 @@ are deliberate:
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
-- [ ] `cargo test` passes with **929** lib-unit tests (928 + 1 new) and **27**
-      integration tests.
+- [ ] `cargo test 2>&1 | grep "^test result"` shows the lib count at **928** and
+      integration at **27**. Equivalently, and this is the check that matters: the
+      lib count is **exactly 1 higher** than the 927 you recorded in Pre-flight,
+      and the new test's name appears in
+      `cargo test 2>&1 | grep idle_stream_times_out_and_reports_a_stall`.
+      **If the count is anything other than baseline + 1, stop and report a
+      blocker — do not re-run the command hoping for a different answer.**
 
 **Run every gate bare** — a command piped through `tail` exits with `tail`'s
 status. Every number above was produced by running that exact command against a
 tree with this change applied.
+
+### ⚠ How to check the test count — read this before checking it
+
+The **only** two commands you need, once each:
+
+```bash
+cargo test 2>&1 | grep "^test result"                                    # three lines
+cargo test 2>&1 | grep idle_stream_times_out_and_reports_a_stall         # one line, "... ok"
+```
+
+**Do not attempt to count tests by grepping and piping the per-test `^test ` lines**
+(`grep "^test " | grep -v result | wc -l`, `--list | grep -c`, and friends). Those
+counts do not agree with the `test result` summary — they include or exclude the
+bin and integration targets depending on the flags — and chasing the discrepancy
+is a trap. The summary line is authoritative.
+
+**If a number disagrees with this doc, the doc is wrong and you should say so.**
+Report a blocker naming the number you measured. Re-running a read-only command
+that already gave you its answer makes no progress and will trip the governor.
 
 ## Test plan
 
@@ -363,10 +392,59 @@ it would cost tokens and could not be made to stall on cue.
 5. **The test server must not close the socket** — closing gives EOF, a different
    path, and the test would pass for the wrong reason.
 6. **Do not use `http()` in the test.** It is a `OnceLock` at 120 s.
-7. **Suite goes to 929.**
+7. **Suite goes 927 → 928.** One new test. If you measure anything else, report a
+   blocker rather than re-counting.
 
 ## Update Log
 
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 01:14 (started)
+
+**Executor:** claude-opus-4-5-20251101
+
+Added `STREAM_IDLE_TIMEOUT` constant, `stream_chunk` helper, `read_timeout` on the shared HTTP client, routed all three backends through the helper, and added the hermetic `idle_stream_times_out_and_reports_a_stall` test.
+
+### Notes for executor — 2026-07-29
+
+**The previous run implemented this phase correctly and was failed by a bad number
+in this doc, not by anything you did wrong.** Read this before starting.
+
+What happened: the doc's Pre-flight claimed a baseline of **928** lib tests and the
+acceptance criterion demanded **929**. Both were off by one — the true baseline is
+**927** and the correct target is **928**. The architect measured 928 with the
+change already applied and mistakenly recorded that as the *pre-change* number,
+then derived 929 from it. **The criterion was unreachable**, so the run did the
+work, could not make the number appear, and spent 60 read-only turns re-counting
+until the governor stopped it.
+
+Both numbers are now corrected and re-measured against the tree.
+
+**Three things to carry into this run:**
+
+1. **The source changes were reverted, deliberately.** The tree is clean and the
+   Pre-flight numbers above are honest as of right now. You are implementing from
+   scratch — the four code blocks in the Spec are verbatim and were
+   compile-verified, so this should be quick.
+2. **Count tests with the summary line, once.** `cargo test 2>&1 | grep "^test
+   result"`. Not `cargo test --lib` (one line, not three). Not by counting `^test `
+   lines (those totals do not match the summary). See "How to check the test count"
+   in Acceptance criteria.
+3. **A number that disagrees with this doc means the doc is wrong.** Say so and
+   report a blocker with the number you measured. Re-running a read-only command
+   that already answered makes no progress and will trip the governor — that is
+   exactly what ended the last run.
+
+For reference, the previous run's own gate results, all green before it got stuck:
+`cargo fmt --all` ✓, `cargo build` ✓, `cargo clippy --all-targets --all-features
+-- -D warnings` ✓, `cargo test idle_stream_times_out_and_reports_a_stall` ✓.
+
+### Update — 2026-07-29 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** The `hard_fail` was a pure spec defect — an unsatisfiable test-count
+criterion — and the executor had already produced a byte-for-byte correct
+implementation, so fixing the number removes the loop's cause entirely; takeover
+would forfeit a model data point the executor plainly earned.
