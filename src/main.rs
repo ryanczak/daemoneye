@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand};
 use daemoneye::{agents, ai, cli, config, daemon, scripts, session_store};
 use std::path::PathBuf;
@@ -254,21 +255,44 @@ fn main() -> anyhow::Result<()> {
     // For `daemon` without `--console`, fork into the background before
     // starting the async runtime so the calling shell is released immediately.
     if let Commands::Daemon { console: false, .. } = &cli.command {
+        let (read_end, write_end) =
+            daemon::ready::create_pipe().context("failed to create the daemon readiness pipe")?;
+
         // SAFETY: This runs before the tokio runtime starts, so only the main
         // thread exists. Forking a live multi-threaded runtime is unsound because
         // only the calling thread survives in the child.
+        let pid = unsafe { libc::fork() };
+        if pid < 0 {
+            anyhow::bail!("fork() failed: {}", std::io::Error::last_os_error());
+        }
+        if pid > 0 {
+            // Parent: drop our copy of the write end so the child's is the only
+            // one left — otherwise the read below never sees EOF.
+            drop(write_end);
+            return match daemon::ready::await_child_report(read_end) {
+                daemon::ready::ChildReport::Ready => {
+                    println!("daemoneye daemon started (PID {})", pid);
+                    Ok(())
+                }
+                daemon::ready::ChildReport::Failed(msg) => {
+                    eprintln!("daemoneye: daemon failed to start: {msg}");
+                    std::process::exit(1);
+                }
+                daemon::ready::ChildReport::Died => {
+                    eprintln!(
+                        "daemoneye: daemon exited during startup without reporting — \
+                         see ~/.daemoneye/var/log/daemon.log"
+                    );
+                    std::process::exit(1);
+                }
+            };
+        }
+        // Child: drop the read end, keep the write end as our reporter.
+        drop(read_end);
+        daemon::ready::set_reporter(write_end);
+
+        // SAFETY: setsid/dup2 operate on raw file descriptors that we control.
         unsafe {
-            let pid = libc::fork();
-            if pid < 0 {
-                anyhow::bail!("fork() failed: {}", std::io::Error::last_os_error());
-            }
-            if pid > 0 {
-                // Parent: report the child PID and exit cleanly.
-                println!("daemoneye daemon started (PID {})", pid);
-                return Ok(());
-            }
-            // Child: create a new session so we are no longer attached to the
-            // calling terminal, then redirect stdin from /dev/null.
             if libc::setsid() < 0 {
                 eprintln!(
                     "daemoneye: setsid() failed: {} — daemon may not be fully detached from terminal",
@@ -313,7 +337,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             } else {
                 Some(log_file.unwrap_or_else(config::default_log_path))
             };
-            daemon::run_daemon(log_file, session).await?;
+            if let Err(e) = daemon::run_daemon(log_file, session).await {
+                daemon::ready::report_failure(&e.to_string());
+                return Err(e);
+            }
         }
         Commands::Logs { log_file } => {
             let path = log_file.unwrap_or_else(config::default_log_path);

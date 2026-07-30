@@ -36,6 +36,7 @@ pub mod instance;
 pub mod memory_prompt;
 pub mod policy;
 pub mod prompt;
+pub mod ready;
 pub mod scheduled;
 pub mod server;
 pub mod session;
@@ -876,6 +877,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     });
 
     log::info!("Daemon listening on {}", socket_path.display());
+    ready::report_ready();
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .context("Failed to install SIGTERM handler")?;
