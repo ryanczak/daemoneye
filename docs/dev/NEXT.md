@@ -3,8 +3,8 @@
 **Active phase: none — M6 is scoped but no phase is drafted.**
 
 M6 — Verification & Hygiene was scoped 2026-07-30. Milestone README:
-`docs/dev/milestones/M6-verification-and-hygiene/README.md`. Nine phases are
-**named, not drafted**, with a thirteen-item defect inventory behind them, all of it
+`docs/dev/milestones/M6-verification-and-hygiene/README.md`. Twelve phases are
+**named, not drafted**, with a sixteen-item defect inventory behind them, all of it
 verified against the tree or the live runtime during scoping.
 
 **This is a human gate.** Review the milestone README — particularly the exit
@@ -29,7 +29,7 @@ prompt names `var/log/events.jsonl` in the same sentence as the correct tool
 (`search_repository(kind:"events")`, which reads the segments properly). The agent
 followed the path.
 
-## The four axes
+## The five axes
 
 1. **Test isolation** — throwaway `HOME` **and** a private tmux server. Phase 01,
    first because everything else needs it. Across M5, every real-artifact check
@@ -43,10 +43,23 @@ followed the path.
    scenario surfaces behind it. Everything downstream of that gate
    (`maybe_analyze_alert`, the `GHOST_TRIGGER` parse, `check_ghost_capacity`,
    `GhostManager::start_session`) has never run for a severity-less alert.
-4. **Runtime-tree hygiene** — `daemon.log` is 25.8 MB with *no* rotation logic
-   anywhere in `src/`; `pane_prefs.json` exists twice, one orphaned, with a doc
-   comment pointing at the dead one; `lib/` is documented as holding SDK modules and
-   has been empty since March.
+4. **Artifact lifecycle and tree hygiene** — *expanded 2026-07-30 on your
+   instruction.* **Only two sweep functions exist in the whole codebase.** Measured
+   against your live tree: `daemon.log` 25.8 MB with no rotation logic anywhere;
+   `panes/` 264 files back to May 9, unswept; agent mailboxes accumulate one per
+   ghost exit, unswept; and `sessions/` has a sweep that is **off by default**
+   (`archive_retention_days = 0`) while events defaults to 90 — opposite defaults,
+   nothing surfacing it. Phase 07 states one policy and lands a test that fails on
+   any class not covered; 08–09 implement against it.
+5. **Pane preferences, re-specified** — *added 2026-07-30 on your instruction.* Not
+   just the orphaned file: **both sides of the `session_name → pane_id` mapping are
+   unstable identities.** Your live file holds `{"0":"%0","1":"%1","2":"%5",…}` —
+   default numeric tmux session names that collide across unrelated sessions, mapped
+   to pane IDs that recycle across server restarts. `pane_exists` proves *a* pane has
+   that ID, not that it is the one you picked. The preference is therefore reliable
+   only within one continuous tmux server lifetime, which is when persistence matters
+   least. Phase 10 is design-discovery, with one hard constraint: never silently run a
+   foreground command in a pane the user did not choose.
 
 ## Not an M5 regression
 
@@ -58,7 +71,7 @@ gate were last touched in `3fde6cd` (2026-03-07), four months before M5 opened.
 
 - **Did not draft phase 01.** Milestone boundaries are a human gate; the README is
   for your review first.
-- **Did not fix any defect.** All thirteen are inventory, not work-in-progress. The
+- **Did not fix any defect.** All sixteen are inventory, not work-in-progress. The
   severity gate is a two-line change and tempting, but it belongs in phase 05 behind
   the harness that can prove it.
 

@@ -38,8 +38,22 @@ the tooling could not tell. See Notes § "Defect inventory".
 - [ ] A test in the repo fails if any path literal in `assets/prompts/sre.toml` or
       `assets/memory/knowledge/*.md` does not correspond to a path the `config`
       module constructs. Stale prompt facts become a red gate, not a discovery.
-- [ ] **`daemon.log` is bounded** by a documented policy (size or age), and the
-      policy is exercised by a test rather than asserted in prose.
+- [ ] **Every artifact class under `~/.daemoneye/` has a stated lifecycle** —
+      rotate, delete, archive, or keep-forever-by-design — recorded in one place, with
+      the default value for each. No class is unmanaged by omission. Verified by a
+      test that enumerates the artifact directories and fails on any not covered by
+      the policy table.
+- [ ] **`daemon.log` is bounded** by that policy, and the bound is exercised by a
+      test rather than asserted in prose.
+- [ ] **A sweep that is off by default says so where the operator will see it.**
+      `sessions.archive_retention_days` defaults to `0` (keep forever) while
+      `events.retention_days` defaults to `90`; today nothing surfaces that
+      asymmetry.
+- [ ] **Pane-preference persistence is re-specified against stable identity**, or
+      deliberately reduced in scope. The exit condition is a recorded decision plus
+      its implementation — not a specific mechanism, which is the phase's to choose.
+      Whatever lands must not silently target a pane the user did not pick, and stale
+      entries must not accumulate indefinitely.
 - [ ] **`~/.daemoneye/` contains no orphaned or undocumented entries.** Every path
       present in a fresh install and in the maintainer's live tree is either
       produced by a named `config::` function or deliberately removed; `lib/` is
@@ -78,9 +92,12 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 04 | audit-prompts-command — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | todo |
 | 05 | severity-gate-honesty — an absent severity is not the lowest severity; every discard logs and emits | todo |
 | 06 | webhook-to-ghost-e2e — the pipeline scenario in the 01 harness, severity-less payload through to a `ghost_*` event | todo |
-| 07 | daemon-log-retention — bound `daemon.log` under a tested policy | todo |
-| 08 | runtime-tree-hygiene — orphan removal, the `lib/` decision, doc-comment corrections | todo |
-| 09 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
+| 07 | artifact-lifecycle-policy — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | todo |
+| 08 | daemon-log-rotation — bound the 25.8 MB unrotated log under the 07 policy | todo |
+| 09 | pane-and-archive-retention — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days` | todo |
+| 10 | pane-prefs-redesign — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | todo |
+| 11 | runtime-tree-hygiene — orphan removal, the `lib/` decision, doc-comment corrections | todo |
+| 12 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
 
 Phases beyond 06 may be re-split or dropped once 01–06 land; the inventory below is
 what is *known*, and 01/06 will very likely add to it.
@@ -145,13 +162,41 @@ Nothing is inferred.
    since creation (Mar 26). Either the feature was dropped or never built; the docs
    never noticed.
 
-**Runtime tree hygiene**
+**Artifact lifecycle** — *scope expanded 2026-07-30 on PE instruction: "all
+daemoneye log files and other artifacts need to be managed (logs rotated, old files
+deleted or archived, etc.)."*
+
+Survey of every artifact class, measured against the maintainer's live tree. **Only
+two sweep functions exist in the entire codebase**
+(`sweep_event_segments`, `sweep_session_archives`), both called from one site
+(`src/daemon/mod.rs:821`) on every 60th cleanup tick:
+
+| Class | Live size | Files | Oldest | Lifecycle |
+|---|---|---|---|---|
+| `var/log/daemon.log` | 25.8 MB | 1 | 2026-05-08 | **none — no rotation logic anywhere** |
+| `var/log/events/` | 167 KB | 10 | 2026-07-13 | swept, `events.retention_days` **default 90** |
+| `var/log/sessions/` | 3.2 MB | 141 | 2026-05-08 | sweep exists but `archive_retention_days` **defaults to 0 = keep forever** |
+| `var/log/panes/` | 1.9 MB | **264** | 2026-05-09 | **none** |
+| `var/log/pipe/` | ~0 | 0 | — | deleted at daemon start ✓ |
+| `agents/*/mailbox/` | — | 3 | — | **none** — `grep` for mailbox cleanup returns only a doc comment |
+| `scripts/`, `runbooks/`, `memory/` | 1.0 MB | 88 | 2026-03-27 | user content — arguably correct to keep, but no stated policy either way |
+
+Three distinct problems, not one:
 
 9. **`daemon.log` is unbounded.** 25.8 MB and growing in the maintainer's tree, and
    `grep -rn 'daemon\.log' src/ | grep -iE 'rotat|truncat|size|sweep'` returns
    **nothing** — there is no rotation logic at all. By contrast the event log *is*
    bounded (`sweep_event_segments`, `events_retention_days`) and session archives are
    (`sweep_session_archives`). `panes/` (1.9 MB) and `pipe/` (487 KB) need checking.
+9b. **A sweep that is off by default, with no signal.** `archive_retention_days`
+    defaults to `0` (`src/config/types.rs:115`, documented in-code as "keep forever")
+    while `events.retention_days` defaults to `90` (`:97`). Opposite defaults for two
+    adjacent artifact classes, and nothing tells the operator which is which. 141
+    session archives back to May 8 are the result.
+9c. **Two classes have no sweep at all** — `panes/` (264 files) and agent mailboxes.
+    Mailbox files are written per `job_id` on every ghost exit
+    (`write_mailbox_on_exit`), so they accumulate one-per-ghost forever.
+
 10. **An orphaned file the code no longer reads.**
     `~/.daemoneye/pane_prefs.json` (12 bytes, Jun 25) vs the live
     `~/.daemoneye/var/run/pane_prefs.json` (64 bytes, Jul 25). `prefs_path()`
@@ -219,3 +264,61 @@ Two folds landed on 2026-07-30 and both bear directly on this milestone:
   eight defective acceptance criteria in M5, three of which cost a run. M6's phase
   02 is a narrower instance of the same idea — turn a discipline into a gate — and
   is worth building partly as a cheap experiment in whether that generalises.
+
+### Pane preferences — the use case needs revisiting, not just the orphan
+
+*Scope addition 2026-07-30 on PE instruction: "there may be better ways of
+remembering pane preferences."* This is why phase 10 is design-discovery rather than
+a bug fix.
+
+The stated goal (`src/pane_prefs.rs:1-5`) is "the user is never asked to pick a pane
+more than once per session", persisted across daemon restarts. The implementation is
+a flat `HashMap<session_name, pane_id>`. **Both sides of that mapping are unstable
+identities**, which is the core problem.
+
+The maintainer's live file, verbatim:
+
+```json
+{"2":"%5","0":"%0","1":"%1","daemoneye":"%0","de-phase01":"%20"}
+```
+
+- **Session names are not identities.** `"0"`, `"1"`, `"2"` are tmux's default
+  numeric names. They are reused constantly and refer to nothing in particular. A
+  preference stored for session `"0"` will be offered for *any* future session that
+  happens to be named `"0"`.
+- **Pane IDs are not identities either.** `%5`, `%20`, `%22` are per-server and
+  recycled across tmux server restarts. `resolve_target_pane` does validate with
+  `pane_exists` (`src/cli/commands/pane.rs:19`), which is better than nothing — but
+  it proves only that *a* pane holds that ID, not that it is the pane the user chose.
+  After a server restart `%0` almost certainly exists and is something else.
+- **Net effect: the preference is reliable only within one continuous tmux server
+  lifetime** — precisely the case where persistence is least needed.
+- **Nothing prunes.** `de-phase01` is a long-dead rexyMCP phase session still in the
+  file. Entries accumulate for every session name ever seen.
+- **`pub fn get()` is implemented as `all.remove(session_name)`**
+  (`src/pane_prefs.rs:35`). Non-destructive today only because the mutated map is
+  never written back — one refactor away from silently deleting preferences.
+
+Directions worth weighing in the phase (none chosen — this is the design question):
+store a *fingerprint* alongside the pane ID (window name, pane index, cwd) and accept
+the preference only if it still matches; key on window/pane *index* rather than ID;
+scope the memory to a tmux-server generation and discard on change; or reduce the
+requirement — "ask once per daemon run" may be enough and is far simpler than
+persistence that is wrong across restarts.
+
+**Constraint carried in:** whatever lands must not silently execute a foreground
+command in a pane the user did not pick. That is the failure this feature can
+actually cause, and it is worse than asking again.
+
+### Why the artifact work is one design phase before three mechanical ones
+
+Phase 07 is deliberately a policy phase with no rotation code in it. The survey above
+found the classes are inconsistent in *kind*, not just in coverage: one is swept with
+a sane default, one is swept with an off default, two are unswept, one is cleared at
+startup, and three hold user content that probably *should* persist. Writing rotation
+for `daemon.log` first would produce a fourth independent convention.
+
+So 07 states the policy and lands the test that fails on any class not covered by it;
+08–09 then implement against a decided table. The test is the durable part — it is
+what stops the next artifact class from being unmanaged by omission, which is how all
+four of the current gaps arose.

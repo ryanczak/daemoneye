@@ -376,17 +376,20 @@ the child has bound its socket.
 ### Active milestone — M6 Verification & Hygiene
 
 Scoped 2026-07-30 (PE sign-off). Milestone README:
-`docs/dev/milestones/M6-verification-and-hygiene/README.md` (nine phases named,
+`docs/dev/milestones/M6-verification-and-hygiene/README.md` (twelve phases named,
 none drafted). Goal: make DaemonEye able to prove its own pipelines work, keep the
 agent's documented beliefs matching the code, and bound the runtime tree. Scoped from
 a live webhook→ghost-shell test that produced three reported symptoms of which two
-were measurement errors and one a real defect — the ratio being the point. Four axes:
+were measurement errors and one a real defect — the ratio being the point. Five axes:
 an isolated test harness (throwaway `HOME` + private tmux server), pipeline
 correctness (starting with a severity gate that silently discards alerts carrying no
 severity), agent-belief accuracy (the prompt and knowledge memories assert a
 filesystem path that has not existed since July 9, with nothing testing prompt facts),
-and runtime-tree hygiene (`daemon.log` unbounded at 25 MB with no rotation logic;
-orphaned files the code no longer reads).
+artifact lifecycle (only two sweep functions exist in the codebase; `daemon.log`
+unbounded at 25 MB with no rotation logic, `panes/` and agent mailboxes unswept, and
+session archives swept only if the operator opts in), and a re-specification of
+pane-preference persistence, whose `session_name → pane_id` mapping is unstable on
+both sides.
 
 One correction recorded during M4 scoping: the FTS5 memory index described in
 §1.4 / "Knowledge system" is currently a **stub** (`src/memory/index.rs`
