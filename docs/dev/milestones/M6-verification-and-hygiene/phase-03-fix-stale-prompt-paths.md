@@ -422,3 +422,102 @@ correct — the only gap is the three required end-to-end transcripts, so the
 refinement names the single file to touch, spells out the three commands, and
 inverts the finish condition (955 lib tests, not 956; exactly one changed path)
 so that adding anything is the signal for scope creep.
+
+### Update — 2026-07-30 (end-to-end verification)
+
+**1. Grep — all surviving `~/.daemoneye/` occurrences are correct paths:**
+
+```
+$ grep -rn '~/\.daemoneye/' assets/
+assets/prompts/sre.toml:78:- Full output archived to `~/.daemoneye/var/log/panes/<win>.log`.
+assets/prompts/sre.toml:117:`edit_file` is additionally blocked from anywhere under `~/.daemoneye/` — use the \
+assets/prompts/sre.toml:289:`~/.daemoneye/agents/<name>/briefing.md`, injected into the next invocation as \
+assets/prompts/sre.toml:313:`~/.daemoneye/` is the agent runtime root. Always look here first before \
+assets/etc/config.toml:1:# DaemonEye configuration — ~/.daemoneye/etc/config.toml
+assets/memory/knowledge/scripts-and-sudoers.md:3:Scripts are pre-vetted programs stored in `~/.daemoneye/scripts/` that Ghost Shells and scheduled jobs can run without per-command human approval. Scripts may be **shell** (`.sh`) or **Python** (`.py`) — Python is preferred for anything with data processing, JSON handling, or multi-step logic.
+assets/memory/knowledge/scripts-and-sudoers.md:114:- Only scripts in `~/.daemoneye/scripts/` are eligible for sudoers rules.
+assets/memory/knowledge/ghost-shell-guide.md:52:| `auto_approve_scripts` | Script names in `~/.daemoneye/scripts/` the ghost may run. Only these scripts may use sudo (see `run_with_sudo`). Always required for scripts that need elevated privileges. |
+assets/memory/knowledge/ghost-shell-guide.md:93:When you see a `[Ghost Shell Completed]` or `[Ghost Shell Failed]` event, use `read_file(<path>)` on the session log path to review the full ghost conversation — what it investigated, which commands it ran, and the final outcome summary. Pane logs for individual background commands are in `~/.daemoneye/var/log/panes/` and are referenced in tool results when output was truncated.
+assets/memory/knowledge/ghost-shell-guide.md:99:**`~/.daemoneye/var/log/daemon.log`** — human-readable trace:
+assets/memory/knowledge/ghost-shell-guide.md:109:**`~/.daemoneye/var/log/events/events-<date>.jsonl`** — structured records (searchable via `search_repository`):
+assets/memory/knowledge/ghost-shell-guide.md:116:**`~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl`** — full message history including all tool calls and results. Created immediately when the session starts (even if the ghost fails before its first turn).
+assets/memory/knowledge/ghost-shell-guide.md:118:**`~/.daemoneye/var/log/panes/<win_name>.log`** — complete output from each background command. Written from the full pipe-pane log — never truncated by tmux scrollback limits.
+assets/memory/knowledge/runbook-ghost-template.md:43:- `auto_approve_scripts`: (list) script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution; non-sudo commands run freely without listing them
+assets/memory/knowledge/scheduling-guide.md:41:Runs a pre-vetted script from `~/.daemoneye/scripts/` on a schedule. Output is captured and appended to the session context.
+assets/memory/knowledge/scheduling-guide.md:77:Schedules survive daemon restarts — they are persisted to `~/.daemoneye/var/run/schedules.json`. Jobs that were due while the daemon was down fire on next startup.
+assets/memory/knowledge/runbook-format.md:43:- `auto_approve_scripts`: (list) script names in `~/.daemoneye/scripts/` pre-approved for **sudo** execution; non-sudo commands run freely without listing them
+assets/memory/knowledge/webhook-setup.md:8:- Authentication: set `webhook.secret` in `~/.daemoneye/etc/config.toml`; send as `Authorization: Bearer <secret>`
+assets/memory/knowledge/webhook-setup.md:12:Add to `~/.daemoneye/etc/config.toml` and restart the daemon:
+assets/memory/knowledge/webhook-setup.md:24:grep -A5 '\[webhook\]' ~/.daemoneye/etc/config.toml || echo 'not configured'
+assets/memory/knowledge/webhook-setup.md:104:Expected: `200` response, tmux overlay in chat pane, `webhook_alert` in `~/.daemoneye/var/log/events/events-<date>.jsonl`.
+assets/memory/knowledge/agent-runtime-layout.md:3:summary: Full ~/.daemoneye/ directory layout — paths, purposes, and access notes for every subdirectory and key file
+assets/memory/knowledge/agent-runtime-layout.md:9:`~/.daemoneye/` is the daemon and agent runtime root. All persistent knowledge,
+assets/memory/knowledge/agent-runtime-layout.md:15:~/.daemoneye/
+assets/memory/knowledge/agent-runtime-layout.md:71:### edit_file blocked from entire `~/.daemoneye/` tree
+```
+
+Every surviving occurrence is a correct path: `~/.daemoneye/var/`, `~/.daemoneye/etc/`, `~/.daemoneye/scripts/`, `~/.daemoneye/agents/`, or the bare runtime root. No pre-`var/` stale paths remain.
+
+**2. Assets-clean test — all 8 assets pass with empty quarantine:**
+
+```
+$ cargo test --lib config::path_audit 2>&1
+...
+test config::path_audit::tests::all_assets_audit_clean_with_empty_quarantine ... ok
+test config::path_audit::tests::extractor_detects_historical_stale_literals ... ok
+test config::path_audit::tests::extracts_real_path_spans ... ok
+test config::path_audit::tests::inventory_contains_all_config_constructors ... ok
+test config::path_audit::tests::legacy_entry_is_reported ... ok
+test config::path_audit::tests::normalisation_collapses_placeholder_segments ... ok
+test config::path_audit::tests::normalisation_strips_prefix_and_trailing_slash ... ok
+test config::path_audit::tests::rejects_slash_commands_and_shebangs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 947 filtered out; finished in 0.00s
+```
+
+**3. Mutation check — breaking `normalise()` causes the synthetic-corpus test to fail:**
+
+Broken `normalise()` (returns `None` unconditionally):
+
+```
+$ cargo test --lib config::path_audit 2>&1
+...
+test config::path_audit::tests::extractor_detects_historical_stale_literals ... FAILED
+test config::path_audit::tests::legacy_entry_is_reported ... FAILED
+test config::path_audit::tests::normalisation_collapses_placeholder_segments ... FAILED
+test config::path_audit::tests::normalisation_strips_prefix_and_trailing_slash ... FAILED
+
+failures:
+
+---- config::path_audit::tests::extractor_detects_historical_stale_literals stdout ----
+assertion `left == right` failed: expected 7 findings from historical corpus, got 0
+  left: 0
+ right: 7
+
+---- config::path_audit::tests::legacy_entry_is_reported stdout ----
+assertion `left == right` failed: expected one finding, got []
+  left: 0
+ right: 1
+
+---- config::path_audit::tests::normalisation_collapses_placeholder_segments stdout ----
+assertion `left == right` failed
+  left: None
+ right: Some("var/log/panes")
+
+---- config::path_audit::tests::normalisation_strips_prefix_and_trailing_slash stdout ----
+assertion `left == right` failed
+  left: None
+ right: Some("scripts")
+
+test result: FAILED. 4 passed; 4 failed; 0 ignored; 0 measured; 947 filtered out; finished in 0.00s
+```
+
+After reverting `normalise()` to the correct implementation:
+
+```
+$ cargo test --lib config::path_audit 2>&1
+...
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 947 filtered out; finished in 0.00s
+```
+
+`git status --porcelain src/` is empty after the revert — no uncommitted changes remain in `src/`.
