@@ -246,6 +246,111 @@ No changes to `src/`. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and the working tree is clean. Expected. NOT evidence
+this phase is done.**
+
+**The instrument itself is APPROVED.** The reviewer mutated your stub — changed
+the emitted token to `"...-MUTATED"` — and
+`stub_returns_canned_response_via_make_client` failed with the right diff. Your
+stub is real and it is trusted. **Do not redesign it.**
+
+Also approved and frozen: the OpenAI-compatible SSE choice, `alloc_free_port()`
+(it does `drop(listener)` before handing the port out — correct), the `Drop`
+impl aborting the stub task, the `private_tmux_socket` refactor, the config
+plumbing, `post_webhook()`, and all four new tests. Phase 01's three isolation
+tests are byte-for-byte unchanged — keep it that way.
+
+**There is exactly one defect: two `tokio::time::sleep` calls.**
+
+The phase doc forbade these twice — task 1 ("Do not add retry loops or sleeps to
+hide it") and Out of scope ("Do not add retries, sleeps, or polling to mask the
+port race"). `STANDARDS.md` §3.3 also bans sleeps in tests outright. Both are
+removable **with no loss of determinism** — the architect verified the fixes
+below compile and pass, 7/7, and the isolation suite got *faster* (0.38s → 0.15s),
+because the sleeps were pure latency, not synchronisation.
+
+---
+
+**Fix 1 — `tests/harness/mod.rs`, `start_stub()` (sleep at ~line 111).**
+
+The bind currently happens *inside* the spawned task, so `start_stub` returns
+before the port is listening and the 50 ms sleep papers over the gap. **Bind
+first, then spawn only the serve loop** — when `start_stub` returns, the port is
+already accepting:
+
+```rust
+pub async fn start_stub(&mut self) {
+    let response = Arc::clone(&self.stub_response);
+    let port = self.stub_port;
+
+    // Bind before spawning: when this returns, the port is already
+    // accepting connections, so no readiness sleep is needed.
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+        .await
+        .expect("bind stub server");
+
+    let app = axum::Router::new().route(
+        "/chat/completions",
+        axum::routing::post(
+            move |axum::Json(_body): axum::Json<serde_json::Value>| async move {
+                let canned: String = {
+                    let guard = response.lock().unwrap();
+                    guard.clone()
+                };
+                let events: Vec<
+                    Result<axum::response::sse::Event, std::convert::Infallible>,
+                > = build_sse_events(canned);
+                axum::response::Sse::new(futures_util::stream::iter(events))
+            },
+        ),
+    );
+
+    self.stub_handle = Some(tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("serve stub");
+    }));
+}
+```
+
+That is the whole change: hoist the `bind`, drop the inner `Arc::clone`, spawn
+only `axum::serve`, delete the sleep and its comment.
+
+---
+
+**Fix 2 — `tests/isolation.rs`, `daemon_webhook_returns_200` (sleep at ~line 289).**
+
+**Delete the sleep and its comment. Add nothing in its place.** No retry, no
+poll, no readiness helper — none is needed, and this is why:
+
+`crate::webhook::bind(&startup_config)` runs at `src/daemon/mod.rs:746`, while
+`ready::report_ready()` runs at `:880`. Per `CLAUDE.md`, `daemoneye daemon`
+(without `--console`) does not report success until the forked child has signalled
+readiness. So **by the time `start_daemon()` returns, the webhook listener is
+already bound** — the ordering is guaranteed by the daemon's own startup, not by
+waiting. Verified: with the sleep removed, `daemon_webhook_returns_200` passes.
+
+---
+
+**Finish condition.**
+
+- `grep -rn "sleep" tests/` must return **no `tokio::time::sleep` call** (a
+  comment containing the word is fine).
+- `cargo test --test isolation` must report **7 passed**, same seven names.
+- lib **964** and integration **30** (2 ignored) unchanged.
+- `git diff --name-only` should list `tests/harness/mod.rs`,
+  `tests/isolation.rs`, and this phase doc. Nothing else, and nothing under
+  `src/`.
+
+**The End-to-end verification entry must be redone** against the fixed code —
+the pasted transcript has to reflect the run you actually did this time. Same
+capture discipline as before (redirect to a file, paste the file, keep the
+`exit=` / `grep-exit=` lines). Your previous entry was accepted as genuine, so
+the format was right; it just describes the pre-fix code now.
+
+
 ### Update — 2026-07-30 20:23 (started)
 
 **Executor:** model
@@ -431,3 +536,15 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - All four gates re-run independently and green: `cargo fmt --all -- --check` (exit=0), `cargo build` (exit=0), `cargo clippy --all-targets --all-features -- -D warnings` (exit=0), `cargo test` (964 lib / 30 integration, 2 ignored / 7 isolation / 0 doc, exit=0) — matching the executor's counts.
 
 **Verdict rationale:** every acceptance criterion and gate is independently met, and the transcript evidence is real (not fabricated — re-run matched). The bounce is solely for the two sleeps, which the phase doc named as an explicit out-of-scope anti-pattern by name (task 1's race) and which STANDARDS.md §3.3 independently forbids. Re-dispatch via `/rexymcp:dispatch phase-06a` once bug-06a-1 is fixed.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce on a single, well-localised defect — two sleeps the
+spec forbade twice. Both fixes were verified by the architect before being
+written in (7/7 pass, suite 0.38s → 0.15s), and fix 2 rests on a source-derived
+ordering guarantee the executor had no reason to know: the webhook binds at
+`daemon/mod.rs:746` and readiness is reported at `:880`, so `start_daemon()`
+returning already implies a bound listener. Supplying that fact is what turns
+"delete the sleep" from a risky instruction into a safe one.
