@@ -1,71 +1,76 @@
 # NEXT
 
-**Active phase: 07 — artifact-lifecycle-policy.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-07-artifact-lifecycle-policy.md`
+**Active phase: 08 — daemon-log-rotation.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-08-daemon-log-rotation.md`
 Status: `todo` — drafted 2026-07-30, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-07`.
+Dispatch with `/rexymcp:dispatch phase-08`.
 
-## M6's headline verification now exists and passes
+## What phase 08 does
 
-Phase 06b landed `approved_first_try`. A payload with **no severity field** now
-provably reaches a ghost shell, observable end-to-end. The real record, captured
-from the event log during the run:
+Bounds `var/log/daemon.log` — 25.8 MB and growing since May 8, with no rotation
+logic anywhere in the tree. Phase 07 recorded its policy as **Rotate**, owned by
+phase 08; this phase makes that true and flips the table entry to implemented.
 
-```json
-{"alert_name": "disk-full", "event": "ghost_start",
- "session_id": "ghost-disk-full-a2123d98…", "tmux_session": "daemoneye-incidents",
- "spawn_depth": 0, "trigger": "de-gs-bg-"}
-```
+## The constraint that decides the design
 
-That is defect 1 — the milestone's motivating bug — demonstrated rather than
-argued. The review reproduced the mutation check independently: breaking the
-fail-open arm makes the scenario fail with `process_alert returned None — no
-ghost spawned`.
+**The log is not written through a Rust writer.** `run_daemon`
+(`src/daemon/mod.rs:371-394`) opens the file `O_APPEND` and `dup2`s its
+descriptor onto **stdout (1) and stderr (2)**; `env_logger` then writes to
+stderr.
 
-**The PE-approved seam shipped with it.** `process_alert` returns
-`Option<JoinHandle<()>>` instead of discarding the spawned ghost's handle;
-production behaviour is unchanged (`server.rs:86` still returns 200 without
-awaiting), but the spawn is now observable. `maybe_analyze_alert`'s signature
-changed to propagate it — the review judged that in-spec.
+So a plain `rename(daemon.log, daemon.log.1)` **is not rotation** — fds 1 and 2
+still point at the same inode, now renamed, so logging would silently continue
+into the rotated file while the live log stayed empty. That is a rotation that
+looks like it worked and didn't. Whatever lands must re-open the new path and
+`dup2` the fresh descriptor onto 1 and 2 (or truncate in place, which `O_APPEND`
+makes safe).
 
-## What phase 07 does
+The phase pins a **testability seam** around that: file-shifting is a pure
+function taking path, size bound and keep-count as parameters, callable straight
+from a test; the `dup2` re-attach is process-global and stays in the daemon path.
+A rotation function that does its own `dup2` internally cannot be tested, and the
+phase says so explicitly.
 
-States, in one place, what happens to **every** artifact class under
-`~/.daemoneye/`, and lands the test that fails when a class exists with no stated
-policy. It writes **no rotation code** — phases 08 and 09 implement against the
-table.
-
-## The design decision this phase turns on
-
-The exit criterion says *"no class is unmanaged by omission"* — **omission** is
-the sin, not unmanagement. So the table records an *intended* lifecycle (rotate /
-delete / archive / keep-forever), its default, **and whether that intent is
-implemented yet, with the owning phase**. `daemon.log`'s policy is "rotate — not
-yet implemented, phase 08". That is a stated policy; recording nothing is not.
-Without this distinction the test would fail on day one for three classes and
-tempt whoever hits it into writing rotation code here, producing exactly the
-fourth independent convention the 07→08→09 ordering exists to prevent.
-
-The phase is the structural sibling of phase 02: an explicit table plus a test
-checked in **both** directions (no class escapes the policy; no entry is
-fiction). It points the executor at `src/config/path_audit.rs` as the pattern,
-which it has now succeeded with twice.
+It also reuses the existing cleanup tick (`src/daemon/mod.rs:819-828`, every 60th
+iteration, already firing the two sweeps) rather than adding a timer — and notes
+that a startup-only check would not bound a daemon that runs for weeks, which is
+exactly how the live log got to 25.8 MB.
 
 ## Where things stand
 
-- Phases 01–06b `done`. 964 lib + 30 integration (2 ignored) + 8 isolation
-  (1 ignored, the full-daemon HTTP stopgap), zero failures.
-- `cargo clippy --all-targets --all-features -- -D warnings` clean.
-- Working tree clean. No daemon running; no tmux server running. An orphaned
-  private tmux server left by an early 06b run was terminated; the operator's
-  default server was never touched.
+- Phases 01–07 `done`. 07 closed `approved_after_1`; the reviewer independently
+  reproduced its mutation (injected an uncovered directory → genuine failure
+  naming it at `exit=101` → revert → 3/3 pass).
+- 967 lib + 30 integration (2 ignored) + 8 isolation (1 ignored), zero failures;
+  clippy clean.
+- Working tree clean. No daemon running; no tmux server running.
 - Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 08–12
-  named, not drafted. Re-verify each phase's "Current state" against the tree
-  before dispatching.
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 09–12
+  named, not drafted.
+
+## Needs your attention before phase 09
+
+**Phase 07's table carries two invented retention numbers** — `var/log/panes` →
+`Sweep{30 days}` and `agents/*/mailbox` → `Sweep{7 days}` — for classes that have
+**no config key today**. The executor chose them; the phase doc asked for "the
+default where the lifecycle is parameterised" without supplying numbers. Both
+reviews judged them acceptable as explicitly-labelled `Pending{phase-09}`
+proposals that cannot silently take effect, but round 1 raised the sharper point:
+the table renders a proposed number identically to a real config-backed one
+(`Sweep{30}` looks exactly like `Sweep{90}`). **Retention periods are an
+operational decision** — worth setting yourself before phase 09 implements
+against them.
 
 ## Carried forward for milestone close
+
+- **Review subagents keep writing stray telemetry rows.** Five times this
+  session a review agent probed the `rexymcp review` CLI with an invalid
+  `--failure-class`, `--verdict`, or a fake `--phase-id`; the CLI records the row
+  anyway with only a warning, and each had to be hand-deleted (backups at
+  `~/.rexymcp/telemetry/phase_runs.jsonl.bak*`). One older stray from a prior
+  session remains at line 314 (`phase_id: "x"`). Worth either rejecting invalid
+  values outright rather than warning, or making probe/dry-run explicit.
 
 
 
