@@ -36,10 +36,33 @@ Read before starting:
 4. Confirm the repo is on a clean branch with no uncommitted changes.
 5. Confirm phase 08 landed: `src/daemon/instance.rs` exists and exports
    `read_pid`, and `crate::config::default_pid_path()` resolves.
+6. Verify the starting state:
+
+```bash
+grep -c "daemon_is_running" src/daemon/mod.rs            # expect 1 (definition only; 08 deleted its call)
+grep -c "pub fn read_pid" src/daemon/instance.rs         # expect 1
+grep -c "pub fn default_pid_path" src/config/load.rs     # expect 1
+grep -c "pub async fn start" src/webhook/server.rs       # expect 1  (becomes 0: bind + serve)
+grep -c "pub use server::\*" src/webhook/mod.rs          # expect 1  (a glob — see task 6)
+grep -n "tempfile" Cargo.toml                            # expect line 44, tempfile = "3"
+cargo test 2>&1 | grep "^test result" | head -3   # expect 928 lib, 0, 27 integration
+```
+
+**Every number above was produced by running that exact command against the tree
+on 2026-07-29, immediately before dispatch.** If one differs, **stop and report a
+blocker**.
+
+> **Use `cargo test`, not `cargo test --lib`.** The full command prints **three**
+> `test result` lines; `--lib` prints only the first.
 
 ## Current state
 
-### `daemon_is_running()` — `src/daemon/mod.rs:291-316`
+### `daemon_is_running()` — `src/daemon/mod.rs:293`
+
+> **⚠ Line numbers in this section were refreshed 2026-07-29 before dispatch.** The
+> phase was drafted 2026-07-26; phases 06h and 08 have since edited
+> `src/daemon/mod.rs`. Every code quote below is byte-identical to the tree as of
+> the refresh — only the numbers moved. Re-derive with the grep beside each.
 
 ```rust
 /// Returns true if a daemon is already listening and responding on the socket.
@@ -73,7 +96,7 @@ pub async fn daemon_is_running() -> bool {
 After phase 08 this function has **zero call sites** (it stays live because
 `src/lib.rs:10` re-exports `pub mod daemon`). This phase gives it real callers.
 
-### `run_ping` — `src/cli/commands/lifecycle.rs:45-64`
+### `run_ping` — `src/cli/commands/lifecycle.rs:46`
 
 ```rust
 pub async fn run_ping() -> Result<()> {
@@ -99,12 +122,13 @@ pub async fn run_ping() -> Result<()> {
 }
 ```
 
-`run_stop` (`lifecycle.rs:24`) and `run_status` (`src/cli/status.rs:154-158`) have
+`run_stop` (`lifecycle.rs:24`) and `run_status` (`src/cli/status.rs:154`, whose
+`Daemon is not running.` line is `:157`) have
 the same `Err(_) => "Daemon is not running."` shape. Note that `connect()`
 (`src/cli/commands/ipc_client.rs:30`) already carries a 5-second timeout, so its
 `Err` conflates "no socket" with "connect timed out".
 
-### The webhook bind — `src/webhook/server.rs:83-112`
+### The webhook bind — `src/webhook/server.rs:83`
 
 ```rust
 pub async fn start(
@@ -132,9 +156,9 @@ pub async fn start(
 }
 ```
 
-Its caller in `run_daemon` (`src/daemon/mod.rs:~651`) wraps the whole thing in
-`supervise(...)`, whose contract is to restart the factory forever with backoff
-(`mod.rs:73-120`). So `EADDRINUSE` is logged once per attempt and retried
+Its caller in `run_daemon` (`src/daemon/mod.rs:707`, `if startup_config.webhook.enabled {`)
+wraps the whole thing in `supervise(...)`, whose contract is to restart the factory
+forever with backoff (`mod.rs:82`). So `EADDRINUSE` is logged once per attempt and retried
 indefinitely.
 
 ## Spec
@@ -225,7 +249,7 @@ an unclean kill, and saying so distinguishes "never started" from "died".
 
 ### 3. Rewire `run_ping`
 
-Replace the body of `run_ping` (`lifecycle.rs:45`) with a probe through
+Replace the body of `run_ping` (`lifecycle.rs:46`) with a probe through
 `daemon_liveness()` plus `instance::read_pid(&default_pid_path())`:
 
 - Print `liveness_line(...)` to **stdout** on `Running`, to **stderr**
@@ -248,7 +272,7 @@ trips on every `stop`. Probe only in the error arm.
 
 ### 5. Rewire `run_status`'s not-running branch
 
-In `run_status` (`src/cli/status.rs:155-159`), replace the
+In `run_status` (`src/cli/status.rs:156-159`), replace the
 `Err(_) => { eprintln!(c_err("Daemon is not running.")); exit(1) }` arm the same
 way: probe, then `eprintln!("{}", c_err(&liveness_line(…)))`, then `exit(1)`.
 Keep the `c_err` coloring. The large `Ok(Response::DaemonStatus { … })` match arm
@@ -296,7 +320,7 @@ Keep the `unwrap_or_else(|_| Ipv4Addr::LOCALHOST.into())` fallback for an
 unparsable `bind_addr` — that is pre-existing behavior and not this phase's
 business.
 
-In `run_daemon` (`src/daemon/mod.rs:~651`), restructure the
+In `run_daemon` (`src/daemon/mod.rs:707`), restructure the
 `if startup_config.webhook.enabled { … }` block to bind **eagerly** with `?` and
 pass the listener into the supervised closure:
 
@@ -320,8 +344,8 @@ re-introduce the retry loop this task exists to delete.
 Keep the two `log::warn!` / `log::info!` messages about Bearer-token auth
 verbatim, including their current wording.
 
-Update the glob re-export in `src/webhook/mod.rs` if it names `start`
-explicitly; if it is a `pub use server::*;` no edit is needed.
+**`src/webhook/mod.rs:19` is `pub use server::*;` — a glob. Verified: no edit is
+needed there.** Do not go looking for a named `start` re-export; there isn't one.
 
 ### 7. Update `CLAUDE.md`
 
@@ -340,12 +364,42 @@ In the `## Important Invariants` list, add:
 - [ ] `cargo build` succeeds with zero new warnings.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.
-- [ ] `cargo test` passes: existing tests plus the 9 new ones below.
+- [ ] `cargo test 2>&1 | grep "^test result"` shows the lib count at **937**
+      (928 + 9 new) and integration at **27**. Equivalently, and this is the check
+      that matters: the lib count is **exactly 9 higher** than the 928 you recorded
+      in Pre-flight. **If it is anything else, stop and report a blocker naming the
+      number you measured — do not re-run the command hoping for a different
+      answer.**
 - [ ] `grep -rn "daemon_is_running" src/` returns nothing.
-- [ ] `grep -n "pub async fn start" src/webhook/server.rs` returns nothing
-      (it is now `bind` + `serve`).
+- [ ] `grep -c "pub async fn start" src/webhook/server.rs` returns **0** (it is
+      now `bind` + `serve`), and `grep -c "pub async fn bind\|pub async fn serve"
+      src/webhook/server.rs` returns **2**.
+- [ ] `git diff -U0 -- src/ | grep '^+' | grep unsafe` shows **only**
+      `unsafe { std::env::set_var("HOME", …) }` inside a test module — no `unsafe`
+      is added to any production path.
+      **⚠ Phrased on the diff, not the file, deliberately.** A per-file count
+      cannot be 0: `src/daemon/mod.rs:355` already contains the pre-existing
+      `unsafe { libc::dup2(…) }` in the log-redirect path, untouched by this phase.
+      An earlier version of this criterion demanded 0 per file and was
+      unsatisfiable; caught by running it before dispatch.
 - [ ] `daemoneye ping` against a wedged daemon reports it as wedged
       (End-to-end verification).
+
+### ⚠ How to check the test count — read this before checking it
+
+The only commands you need, once each:
+
+```bash
+cargo test 2>&1 | grep "^test result"     # three lines; lib is the first
+cargo test 2>&1 | grep liveness_          # the new tests, each "... ok"
+```
+
+**Do not count tests by grepping the per-test `^test ` lines** (`| wc -l`,
+`--list | grep -c`, and friends) — those totals do not agree with the summary,
+because they include or exclude the bin and integration targets depending on
+flags. The summary line is authoritative. **A number that disagrees with this doc
+means the doc is wrong; say so and report a blocker.** Re-running a read-only
+command that already answered makes no progress and will trip the governor.
 
 ## Test plan
 
@@ -354,10 +408,50 @@ In the `## Important Invariants` list, add:
 `tokio::net::UnixListener` that you control, so the tests stay hermetic and need
 no daemon.
 
-`daemon_liveness()` reads `default_socket_path()`, which depends on `HOME`. Tests
-that redirect `HOME` **must** hold `crate::TEST_HOME_LOCK` (exported from
-`src/main.rs`) — see the existing pattern in `src/daemon/utils/event_log.rs`
-tests.
+`daemon_liveness()` reads `default_socket_path()`, which depends on `HOME`.
+
+### ⚠ How to redirect `HOME` in a test — corrected 2026-07-29
+
+The earlier draft of this section said to hold `crate::TEST_HOME_LOCK` "exported
+from `src/main.rs`". **Both halves were wrong.** The lock lives at
+**`src/lib.rs:32`**, and you should not take it directly — take the
+poison-recovering accessor **`crate::test_home_guard()`** (`src/lib.rs:45`),
+added precisely so that one panicking test does not poison the lock and fail
+every other HOME-dependent test in the binary (48 instead of 1, measured).
+
+**Use this RAII shape — it is the codebase idiom, quoted from
+`src/daemon/context/recall.rs:246`:**
+
+```rust
+    /// RAII test-home guard: holds `TEST_HOME_LOCK`, points `HOME` at a fresh
+    /// tempdir, and restores the original `HOME` on drop.
+    struct TestHome {
+        _tmp: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+        saved: Option<String>,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let lock = crate::test_home_guard();
+            let saved = std::env::var("HOME").ok();
+            let tmp = tempfile::tempdir().unwrap();
+            unsafe {
+                std::env::set_var("HOME", tmp.path());
+            }
+            Self { _tmp: tmp, _lock: lock, saved }
+        }
+    }
+```
+
+(Its `Drop` restores `saved`, or removes `HOME` when it was absent.)
+
+**This crate is `edition = "2024"`, so `std::env::set_var` is `unsafe` and the
+`unsafe { … }` block above is mandatory** — there is no safe alternative. See the
+Authorizations: `unsafe` is authorized for exactly this and nothing else.
+
+For the `Confused` test, `Response::Error(String)` (`src/ipc.rs:355`) is a
+concrete non-`Ok` variant — use it rather than hunting for one.
 
 In `src/cli/commands/lifecycle.rs`:
 
@@ -395,6 +489,29 @@ unit test is not hermetic. Its behavior is covered by the E2E below.
 
 Two real-artifact behaviors need checking: the fatal bind, and the wedged
 report. Quote actual output in the Update Log.
+
+### ⚠ Phase 08 changed the ordering these scenarios depend on
+
+**Added 2026-07-29.** Phase 08 put the `InstanceLock` at `src/daemon/mod.rs:372`,
+which is *before* the webhook bind at `:707`. So if any daemon already holds the
+lock, scenario A fails with `another daemon is already running (PID …)` and
+**never reaches the webhook bind** — it would look like a pass while testing
+nothing.
+
+**Before scenario A, confirm no daemon is running:**
+
+```bash
+./target/release/daemoneye stop 2>/dev/null || true
+pgrep -af 'daemoneye daemon' | grep -v grep    # expect no output
+```
+
+Verified config for these scenarios: `port = 9393`, `bind_addr = "0.0.0.0"`,
+`enabled = true`.
+
+**These scenarios stop, `SIGSTOP`, and `SIGKILL` a real daemon and repoint global
+tmux hooks.** That is unavoidable for a real-artifact check of this behavior, but
+note it in the Update Log, and leave a working daemon running at the end (or say
+explicitly that you did not).
 
 ```bash
 cargo build --release
@@ -441,10 +558,15 @@ running.`
 - [x] May change the public signatures of `webhook::start` → `bind` + `serve`
       (task 6) and `daemon_is_running` → `daemon_liveness` (task 1). Both are
       breaking API changes to lib-public items; that is intended.
-- [ ] No new dependencies. `tempfile` is already a dev-dependency — verify with
-      `grep -n tempfile Cargo.toml` before using it, and file a blocker if it is
-      absent rather than adding it.
-- [ ] No `unsafe`.
+- [ ] No new dependencies. `tempfile` is present at `Cargo.toml:44` (`tempfile =
+      "3"`) — **verified 2026-07-29**, so use it; do not add it.
+- [x] **May use `unsafe` for `std::env::set_var` in test modules only** (task:
+      the `TestHome` guard). **⚠ Corrected 2026-07-29 — the earlier draft said
+      "No `unsafe`", which contradicted this phase's own Test plan and would have
+      made the HOME-redirecting tests impossible to write.** This crate is
+      `edition = "2024"`, where `set_var` is `unsafe`; every existing HOME test in
+      the tree wraps it. **Nothing else may use `unsafe`** — not the liveness
+      probe, not the webhook bind, not any production path.
 
 ## Out of scope
 
@@ -467,3 +589,32 @@ running.`
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-29 (pre-dispatch refresh)
+
+This phase was drafted 2026-07-26. Phases 06h, 07 and 08 have since edited the
+files it touches, so the architect re-derived every fact against the tree before
+dispatch. Five things changed, and two of them would have blocked you:
+
+1. **Line numbers refreshed.** `daemon_is_running` is at `mod.rs:293`, `supervise`
+   at `:82`, the webhook block at `:707`, `run_ping` at `lifecycle.rs:46`,
+   `run_status`'s error arm at `status.rs:156-159`. Every code quote is
+   byte-identical to the tree; only the numbers moved.
+2. **`unsafe` is now authorized for `std::env::set_var` in tests.** It previously
+   said "No `unsafe`", which contradicted this phase's own HOME-redirecting
+   tests — this crate is `edition = "2024"`, where `set_var` is `unsafe` and has
+   no safe alternative. That contradiction would have been unresolvable.
+3. **`TEST_HOME_LOCK` guidance corrected.** It is at `src/lib.rs:32`, not
+   `src/main.rs`, and you should take `crate::test_home_guard()`
+   (`src/lib.rs:45`) rather than the lock directly. A worked `TestHome` RAII
+   example is quoted in the Test plan.
+4. **`src/webhook/mod.rs:19` is `pub use server::*;`** — a glob, so task 6's
+   conditional re-export edit is resolved: there is nothing to change there.
+5. **E2E scenario A now needs no daemon running first**, because phase 08's
+   instance lock is acquired before the webhook bind. See the note in
+   End-to-end verification.
+
+Test baseline is **928**; this phase adds 9, giving **937**. Count with
+`cargo test 2>&1 | grep "^test result"` — once. If a number disagrees with this
+doc, the doc is wrong: report a blocker naming what you measured rather than
+re-running.

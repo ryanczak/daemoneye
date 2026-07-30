@@ -1,5 +1,100 @@
 # NEXT
 
+**Active phase: M5 phase-09 — fatal-bind-honest-liveness**
+(`todo`, drafted 2026-07-26, **pre-dispatch refresh applied 2026-07-29**).
+Doc: `docs/dev/milestones/M5-ux-stability/phase-09-fatal-bind-honest-liveness.md`.
+
+Dispatch with `/rexymcp:dispatch phase-09-fatal-bind-honest-liveness`.
+
+## Eight of nine exit criteria are met
+
+07 landed `approved_after_1` and closed the sixth: all three stall mechanisms now
+self-report — A panics on an always-on assertion, B logs `tmux server may be
+wedged` at 5 s, C logs the AI-stream stall at 120 s. 09 closes the eighth
+(honest liveness), leaving only the ninth (gates stay clean, which 10 and 11 ride
+on).
+
+## 09 needed no drafting, but it needed a refresh — and two findings were blockers
+
+It was written 2026-07-26 alongside 08–11. Phases 06h, 07 and 08 have since edited
+every file it touches, so I re-derived every fact against the tree. **Two of the
+five corrections would have stopped the run outright:**
+
+**1. The Authorizations said "No `unsafe`" while the Test plan required
+HOME-redirecting tests.** This crate is `edition = "2024"`, where
+`std::env::set_var` is `unsafe` with no safe alternative — every existing HOME test
+in the tree wraps it. The contradiction was unresolvable: the executor could not
+write the tests the spec demanded without violating an authorization it was held
+to. Now narrowly authorized for `set_var` in test modules and nothing else.
+
+**2. The `TEST_HOME_LOCK` guidance was wrong in both halves.** It said "exported
+from `src/main.rs`" — it is at **`src/lib.rs:32`**, and the thing to take is the
+poison-recovering accessor **`crate::test_home_guard()`** (`src/lib.rs:45`) rather
+than the lock directly. Phase 05h added that accessor precisely because one
+panicking test poisoning the lock failed 48 others instead of 1. Pointing at the
+raw lock would have re-introduced that. The `TestHome` RAII idiom is now quoted
+verbatim from `src/daemon/context/recall.rs:246`.
+
+The other three: line numbers refreshed (`daemon_is_running` `mod.rs:293`,
+`supervise` `:82`, webhook block `:707`, `run_ping` `lifecycle.rs:46`);
+`src/webhook/mod.rs:19` confirmed a `pub use server::*;` glob, so task 6's
+conditional re-export edit is resolved as "nothing to do"; and
+`Response::Error(String)` named as the concrete non-`Ok` variant for the
+`Confused` test.
+
+## The pre-dispatch criteria-runner caught a fifth bad criterion of mine — in the act
+
+I wrote `grep -rc "unsafe" src/daemon/mod.rs … returns 0 for each`, ran it, and got
+**1**: `mod.rs:355` already holds the pre-existing `unsafe { libc::dup2(…) }` from
+the log-redirect path. Unsatisfiable, exactly like 06w's. Rephrased on the **diff**
+rather than the file.
+
+That is now **five** defective criteria in M5 (06n, 06s, 06w, 07, and this one
+caught pre-dispatch) — and the first the practice caught before it cost a run.
+Running every criterion against the tree with the list final is the whole
+intervention; it took two minutes here and would have saved 110 turns on 07.
+
+## One interaction 08 created that the E2E did not know about
+
+Scenario A occupies port 9393 and starts a daemon expecting a webhook bind failure.
+But 08 put the `InstanceLock` at `mod.rs:372`, **before** the bind at `:707` — so
+if any daemon holds the lock, the run dies with `another daemon is already running`
+and never reaches the bind. It would have looked like a pass while testing nothing.
+The E2E now requires confirming no daemon is running first. Config verified:
+`port = 9393`, `bind_addr = "0.0.0.0"`, `enabled = true`.
+
+Also flagged in the doc: these scenarios `SIGSTOP`/`SIGKILL` a real daemon and
+repoint global tmux hooks, so the executor must say what state it left behind.
+
+## Counting discipline
+
+Every Pre-flight and criteria value was run against the tree at refresh time
+(`daemon_is_running` 1, `read_pid` 1, `default_pid_path` 1, `pub async fn start` 1,
+the `server::*` glob 1, `tempfile` at `Cargo.toml:44`, 928/0/27, and the `unsafe`
+diff-grep empty on a clean tree). Test baseline **928**, target **937** (+9), with
+the delta phrasing and anti-loop guard 07 taught.
+
+## Calibration
+
+The mechanical pre-dispatch criteria-runner is no longer a candidate — it has now
+**prevented** a failure rather than explained one. Recommend promoting it to
+`WORKFLOW.md` at milestone close, with the counting fold's staleness clause
+extended to say the check must run *after* the criteria list is final. Five
+occurrences, one prevention.
+
+Also open, unchanged: apply-verify-revert (pending PE sign-off) and the
+warn-vs-error cascade distinction from 06r.
+
+## After 09
+
+**10** (lifecycle observability — PID on every event, startup identity line) and
+**11** (fork readiness handshake), both drafted and both likely to need the same
+pre-dispatch refresh. Then the milestone boundary.
+
+---
+
+## Superseded: the 07 dispatch note
+
 **Active phase: M5 phase-07 — stream-idle-timeout**
 (`todo`, drafted 2026-07-29).
 Doc: `docs/dev/milestones/M5-ux-stability/phase-07-stream-idle-timeout.md`.
