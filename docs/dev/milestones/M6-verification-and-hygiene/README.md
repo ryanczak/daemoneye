@@ -104,7 +104,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 04 | [audit-prompts-command](phase-04-audit-prompts-command.md) — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | done                            |
 | 05 | [severity-gate-honesty](phase-05-severity-gate-honesty.md) — an absent severity is not the lowest severity; every discard logs and emits | done        |
 | 06a | [e2e-harness-ai-stub](phase-06a-e2e-harness-ai-stub.md) — canned-AI stub server + free webhook port + POST helper in the 01 harness; proves the instrument | done                              |
-| 06b | webhook-to-ghost-e2e — the pipeline scenario itself: severity-less payload through to a `ghost_*` event | todo |
+| 06b | [webhook-to-ghost-e2e](phase-06b-webhook-to-ghost-e2e.md) — observability seam for the ghost spawn + the pipeline scenario: severity-less payload through to `ghost_start` | todo |
 | 07 | artifact-lifecycle-policy — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | todo |
 | 08 | daemon-log-rotation — bound the 25.8 MB unrotated log under the 07 policy | todo |
 | 09 | pane-and-archive-retention — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days` | todo |
@@ -282,6 +282,19 @@ as plain `AiEvent::Token`s, so the stub only has to stream tokens.
 failure is **fatal** (`CLAUDE.md`), so an isolated daemon asking for the default
 9393 will fail to start whenever the operator's own daemon holds it. Every
 `IsolatedEnv` needs its own free port.
+
+**06b needed a PE decision (2026-07-30).** The milestone's headline criterion
+requires observing a `ghost_*` event end-to-end, but the ghost spawn is
+`tokio::spawn` with the handle discarded (`webhook/process.rs:435`), so
+`process_alert` returns before `ghost_start` is logged and there is nothing to
+await. Observing one needed wall-clock waiting, which `STANDARDS.md` §3.3
+forbids — the rule that had just bounced 06a. Four resolutions were put to the
+PE (ignored test / relax §3.3 / production seam / narrow the criterion). **PE
+chose the production seam, with an ignored full-daemon test as a stopgap.**
+Rationale: the discarded handle is a real observability defect independent of
+testing — nothing in production can answer whether a triggered ghost started —
+so fixing it makes the criterion satisfiable as written rather than negotiating
+it down.
 
 **05 before 06.** The gate fix is small and fully understood; the E2E scenario is
 the thing that proves it *and* opens the unexplored ground behind it. Doing 06 first
