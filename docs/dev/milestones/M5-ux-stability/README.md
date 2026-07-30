@@ -5,7 +5,7 @@ from wedging: the user's own words appear in the history, the spinner stops
 squatting in the input box, and no code path can take the daemon global by
 blocking under a shared lock.
 
-**Status:** in-progress
+**Status:** done
 
 **Depends on:** M4 (Context Management Overhaul) — complete 2026-07-16.
 
@@ -149,8 +149,15 @@ take the socket.
       'anthropic'…` on stderr. The success path is equally honest — an immediate
       `ping` with no sleep now succeeds, because the parent does not return until
       the child has bound its socket.
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
       `cargo test` green; no regression in the ~928 existing tests.
+      **Met at close, 2026-07-30.** Clippy clean, `cargo test` at **947** lib +
+      **27** integration, zero failures, zero ignored in the lib suite. The suite
+      *grew* across the milestone rather than merely surviving: +5 (`bounded_output`,
+      06s), +6 (instance lock, 08), +1 (stream idle, 07), +9 (liveness, 09), +3
+      (event PID, 10), +7 (readiness handshake, 11) — and the pre-06 lock work added
+      its own. The "~928" figure in this criterion was an estimate written at
+      kick-off; the real end state is 947.
 
 ## Architecture references
 
@@ -514,3 +521,153 @@ The tail (04d) is ~60 sites across `background.rs`, `ghost.rs`,
 and will be split when it is drafted — deliberately not pre-planned now, since
 04b and 04c will show how fast this executor gets through mechanical conversion
 and that is the number worth sizing against.
+---
+
+## M5 retrospective — closed 2026-07-30
+
+**All nine exit criteria met.** 218 commits, 62 files in `src/` changed
+(+3957 −1578), suite grown to **947** lib + 27 integration with clippy
+`-D warnings` clean.
+
+### Outcome
+
+The milestone set out to fix three reported UX items and one hang. It ended up
+closing **two whole axes**:
+
+- **The stall axis.** All three mechanisms from `daemon-stalls.md` are now shut,
+  and each one *self-reports* rather than freezing silently. **A** (lock held /
+  re-entrant) is structurally impossible: `with_sessions` + the `SessionStore`
+  newtype + an always-on `SessionsLockDepth` assertion that panics instead of
+  deadlocking. **B** (blocking tmux subprocess) is bounded at every one of 79
+  spawn sites — 44 in `src/tmux/` via `bounded_output`, 26 via `off_runtime`, 9
+  direct — with one permanent `.exec()` residue that cannot be bounded and does
+  not need to be. **C** (silent AI provider) is bounded at 120 s per read with a
+  diagnosable log line.
+- **The instance-ownership axis**, added mid-milestone after the 2026-07-25
+  incident. One daemon per `$HOME` enforced by an exclusive `flock` acquired
+  before *any* startup side effect; liveness reporting that distinguishes
+  wedged from dead; every event record attributable to a PID; and a fork
+  handshake so `daemoneye daemon` stops lying about success.
+
+The original defect — a re-entrant `SessionStore` acquisition firing hourly — was
+root-caused with gdb stacks and fixed in phase 02. Everything after it was
+removing the *class* of defect rather than the instance.
+
+### Phase statistics
+
+| | Count |
+|---|---|
+| Phases `done` | **46** |
+| `approved_first_try` | **36** (78%) |
+| `approved_after_1` | **8** |
+| `approved_after_2` | **2** |
+| Dropped (06k, with PE sign-off) | 1 |
+| Bug docs filed | **6** |
+| `hard_fail`s requiring escalation | 3 (all `NoProgressStall`) |
+
+Executor throughout the 06x–11 stretch: `Qwen/Qwen3.6-27B-FP8` via rexyMCP.
+
+### What worked
+
+**Slicing by convertible sites, not by match count.** The 06x sweep ran 20+
+phases at 6–15 sites each and produced a near-unbroken run of first-try
+approvals. Every attempt to size a phase by raw grep count was wrong — usually by
+2–3×. The classifier-not-counter rule folded mid-milestone paid for itself within
+the hour (06j: 39 raw hits → 6 convertible; the 06k drop).
+
+**Apply-verify-revert.** Applying a phase's own diff before dispatch, running the
+gates *and* the criteria against it, then reverting. Roughly twenty clean
+applications. It settled genuine design questions the executor would otherwise
+have discovered by shipping a bug — the threads-vs-`try_wait` deadlock in
+`bounded_output`, the `E0433` on fully-qualified `Command::new`, the `nix`
+`Flock` API shape, and the `AsRawFd` unused-import lint failure in phase 11.
+
+**Mutation-proving coverage at review, independently.** Never once accepted a
+claimed mutation check. This caught two vacuous tests (bug-09-1, bug-10-1) that
+all four gates passed.
+
+**The green-bounce treatment.** Bounces on test quality leave four green gates and
+a clean tree, which the executor reads as "nothing to do". A loud header naming
+what is already approved, the fix inlined, and an *inverted* count ("940, **not**
+941") turned both into short, clean fix runs (37 and ~30 turns).
+
+### What did not work — and it was consistently me
+
+**Eight defective acceptance criteria, three of which cost a run.** Not one
+`hard_fail` in this milestone traced to code the executor could not write. All
+three were criteria it could not *satisfy* or could not *verify*, after having
+completed the implementation and passed every gate:
+
+| Phase | Defect | Cost |
+|---|---|---|
+| 06n | criterion contradicted by the spec's own tasks | run |
+| 06s | criterion matched a pre-existing doc comment | — |
+| 06w | per-file `unsafe` count of 0 against 3 pre-existing | caught at review |
+| 07 | test baseline off by one → target unreachable | **110 turns** |
+| 09 | Test plan named a branch by a sequence that cannot reach it | bounce |
+| 10 | spec pinned a property `serde_json` discards | bounce |
+| 10 (refresh) | ambiguous negative over a grep with 8 legitimate hits | caught pre-dispatch |
+| 11 | bare `git diff` (0 once staged) **and** wrong count | **60 turns** |
+
+Two patterns inside that list, both sharper than "be careful":
+
+1. **A negative phrased over a grep that legitimately matches something is
+   unverifiable.** Three of the eight. "No new occurrence" has no observable
+   distinguishing pass from fail. Pin counts, or scope to the diff with a baseline.
+2. **A criterion over one's own diff must pin the baseline.** The executor stages
+   and commits as it works, so a bare `git diff` says nothing. `WORKFLOW.md` had
+   *already folded this* and it recurred anyway — which is the argument for a
+   mechanical check over more prose.
+
+**Architect-authored vacuous coverage, three times.** A test can satisfy a spec
+and prove nothing: 09's EOF test passed via the `write_all` arm (both return
+`NotRunning`); 10's ordering test passed on the alphabet. The rule that would have
+prevented both: **when a spec pins an observable property, confirm the property is
+observable at all**, and when it names a branch, describe a sequence that *reaches*
+it — not merely the value expected.
+
+**One process error of my own outside the specs:** an escalation commit swept up
+the executor's staged source, landing a 220-line feature under a `docs:` message.
+Split on PE instruction into `ae4e833` (`feat:`) + three docs commits, verified
+content-identical by tree hash. Lesson: after an escalation on a tree the executor
+has staged, check `git diff --cached --name-only` before committing — `git add
+<subset>` does not narrow what a following `git commit` picks up.
+
+### Decisions worth carrying forward
+
+- **Deferring a speculative-instrumentation phase paid off.** 07 was scoped as a
+  stall watchdog. Deferred at PE decision until 08 landed, the revisit found its
+  target already structurally closed and one *real* stall path still open
+  (mechanism C). Built as originally specced it would have instrumented a solved
+  problem. Generalisable: defer instrumentation until the thing it observes is
+  known.
+- **Two exit criteria were reworded mid-milestone on evidence, not convenience** —
+  the fifth (a false premise: `Drop` impls and the CLI never call `src/tmux/`
+  helpers, so helper-side timeouts cannot reach them) and the sixth (a watchdog
+  for a mechanism that can no longer fire). Both rewordings are recorded inline
+  above with the evidence that forced them.
+- **`clippy::await_holding_lock` gave false comfort** for the entire life of the
+  original defect: the re-entrant double-lock has no `.await` between the two
+  acquisitions, so the lint gate was green throughout. A green lint is not
+  evidence of absence.
+
+### Folds proposed for `WORKFLOW.md` — awaiting PE sign-off
+
+Not applied. Per the architect contract, `WORKFLOW.md` changes need explicit
+approval.
+
+1. **A mechanical pre-dispatch criteria check** (eight occurrences, three caught
+   pre-dispatch once practised). The existing counting fold's dated note predicted
+   exactly this: "if a sixth occurs, the remedy is a *mechanical* pre-dispatch
+   check, not stronger prose." We are at eight. Concretely: run **every**
+   acceptance criterion against the tree with the criteria list *final*, and treat
+   an unrunnable or ambiguous criterion as a blocker on the spec.
+2. **Observable-property discipline** (three occurrences — at the fold-immediately
+   bar). When a spec pins a property, confirm it is observable; when it names a
+   branch, give a sequence that reaches it. Distinct from the existing
+   coverage-mutation fold, which assumes the property *can* be observed.
+
+Also still open at one occurrence, not proposed: the warn-vs-error cascade
+distinction from 06r (an `async fn` mutation warns rather than errors, so the
+compiler's warning list is the ordered work queue — the opposite of the usual
+multi-site guidance).
