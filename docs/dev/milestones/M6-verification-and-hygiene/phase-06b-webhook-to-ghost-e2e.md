@@ -1,7 +1,7 @@
 # Phase 06b: Webhook → Ghost End-to-End
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (done), phase-05 (done), phase-06a (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=test, size=m
@@ -382,3 +382,134 @@ The test correctly fails when the fail-open arm is broken and passes when restor
 - `src/webhook/server.rs` — bind `_handle` and drop with comment
 - `tests/isolation.rs` — added `webhook_ghost_e2e_deterministic` and `webhook_ghost_e2e_http` (ignored)
 - `tests/integration.rs` — removed `mod harness;` and the two tests moved to isolation.rs
+
+### Update — ts=1785450934710 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Fixed three defects from the prior executor's stalled run: (1) Moved both tests from `tests/integration.rs` to `tests/isolation.rs` where `mod harness;` already exists, eliminating the `dead_code` clippy error; (2) Replaced the hand-rolled `TcpListener` SSE stub with the harness's mutation-verified `IsolatedEnv::start_stub()` / `stub_base_url()`; (3) Removed the vacuous `tmux -V` early-return guard that would have let the test pass silently on machines without tmux. The seam (`process_alert` → `Option<JoinHandle<()>>`) and server.rs `_handle` drop were already correct from the prior run and unchanged.
+
+Mutation check confirmed: breaking the fail-open arm causes the deterministic test to fail; restoring it makes it pass. All four gates green — `cargo fmt`, `cargo build`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test` (lib 964, integration 30 with 2 ignored, isolation 8 passed + 1 ignored).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.79s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+
+TEST
+ests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test manifest::tests::manifest_empty_stores ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test memory::tests::update_memory_partial_update_preserves_other_fields ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 964 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.44s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test event_log_entry_format ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ghost_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_masking_applied ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-652de6e8e49133dd)
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M6-verification-and-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M6-verification-and-hygiene/phase-06b-webhook-to-ghost-e2e.md` — +104 -1
+- `tests/integration.rs` — +0 -396
+
+**Commit:** b9e46609646fe1752f49b46e31b2c726a80a8f95
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
