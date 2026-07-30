@@ -132,6 +132,16 @@ take the socket.
 - [ ] `daemoneye ping` / `status` distinguish "not running" from "alive but not
       answering", and `daemoneye daemon` exits non-zero with the real reason when
       the forked child fails to start.
+      **Half met 2026-07-29 by 09**: `DaemonLiveness` splits the probe into
+      `NotRunning` / `Unresponsive` / `Confused` / `Running`, and `ping` / `stop` /
+      `status` all report through `liveness_line`, so a wedged daemon now reads
+      `Daemon PID <n> is alive but not answering — it may be wedged.` and a dead one
+      with a leftover PID file reads `Daemon is not running (stale PID file names
+      PID <n>).` Verified E2E via `SIGSTOP`. The webhook bind is also fatal now, so
+      `EADDRINUSE` is no longer retried forever.
+      **Still open: the `daemoneye daemon` clause.** The parent still exits 0 after
+      `fork()` regardless of the child's fate — that is **phase 11**'s readiness
+      handshake.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` stays clean;
       `cargo test` green; no regression in the ~928 existing tests.
 
@@ -193,7 +203,7 @@ take the socket.
 | 06w | bounded-output-direct-spawns ([phase-06w-bounded-output-direct-spawns.md](phase-06w-bounded-output-direct-spawns.md)) — the **9 raw `std::process::Command::new("tmux")` spawns that never go through a `src/tmux/` helper**: the two `Drop` impls (`FgHookGuard` ×2, `WatchHookGuard` ×1) + `src/cli/` (6, in `local_cmds.rs`, `commands/pane.rs`, `commands/chat.rs`). **Closes the fifth exit criterion.** Three of the five files also contain already-bounded `off_runtime` sites, so a whole-file replace is wrong; `chat.rs`'s `.exec()` site is never a target. **Closed the fifth exit criterion** | done (approved_first_try) |
 | 07 | stream-idle-timeout ([phase-07-stream-idle-timeout.md](phase-07-stream-idle-timeout.md)) — **rescoped 2026-07-29 (PE decision) from "stall instrumentation" to mechanism C**: a `read_timeout` on the shared AI client + a `stream_chunk` helper that translates an idle-read timeout into a logged, diagnosable stall. Raw reqwest calls it `error decoding response body`, which misdirects. 1 hermetic test, mutation-proved. Bounced once on an **architect** arithmetic error (criterion demanded 929 tests; true count 928) — 110 turns `NoProgressStall`, then 30 clean | done (approved_after_1) |
 | 08 | instance-lock ([phase-08-instance-lock.md](phase-08-instance-lock.md)) — `InstanceLock`: exclusive `flock` on `var/run/daemoneye.pid`, acquired at `mod.rs:372` **before every startup side effect**; Ping-based guard deleted; identity-checked (dev/inode) socket teardown. 6 new tests, both core properties mutation-proved | done (approved_first_try) |
-| 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) — `DaemonLiveness` (4 variants) replacing the `bool` probe, `liveness_line` for `ping`/`stop`/`status`, `webhook::start` → eager fatal `bind` + `serve`. 9 tests; all 8 pinned strings verified exact. Bounced on [bug-09-1](bugs/bug-09-1.md): the EOF-branch test passes via the `write_all` arm instead — mutation-proved | review      |
+| 09 | fatal-bind-honest-liveness ([phase-09-fatal-bind-honest-liveness.md](phase-09-fatal-bind-honest-liveness.md)) — `DaemonLiveness` (4 variants) replacing the `bool` probe, `liveness_line` for `ping`/`stop`/`status`, `webhook::start` → eager fatal `bind` + `serve`. 9 tests; all 8 pinned strings verified exact. Bounced on [bug-09-1](bugs/bug-09-1.md): the EOF-branch test passes via the `write_all` arm instead — mutation-proved; fixed and re-verified in 37 turns | done (approved_after_1) |
 | 10 | lifecycle-observability ([phase-10-lifecycle-observability.md](phase-10-lifecycle-observability.md)) | todo |
 | 11 | fork-readiness-handshake ([phase-11-fork-readiness-handshake.md](phase-11-fork-readiness-handshake.md)) | todo |
 

@@ -1,7 +1,7 @@
 # Phase 09: Fatal Webhook Bind + Honest Liveness Reporting
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** done
 **Depends on:** phase-08 (instance lock) — the PID file this phase reads is
 created there
 **Estimated diff:** ~210 lines
@@ -1040,3 +1040,87 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f28bef826947041f87a1add6315c419b36c0bc28
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-29
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-09-1, `minor` — test did not reach the branch it was named
+  for)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (144 turns first pass, **37** on the fix)
+- **Scope deviations:** three, all forced by the spec's own structure — recorded in
+  the bounce review above (`liveness_line` `pub` not private; the
+  `Webhook server listening on` log line reshaped; `run_stop`'s error branch to
+  `eprintln!`). The second went undeclared.
+- **Calibration:** the bounced test's design came from my Test plan. See below.
+
+All four gates re-run bare and green (`cargo fmt --all --check`, `cargo build`
+after `touch`ing `src/daemon/mod.rs` — zero warnings, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` at **937** lib + **27** integration).
+
+### The fix is exactly the one specified, and the count held
+
+The diff is three lines of test body plus the comment, verbatim from the bug doc.
+**937, not 938** — the inverted finish condition did its job: no test was added,
+no scope crept, and `daemon_liveness()` itself was untouched.
+
+### bug-09-1 is closed, mutation-verified independently
+
+Re-run by me, not taken on the executor's word:
+
+```
+=== MUTATION: Ok(Ok(0)) => NotRunning  ->  Confused ===
+test daemon::tests::liveness_is_not_running_when_peer_closes_immediately ... FAILED
+assertion `left == right` failed
+  left: Confused
+ right: NotRunning
+=== RESTORED ===
+test daemon::tests::liveness_is_not_running_when_peer_closes_immediately ... ok
+```
+
+Before the fix that same mutation left **all nine green**. The EOF row is now
+genuinely covered.
+
+### One honest consequence: the `write_all` arm is now untested
+
+The fix moves this test from the write-failure path onto the EOF path, so the arm
+it used to cover *incidentally* is no longer covered. Verified: mutating
+`if tx.write_all(…).is_err() { NotRunning }` → `Confused` now leaves all nine
+green.
+
+**Recorded rather than bounced on, deliberately.** The Test plan named five
+`daemon_liveness` rows — absent socket, unresponsive, EOF, `Ok` reply, unexpected
+reply — and all five are now covered. It never named the write-failure row; that
+row was only ever covered by accident, and forcing a mid-write broken pipe
+deterministically is the kind of timing-dependent test `STANDARDS.md` § 3.3
+forbids. The arm is two lines (`is_err()` → `NotRunning`) and correct.
+
+Stating it here so it is not later mistaken for covered — an implied coverage claim
+is the thing this project's mutation fold exists to prevent.
+
+### Everything from the first pass still holds
+
+Re-verified at this review: all seven spec tasks present, `daemon_is_running` gone
+from the tree, the eight `liveness_line` strings still exact (checked
+character-for-character against the real function, including both em-dashes), and
+the only `unsafe` in the diff still confined to the `TestHome` guard as authorized.
+
+### Calibration — the bounce traces to my Test plan
+
+The defective test did what the spec said: "accept, then drop the stream → EOF".
+That instruction races the probe's write, and both paths return `NotRunning`, so
+the test could not fail. **A Test plan that names a branch must describe a sequence
+that reaches it** — naming the expected *value* is not enough when two branches
+return the same value.
+
+This is a distinct species from M5's earlier criterion defects (which were
+unsatisfiable or derived): here the criterion was satisfiable and satisfied, but
+**vacuously**. The remedy is the same practice extended — when a spec names a
+branch, the architect should mutation-check the *test design* at draft time, not
+only the counts. Second occurrence of "architect-authored vacuous coverage" in this
+project (the first was the fixture-default trap behind the coverage fold); worth
+watching for a third.
+
+**The green-bounce treatment worked and is worth noting as evidence.** All four
+gates passed and the tree was clean at re-dispatch, which is the documented setup
+for an empty-diff `complete`. The loud header, the already-approved list, the
+inlined fix and the inverted count landed it in 37 turns with no confusion.
