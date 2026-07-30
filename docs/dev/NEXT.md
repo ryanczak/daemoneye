@@ -6,7 +6,8 @@ M5 — UX & Stability is `done` as of 2026-07-30. All nine exit criteria met, al
 phases approved, retrospective written in
 `docs/dev/milestones/M5-ux-stability/README.md` § "M5 retrospective".
 
-**This is a human gate.** Two things need the PE before any M6 work begins.
+**This is a human gate.** The calibration folds are resolved (below); **M6 scope
+is the one thing still open.**
 
 ## 1. Folds — one applied, one parked (PE decisions, 2026-07-30)
 

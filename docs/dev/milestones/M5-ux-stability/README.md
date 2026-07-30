@@ -651,21 +651,27 @@ has staged, check `git diff --cached --name-only` before committing — `git add
   acquisitions, so the lint gate was green throughout. A green lint is not
   evidence of absence.
 
-### Folds proposed for `WORKFLOW.md` — awaiting PE sign-off
+### Folds — resolved 2026-07-30 (PE decisions)
 
-Not applied. Per the architect contract, `WORKFLOW.md` changes need explicit
-approval.
+Both were put to the PE at close. One landed as prose; the other was deliberately
+parked as tooling.
 
-1. **A mechanical pre-dispatch criteria check** (eight occurrences, three caught
-   pre-dispatch once practised). The existing counting fold's dated note predicted
-   exactly this: "if a sixth occurs, the remedy is a *mechanical* pre-dispatch
-   check, not stronger prose." We are at eight. Concretely: run **every**
-   acceptance criterion against the tree with the criteria list *final*, and treat
-   an unrunnable or ambiguous criterion as a blocker on the spec.
-2. **Observable-property discipline** (three occurrences — at the fold-immediately
-   bar). When a spec pins a property, confirm it is observable; when it names a
+1. **A mechanical pre-dispatch criteria check** — **PARKED as tooling, not folded
+   as prose.** Eight occurrences, three of which cost a run. The PE's call was to
+   explore a mechanical realisation later, and the reasoning is the point: the
+   counting fold *already* states the rule and its dated note *already* predicted
+   that prose would not be the remedy ("if a sixth occurs, the remedy is a
+   mechanical pre-dispatch check, not stronger prose"). We reached eight. A fourth
+   restatement would have been the wrong instrument. Logged with evidence and a
+   design sketch in `docs/dev/TODO.md` § 1. The work belongs in the rexyMCP repo,
+   not here.
+2. **Observable-property discipline** — **APPLIED** to
+   `docs/dev/WORKFLOW.md` § "Coverage claims are inadmissible without mutation
+   proof". When a spec pins a property, confirm it is observable; when it names a
    branch, give a sequence that reaches it. Distinct from the existing
-   coverage-mutation fold, which assumes the property *can* be observed.
+   coverage-mutation fold, which assumes the property *can* be observed. All three
+   occurrences were architect-authored — the executor implemented what was
+   specified each time.
 
 Also still open at one occurrence, not proposed: the warn-vs-error cascade
 distinction from 06r (an `async fn` mutation warns rather than errors, so the
