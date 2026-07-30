@@ -1,7 +1,7 @@
 # Phase 10: Lifecycle Observability — Attribute Every Event to a Process
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** in-progress (bug-10-1 open)
 **Depends on:** phase-08 (instance lock) — the startup identity line reports the
 lock outcome
 **Estimated diff:** ~130 lines
@@ -562,3 +562,88 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 815bf27c532dca1658fd1cd5da23d324237faaf1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-07-30 (bounced, bug-10-1)
+
+**Bounced on one `minor` finding whose root cause is my own spec error:**
+`bugs/bug-10-1.md`. Everything else verified below so the re-dispatch does not
+redo it.
+
+#### All four gates re-run bare and green
+
+`cargo fmt --all --check`; `cargo build` after `touch`ing
+`src/daemon/utils/event_log.rs` — zero warnings; `cargo clippy --all-targets
+--all-features -- -D warnings`; `cargo test` at **940** lib (937 + 3) + **27**
+integration.
+
+#### All five tasks are implemented
+
+The `pid` stamp inserted before the drain; the redundant explicit `pid` deleted
+from `daemon_start`; `try_init`'s result bound with an `eprintln!` (not
+`log::warn!`, correctly — the thing that failed *is* the logger); the identity line
+placed immediately after the `InstanceLock` acquisition; the `CLAUDE.md` bullet
+added. Criteria checked: `"pid"` in `mod.rs` **0** (was 1), in `event_log.rs`
+**≥1**, `let _ =`-before-builder **0** (was 1), `logger already initialised` **1**,
+`starting — PID` **1**, `try_init` **1** unchanged.
+
+#### The E2E is genuinely convincing
+
+Real output quoted, and the identity line is exactly the forensic artifact the
+incident lacked:
+
+```
+daemoneye 0.9.9 starting — PID 3122741, exe /home/matt/src/daemoneye/target/release/daemoneye, log /home/matt/.daemoneye/var/log/daemon.log
+```
+
+and `daemon_stop` now carries `pid: 3122741` — the record that was ambiguous
+between two processes on 2026-07-25 is now attributable. The executor also stated
+it left the daemon **stopped**, as required.
+
+#### One test is genuinely load-bearing, one is not — mutation-proved
+
+Moving the `pid` insert to after the drain loop:
+
+| Test | Under the mutation |
+|---|---|
+| `log_event_caller_pid_overrides_stamp` | **FAILED** ✓ |
+| `log_event_prefix_order_is_ts_event_pid` | **passed** ← detects nothing |
+| `log_event_stamps_emitting_pid` | passed |
+
+So the spec's requirement — "a mutation that moves the insert after the drain must
+fail this test" — **is** met, by `log_event_caller_pid_overrides_stamp`. The
+ordering test is redundant *and* vacuous: its `z_custom` sentinel sorts last by
+the alphabet, so the comparison cannot fail regardless of the code.
+
+#### The bounce: my spec asserted a property `serde_json` does not have
+
+Task 1 claimed insertion order gives `ts`/`event`/`pid` a "leading prefix". Without
+`preserve_order` — which this crate does not enable — `serde_json::Map` is a
+`BTreeMap`, so **keys serialize alphabetically** and insertion order is invisible in
+the output. A real record from this phase's own E2E:
+
+```json
+{"event":"daemon_start","pid":3122741,"session":"daemoneye","socket":"…","ts":"…","version":"0.9.9"}
+```
+
+`ts` is fifth of six. I even wrote the words "`preserve_order` … which this crate
+does not enable" in the Test plan and then drew the opposite conclusion from them.
+
+**Credit to the executor: it caught this and declared it plainly** in its summary,
+which is exactly the "trust the tree over the architect's sketch, and flag the
+divergence" behavior the workflow asks for. What it did not do is propagate the
+correction into the two artifacts that still assert the false property — the
+`CLAUDE.md` invariant (pinned verbatim in my spec, so it changed nothing) and the
+test's name and body. Those are the bounce.
+
+#### Calibration
+
+**Third occurrence of architect-authored vacuous coverage** (the fixture-default
+trap behind the existing fold, 09's bug-09-1, and now this) — and the second in
+consecutive phases. The pattern is sharper than "run your criteria": **when a spec
+pins an observable property, the architect must confirm the property is observable
+at all.** Here it was not — no test could have distinguished insertion order,
+because the serializer discards it.
+
+At three occurrences this is at `WORKFLOW.md`'s fold-immediately bar. Recommend
+folding at milestone close alongside the pre-dispatch criteria-runner, which is
+now at six.
