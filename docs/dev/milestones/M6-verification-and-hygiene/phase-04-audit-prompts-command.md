@@ -1,7 +1,7 @@
 # Phase 04: `daemoneye audit-prompts`
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-04-1, bug-04-2, bug-04-3)
 **Depends on:** phase-02 (done), phase-03 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -378,3 +378,45 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bd2819182a8df88c4e454cd620476bf1dd39cb7e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** bounced
+- **Bounces:** 1 (this run was itself a resume after a prior `NoProgressStall`
+  hard_fail during Task 1; this is the phase's first review pass and it did
+  not pass)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (resume via `continue_phase`, 1 prior
+  assist)
+- **Bugs filed:** 3 — `bug-04-1` (blocker: missing End-to-end verification
+  transcripts — assertion in prose instead of quoted, redirected output;
+  third occurrence of this defect class on M6 after bug-03-1/bug-03-2),
+  `bug-04-2` (major: test-isolation race in
+  `audit_prompts_exits_zero_on_clean_tree` — `drop(_lock)` releases
+  `test_home_guard()` before the HOME-dependent `collect_assets()` call
+  runs), `bug-04-3` (minor: unauthorized `pub use path_audit::*;` in
+  `src/config/mod.rs`, reversing a decision phase 02 explicitly made and
+  recorded as correct — currently harmless, no name collision found, but
+  outside phase 04's Authorizations and contradicts prior review record).
+- **Independent re-verification performed during this review (informational,
+  not a bug):** all four gates re-run as separate invocations
+  (`cargo fmt --all` clean/no diff, `cargo build` 0 warnings, `cargo clippy
+  --all-targets --all-features -- -D warnings` 0 warnings, `cargo test`
+  lib 964 / integration 27 (2 ignored) / isolation 3, all green — matches the
+  executor's reported counts). The no-write property test was mutation-
+  checked live: injecting a stray `std::fs::write` into `collect_assets()`
+  made `audit_prompts_no_write_property` fail as expected; reverted cleanly.
+  The command was run end-to-end against a real throwaway `HOME` seeded via
+  `daemoneye setup`: clean tree → 42 literals, 0 findings, exit 0; after
+  editing the installed prompt to add `` `var/log/events.jsonl` `` → 43
+  literals, 1 superseded finding, exit 1; a snapshot taken immediately
+  before/after the `audit-prompts` invocation itself (isolated from the
+  injection edit) was byte-identical, confirming no write. These numbers
+  match what the executor's completion summary claimed — the underlying
+  behavior is correct. The phase bounces on bug-04-1 because that
+  verification was not captured as required in the Update Log, not because
+  the command misbehaves.
+- **Scope deviations:** bug-04-3 (unauthorized `config/mod.rs` change).
+- **Calibration:** none folded this round — the E2E-transcript-omission
+  pattern (now 3/3 occurrences on this milestone) is a repeat and may
+  warrant a WORKFLOW.md fold once phase 04 lands; left for the human/architect
+  to decide, not decided unilaterally here.
