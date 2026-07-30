@@ -216,6 +216,85 @@ No new dependencies. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green, the working tree is clean, and every line of code you
+wrote is CORRECT and ACCEPTED.** That is expected here and is NOT evidence this
+phase is done.
+
+**The reviewer proved your gate works.** It injected an uncovered directory into
+your Direction A fixture and got a genuine failure naming it
+(`exit=101`), then reverted and got a clean 3/3 pass. Your `POLICY_TABLE`,
+`is_covered()`, `collect_existing_dirs()`, all three tests, and the lazy-directory
+handling are **approved and frozen**. So is the decision to record
+`var/log/panes → Sweep{30}` and `agents/*/mailbox → Sweep{7}` as phase-09
+proposals. **Do not touch `src/config/lifecycle.rs`'s logic or the table.**
+
+**There is exactly ONE thing left: the End-to-end verification entry.**
+
+Your `mutation_check_uncovered_directory_fails_gate` test is real coverage — but
+it asserts that a *helper* returns the right list. That is a different claim from
+*"the gate goes red"*. `STANDARDS.md` §1 and this phase's own End-to-end section
+require a **captured transcript of `cargo test` actually failing**, which no
+in-test assertion can stand in for.
+
+**Run exactly this.** Step 1 temporarily edits the fixture — that edit is
+reverted in step 3 and must NOT appear in your final diff.
+
+```sh
+# 1. Inject an uncovered directory into the Direction A fixture.
+#    In src/config/lifecycle.rs, inside every_existing_directory_has_a_policy_entry,
+#    immediately after the line:
+#        std::fs::create_dir_all(base.join("agents/test-agent/mailbox")).ok();
+#    add:
+#        std::fs::create_dir_all(base.join("var/log/rogue-uncovered-dir")).ok();
+
+# 2. Capture the RED run.
+cargo test --lib config::lifecycle -- --nocapture \
+  > /tmp/e2e-07-red.txt 2>&1; echo "exit=$?" >> /tmp/e2e-07-red.txt
+
+# 3. Revert the injection — this must leave src/ byte-identical.
+git checkout -- src/config/lifecycle.rs
+
+# 4. Capture the GREEN run.
+cargo test --lib config::lifecycle -- --nocapture \
+  > /tmp/e2e-07-green.txt 2>&1; echo "exit=$?" >> /tmp/e2e-07-green.txt
+
+# 5. Prove the failure named the directory.
+grep -n "rogue-uncovered-dir" /tmp/e2e-07-red.txt \
+  > /tmp/e2e-07-named.txt 2>&1; echo "grep-exit=$?" >> /tmp/e2e-07-named.txt
+```
+
+Then append one Update Log entry titled
+`### Update — <date> (end-to-end verification)` containing three fenced blocks:
+the **contents** of `/tmp/e2e-07-red.txt` (expect `exit=101`),
+`/tmp/e2e-07-green.txt` (expect `exit=0`, 3 passed), and `/tmp/e2e-07-named.txt`
+(expect `grep-exit=0`).
+
+The `exit=` and `grep-exit=` lines are the point: a command that finds nothing
+prints nothing, so the exit code is what makes the result observable either way.
+
+**Do not** retype, summarise, or reconstruct any of it, and **do not** copy lines
+out of this doc or out of `bugs/bug-07-1.md` — the bug report quotes the
+reviewer's own run, which is not yours.
+
+**A note on where this keeps going wrong.** The server writes a `(complete)`
+entry containing a "Command output tails" block. It looks like captured
+evidence. **It is not** — it is the standard gate capture every phase receives
+automatically, and both `STANDARDS.md` §1 and this doc explicitly disclaim it.
+You must author your own entry.
+
+**Finish condition — this fix must change no code.**
+
+- `cargo test` must still report **967** lib, **30** integration (2 ignored),
+  **8** isolation (1 ignored).
+- `git diff --name-only` must list **exactly one** path: this phase doc.
+  Anything under `src/` means step 3's revert did not take.
+- All four gates still green.
+
+
 ### Update — 2026-07-30 22:48 (started)
 
 **Executor:** local model
@@ -377,3 +456,16 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 Independent review verification (mutation performed by hand against a throwaway `HOME`, reverted afterward — working tree left clean) confirmed the underlying gate mechanism is sound: a policy-uncovered directory injected into the `every_existing_directory_has_a_policy_entry` fixture makes that test fail with `directories exist without a lifecycle policy entry:\n  var/log/reviewer-injected-uncovered-dir` (`exit=101`), and removing the injection restores a clean pass (`exit=0`, 3/3 tests). The defect is confined to the missing Update Log transcript — no code fix is required, only the capture-and-paste step.
 
 On the retention-default question (`var/log/panes` → `Sweep{30}`, `agents/*/mailbox` → `Sweep{7}`): judged **acceptable as explicitly-labelled proposals**, not a scope violation. Both entries have `config_key: None` and `ImplementationStatus::Pending { owned_by: "phase-09" }` — no config default was changed (confirmed `src/config/types.rs` untouched in the diff) and the numbers cannot silently take effect since no knob reads them yet. They are visibly attributed to phase-09 for a decision. Noted for the human's attention before phase-09 treats them as settled, per instruction, but not grounds for a bounce on their own.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce with the code independently proven — the reviewer
+injected an uncovered directory and got a real failure naming it, then a clean
+revert and pass. The only gap is the captured transcript, and the previous spec
+described it in prose rather than as a runnable command. That asymmetry has now
+failed twice on this milestone (phase 05's transcript 3, and this), and both
+times supplying a literal command block fixed it immediately, so this refinement
+supplies one — including the temporary fixture edit and its revert, which is the
+part the executor had no obvious way to guess.
