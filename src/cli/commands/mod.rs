@@ -16,7 +16,7 @@ pub use ask::run_ask;
 pub use costs::{GroupBy, run_costs};
 pub use interrupt::InterruptState;
 pub use ipc_client::{connect, recv, send_request};
-pub use lifecycle::{run_logs, run_ping, run_stop};
+pub use lifecycle::{liveness_line, run_logs, run_ping, run_stop};
 pub use setup::run_setup;
 
 use chat::run_chat_inner;

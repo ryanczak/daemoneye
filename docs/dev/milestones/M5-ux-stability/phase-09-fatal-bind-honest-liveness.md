@@ -1,7 +1,7 @@
 # Phase 09: Fatal Webhook Bind + Honest Liveness Reporting
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08 (instance lock) — the PID file this phase reads is
 created there
 **Estimated diff:** ~210 lines
@@ -589,6 +589,25 @@ running.`
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 04:35 (started)
+
+**Executor:** Claude executor
+
+Implemented all 7 spec tasks: `DaemonLiveness` enum replacing `daemon_is_running()`, shared `liveness_line()` helper, rewired `run_ping`/`run_stop`/`run_status`, split `webhook::start` into `bind` + `serve` with eager fatal bind, updated `CLAUDE.md`. Added 9 new tests (4 `liveness_line` unit tests + 5 `daemon_liveness` async tests).
+
+End-to-end verification:
+- Scenario A (webhook bind fatal): `Error: failed to bind the webhook listener on 0.0.0.0:9393 (is another daemon or another process already using it?)` — confirmed.
+- Scenario B (wedged daemon): `Daemon PID 3083667 is alive but not answering — it may be wedged. Check ~/.daemoneye/var/log/daemon.log.` — confirmed for both `ping` and `status`.
+- Scenario C (stale PID file): `Daemon is not running (stale PID file names PID 3083667).` — confirmed.
+- `cargo test`: 937 lib, 0 bin, 27 integration — matches expected 928 + 9 = 937.
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- `cargo fmt --all`: clean.
+- `grep -rn "daemon_is_running" src/`: 0 matches.
+- `grep -c "pub async fn start" src/webhook/server.rs`: 0; `bind` + `serve`: 1 each.
+- `git diff -U0 -- src/ | grep '^+' | grep unsafe`: only in test module `TestHome`.
+
+Note: A real daemon was running during E2E scenarios B and C; it was SIGKILL'd at the end. The daemon needs to be restarted for normal operation.
 
 ### Notes for executor — 2026-07-29 (pre-dispatch refresh)
 

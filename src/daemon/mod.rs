@@ -288,30 +288,50 @@ pub fn install_session_hooks(session_name: &str, hook_exe: &str) {
     log::info!("Session hooks installed for: {}", session_name);
 }
 
-/// Returns true if a daemon is already listening and responding on the socket.
+/// What a liveness probe against the daemon socket found.
+///
+/// This is a *report*, never an authorization. Nothing may unlink a socket,
+/// remove a file, or otherwise act destructively on the strength of a variant
+/// here — instance ownership is decided solely by the `InstanceLock`
+/// (`docs/design/daemon-instance.md` § 2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonLiveness {
+    /// No socket file, or nothing listening on it.
+    NotRunning,
+    /// Connected, but the daemon did not answer `Ping` within the timeout.
+    /// A live process that is wedged looks like this.
+    Unresponsive,
+    /// Connected and answered `Ping` with something other than `Response::Ok`.
+    Confused,
+    /// Connected and answered `Ping` with `Response::Ok`.
+    Running,
+}
+
+/// Probe the daemon socket and report what was found.
 /// Uses a 2-second timeout so a hung process doesn't block startup.
-pub async fn daemon_is_running() -> bool {
+pub async fn daemon_liveness() -> DaemonLiveness {
     let Ok(stream) = tokio::net::UnixStream::connect(default_socket_path()).await else {
-        return false;
+        return DaemonLiveness::NotRunning;
     };
     let (rx_half, mut tx) = stream.into_split();
     let mut rx = BufReader::new(rx_half);
 
     let Ok(mut data) = serde_json::to_vec(&Request::Ping) else {
-        return false;
+        return DaemonLiveness::Confused;
     };
     data.push(b'\n');
     if tx.write_all(&data).await.is_err() {
-        return false;
+        return DaemonLiveness::NotRunning;
     }
 
     let mut line = String::new();
     match tokio::time::timeout(Duration::from_secs(2), rx.read_line(&mut line)).await {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_str::<Response>(line.trim()),
-            Ok(Response::Ok)
-        ),
-        _ => false,
+        Ok(Ok(0)) => DaemonLiveness::NotRunning,
+        Ok(Ok(_)) => match serde_json::from_str::<Response>(line.trim()) {
+            Ok(Response::Ok) => DaemonLiveness::Running,
+            _ => DaemonLiveness::Confused,
+        },
+        _ => DaemonLiveness::Unresponsive,
     }
 }
 
@@ -705,21 +725,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // Optional webhook ingestion endpoint.
     if startup_config.webhook.enabled {
-        let wh_config_sup = startup_config.clone();
-        let wh_sessions_sup = sessions.clone();
-        let wh_cache_sup = Arc::clone(&cache);
-        let wh_schedule_store_sup = Arc::clone(&schedule_store);
-        tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
-            let cfg = wh_config_sup.clone();
-            let sessions = wh_sessions_sup.clone();
-            let cache = Arc::clone(&wh_cache_sup);
-            let schedule_store = Arc::clone(&wh_schedule_store_sup);
-            async move {
-                if let Err(e) = crate::webhook::start(cfg, sessions, cache, schedule_store).await {
-                    log::error!("Webhook server exited: {}", e);
-                }
-            }
-        }));
+        let listener = crate::webhook::bind(&startup_config).await?;
         if startup_config.webhook.secret.is_empty() {
             log::warn!(
                 "Webhook listener enabled on port {} — no auth (set webhook.secret in config.toml to require a Bearer token)",
@@ -731,6 +737,36 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 startup_config.webhook.port
             );
         }
+        let wh_config_sup = startup_config.clone();
+        let wh_sessions_sup = sessions.clone();
+        let wh_cache_sup = Arc::clone(&cache);
+        let wh_schedule_store_sup = Arc::clone(&schedule_store);
+        let listener = Arc::new(tokio::sync::Mutex::new(Some(listener)));
+        tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
+            let cfg = wh_config_sup.clone();
+            let sessions = wh_sessions_sup.clone();
+            let cache = Arc::clone(&wh_cache_sup);
+            let schedule_store = Arc::clone(&wh_schedule_store_sup);
+            let listener = Arc::clone(&listener);
+            async move {
+                let listener = {
+                    let mut guard = listener.lock().await;
+                    guard.take()
+                };
+                match listener {
+                    Some(l) => {
+                        if let Err(e) =
+                            crate::webhook::serve(l, cfg, sessions, cache, schedule_store).await
+                        {
+                            log::error!("Webhook server exited: {}", e);
+                        }
+                    }
+                    None => {
+                        log::error!("webhook listener was consumed; not restarting");
+                    }
+                }
+            }
+        }));
     }
 
     // Prune chat sessions idle for more than 30 minutes.
@@ -1005,5 +1041,129 @@ mod tests {
             1,
             "factory should be called exactly once when shutdown is set"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Liveness probe tests
+    // ---------------------------------------------------------------------------
+
+    struct TestHome {
+        _tmp: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+        saved: Option<String>,
+    }
+
+    impl TestHome {
+        fn new() -> Self {
+            let lock = crate::test_home_guard();
+            let saved = std::env::var("HOME").ok();
+            let tmp = tempfile::tempdir().unwrap();
+            unsafe {
+                std::env::set_var("HOME", tmp.path());
+            }
+            Self {
+                _tmp: tmp,
+                _lock: lock,
+                saved,
+            }
+        }
+    }
+
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            match &self.saved {
+                Some(v) => unsafe {
+                    std::env::set_var("HOME", v);
+                },
+                None => unsafe {
+                    std::env::remove_var("HOME");
+                },
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn liveness_is_not_running_when_socket_absent() {
+        let _home = TestHome::new();
+        let liveness = daemon_liveness().await;
+        assert_eq!(liveness, DaemonLiveness::NotRunning);
+    }
+
+    #[tokio::test]
+    async fn liveness_is_unresponsive_when_peer_never_replies() {
+        let _home = TestHome::new();
+        let socket_path = crate::config::default_socket_path();
+        std::fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let probe = tokio::spawn(async { daemon_liveness().await });
+
+        // Accept the connection and keep the stream open without writing
+        // anything — the probe times out waiting for a response.
+        let (stream, _) = listener.accept().await.unwrap();
+        // Keep the stream alive for the full duration of the probe's 2s timeout.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        drop(stream);
+
+        let liveness = probe.await.unwrap();
+        assert_eq!(liveness, DaemonLiveness::Unresponsive);
+    }
+
+    #[tokio::test]
+    async fn liveness_is_not_running_when_peer_closes_immediately() {
+        let _home = TestHome::new();
+        let socket_path = crate::config::default_socket_path();
+        std::fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let probe = tokio::spawn(async { daemon_liveness().await });
+
+        // Accept then immediately drop the stream — EOF.
+        let (stream, _) = listener.accept().await.unwrap();
+        drop(stream);
+
+        let liveness = probe.await.unwrap();
+        assert_eq!(liveness, DaemonLiveness::NotRunning);
+    }
+
+    #[tokio::test]
+    async fn liveness_is_running_when_peer_answers_ok() {
+        let _home = TestHome::new();
+        let socket_path = crate::config::default_socket_path();
+        std::fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let probe = tokio::spawn(async { daemon_liveness().await });
+
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let reply = format!("{}\n", serde_json::to_string(&Response::Ok).unwrap());
+        stream.writable().await.unwrap();
+        use tokio::io::AsyncWriteExt;
+        stream.write_all(reply.as_bytes()).await.unwrap();
+
+        let liveness = probe.await.unwrap();
+        assert_eq!(liveness, DaemonLiveness::Running);
+    }
+
+    #[tokio::test]
+    async fn liveness_is_confused_on_unexpected_reply() {
+        let _home = TestHome::new();
+        let socket_path = crate::config::default_socket_path();
+        std::fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
+        let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+
+        let probe = tokio::spawn(async { daemon_liveness().await });
+
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let reply = format!(
+            "{}\n",
+            serde_json::to_string(&Response::Error("test".into())).unwrap()
+        );
+        stream.writable().await.unwrap();
+        use tokio::io::AsyncWriteExt;
+        stream.write_all(reply.as_bytes()).await.unwrap();
+
+        let liveness = probe.await.unwrap();
+        assert_eq!(liveness, DaemonLiveness::Confused);
     }
 }

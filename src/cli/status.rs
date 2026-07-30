@@ -1,8 +1,11 @@
 use anyhow::Result;
 use tokio::io::BufReader;
 
-use crate::cli::commands::{connect, recv, send_request};
+use crate::cli::commands::{connect, liveness_line, recv, send_request};
 use crate::cli::render::terminal_width;
+use crate::config::default_pid_path;
+use crate::daemon::daemon_liveness;
+use crate::daemon::instance::read_pid;
 use crate::ipc::{Request, Response};
 
 // ── Color palette ─────────────────────────────────────────────────────────────
@@ -154,7 +157,9 @@ fn fmt_appr_denied(a: usize, d: usize) -> String {
 pub async fn run_status() -> Result<()> {
     match connect().await {
         Err(_) => {
-            eprintln!("{}", c_err("Daemon is not running."));
+            let liveness = daemon_liveness().await;
+            let pid = read_pid(&default_pid_path());
+            eprintln!("{}", c_err(&liveness_line(liveness, pid)));
             std::process::exit(1);
         }
         Ok(stream) => {
