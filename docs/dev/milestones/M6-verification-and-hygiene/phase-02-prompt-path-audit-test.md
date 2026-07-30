@@ -1,7 +1,7 @@
 # Phase 02: Prompt-Path Audit Test
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=test, size=m
@@ -414,3 +414,138 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 Lib count: 955 (above 947 baseline, +8 new tests). Integration: 27. Isolation: 3. All unchanged.
 
 PENDING_FIX contains exactly 7 entries, each matching a finding from the red run.
+
+### Update — ts=1785429474391 (complete, server-authored)
+
+**Summary:** ## Summary + Notes for review
+
+Built `src/config/path_audit.rs` — a production module with a backtick-delimited path extractor, a hand-maintained `INVENTORY` of 26 known runtime-relative paths (with `Current`/`Legacy` status), and an `audit_text()` gate that flags unknown and legacy path literals in agent-facing assets. Widened the 7 knowledge-memory consts in `src/config/seeds.rs` from private to `pub(crate)` so the audit module can reach them.
+
+**Red run:** Without `PENDING_FIX`, the audit correctly caught 7 unique normalised path defects across the shipped assets — `var/log/events.jsonl` (Legacy, superseded by dated segments) and 6 wrong paths in knowledge memories that use `~/.daemoneye/` prefixes instead of the correct `var/`/`etc/` prefixes (e.g. `~/.daemoneye/config.toml` should be `etc/config.toml`, `~/.daemoneye/pane_logs/` should be `var/log/panes/`).
+
+**Green run:** After quarantining all 7 into `PENDING_FIX`, all tests pass. 955 lib tests (+8 new), 27 integration, 3 isolation — all clean.
+
+**End-to-end:** The audit runs against the real `include_str!` consts, not fakes. 45 path literals extracted across 8 assets. `assets/prompts/sre.toml:320` (`var/log/events.jsonl`) is correctly flagged as Legacy.
+
+**Deviation from spec:** Added `etc/prompts/sre.toml`, `var/run/daemoneye.sock`, `var/run/daemoneye.pid`, and `var/sessions/index.json` to the inventory beyond the spec's table — these are real paths constructed by `config::` or `session_store.rs` that the completeness test would otherwise fail for the wrong reason. The spec says "verify each against the source rather than copying this list on faith."
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+fication ... ok
+test tmux::cache::tests::get_labeled_context_session_topology ... ok
+test tmux::cache::tests::get_labeled_context_synchronized_pane_noted ... ok
+test tmux::cache::tests::get_labeled_context_source_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test memory::tests::migrate_namespace_skips_already_migrated ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 955 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.29s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 29 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 27 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 3 tests
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-652de6e8e49133dd)
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M6-verification-and-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M6-verification-and-hygiene/phase-02-prompt-path-audit-test.md` — +52 -1
+- `src/config/mod.rs` — +1 -0
+- `src/config/path_audit.rs` — +578 -0
+- `src/config/seeds.rs` — +9 -7
+
+**Commit:** 9d07174f8a89a78ed34aa437449736a5442a730b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
