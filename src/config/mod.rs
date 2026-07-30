@@ -8,7 +8,6 @@ mod seeds;
 mod types;
 
 pub use load::*;
-pub use path_audit::*;
 pub use seeds::*;
 pub use types::*;
 

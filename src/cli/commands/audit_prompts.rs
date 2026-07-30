@@ -2,7 +2,8 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
 
-use crate::config::{PathClassification, classify_text, config_dir, prompts_dir};
+use crate::config::path_audit::{PathClassification, classify_text};
+use crate::config::{config_dir, prompts_dir};
 
 /// Result of auditing a single asset.
 struct AssetResult {
@@ -216,7 +217,6 @@ mod tests {
         let (_tmp, _lock) = setup_test_home();
         // Seed a clean tree
         crate::config::Config::ensure_dirs().unwrap();
-        drop(_lock);
 
         // Run the audit — it should exit 0 (no panic, no non-zero exit)
         // We can't easily capture process::exit in a unit test, so we test
@@ -231,6 +231,7 @@ mod tests {
         let prompt = assets.iter().find(|a| a.name == "SRE prompt");
         assert!(prompt.is_some(), "SRE prompt should exist after seeding");
         assert!(!prompt.unwrap().missing);
+        drop(_lock);
     }
 
     #[test]
