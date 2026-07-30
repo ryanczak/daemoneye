@@ -31,13 +31,25 @@ the tooling could not tell. See Notes § "Defect inventory".
       the emitted record — not merely that nothing crashed.
 - [ ] **`daemoneye audit-prompts`** (name provisional) reports every filesystem
       path asserted by the installed prompt and knowledge memories, marking each
-      *resolves* / *does not resolve* against the `config` module, and exits
-      non-zero when any does not. **It never rewrites the user's files** — local
-      prompt edits are the operator's, and the command's contract is to report
-      only.
+      *current* / *superseded* / *unknown* against the phase-02 inventory, and
+      exits non-zero on anything that is not *current*. **It never rewrites the
+      user's files** — local prompt edits are the operator's, and the command's
+      contract is to report only. It **reuses** `src/config/path_audit.rs` rather
+      than growing a second extractor.
+      *(Restated 2026-07-30 with the criterion below — "resolves / does not
+      resolve against the `config` module" has the same blind spot.)*
 - [ ] A test in the repo fails if any path literal in `assets/prompts/sre.toml` or
-      `assets/memory/knowledge/*.md` does not correspond to a path the `config`
-      module constructs. Stale prompt facts become a red gate, not a discovery.
+      `assets/memory/knowledge/*.md` is **wrong or superseded**. Stale prompt facts
+      become a red gate, not a discovery.
+      **Restated 2026-07-30 while drafting phase 02.** This criterion originally
+      read "does not correspond to a path the `config` module constructs" — and
+      applied literally it **passes the defect that motivated the milestone**.
+      `config::events_path()` still returns `var/log/events.jsonl` and has 19 live
+      call sites; `event_log.rs:93` binds it as `legacy`. The path resolves and is
+      still the wrong thing to put in front of the agent. Existence is not the
+      property; **current-vs-superseded** is. Phase 02 therefore audits against an
+      explicit inventory carrying a `Current` / `Legacy` status per path, not
+      against mere constructibility.
 - [ ] **Every artifact class under `~/.daemoneye/` has a stated lifecycle** —
       rotate, delete, archive, or keep-forever-by-design — recorded in one place, with
       the default value for each. No class is unmanaged by omission. Verified by a
@@ -87,8 +99,8 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [test-isolation-harness](phase-01-test-isolation-harness.md) — throwaway `HOME` + private tmux server; one scenario proving the operator's live server is untouched | done |
-| 02 | prompt-path-audit-test — repo-side test that fails on any unresolvable path literal in the prompt and knowledge-memory assets | todo |
-| 03 | fix-stale-prompt-paths — correct the three known stale `events.jsonl` references; whatever else 02 surfaces | todo |
+| 02 | [prompt-path-audit-test](phase-02-prompt-path-audit-test.md) — repo-side test that fails on any wrong or superseded path literal in the prompt and knowledge-memory assets | todo (drafted) |
+| 03 | fix-stale-prompt-paths — correct the stale `events.jsonl` references **and the six-path pre-`var/` generation in the knowledge memories** (see defect 5); whatever else 02 surfaces | todo |
 | 04 | audit-prompts-command — the operator-facing `daemoneye audit-prompts`, report-only, never rewriting | todo |
 | 05 | severity-gate-honesty — an absent severity is not the lowest severity; every discard logs and emits | todo |
 | 06 | webhook-to-ghost-e2e — the pipeline scenario in the 01 harness, severity-less payload through to a `ghost_*` event | todo |
@@ -146,6 +158,23 @@ Nothing is inferred.
    `assets/memory/knowledge/agent-runtime-layout.md:51` (ASCII tree) and `:79` (path
    list). The prompt explicitly sends the agent there "for the full layout", so the
    authoritative reference is the most wrong.
+   **Understated — corrected 2026-07-30 while drafting phase 02.** Extracting every
+   backticked path span across all seven knowledge memories found not two stale
+   references but **a whole pre-`var/` generation of them**, all still shipped:
+
+   | in the knowledge memories | actually |
+   |---|---|
+   | `~/.daemoneye/config.toml` | `etc/config.toml` |
+   | `~/.daemoneye/daemon.log` | `var/log/daemon.log` |
+   | `~/.daemoneye/events.jsonl` | `var/log/events/events-<date>.jsonl` |
+   | `~/.daemoneye/pane_logs/`, `~/.daemoneye/pane_logs/<win_name>.log` | `var/log/panes/` |
+   | `~/.daemoneye/schedules.json` | `var/run/schedules.json` |
+   | `~/.daemoneye/sessions/ghost-<name>-<uuid>.jsonl` | `var/log/sessions/<id>.jsonl` |
+
+   Every one of these predates the `var/` reorganisation and nothing noticed. This
+   is the same drift class as defect 4, at six times the scale, in the file the
+   prompt calls authoritative. Phase 03's scope is correspondingly larger than
+   "the three known stale `events.jsonl` references".
 6. **Installed copies drift indefinitely.** `overwrite_sre_prompt()` and
    `overwrite_knowledge_memories()` (`src/config/seeds.rs:147`, `:103`) have exactly
    one caller each, both in `src/cli/commands/setup.rs`. First-run seeding is
