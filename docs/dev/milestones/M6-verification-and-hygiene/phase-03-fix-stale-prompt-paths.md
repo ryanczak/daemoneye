@@ -1,7 +1,7 @@
 # Phase 03: Fix Stale Prompt Paths
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-03-1)
 **Depends on:** phase-02 (done)
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
