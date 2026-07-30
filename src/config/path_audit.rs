@@ -7,8 +7,6 @@
 //! This module is production code — phase 04 ships `daemoneye audit-prompts`
 //! and reuses it without inventing a second extractor.
 
-#![allow(dead_code)]
-
 /// Whether a path in the inventory is still valid for agent-facing text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathStatus {
@@ -291,8 +289,10 @@ fn normalise(literal: &str) -> Option<String> {
         Some(normalised)
     }
 }
-/// Returns one finding per bad literal. An empty vec means clean.
-pub fn audit_text(text: &str) -> Vec<Finding> {
+/// Audit `text` against the inventory, skipping literals listed in `pending`.
+///
+/// Tests pass `&[]` to reproduce the unquarantined (red) audit.
+pub fn audit_text_with(text: &str, pending: &[&str]) -> Vec<Finding> {
     let literals = extract_path_literals(text);
     let mut findings = Vec::new();
 
@@ -303,7 +303,7 @@ pub fn audit_text(text: &str) -> Vec<Finding> {
         };
 
         // Skip literals in the quarantine list (owned by phase 03)
-        if PENDING_FIX.iter().any(|&p| p == normalised) {
+        if pending.iter().any(|&p| p == normalised) {
             continue;
         }
 
@@ -327,6 +327,11 @@ pub fn audit_text(text: &str) -> Vec<Finding> {
     }
 
     findings
+}
+
+/// Audit `text` with the standing quarantine list applied.
+pub fn audit_text(text: &str) -> Vec<Finding> {
+    audit_text_with(text, PENDING_FIX)
 }
 
 /// Audit a single asset by name, returning the extracted literal count and findings.
@@ -462,22 +467,13 @@ mod tests {
 
     #[test]
     fn legacy_entry_is_reported() {
-        // var/log/events.jsonl is in PENDING_FIX so audit_text skips it.
-        // Verify the Legacy mechanism works by checking the inventory directly.
-        let entry = INVENTORY
-            .iter()
-            .find(|e| e.path == "var/log/events.jsonl")
-            .expect("var/log/events.jsonl must be in INVENTORY");
+        let findings = audit_text_with("see `var/log/events.jsonl` for events", &[]);
+        assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
         assert!(
-            matches!(entry.status, PathStatus::Legacy { .. }),
-            "expected Legacy status, got {:?}",
-            entry.status
+            matches!(findings[0].reason, FindingReason::Legacy { .. }),
+            "expected Legacy, got {:?}",
+            findings[0].reason
         );
-        // Also verify the reason is carried through: construct a Finding
-        // manually to prove the reason string is non-empty.
-        if let PathStatus::Legacy { reason } = entry.status {
-            assert!(!reason.is_empty(), "Legacy reason must not be empty");
-        }
     }
 
     // ── Inventory completeness ──────────────────────────────────────────────
@@ -574,5 +570,45 @@ mod tests {
                     .join("\n")
             );
         }
+    }
+
+    #[test]
+    fn red_run_is_reproducible() {
+        // With no quarantine, the audit must flag exactly the 7 literals in
+        // PENDING_FIX — this is the permanent regression test for the red run.
+        let assets: &[(&str, &str)] = &[
+            ("SRE_PROMPT_TOML", SRE_PROMPT_TOML),
+            ("webhook-setup", WEBHOOK_SETUP_MEMORY),
+            ("runbook-format", RUNBOOK_FORMAT_MEMORY),
+            ("runbook-ghost-template", RUNBOOK_GHOST_TEMPLATE_MEMORY),
+            ("ghost-shell-guide", GHOST_SHELL_GUIDE_MEMORY),
+            ("scheduling-guide", SCHEDULING_GUIDE_MEMORY),
+            ("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY),
+            ("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY),
+        ];
+
+        let mut flagged: Vec<String> = Vec::new();
+        for (_name, text) in assets {
+            let findings = audit_text_with(text, &[]);
+            for f in findings {
+                let norm = normalise(&f.literal);
+                if let Some(n) = norm {
+                    flagged.push(n);
+                }
+            }
+        }
+        flagged.sort();
+        flagged.dedup();
+
+        let mut expected = PENDING_FIX.to_vec();
+        expected.sort();
+
+        assert_eq!(
+            flagged.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            expected,
+            "flagged literals must match PENDING_FIX exactly.\n\
+             flagged: {flagged:?}\n\
+             expected: {expected:?}"
+        );
     }
 }
