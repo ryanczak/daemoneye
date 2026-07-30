@@ -1,7 +1,7 @@
 # Phase 09: Fatal Webhook Bind + Honest Liveness Reporting
 
 **Milestone:** M5 — UX & Stability
-**Status:** review
+**Status:** in-progress (bug-09-1 open)
 **Depends on:** phase-08 (instance lock) — the PID file this phase reads is
 created there
 **Estimated diff:** ~210 lines
@@ -768,3 +768,77 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** fd42f601db833dfa4f5d7fd69e0680a0667c2d11
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-07-29 (bounced, bug-09-1)
+
+**Bounced on one `minor` finding: `bugs/bug-09-1.md`.** The implementation is
+correct and complete; one of the nine new tests does not cover the branch it is
+named for. Everything else verified below so the re-dispatch does not redo it.
+
+#### All four gates re-run bare and green
+
+`cargo fmt --all --check`; `cargo build` after `touch`ing `src/daemon/mod.rs` and
+`src/webhook/server.rs` — zero warnings; `cargo clippy --all-targets
+--all-features -- -D warnings`; `cargo test` at **937** lib (928 + 9) + **27**
+integration. All nine `liveness_*` tests present and passing.
+
+#### All seven spec tasks are implemented
+
+`DaemonLiveness` with the four variants and the report-not-authorization doc
+comment; `daemon_liveness()` replacing `daemon_is_running()` (`grep -rn
+daemon_is_running src/` → nothing); `liveness_line`; `run_ping` / `run_stop` /
+`run_status` rewired with `stop`'s and `status`'s success paths untouched;
+`webhook::start` split into `bind` + `serve` with the eager `?` bind and the
+`Arc<Mutex<Option<TcpListener>>>` + "listener was consumed; not restarting"
+guard; both `CLAUDE.md` invariants added.
+
+#### The eight pinned strings match character-for-character
+
+The phase's own tests only assert substrings, so I verified the exact strings
+independently against the real `liveness_line` — all eight, including both
+em-dashes and the `\`-continuation whitespace handling. E.g.
+`Daemon PID 4321 is alive but not answering — it may be wedged. Check
+~/.daemoneye/var/log/daemon.log.` exactly.
+
+#### `unsafe` stayed inside its authorization
+
+The only `unsafe` in the diff is `std::env::set_var` in the `TestHome` guard, as
+authorized. Nothing was added to any production path.
+
+#### Three deviations, all defensible, none bounced on
+
+1. **`liveness_line` is `pub`, not private** as task 2 said, and is re-exported
+   from `src/cli/commands/mod.rs`. Forced: `src/cli/status.rs` is outside the
+   `commands` module. `pub(crate)` would be tighter and is worth a follow-up nit,
+   but the spec's "private" was simply unachievable given task 5's caller.
+2. **The `Webhook server listening on …` log line changed shape** — from
+   `"{}:{}" (bind_ip, port)` to a single `listener.local_addr()`. Also forced:
+   after the split, `serve` no longer has `bind_ip`/`port` in scope. Reporting the
+   actually-bound address is arguably better. **Undeclared** — it should have been
+   named in "Notes for review". (Its `unwrap_or_else` fallback prints
+   `127.0.0.1:0` if `local_addr()` fails, which is misleading; nit only.)
+3. **`run_stop`'s not-running branch moved from `println!` to `eprintln!`.** The
+   spec did not pin the stream there; consistent with `run_ping`. Fine.
+
+#### One spec gap I own, for the record
+
+The task-1 mapping table has no row for `Ok(Err(_))` — a read **I/O error** as
+distinct from a timeout. The implementation folds it into `_ => Unresponsive`.
+That is a reasonable reading of an under-specified case, not a deviation. If the
+distinction ever matters, `NotRunning` is the better answer for a reset peer.
+
+#### E2E was run against real artifacts and reported honestly
+
+The executor quoted real output for all three scenarios — the fatal bind
+(`failed to bind the webhook listener on 0.0.0.0:9393 (is another daemon or
+another process already using it?)`), the wedged report (`Daemon PID 3083667 is
+alive but not answering …`) for both `ping` and `status`, and the stale PID file
+(`Daemon is not running (stale PID file names PID 3083667).`). It also complied
+with the doc's requirement to state what it left behind: **the daemon was
+SIGKILLed at the end and needs restarting.**
+
+#### Suite time
+
+1.3 s → 4.2 s, from the deliberate 3 s hold in
+`liveness_is_unresponsive_when_peer_never_replies`. Expected — the spec forbids
+shortening the probe's 2 s timeout for tests. Not a finding.
