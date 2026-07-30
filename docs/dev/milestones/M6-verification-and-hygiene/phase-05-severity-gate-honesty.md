@@ -1,7 +1,7 @@
 # Phase 05: Severity-Gate Honesty
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -692,3 +692,22 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f099b7bbc075491d663e7d2eefac26097000d381
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bugs: bug-05-1 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — the code change (round 1) is correct, complete, and independently mutation-verified; round 2 added only the mechanically-captured E2E transcript bug-05-1 required.
+- **Calibration:** none — already folded (6th M6 occurrence of the missing/hand-made-transcript pattern; fold already in place in WORKFLOW.md § "A pasted transcript is a claim, not evidence").
+
+**Round 2 verification performed at this review:**
+
+- Re-ran all four gates independently: `cargo fmt --all -- --check` (exit 0), `cargo build` (exit 0), `cargo clippy --all-targets --all-features -- -D warnings` (exit 0), `cargo test` — 964 lib + 30 integration (2 ignored) + 3 isolation + 0 doc, all passing — matches the reported counts exactly.
+- Confirmed no code changed this round: `git diff --name-only 5c2df0d HEAD` (the round-1 fix commit through the pre-review tree) touches nothing under `src/` or `tests/`; the only content commit this round (`f099b7b`) is `+42 -0` on the phase doc alone. The subsequent `d9d3d10` is the server-authored bookkeeping commit (Status flip to `review` + the server's own "(complete)" entry), also docs-only.
+- Re-ran the executor's exact three End-to-end verification commands (`cargo test --test integration webhook_alert -- --nocapture`, then the two `grep -n` proofs) against the current tree. All three tests plus `webhook_alert_to_event_log` pass; my re-run's line numbers for the two greps differ from the pasted ones (5/7 vs. the pasted 7/8) because test execution order varies between runs and my run had no `Compiling` line (already built) — exactly the legitimate variance the escalation note anticipated, not a discrepancy.
+- **Line-number consistency check (the sharpest authenticity test):** counted the pasted `/tmp/e2e-gate.txt` fenced block by hand — `test webhook_alert_no_severity_passes_gate ... ok` is block line 7, `test webhook_alert_below_threshold_discarded ... ok` is block line 8. The pasted `/tmp/e2e-nosev.txt` and `/tmp/e2e-discard.txt` blocks claim exactly lines 7 and 8 respectively. Cross-file line numbers agree with an independent hand count — decisive evidence the transcript is a genuine single capture, not hand-assembled.
+- Confirmed the `### Update — 2026-07-30 20:11 (end-to-end verification)` entry is executor-authored and distinct from the server-authored `(complete)` entry's "Command output tails" block (standard gate capture, not phase-specific E2E evidence) that follows it.
+- Confirmed the documented limitation is present: the entry states in one line that a real `webhook_discarded` line from `events.jsonl` is not obtainable in this phase (integration tests scope `HOME` to a tempdir deleted at test end), with daemon-level capture deferred to phase 06. This narrowing is the architect's (recorded in the phase doc's "Scope note" and the escalation entry above) — accepted, not filed as a defect, noted here for the human at milestone close.
+
+**Conclusion:** bug-05-1 is resolved — the missing mechanical-capture evidence is now present, internally consistent, and independently reproducible in substance (same tests, same pass/fail outcome; line-number drift is expected nondeterminism, not fabrication). Phase 05 is `done`.
