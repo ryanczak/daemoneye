@@ -1,7 +1,7 @@
 # Phase 02: Prompt-Path Audit Test
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-02-1, bug-02-2)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=test, size=m
@@ -549,3 +549,41 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9d07174f8a89a78ed34aa437449736a5442a730b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-30
+
+- **Verdict:** bounced
+- **Bounces:** 1 (so far)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** Executor added `etc/prompts/sre.toml`, `var/run/daemoneye.sock`,
+  `var/run/daemoneye.pid`, `var/sessions/index.json` to `INVENTORY` beyond the
+  spec's table. Independently verified all four against source: `etc/prompts/sre.toml`
+  via `config::prompts_dir().join("sre.toml")` (`src/config/seeds.rs:148`),
+  `var/run/daemoneye.sock` via `config::default_socket_path()` (`src/config/load.rs:58-60`),
+  `var/run/daemoneye.pid` via `config::default_pid_path()` (`src/config/load.rs:64-66`),
+  `var/sessions/index.json` via `session_store.rs:67` (`saved_sessions_dir().join("index.json")`).
+  All four are real, current paths genuinely constructed where claimed. This is a
+  legitimate correction invited by the spec's own instruction ("verify each against
+  the source rather than copying this list on faith") — accepted, not a bug.
+- **Bugs filed:**
+  - `bugs/bug-02-1.md` (blocker) — `audit_text`'s `Legacy`-finding branch
+    (lines 318-325) is untested: mutating it to a no-op leaves all 8
+    `path_audit` tests green. Root cause: the one `Legacy` entry in
+    `INVENTORY` (`var/log/events.jsonl`) was also added to `PENDING_FIX`,
+    so every real-asset literal that could exercise the branch is skipped
+    upstream of the `INVENTORY` lookup. `legacy_entry_is_reported` checks
+    `INVENTORY` data directly, never calls `audit_text`, and does not satisfy
+    the phase doc's own Test Plan bullet ("Audit a synthetic string... not
+    merely that the vec is non-empty"). This is the exact "Finding 1"
+    mechanism motivating the whole milestone axis-2 gate, and it is currently
+    provable-dead by mutation.
+  - `bugs/bug-02-2.md` (minor) — `#![allow(dead_code)]` at
+    `src/config/path_audit.rs:10` is unauthorized (not listed in the phase
+    doc's Authorizations section) and has no precedent elsewhere in the repo.
+    Confirmed load-bearing (removing it produces 11+2 `never used` errors,
+    since the module's only caller today is its own test block ahead of
+    phase 04). `STANDARDS.md` §1 bans `#[allow(...)]` masking unconditionally;
+    this needed an explicit blocker/authorization, not a silent addition.
+- **Calibration:** none folded yet — pending a fix-and-reverify pass to see
+  whether the root cause (adding a `Legacy` inventory entry to `PENDING_FIX`
+  simultaneously, silently orphaning its own test coverage) recurs elsewhere.
