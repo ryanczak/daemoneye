@@ -343,7 +343,7 @@ Each has a retrospective in its `docs/dev/milestones/M<n>-<slug>/README.md`.
   `TODO(M2)` signature consolidations, and first-ever unit coverage for the
   `executor/knowledge/` handlers). No behavior regressions.
 
-### Active milestone — M4 Context Management Overhaul
+### Shipped — M4 Context Management Overhaul
 
 Scoped 2026-07-07 (PE sign-off). Design doc:
 [`docs/design/context-management.md`](design/context-management.md); milestone
@@ -355,6 +355,38 @@ representation), a `recall_context` tool over the archive, asynchronous
 compaction, session-meta persistence across restarts, and ghost-session
 coverage. The pre-rexyMCP [`ROADMAP.md`](ROADMAP.md) remains a reference
 baseline, not a commitment.
+
+### Shipped — M5 UX & Stability
+
+Closed 2026-07-30. Milestone README:
+`docs/dev/milestones/M5-ux-stability/README.md` (46 phases, 36 approved first try).
+Closed two axes rather than the three UX papercuts it was scoped for. **Stalls:** all
+three mechanisms from [`docs/design/daemon-stalls.md`](design/daemon-stalls.md) are
+shut *and self-reporting* — a re-entrant `SessionStore` acquisition panics on an
+always-on assertion instead of deadlocking; every tmux subprocess is timeout-bounded
+(44 via `bounded_output`, 26 via `off_runtime`, 9 direct); and a silent AI provider
+fails at a 120 s idle read with a diagnosable message. **Instance ownership**, added
+mid-milestone after a live two-daemon incident
+([`docs/design/daemon-instance.md`](design/daemon-instance.md)): one daemon per
+`$HOME` enforced by an exclusive `flock` acquired before any startup side effect,
+liveness reporting that distinguishes wedged from dead, a PID on every event record,
+and a fork readiness handshake so `daemoneye daemon` stops reporting success before
+the child has bound its socket.
+
+### Active milestone — M6 Verification & Hygiene
+
+Scoped 2026-07-30 (PE sign-off). Milestone README:
+`docs/dev/milestones/M6-verification-and-hygiene/README.md` (nine phases named,
+none drafted). Goal: make DaemonEye able to prove its own pipelines work, keep the
+agent's documented beliefs matching the code, and bound the runtime tree. Scoped from
+a live webhook→ghost-shell test that produced three reported symptoms of which two
+were measurement errors and one a real defect — the ratio being the point. Four axes:
+an isolated test harness (throwaway `HOME` + private tmux server), pipeline
+correctness (starting with a severity gate that silently discards alerts carrying no
+severity), agent-belief accuracy (the prompt and knowledge memories assert a
+filesystem path that has not existed since July 9, with nothing testing prompt facts),
+and runtime-tree hygiene (`daemon.log` unbounded at 25 MB with no rotation logic;
+orphaned files the code no longer reads).
 
 One correction recorded during M4 scoping: the FTS5 memory index described in
 §1.4 / "Knowledge system" is currently a **stub** (`src/memory/index.rs`

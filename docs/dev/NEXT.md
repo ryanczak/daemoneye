@@ -1,75 +1,76 @@
 # NEXT
 
-**Active phase: none — M5 is closed.**
+**Active phase: none — M6 is scoped but no phase is drafted.**
 
-M5 — UX & Stability is `done` as of 2026-07-30. All nine exit criteria met, all 46
-phases approved, retrospective written in
-`docs/dev/milestones/M5-ux-stability/README.md` § "M5 retrospective".
+M6 — Verification & Hygiene was scoped 2026-07-30. Milestone README:
+`docs/dev/milestones/M6-verification-and-hygiene/README.md`. Nine phases are
+**named, not drafted**, with a thirteen-item defect inventory behind them, all of it
+verified against the tree or the live runtime during scoping.
 
-**This is a human gate.** The calibration folds are resolved (below); **M6 scope
-is the one thing still open.**
+**This is a human gate.** Review the milestone README — particularly the exit
+criteria and the phase ordering — then draft phase 01 with
+`/rexymcp:architect next`.
 
-## 1. Folds — one applied, one parked (PE decisions, 2026-07-30)
+## Why this milestone exists
 
-**Fold 2 is applied.** "Confirm the property is observable before pinning it" now
-sits in `docs/dev/WORKFLOW.md` § "Coverage claims are inadmissible without mutation
-proof". Three occurrences, all architect-authored.
+A live webhook→ghost-shell test produced three reported symptoms. **Two were
+measurement errors and one was a real defect.** That ratio is the thesis: the system
+was partly working, and the tooling could not tell the difference.
 
-**Fold 1 is parked as tooling, not prose** — see `docs/dev/TODO.md` § 1. The PE's
-call was to explore a mechanical realisation later rather than add another paragraph;
-the existing counting fold already stated the rule and already predicted that prose
-would not be the remedy. Evidence and a design sketch are in the TODO.
+- The event log *was* written — to `events/events-<date>.jsonl`. The grep went to
+  `var/log/events.jsonl`, dead since July 9.
+- The `[Webhook Alert]` block *was* injected — three times, on disk.
+- The ghost shell genuinely never fired: an alert with **no severity** ranks 0,
+  the default threshold is `warning` (rank 2), and the gate discards it **with no
+  log line and no event**.
 
-The original proposals, retained for reference:
+And the reason the first conclusion was wrong is itself a defect: the agent's own
+prompt names `var/log/events.jsonl` in the same sentence as the correct tool
+(`search_repository(kind:"events")`, which reads the segments properly). The agent
+followed the path.
 
-**a. A mechanical pre-dispatch criteria check.** Eight defective acceptance
-criteria in M5, three of which cost a run (110 turns on 07, 60 on 11, plus 06n).
-**Every one of the three `hard_fail`s in this milestone was a criterion the
-executor could not satisfy or verify — never code it could not write.** The
-existing counting fold's dated note already predicted the remedy: "if a sixth
-occurs, the remedy is a *mechanical* pre-dispatch check, not stronger prose." We
-reached eight. Proposed: run every criterion against the tree with the list
-*final*, and treat an unrunnable or ambiguous criterion as a spec blocker.
+## The four axes
 
-**b. Observable-property discipline.** Three occurrences — the fold-immediately
-bar. A test can satisfy a spec and prove nothing: 09's EOF test passed via a
-different arm returning the same value; 10's ordering test passed on the alphabet
-because `serde_json` discards insertion order. Proposed: when a spec pins a
-property, confirm the property is *observable*; when it names a branch, give a
-sequence that *reaches* it.
+1. **Test isolation** — throwaway `HOME` **and** a private tmux server. Phase 01,
+   first because everything else needs it. Across M5, every real-artifact check
+   disrupted the operator's live daemon and tmux hooks, and one scenario could not be
+   re-run at review for that reason.
+2. **Agent-belief accuracy** — a repo test that fails on any unresolvable path
+   literal in the prompt and knowledge memories, then the fixes, then an operator
+   `daemoneye audit-prompts`. **Report-only by PE constraint: auto-refresh is ruled
+   out because it would clobber local prompt edits.**
+3. **Pipeline correctness** — the severity gate, and then whatever the end-to-end
+   scenario surfaces behind it. Everything downstream of that gate
+   (`maybe_analyze_alert`, the `GHOST_TRIGGER` parse, `check_ghost_capacity`,
+   `GhostManager::start_session`) has never run for a severity-less alert.
+4. **Runtime-tree hygiene** — `daemon.log` is 25.8 MB with *no* rotation logic
+   anywhere in `src/`; `pane_prefs.json` exists twice, one orphaned, with a doc
+   comment pointing at the dead one; `lib/` is documented as holding SDK modules and
+   has been empty since March.
 
-Full evidence for both is in the retrospective. Not proposed, held at one
-occurrence: the warn-vs-error cascade distinction from 06r.
+## Not an M5 regression
 
-**Standing backlog:** `docs/dev/TODO.md` — cross-milestone items parked with their
-evidence. Currently one entry (the criteria-check mechanisation).
+Worth stating plainly since it was the initial hypothesis: `severity_rank` and the
+gate were last touched in `3fde6cd` (2026-03-07), four months before M5 opened.
+`ae4e833` (the phase-11 fork handshake) is exonerated, and M5's close stands.
 
-## 2. M6 has no design and no scope
+## Two things I did not do
 
-`docs/architecture.md`'s roadmap does not name an M6. Nothing is drafted, and
-nothing should be until you say what the next capability is. Candidates visible
-from M5's work, none chosen:
-
-- **The `--console` teeing gap** — 11's Out-of-scope notes that lifecycle output
-  under `--console` still goes to the terminal rather than `daemon.log`.
-- **`src/cli/` has no concurrency** (established when 06k was dropped), so its 19
-  tmux call sites are bounded but never off-runtime. Fine today; a constraint to
-  remember if the CLI ever gains threads.
-- **Old event segments carry no `pid`** — 10 deliberately did not backfill.
+- **Did not draft phase 01.** Milestone boundaries are a human gate; the README is
+  for your review first.
+- **Did not fix any defect.** All thirteen are inventory, not work-in-progress. The
+  severity gate is a two-line change and tempting, but it belongs in phase 05 behind
+  the harness that can prove it.
 
 ## Where things stand
 
+- `docs/architecture.md` § 5 updated: M4 and M5 moved to shipped, M6 recorded as
+  active. It had still named M4 — the same drift class the milestone is about.
 - `cargo clippy --all-targets --all-features -- -D warnings` clean; **947** lib +
-  **27** integration tests, zero failures.
-- Working tree clean. `CLAUDE.md` carries four new invariants from phases 08–11 but
-  is in `.gitignore` (untracked since `a793e4d`), so those live only in the working
-  tree — worth knowing if the repo is ever cloned fresh.
-- **No daemon is running.** Phases 09–11's E2E scenarios stopped it; nothing has
-  restarted it. `daemoneye chat` (PID 559023) has been up without a daemon since
-  early in the session.
-
-## To proceed
-
-Run `/rexymcp:architect` (no args) to scope M6 — it will survey and ask what the
-next capability should be. Decide the two folds first, or explicitly defer them;
-they are recorded and will not be lost.
+  **27** integration, zero failures.
+- Working tree clean. `CLAUDE.md` is now tracked (`51dff3e`) and no longer ignored.
+- **A daemon is running** (PID in `var/run/daemoneye.pid`, socket present) — you
+  restarted it for the webhook test.
+- Standing backlog: `docs/dev/TODO.md` — one entry, the pre-dispatch criteria-check
+  mechanisation parked at the M5 close. M6 phase 02 is a narrower instance of the
+  same idea and worth reading against it.
