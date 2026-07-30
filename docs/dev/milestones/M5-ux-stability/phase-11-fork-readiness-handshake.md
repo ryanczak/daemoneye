@@ -1,7 +1,7 @@
 # Phase 11: Fork Readiness Handshake — Make `daemoneye daemon` Tell the Truth
 
 **Milestone:** M5 — UX & Stability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08 (instance lock — the failure this most needs to report),
 phase-09 (fatal webhook bind — the second such failure)
 **Estimated diff:** ~220 lines
@@ -394,8 +394,32 @@ And to `## Important Invariants`:
 - [ ] `grep -c "unsafe" src/daemon/ready.rs` returns **2** — both inside
       `create_pipe`. *(Verified satisfiable at the refresh against a
       spec-following implementation.)*
-- [ ] `git diff -U0 -- src/ | grep '^+' | grep -c unsafe` returns **2** — the only
-      `unsafe` **added** anywhere in the phase is those two lines.
+- [ ] `git diff -U0 HEAD -- src/ | grep '^+' | grep -c unsafe` returns **3**, and
+      `git diff -U0 HEAD -- src/ | grep '^+' | grep unsafe` shows exactly these
+      three lines:
+
+      ```
+      +    let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+      +    unsafe { Ok((OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))) }
+      +        let pid = unsafe { libc::fork() };
+      ```
+
+      **⚠ Both the command and the number were wrong in the previous draft, and
+      the run stalled on them. Corrected 2026-07-30.**
+      - **`HEAD`, not a bare `git diff`.** A bare `git diff` shows only *unstaged*
+        changes, so it returns **0** the moment you `git add` — and you will.
+        `HEAD` pins the baseline, per `WORKFLOW.md` § "Every acceptance criterion
+        must be satisfiable, and its mechanics pinned": *if a criterion asks the
+        executor to prove a property of its own diff, pin the baseline commit.*
+      - **Three, not two.** Task 2 tells you to pull `libc::fork()` out of the big
+        `unsafe` block, which necessarily *adds* a third `unsafe` line in
+        `main.rs`. The old "2" contradicted this doc's own task 2.
+
+      **If your count is not 3, compare against the three lines above rather than
+      re-running the command — and if a line differs, report a blocker naming what
+      you see.** Re-running a read-only command that already answered makes no
+      progress and will trip the governor. That is exactly how the previous run
+      ended.
 - [ ] `grep -c 'libc::close' src/main.rs` returns **1** — the pre-existing
       `libc::close(devnull)` at `main.rs:291`, unchanged — and
       `grep -c 'libc::close' src/daemon/ready.rs` returns **0**.
@@ -544,6 +568,12 @@ before this phase the parent returned before the socket existed, so an immediate
 
 <!-- entries appended below this line -->
 
+### Update — 2026-07-30 11:58 (started)
+
+**Executor:** model (phase-11 executor)
+
+Implemented the fork readiness handshake: new `src/daemon/ready.rs` module with pipe-based `READY`/`ERR` protocol, parent waits for child report before exiting, child reports success after socket bind and failure from `async_main`. 7 new unit tests.
+
 ### Notes for executor — 2026-07-30 (pre-dispatch refresh)
 
 Drafted 2026-07-26; phases 07–10 have edited `src/daemon/mod.rs` heavily since, so
@@ -590,3 +620,67 @@ re-running.
 **On the E2E:** it starts, duplicates, and stops a real daemon and repoints global
 tmux hooks. No daemon is running as of this refresh. Step 4 uses a throwaway
 `HOME`, so it will not touch the real config. State what you leave behind.
+
+### Update — 2026-07-30 (escalation)
+
+**Chosen lever:** resume (`continue_phase`) after correcting the criterion
+**Rationale:** The implementation is complete and all four gates pass — the run
+stalled for 60 read-only turns on an acceptance criterion of mine that was
+unsatisfiable two ways over, so fixing the criterion removes the loop's cause;
+resume rather than re-dispatch because the **E2E has not run yet** (real work the
+executor can still reach) and re-dispatch would throw away ~220 lines of correct
+fd/fork work to re-derive it.
+
+### Notes for executor — 2026-07-30 (resumed)
+
+## Your implementation is complete and correct. Do not redo it.
+
+Verified at the escalation: `cargo fmt --all --check`, `cargo build`,
+`cargo clippy --all-targets --all-features -- -D warnings` and `cargo test` all
+green, with **947** lib tests (940 + 7) and all seven `daemon::ready::tests`
+present and passing. `src/daemon/ready.rs` (+168), `src/main.rs` (+39 −12),
+`src/daemon/mod.rs` (+2) and `CLAUDE.md` (+6) are on disk and **staged**.
+
+**The previous run failed on my criterion, not on your code.** It said
+
+```
+git diff -U0 -- src/ | grep '^+' | grep -c unsafe    → 2
+```
+
+and both halves were wrong: a bare `git diff` shows only *unstaged* changes, so it
+returned **0** once you staged; and the true count is **3**, because this doc's own
+task 2 tells you to pull `libc::fork()` out of the big `unsafe` block. You could
+not have made that command print 2. It is now `git diff -U0 HEAD -- src/ …` → **3**,
+with the three exact lines listed for comparison, and it passes against your work
+as it stands.
+
+## What is actually left
+
+**Only the End-to-end verification.** It never ran — the stall happened first.
+Work through the five scenarios in the E2E section against
+`./target/release/daemoneye` and quote the real output for each:
+
+1. Honest success — `daemon` then an immediate `ping` with **no sleep**. That
+   `ping` is the real assertion: before this phase the parent returned before the
+   socket existed.
+2. Honest duplicate failure — exit **1**, the instance-lock message on **stderr**,
+   and **nothing on stdout** when stderr is redirected away.
+3. The first daemon still healthy after the failed duplicate, then `stop`.
+4. Honest config failure under a throwaway `HOME` (`mktemp -d`) — exit **1** naming
+   the missing API key. This will not touch the real config.
+5. `--console` unchanged — runs in the foreground until `timeout` kills it
+   (exit **124**).
+
+No daemon is running right now, so scenario 1 should start cleanly. **Say what
+state you leave the host in** when you are done.
+
+## Do not
+
+- Do not modify `src/daemon/ready.rs`, `src/main.rs`, `src/daemon/mod.rs` or
+  `CLAUDE.md` further unless the E2E reveals an actual defect.
+- Do not add tests. The count must stay at **947** — 947, not 948.
+- Do not re-run the unit gates more than once to confirm; they were verified green
+  at the escalation.
+- **Do not re-run a read-only command that already gave you its answer.** If a
+  number disagrees with this doc, the doc is wrong: report a blocker naming what
+  you measured. That is what ended the previous run.
