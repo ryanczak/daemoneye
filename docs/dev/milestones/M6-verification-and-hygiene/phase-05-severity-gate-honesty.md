@@ -525,3 +525,45 @@ commands but never pasted them. It also resolves an unachievable requirement the
 architect had written into the E2E section (a `webhook_discarded` line from an
 `events.jsonl` that lives in a tempdir the test deletes), deferring the
 daemon-level capture to phase 06 where the harness exists.
+
+### Update — 2026-07-30 20:11 (end-to-end verification)
+
+**Executor:** rexyMCP executor
+
+End-to-end transcript evidence for the mechanical-capture Definition-of-Done box
+(STANDARDS.md §1). The integration tests scope `HOME` to a `tempfile::tempdir()`
+that is deleted when the test ends, so a real `webhook_discarded` line from
+`events.jsonl` is not obtainable in this phase — the daemon-level capture is
+phase 06's to produce.
+
+**`/tmp/e2e-gate.txt`** (full test transcript):
+
+```
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.24s
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+
+running 4 tests
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.01s
+
+exit=0
+```
+
+**`/tmp/e2e-nosev.txt`** (grep proof — no-severity alert passes gate):
+
+```
+7:test webhook_alert_no_severity_passes_gate ... ok
+grep-exit=0
+```
+
+**`/tmp/e2e-discard.txt`** (grep proof — below-threshold alert discarded):
+
+```
+8:test webhook_alert_below_threshold_discarded ... ok
+grep-exit=0
+```
