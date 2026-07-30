@@ -48,7 +48,8 @@ automation, configuration, and logs live under it.
 
     log/
       daemon.log             ← daemon process log (structured JSON lines)
-      events.jsonl           ← structured event log (tool calls, lifecycle events, alerts)
+      events/
+        events-<date>.jsonl  ← structured event log (dated segments, searchable via search_repository)
       panes/                 ← archived background-window scrollback (.log files)
       pipe/                  ← live pipe-pane capture logs (ephemeral, ANSI-stripped)
       sessions/
@@ -76,7 +77,7 @@ Use dedicated CRUD tools for all daemoneye-managed artifacts:
 ### Log and data files (readable via read_file)
 - `var/log/panes/<name>.log` — archived background-window output; path shown in
   `[Background Task Completed]` when output is truncated. Page with `read_file(path)`.
-- `var/log/events.jsonl` — prefer `search_repository(kind:"events")` for keyword search;
+- `var/log/events/events-<date>.jsonl` — prefer `search_repository(kind:"events")` for keyword search;
   use `read_file` for raw tail or line-range reads.
 - `var/log/daemon.log` — daemon internals; useful for debugging stuck commands or
   missed hooks.

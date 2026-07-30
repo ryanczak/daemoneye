@@ -5,11 +5,11 @@
 - Default port: 9393 (configure via `webhook.port` in config.toml)
 - Endpoint: `http://<daemon-host>:9393/webhook`
 - Health check: `http://<daemon-host>:9393/health`
-- Authentication: set `webhook.secret` in config.toml; send as `Authorization: Bearer <secret>`
+- Authentication: set `webhook.secret` in `~/.daemoneye/etc/config.toml`; send as `Authorization: Bearer <secret>`
 
 ## Enabling
 
-Add to `~/.daemoneye/config.toml` and restart the daemon:
+Add to `~/.daemoneye/etc/config.toml` and restart the daemon:
 
 ```toml
 [webhook]
@@ -21,7 +21,7 @@ secret = ""
 Check current state:
 
 ```
-grep -A5 '\[webhook\]' ~/.daemoneye/config.toml || echo 'not configured'
+grep -A5 '\[webhook\]' ~/.daemoneye/etc/config.toml || echo 'not configured'
 ```
 
 ## Prometheus Alert Rule
@@ -101,7 +101,7 @@ curl -s -X POST http://<daemon-host>:9393/webhook \
   -d '{"alerts":[{"status":"firing","labels":{"alertname":"TestAlert","severity":"warning"},"annotations":{"summary":"Integration test","description":"Verify DaemonEye webhook is working"},"fingerprint":"test-001"}]}'
 ```
 
-Expected: `200` response, tmux overlay in chat pane, `webhook_alert` in `~/.daemoneye/events.jsonl`.
+Expected: `200` response, tmux overlay in chat pane, `webhook_alert` in `~/.daemoneye/var/log/events/events-<date>.jsonl`.
 
 Check recent events: `search_repository("webhook_alert", kind:"events")`
 

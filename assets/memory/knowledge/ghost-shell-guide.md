@@ -90,13 +90,13 @@ All ghost lifecycle events are injected into active sessions and surfaced in cat
 - `[Ghost Shell Failed]` — an error stopped the ghost — includes `— session log: <path>`
 - `[Ghost Shell Skipped]` — concurrency cap prevented the ghost from starting
 
-When you see a `[Ghost Shell Completed]` or `[Ghost Shell Failed]` event, use `read_file(<path>)` on the session log path to review the full ghost conversation — what it investigated, which commands it ran, and the final outcome summary. Pane logs for individual background commands are in `~/.daemoneye/pane_logs/` and are referenced in tool results when output was truncated.
+When you see a `[Ghost Shell Completed]` or `[Ghost Shell Failed]` event, use `read_file(<path>)` on the session log path to review the full ghost conversation — what it investigated, which commands it ran, and the final outcome summary. Pane logs for individual background commands are in `~/.daemoneye/var/log/panes/` and are referenced in tool results when output was truncated.
 
 ## Troubleshooting Ghost Shells
 
 Ghost shell activity is logged at multiple levels:
 
-**`~/.daemoneye/daemon.log`** — human-readable trace:
+**`~/.daemoneye/var/log/daemon.log`** — human-readable trace:
 - `INFO Ghost Shell started: <id> (alert: ..., tmux_session: ..., bg_prefix: ...)` — session created
 - `INFO Ghost Shell <id>: starting turn N/M` — each turn start
 - `INFO Ghost Shell <id>: turn N dispatching '<tool>'` — each tool call with command
@@ -106,16 +106,16 @@ Ghost shell activity is logged at multiple levels:
 - `WARN Ghost Shell <id>: reached max turns (N), stopping` — turn budget exhausted
 - `ERROR Ghost Shell <id>: turn N timed out after 300s` — AI call hung
 
-**`~/.daemoneye/events.jsonl`** — structured records (searchable via `search_repository`):
+**`~/.daemoneye/var/log/events/events-<date>.jsonl`** — structured records (searchable via `search_repository`):
 - `ghost_start` — session created: `session_id`, `alert_name`, `tmux_session`, `trigger`
 - `ghost_lifecycle` — every lifecycle event message injected into sessions (started/completed/failed/skipped)
 - `ghost_turn` — per-turn tool dispatch: `session_id`, `turn`, `tool_count`, `tools` (array of `{name, cmd}`)
 - `ghost_complete` — successful finish: `session_id`, `turns_used`
 - `ghost_error` — errors/timeouts/denials: `session_id`, `turn`, `error`
 
-**`~/.daemoneye/sessions/ghost-<name>-<uuid>.jsonl`** — full message history including all tool calls and results. Created immediately when the session starts (even if the ghost fails before its first turn).
+**`~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl`** — full message history including all tool calls and results. Created immediately when the session starts (even if the ghost fails before its first turn).
 
-**`~/.daemoneye/pane_logs/<win_name>.log`** — complete output from each background command. Written from the full pipe-pane log — never truncated by tmux scrollback limits.
+**`~/.daemoneye/var/log/panes/<win_name>.log`** — complete output from each background command. Written from the full pipe-pane log — never truncated by tmux scrollback limits.
 
 ## Operational Checklist Before Spawning a Ghost
 

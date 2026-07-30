@@ -154,29 +154,13 @@ pub static INVENTORY: &[InventoryEntry] = &[
     },
 ];
 
-/// Literals the audit skips because they are real defects owned by phase 03.
+/// Literals the audit skips because they are real defects owned by a named phase.
 ///
-/// Each entry is a normalised path literal found in the shipped assets that
-/// the audit would flag. Phase 03 must either fix the asset or add the path
-/// to the inventory, then remove it from this list.
-pub static PENDING_FIX: &[&str] = &[
-    // ~/.daemoneye/config.toml → etc/config.toml (webhook-setup.md)
-    "config.toml",
-    // ~/.daemoneye/daemon.log → var/log/daemon.log (ghost-shell-guide.md)
-    "daemon.log",
-    // ~/.daemoneye/events.jsonl → var/log/events.jsonl is Legacy
-    // (ghost-shell-guide.md, webhook-setup.md)
-    "events.jsonl",
-    // ~/.daemoneye/pane_logs/ → var/log/panes/ (ghost-shell-guide.md)
-    "pane_logs",
-    // ~/.daemoneye/schedules.json → var/run/schedules.json (scheduling-guide.md)
-    "schedules.json",
-    // ~/.daemoneye/sessions/… → var/sessions/ (ghost-shell-guide.md)
-    "sessions",
-    // var/log/events.jsonl is Legacy — superseded by dated segments
-    // (sre.toml, agent-runtime-layout.md, ghost-shell-guide.md, webhook-setup.md)
-    "var/log/events.jsonl",
-];
+/// This list is currently empty. When a phase introduces a known defect (e.g. a
+/// stale path in an asset), it adds the normalised literal here as a temporary
+/// quarantine and owns its removal. A non-empty entry is a temporary quarantine
+/// owned by a named phase.
+pub static PENDING_FIX: &[&str] = &[];
 
 /// A reason why a path literal was flagged by the audit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -532,50 +516,21 @@ mod tests {
 
     // ── Shipped assets audit ────────────────────────────────────────────────
 
-    #[test]
-    fn sre_prompt_audits_clean_under_pending_fix() {
-        let findings = audit_text(SRE_PROMPT_TOML);
-        assert!(
-            findings.is_empty(),
-            "SRE_PROMPT_TOML has findings (add to PENDING_FIX or fix in phase 03):\n{}",
-            findings
-                .iter()
-                .map(|f| format!("  {} → {:?}", f.literal, f.reason))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-    }
+    /// The 7 historical path literals that were quarantined in PENDING_FIX.
+    /// Frozen as test data so the extractor's detection capability is preserved
+    /// even after the real assets are corrected.
+    const HISTORICAL_STALE_LITERALS: &[&str] = &[
+        "`var/log/events.jsonl`",
+        "`~/.daemoneye/config.toml`",
+        "`~/.daemoneye/daemon.log`",
+        "`~/.daemoneye/events.jsonl`",
+        "`~/.daemoneye/pane_logs/`",
+        "`~/.daemoneye/schedules.json`",
+        "`~/.daemoneye/sessions/ghost-<name>-<uuid>.jsonl`",
+    ];
 
     #[test]
-    fn knowledge_memories_audit_clean_under_pending_fix() {
-        let memories: &[(&str, &str)] = &[
-            ("webhook-setup", WEBHOOK_SETUP_MEMORY),
-            ("runbook-format", RUNBOOK_FORMAT_MEMORY),
-            ("runbook-ghost-template", RUNBOOK_GHOST_TEMPLATE_MEMORY),
-            ("ghost-shell-guide", GHOST_SHELL_GUIDE_MEMORY),
-            ("scheduling-guide", SCHEDULING_GUIDE_MEMORY),
-            ("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY),
-            ("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY),
-        ];
-
-        for (name, text) in memories {
-            let findings = audit_text(text);
-            assert!(
-                findings.is_empty(),
-                "knowledge memory '{name}' has findings (add to PENDING_FIX or fix in phase 03):\n{}",
-                findings
-                    .iter()
-                    .map(|f| format!("  {} → {:?}", f.literal, f.reason))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            );
-        }
-    }
-
-    #[test]
-    fn red_run_is_reproducible() {
-        // With no quarantine, the audit must flag exactly the 7 literals in
-        // PENDING_FIX — this is the permanent regression test for the red run.
+    fn all_assets_audit_clean_with_empty_quarantine() {
         let assets: &[(&str, &str)] = &[
             ("SRE_PROMPT_TOML", SRE_PROMPT_TOML),
             ("webhook-setup", WEBHOOK_SETUP_MEMORY),
@@ -587,28 +542,54 @@ mod tests {
             ("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY),
         ];
 
-        let mut flagged: Vec<String> = Vec::new();
-        for (_name, text) in assets {
+        for (name, text) in assets {
             let findings = audit_text_with(text, &[]);
-            for f in findings {
-                let norm = normalise(&f.literal);
-                if let Some(n) = norm {
-                    flagged.push(n);
-                }
-            }
+            assert!(
+                findings.is_empty(),
+                "asset '{name}' has findings (empty quarantine):\n{}",
+                findings
+                    .iter()
+                    .map(|f| format!("  {} → {:?}", f.literal, f.reason))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
         }
-        flagged.sort();
-        flagged.dedup();
+    }
 
-        let mut expected = PENDING_FIX.to_vec();
+    #[test]
+    fn extractor_detects_historical_stale_literals() {
+        // Freeze the 7 historical defects as a synthetic corpus so the
+        // extractor's detection capability is preserved after the real
+        // assets are corrected.
+        let corpus = HISTORICAL_STALE_LITERALS.join(" ");
+        let findings = audit_text_with(&corpus, &[]);
+        assert_eq!(
+            findings.len(),
+            7,
+            "expected 7 findings from historical corpus, got {}",
+            findings.len()
+        );
+
+        let mut flagged: Vec<String> = findings
+            .iter()
+            .filter_map(|f| normalise(&f.literal))
+            .collect();
+        flagged.sort();
+
+        let mut expected = vec![
+            "config.toml".to_string(),
+            "daemon.log".to_string(),
+            "events.jsonl".to_string(),
+            "pane_logs".to_string(),
+            "schedules.json".to_string(),
+            "sessions".to_string(),
+            "var/log/events.jsonl".to_string(),
+        ];
         expected.sort();
 
         assert_eq!(
-            flagged.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-            expected,
-            "flagged literals must match PENDING_FIX exactly.\n\
-             flagged: {flagged:?}\n\
-             expected: {expected:?}"
+            flagged, expected,
+            "flagged normalised literals must match the 7 historical defects"
         );
     }
 }

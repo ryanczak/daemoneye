@@ -1,7 +1,7 @@
 # Phase 03: Fix Stale Prompt Paths
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (done)
 **Estimated diff:** ~150 lines
 **Tags:** language=rust, kind=fix, size=s
@@ -214,3 +214,9 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-30 17:03 (started)
+
+**Executor:** Claude (Anthropic)
+
+Correcting all 9 audited path literals across 6 asset files, fixing the 2 unaudited spans (ASCII tree in agent-runtime-layout.md and grep in webhook-setup.md), emptying `PENDING_FIX`, and splitting the red-run test into `all_assets_audit_clean_with_empty_quarantine` and `extractor_detects_historical_stale_literals`.

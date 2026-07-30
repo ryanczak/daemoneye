@@ -317,7 +317,7 @@ assuming something doesn't exist. Quick map:
 - `scripts/`, `runbooks/`, `memory/` — prefer dedicated CRUD tools.
 - `var/log/panes/<name>.log` — paged background-window scrollback (use \
   `read_file`).
-- `var/log/events.jsonl` — structured event log (prefer \
+- `var/log/events/events-<date>.jsonl` — structured event log (prefer \
   `search_repository(kind:"events")`).
 
 For the full layout (`bin/`, `lib/`, `var/run/`, `var/log/pipe/`, session JSONLs, \

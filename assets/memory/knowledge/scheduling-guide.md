@@ -74,4 +74,4 @@ The watchdog model analyzes output against the runbook and emits `GHOST_TRIGGER:
 
 ## Schedule Persistence
 
-Schedules survive daemon restarts — they are persisted to `~/.daemoneye/schedules.json`. Jobs that were due while the daemon was down fire on next startup.
+Schedules survive daemon restarts — they are persisted to `~/.daemoneye/var/run/schedules.json`. Jobs that were due while the daemon was down fire on next startup.
