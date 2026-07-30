@@ -285,9 +285,6 @@ async fn daemon_webhook_returns_200() {
     env.start_stub().await;
     env.start_daemon("de-test-webhook");
 
-    // Give the daemon's webhook listener a moment to bind.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
     let body = serde_json::json!({
         "alerts": [{
             "status": "firing",

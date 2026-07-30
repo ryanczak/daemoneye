@@ -246,6 +246,44 @@ No changes to `src/`. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Update — 2026-07-30 20:59 (started — re-dispatch after bug-06a-1)
+
+**Executor:** model
+
+Removed two `tokio::time::sleep` calls: (1) `start_stub()` — hoisted `TcpListener::bind` before `tokio::spawn` so the port is already accepting when the method returns; (2) `daemon_webhook_returns_200` — deleted the 200ms sleep since `start_daemon()` returning already guarantees the webhook listener is bound (daemon binds at `daemon/mod.rs:746` and reports readiness at `:880`). Suite went from 0.38s to 0.15s.
+
+### Update — 2026-07-30 20:59 (end-to-end verification)
+
+**Command output:**
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+
+running 7 tests
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+exit=0
+```
+
+**Grep for stub/webhook:**
+
+```
+5:test webhook_ports_differ_between_environments ... ok
+6:test stub_returns_canned_response_via_make_client ... ok
+7:test config_contains_webhook_and_stub_url ... ok
+11:test daemon_webhook_returns_200 ... ok
+grep-exit=0
+```
+
 ### Notes for executor — 2026-07-30 (refined re-dispatch after bounce 1)
 
 **READ THIS BEFORE ANYTHING ELSE.**

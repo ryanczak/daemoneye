@@ -81,34 +81,30 @@ impl IsolatedEnv {
         let response = Arc::clone(&self.stub_response);
         let port = self.stub_port;
 
-        let handle = tokio::spawn(async move {
-            let response = Arc::clone(&response);
+        // Bind before spawning: when this returns, the port is already
+        // accepting connections, so no readiness sleep is needed.
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .expect("bind stub server");
 
-            let app = axum::Router::new().route(
-                "/chat/completions",
-                axum::routing::post(
-                    move |axum::Json(_body): axum::Json<serde_json::Value>| async move {
-                        let canned: String = {
-                            let guard = response.lock().unwrap();
-                            guard.clone()
-                        };
-                        let events: Vec<
-                            Result<axum::response::sse::Event, std::convert::Infallible>,
-                        > = build_sse_events(canned);
-                        axum::response::Sse::new(futures_util::stream::iter(events))
-                    },
-                ),
-            );
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(
+                move |axum::Json(_body): axum::Json<serde_json::Value>| async move {
+                    let canned: String = {
+                        let guard = response.lock().unwrap();
+                        guard.clone()
+                    };
+                    let events: Vec<Result<axum::response::sse::Event, std::convert::Infallible>> =
+                        build_sse_events(canned);
+                    axum::response::Sse::new(futures_util::stream::iter(events))
+                },
+            ),
+        );
 
-            let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-                .await
-                .expect("bind stub server");
+        self.stub_handle = Some(tokio::spawn(async move {
             axum::serve(listener, app).await.expect("serve stub");
-        });
-
-        self.stub_handle = Some(handle);
-        // Give the stub a moment to bind.
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }));
     }
 
     /// Return the stub's base URL (including `/v1` suffix).
