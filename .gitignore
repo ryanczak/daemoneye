@@ -2,7 +2,6 @@
 /target
 
 # Claude Code
-CLAUDE.md
 .claude/
 
 # Environment / secrets
