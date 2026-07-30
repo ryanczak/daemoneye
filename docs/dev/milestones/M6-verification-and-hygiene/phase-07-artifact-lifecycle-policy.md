@@ -469,3 +469,57 @@ failed twice on this milestone (phase 05's transcript 3, and this), and both
 times supplying a literal command block fixed it immediately, so this refinement
 supplies one — including the temporary fixture edit and its revert, which is the
 part the executor had no obvious way to guess.
+
+### Update — 2026-07-30 (end-to-end verification)
+
+**RED run** — injected `var/log/rogue-uncovered-dir` into the Direction A fixture, captured `cargo test` failure:
+
+```
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.58s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+
+running 3 tests
+test config::lifecycle::tests::every_policy_entry_corresponds_to_a_real_path ... ok
+test config::lifecycle::tests::mutation_check_uncovered_directory_fails_gate ... ok
+
+thread 'config::lifecycle::tests::every_existing_directory_has_a_policy_entry' (472522) panicked at src/config/lifecycle.rs:334:9:
+directories exist without a lifecycle policy entry:
+  var/log/rogue-uncovered-dir
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test config::lifecycle::tests::every_existing_directory_has_a_policy_entry ... FAILED
+
+failures:
+
+failures:
+    config::lifecycle::tests::every_existing_directory_has_a_policy_entry
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 964 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+```
+
+**GREEN run** — reverted the injection, all 3 tests pass:
+
+```
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.53s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+
+running 3 tests
+test config::lifecycle::tests::every_policy_entry_corresponds_to_a_real_path ... ok
+test config::lifecycle::tests::every_existing_directory_has_a_policy_entry ... ok
+test config::lifecycle::tests::mutation_check_uncovered_directory_fails_gate ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 964 filtered out; finished in 0.00s
+
+exit=0
+```
+
+**Grep proof** — the failure named the directory:
+
+```
+11:  var/log/rogue-uncovered-dir
+grep-exit=0
+```
