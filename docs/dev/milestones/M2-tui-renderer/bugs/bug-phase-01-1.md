@@ -1,7 +1,7 @@
 # Bug 1 on phase-01: banned constructs in the ratatui wiring (new `unsafe`, lint-silencing `#[allow]`, production `expect`) — one is a latent terminal-corruption bug
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
 **Filed:** 2026-06-24
 
 The phase is functionally plausible and builds green, but the wiring in

@@ -1,7 +1,7 @@
 # Bug 2 on phase-02b: credential prompt returns masking bullet characters, not the actual typed credential
 
 **Severity:** blocker
-**Status:** open
+**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
 **Filed:** 2026-06-25
 
 ## What's wrong

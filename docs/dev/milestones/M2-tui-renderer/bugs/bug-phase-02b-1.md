@@ -1,7 +1,7 @@
 # Bug 1 on phase-02b: interactive approval line-editing is inert/garbled (per-byte `commit`), plus dead-code shims, a fake decision-parser test, and no E2E
 
 **Severity:** blocker
-**Status:** open
+**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
 **Filed:** 2026-06-25
 
 ## Summary

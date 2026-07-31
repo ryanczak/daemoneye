@@ -1,7 +1,7 @@
 # Bug 2 on phase-01: ratatui path never enters raw mode — input box is non-functional in a real terminal (green-but-broken)
 
 **Severity:** major
-**Status:** open
+**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
 **Filed:** 2026-06-24
 
 The banned-construct fixes from bug-phase-01-1 are all correctly applied (no

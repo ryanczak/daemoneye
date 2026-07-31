@@ -59,7 +59,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [dependency-currency](phase-01-dependency-currency.md) — update every direct dependency to latest stable; hold `libc` back from its alpha | done |
-| 02 | [bug-tracker-truth](phase-02-bug-tracker-truth.md) — a gate failing when a bug doc is `open` while its phase is `done`; close the five stale M2/M4 docs it catches | todo |
+| 02 | [bug-tracker-truth](phase-02-bug-tracker-truth.md) — a gate failing when a bug doc is `open` while its phase is `done`; close the five stale M2/M4 docs it catches | in-progress |
 | 03 | test-sleep-removal — the four `sleep` sites `STANDARDS.md` §3.3 forbids | todo |
 | 04 | path-audit-fenced-blocks — extend extraction to fenced code blocks (Part A of M6 item 5) | todo |
 | 05 | generated-runtime-tree — derive `agent-runtime-layout.md`'s tree from the policy table (Part B of M6 item 5) | todo |

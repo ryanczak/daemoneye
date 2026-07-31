@@ -1,7 +1,7 @@
 # Phase 02: Bug-Tracker Truth
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (dependency-currency, done)
 **Estimated diff:** ~200 lines (one new test file) + 5 one-line doc status edits
 **Tags:** language=rust, kind=test, size=m
@@ -383,3 +383,51 @@ build/lint/test ran, not that this phase's acceptance criteria were exercised.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 16:51 (started)
+
+**Executor:** rexyMCP executor
+
+Created `tests/bug_tracker.rs` with pure classifier, scanner, and 6 tests (5 pure + 1 real-tree gate). Closed the five stale bug docs by changing their header `**Status:**` line from `open` to `closed`.
+
+### Update — 2026-07-31 16:51 (end-to-end verification)
+
+```
+=== the gate passes ===
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+=== the five docs are no longer open ===
+docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-01-1.md:**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
+docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-01-2.md:**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
+docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-02b-1.md:**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
+docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-02b-2.md:**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
+docs/dev/milestones/M4-context-management/bugs/bug-09-1.md:**Status:** closed 2026-07-31 — verified fixed against the code during M7 scoping; see phase-02 for the gate that now prevents this drift.
+exit=0
+=== NO bug doc anywhere is still open on a done phase (independent shell check) ===
+grep-exit=1   # empty list above == PASS
+=== each of the five changed by exactly one line ===
+1	1	docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-01-1.md
+1	1	docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-01-2.md
+1	1	docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-02b-1.md
+1	1	docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-02b-2.md
+1	1	docs/dev/milestones/M4-context-management/bugs/bug-09-1.md
+exit=0
+=== no dependency was added ===
+grep-exit=1   # 1 == no Cargo files touched == PASS
+=== full gate ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy-exit=0
+test result: ok. 991 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.30s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
