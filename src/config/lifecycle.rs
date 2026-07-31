@@ -93,14 +93,9 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         intent: LifecycleIntent::Sweep {
             default_retention_days: 7,
         },
-        config_key: None,
-        implemented: ImplementationStatus::Pending {
-            owned_by: "phase-09",
-        },
-        note: "264 files, no sweep at all. 7-day default set by PE decision \
-               2026-07-30. config_key is None only because the knob does not \
-               exist yet — phase-09 MUST add it; an operator-tunable retention \
-               is required, not optional",
+        config_key: Some("retention.pane_log_retention_days"),
+        implemented: ImplementationStatus::Implemented,
+        note: "swept every 60th cleanup tick; operator-tunable via retention.pane_log_retention_days",
         lazy: false,
     },
     LifecycleEntry {
@@ -200,18 +195,12 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
     LifecycleEntry {
         path: "agents/*/mailbox",
         intent: LifecycleIntent::Sweep {
-            // 7-day default confirmed by PE decision 2026-07-30, matching
-            // var/log/panes. config_key is None only because the knob does not
-            // exist yet — phase-09 MUST add it; operator-tunable retention is
-            // required, not optional.
             default_retention_days: 7,
         },
-        config_key: None,
-        implemented: ImplementationStatus::Pending {
-            owned_by: "phase-09",
-        },
-        note: "one file per ghost exit, grows forever; phase-09 adds sweep",
-        lazy: true,
+        config_key: Some("retention.mailbox_retention_days"),
+        implemented: ImplementationStatus::Implemented,
+        note: "swept every 60th cleanup tick across all agent mailboxes; operator-tunable via retention.mailbox_retention_days",
+        lazy: false,
     },
 ];
 

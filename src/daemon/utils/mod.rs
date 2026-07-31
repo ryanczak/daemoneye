@@ -7,6 +7,7 @@ mod output;
 mod response;
 mod shell;
 mod sudo;
+mod warnings;
 
 pub use event_log::*;
 pub use host::*;
@@ -15,6 +16,7 @@ pub use output::*;
 pub use response::*;
 pub use shell::*;
 pub use sudo::*;
+pub use warnings::*;
 
 /// Delete session archive files (`*.archive.jsonl`) whose mtime is older than
 /// `retention_days` days. 0 = keep forever (no-op). Active sessions (present
@@ -65,6 +67,92 @@ pub fn sweep_session_archives(
                 path.display(),
                 e
             );
+        }
+    }
+}
+
+/// Delete pane log files (`*.log`) in `var/log/panes/` whose mtime is older
+/// than `retention_days` days. 0 = keep forever (no-op).
+pub fn sweep_pane_logs(retention_days: u32) {
+    if retention_days == 0 {
+        return;
+    }
+
+    let panes_dir = crate::config::pane_logs_dir();
+    let Ok(entries) = std::fs::read_dir(&panes_dir) else {
+        return;
+    };
+
+    let now = std::time::SystemTime::now();
+    let cutoff = now - std::time::Duration::from_secs(retention_days as u64 * 86_400);
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.ends_with(".log") {
+            continue;
+        }
+
+        let Ok(meta) = path.metadata() else { continue };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if modified >= cutoff {
+            continue;
+        }
+
+        log::info!("panes: deleting expired log {}", path.display());
+        if let Err(e) = std::fs::remove_file(&path) {
+            log::warn!("panes: failed to delete {}: {}", path.display(), e);
+        }
+    }
+}
+
+/// Delete mailbox files (`*.json`) in every agent's `agents/<name>/mailbox/`
+/// directory whose mtime is older than `retention_days` days. 0 = keep forever
+/// (no-op). An agent with no mailbox directory is silently skipped.
+pub fn sweep_agent_mailboxes(retention_days: u32) {
+    if retention_days == 0 {
+        return;
+    }
+
+    let agents_dir = crate::agents::agents_dir();
+    let Ok(agent_entries) = std::fs::read_dir(&agents_dir) else {
+        return;
+    };
+
+    let now = std::time::SystemTime::now();
+    let cutoff = now - std::time::Duration::from_secs(retention_days as u64 * 86_400);
+
+    for agent_entry in agent_entries.filter_map(|e| e.ok()) {
+        let mailbox = agent_entry.path().join("mailbox");
+        let Ok(mailbox_entries) = std::fs::read_dir(&mailbox) else {
+            continue;
+        };
+
+        for entry in mailbox_entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !name.ends_with(".json") {
+                continue;
+            }
+
+            let Ok(meta) = path.metadata() else { continue };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            if modified >= cutoff {
+                continue;
+            }
+
+            log::info!("mailboxes: deleting expired entry {}", path.display());
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::warn!("mailboxes: failed to delete {}: {}", path.display(), e);
+            }
         }
     }
 }
@@ -138,5 +226,99 @@ mod sweep_tests {
             sessions_dir.join("expired-sess.archive.jsonl").exists(),
             "retention_days=0 should be a no-op"
         );
+    }
+
+    #[test]
+    fn sweep_pane_logs_deletes_expired_keeps_recent() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let panes_dir = crate::config::pane_logs_dir();
+        std::fs::create_dir_all(&panes_dir).unwrap();
+
+        let old_log = panes_dir.join("old-pane.log");
+        let recent_log = panes_dir.join("recent-pane.log");
+        let not_log = panes_dir.join("something.txt");
+        std::fs::write(&old_log, "old data").unwrap();
+        std::fs::write(&recent_log, "recent data").unwrap();
+        std::fs::write(&not_log, "not a log").unwrap();
+
+        set_file_mtime(&old_log, 30);
+
+        sweep_pane_logs(14);
+
+        assert!(!old_log.exists(), "expired pane log should be deleted");
+        assert!(recent_log.exists(), "recent pane log should survive");
+        assert!(not_log.exists(), "non-.log files should be untouched");
+    }
+
+    #[test]
+    fn sweep_pane_logs_zero_is_noop() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let panes_dir = crate::config::pane_logs_dir();
+        std::fs::create_dir_all(&panes_dir).unwrap();
+
+        let old_log = panes_dir.join("old-pane.log");
+        std::fs::write(&old_log, "old data").unwrap();
+        set_file_mtime(&old_log, 30);
+
+        sweep_pane_logs(0);
+
+        assert!(old_log.exists(), "retention_days=0 should be a no-op");
+    }
+
+    #[test]
+    fn sweep_agent_mailboxes_deletes_expired_keeps_recent() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let agents_dir = crate::agents::agents_dir();
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        let agent1_mailbox = agents_dir.join("agent-1/mailbox");
+        std::fs::create_dir_all(agents_dir.join("agent-2")).unwrap();
+        std::fs::create_dir_all(&agent1_mailbox).unwrap();
+
+        let old_entry = agent1_mailbox.join("job-1.json");
+        let recent_entry = agent1_mailbox.join("job-2.json");
+        let not_json = agent1_mailbox.join("notes.txt");
+        std::fs::write(&old_entry, r#"{"job_id":"job-1"}"#).unwrap();
+        std::fs::write(&recent_entry, r#"{"job_id":"job-2"}"#).unwrap();
+        std::fs::write(&not_json, "not json").unwrap();
+
+        set_file_mtime(&old_entry, 30);
+
+        sweep_agent_mailboxes(14);
+
+        assert!(
+            !old_entry.exists(),
+            "expired mailbox entry should be deleted"
+        );
+        assert!(recent_entry.exists(), "recent mailbox entry should survive");
+        assert!(not_json.exists(), "non-.json files should be untouched");
+    }
+
+    #[test]
+    fn sweep_agent_mailboxes_zero_is_noop() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let agents_dir = crate::agents::agents_dir();
+        let agent_mailbox = agents_dir.join("agent-x/mailbox");
+        std::fs::create_dir_all(&agent_mailbox).unwrap();
+
+        let old_entry = agent_mailbox.join("job-1.json");
+        std::fs::write(&old_entry, r#"{"job_id":"job-1"}"#).unwrap();
+        set_file_mtime(&old_entry, 30);
+
+        sweep_agent_mailboxes(0);
+
+        assert!(old_entry.exists(), "retention_days=0 should be a no-op");
     }
 }

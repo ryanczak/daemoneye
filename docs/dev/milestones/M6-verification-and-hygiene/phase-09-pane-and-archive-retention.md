@@ -1,7 +1,7 @@
 # Phase 09: Pane and Archive Retention
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07 (done), phase-08 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -247,3 +247,9 @@ No new dependencies (`filetime` is already a dev-dependency). No changes to
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 00:14 (started)
+
+**Executor:** model (phase-09 executor)
+
+Implementing sweep_pane_logs, sweep_agent_mailboxes, two config keys (defaulting to 7), the off-by-default warning function, wiring into the cleanup tick, and updating the phase-07 policy table.

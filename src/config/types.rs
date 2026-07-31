@@ -36,6 +36,8 @@ pub struct Config {
     pub events: EventsConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
 }
 
 impl Default for Config {
@@ -56,6 +58,7 @@ impl Default for Config {
             sessions: SessionsConfig::default(),
             events: EventsConfig::default(),
             logging: LoggingConfig::default(),
+            retention: RetentionConfig::default(),
         }
     }
 }
@@ -145,6 +148,36 @@ fn default_log_max_bytes() -> u64 {
 /// Keep 5 rotated copies, giving ~25 MB total on disk at default size.
 fn default_log_keep_count() -> u32 {
     5
+}
+
+/// Retention settings for artifact classes that are swept periodically.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct RetentionConfig {
+    /// Days to keep pane log files (`var/log/panes/*.log`). 0 = keep forever.
+    /// Default: 7.
+    #[serde(default = "default_pane_log_retention_days")]
+    pub pane_log_retention_days: u32,
+    /// Days to keep agent mailbox entries (`agents/*/mailbox/*.json`). 0 = keep forever.
+    /// Default: 7.
+    #[serde(default = "default_mailbox_retention_days")]
+    pub mailbox_retention_days: u32,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        RetentionConfig {
+            pane_log_retention_days: default_pane_log_retention_days(),
+            mailbox_retention_days: default_mailbox_retention_days(),
+        }
+    }
+}
+
+fn default_pane_log_retention_days() -> u32 {
+    7
+}
+
+fn default_mailbox_retention_days() -> u32 {
+    7
 }
 
 impl Default for LoggingConfig {

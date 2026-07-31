@@ -429,6 +429,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Warn about any limit configuration that is likely unintentional.
     startup_config.limits.validate();
 
+    // Warn about retention settings that are off by default (keep forever).
+    for warn in crate::daemon::utils::retention_warnings(&startup_config) {
+        log::warn!(
+            "retention off for {}: {} — {}",
+            warn.artifact_class,
+            warn.config_key,
+            warn.suggestion,
+        );
+    }
+
     // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
 
@@ -826,6 +836,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         crate::daemon::utils::sweep_session_archives(
                             startup_config.sessions.archive_retention_days,
                             &active_ids,
+                        );
+                        crate::daemon::utils::sweep_pane_logs(
+                            startup_config.retention.pane_log_retention_days,
+                        );
+                        crate::daemon::utils::sweep_agent_mailboxes(
+                            startup_config.retention.mailbox_retention_days,
                         );
                         if let Some(ref lp) = log_path
                             && crate::daemon::utils::rotate_log_file(
