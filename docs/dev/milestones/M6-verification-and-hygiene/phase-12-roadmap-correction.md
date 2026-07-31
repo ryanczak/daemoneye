@@ -454,3 +454,9 @@ capability. The previous round completed in 44 turns without stalling, so the
 cheap, disciplined path is available. The refinement is scoped to one clause and
 explicitly waives a fresh end-to-end capture, since the edit cannot move either
 recorded result.
+
+### Update — 2026-07-31 05:02 (progress)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Removed `; closed 2026-07-31` from the M6 paragraph opening in `docs/architecture.md` § 5 (bug-12-1). The heading still reads `### Active milestone — M6 Verification & Hygiene`, so the body must not assert a closure date. One line changed, nothing else touched. No new E2E capture needed — the edit changes no paths, no assets, and no code.
