@@ -108,7 +108,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 07 | [artifact-lifecycle-policy](phase-07-artifact-lifecycle-policy.md) — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | done                   |
 | 08 | [daemon-log-rotation](phase-08-daemon-log-rotation.md) — bound the 25.8 MB unrotated log under the 07 policy | done |
 | 09 | [pane-and-archive-retention](phase-09-pane-and-archive-retention.md) — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days`; **must add operator-tunable config keys** for panes + mailbox retention (PE decision 2026-07-30) | done |
-| 10 | pane-prefs-redesign — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | todo |
+| 10 | [pane-prefs-redesign](phase-10-pane-prefs-redesign.md) — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | todo |
 | 11 | runtime-tree-hygiene — orphan removal, the `lib/` decision, doc-comment corrections | todo |
 | 12 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
 
@@ -303,6 +303,19 @@ days** and ruled that these values **must be operator-configurable** — "we eit
 do it now or we do it later." Phase 09 therefore adds the config keys alongside
 the sweeps, rather than shipping hard-coded retention. The table's `config_key`
 stays `None` only until 09 lands them, and both entries now say so explicitly.
+
+**Architect decision 2026-07-31 — phase 10's mechanism.** The exit criterion left
+the pane-preference mechanism to the phase ("a recorded decision plus its
+implementation — not a specific mechanism"). Given four `NoProgressStall`
+hard-fails on this milestone, all on open-ended integration work, the architect
+made the decision rather than leaving it to the executor: **fingerprint
+validation + pruning**. Store window name and cwd beside the pane ID and accept
+the preference only on a match. Rejected: dropping persistence (discards the
+feature's stated purpose when the data to make it safe is already available),
+keying on pane index (trades one unstable identity for another), and scoping to a
+tmux-server generation (a new concept for a problem the fingerprint already
+solves). **Open to PE override at close** — the fallback is the scope reduction,
+which is strictly less work, so nothing is wasted either way.
 
 **05 before 06.** The gate fix is small and fully understood; the E2E scenario is
 the thing that proves it *and* opens the unexplored ground behind it. Doing 06 first

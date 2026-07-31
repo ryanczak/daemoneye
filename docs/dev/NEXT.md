@@ -1,59 +1,68 @@
 # NEXT
 
-**Active phase: 09 — pane-and-archive-retention.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-09-pane-and-archive-retention.md`
-Status: `todo` — drafted 2026-07-30, not yet dispatched.
+**Active phase: 10 — pane-prefs-redesign.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-10-pane-prefs-redesign.md`
+Status: `todo` — drafted 2026-07-31, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-09`.
+Dispatch with `/rexymcp:dispatch phase-10`.
 
-## What phase 09 does
+## What phase 10 does
 
-Closes the last three artifact gaps phase 07's table left `Pending{phase-09}`:
-a sweep for `var/log/panes/` (264 files, none today), a sweep for
-`agents/*/mailbox/` (one file per ghost exit, forever), and **surfacing** the
-asymmetry where `sessions.archive_retention_days` defaults to `0` (keep forever)
-while `events.retention_days` defaults to `90`.
+Stops the pane preference silently targeting a pane the user never picked. The
+mapping is `session_name → pane_id` and **both sides are unstable identities** —
+after a tmux server restart `%0` almost certainly exists and is something else,
+so the stored preference validates and the agent runs a foreground command in the
+wrong pane with no prompt.
 
-Both new retentions are **7 days** and both **must be operator-configurable** —
-PE decision 2026-07-30, "we either do it now or we do it later". The phase says
-outright that shipping the sweeps reading hard-coded constants is not acceptable.
+## The mechanism decision was made by the architect, not left open
 
-## Two design calls made at drafting
+The exit criterion says the mechanism is the phase's to choose. Given four
+`NoProgressStall` hard-fails on this milestone — every one on open-ended
+integration work — leaving a design decision open invites a fifth. So the phase
+ships determinate: **fingerprint validation + pruning**, with the rationale and
+the rejected alternatives recorded in both the phase doc and the milestone README.
 
-**Surfacing is a startup WARN, not an IPC change.** The obvious operator-facing
-surface is `daemoneye status`, but that payload is `Response::DaemonStatus` —
-extending it touches `ipc.rs`, the server handler and `cli/status.rs` for a
-one-line benefit. A startup WARN in `run_daemon` meets the criterion ("a sweep
-that is off by default says so where the operator will see it") at a fraction of
-the blast radius. The phase forbids the IPC route and says to report a blocker
-instead of taking it.
+**Open to your override at close.** The fallback is the scope reduction ("ask once
+per daemon run"), which is strictly less work than what is specified, so nothing
+is wasted if you prefer it.
 
-**The warning is a pure function.** Following phase 08's split, which worked: a
-function takes `&Config` and returns the warnings that apply; the daemon logs
-them. The decision is testable; only the logging is a side effect.
+## Three defects the phase fixes, all verified in the tree
 
-**The default itself is untouched.** The criterion asks for visibility, not a
-behaviour change — silently flipping a keep-forever default to a deleting one
-would destroy operator data.
+1. **`pane_exists()` is not identity.** It proves *a* pane holds that ID, not that
+   it is the pane the user chose.
+2. **`get()` is implemented as `all.remove(session_name)`** — non-destructive only
+   because the mutated map is never written back. One refactor from silently
+   deleting every preference on read.
+3. **Nothing prunes.** The live file still holds `de-phase01`, a long-dead
+   rexyMCP session, and keys like `"0"`/`"1"`/`"2"` are tmux's default numeric
+   session names, reused constantly — a preference stored for `"0"` is offered to
+   any future session named `"0"`.
+
+The phase also fixes `pane_prefs.rs`'s doc comment, which names
+`~/.daemoneye/pane_prefs.json` while `prefs_path()` returns `var/run/`. That is
+milestone defect 10, nominally phase 11's, but phase 10 rewrites that exact
+comment — so it is folded in rather than having phase 11 reopen the file. The
+orphaned file on disk is still phase 11's to remove.
 
 ## Where things stand
 
-- Phases 01–08 `done`. 08 closed `escalated` (architect takeover after the
-  milestone's third `NoProgressStall`); the daemon-log rotation, its `dup2`
-  re-attach, and the mutation-checked bound all landed.
-- 972 lib + 30 integration (2 ignored) + 8 isolation (1 ignored), zero failures;
-  clippy clean.
+- Phases 01–09 `done`. **09 closed `escalated`** — architect takeover after the
+  milestone's fourth `NoProgressStall`.
+- 979 lib + 30 integration (2 ignored) + 8 isolation (1 ignored); clippy clean;
+  `cargo test --lib` now clean across 12 consecutive runs (it was failing ~3 in 8
+  before the phase-09 takeover fixed `HOME` poisoning).
 - Working tree clean. No daemon running; no tmux server running.
-- **The NoProgressStall response fold landed** in `WORKFLOW.md` (§ "A
-  NoProgressStall is usually a nearly-finished phase — diagnose the tree before
-  choosing a lever"). If phase 09 stalls, run the gates against the partial tree
-  before picking a lever; three-for-three the partial work was correct and the
-  tree check found defects the executor never ran a gate to see.
 - Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 10–12
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 11–12
   named, not drafted.
 
 ## Carried forward for milestone close
+
+- **The stall pathology has shifted shape.** Phase 09's fourth
+  `NoProgressStall` was a `sed -n 'N,N+10p'` paging crawl through a captured
+  file — it evades the identical-call governor because every call differs, and
+  only `read_only_stall_threshold` caught it. Four stalls now: phases 04, 06b, 08,
+  09.
 
 
 - **Review subagents keep writing stray telemetry rows.** Five times this
