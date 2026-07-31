@@ -671,3 +671,77 @@ tmux server, so it would pass even if `get()` did mutate. The architect
 implemented and verified the restructure (a narrow `LivePane` type plus pure
 `prune_map` / `get_from` seams) before specifying it — it builds, lints clean at
 `-D warnings`, and leaves all ten existing tests passing.
+
+<!-- entries appended below this line -->
+
+### Update — 2026-07-31 03:00 (started)
+
+**Executor:** model
+
+Restructured `src/pane_prefs.rs` per bug-10-1 fix: added `LivePane` type, pure `prune_map()` and `get_from()` seams, removed `prune()` from `get()`, and rewrote `get_does_not_mutate_stored_map` to be non-vacuous.
+
+### Update — 2026-07-31 03:00 (end-to-end verification)
+
+**Mutation check — fingerprint broken (RED):**
+```
+running 10 tests
+
+thread 'pane_prefs::tests::does_not_match_when_current_path_changed' (1206251) panicked at src/pane_prefs.rs:203:9:
+assertion failed: !matches(&stored, "%3", "main", "/tmp")
+note: run with `RUST_BACKTRACE=1` environment variable to display backtrace
+
+thread 'pane_prefs::tests::does_not_match_when_pane_id_changed' (1206252) panicked at src/pane_prefs.rs:209:9:
+assertion failed: !matches(&stored, "%99", "main", "/home/user")
+
+thread 'pane_prefs::tests::does_not_match_when_window_name_changed' (1206253) panicked at src/pane_prefs.rs:197:9:
+assertion failed: !matches(&stored, "%3", "edited", "/home/user")
+test pane_prefs::tests::does_not_match_when_window_name_changed ... FAILED
+test pane_prefs::tests::does_not_match_when_current_path_changed ... FAILED
+test pane_prefs::tests::does_not_match_when_pane_id_changed ... FAILED
+test pane_prefs::tests::matches_when_all_fields_equal ... ok
+test pane_prefs::tests::get_does_not_mutate_stored_map ... ok
+test pane_prefs::tests::load_all_tolerates_garbage_json ... ok
+test pane_prefs::tests::load_all_reads_new_format ... ok
+test pane_prefs::tests::load_all_tolerates_missing_file ... ok
+test pane_prefs::tests::save_roundtrips_fingerprint ... ok
+test pane_prefs::tests::load_all_tolerates_old_format ... ok
+
+failures:
+    pane_prefs::tests::does_not_match_when_current_path_changed
+    pane_prefs::tests::does_not_match_when_pane_id_changed
+    pane_prefs::tests::does_not_match_when_window_name_changed
+
+test result: FAILED. 7 passed; 3 failed; 0 ignored; 0 measured; 979 filtered out; finished in 0.00s
+exit=101
+```
+
+**Mutation check — fingerprint restored (GREEN):**
+```
+running 10 tests
+test pane_prefs::tests::does_not_match_when_current_path_changed ... ok
+test pane_prefs::tests::does_not_match_when_window_name_changed ... ok
+test pane_prefs::tests::does_not_match_when_pane_id_changed ... ok
+test pane_prefs::tests::matches_when_all_fields_equal ... ok
+test pane_prefs::tests::get_does_not_mutate_stored_map ... ok
+test pane_prefs::tests::load_all_tolerates_garbage_json ... ok
+test pane_prefs::tests::load_all_reads_new_format ... ok
+test pane_prefs::tests::load_all_tolerates_missing_file ... ok
+test pane_prefs::tests::save_roundtrips_fingerprint ... ok
+test pane_prefs::tests::load_all_tolerates_old_format ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 979 filtered out; finished in 0.00s
+exit=0
+```
+
+**Flake check (12 runs):**
+```
+exit=0
+```
+
+**New on-disk JSON format (from test roundtrip):**
+```json
+{"sess1":{"pane_id":"%3","window_name":"main","current_path":"/home/user"},"sess2":{"pane_id":"%7","window_name":"edit","current_path":"/tmp"}}
+```
+
+**Test count:** 989 lib (+10 pane_prefs tests), 30 integration (2 ignored), 8 isolation (1 ignored). Same count as prior run — the rewrite replaced the vacuous `get_does_not_mutate_stored_map` with a non-vacuous version and kept the same total.
+
+**Grep for pinned literal:** `grep -c "PanePreference" src/pane_prefs.rs` → 11 occurrences confirmed.

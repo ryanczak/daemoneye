@@ -1,9 +1,9 @@
 //! Persistent per-session foreground pane preferences.
 //!
 //! Stores the user's chosen target pane (for foreground command execution) keyed
-//! by tmux session name in `~/.daemoneye/var/run/pane_prefs.json`.  Survives
-//! daemon restarts so the user is never asked to pick a pane more than once per
-//! session.
+//! by tmux session name in `var/run/pane_prefs.json` (under the daemon data
+//! directory).  Survives daemon restarts so the user is never asked to pick a
+//! pane more than once per session.
 //!
 //! Each entry carries a fingerprint (window name + working directory) so that a
 //! recycled pane ID from a previous tmux server is not accepted silently.
@@ -14,6 +14,14 @@ use std::collections::HashMap;
 /// the one the user chose.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanePreference {
+    pub pane_id: String,
+    pub window_name: String,
+    pub current_path: String,
+}
+
+/// The three live pane facts the fingerprint check needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LivePane {
     pub pane_id: String,
     pub window_name: String,
     pub current_path: String,
@@ -47,6 +55,22 @@ fn save_all(prefs: &HashMap<String, PanePreference>) {
     }
 }
 
+/// Fetch the live pane facts from tmux, returning only the fields the
+/// fingerprint check needs.
+fn live_panes() -> Option<Vec<LivePane>> {
+    Some(
+        crate::tmux::list_panes_detailed()
+            .ok()?
+            .into_iter()
+            .map(|p| LivePane {
+                pane_id: p.pane_id,
+                window_name: p.window_name,
+                current_path: p.current_path,
+            })
+            .collect(),
+    )
+}
+
 /// Check whether a live pane matches a stored fingerprint.
 ///
 /// This is the pure comparison behind the safety property: a stored preference
@@ -63,26 +87,74 @@ pub fn matches(
         && stored.current_path == current_path
 }
 
+/// Pure pruning: keep only entries whose pane still exists and matches its
+/// fingerprint.
+pub fn prune_map(
+    prefs: &HashMap<String, PanePreference>,
+    panes: &[LivePane],
+) -> HashMap<String, PanePreference> {
+    let mut kept = HashMap::new();
+    for (session, stored) in prefs {
+        if let Some(live) = panes.iter().find(|p| p.pane_id == stored.pane_id)
+            && matches(stored, &live.pane_id, &live.window_name, &live.current_path)
+        {
+            kept.insert(session.clone(), stored.clone());
+        }
+    }
+    kept
+}
+
+/// Pure lookup: return the stored pane ID only if the live pane still matches
+/// the recorded fingerprint.
+pub fn get_from(
+    prefs: &HashMap<String, PanePreference>,
+    session_name: &str,
+    panes: &[LivePane],
+) -> Option<String> {
+    let stored = prefs.get(session_name)?;
+    let live = panes.iter().find(|p| p.pane_id == stored.pane_id)?;
+    if matches(stored, &live.pane_id, &live.window_name, &live.current_path) {
+        Some(stored.pane_id.clone())
+    } else {
+        None
+    }
+}
+
 /// Save the preferred target pane for a tmux session.
 ///
 /// Fetches the live pane's fingerprint from tmux at call time, so callers only
-/// need to supply the session name and pane ID.
+/// need to supply the session name and pane ID. Prunes stale entries in the
+/// same pass since live pane data is already available and we are already
+/// writing.
 pub fn save(session_name: &str, pane_id: &str) {
     // Fetch the fingerprint from the live pane. If the pane is gone by the
     // time we save, skip — there is nothing meaningful to record.
-    let info = match crate::tmux::list_panes_detailed() {
-        Ok(panes) => panes.into_iter().find(|p| p.pane_id == pane_id),
-        Err(_) => None,
+    let panes = match crate::tmux::list_panes_detailed() {
+        Ok(p) => p,
+        Err(_) => return,
     };
-    let pref = match info {
+
+    let pref = match panes.iter().find(|p| p.pane_id == pane_id) {
         Some(p) => PanePreference {
             pane_id: pane_id.to_string(),
-            window_name: p.window_name,
-            current_path: p.current_path,
+            window_name: p.window_name.clone(),
+            current_path: p.current_path.clone(),
         },
         None => return,
     };
-    let mut prefs = load_all();
+
+    // Convert to LivePane for the pure prune.
+    let live: Vec<LivePane> = panes
+        .into_iter()
+        .map(|p| LivePane {
+            pane_id: p.pane_id,
+            window_name: p.window_name,
+            current_path: p.current_path,
+        })
+        .collect();
+
+    // Prune stale entries, then insert the new one.
+    let mut prefs = prune_map(&load_all(), &live);
     prefs.insert(session_name.to_string(), pref);
     save_all(&prefs);
 }
@@ -95,47 +167,11 @@ pub fn save(session_name: &str, pane_id: &str) {
 /// - The stored pane no longer exists.
 /// - The stored pane exists but its window name or working directory has changed.
 pub fn get(session_name: &str) -> Option<String> {
-    // Prune stale entries on every read so they do not accumulate.
-    prune();
-
+    // A read. Pruning happens in `save()`, which already holds live pane data
+    // and is already writing — so a lookup never mutates the store.
     let prefs = load_all();
-    let stored = prefs.get(session_name)?;
-
-    // Look up the live pane.
-    let panes = crate::tmux::list_panes_detailed().ok()?;
-    let live = panes.iter().find(|p| p.pane_id == stored.pane_id)?;
-
-    // Validate the fingerprint.
-    if matches(stored, &live.pane_id, &live.window_name, &live.current_path) {
-        Some(stored.pane_id.clone())
-    } else {
-        None
-    }
-}
-
-/// Prune entries whose panes no longer exist or no longer match their
-/// fingerprint. Runs on every `get()` so stale entries do not accumulate.
-///
-/// This is the deliberate pruning point — not a side effect of a lookup.
-fn prune() {
-    let prefs = load_all();
-    if prefs.is_empty() {
-        return;
-    }
-    let panes = match crate::tmux::list_panes_detailed() {
-        Ok(p) => p,
-        Err(_) => return,
-    };
-    let mut kept = HashMap::new();
-    for (session, stored) in &prefs {
-        if let Some(live) = panes.iter().find(|p| p.pane_id == stored.pane_id)
-            && matches(stored, &live.pane_id, &live.window_name, &live.current_path)
-        {
-            kept.insert(session.clone(), stored.clone());
-        }
-        // Else: pane gone or fingerprint changed — drop it.
-    }
-    save_all(&kept);
+    let panes = live_panes()?;
+    get_from(&prefs, session_name, &panes)
 }
 
 #[cfg(test)]
@@ -273,15 +309,49 @@ mod tests {
 
         let run_dir = tmp.path().join(".daemoneye/var/run");
         std::fs::create_dir_all(&run_dir).unwrap();
-        let new_json = r#"{"my-session":{"pane_id":"%3","window_name":"main","current_path":"/home/user"},"other":{"pane_id":"%0","window_name":"main","current_path":"/tmp"}}"#;
-        std::fs::write(run_dir.join("pane_prefs.json"), new_json).unwrap();
 
-        // Call get() — it should not remove entries from disk.
-        let _ = get("my-session");
+        // Write a prefs file with one matching entry and one stale entry.
+        let prefs: HashMap<String, PanePreference> = HashMap::from([
+            (
+                "my-session".to_string(),
+                make_pref("%3", "main", "/home/user"),
+            ),
+            (
+                "stale-session".to_string(),
+                make_pref("%99", "gone", "/nowhere"),
+            ),
+        ]);
+        save_all(&prefs);
 
-        // Verify the file still has both entries.
-        let remaining = load_all();
-        assert_eq!(remaining.len(), 2, "get() must not remove entries");
+        // Snapshot the file contents before calling get_from.
+        let before = std::fs::read_to_string(prefs_path()).unwrap();
+
+        // Build a LivePane list by hand — only the matching pane exists.
+        let panes = vec![LivePane {
+            pane_id: "%3".to_string(),
+            window_name: "main".to_string(),
+            current_path: "/home/user".to_string(),
+        }];
+
+        // get_from is pure — it should return the matching pane.
+        let result = get_from(&prefs, "my-session", &panes);
+        assert_eq!(result.as_deref(), Some("%3"));
+
+        // The on-disk file must be byte-identical — get_from never writes.
+        let after = std::fs::read_to_string(prefs_path()).unwrap();
+        assert_eq!(before, after, "get_from must not modify the on-disk file");
+
+        // Separately verify prune_map drops the stale entry.
+        let pruned = prune_map(&prefs, &panes);
+        assert_eq!(pruned.len(), 1, "prune_map should drop stale entries");
+        assert!(
+            pruned.contains_key("my-session"),
+            "prune_map should keep matching entries"
+        );
+        assert!(
+            !pruned.contains_key("stale-session"),
+            "prune_map should drop entries whose pane no longer exists"
+        );
 
         match old_home {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
