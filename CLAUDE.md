@@ -68,9 +68,8 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/scripts.rs` | Script management in `~/.daemoneye/scripts/` (chmod 700, path-traversal validation); `install_sudoers()` |
 | `src/runbook.rs` | TOML runbook loader; `watchdog_system_prompt()` for AI watchdog analysis |
 | `src/session_store.rs` | Named session persistence: `save/load/list/delete/rename_session()`; `ArtifactRef`; `backfill_session_origin()`; `build_resumed_banner()` |
-| `src/memory/mod.rs` | Memory module: CRUD types, `add_memory()`/`update_memory()` enforce size cap, fcntl lock, masking, index sync (G1); G2 schema fields (`volatility`, `lifecycle`, `confidence`, `source`, `pinned`, `last_verified`, `verified_by`, `usefulness_score`), schema validation, version history |
-| `src/memory/index.rs` | FTS5 index (`var/index/memory.db`): schema, reconciliation, CRUD, BM25 search with grep fallback (G1); G2 `migrate_schema()` for ALTER TABLE columns |
-| `src/memory/migrate.rs` | G2 migration tool (`run_migration()` — idempotent, `lifecycle` sentinel), `verify_migration()`, `rescan_masking()` |
+| `src/memory.rs` | Memory module: CRUD types, `add_memory()`/`update_memory()` enforce size cap, fcntl lock, masking, index sync (G1); G2 schema fields (`volatility`, `lifecycle`, `confidence`, `source`, `pinned`, `last_verified`, `verified_by`, `usefulness_score`), schema validation, version history |
+| `src/memory/index.rs` | **Stub.** `fts5_search()` returns an empty `Vec` — there is no SQLite index, no `var/index/memory.db`, and no BM25 scoring. Its only caller is `memory_prompt::ftsearch_memories()`, which therefore always finds nothing. Real memory search is the grep scan in `src/search.rs`. Un-stubbing is future work (see `docs/architecture.md` § 5) |
 | `src/memory/tags.rs` | G5 SessionTags derivation: tag inference from cwd, command, hostname, recent keywords |
 | `src/daemon/memory_prompt.rs` | G5 tiered memory prompt: stable ambient block + dynamic turn-relevant block |
 | `src/header.rs` | Inline header parser/renderer for all artifact types; `inject_yaml_session_origin()` / `inject_comment_session_origin()` |
@@ -130,7 +129,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `edit_file` | File operations on daemon host (or remote via `target_pane`): `operation="edit"` (atomic string replacement, requires `old_string`/`new_string`), `operation="create"` (new file from `content`), `operation="delete"` (remove file), `operation="copy"` (duplicate `path` to `dest_path`). All require user approval with colored unified diff. Atomic writes via `.de_tmp` → rename. **Blocked from `~/.daemoneye/`**. IPC: `EditFilePrompt` / `EditFileResponse`. |
 | `write_runbook` / `read_runbook` / `delete_runbook` / `list_runbooks` | Runbook CRUD |
 | `add_memory` / `read_memory` / `delete_memory` / `list_memories` | Persistent memory |
-| `search_repository` | Grep across runbooks / scripts / memory / events; FTS5-first for memory with grep fallback (G1) |
+| `search_repository` | Grep across runbooks / scripts / memory / events |
 | `get_terminal_context` | Fresh tmux snapshot on demand |
 | `list_panes` | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
 | `spawn_ghost_shell` | Delegate a task to an autonomous background Ghost Shell that follows a named runbook |
