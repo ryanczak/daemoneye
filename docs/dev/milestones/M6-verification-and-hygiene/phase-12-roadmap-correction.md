@@ -1,7 +1,7 @@
 # Phase 12: Roadmap Correction
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phases 01–11 (all done)
 **Estimated diff:** ~120 lines
 **Tags:** language=markdown, kind=docs, size=s
@@ -581,5 +581,32 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `docs/dev/milestones/M6-verification-and-hygiene/phase-12-roadmap-correction.md` — +6 -0
 
 **Commit:** be232f00cff13b053ae4227f665571f581c81236
+
+### Review verdict — 2026-07-31
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-12-1)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (with Claude Sonnet 4.5 progress-log entries)
+- **Scope deviations:** none — `git diff --name-only` from before the refined
+  re-dispatch to now lists exactly two paths, `docs/architecture.md` (one line
+  changed, the `; closed 2026-07-31` clause removed) and this phase doc.
+- **Calibration:** none — a four-word deletion bouncing and then landing clean
+  on the refined re-dispatch is not a new pattern; see bug-12-1 for the
+  substantive finding.
+
+Independently re-ran all four gates (`cargo fmt --all -- --check`, `cargo
+build`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo
+test`) — all green, counts unchanged at 990 lib / 30 integration (2 ignored) /
+8 isolation (1 ignored). Re-ran both end-to-end commands from the phase doc's
+§ "End-to-end verification"; both reproduced the pasted transcripts exactly
+(13/13 `path_audit` tests passing, `exit=0`; grep for `memory\.db|var/index`
+across `assets/` and `src/` returns no matches, `grep-exit=1`) — the refinement
+correctly waived a fresh capture since the fix could not move either result.
+Confirmed `### Active milestone — M6 Verification & Hygiene` is unchanged, no
+retrospective section exists, and `docs/dev/NEXT.md` was not touched by the
+executor (last commit to it, `8fbe42d`, predates dispatch). Spot-checked the §
+5 M6 paragraph's "thirteen phase docs — phase 06 split into 06a/06b" claim and
+its phase-05 / phase-09 delivery summaries against the milestone README's
+phase table — all match. bug-12-1 is closed below.
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
