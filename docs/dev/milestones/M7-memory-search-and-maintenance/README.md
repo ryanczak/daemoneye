@@ -63,7 +63,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 03 | test-sleep-removal — the four `sleep` sites `STANDARDS.md` §3.3 forbids | todo |
 | 04 | path-audit-fenced-blocks — extend extraction to fenced code blocks (Part A of M6 item 5) | todo |
 | 05 | generated-runtime-tree — derive `agent-runtime-layout.md`'s tree from the policy table (Part B of M6 item 5) | todo |
-| 06 | fts5-index-schema — **needs a PE dependency decision first.** SQLite + FTS5 schema, creation, and the `var/index/memory.db` lifecycle entry | todo |
+| 06 | fts5-index-schema — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and the `var/index/memory.db` lifecycle entry | todo |
 | 07 | fts5-write-path — index maintained on add/update/delete, with reconciliation | todo |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
 | 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
@@ -73,22 +73,40 @@ of this milestone and the phase boundaries are a guess until the schema exists.
 
 ## Notes
 
-### A dependency decision the PE must make before phase 06
+### Dependency decision — settled 2026-07-31 (PE)
 
-**Un-stubbing FTS5 requires adding a SQLite dependency.** There is none today —
-`grep -iE "rusqlite|sqlite|libsql|sqlx" Cargo.toml` returns nothing. Adding a
-dependency is on `WORKFLOW.md`'s "What Executors Never Decide" list and needs
-explicit sign-off.
+**`rusqlite` with the `bundled` feature.** SQLite is compiled from source into the
+binary, so FTS5 availability is a property of *our build*, not of the operator's
+machine. For a daemon that ships to arbitrary operator hosts, a search index that
+silently does not exist on some of them is the failure mode this milestone is
+removing — paying build time to eliminate it is the right trade.
 
-The choice is not only *which* crate but *how it links*: `rusqlite` with the
-`bundled` feature compiles SQLite from source (no system dependency, larger build,
-FTS5 available via `bundled-full` or the `fts5` feature), while linking the system
-SQLite is smaller but makes FTS5 availability a property of the host. For a daemon
-that ships to operator machines, bundling is the safer default — but it is a real
-build-time and binary-size cost, and it is the PE's call.
+Verified empirically before recording, not assumed:
 
-**Phases 01–05 are independent of this decision** and can run first, which is why
-they are ordered ahead of it.
+```
+$ cargo add rusqlite --features bundled     # in a scratch crate
+$ cargo run
+sqlite_version=3.53.2
+fts5=AVAILABLE
+compile_options_fts=["ENABLE_FTS3", "ENABLE_FTS3_PARENTHESIS", "ENABLE_FTS5"]
+```
+
+Three facts that follow, and that phase 06 must not re-litigate:
+
+- **`bundled` alone is sufficient for FTS5** — `ENABLE_FTS5` is in the bundled
+  build's compile options. Do **not** reach for `bundled-full`; it enables a large
+  set of extensions we do not use.
+- **Latest stable is `0.40.1`**, bundling SQLite 3.53.2. Phase 01 sweeps
+  dependencies *before* this lands, so 06 adds it already-current.
+- **The transitive cost is six small crates** — `bitflags`,
+  `fallible-iterator`, `fallible-streaming-iterator`, `hashlink` (→ `hashbrown`
+  → `foldhash`), `libsqlite3-sys`, `smallvec`. The `ffi-sqlite-wasm-rs` default
+  feature is **target-gated to wasm** and compiles nothing on native targets;
+  confirmed by inspecting the built dep directory. No need to disable default
+  features.
+
+The build-time cost is real — compiling SQLite adds roughly a minute to a cold
+build — and is accepted.
 
 ### Why this order
 

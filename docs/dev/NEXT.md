@@ -20,18 +20,17 @@ One capability and one maintenance axis:
   code blocks, a generated runtime-layout tree, a bug-tracker truth gate, and the
   four test sleeps `STANDARDS.md` §3.3 forbids.
 
-## One decision needed before phase 06
+## The phase-06 dependency decision is settled
 
-**Un-stubbing FTS5 requires adding a SQLite dependency** — there is none today.
-Adding one is on `WORKFLOW.md`'s "What Executors Never Decide" list, so it needs
-your sign-off, and the choice includes *how it links*: `rusqlite` with `bundled`
-compiles SQLite from source (no host dependency, larger binary, FTS5 via feature
-flag) versus linking the system SQLite (smaller, but FTS5 availability becomes a
-property of the operator's machine). For a daemon shipping to operator machines
-bundling is the safer default, but it is a real build-time and size cost.
+**`rusqlite` with the `bundled` feature** (PE, 2026-07-31). Recorded with its
+rationale and the empirical verification in the milestone README's Notes. Phase 06
+is authorized to add it; phase 06's spec must carry that authorization explicitly,
+since `STANDARDS.md` §2.6 makes an unauthorized dependency an always-blocker.
 
-**Phases 01–05 do not depend on this** and are ordered ahead of it, so drafting
-can start immediately.
+Verified rather than assumed: `bundled` alone yields `ENABLE_FTS5` (no
+`bundled-full`), latest stable is `0.40.1` bundling SQLite 3.53.2, and the
+`ffi-sqlite-wasm-rs` default feature is target-gated to wasm and compiles nothing
+natively.
 
 ## Where the tree stands
 
