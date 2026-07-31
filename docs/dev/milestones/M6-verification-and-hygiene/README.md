@@ -5,7 +5,7 @@ documented beliefs matching the code, and stop the runtime tree growing without
 bound — so the next "is this broken?" question is answered by running something
 rather than by reading source.
 
-**Status:** planning
+**Status:** done (closed 2026-07-31, pending PE sign-off on the folds below)
 
 **Depends on:** M5 (UX & Stability) — closed 2026-07-30.
 
@@ -368,6 +368,102 @@ four server-wide `-g` hooks (`src/daemon/mod.rs:563`–`:620`) keep firing
 **Expect the inventory to grow.** Thirteen items came from one afternoon aimed at a
 single webhook. Phases 01 and 06 are the ones most likely to add to it, and the
 milestone should be re-scoped rather than stretched if they do.
+
+
+### M6 retrospective (2026-07-31)
+
+**Outcome.** All thirteen phase docs `done` (phase 06 split into 06a/06b).
+990 lib + 30 integration (2 ignored) + 8 isolation (1 ignored), clippy clean,
+`cargo test --lib` stable across sixteen consecutive runs. Every exit criterion
+met; the headline one — a severity-less payload provably reaching a ghost shell —
+is demonstrated by a real `ghost_start` record captured in phase 06b, not argued.
+
+**Verdicts.** 1 `approved_first_try` (06b), 8 `approved_after_N`, 4 `escalated`
+(03, 08, 09, 11 — all architect takeovers). 20 bug docs, 14 bounces, 4
+`NoProgressStall` hard-fails (04, 06b, 08, 09).
+
+That is a low first-try rate by this project's standards, and the reason is worth
+recording: **the milestone's own gates were the thing being built.** Nine of the
+fourteen bounces were the review catching work that passed all four command
+gates — vacuous coverage, unverifiable evidence, a flaky test, a
+self-contradicting doc. A milestone about verification producing a lot of bounces
+is the instrument working, not the executor failing.
+
+**The dominant failure mode, by a wide margin.** Ten of the fourteen bounces and
+two of the four takeovers were a single cause: the executor not producing the
+mechanically-captured end-to-end transcript. It was never a capability problem —
+in every case the executor had run the commands and its narrative claims were
+accurate when checked. Two things separated success from failure, consistently:
+
+- **A literal, copy-pasteable command block succeeded; prose describing the same
+  commands failed.** Phase 05's transcript 3 and phase 07 both flipped the moment
+  the spec supplied a runnable block instead of a description.
+- **Naming the server-authored `(complete)` entry as insufficient unblocked it
+  immediately.** That entry carries a "Command output tails" block which looks
+  like captured evidence but is the automatic gate capture every phase receives.
+  Saying so explicitly worked in phases 05 and 07; omitting it failed in 03, 04,
+  09, 11 and 12.
+
+The fold approved mid-milestone (`STANDARDS.md` §1 capture box + `WORKFLOW.md`
+step 4) demonstrably works **at review** — it caught every single instance,
+including bug-04-2's spliced line, which no amount of reading for plausibility
+would have found. What it does not do is get the artefact produced. See "Folds
+proposed" below.
+
+**Second pattern: four `NoProgressStall` hard-fails.** Folded mid-milestone
+(`WORKFLOW.md` § "A NoProgressStall is usually a nearly-finished phase"). The fold
+held up on its next occurrence: the tree check found half a fix plus an
+unauthorised production-data change the briefing did not mention. One shape change
+worth noting — phase 09's stall was a `sed -n 'N,N+10p'` paging crawl, which
+evades the identical-call governor because every call differs; only
+`read_only_stall_threshold` caught it.
+
+**What the milestone found that the 13-defect scoping inventory did not.**
+
+- **Defect 5 was understated sixfold.** Drafting phase 02 found not two stale path
+  references but an entire pre-`var/` generation across seven knowledge memories.
+- **The gate is blind to code fences.** The backtick-delimited extractor cannot
+  see fenced blocks by design (a "contains a slash" rule false-positives on
+  `/clear` and shebangs). Three instances slipped through on that account: the
+  ASCII tree and a fenced `grep` in phase 03, and a phantom `memory.db` in
+  phase 12.
+- **About 25 test files set `HOME` without restoring it**, of which roughly five
+  do. This surfaced as a ~3-in-8 `cargo test --lib` flake in phase 09 and again at
+  1-in-14 in phase 11. Both were closed by pinning the *reader* rather than
+  chasing the writers.
+- **A detached `tokio::spawn` made the ghost pipeline unobservable** — not just
+  untestable. The PE-approved seam (`process_alert` returning its `JoinHandle`)
+  fixed a production observability gap, not merely a test one.
+
+**Calibration folds proposed — these need PE sign-off; none has been applied.**
+
+1. **Require the E2E block to be a distinct executor-authored Update Log entry,
+   and state that the server-authored gate tails never satisfy it.** This exact
+   wording was used inline in phases 05 and 07 and worked both times, but was
+   never folded into the contract. Highest-value fold available; it targets the
+   cause of ten bounces.
+2. **Consider requiring phase specs to supply E2E commands only as runnable
+   blocks**, never as prose. Same evidence base.
+3. **The ~25-file `HOME` drift** — not a doc fold but a cleanup phase. Recommend
+   scheduling it before the next milestone that adds HOME-touching tests, since it
+   resurfaces whenever an ambient reader is added.
+4. **`CLAUDE.md` describes `src/memory/index.rs`** as a full FTS5 index with
+   schema, reconciliation, CRUD and BM25 search. It is an eight-line stub
+   returning empty. Developer-facing, so outside the path-audit gate — same drift
+   class as defect 4, and it shapes how work gets planned.
+5. **Whether the path-audit extractor should learn about fenced blocks.** Three
+   instances argue yes; the false-positive risk on `/clear`, `/limits reset` and
+   shebangs argues for a narrower rule rather than the obvious one.
+
+**Deliberately left to the operator.** `~/.daemoneye/lib/` and
+`~/.daemoneye/pane_prefs.json` are dead but still on disk — the code no longer
+creates or reads either. Removing files from a live tree was kept out of every
+phase's scope on purpose:
+`rmdir ~/.daemoneye/lib && rm ~/.daemoneye/pane_prefs.json`
+
+**Telemetry note.** Four phases closed `escalated`, so the model scorecard has no
+model-vs-spec data point for 03, 08, 09 and 11. Two of those takeovers were for
+the E2E capture alone — if fold 1 lands, that class of takeover should disappear.
 
 ### Calibration carried in from M5
 

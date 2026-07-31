@@ -373,9 +373,9 @@ liveness reporting that distinguishes wedged from dead, a PID on every event rec
 and a fork readiness handshake so `daemoneye daemon` stops reporting success before
 the child has bound its socket.
 
-### Active milestone — M6 Verification & Hygiene
+### Shipped — M6 Verification & Hygiene
 
-Scoped 2026-07-30 (PE sign-off). Milestone README:
+Scoped 2026-07-30 (PE sign-off); closed 2026-07-31. Milestone README:
 `docs/dev/milestones/M6-verification-and-hygiene/README.md` (thirteen phase docs —
 phase 06 split into 06a/06b — all delivered). The milestone delivered: an isolated
 test harness with a throwaway `HOME` and private tmux server; a path-audit gate that
