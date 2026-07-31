@@ -35,8 +35,10 @@ run at close. One capability (working memory search) and one maintenance axis.
 - [ ] **No bug doc is marked `open` while its phase is `done`.** Enforced by a
       test, not by discipline; the five currently-stale docs are closed as part of
       landing it.
-- [ ] **No `sleep` in a non-`#[ignore]`d test.** `STANDARDS.md` §3.3 already
-      forbids it; four sites predate the rule.
+- [ ] **No real-clock `sleep` in a non-`#[ignore]`d test.** `STANDARDS.md` §3.3
+      already forbids it. **Three** live sites predate the rule (corrected from
+      "four" during phase-03 drafting — the original count came from a text grep
+      that both over- and under-counted; see phase-03 § Current state).
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo
       test` green; no regression against the 991 lib + 30 integration + 8
       isolation baseline M6 closed at.
@@ -60,7 +62,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 |----|-------|--------|
 | 01 | [dependency-currency](phase-01-dependency-currency.md) — update every direct dependency to latest stable; hold `libc` back from its alpha | done |
 | 02 | [bug-tracker-truth](phase-02-bug-tracker-truth.md) — a gate failing when a bug doc is `open` while its phase is `done`; close the five stale M2/M4 docs it catches | done |
-| 03 | test-sleep-removal — the four `sleep` sites `STANDARDS.md` §3.3 forbids | todo |
+| 03 | [test-sleep-removal](phase-03-test-sleep-removal.md) — the three live-test `sleep` sites `STANDARDS.md` §3.3 forbids | todo |
 | 04 | path-audit-fenced-blocks — extend extraction to fenced code blocks (Part A of M6 item 5) | todo |
 | 05 | generated-runtime-tree — derive `agent-runtime-layout.md`'s tree from the policy table (Part B of M6 item 5) | todo |
 | 06 | fts5-index-schema — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and the `var/index/memory.db` lifecycle entry | todo |
@@ -162,10 +164,21 @@ against a shipped milestone is worse than one that reports none, because it
 trains everyone to ignore it — hence phase 02 lands a gate rather than only a
 cleanup.
 
-**Four `sleep` sites in tests.** `src/session_store_tests.rs:254`,
-`tests/integration.rs:615`, `:1746`, `:1770`. Two are inside `#[ignore]`d tests
-where §3.3 permits them with a justification comment; the other two need real
-synchronisation or an ignore justification of their own.
+**Three live `sleep` sites in tests** — recounted during phase-03 drafting by
+walking each `sleep(` back to its enclosing function and reading that function's
+attributes, rather than by grepping text. The original "four" was wrong in both
+directions: it listed `tests/integration.rs` sites that are already compliant,
+and missed two live ones in `src/`.
+
+| Site | Test | Sleep |
+|---|---|---|
+| `src/session_store_tests.rs:254` | `list_returns_newest_first` | 10 ms real clock |
+| `src/daemon/mod.rs:1151` | `liveness_is_unresponsive_when_peer_never_replies` | **3 s real clock** |
+| `src/daemon/context/background.rs:450` | `spawn_is_noop_when_in_flight` | 10 ms virtual clock |
+
+Five further sleeps (`tests/integration.rs:615`/`:1746`/`:1770`/`:1778`,
+`tests/isolation.rs:591`) are all inside `#[ignore]`d tests that already carry
+the justification comment §3.3 requires — compliant, and out of scope.
 
 **No `TODO` / `FIXME` / `XXX` anywhere in `src/`** — checked, clean.
 

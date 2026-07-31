@@ -1,20 +1,23 @@
 # NEXT
 
-**Active phase: M7 phase-02 — bug-tracker-truth** (`todo`, drafted 2026-07-31).
+**Active phase: M7 phase-03 — test-sleep-removal** (`todo`, drafted 2026-07-31).
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-02-bug-tracker-truth.md`
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-03-test-sleep-removal.md`
 
-Dispatch with `/rexymcp:dispatch phase-02`.
+Dispatch with `/rexymcp:dispatch phase-03`.
 
-Phase 01 (dependency-currency) is `done`, approved_first_try.
+Phases 01 and 02 are `done`, both approved_first_try.
 
-The gate's algorithm was validated against the real tree before the spec was
-written: it produces exactly five findings — the known-stale M2/M4 docs — and no
-false positives. The spec pre-injects the four parsing traps that would otherwise
-cost round-trips (status lines carry trailing prose; three phase docs have a
-second `Status:` line inside an Update Log entry; bug filenames use two
-conventions; phase docs match by prefix), plus the fact that `tests/` sees only
-dev-dependencies, so `regex` is unavailable there.
+**The milestone README's "four sleep sites" was wrong and has been corrected.**
+Re-scanning by enclosing-function attributes rather than by text grep found
+**three** live sites — including a 3-second wall-clock wait in
+`liveness_is_unresponsive_when_peer_never_replies` that the original count
+missed entirely — while five of the originally-listed sites turned out to be
+already compliant inside `#[ignore]`d tests.
+
+All three fixes were applied, run and reverted before the spec was written:
+`start_paused = true` takes the 3 s test to `0.00s`, and both changed tests held
+green across 15 consecutive runs each.
 
 ## The phase-06 dependency decision is settled
 
