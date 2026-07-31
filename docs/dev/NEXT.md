@@ -1,27 +1,20 @@
 # NEXT
 
-**Active phase: M7 phase-01 — dependency-currency** (`todo`, drafted 2026-07-31).
+**Active phase: M7 phase-02 — bug-tracker-truth** (`todo`, drafted 2026-07-31).
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-01-dependency-currency.md`
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-02-bug-tracker-truth.md`
 
-Dispatch with `/rexymcp:dispatch phase-01`.
+Dispatch with `/rexymcp:dispatch phase-02`.
 
-The migration was verified end-to-end in a throwaway copy of `HEAD` before the
-spec was written: build, clippy and the full suite (991 + 30 + 8) were green with
-exactly the version requirements the spec pins. The spec says so, so the executor
-applies a known-good change rather than exploring one.
+Phase 01 (dependency-currency) is `done`, approved_first_try.
 
-## What M7 covers
-
-One capability and one maintenance axis:
-
-- **Working memory search.** `fts5_search()` is an eight-line stub returning an
-  empty `Vec`, and it is one of three candidate sources in memory recall — so a
-  memory whose *text* matches what the user said surfaces only if its *tags*
-  happen to overlap. Degraded silently today.
-- **Maintenance:** dependency currency, the path-audit gate's blindness to fenced
-  code blocks, a generated runtime-layout tree, a bug-tracker truth gate, and the
-  four test sleeps `STANDARDS.md` §3.3 forbids.
+The gate's algorithm was validated against the real tree before the spec was
+written: it produces exactly five findings — the known-stale M2/M4 docs — and no
+false positives. The spec pre-injects the four parsing traps that would otherwise
+cost round-trips (status lines carry trailing prose; three phase docs have a
+second `Status:` line inside an Update Log entry; bug filenames use two
+conventions; phase docs match by prefix), plus the fact that `tests/` sees only
+dev-dependencies, so `regex` is unavailable there.
 
 ## The phase-06 dependency decision is settled
 
