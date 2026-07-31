@@ -109,7 +109,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 08 | [daemon-log-rotation](phase-08-daemon-log-rotation.md) — bound the 25.8 MB unrotated log under the 07 policy | done |
 | 09 | [pane-and-archive-retention](phase-09-pane-and-archive-retention.md) — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days`; **must add operator-tunable config keys** for panes + mailbox retention (PE decision 2026-07-30) | done |
 | 10 | [pane-prefs-redesign](phase-10-pane-prefs-redesign.md) — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | done                          |
-| 11 | [runtime-tree-hygiene](phase-11-runtime-tree-hygiene.md) — orphan removal, the `lib/` decision, doc-comment corrections | in-progress |
+| 11 | [runtime-tree-hygiene](phase-11-runtime-tree-hygiene.md) — orphan removal, the `lib/` decision, doc-comment corrections | review      |
 | 12 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
 
 Phases beyond 06 may be re-split or dropped once 01–06 land; the inventory below is
