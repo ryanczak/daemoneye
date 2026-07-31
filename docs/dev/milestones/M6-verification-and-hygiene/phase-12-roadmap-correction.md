@@ -190,6 +190,73 @@ No new dependencies. No code changes.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-31 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and this phase is otherwise COMPLETE AND ACCEPTED.**
+The reviewer independently re-ran both end-to-end commands and reproduced your
+transcripts exactly, spot-checked three of the M6 paragraph's claims against the
+milestone README's phase table (all matched), and confirmed the `memory.db`
+removal, the untouched FTS5 note, the untouched M1–M5 entries, and zero code
+changed.
+
+**Do not touch anything except one clause.**
+
+---
+
+**Bug-12-1 — the paragraph asserts a close that has not happened.**
+
+`docs/architecture.md` § 5's M6 paragraph now opens:
+
+```
+Scoped 2026-07-30 (PE sign-off); closed 2026-07-31. Milestone README:
+```
+
+Two lines above, the heading still reads `### Active milestone — M6 Verification
+& Hygiene`. So the section says *Active* in the heading and *closed* in the body.
+
+The phase's task 3 and Out-of-scope both reserve any assertion of M6's closure
+for the human gate — asserting a close **date in prose** is the same act the
+heading-relabel prohibition forbids, just in different words. And it is not true:
+the milestone is not closed; this review is what is happening instead.
+
+**The fix is to delete four words.** Change:
+
+```
+Scoped 2026-07-30 (PE sign-off); closed 2026-07-31. Milestone README:
+```
+
+to:
+
+```
+Scoped 2026-07-30 (PE sign-off). Milestone README:
+```
+
+**Change nothing else** — not the rest of the paragraph, not the heading, not the
+asset, not the Update Log's existing end-to-end entry. The remaining prose ("all
+delivered", the list of what shipped) is accurate and stays; it describes
+delivered work without claiming the milestone is closed, which is exactly the line
+this phase is meant to hold.
+
+---
+
+**No new end-to-end capture is required.** The existing
+`### Update — 2026-07-31 04:50 (end-to-end verification)` entry remains valid —
+this edit changes no path, no asset and no code, so neither the path audit nor the
+grep result can move. Add a brief `### Update — <date> (progress)` note saying
+what you removed and why, and leave the E2E entry as it is.
+
+**Finish condition.**
+
+- `git diff --name-only` must list **exactly two** paths: `docs/architecture.md`
+  and this phase doc. Anything else is a scope violation.
+- The diff to `docs/architecture.md` must be **one line changed**.
+- `### Active milestone — M6 Verification & Hygiene` still reads exactly that.
+- `cargo test` unchanged at 990 lib / 30 integration (2 ignored) / 8 isolation
+  (1 ignored); all four gates green.
+
+
 ### Update — 2026-07-31 04:48 (started)
 
 **Executor:** Claude (Sonnet 4.5)
@@ -374,3 +441,16 @@ independently reproduced the executor's results; this is the only defect
 found. Re-dispatch via `/rexymcp:dispatch phase-12` to remove the `; closed
 2026-07-31` clause per bug-12-1's fix instructions — everything else in the
 diff is correct and should not be touched.
+
+### Update — 2026-07-31 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce on a four-word deletion. Takeover was rejected
+deliberately: the architect has already taken over four phases on this milestone,
+and reaching for it again on the most mechanical fix of the twelve would be the
+anti-pattern the escalate skill warns about rather than a judgement about
+capability. The previous round completed in 44 turns without stalling, so the
+cheap, disciplined path is available. The refinement is scoped to one clause and
+explicitly waives a fresh end-to-end capture, since the edit cannot move either
+recorded result.
