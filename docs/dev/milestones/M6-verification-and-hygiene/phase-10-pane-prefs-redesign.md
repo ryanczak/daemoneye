@@ -781,11 +781,80 @@ implemented and verified the restructure (a narrow `LivePane` type plus pure
 
 <!-- entries appended below this line -->
 
-### Update — 2026-07-31 03:00 (started)
+### Update — 2026-07-31 03:23 (started)
 
 **Executor:** model
 
-Restructured `src/pane_prefs.rs` per bug-10-1 fix: added `LivePane` type, pure `prune_map()` and `get_from()` seams, removed `prune()` from `get()`, and rewrote `get_does_not_mutate_stored_map` to be non-vacuous.
+Applied bug-10-2(a) mtime assertion to `get_does_not_mutate_stored_map` and captured the required mutation-check evidence for bug-10-2(b).
+
+### Update — 2026-07-31 03:23 (end-to-end verification — non-mutation mutation check)
+
+**Non-mutation mutation check — byte-identical write-back in `get_from` (RED):**
+```
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.49s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+
+running 10 tests
+test pane_prefs::tests::does_not_match_when_current_path_changed ... ok
+test pane_prefs::tests::does_not_match_when_window_name_changed ... ok
+test pane_prefs::tests::does_not_match_when_pane_id_changed ... ok
+test pane_prefs::tests::matches_when_all_fields_equal ... ok
+test pane_prefs::tests::load_all_tolerates_garbage_json ... ok
+test pane_prefs::tests::load_all_reads_new_format ... ok
+test pane_prefs::tests::load_all_tolerates_missing_file ... ok
+
+thread 'pane_prefs::tests::get_does_not_mutate_stored_map' (1306870) panicked at src/pane_prefs.rs:346:9:
+assertion `left == right` failed: get_from must not write at all — mtime moved, so the file was rewritten even though its bytes are unchanged
+  left: SystemTime { tv_sec: 1785468317, tv_nsec: 921847800 }
+ right: SystemTime { tv_sec: 1785468317, tv_nsec: 921963800 }
+note: run with `RUST_BACKTRACE=1` environment variable to display backtrace
+test pane_prefs::tests::get_does_not_mutate_stored_map ... FAILED
+test pane_prefs::tests::load_all_tolerates_old_format ... ok
+test pane_prefs::tests::save_roundtrips_fingerprint ... ok
+
+failures:
+
+failures:
+    pane_prefs::tests::get_does_not_mutate_stored_map
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 979 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+```
+
+**Non-mutation mutation check — `get_from` restored (GREEN):**
+```
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.53s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+
+running 10 tests
+test pane_prefs::tests::does_not_match_when_window_name_changed ... ok
+test pane_prefs::tests::does_not_match_when_current_path_changed ... ok
+test pane_prefs::tests::does_not_match_when_pane_id_changed ... ok
+test pane_prefs::tests::matches_when_all_fields_equal ... ok
+test pane_prefs::tests::get_does_not_mutate_stored_map ... ok
+test pane_prefs::tests::load_all_tolerates_missing_file ... ok
+test pane_prefs::tests::load_all_tolerates_garbage_json ... ok
+test pane_prefs::tests::load_all_tolerates_old_format ... ok
+test pane_prefs::tests::load_all_reads_new_format ... ok
+test pane_prefs::tests::save_roundtrips_fingerprint ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 979 filtered out; finished in 0.00s
+
+exit=0
+```
+
+**Flake check (12 runs):**
+```
+exit=0
+```
+
+**Test count:** 989 lib, 30 integration (2 ignored), 8 isolation (1 ignored). Unchanged — this round adds no tests.
+
+**Grep for pinned literal:** `grep -c "mtime" src/pane_prefs.rs` → 4 occurrences (mtime_before, mtime_after, and the two assert lines).
 
 ### Update — 2026-07-31 03:00 (end-to-end verification)
 

@@ -323,8 +323,9 @@ mod tests {
         ]);
         save_all(&prefs);
 
-        // Snapshot the file contents before calling get_from.
+        // Snapshot the file contents and mtime before calling get_from.
         let before = std::fs::read_to_string(prefs_path()).unwrap();
+        let mtime_before = std::fs::metadata(prefs_path()).unwrap().modified().unwrap();
 
         // Build a LivePane list by hand — only the matching pane exists.
         let panes = vec![LivePane {
@@ -339,7 +340,13 @@ mod tests {
 
         // The on-disk file must be byte-identical — get_from never writes.
         let after = std::fs::read_to_string(prefs_path()).unwrap();
+        let mtime_after = std::fs::metadata(prefs_path()).unwrap().modified().unwrap();
         assert_eq!(before, after, "get_from must not modify the on-disk file");
+        assert_eq!(
+            mtime_before, mtime_after,
+            "get_from must not write at all — mtime moved, so the file was \
+             rewritten even though its bytes are unchanged"
+        );
 
         // Separately verify prune_map drops the stale entry.
         let pruned = prune_map(&prefs, &panes);
