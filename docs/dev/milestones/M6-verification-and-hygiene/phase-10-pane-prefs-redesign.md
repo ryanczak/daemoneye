@@ -1,7 +1,7 @@
 # Phase 10: Pane-Preference Redesign
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress (bounced — see bug-10-2)
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -872,3 +872,92 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 84f549410811dd5afb39ab0cfca6bef99a628c5d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-07-30 (round 2, bounced, bug-10-2)
+
+**Independent gate re-runs:** `cargo fmt --all -- --check` (exit 0), `cargo
+build` (exit 0, no warnings), `cargo clippy --all-targets --all-features -- -D
+warnings` (exit 0), `cargo test` (989 lib / 30 integration [2 ignored] / 8
+isolation [1 ignored], all passing). Matches the executor's reported counts
+exactly. `cargo test --lib` confirms 989.
+
+**Confirmed already-verified items (per dispatch instructions, spot-checked
+rather than re-derived):** `get()` no longer writes; the old `prune()` is
+deleted; pruning moved into `save()`. The narrow `LivePane` type plus
+`prune_map(&prefs, &[LivePane])` / `get_from(&prefs, session, &[LivePane])`
+seams landed exactly as specified — neither takes `RichPaneInfo`. `matches()`,
+the fingerprint gate, old-format tolerance, and the doc comment
+(`var/run/pane_prefs.json`) are unchanged from round 1. All six HOME-touching
+tests pair `set_var` with a restore.
+
+**RED/GREEN re-run (independent, matches() mutation, `/tmp/review-10-red.txt`,
+`/tmp/review-10-green.txt`):** forcing `matches()` to always return `true`
+failed exactly `does_not_match_when_current_path_changed`,
+`does_not_match_when_pane_id_changed`, `does_not_match_when_window_name_changed`
+(`exit=101`); `git checkout -- src/pane_prefs.rs` restored all 10
+`pane_prefs` tests to green (`exit=0`). Output matches the pasted transcript
+verbatim (line numbers differ trivially by 3 due to the diff churn between
+rounds — same three test names, same pass/fail counts).
+
+**12-run flake re-run (independent, `/tmp/review-10-flake.txt`):** 12
+consecutive `cargo test --lib` runs, all clean, `exit=0` only.
+
+**`resolve_target_pane` fallback:** confirmed untouched.
+`git diff --name-only 909beea 84f5494` (the work commit against its direct
+parent) lists only `docs/dev/milestones/M6-verification-and-hygiene/phase-10-pane-prefs-redesign.md`
+and `src/pane_prefs.rs` — `src/cli/commands/pane.rs` is not in either round's
+diff, and its last change (`b4266f4`) predates this phase. The sibling
+auto-pick / prompt / no-sibling-split fallback still runs whenever `get()`
+returns `None`.
+
+**Test delta:** +0 net (989 → 989), one test replaced
+(`get_does_not_mutate_stored_map` rewritten to be non-vacuous), none added —
+matches the executor's stated explanation.
+
+**`git status --short`:** clean before and after the independent re-runs
+(reverted every mutation with `git checkout -- src/pane_prefs.rs`). No
+evidence of `git add -A` — the work commit (`84f5494`) touches exactly
+`src/pane_prefs.rs` and the phase doc, nothing stray.
+
+**Two things this round adjudicated, per dispatch instructions:**
+
+1. **The non-mutation test's residual weakness — reproduced both ways.**
+   - Reproduction A: added an unconditional `save_all(prefs)` (byte-identical
+     write-back) as the first line of `get_from`. `get_does_not_mutate_stored_map`
+     still **passed** (`exit=0`, 1 passed / 0 failed). Confirms the test does
+     not detect an unconditional write that happens to serialize the same
+     bytes.
+   - Reproduction B: replaced that with `save_all(&prune_map(prefs, panes))`
+     — the original bug-10-1(a) defect shape, faithfully reproduced. The test
+     **failed** (`exit=101`) with a diff showing the stale entry pruned from
+     the on-disk file; `git checkout -- src/pane_prefs.rs` restored all 10
+     `pane_prefs` tests to green.
+   - **Ruling: (b) — require a stronger check, filed as bug-10-2 part (b).**
+     The assertion message ("`get_from` must not modify the on-disk file")
+     claims a property the check does not enforce: content-equality at one
+     instant does not prove no write occurred, and in the concurrent case this
+     feature's persistence exists for (daemon `get()` reads at T0, a CLI
+     `save()` writes at T1, a regressed `get()` writes its stale T0 snapshot
+     at T2) an identical-content T2 write can still clobber the T1 save. This
+     is exactly the shape of overclaiming coverage this milestone exists to
+     eliminate, so it is not waved through as a style nit — filed as part of
+     bug-10-2, with a concrete, cheap fix (mtime comparison alongside the
+     existing content check).
+2. **DoD gap: the required mutation-check of the new test was not performed
+   or captured.** Verified by reading both `### Update — 2026-07-31 03:00`
+   entries: the "end-to-end verification" entry contains only the `matches()`
+   RED/GREEN capture (identical in substance to round 1) and the flake block —
+   no RED/GREEN transcript for `get_does_not_mutate_stored_map` itself, despite
+   the refined phase doc's bug-10-1(b) notes explicitly requiring: *"Mutation-
+   check the new test: make `get_from` write to the file (or re-add the
+   `prune()` call in `get()`), confirm the non-mutation assertion fails,
+   revert, confirm it passes."* Reviewer ran this exact check (reproduction B
+   above) and it does pass as required — so the underlying property holds —
+   but the executor's own record does not show this was ever run. Per
+   `STANDARDS.md` §1's mechanical-capture box and this milestone's seven prior
+   bounces on missing capture, evidence-on-the-record is the gate, not
+   plausibility of the outcome. **Filed as bug-10-2 part (a), major.**
+
+**Bounced — see `bugs/bug-10-2.md` (major).** bug-10-1 is verified fixed (see
+its Status line) — this bounce is for a new, distinct gap discovered in round
+2's own deliverable, not a reopening of round 1's defect.
