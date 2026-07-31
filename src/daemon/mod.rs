@@ -1135,7 +1135,7 @@ mod tests {
         assert_eq!(liveness, DaemonLiveness::NotRunning);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn liveness_is_unresponsive_when_peer_never_replies() {
         let _home = TestHome::new();
         let socket_path = crate::config::default_socket_path();

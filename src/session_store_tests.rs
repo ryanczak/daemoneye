@@ -251,7 +251,6 @@ fn list_returns_newest_first() {
             force: false,
         })
         .expect("a");
-        std::thread::sleep(std::time::Duration::from_millis(10));
         save_session(SaveSessionArgs {
             name: "bbb",
             current_saved_name: None,
@@ -263,6 +262,12 @@ fn list_returns_newest_first() {
             force: false,
         })
         .expect("b");
+        let mut index = load_index();
+        index.get_mut("aaa").expect("aaa indexed").last_updated =
+            "2026-01-01T00:00:00Z".to_string();
+        index.get_mut("bbb").expect("bbb indexed").last_updated =
+            "2026-01-02T00:00:00Z".to_string();
+        save_index(&index).expect("save index");
         let list = list_sessions();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].0, "bbb");

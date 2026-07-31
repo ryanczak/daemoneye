@@ -446,8 +446,8 @@ mod tests {
         let config = Arc::new(Config::default());
         spawn_compaction(session_id.clone(), sessions.clone(), config);
 
-        // Give the (non-existent) task a moment.
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        // Yield so a task would get to run if one HAD been spawned.
+        tokio::task::yield_now().await;
 
         // Flag should still be true — no task touched it.
         with_sessions(&sessions, |store| {

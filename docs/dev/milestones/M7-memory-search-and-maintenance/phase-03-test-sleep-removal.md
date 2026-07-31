@@ -1,7 +1,7 @@
 # Phase 03: Test Sleep Removal
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (bug-tracker-truth, done)
 **Estimated diff:** ~25 lines across three test sites
 **Tags:** language=rust, kind=test, size=s
@@ -300,3 +300,42 @@ build/lint/test ran, not that this phase's acceptance criteria were exercised.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 23:15 (started)
+
+**Executor:** model
+
+Removed three live-test `sleep` sites per `STANDARDS.md` §3.3:
+1. `list_returns_newest_first` — replaced wall-clock sleep with deterministic index timestamp stamps.
+2. `liveness_is_unresponsive_when_peer_never_replies` — added `start_paused = true` to use tokio's virtual clock.
+3. `spawn_is_noop_when_in_flight` — replaced sleep with `tokio::task::yield_now()` since no task is spawned.
+
+### Update — 2026-07-31 23:15 (end-to-end verification)
+
+**End-to-end verification:**
+
+```
+=== the 3s test is now instant ===
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 990 filtered out; finished in 0.00s
+exit=0
+
+=== the other two touched tests pass ===
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 990 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 990 filtered out; finished in 0.00s
+exit=0
+
+=== nothing under tests/ was touched ===
+grep-exit=1   # 1 == tests/ untouched == PASS
+
+=== full gate ===
+exit=0
+test result: ok. 991 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+All test counts match spec: lib 991, integration 30 (2 ignored), isolation 8 (1 ignored), bug_tracker 6. The `liveness_is_unresponsive_when_peer_never_replies` test now finishes in 0.00s (was 3.00s). No `tests/` files modified. No live wall-clock sleeps remain in test code.
