@@ -1,12 +1,15 @@
 # NEXT
 
-**Active phase: none — M7 is scoped but no phase is drafted.**
+**Active phase: M7 phase-01 — dependency-currency** (`todo`, drafted 2026-07-31).
 
-M7 — Memory Search & Maintenance was scoped 2026-07-31. Milestone README:
-`docs/dev/milestones/M7-memory-search-and-maintenance/README.md` (nine phases
-named, none drafted).
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-01-dependency-currency.md`
 
-Draft phase 01 with `/rexymcp:architect next`.
+Dispatch with `/rexymcp:dispatch phase-01`.
+
+The migration was verified end-to-end in a throwaway copy of `HEAD` before the
+spec was written: build, clippy and the full suite (991 + 30 + 8) were green with
+exactly the version requirements the spec pins. The spec says so, so the executor
+applies a known-good change rather than exploring one.
 
 ## What M7 covers
 
