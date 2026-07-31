@@ -291,6 +291,7 @@ mod tests {
         let tmp_home =
             std::env::temp_dir().join(format!("de_lifecycle_test_{}", std::process::id()));
         std::fs::create_dir_all(&tmp_home).ok();
+        let old_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", &tmp_home);
         }
@@ -322,9 +323,9 @@ mod tests {
             uncovered.join("\n  ")
         );
 
-        // Cleanup
-        unsafe {
-            std::env::set_var("HOME", "");
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
         }
         let _ = std::fs::remove_dir_all(&tmp_home);
     }
@@ -392,6 +393,7 @@ mod tests {
         let tmp_home =
             std::env::temp_dir().join(format!("de_lifecycle_mutation_{}", std::process::id()));
         std::fs::create_dir_all(&tmp_home).ok();
+        let old_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", &tmp_home);
         }
@@ -439,8 +441,9 @@ mod tests {
             uncovered2
         );
 
-        unsafe {
-            std::env::set_var("HOME", "");
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
         }
         let _ = std::fs::remove_dir_all(&tmp_home);
     }
@@ -459,6 +462,7 @@ mod tests {
         let tmp_home =
             std::env::temp_dir().join(format!("de_lifecycle_eager_{}", std::process::id()));
         std::fs::create_dir_all(&tmp_home).ok();
+        let old_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", &tmp_home);
         }
@@ -500,8 +504,9 @@ mod tests {
             missing.join("\n  ")
         );
 
-        unsafe {
-            std::env::set_var("HOME", "");
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
         }
         let _ = std::fs::remove_dir_all(&tmp_home);
     }

@@ -495,6 +495,13 @@ mod tests {
     // ── Inventory completeness ──────────────────────────────────────────────
     #[test]
     fn inventory_contains_all_config_constructors() {
+        // Hermetic: use a throwaway HOME so other tests that set HOME without
+        // restoring don't poison our config_dir() call.
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
         // Every path the config:: module constructs must appear in INVENTORY.
         // We derive the runtime-relative form by stripping the config_dir prefix.
         let constructors: Vec<fn() -> PathBuf> = vec![
@@ -543,6 +550,11 @@ mod tests {
             INVENTORY.iter().any(|e| e.path == rel),
             "current_event_segment_path parent '{rel}' not in INVENTORY",
         );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     // ── Shipped assets audit ────────────────────────────────────────────────
