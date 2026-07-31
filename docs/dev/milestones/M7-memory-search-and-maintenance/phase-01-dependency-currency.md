@@ -1,7 +1,7 @@
 # Phase 01: Dependency Currency
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** in-progress
+**Status:** review
 **Depends on:** none
 **Estimated diff:** ~15 lines in `Cargo.toml` (plus a regenerated `Cargo.lock`)
 **Tags:** language=rust, kind=refactor, size=s
@@ -305,3 +305,131 @@ exit=0
 ```
 
 Test counts match M6 baseline exactly: **991** lib tests, **30** integration (2 ignored), **8** isolation (1 ignored).
+
+### Update — ts=1785515857409 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+All five spec tasks completed: raised `toml` to `1.1` (both `[dependencies]` and `[dev-dependencies]`), `similar` to `3`, `cron` to `0.17`; refreshed six precise-pinned minimums (`anyhow`, `nix`, `reqwest`, `serde`, `serde_json`, `tokio`); added the `libc` pin-back comment; and regenerated `Cargo.lock` via `cargo update`. All gates passed cleanly — `cargo build`, `cargo clippy`, `cargo fmt`, and `cargo test` all green. Test counts match the M6 baseline exactly: 991 lib, 30 integration (2 ignored), 8 isolation (1 ignored). `cargo update --dry-run` confirms no further updates available. Zero `.rs` files modified. Working tree is clean, one conventional commit made.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+st search::tests::search_respects_kind_filter ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test memory::tests::update_memory_replace_body ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test memory::tests::update_memory_sets_updated_timestamp ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test memory::tests::write_agent_reads_agent ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test test_home_guard_tests::guard_restores_home_on_drop ... ok
+
+test result: ok. 991 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.22s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test event_log_entry_format ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test session_index_persistence ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1ad9304635fe6e0b)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e13fd526e8666cb6)
+     Running tests/integration.rs (target/debug/deps/integration-15c2cb829537d34b)
+     Running tests/isolation.rs (target/debug/deps/isolation-783d9644f0ac8667)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `Cargo.toml` — +11 -10
+- `docs/dev/milestones/M7-memory-search-and-maintenance/README.md` — +1 -1
+- `docs/dev/milestones/M7-memory-search-and-maintenance/phase-01-dependency-currency.md` — +57 -1
+
+**Commit:** 0e7722bd243d272991a51c90e9e78b3fbe2c7dca
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
