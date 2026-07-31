@@ -1,7 +1,7 @@
 # Phase 09: Pane and Archive Retention
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-07 (done), phase-08 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -394,3 +394,19 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0a9947bf5ebf69e3201c391698d706b12871dd13
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-07-30 (bounced)
+
+Bounced back to `in-progress`. Bugs filed: `bug-09-1` (major — missing
+standalone `### Update — <date> (end-to-end verification)` entry; the
+mechanical-capture box in `STANDARDS.md` §1 is not satisfied by the
+`(started)` note or the server-authored `(complete)` gate-tail block) and
+`bug-09-2` (major — `cargo test --lib` fails intermittently, ~30% of runs,
+on this commit; `config::lifecycle::tests::every_policy_entry_corresponds_to_a_real_path`
+races against this phase's four new `HOME`-swapping tests because it reads
+`HOME`-derived state without holding `test_home_guard()`; reproduced 10/10
+clean on the parent commit vs. 3/10 failures on this commit). See the bug
+files for full detail. All other DoD checks passed independently re-run
+(format/build/clippy/test gates green in isolation; mutation checks on both
+sweeps' `0`-guards and cutoff comparisons confirmed real; blast radius,
+defaults, and no-hard-coding all verified).
