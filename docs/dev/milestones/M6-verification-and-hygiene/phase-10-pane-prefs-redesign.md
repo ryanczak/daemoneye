@@ -1,7 +1,7 @@
 # Phase 10: Pane-Preference Redesign
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -1281,3 +1281,77 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f0abb837db7fdcfc4483e2cc46741b1590f0c19d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-31
+
+**Independent gate re-runs:** `cargo fmt --all -- --check` (exit 0), `cargo
+build` (exit 0, no warnings), `cargo clippy --all-targets --all-features --
+-D warnings` (exit 0), `cargo test` (989 lib / 30 integration [2 ignored] /
+8 isolation [1 ignored], all passing). Matches the executor's reported
+counts exactly.
+
+**bug-10-1 — confirmed already closed, spot-checked not re-litigated:**
+`get()` is a plain read (`load_all()` + `live_panes()` + `get_from()`, no
+`save_all` call in its body); the old `prune()` function is gone from the
+file; pruning happens inside `save()` via `prune_map(&load_all(), &live)`.
+The pure `LivePane` / `prune_map` / `get_from` seams are present exactly as
+specified.
+
+**bug-10-2(a) — the mtime assertion.** Confirmed it landed *alongside*, not
+in place of, the content assertion: `src/pane_prefs.rs:345`
+(`assert_eq!(before, after, "get_from must not modify the on-disk
+file")`) is immediately followed by the mtime assertion at `:346-349`. Ran
+the required reproduction myself: inserted `save_all(prefs);` as the first
+statement of `get_from`, ran `cargo test --lib pane_prefs -- --nocapture`.
+Result: `get_does_not_mutate_stored_map` **FAILED** (`exit=101`), and the
+panic location is `src/pane_prefs.rs:346` — the mtime assertion, not the
+content assertion at `:345` (which necessarily passed, since execution
+reached the mtime assert). Observed values:
+
+```
+thread 'pane_prefs::tests::get_does_not_mutate_stored_map' panicked at src/pane_prefs.rs:346:9:
+assertion `left == right` failed: get_from must not write at all — mtime moved, so the file was
+rewritten even though its bytes are unchanged
+  left: SystemTime { tv_sec: 1785469430, tv_nsec: 313229935 }
+ right: SystemTime { tv_sec: 1785469430, tv_nsec: 314553093 }
+```
+
+Same-second, sub-2ms difference (~1323µs) — larger than the executor's
+~116µs and the interrupted run's ~165µs, but the same shape: same-second,
+sub-millisecond-to-low-millisecond resolution, decisively separating the
+content check (passed) from the mtime check (failed). This filesystem's
+mtime resolution is fine enough for the assertion to be meaningful.
+Reverted with `git checkout -- src/pane_prefs.rs`; `git status --short`
+clean; `cargo build` and `cargo test --lib pane_prefs` both clean
+afterward (10/10 passed).
+
+**bug-10-2(b) — the capture.** The `### Update — 2026-07-31 03:23
+(end-to-end verification — non-mutation mutation check)` entry above is
+executor-authored (distinct from the server-authored `(complete)`
+bookkeeping tail at `ts=1785468692882`) and contains three blocks — RED,
+GREEN, and the 12-run flake check — each ending in an `exit=` marker; the
+flake block contains only `exit=0`. Ran the twelve-run `cargo test --lib`
+loop myself: all 12 runs clean, only `exit=0` produced.
+
+**Test delta:** +0, confirmed (`cargo test --lib` → 989, matching the
+pre-round baseline; this round touched only the test body of
+`get_does_not_mutate_stored_map`).
+
+**Hygiene grep:** no `#[allow(...)]`, `#[ignore]`, `dbg!`, `println!`,
+`TODO`/`FIXME`/`XXX`, or new `unsafe` outside the pre-existing
+`#[cfg(test)]` `HOME`-manipulation blocks (which predate this round and are
+required by the crate's edition-2024 `set_var` signature). All six
+`HOME`-touching tests pair `set_var` with a `match old_home { … }` restore.
+
+**`resolve_target_pane` fallback:** `git diff --name-only 7cc1daf f0abb83
+-- src/cli/commands/pane.rs` is empty — untouched by this round.
+
+**Scope:** `git diff --name-only 7cc1daf f0abb83` lists exactly
+`docs/dev/milestones/M6-verification-and-hygiene/phase-10-pane-prefs-redesign.md`
+and `src/pane_prefs.rs` — no other file, no production function touched.
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-10-1, bug-10-2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** none
