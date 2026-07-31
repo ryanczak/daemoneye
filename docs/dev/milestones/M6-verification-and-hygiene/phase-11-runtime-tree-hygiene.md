@@ -191,6 +191,11 @@ must contain only `exit=0`.
       `src/config/path_audit.rs`, `src/config/lifecycle.rs`, `src/main.rs`,
       `.gitignore`, and `assets/memory/knowledge/agent-runtime-layout.md`.
 - [ ] May add the tree-consistency test wherever it reads best.
+- [ ] **(added on bounce 1)** May fix `HOME` handling in the test bodies of
+      `src/config/lifecycle.rs` and make
+      `inventory_contains_all_config_constructors` in `src/config/path_audit.rs`
+      hermetic. Both are the authorized fix for bug-11-2. Change no production
+      code in either file.
 
 No new dependencies. No changes to `docs/architecture.md` — that is phase 12.
 
@@ -214,6 +219,107 @@ No new dependencies. No changes to `docs/architecture.md` — that is phase 12.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-31 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and the substance of this phase is CORRECT and
+ACCEPTED.** Frozen — do not redo:
+
+- `lib` removed from all six sites (`ensure_dirs`, `lib_dir()`, the path-audit
+  inventory *and* its prefix/constructor lists, the lifecycle entry, the asset,
+  and `setup.rs`'s output). The phase-02 audit was independently re-run and is
+  **green**, which is the evidence the asset and inventory moved together.
+- Both `main.rs` help strings corrected; zero other stale paths found.
+- `.gitignore` entry added.
+- `every_eager_policy_entry_is_created_by_ensure_dirs` — the Direction C gate.
+- **Neither `~/.daemoneye/lib/` nor `~/.daemoneye/pane_prefs.json` was deleted
+  from the operator's tree.** Correct — that was the one hard prohibition.
+
+**Two things left.**
+
+---
+
+**Bug-11-1 — the End-to-end verification entry is missing.**
+
+The Update Log has a one-line "(progress)" stub and the server-authored
+"(complete)" gate-tail block. The phase doc says in as many words that the
+server-authored block does **not** satisfy `STANDARDS.md` §1. This is the ninth
+time on this milestone.
+
+Your completion summary claims the mutation check was run. It probably was — but
+a claim is not the artefact, and nobody can now reproduce your captures because
+they were not preserved. Re-run and paste, per the phase doc's End-to-end
+section: four blocks (`/tmp/e2e-11-red.txt`, `/tmp/e2e-11-green.txt`,
+`/tmp/e2e-11-tree.txt`, `/tmp/e2e-11-flake.txt`), each ending in an `exit=`
+marker. The tree listing must not contain `lib`; the flake file must contain only
+`exit=0`.
+
+---
+
+**Bug-11-2 — `HOME` is left broken, and it is now an observable flake.**
+
+Your new test ends with `unsafe { std::env::set_var("HOME", ""); }` instead of
+restoring. The phase doc named this pathology explicitly and pointed at the
+`src/pane_prefs.rs` idiom. You copied the style of two sibling tests in the same
+file rather than the instruction — understandable, and those two siblings are
+wrong as well.
+
+**This is not theoretical.** The architect measured it on your commit:
+`cargo test --lib` failed **1 run in 14**, always the same way:
+
+```
+thread 'config::path_audit::tests::inventory_contains_all_config_constructors'
+panicked at src/config/path_audit.rs:528:13:
+config constructor produces '' but it is not in INVENTORY
+```
+
+That is phase 02's test reading `config_dir()` while `HOME` is `""`.
+
+**The architect implemented and verified the two-part fix** — 0 failures in 16
+consecutive `cargo test --lib` runs, all four gates green, 990 lib tests:
+
+**(a) Restore `HOME` in all four `lifecycle.rs` tests.** Three currently end with
+`set_var("HOME", "")`; only one restores. For each, capture before and restore
+after:
+
+```rust
+let old_home = std::env::var("HOME").ok();
+unsafe { std::env::set_var("HOME", &tmp_home); }
+// … test body …
+match old_home {
+    Some(v) => unsafe { std::env::set_var("HOME", v) },
+    None => unsafe { std::env::remove_var("HOME") },
+}
+```
+
+**(b) Make the victim hermetic too.** `inventory_contains_all_config_constructors`
+(`path_audit.rs`) takes no guard and reads ambient `HOME`. Give it the same
+treatment Direction B got: `test_home_guard()`, its own `temp_dir()`-based `HOME`,
+and a restore at the end. **(a) alone is not sufficient** — the architect tried it
+and the flake persisted at 1-in-16, because roughly twenty other test files also
+set `HOME` without restoring. Pinning the reader is what actually closes it.
+
+Both edits are newly authorized above. **Change no production code in either
+file.**
+
+---
+
+**Explicitly out of scope — do not attempt it.** Roughly 25 files under `src/`
+set `HOME` in tests and only about five restore it. That is pre-existing drift
+well beyond this phase, and it is recorded for the milestone close. Fix only the
+four `lifecycle.rs` tests and the one `path_audit.rs` reader named above.
+
+**Finish condition.**
+
+- `cargo test --lib` run **16 times consecutively, zero failures.**
+- `cargo test` totals: **990** lib, **30** integration (2 ignored), **8**
+  isolation (1 ignored) — unchanged; this round adds no tests.
+- `git diff --name-only` should list `src/config/lifecycle.rs`,
+  `src/config/path_audit.rs`, and this phase doc. Nothing else.
+- All four gates green.
+
 
 ### Update — 2026-07-31 03:50 (progress)
 
@@ -353,3 +459,19 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8bd11bc0f4565b5e6e105c9032101a846d439f14
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-07-31 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** The phase's substance is correct and independently confirmed — the
+`lib` removal is complete across six sites with the phase-02 audit green as
+proof, and the one hard prohibition (no deletion from the operator's tree) was
+respected. The two gaps are a missing capture and a `HOME` restore, both small.
+The architect measured the second one rather than asserting it (1 failure in 14
+runs on the executor's commit, always phase 02's constructor test seeing
+`HOME=""`), found that fixing the three offending tests alone was **not** enough
+because ~20 other files leak `HOME` too, and verified that additionally pinning
+the victim closes it — 0 failures in 16 runs. Authorizations were widened for
+both edits; the wider ~25-file drift is recorded for milestone close, not folded
+into this phase.
