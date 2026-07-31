@@ -1,68 +1,60 @@
 # NEXT
 
-**Active phase: 08 — daemon-log-rotation.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-08-daemon-log-rotation.md`
+**Active phase: 09 — pane-and-archive-retention.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-09-pane-and-archive-retention.md`
 Status: `todo` — drafted 2026-07-30, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-08`.
+Dispatch with `/rexymcp:dispatch phase-09`.
 
-## What phase 08 does
+## What phase 09 does
 
-Bounds `var/log/daemon.log` — 25.8 MB and growing since May 8, with no rotation
-logic anywhere in the tree. Phase 07 recorded its policy as **Rotate**, owned by
-phase 08; this phase makes that true and flips the table entry to implemented.
+Closes the last three artifact gaps phase 07's table left `Pending{phase-09}`:
+a sweep for `var/log/panes/` (264 files, none today), a sweep for
+`agents/*/mailbox/` (one file per ghost exit, forever), and **surfacing** the
+asymmetry where `sessions.archive_retention_days` defaults to `0` (keep forever)
+while `events.retention_days` defaults to `90`.
 
-## The constraint that decides the design
+Both new retentions are **7 days** and both **must be operator-configurable** —
+PE decision 2026-07-30, "we either do it now or we do it later". The phase says
+outright that shipping the sweeps reading hard-coded constants is not acceptable.
 
-**The log is not written through a Rust writer.** `run_daemon`
-(`src/daemon/mod.rs:371-394`) opens the file `O_APPEND` and `dup2`s its
-descriptor onto **stdout (1) and stderr (2)**; `env_logger` then writes to
-stderr.
+## Two design calls made at drafting
 
-So a plain `rename(daemon.log, daemon.log.1)` **is not rotation** — fds 1 and 2
-still point at the same inode, now renamed, so logging would silently continue
-into the rotated file while the live log stayed empty. That is a rotation that
-looks like it worked and didn't. Whatever lands must re-open the new path and
-`dup2` the fresh descriptor onto 1 and 2 (or truncate in place, which `O_APPEND`
-makes safe).
+**Surfacing is a startup WARN, not an IPC change.** The obvious operator-facing
+surface is `daemoneye status`, but that payload is `Response::DaemonStatus` —
+extending it touches `ipc.rs`, the server handler and `cli/status.rs` for a
+one-line benefit. A startup WARN in `run_daemon` meets the criterion ("a sweep
+that is off by default says so where the operator will see it") at a fraction of
+the blast radius. The phase forbids the IPC route and says to report a blocker
+instead of taking it.
 
-The phase pins a **testability seam** around that: file-shifting is a pure
-function taking path, size bound and keep-count as parameters, callable straight
-from a test; the `dup2` re-attach is process-global and stays in the daemon path.
-A rotation function that does its own `dup2` internally cannot be tested, and the
-phase says so explicitly.
+**The warning is a pure function.** Following phase 08's split, which worked: a
+function takes `&Config` and returns the warnings that apply; the daemon logs
+them. The decision is testable; only the logging is a side effect.
 
-It also reuses the existing cleanup tick (`src/daemon/mod.rs:819-828`, every 60th
-iteration, already firing the two sweeps) rather than adding a timer — and notes
-that a startup-only check would not bound a daemon that runs for weeks, which is
-exactly how the live log got to 25.8 MB.
+**The default itself is untouched.** The criterion asks for visibility, not a
+behaviour change — silently flipping a keep-forever default to a deleting one
+would destroy operator data.
 
 ## Where things stand
 
-- Phases 01–07 `done`. 07 closed `approved_after_1`; the reviewer independently
-  reproduced its mutation (injected an uncovered directory → genuine failure
-  naming it at `exit=101` → revert → 3/3 pass).
-- 967 lib + 30 integration (2 ignored) + 8 isolation (1 ignored), zero failures;
+- Phases 01–08 `done`. 08 closed `escalated` (architect takeover after the
+  milestone's third `NoProgressStall`); the daemon-log rotation, its `dup2`
+  re-attach, and the mutation-checked bound all landed.
+- 972 lib + 30 integration (2 ignored) + 8 isolation (1 ignored), zero failures;
   clippy clean.
 - Working tree clean. No daemon running; no tmux server running.
+- **The NoProgressStall response fold landed** in `WORKFLOW.md` (§ "A
+  NoProgressStall is usually a nearly-finished phase — diagnose the tree before
+  choosing a lever"). If phase 09 stalls, run the gates against the partial tree
+  before picking a lever; three-for-three the partial work was correct and the
+  tree check found defects the executor never ran a gate to see.
 - Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 09–12
+  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 10–12
   named, not drafted.
 
-## Needs your attention before phase 09
-
-**Phase 07's table carries two invented retention numbers** — `var/log/panes` →
-`Sweep{30 days}` and `agents/*/mailbox` → `Sweep{7 days}` — for classes that have
-**no config key today**. The executor chose them; the phase doc asked for "the
-default where the lifecycle is parameterised" without supplying numbers. Both
-reviews judged them acceptable as explicitly-labelled `Pending{phase-09}`
-proposals that cannot silently take effect, but round 1 raised the sharper point:
-the table renders a proposed number identically to a real config-backed one
-(`Sweep{30}` looks exactly like `Sweep{90}`). **Retention periods are an
-operational decision** — worth setting yourself before phase 09 implements
-against them.
-
 ## Carried forward for milestone close
+
 
 - **Review subagents keep writing stray telemetry rows.** Five times this
   session a review agent probed the `rexymcp review` CLI with an invalid
