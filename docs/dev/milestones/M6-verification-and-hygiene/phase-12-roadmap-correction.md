@@ -1,7 +1,7 @@
 # Phase 12: Roadmap Correction
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress
 **Depends on:** phases 01–11 (all done)
 **Estimated diff:** ~120 lines
 **Tags:** language=markdown, kind=docs, size=s
@@ -362,3 +362,15 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0f8b7c2dbe2a2bd412398d0937479e99628b2ab1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-31
+
+**Bounced — see bug-12-1.** § 5's M6 paragraph opens `Scoped 2026-07-30 (PE
+sign-off); closed 2026-07-31.` The `### Active milestone — M6` heading two
+lines above still reads "Active", so the section now contradicts itself, and
+the phase doc's own task 3 / Out-of-scope both reserve any assertion of M6's
+closure for the human gate. All four gates and both re-run E2E commands
+independently reproduced the executor's results; this is the only defect
+found. Re-dispatch via `/rexymcp:dispatch phase-12` to remove the `; closed
+2026-07-31` clause per bug-12-1's fix instructions — everything else in the
+diff is correct and should not be touched.
