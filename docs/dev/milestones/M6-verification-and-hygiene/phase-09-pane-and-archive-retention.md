@@ -223,6 +223,11 @@ string your function produces for `archive_retention_days = 0`.
       `src/daemon/mod.rs`.
 - [ ] May update **only** the `var/log/panes` and `agents/*/mailbox` entries in
       `src/config/lifecycle.rs`.
+- [ ] **(added on bounce 1)** May modify the **test body** of
+      `every_policy_entry_corresponds_to_a_real_path` in `src/config/lifecycle.rs`
+      to make it hermetic, and may add `HOME` restoration to the five sweep tests
+      in `src/daemon/utils/mod.rs`. This is the authorized fix for bug-09-2. Do
+      not change `POLICY_TABLE` data beyond the two entries already authorized.
 
 No new dependencies (`filetime` is already a dev-dependency). No changes to
 `docs/architecture.md`.
@@ -247,6 +252,156 @@ No new dependencies (`filetime` is already a dev-dependency). No changes to
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-31 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**A single `cargo test` run passes — and the suite is still broken.** `cargo test
+--lib` on your commit fails **3 runs out of 6**. A full-workspace `cargo test`
+happens to pass because the binaries run in a different order. So "the gates were
+green" is true and not sufficient.
+
+**Your production code is CORRECT and ACCEPTED — do not touch it.** The reviewer
+mutation-checked all four safety properties and each behaved right:
+
+- `sweep_pane_logs`'s and `sweep_agent_mailboxes`'s `retention_days == 0` guards
+  (break either → the corresponding "zero is no-op" test fails).
+- Both cutoff comparisons (break either → the "old deleted, fresh survives" test
+  fails).
+
+Also verified and frozen: the blast radius (both sweeps are non-recursive, filter
+on `.log` / `.json`, use `remove_file` not `remove_dir_all`, and
+`sweep_agent_mailboxes` only ever constructs `<agent>/mailbox/…` so it cannot
+reach `config.toml` or `briefing.md`); `RetentionConfig` with both defaults at 7;
+the tick reading `startup_config.retention.*` rather than literals; the untouched
+`archive_retention_days = 0` and `events.retention_days = 90`; `retention_warnings`
+and its three tests; and both policy-table entries.
+
+**Two things left. The first is not what bug-09-2 says it is.**
+
+---
+
+**Bug-09-2 — the flake. Read this carefully; the bug report's suggested fix makes
+it WORSE.**
+
+bug-09-2 proposes adding `test_home_guard()` to
+`every_policy_entry_corresponds_to_a_real_path`. **The architect tried exactly
+that: the suite went from 3-of-8 failing to 8-of-8 failing.** Do not do it alone.
+
+The real root cause is that `HOME` is left **poisoned**, and that test is merely
+the most frequent victim:
+
+- Your five new tests in `src/daemon/utils/mod.rs` each do
+  `unsafe { std::env::set_var("HOME", tmp.path()) }` and **never restore it**.
+  When the `TempDir` drops, `HOME` points at a deleted directory.
+- Phase 07's two tests end with `std::env::set_var("HOME", "")` — also not a
+  restore.
+- `every_policy_entry_corresponds_to_a_real_path` takes **no guard** and reads
+  ambient `HOME` via `config_dir()`. It passes when it happens to run while some
+  other test's seeded tree is installed, and fails otherwise. Adding the guard
+  removes the luck and it then fails *every* time.
+
+There is a second victim too: with only the guard added, the architect saw
+`config::path_audit::tests::inventory_contains_all_config_constructors` (phase
+02's) start flaking for the same reason.
+
+**The fix is two-part, and the architect verified it takes the suite to 0 failures
+in 12 consecutive `cargo test --lib` runs:**
+
+**(a) Stop poisoning `HOME`.** In each of the five sweep tests in
+`src/daemon/utils/mod.rs`, capture the old value and restore it at the end:
+
+```rust
+let old_home = std::env::var("HOME").ok();
+unsafe { std::env::set_var("HOME", tmp.path()) };
+// … test body …
+
+// Restore HOME so ambient readers in other tests are not poisoned.
+match old_home {
+    Some(v) => unsafe { std::env::set_var("HOME", v) },
+    None => unsafe { std::env::remove_var("HOME") },
+}
+```
+
+**(b) Make Direction B hermetic instead of ambient.** Reading the operator's real
+`~/.daemoneye/` is a §3.3 hermeticity violation on its own — it passes only
+because that tree happens to exist on this machine. Give it the guard **and its
+own seeded HOME**, mirroring Direction A:
+
+```rust
+fn every_policy_entry_corresponds_to_a_real_path() {
+    // Hermetic by construction: seed our own throwaway HOME rather than reading
+    // whatever the ambient one happens to contain.
+    let _guard = test_home_guard();
+    let tmp_home =
+        std::env::temp_dir().join(format!("de_lifecycle_dirb_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp_home).ok();
+    let old_home = std::env::var("HOME").ok();
+    unsafe { std::env::set_var("HOME", &tmp_home); }
+    Config::ensure_dirs().ok();
+    let base = crate::config::config_dir();
+    std::fs::create_dir_all(base.join("agents/test-agent/mailbox")).ok();
+    std::fs::create_dir_all(base.join("var/log/events")).ok();
+    std::fs::create_dir_all(base.join("var/sessions")).ok();
+
+    // … existing assertions, unchanged …
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+    let _ = std::fs::remove_dir_all(&tmp_home);
+}
+```
+
+Both edits are newly authorized in the Authorizations section above.
+
+---
+
+**Bug-09-1 — the End-to-end verification entry.**
+
+Missing entirely; the Update Log has only a "(started)" note and the
+server-authored "(complete)" gate-tail block. **That block is the standard gate
+capture every phase receives automatically and does not satisfy `STANDARDS.md`
+§1** — this is the 7th time on this milestone.
+
+Run exactly this and paste the file contents into a new entry titled
+`### Update — <date> (end-to-end verification)`:
+
+```sh
+# Both cutoffs disabled → the deletion tests must go red.
+#   (edit each `if modified >= cutoff` to `if modified >= cutoff || true`)
+cargo test --lib sweep -- --nocapture \
+  > /tmp/e2e-09-red.txt 2>&1; echo "exit=$?" >> /tmp/e2e-09-red.txt
+
+git checkout -- src/
+
+cargo test --lib sweep -- --nocapture \
+  > /tmp/e2e-09-green.txt 2>&1; echo "exit=$?" >> /tmp/e2e-09-green.txt
+
+# The flake is gone: twelve consecutive runs, all green.
+for i in $(seq 1 12); do cargo test --lib >/dev/null 2>&1 || echo "FAIL run $i"; done \
+  > /tmp/e2e-09-flake.txt 2>&1; echo "exit=$?" >> /tmp/e2e-09-flake.txt
+```
+
+Paste all three files' contents. `/tmp/e2e-09-flake.txt` should contain only the
+`exit=0` line — no `FAIL` lines. Also paste the warning string
+`retention_warnings` produces for `archive_retention_days = 0`.
+
+---
+
+**Finish condition.**
+
+- `cargo test --lib` run **12 times in a row, zero failures**. This is the
+  headline — a single green run does not demonstrate it.
+- `cargo test` totals unchanged: **979** lib, **30** integration (2 ignored),
+  **8** isolation (1 ignored). The fix adds no tests.
+- `git diff --name-only` should list `src/config/lifecycle.rs`,
+  `src/daemon/utils/mod.rs`, and this phase doc. Nothing else, and no production
+  (non-test) code.
+- All four gates green.
+
 
 ### Update — 2026-07-31 00:14 (started)
 
@@ -410,3 +565,17 @@ files for full detail. All other DoD checks passed independently re-run
 (format/build/clippy/test gates green in isolation; mutation checks on both
 sweeps' `0`-guards and cutoff comparisons confirmed real; blast radius,
 defaults, and no-hard-coding all verified).
+
+### Update — 2026-07-31 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** The production code is correct and mutation-verified, and the
+executor completed without stalling — this is a first assist on a well-scoped
+pair of fixes. The refinement carries a correction the bug report could not:
+bug-09-2's proposed fix (adding the guard to Direction B) was tried by the
+architect and took the suite from 3-of-8 failing to **8-of-8** failing, because
+the guard removes the luck that was masking a poisoned `HOME` rather than fixing
+it. The verified two-part fix — restore `HOME` in the five new tests, and make
+Direction B seed its own — takes twelve consecutive `cargo test --lib` runs to
+zero failures. Authorizations were widened to permit both edits.
