@@ -1,7 +1,7 @@
 # Phase 10: Pane-Preference Redesign
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -315,3 +315,138 @@ exit=0
 **Test count:** 989 lib (+10 new pane_prefs tests), 30 integration (2 ignored), 8 isolation (1 ignored). Delta: +10 unit tests for `matches()`, old-format tolerance, mutation-free `get()`, missing file, garbage JSON, and save/load roundtrip.
 
 **Grep for pinned literal:** `grep -r "PanePreference" src/pane_prefs.rs | head -1` → confirmed `PanePreference` struct present in the module.
+
+### Update — ts=1785465804443 (complete, server-authored)
+
+**Summary:** All gates are green. Here is the summary:
+
+**What was built:** Rewrote `src/pane_prefs.rs` to store a fingerprinted `PanePreference` (pane_id, window_name, current_path) instead of a bare pane ID. `get()` now queries live tmux data via `list_panes_detailed()` and only returns the stored pane when its window name and working directory still match the recorded fingerprint. The `matches()` function is the pure seam behind the safety property.
+
+**Deviations from spec:** None. All five spec tasks are addressed: fingerprinted preference, fingerprint-only acceptance, non-mutating `get()`, deliberate pruning on every `get()` call, and all four `save()` call sites work unchanged (fingerprint is fetched inside `save()` from `list_panes_detailed()`).
+
+**End-to-end verification:** Mutation check passed — breaking `matches()` to always return `true` caused 3 fingerprint-rejection tests to fail (exit=101); restoring the real comparison made all 10 tests pass (exit=0). Flake check: 12 consecutive runs clean. Total test count: 989 lib (+10 new), 30 integration (2 ignored), 8 isolation (1 ignored).
+
+**Notes for review:** The `resolve_target_pane` function in `cli/commands/pane.rs` still calls `pane_exists(&saved)` after `get()` returns — this is now redundant since `get()` already verified the pane exists, but it does no harm and the spec says not to change the fallback behavior.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.03s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+TEST
+earch::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test session_store::tests::artifacts_round_trip ... ok
+test session_store::tests::backfill_idempotent ... ok
+test session_store::tests::backfill_missing_artifact_returns_error_name ... ok
+test session_store::tests::backfill_stamps_memory_without_frontmatter ... ok
+test session_store::tests::backfill_stamps_runbook ... ok
+test session_store::tests::backfill_stamps_script ... ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+
+test result: ok. 989 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.27s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test event_log_append_read ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_masking_applied ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-652de6e8e49133dd)
+     Running tests/integration.rs (target/debug/deps/integration-2a7b50e73e835fce)
+     Running tests/isolation.rs (target/debug/deps/isolation-e1235ad2e8c74fcd)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M6-verification-and-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M6-verification-and-hygiene/phase-10-pane-prefs-redesign.md` — +53 -1
+- `src/pane_prefs.rs` — +299 -14
+
+**Commit:** b68769f5ea4071acf67ca987aed59606568d16b0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
