@@ -1,7 +1,7 @@
 # Phase 01: Dependency Currency
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~15 lines in `Cargo.toml` (plus a regenerated `Cargo.lock`)
 **Tags:** language=rust, kind=refactor, size=s
@@ -433,3 +433,44 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0e7722bd243d272991a51c90e9e78b3fbe2c7dca
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (via rexyMCP, 51 turns)
+- **Scope deviations:** none
+- **Calibration:** one architect-side spec defect, recorded not folded (first
+  occurrence). Acceptance criterion 8 read "`git diff --stat` lists only
+  `Cargo.toml` and `Cargo.lock`" — **impossible as written**, because the
+  executor must also edit the phase doc's Update Log and the README's status
+  row, so the diff necessarily lists four files. Per STANDARDS §7 an
+  impossible criterion is an always-blocker, and the executor should have
+  filed one; instead it pasted the honest four-file output and moved on. The
+  paste was correct and the substance of the criterion — *no `.rs` file is
+  modified* — was independently verified true. Fix in future specs: pin the
+  property (`git diff --name-only | grep '\.rs$'` is empty), never the whole
+  `--stat` file list, whenever the executor must also write bookkeeping.
+
+**Independent verification (reviewer, not the executor's run).** The executor's
+own gate output showed `Finished ... in 0.07s` for build and lint — cached
+no-ops — and the LSP was reporting `E0464: multiple candidates for rmeta
+dependency toml` from `target/` holding both the 0.8 and 1.1 artifacts. Since a
+stale incremental tree is exactly what could hide a breakage in a dependency
+bump, the review re-ran every gate after `cargo clean` (20,795 files, 20.8 GiB
+removed), from a cold build:
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all --check` | exit 0 |
+| `cargo build` (cold) | exit 0, **zero warnings** |
+| `cargo clippy --all-targets --all-features -- -D warnings` | exit 0 |
+| `cargo test` | 991 / 30 (2 ignored) / 8 (1 ignored) — matches the M6 baseline exactly |
+| `cargo update --dry-run` | no `Updating` lines remain |
+
+The `E0464` was therefore a stale-cache artifact, not a defect. `libc` resolves
+to `0.2.189` — the pre-release was correctly refused. All six precise-pinned
+minimums kept their `features` / `default-features` settings, and the `ratatui`
+comment block is byte-identical; the only comment added is the `libc` pin-back.
+No `.rs` file changed, so the DoD's `unwrap`/`expect`/`panic!`/`unsafe`/`#[allow]`
+boxes are satisfied by construction.
