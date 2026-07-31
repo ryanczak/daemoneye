@@ -272,6 +272,113 @@ No new dependencies. No changes to `docs/architecture.md`.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-07-31 (refined re-dispatch after bounce 2)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green, the tree is clean, and the restructure you shipped is
+CORRECT and ACCEPTED.** bug-10-1 is **verified closed**: `get()` no longer writes,
+the old `prune()` is deleted, pruning moved into `save()`, and the pure
+`LivePane` / `prune_map` / `get_from` seams landed exactly as specified. The
+reviewer confirmed all of it, plus twelve clean `cargo test --lib` runs.
+
+**Do not touch production code.** `matches()`, the fingerprint gate, `get()`,
+`get_from()`, `prune_map()`, `save()`, `load_all()`, the doc comment — all frozen.
+**This round changes one test and adds one Update Log entry. Nothing else.**
+
+---
+
+**Bug-10-2(a) — the non-mutation test asserts more than it checks.**
+
+`get_does_not_mutate_stored_map` snapshots the file, calls `get_from`, snapshots
+again, and asserts equality with the message *"get_from must not modify the
+on-disk file"*. Content-equality at one instant does not prove no write happened.
+Both the dispatch agent and the reviewer confirmed the gap: inserting an
+unconditional `save_all(prefs)` into `get_from` — a byte-identical write-back —
+leaves the test **passing**.
+
+That matters concretely. An identical-content write is still an unsynchronised
+write: `get()` reads at T0, a CLI `save()` lands at T1, and a regressed `get()`
+writes its stale T0 snapshot at T2 — clobbering the save with bytes that were
+"identical to what it read".
+
+**The architect implemented and verified the fix.** Capture the file's mtime
+either side of the call and assert it too:
+
+```rust
+let before = std::fs::read_to_string(prefs_path()).unwrap();
+let mtime_before = std::fs::metadata(prefs_path()).unwrap().modified().unwrap();
+
+let result = get_from(&prefs, "my-session", &panes);
+assert_eq!(result.as_deref(), Some("%3"));
+
+let after = std::fs::read_to_string(prefs_path()).unwrap();
+let mtime_after = std::fs::metadata(prefs_path()).unwrap().modified().unwrap();
+
+assert_eq!(before, after, "get_from must not modify the on-disk file");
+assert_eq!(
+    mtime_before, mtime_after,
+    "get_from must not write at all — mtime moved, so the file was \
+     rewritten even though its bytes are unchanged"
+);
+```
+
+Verified by the architect: the baseline passes, **repro A now fails** (inserting
+`save_all(prefs)` into `get_from` trips the mtime assertion), and ten consecutive
+`cargo test --lib` runs stay clean — so the mtime comparison is not itself flaky
+at this filesystem's resolution.
+
+---
+
+**Bug-10-2(b) — the required mutation capture is still missing.**
+
+The bounce-1 notes required: *"Mutation-check the new test: make `get_from` write
+to the file … confirm the non-mutation assertion fails, revert, confirm it
+passes."* Your `(end-to-end verification)` entry carries only the older
+`matches()` fingerprint mutation and the flake block — not this one. Both the
+dispatch agent and the reviewer ran it for you and it passes; what is missing is
+**your** captured evidence, which `STANDARDS.md` §1 requires and which this
+milestone has now bounced on eight times.
+
+Run exactly this, against the **strengthened** test from (a):
+
+```sh
+# REPRO A — an unconditional byte-identical write inside get_from.
+#   Insert `save_all(prefs);` as the first statement of `get_from`.
+cargo test --lib pane_prefs -- --nocapture \
+  > /tmp/e2e-10b-red.txt 2>&1; echo "exit=$?" >> /tmp/e2e-10b-red.txt
+
+git checkout -- src/pane_prefs.rs
+#   …then re-apply ONLY your mtime change from (a) before the green run.
+
+cargo test --lib pane_prefs -- --nocapture \
+  > /tmp/e2e-10b-green.txt 2>&1; echo "exit=$?" >> /tmp/e2e-10b-green.txt
+
+for i in $(seq 1 12); do cargo test --lib >/dev/null 2>&1 || echo "FAIL run $i"; done \
+  > /tmp/e2e-10b-flake.txt 2>&1; echo "exit=$?" >> /tmp/e2e-10b-flake.txt
+```
+
+Append a **new** entry titled `### Update — <date> (end-to-end verification —
+non-mutation mutation check)` with all three file contents pasted. The RED block
+must show `get_does_not_mutate_stored_map` **failing on the mtime assertion**
+(`exit=101`), not on the content one — that distinction is the whole point of
+this round. The flake file must contain only `exit=0`.
+
+The server-authored `(complete)` entry's "Command output tails" block does **not**
+satisfy this.
+
+---
+
+**Finish condition.**
+
+- `cargo test` totals **unchanged**: 989 lib, 30 integration (2 ignored),
+  8 isolation (1 ignored). This round adds no tests.
+- `git diff --name-only` must list **exactly two** paths: `src/pane_prefs.rs`
+  and this phase doc. Any other file, and especially any change to production
+  functions, is a scope violation.
+- All four gates green, and twelve consecutive `cargo test --lib` runs clean.
+
+
 ### Notes for executor — 2026-07-31 (refined re-dispatch after bounce 1)
 
 **READ THIS BEFORE ANYTHING ELSE.**
@@ -961,3 +1068,16 @@ evidence of `git add -A` — the work commit (`84f5494`) touches exactly
 **Bounced — see `bugs/bug-10-2.md` (major).** bug-10-1 is verified fixed (see
 its Status line) — this bounce is for a new, distinct gap discovered in round
 2's own deliverable, not a reopening of round 1's defect.
+
+### Update — 2026-07-31 (escalation, bounce 2)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** Assist 2 of 3, on a phase whose production code is now verified
+correct and whose remaining work is one test assertion plus its captured proof.
+The architect verified the mtime fix before specifying it — baseline green, repro
+A (byte-identical write-back) now caught, and ten consecutive runs clean, which
+also rules out the obvious risk that mtime resolution would make the stronger
+assertion flaky. Takeover was rejected: the change is two lines in a test, the
+executor has completed both prior rounds without stalling, and the only genuinely
+missing artefact is evidence it must produce itself.
