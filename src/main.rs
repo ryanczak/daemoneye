@@ -14,7 +14,7 @@ struct Cli {
 enum Commands {
     /// Start the background daemon
     Daemon {
-        /// Redirect daemon output to FILE instead of stdout (default: ~/.daemoneye/daemon.log)
+        /// Redirect daemon output to FILE instead of stdout (default: ~/.daemoneye/var/log/daemon.log)
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
         /// Log to the console instead of a file (useful for troubleshooting)
@@ -27,7 +27,7 @@ enum Commands {
     },
     /// Tail the daemon log
     Logs {
-        /// Log file to tail (default: ~/.daemoneye/daemon.log)
+        /// Log file to tail (default: ~/.daemoneye/var/log/daemon.log)
         #[arg(long, value_name = "FILE")]
         log_file: Option<PathBuf>,
     },

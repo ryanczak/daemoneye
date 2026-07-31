@@ -166,7 +166,7 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         note: "knowledge and session memories — user content",
         lazy: false,
     },
-    // ── Binaries and shared modules ───────────────────────────────────────────
+    // ── Binaries ──────────────────────────────────────────────────────────────
     LifecycleEntry {
         path: "bin",
         intent: LifecycleIntent::KeepForever,
@@ -175,15 +175,6 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         note: "symlinks/wrappers for compiled agent and scripts",
         lazy: false,
     },
-    LifecycleEntry {
-        path: "lib",
-        intent: LifecycleIntent::KeepForever,
-        config_key: None,
-        implemented: ImplementationStatus::Implemented,
-        note: "shared SDK modules; defect-8 decides whether this lives",
-        lazy: false,
-    },
-    // ── Agents ────────────────────────────────────────────────────────────────
     LifecycleEntry {
         path: "agents",
         intent: LifecycleIntent::KeepForever,
@@ -446,6 +437,67 @@ mod tests {
             uncovered2.is_empty(),
             "after removing rogue dir, unexpected uncovered: {:?}",
             uncovered2
+        );
+
+        unsafe {
+            std::env::set_var("HOME", "");
+        }
+        let _ = std::fs::remove_dir_all(&tmp_home);
+    }
+
+    // ── Direction C: every non-lazy policy entry is created by ensure_dirs ────
+
+    /// Assert that every non-lazy (eager) policy entry names a directory that
+    /// `Config::ensure_dirs()` actually creates. This is the reverse of
+    /// Direction A: Direction A catches directories without policy entries;
+    /// this catches policy entries for directories that are never created.
+    ///
+    /// Adding `lib`-shaped drift back in should fail this test.
+    #[test]
+    fn every_eager_policy_entry_is_created_by_ensure_dirs() {
+        let _guard = test_home_guard();
+        let tmp_home =
+            std::env::temp_dir().join(format!("de_lifecycle_eager_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp_home).ok();
+        unsafe {
+            std::env::set_var("HOME", &tmp_home);
+        }
+
+        Config::ensure_dirs().ok();
+
+        let base = crate::config::config_dir();
+        let existing = collect_existing_dirs(&base);
+
+        let eager = eager_entries();
+        let mut missing = Vec::new();
+        for entry in eager {
+            let path = entry.path;
+            // Skip file entries (like daemon.log) — ensure_dirs creates
+            // directories, not files. We check that the parent directory
+            // exists for file entries.
+            if path.contains('.') {
+                // This is a file path; check the parent directory exists
+                let parent = path.rsplit_once('/').map(|(p, _)| p).unwrap_or(path);
+                if !existing.iter().any(|d| d == parent) {
+                    missing.push(format!("{path} (parent '{parent}' not created)"));
+                }
+            } else if path.contains('*') {
+                // Wildcard: check the normalised prefix directory exists
+                let prefix = normalise_table_path(path);
+                if !existing.iter().any(|d| d == &prefix) {
+                    missing.push(format!("{path} (prefix '{prefix}' not created)"));
+                }
+            } else {
+                // Directory: must exist exactly
+                if !existing.iter().any(|d| d == path) {
+                    missing.push(path.to_string());
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "eager policy entries not created by ensure_dirs():\n  {}",
+            missing.join("\n  ")
         );
 
         unsafe {

@@ -41,11 +41,6 @@ pub fn bin_dir() -> PathBuf {
     config_dir().join("bin")
 }
 
-/// `~/.daemoneye/lib/` — shared SDK modules (de_sdk, Python helpers, etc.).
-pub fn lib_dir() -> PathBuf {
-    config_dir().join("lib")
-}
-
 /// Default path for the daemon log file: `~/.daemoneye/var/log/daemon.log`.
 pub fn default_log_path() -> PathBuf {
     var_log_dir().join("daemon.log")

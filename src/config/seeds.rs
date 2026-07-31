@@ -15,7 +15,6 @@ impl Config {
         std::fs::create_dir_all(pipe_log_dir())?;
         std::fs::create_dir_all(pane_logs_dir())?;
         std::fs::create_dir_all(bin_dir())?;
-        std::fs::create_dir_all(lib_dir())?;
         // Daemon-managed persistent data
         let pd = prompts_dir();
         std::fs::create_dir_all(&pd)?;

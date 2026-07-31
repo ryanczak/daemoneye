@@ -46,10 +46,6 @@ pub fn run_setup(
         dir.display()
     );
     println!(
-        "  {}/lib/                   ← shared SDK modules (de_sdk, Python helpers)",
-        dir.display()
-    );
-    println!(
         "  {}/scripts/               ← automation scripts",
         dir.display()
     );

@@ -1,7 +1,7 @@
 # Phase 11: Runtime-Tree Hygiene
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (done), phase-07 (done), phase-10 (done)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -214,3 +214,7 @@ No new dependencies. No changes to `docs/architecture.md` — that is phase 12.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 03:50 (progress)
+
+Executor: rexyMCP. Removing `lib/` from all four code locations (seeds, load, path_audit, lifecycle), the knowledge asset, fixing CLI help strings, adding `.gitignore` entry, and adding the tree-consistency gate test.

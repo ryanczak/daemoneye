@@ -27,7 +27,6 @@ automation, configuration, and logs live under it.
         <job_id>.json        ← mailbox result written by child ghost on exit
 
   bin/                       ← place symlinks / wrappers here (on PATH for systemd service)
-  lib/                       ← shared SDK modules (de_sdk, Python helpers)
 
   scripts/                   ← executable automation (.sh / .py, chmod 700)
   runbooks/                  ← procedure runbooks (markdown + YAML frontmatter)

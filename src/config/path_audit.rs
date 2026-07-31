@@ -119,11 +119,6 @@ pub static INVENTORY: &[InventoryEntry] = &[
         source: "config::bin_dir()",
     },
     InventoryEntry {
-        path: "lib",
-        status: PathStatus::Current,
-        source: "config::lib_dir()",
-    },
-    InventoryEntry {
         path: "memory",
         status: PathStatus::Current,
         source: "memory::memory_dir_for_namespace(\"global\", …)",
@@ -186,7 +181,6 @@ const PATH_PREFIXES: &[&str] = &[
     "etc/",
     "var/",
     "bin/",
-    "lib/",
     "memory/",
     "runbooks/",
     "scripts/",
@@ -404,7 +398,6 @@ mod tests {
             "runbooks/",
             "scripts/",
             "bin/",
-            "lib/",
             "var/run/",
             "var/log/pipe/",
         ];
@@ -511,7 +504,6 @@ mod tests {
             crate::config::pipe_log_dir,
             crate::config::pane_logs_dir,
             crate::config::bin_dir,
-            crate::config::lib_dir,
             crate::config::default_log_path,
             crate::config::default_socket_path,
             crate::config::default_pid_path,
