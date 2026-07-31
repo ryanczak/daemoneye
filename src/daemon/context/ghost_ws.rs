@@ -111,7 +111,7 @@ mod tests {
     /// fresh tempdir, and restores the original `HOME` on drop.
     struct TestHome {
         _tmp: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::TestHomeGuard,
         saved_home: Option<String>,
     }
 

@@ -1139,7 +1139,7 @@ mod tests {
     /// not leaked into subsequent tests.
     struct TestHome {
         tmp: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::TestHomeGuard,
         saved_home: Option<String>,
     }
 

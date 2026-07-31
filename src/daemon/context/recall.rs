@@ -250,7 +250,7 @@ mod tests {
     /// one (`let _home = TestHome::new();`).
     struct TestHome {
         _tmp: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::TestHomeGuard,
         saved: Option<String>,
     }
 

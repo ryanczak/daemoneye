@@ -1095,7 +1095,7 @@ mod tests {
 
     struct TestHome {
         _tmp: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::TestHomeGuard,
         saved: Option<String>,
     }
 

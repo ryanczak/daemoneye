@@ -14,16 +14,19 @@ Notes section:
 **Five calibration items, none applied.** The retrospective carries the full
 evidence; in short:
 
-1. **Fold: the E2E block must be a distinct executor-authored Update Log entry,
-   and the server-authored gate tails never satisfy it.** Ten of M6's fourteen
-   bounces and two of its four takeovers were this one cause. The wording worked
-   inline in phases 05 and 07 but was never folded into `STANDARDS.md` /
-   `WORKFLOW.md`. Highest-value change available.
-2. **Fold: phase specs supply E2E commands as runnable blocks, never prose.**
-   Same evidence base — literal blocks succeeded every time, prose failed.
-3. **A cleanup phase for the ~25 test files that set `HOME` without restoring
-   it.** Caused a flake twice in M6 (3-in-8, then 1-in-14). Worth scheduling
-   before any milestone that adds HOME-touching tests.
+1. ~~Fold: the E2E block must be a distinct executor-authored Update Log entry~~
+   — **APPLIED 2026-07-31 on PE sign-off.** Landed in `STANDARDS.md` §1 (new DoD
+   box) and `WORKFLOW.md` § "End-to-end verification", with the attribution note.
+2. ~~Fold: phase specs supply E2E commands as runnable blocks, never prose~~ —
+   **APPLIED 2026-07-31**, folded into the same `WORKFLOW.md` section as an
+   architect-facing paragraph, since the two share one evidence base.
+3. ~~A cleanup phase for the ~25 test files that set `HOME` without restoring~~
+   — **DONE 2026-07-31.** Fixed at the root instead of across 27 files:
+   `test_home_guard()` now returns an RAII `TestHomeGuard` that snapshots `HOME`
+   on acquisition and restores it on drop, before releasing the mutex. Every one
+   of the ~109 `set_var("HOME", …)` sites is covered without editing any of
+   them, because all 27 files already took the guard. 20 consecutive
+   `cargo test --lib` runs clean.
 4. **`CLAUDE.md` over-describes `src/memory/index.rs`** as a full FTS5 index; it
    is an eight-line stub. Developer-facing, so no gate covers it.
 5. **Whether the path-audit extractor should learn about fenced blocks.** Three

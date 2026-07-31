@@ -40,6 +40,14 @@ the phase's Update Log — never silently mark a phase done.
       that is retyped, paraphrased, summarised into prose, or assembled from more
       than one run fails this box **even when every claim in it is true**. The
       deliverable is the evidence, not the conclusion.
+- [ ] The end-to-end evidence lives in its **own Update Log entry, authored by
+      whoever ran the phase** — titled `### Update — <date> (end-to-end
+      verification)`. **The server-authored `(complete)` entry does not satisfy
+      this box.** Its "Command output tails" block is the standard gate capture
+      every phase receives automatically; it shows `build`/`lint`/`test` ran, not
+      that the phase's acceptance criteria were exercised against real artifacts.
+      A phase whose only new Update Log content is that block has not met this
+      requirement, however accurate its completion summary reads.
 - [ ] `cargo build` succeeds with **zero new warnings**.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes.
 - [ ] `cargo fmt --all` passes.

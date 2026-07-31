@@ -284,7 +284,7 @@ mod tests {
     /// runtime (`#[tokio::test]` is single-threaded, so the !Send guard is ok).
     struct TestHome {
         _tmp: tempfile::TempDir,
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _lock: crate::TestHomeGuard,
         saved: Option<String>,
     }
 

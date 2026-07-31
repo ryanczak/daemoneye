@@ -203,7 +203,7 @@ mod tests {
     use std::collections::HashMap;
     use std::fs;
 
-    fn setup_test_home() -> (tempfile::TempDir, std::sync::MutexGuard<'static, ()>) {
+    fn setup_test_home() -> (tempfile::TempDir, crate::TestHomeGuard) {
         let _lock = test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {

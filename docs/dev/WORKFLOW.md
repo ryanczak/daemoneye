@@ -192,6 +192,34 @@ memory, summarise the results into prose, or copy lines out of the phase doc or 
 previous Update Log entry — those are the four ways an untrue line gets into an
 otherwise-real transcript. See § "A pasted transcript is a claim, not evidence."
 
+**Put it in its own entry, and know what does not count.** The evidence goes in
+an Update Log entry you author, titled `### Update — <date> (end-to-end
+verification)`. **The server-authored `(complete)` entry never satisfies this.**
+It carries a "Command output tails" block showing the gate commands' output —
+which looks like captured evidence and is not: every phase gets it
+automatically, and it proves the gates ran, not that the phase's acceptance
+criteria were exercised against real artifacts. If the only new content in the
+Update Log is that block, the requirement is unmet no matter how accurately the
+completion summary describes what was run.
+
+**For the architect: give the commands as a runnable block, never as prose.**
+Write the exact shell the executor should run — redirect included, `exit=$?`
+marker included — rather than describing what to verify. Where a result's success
+case produces *no output* (a grep that finds nothing, a diff over identical
+inputs), the exit marker is the whole proof; an empty block on its own
+demonstrates nothing.
+
+*(Folded 2026-07-31 after M6, on PE sign-off. Ten of that milestone's fourteen
+bounces and two of its four architect takeovers were this single requirement —
+more than every other cause combined. It was never a capability problem: in each
+case the executor had run the commands and its narrative claims held up when
+checked independently. Two things separated the runs that produced the artefact
+from the ones that did not, consistently: whether the spec gave a literal
+copy-pasteable block or prose, and whether it said in as many words that the
+server-authored `(complete)` block does not count. Both were used inline in M6
+phases 05 and 07 and worked immediately both times; omitting either failed in
+phases 03, 04, 09, 11 and 12.)*
+
 If the phase ships **no** runtime-loadable real artifact (a pure internal
 refactor, a new private type, a test-only helper), write:
 
