@@ -109,7 +109,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 08 | [daemon-log-rotation](phase-08-daemon-log-rotation.md) — bound the 25.8 MB unrotated log under the 07 policy | done |
 | 09 | [pane-and-archive-retention](phase-09-pane-and-archive-retention.md) — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days`; **must add operator-tunable config keys** for panes + mailbox retention (PE decision 2026-07-30) | done |
 | 10 | [pane-prefs-redesign](phase-10-pane-prefs-redesign.md) — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | done                          |
-| 11 | runtime-tree-hygiene — orphan removal, the `lib/` decision, doc-comment corrections | todo |
+| 11 | [runtime-tree-hygiene](phase-11-runtime-tree-hygiene.md) — orphan removal, the `lib/` decision, doc-comment corrections | todo |
 | 12 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
 
 Phases beyond 06 may be re-split or dropped once 01–06 land; the inventory below is
@@ -316,6 +316,15 @@ keying on pane index (trades one unstable identity for another), and scoping to 
 tmux-server generation (a new concept for a problem the fingerprint already
 solves). **Open to PE override at close** — the fallback is the scope reduction,
 which is strictly less work, so nothing is wasted either way.
+
+**Architect decision 2026-07-31 — defect 8, `lib/`: drop it.** Phase 11's own
+policy note said "defect-8 decides whether this lives". Decided: `lib/` is
+created on every install, has been empty since its creation date (26 March) in
+the only live tree available, and documents a feature (`de_sdk`, Python helpers)
+with no code anywhere in the repository. Phase 11 stops creating it and removes
+it from the path-audit inventory, the lifecycle table and the knowledge-memory
+asset. **It does not delete it from anyone's disk** — ceasing to create it is the
+change; an existing empty directory is inert. Open to PE override at close.
 
 **05 before 06.** The gate fix is small and fully understood; the E2E scenario is
 the thing that proves it *and* opens the unexplored ground behind it. Doing 06 first

@@ -1,62 +1,69 @@
 # NEXT
 
-**Active phase: 10 — pane-prefs-redesign.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-10-pane-prefs-redesign.md`
+**Active phase: 11 — runtime-tree-hygiene.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-11-runtime-tree-hygiene.md`
 Status: `todo` — drafted 2026-07-31, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-10`.
+Dispatch with `/rexymcp:dispatch phase-11`.
 
-## What phase 10 does
+## What phase 11 does
 
-Stops the pane preference silently targeting a pane the user never picked. The
-mapping is `session_name → pane_id` and **both sides are unstable identities** —
-after a tmux server restart `%0` almost certainly exists and is something else,
-so the stored preference validates and the agent runs a foreground command in the
-wrong pane with no prompt.
+Makes `~/.daemoneye/` contain nothing the code does not deliberately produce, and
+nothing the docs describe that the code does not create. Three concrete items plus
+a gate:
 
-## The mechanism decision was made by the architect, not left open
+1. **`lib/` — decided: drop it.** Created on every install, empty since 26 March
+   in the only live tree available, documenting `de_sdk`/Python helpers that exist
+   nowhere in the repo. The phase removes it from `ensure_dirs()`, the path-audit
+   inventory, the lifecycle table and the knowledge-memory asset.
+2. **The CLI help strings** at `src/main.rs:17` and `:30` still name
+   `~/.daemoneye/daemon.log`; the real path is `var/log/daemon.log`. Same drift
+   class phase 03 fixed in the assets — but the phase-02 gate only audits assets,
+   so CLI help was never covered.
+3. **`.gitignore` gets a `.daemoneye/` entry.** During phase 04 a full 168 KB
+   seeded tree appeared untracked in the repo root and had to be moved out before
+   a `git add -A` swept it in. Two reviews recommended this; both correctly
+   declined as out of scope.
 
-The exit criterion says the mechanism is the phase's to choose. Given four
-`NoProgressStall` hard-fails on this milestone — every one on open-ended
-integration work — leaving a design decision open invites a fifth. So the phase
-ships determinate: **fingerprint validation + pruning**, with the rationale and
-the rejected alternatives recorded in both the phase doc and the milestone README.
+Plus the durable part: a test asserting the directories `ensure_dirs()` creates
+are exactly the set the policy table documents — Direction A already covers "no
+directory without an entry"; the missing half is "no non-lazy entry without a
+directory", which is precisely `lib`-shaped drift.
 
-**Open to your override at close.** The fallback is the scope reduction ("ask once
-per daemon run"), which is strictly less work than what is specified, so nothing
-is wasted if you prefer it.
+## The interlock worth watching
 
-## Three defects the phase fixes, all verified in the tree
+Removing `lib` from the path-audit inventory makes any surviving `lib/` mention
+in an audited asset an `Unknown` finding, turning the phase-02 gate red. So a
+partial job fails loudly rather than silently — the gates built earlier in this
+milestone now enforce this phase's completeness.
 
-1. **`pane_exists()` is not identity.** It proves *a* pane holds that ID, not that
-   it is the pane the user chose.
-2. **`get()` is implemented as `all.remove(session_name)`** — non-destructive only
-   because the mutated map is never written back. One refactor from silently
-   deleting every preference on read.
-3. **Nothing prunes.** The live file still holds `de-phase01`, a long-dead
-   rexyMCP session, and keys like `"0"`/`"1"`/`"2"` are tmux's default numeric
-   session names, reused constantly — a preference stored for `"0"` is offered to
-   any future session named `"0"`.
+## Two things left for you deliberately
 
-The phase also fixes `pane_prefs.rs`'s doc comment, which names
-`~/.daemoneye/pane_prefs.json` while `prefs_path()` returns `var/run/`. That is
-milestone defect 10, nominally phase 11's, but phase 10 rewrites that exact
-comment — so it is folded in rather than having phase 11 reopen the file. The
-orphaned file on disk is still phase 11's to remove.
+- **`~/.daemoneye/pane_prefs.json`** (12 bytes, 25 June) is dead —
+  `pane_prefs::prefs_path()` returns `var/run/pane_prefs.json`. The phase does
+  **not** delete it, because it lives in your real tree and this milestone has
+  been careful about code that removes user data. Remove it when convenient:
+  `rm ~/.daemoneye/pane_prefs.json`
+- **`~/.daemoneye/lib/`** likewise stays on disk; the phase only stops creating
+  it. `rmdir ~/.daemoneye/lib` once you are satisfied.
 
 ## Where things stand
 
-- Phases 01–09 `done`. **09 closed `escalated`** — architect takeover after the
-  milestone's fourth `NoProgressStall`.
-- 979 lib + 30 integration (2 ignored) + 8 isolation (1 ignored); clippy clean;
-  `cargo test --lib` now clean across 12 consecutive runs (it was failing ~3 in 8
-  before the phase-09 takeover fixed `HOME` poisoning).
+- Phases 01–10 `done`. 10 closed `approved_after_2` after two bounces; its
+  non-mutation test now asserts mtime as well as content, so a byte-identical
+  write-back is caught.
+- 989 lib + 30 integration (2 ignored) + 8 isolation (1 ignored); clippy clean;
+  twelve consecutive `cargo test --lib` runs clean.
 - Working tree clean. No daemon running; no tmux server running.
-- Milestone README:
-  `docs/dev/milestones/M6-verification-and-hygiene/README.md`. Phases 11–12
-  named, not drafted.
+- **Only phase 12 remains after this** — `docs/architecture.md` § 5 still names
+  M4 as the active milestone.
 
 ## Carried forward for milestone close
+
+- **A spurious `boundary` activity row for phase-10** was journaled when a review
+  subagent was interrupted by accident. It is an activity record, not a verdict,
+  so it does not affect the scorecard — left in place rather than hand-editing the
+  telemetry store again.
 
 - **The stall pathology has shifted shape.** Phase 09's fourth
   `NoProgressStall` was a `sed -n 'N,N+10p'` paging crawl through a captured
