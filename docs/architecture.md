@@ -391,6 +391,18 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
+### Active milestone — M7 Memory Search & Maintenance
+
+Scoped 2026-07-31 (PE sign-off). Milestone README:
+`docs/dev/milestones/M7-memory-search-and-maintenance/README.md` (nine phases
+named, none drafted). Goal: make memory recall match what the user actually said,
+and drain M6's carried-forward maintenance list. The FTS5 note below is the
+milestone's headline item — it is accurate today and M7 exists to make it stale.
+Also in scope: dependency currency, the path-audit gate's blindness to fenced
+code blocks, a generated runtime-layout tree, a bug-tracker truth gate, and four
+test sleeps that predate STANDARDS 3.3. Adding a SQLite dependency is a PE
+decision gating the FTS5 phases; phases 01-05 do not depend on it.
+
 One correction recorded during M4 scoping: the FTS5 memory index described in
 §1.4 / "Knowledge system" is currently a **stub** (`src/memory/index.rs`
 returns empty; real search is the grep scan in `src/search.rs`). Un-stubbing
