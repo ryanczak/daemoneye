@@ -1,7 +1,7 @@
 # Phase 02: Bug-Tracker Truth
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-01 (dependency-currency, done)
 **Estimated diff:** ~200 lines (one new test file) + 5 one-line doc status edits
 **Tags:** language=rust, kind=test, size=m
@@ -431,3 +431,151 @@ test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; fini
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 exit=0
 ```
+
+### Update — ts=1785517325456 (complete, server-authored)
+
+**Summary:** All acceptance criteria verified:
+
+- `cargo test --test bug_tracker`: 6 passed (5 pure + 1 real-tree gate)
+- All five bug docs changed by exactly 1 line each (header Status line)
+- Independent shell scan: zero violations remain
+- No Cargo.toml or Cargo.lock touched
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean
+- `cargo fmt --all`: clean
+- `cargo test`: 991 lib tests + 6 new bug_tracker tests + 30 integration + 8 isolation = all passing
+- Working tree is clean; single conventional commit includes all changes
+
+**Summary + Notes for review:**
+
+Built `tests/bug_tracker.rs` — a repo-hygiene integration test with a pure `classify` function, a filesystem `scan` function, a `header_status` parser, and 6 tests (5 pure covering the parsing edge cases and classifier logic, 1 real-tree gate `repository_bug_tracker_is_consistent`). The gate initially caught the 5 expected violations, then passed after closing the five stale bug docs. No dependencies were added; all parsing uses plain `std` string operations. The test follows the repo's established seam idiom (pure classifier separate from scanner). One minor clippy fix was needed (`needless_borrows_for_generic_args` on `std::fs::read_dir`). The five bug docs were each edited by exactly one line — the header `**Status:**` changed from `open` to `closed` with the prescribed prose.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+
+
+TEST
+est session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test memory::tests::write_agent_invisible_to_global ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test test_home_guard_tests::guard_restores_home_on_drop ... ok
+
+test result: ok. 991 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.56s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test header_status_strips_trailing_prose ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test event_log_append_read ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1ad9304635fe6e0b)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e13fd526e8666cb6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-3a042278c054277a)
+     Running tests/integration.rs (target/debug/deps/integration-15c2cb829537d34b)
+     Running tests/isolation.rs (target/debug/deps/isolation-783d9644f0ac8667)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-01-1.md` — +1 -1
+- `docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-01-2.md` — +1 -1
+- `docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-02b-1.md` — +1 -1
+- `docs/dev/milestones/M2-tui-renderer/bugs/bug-phase-02b-2.md` — +1 -1
+- `docs/dev/milestones/M4-context-management/bugs/bug-09-1.md` — +1 -1
+- `docs/dev/milestones/M7-memory-search-and-maintenance/README.md` — +1 -1
+- `docs/dev/milestones/M7-memory-search-and-maintenance/phase-02-bug-tracker-truth.md` — +49 -1
+- `tests/bug_tracker.rs` — +297 -0
+
+**Commit:** 7be6208ab174e51791413c67a145ce40ce45da79
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
