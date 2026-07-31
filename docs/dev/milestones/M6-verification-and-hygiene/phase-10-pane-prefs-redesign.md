@@ -1,7 +1,7 @@
 # Phase 10: Pane-Preference Redesign
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -450,3 +450,61 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b68769f5ea4071acf67ca987aed59606568d16b0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-07-30 (bounced, bug-10-1)
+
+**Independent gate re-runs:** `cargo fmt --all -- --check` (exit 0),
+`cargo build` (exit 0, no warnings), `cargo clippy --all-targets
+--all-features -- -D warnings` (exit 0), `cargo test` (989 lib / 30
+integration [2 ignored] / 8 isolation [1 ignored], all passing). Matches the
+executor's reported counts exactly.
+
+**Mutation of `matches()` (independently re-run):** forcing `matches()` to
+always return `true` failed exactly the 3 fingerprint-rejection tests
+(`does_not_match_when_current_path_changed`, `does_not_match_when_window_name_changed`,
+`does_not_match_when_pane_id_changed`, `exit=101`); `git checkout --
+src/pane_prefs.rs` restored all 10 `pane_prefs` tests to green (`exit=0`).
+Output matches the pasted Update Log transcript. The core safety property —
+a recycled/changed pane is rejected — holds.
+
+**12-run flake check:** 12 consecutive `cargo test --lib` runs, all clean,
+zero failures.
+
+**HOME restoration:** all 6 tests that call `set_var("HOME", ...)` pair it
+with a restore in a `match old_home { ... }` block at the end of the test
+body; no un-restored `HOME` found.
+
+**`resolve_target_pane` fallback:** untouched by this phase's diff (`git
+show b68769f -- src/cli/commands/pane.rs` is empty) — the sibling/prompt
+fallback still runs whenever `get()` returns `None`. The redundant
+`pane_exists(&saved)` call after `get()` is harmless (a narrow TOCTOU
+window, not a fingerprint-gate bypass) since `get()` only returns a pane_id
+it just confirmed live via `list_panes_detailed()`.
+
+**Old-format tolerance:** verified by `load_all_tolerates_old_format` and by
+reading `load_all()` (`src/pane_prefs.rs:26-41`) — a `{session: "pane_id"}`
+file fails the new-format `HashMap<String, PanePreference>` parse, succeeds
+the old-format `HashMap<String, String>` parse, and returns an empty map.
+No panic path.
+
+**Bounced — see `bugs/bug-10-1.md` (major).** Adjudicating the architect's
+posed tension: the executor's choice to call `prune()` as the first
+statement of `get()` does not satisfy task 3's intent. Task 4 names three
+legitimate pruning triggers — "on load, on save, or on an explicit call" —
+and none of them is "inside the read accessor." Calling it there means
+every `get()` unconditionally performs a disk write via `prune()`'s
+`save_all()` (`src/pane_prefs.rs:43-48`, plain `fs::write`, no atomic
+rename, no lock). That is a real, not cosmetic, consequence: a concurrent
+daemon + CLI process racing a `get()`-triggered prune against a `save()` can
+silently drop the freshly-saved entry, which undermines the feature's other
+half (the user "is never asked to pick a pane more than once per session").
+Independently confirmed the `get_does_not_mutate_stored_map` test is
+vacuous in this review environment — instrumenting it showed
+`list_panes_detailed()` returns `Err` (no tmux server), so both `prune()`
+and `get()` short-circuit before any write is reachable, and the test would
+pass unchanged even if `get()` truly mutated on a machine with live tmux.
+This is not treated as a doc-only issue: the spec conflict is real, but the
+executor's resolution of it has a demonstrable correctness cost, so it is
+filed as a bug rather than a documentation fix. The stale doc-comment fix
+(defect 4, `var/run/pane_prefs.json`) is confirmed correct and not part of
+this bounce.
