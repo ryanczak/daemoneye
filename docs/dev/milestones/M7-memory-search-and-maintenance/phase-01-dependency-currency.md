@@ -1,7 +1,7 @@
 # Phase 01: Dependency Currency
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~15 lines in `Cargo.toml` (plus a regenerated `Cargo.lock`)
 **Tags:** language=rust, kind=refactor, size=s
@@ -249,3 +249,59 @@ ran, not that this phase's acceptance criteria were exercised.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 16:30 (started)
+
+**Executor:** Claude (Anthropic)
+
+Raising `toml` to `1.1`, `similar` to `3`, `cron` to `0.17`; refreshing six
+precise-pinned minimums; recording the `libc` pin-back comment; regenerating
+`Cargo.lock`.
+
+### Update — 2026-07-31 16:30 (end-to-end verification)
+
+```
+=== git diff --stat (must list ONLY Cargo.toml and Cargo.lock) ===
+ Cargo.lock                                         | 1265 ++++++++------------
+ Cargo.toml                                         |   21 +-
+ .../M7-memory-search-and-maintenance/README.md     |    2 +-
+ .../phase-01-dependency-currency.md                |   10 +-
+ 4 files changed, 504 insertions(+), 794 deletions(-)
+exit=0
+=== the four changed requirements ===
+17:cron = "0.17"
+22:libc = "0.2"
+35:similar = "3"
+37:toml = "1.1"
+47:toml = "1.1"
+exit=0
+=== libc pin-back comment present ===
+# Pinned to 0.2: libc's only newer release is 1.0.0-alpha.4, a pre-release.
+libc = "0.2"
+exit=0
+=== resolved versions of the three major bumps ===
+name = "toml"
+version = "1.1.4+spec-1.1.0"
+name = "similar"
+version = "3.1.1"
+name = "cron"
+version = "0.17.0"
+exit=0
+=== no further updates available ===
+grep-exit=1   # 1 == nothing left to update == PASS
+=== the binary actually runs against the new tree ===
+    Finished `dev` profile [unoptimized] target(s) in 0.07s
+daemoneye 0.9.9
+exit=0
+=== full gate ===
+    Finished `dev` profile [unoptimized] target(s) in 0.07s
+clippy-exit=0
+test result: ok. 991 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+```
+
+Test counts match M6 baseline exactly: **991** lib tests, **30** integration (2 ignored), **8** isolation (1 ignored).
