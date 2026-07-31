@@ -1,7 +1,7 @@
 # Phase 11: Runtime-Tree Hygiene
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (done), phase-07 (done), phase-10 (done)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -610,3 +610,125 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ff052bf4dbae95d6d3657a26960465083d307288
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-07-31 (architect takeover — end-to-end verification)
+
+**Lever:** session takeover, for the End-to-end capture only.
+
+**Why.** bug-11-1 recurred after a refined re-dispatch that supplied the four
+commands literally and stated in as many words that the server-authored
+"(complete)" block does not satisfy `STANDARDS.md` §1. The executor ran the
+commands both rounds — its completion summaries narrate the results accurately —
+and both rounds the output never reached the Update Log. Per `escalate`
+§ "Session takeover", one refinement was spent and the same class recurred.
+
+**Everything else in this phase is the executor's and is accepted**: the `lib`
+removal across seven sites, the CLI help-string corrections, the `.gitignore`
+entry, the Direction C gate, and the two-part `HOME` fix — all independently
+verified, with the flake measured gone at 0-in-16 by the dispatch agent and again
+here.
+
+**A defect in the architect's own E2E script, found while running it.** The phase
+doc said:
+
+```sh
+HOME=$H cargo run --quiet -- setup
+```
+
+That cannot work: `cargo` is resolved through rustup, whose toolchain config
+lives in `$HOME/.rustup`, so overriding `HOME` breaks cargo before it reaches the
+binary — `rustup could not choose a version of cargo to run`. The correct form
+builds first and then runs the built binary under the modified `HOME`:
+
+```sh
+cargo build --quiet
+HOME=$H ./target/debug/daemoneye setup
+```
+
+The transcripts below use the corrected form.
+
+**1. Mutation — a fake non-lazy policy entry for a directory `ensure_dirs()`
+never creates (`/tmp/e2e-11-red.txt`):**
+
+```
+
+failures:
+    config::lifecycle::tests::every_eager_policy_entry_is_created_by_ensure_dirs
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 982 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+```
+
+**2. Reverted (`/tmp/e2e-11-green.txt`):**
+
+```
+test config::lifecycle::tests::mutation_check_uncovered_directory_fails_gate ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 982 filtered out; finished in 0.00s
+
+exit=0
+```
+
+**3. Freshly seeded tree — note the absence of `lib` (`/tmp/e2e-11-tree.txt`):**
+
+```
+agents
+bin
+etc
+memory
+runbooks
+scripts
+var
+exit=0
+```
+
+**4. Flake loop, sixteen consecutive `cargo test --lib` runs. The loop echoes
+`FAIL run N` on any failure, so a file containing only the exit marker is the
+result (`/tmp/e2e-11-flake.txt`):**
+
+```
+exit=0
+```
+
+On the pre-fix commit this failed roughly 1 run in 14, always
+`config constructor produces '' but it is not in INVENTORY`.
+
+**Gates re-run by the architect, separately:**
+
+```
+cargo fmt --all -- --check                               → exit 0
+cargo build                                              → exit 0
+cargo clippy --all-targets --all-features -- -D warnings → exit 0
+cargo test                                               → exit 0
+  lib          990 passed
+  integration   30 passed; 2 ignored
+  isolation      8 passed; 1 ignored
+```
+
+**Operator tree untouched:** `ls -A ~/.daemoneye/` still lists both `lib` and
+`pane_prefs.json`. The phase stops *creating* `lib/`; removing the existing
+directory and the dead `pane_prefs.json` is the operator's call.
+
+### Review verdict — 2026-07-31 (takeover)
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-11-1, bug-11-2 — 11-2 fixed by the executor, 11-1 by
+  takeover)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 for all code in this phase, including the
+  two-part `HOME` fix; Claude (direct) for the end-to-end capture only.
+- **Scope deviations:** none. No production code changed in the re-dispatch
+  round; the wider ~25-file `HOME` drift was correctly left alone.
+- **Calibration:** the missing-E2E-capture class has now cost **ten** bounces on
+  this milestone and two takeovers. The first fold (`STANDARDS.md` §1 capture box
+  + `WORKFLOW.md` step 4) demonstrably works at *review* — it catches every
+  instance. What it does not do is get the artefact produced. Every phase where a
+  literal, copy-pasteable command block was supplied *and* the executor pasted
+  produced a clean capture; where it was described in prose, or where the
+  executor ran the commands but treated the server-authored "(complete)" block as
+  the deliverable, it did not. **Candidate fold for the milestone close:** require
+  the E2E block to be a distinct executor-authored Update Log entry and state that
+  the server-authored gate tails never satisfy it — this was tried inline in
+  phases 05 and 07 and worked both times, but has never been folded into the
+  contract. Not folded here; contract changes are a human gate.
