@@ -183,6 +183,7 @@ mod sweep_tests {
     fn sweep_archives_respects_active_and_zero() {
         let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
         let sessions_dir = crate::config::sessions_dir();
@@ -226,12 +227,19 @@ mod sweep_tests {
             sessions_dir.join("expired-sess.archive.jsonl").exists(),
             "retention_days=0 should be a no-op"
         );
+
+        // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     #[test]
     fn sweep_pane_logs_deletes_expired_keeps_recent() {
         let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
         let panes_dir = crate::config::pane_logs_dir();
@@ -251,12 +259,19 @@ mod sweep_tests {
         assert!(!old_log.exists(), "expired pane log should be deleted");
         assert!(recent_log.exists(), "recent pane log should survive");
         assert!(not_log.exists(), "non-.log files should be untouched");
+
+        // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     #[test]
     fn sweep_pane_logs_zero_is_noop() {
         let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
         let panes_dir = crate::config::pane_logs_dir();
@@ -269,12 +284,19 @@ mod sweep_tests {
         sweep_pane_logs(0);
 
         assert!(old_log.exists(), "retention_days=0 should be a no-op");
+
+        // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     #[test]
     fn sweep_agent_mailboxes_deletes_expired_keeps_recent() {
         let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
         let agents_dir = crate::agents::agents_dir();
@@ -301,12 +323,19 @@ mod sweep_tests {
         );
         assert!(recent_entry.exists(), "recent mailbox entry should survive");
         assert!(not_json.exists(), "non-.json files should be untouched");
+
+        // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 
     #[test]
     fn sweep_agent_mailboxes_zero_is_noop() {
         let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
         let agents_dir = crate::agents::agents_dir();
@@ -320,5 +349,11 @@ mod sweep_tests {
         sweep_agent_mailboxes(0);
 
         assert!(old_entry.exists(), "retention_days=0 should be a no-op");
+
+        // Restore HOME so ambient readers in other tests are not poisoned.
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 }

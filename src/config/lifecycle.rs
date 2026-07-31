@@ -342,10 +342,21 @@ mod tests {
 
     #[test]
     fn every_policy_entry_corresponds_to_a_real_path() {
-        // Every entry must correspond to a path the daemon actually creates
-        // or writes to. We verify by checking that the path is constructible
-        // from known config/agent helpers.
+        // Hermetic by construction: seed our own throwaway HOME rather than reading
+        // whatever the ambient one happens to contain.
+        let _guard = test_home_guard();
+        let tmp_home =
+            std::env::temp_dir().join(format!("de_lifecycle_dirb_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp_home).ok();
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &tmp_home);
+        }
+        Config::ensure_dirs().ok();
         let base = crate::config::config_dir();
+        std::fs::create_dir_all(base.join("agents/test-agent/mailbox")).ok();
+        std::fs::create_dir_all(base.join("var/log/events")).ok();
+        std::fs::create_dir_all(base.join("var/sessions")).ok();
 
         for entry in POLICY_TABLE {
             let path = entry.path;
@@ -374,6 +385,12 @@ mod tests {
                 "policy entry path '{path}' is not a valid relative path"
             );
         }
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+        let _ = std::fs::remove_dir_all(&tmp_home);
     }
 
     // ── Mutation check: gate fires on uncovered directory ─────────────────────

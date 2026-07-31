@@ -1,7 +1,7 @@
 # Phase 09: Pane and Archive Retention
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-07 (done), phase-08 (done)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -579,3 +579,120 @@ the guard removes the luck that was masking a poisoned `HOME` rather than fixing
 it. The verified two-part fix — restore `HOME` in the five new tests, and make
 Direction B seed its own — takes twelve consecutive `cargo test --lib` runs to
 zero failures. Authorizations were widened to permit both edits.
+
+### Update — 2026-07-31 (architect takeover)
+
+**Lever:** session takeover, after the **fourth** `NoProgressStall` on this
+milestone (phases 04, 06b, 08, 09).
+
+**Why not a third hand-back.** Assist 1 was a refined re-dispatch carrying both
+fixes as verified worked examples. The executor landed **half** of one of them,
+never ran a gate, and spent its final ~100 turns paging a captured file with
+repeated `sed -n 'N,N+10p'` calls — the verify-loop pathology, tripping the
+read-only governor rather than the identical-call governor because each `sed`
+range differed. Per `escalate` § "Session takeover": one refinement was spent and
+the same class recurred, and the architect had already written and verified the
+complete fix twice, so a third hand-back adds risk without producing a
+model-vs-spec data point.
+
+**What the executor had done, and what was kept:** part (b) of the fix —
+`every_policy_entry_corresponds_to_a_real_path` made hermetic with its own seeded
+`HOME` — landed correctly and was kept verbatim. All phase-09 production code
+(both sweeps, `RetentionConfig`, `retention_warnings`, the tick wiring) was
+already accepted at review and is untouched.
+
+**What the architect corrected:**
+
+1. **Reverted two unauthorized `lazy: false → true` flips** on the `agents` and
+   `agents/*/mailbox` policy entries. `lazy` is production data read by
+   `LifecycleEntry::active()`, and the `agents` entry was a *third* entry outside
+   phase 09's authorization. Neither flip was needed: the verified fix passes
+   twelve consecutive runs with `lazy` unchanged, so these were the executor's own
+   invention while chasing the flake.
+2. **Applied part (a), which never landed** — the five sweep tests in
+   `src/daemon/utils/mod.rs` set `HOME` and never restored it, leaving it pointing
+   at a dropped `TempDir` for every test that ran afterwards. Each now captures
+   `old_home` and restores (or removes) it at the end.
+
+**On bug-09-2's proposed fix.** The bug report suggested simply adding
+`test_home_guard()` to the racing test. The architect tried exactly that and the
+suite went from **3-of-8** failing to **8-of-8** — the guard removes the luck that
+was masking a poisoned `HOME` rather than fixing it, and a second victim
+(`config::path_audit::tests::inventory_contains_all_config_constructors`, phase
+02's) surfaced under it. Only the two-part fix actually holds.
+
+### Update — 2026-07-31 (end-to-end verification)
+
+**Mutation — all three cutoff comparisons disabled (`if modified >= cutoff ||
+true`), `/tmp/e2e-09-red.txt`:**
+
+```
+
+failures:
+    daemon::utils::sweep_tests::sweep_agent_mailboxes_deletes_expired_keeps_recent
+    daemon::utils::sweep_tests::sweep_archives_respects_active_and_zero
+    daemon::utils::sweep_tests::sweep_pane_logs_deletes_expired_keeps_recent
+
+test result: FAILED. 3 passed; 3 failed; 0 ignored; 0 measured; 973 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+exit=101
+```
+
+**Reverted, `/tmp/e2e-09-green.txt`:**
+
+```
+test daemon::utils::sweep_tests::sweep_agent_mailboxes_deletes_expired_keeps_recent ... ok
+test daemon::utils::sweep_tests::sweep_archives_respects_active_and_zero ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 973 filtered out; finished in 0.00s
+
+exit=0
+```
+
+**Flake proof — twelve consecutive `cargo test --lib` runs, `/tmp/e2e-09-flake.txt`.
+The loop echoes `FAIL run N` on any failure, so a file containing only the exit
+marker is the result:**
+
+```
+exit=0
+```
+
+On the pre-fix commit the same loop failed 3 times in 8.
+
+**Warning string produced for `archive_retention_days = 0`** (`warnings.rs:29-31`):
+
+```
+artifact_class: "session archives"
+config_key:     "sessions.archive_retention_days"
+suggestion:     "Set to a non-zero value (e.g. 7) to sweep expired archives"
+```
+
+**Gates re-run by the architect, separately:**
+
+```
+cargo fmt --all                                          → exit 0
+cargo build                                              → exit 0
+cargo clippy --all-targets --all-features -- -D warnings → exit 0
+cargo test                                               → exit 0
+  lib          979 passed   (unchanged — the fix adds no tests)
+  integration   30 passed; 2 ignored
+  isolation      8 passed; 1 ignored
+```
+
+### Review verdict — 2026-07-31 (takeover)
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-09-1, bug-09-2 — both now fixed)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 for all phase-09 production code and part (b)
+  of the test fix; Claude (direct) for part (a), the `lazy` reverts, and this
+  verification.
+- **Scope deviations:** the executor's two `lazy` flips, reverted by the
+  architect; no production behaviour changed by the takeover.
+- **Calibration:** **fourth `NoProgressStall` on this milestone.** The fold landed
+  after the third (`WORKFLOW.md` § "A NoProgressStall is usually a nearly-finished
+  phase") held up again here — the tree check found half a fix plus an
+  unauthorized production-data change that no briefing mentioned. Worth noting at
+  milestone close that the pathology's *shape* has now shifted: this one was a
+  `sed -n` paging crawl, which evades the identical-call governor because each
+  call differs, and only the read-only-stall threshold caught it.
