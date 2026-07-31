@@ -455,11 +455,13 @@ evades the identical-call governor because every call differs; only
    instances argue yes; the false-positive risk on `/clear`, `/limits reset` and
    shebangs argues for a narrower rule rather than the obvious one.
 
-**Deliberately left to the operator.** `~/.daemoneye/lib/` and
-`~/.daemoneye/pane_prefs.json` are dead but still on disk — the code no longer
-creates or reads either. Removing files from a live tree was kept out of every
-phase's scope on purpose:
-`rmdir ~/.daemoneye/lib && rm ~/.daemoneye/pane_prefs.json`
+**Deliberately left to the operator — since done.** `~/.daemoneye/lib/` and the
+orphaned top-level `~/.daemoneye/pane_prefs.json` were dead but still on disk;
+the code no longer creates or reads either. Removing files from a live tree was
+kept out of every phase's scope on purpose, and the operator removed both on
+2026-07-31. The runtime tree now contains exactly what the code produces, which
+is the milestone's "no orphaned or undocumented entries" exit criterion satisfied
+end to end rather than only in a fresh install.
 
 **Telemetry note.** Four phases closed `escalated`, so the model scorecard has no
 model-vs-spec data point for 03, 08, 09 and 11. Two of those takeovers were for

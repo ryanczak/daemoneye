@@ -29,12 +29,16 @@ evidence; in short:
 5. **Whether the path-audit extractor should learn about fenced blocks.** Three
    stale paths slipped through on that account across M6.
 
-**Two dead entries in your runtime tree**, left deliberately because removing
-files from a live tree was out of scope for every phase:
+**Runtime tree — done.** The two dead entries (`~/.daemoneye/lib/` and the
+orphaned top-level `~/.daemoneye/pane_prefs.json`) were removed by the operator
+on 2026-07-31. `~/.daemoneye/` now contains exactly what the code produces:
+`agents bin etc memory runbooks scripts var`.
 
-```sh
-rmdir ~/.daemoneye/lib && rm ~/.daemoneye/pane_prefs.json
-```
+Note the live `var/run/pane_prefs.json` (64 bytes, 25 July) is still in the
+**old** `{session: "pane_id"}` format. Phase 10's loader treats an entry that
+does not parse as the new fingerprinted shape as absent and discards it — so the
+first foreground command after upgrade prompts once for a pane and writes a
+fingerprinted entry. That is by design, not a leftover.
 
 ## Where the tree stands
 
