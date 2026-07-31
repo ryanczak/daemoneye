@@ -1,7 +1,7 @@
 # Phase 12: Roadmap Correction
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phases 01–11 (all done)
 **Estimated diff:** ~120 lines
 **Tags:** language=markdown, kind=docs, size=s
@@ -189,3 +189,47 @@ No new dependencies. No code changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 04:48 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Working on tasks 1–3: updating § 5 M6 entry, removing phantom `memory.db` from agent-runtime-layout.md, and verifying the path audit stays green.
+
+### Update — 2026-07-31 04:50 (end-to-end verification)
+
+**End-to-end verification** — both commands captured mechanically via redirect.
+
+`cargo test --lib path_audit -- --nocapture > /tmp/e2e-12-audit.txt 2>&1`:
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1fe3bbd9ed7ce096)
+
+running 13 tests
+test config::path_audit::tests::classify_text_omits_bare_runtime_root ... ok
+test config::path_audit::tests::classify_text_returns_current_for_good_literal ... ok
+test config::path_audit::tests::classify_text_returns_superseded_with_reason ... ok
+test config::path_audit::tests::classify_text_reports_all_literals_including_good_ones ... ok
+test config::path_audit::tests::classify_text_returns_unknown_for_invented_path ... ok
+test config::path_audit::tests::extractor_detects_historical_stale_literals ... ok
+test config::path_audit::tests::rejects_slash_commands_and_shebangs ... ok
+test config::path_audit::tests::normalisation_collapses_placeholder_segments ... ok
+test config::path_audit::tests::normalisation_strips_prefix_and_trailing_slash ... ok
+test config::path_audit::tests::legacy_entry_is_reported ... ok
+test config::path_audit::tests::extracts_real_path_spans ... ok
+test config::path_audit::tests::inventory_contains_all_config_constructors ... ok
+test config::path_audit::tests::all_assets_audit_clean_with_empty_quarantine ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 977 filtered out; finished in 0.00s
+
+exit=0
+```
+
+`grep -rn "memory\.db\|var/index" assets/ src/ > /tmp/e2e-12-grep.txt 2>&1`:
+
+```
+grep-exit=1
+```
+
+No matches found — `memory.db` and `var/index` references are fully removed from assets. The `grep-exit=1` is the success case (grep exits 1 when it finds nothing).

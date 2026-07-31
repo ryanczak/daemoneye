@@ -35,9 +35,6 @@ automation, configuration, and logs live under it.
     session/                 ← user prefs, always injected at session start
     knowledge/               ← technical facts, loaded on-demand via tags
     incident/                ← post-mortems, never auto-loaded
-    var/
-      index/
-        memory.db            ← FTS5 full-text search index (SQLite)
 
   var/
     run/
