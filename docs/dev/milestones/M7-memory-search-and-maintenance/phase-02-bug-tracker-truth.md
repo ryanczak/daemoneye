@@ -1,7 +1,7 @@
 # Phase 02: Bug-Tracker Truth
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (dependency-currency, done)
 **Estimated diff:** ~200 lines (one new test file) + 5 one-line doc status edits
 **Tags:** language=rust, kind=test, size=m
@@ -579,3 +579,50 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7be6208ab174e51791413c67a145ce40ce45da79
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (via rexyMCP, 59 turns)
+- **Scope deviations:** none. No dependency added, no `.rs` file outside
+  `tests/bug_tracker.rs`, and each of the five bug docs changed by exactly one
+  line (`git diff --numstat` reports `1  1` for all five).
+- **Calibration:** two architect-side notes, neither folded (first occurrence).
+  1. The spec's Test plan enumerated exactly six tests and the executor wrote
+     exactly those — but `classify` returns a three-variant enum and only
+     `OpenBugOnDonePhase` has a unit test. `UnknownBugStatus` and `DanglingBug`
+     are unguarded against future regression. Both were verified reachable and
+     correct by reviewer mutation (below), so this is a durability gap, not a
+     defect. **Rule for future specs: when a spec defines an enum with N
+     variants, pin one test per variant rather than per scenario.**
+  2. The spec said "There are 46 bug docs"; the true count is 45. An architect
+     miscount with no effect on the work.
+- **Nit, not filed:** the local `terminal_bug_statuses` binding
+  (`tests/bug_tracker.rs`) includes `"open"`, which is not a terminal status —
+  it is the *recognised* set. The logic is correct; only the name misleads.
+
+**Mutation testing (reviewer).** A gate that passes proves nothing unless it
+also fails when it should — and a scanner that silently reads a subset of the
+tree would pass vacuously. Six mutations were applied to the real tree, each
+reverted immediately via `git checkout`:
+
+| # | Mutation | Expected | Result |
+|---|---|---|---|
+| 1 | re-open `M2/bug-phase-01-1` (phase `done`) | FAIL | FAIL — named the exact doc |
+| 2 | re-open `M4/bug-09-1` — other filename convention, other milestone | FAIL | FAIL — named the exact doc |
+| 3 | set a bug status to `wibble` | FAIL (`UnknownBugStatus`) | FAIL — branch reachable |
+| 4 | bug `open` **and** its phase `in-progress` | **PASS** | PASS — no false positive |
+| 5 | set **all 45** bug statuses to `wibble` | 45 findings | 45 findings — full coverage |
+| 6 | add a bug doc whose phase id has no phase doc | FAIL (`DanglingBug`) | FAIL — branch reachable |
+
+Mutation 4 is the load-bearing negative: a gate that fired on an open bug
+against a live `in-progress` phase would break every bounce and get disabled
+within a week. Mutation 5 is what rules out a vacuous scan — findings match the
+doc count exactly, so the scanner reads every file rather than a subset.
+
+**Gates re-run independently:** `cargo fmt --all --check` exit 0; `cargo build`
+zero warnings; `cargo clippy --all-targets --all-features -- -D warnings` exit 0;
+`cargo test` green at 991 lib / **6 bug_tracker (new)** / 30 integration
+(2 ignored) / 8 isolation (1 ignored). Lib and isolation counts are unchanged
+from the M6 baseline, as the spec required.
