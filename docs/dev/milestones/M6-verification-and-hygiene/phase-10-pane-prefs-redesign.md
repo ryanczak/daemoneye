@@ -1,7 +1,7 @@
 # Phase 10: Pane-Preference Redesign
 
 **Milestone:** M6 — Verification & Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=fix, size=m
@@ -263,3 +263,55 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-07-31 02:35 (started)
+
+**Executor:** model
+
+Rewrote `src/pane_prefs.rs` with fingerprint validation. `get()` now validates the stored pane's window name and working directory against live tmux data before returning it. Old-format `{session: "pane_id"}` files are tolerated (entries treated as absent). `get()` is non-destructive. Pruning runs on every `get()` call. `save()` fetches the fingerprint from `list_panes_detailed()` at call time, so all four existing call sites work without changes.
+
+### Update — 2026-07-31 02:38 (end-to-end verification)
+
+**Mutation check — fingerprint broken (RED):**
+```
+running 10 tests
+thread 'pane_prefs::tests::does_not_match_when_current_path_changed' panicked at src/pane_prefs.rs:168:9:
+assertion failed: !matches(&stored, "%3", "main", "/tmp")
+thread 'pane_prefs::tests::does_not_match_when_window_name_changed' panicked at src/pane_prefs.rs:162:9:
+assertion failed: !matches(&stored, "%3", "edited", "/home/user")
+thread 'pane_prefs::tests::does_not_match_when_pane_id_changed' panicked at src/pane_prefs.rs:174:9:
+assertion failed: !matches(&stored, "%99", "main", "/home/user")
+test result: FAILED. 7 passed; 3 failed; 0 ignored; 0 measured; 979 filtered out
+exit=101
+```
+
+**Mutation check — fingerprint restored (GREEN):**
+```
+running 10 tests
+test pane_prefs::tests::does_not_match_when_pane_id_changed ... ok
+test pane_prefs::tests::does_not_match_when_current_path_changed ... ok
+test pane_prefs::tests::does_not_match_when_window_name_changed ... ok
+test pane_prefs::tests::matches_when_all_fields_equal ... ok
+test pane_prefs::tests::get_does_not_mutate_stored_map ... ok
+test pane_prefs::tests::load_all_reads_new_format ... ok
+test pane_prefs::tests::load_all_tolerates_garbage_json ... ok
+test pane_prefs::tests::load_all_tolerates_old_format ... ok
+test pane_prefs::tests::load_all_tolerates_missing_file ... ok
+test pane_prefs::tests::save_roundtrips_fingerprint ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 979 filtered out
+exit=0
+```
+
+**Flake check (12 runs):**
+```
+exit=0
+```
+
+**New on-disk JSON format (from test roundtrip):**
+```json
+{"sess1":{"pane_id":"%3","window_name":"main","current_path":"/home/user"},"sess2":{"pane_id":"%7","window_name":"edit","current_path":"/tmp"}}
+```
+
+**Test count:** 989 lib (+10 new pane_prefs tests), 30 integration (2 ignored), 8 isolation (1 ignored). Delta: +10 unit tests for `matches()`, old-format tolerance, mutation-free `get()`, missing file, garbage JSON, and save/load roundtrip.
+
+**Grep for pinned literal:** `grep -r "PanePreference" src/pane_prefs.rs | head -1` → confirmed `PanePreference` struct present in the module.
