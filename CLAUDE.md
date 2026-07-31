@@ -41,35 +41,36 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/ipc.rs` | `Request` / `Response` enums — the full wire protocol |
 | `src/daemon/instance.rs` | `InstanceLock` — flock-based single-instance enforcement + PID payload |
 | `src/daemon/ready.rs` | Fork readiness handshake — child reports `READY` / `ERR <msg>` to the parent over a pipe |
-| `src/daemon/server.rs` | IPC dispatch + `handle_ask` orchestrator; utility helpers (`build_catchup_brief`, `is_valid_pane_id`) |
+| `src/daemon/server/` | IPC server, split by concern: `mod.rs` client dispatch (`handle_client`), `ask.rs` the `handle_ask` orchestrator, `handlers.rs` the simple request handlers (`handle_ping`, `handle_shutdown`, `handle_refresh`, `handle_set_model`), `catchup.rs` the catch-up brief (`build_catchup_brief`, `is_valid_pane_id`) |
 | `src/daemon/hook.rs` | 9 IPC hook notification handlers (`NotifyActivity`, `NotifyComplete`, `NotifyFocus`, etc.) |
 | `src/daemon/auto_name.rs` | Session auto-naming (`suggest_session_name`, `diff_sessions_summary`) |
 | `src/daemon/prompt.rs` | Prompt assembly via `PromptCtx` (`build_first_turn_prompt`, `build_subsequent_turn_prompt`) |
 | `src/daemon/stream.rs` | AI event streaming loop (`run_conversation_loop`); tool execution; response persistence |
 | `src/daemon/executor/` | Tool call dispatch; approval gate (`ToolCallOutcome`); background/foreground execution coordination; `ArtifactCtx` for session-origin stamping |
-| `src/daemon/background.rs` | `run_background_in_window`, `notify_job_completion`, GC lifecycle |
+| `src/daemon/background/` | Background execution: `run.rs` `run_background_in_window()`, `respawn.rs` `respawn_background_in_pane()`, `gc.rs` `notify_job_completion()` + `gc_bg_windows()` + `OwnedJobInfo`, `helpers.rs` output capture/archive and session notification |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
 | `src/daemon/ghost.rs` | `GhostManager::start_session()` — allocates `de-gs-bg-*` / `de-gs-sj-*` / `de-gs-ir-*` windows for autonomous remediation; briefing generation on clean exit |
 | `src/daemon/briefing.rs` | G4 briefing generation: `generate_and_save_briefing()`, `read_briefing()`, `clear_briefing()`; AI summarization + masking + file I/O |
 | `src/daemon/policy.rs` | `GhostPolicy` — runtime enforcement of `auto_approve_scripts` / `auto_approve_read_only` for ghost shells |
-| `src/daemon/utils.rs` | Event logger (`events.jsonl`), `command_has_sudo`, `is_interactive_command`, `interactive_destination`, `normalize_output` helpers |
-| `src/ai/types.rs` | `PendingCall` enum (one variant per AI tool), `AiEvent`, `Message`, `AiUsage` |
+| `src/daemon/utils/` | Daemon helpers, one file per concern: `event_log.rs` `log_event()` + dated-segment readers + `sweep_event_segments()`, `log_rotation.rs` `rotate_log_file()` + `reattach_log_fds()`, `warnings.rs` `retention_warnings()`, `shell.rs` escaping + `is_interactive_command()`/`interactive_destination()`, `sudo.rs` `command_has_sudo()` + fingerprint-prompt detection, `output.rs` `normalize_output()`, `response.rs` IPC response senders + `fire_notification()`, `host.rs` `daemon_hostname()`. `mod.rs` also holds `sweep_session_archives()`, `sweep_pane_logs()`, `sweep_agent_mailboxes()` |
+| `src/ai/types/` | `pending.rs` the `PendingCall` enum (one variant per AI tool), `events.rs` `AiEvent`, `wire.rs` the provider wire types (`Message`, `ToolCall`, `ToolResult`, `TokenBreakdown`) |
 | `src/ai/mod.rs` | `AiClient` trait; `dispatch_tool_event()` |
-| `src/ai/tools.rs` | Tool definitions for all three providers (Anthropic / OpenAI / Gemini) |
+| `src/ai/tools/` | Tool definitions for all three providers (Anthropic / OpenAI / Gemini): `defs.rs` the flat `TOOLS` table, `schema.rs` `ToolDef`/`ParamDef` + `render_gemini()`, `args.rs` serde defaults for tool arguments, `dispatch.rs` `dispatch_tool_event()` |
 | `src/ai/backends/` | Per-provider SSE streaming implementations |
 | `src/ai/filter.rs` | Regex-based sensitive-data masking; `init_masking()` at daemon start |
 | `src/tmux/mod.rs` | All `tmux` subprocess calls (one function per operation) |
 | `src/tmux/cache.rs` | Background 2 s poll; `SessionCache`, `PaneState`, `get_labeled_context()` |
 | `src/tmux/session.rs` | Session-level tmux helpers: `other_sessions_context()`, `format_other_sessions()`, `client_dimensions()`, `session_environment()`, `list_sessions()`, `session_exists()` |
 | `src/util.rs` | `UnpoisonExt` trait — `unwrap_or_log()` extension on `LockResult` that logs ERROR on poison recovery |
-| `src/config.rs` | `~/.daemoneye/config.toml` parsing; `SRE_PROMPT_TOML` constant; `AiConfig::resolve_api_key()` |
+| `src/config/` | Config, FHS paths and first-run seeding; the public surface is re-exported from `mod.rs`. `types.rs` `Config` + the per-section structs + `resolve_api_key()`, `load.rs` the path constructors (`config_dir()`, `var_log_dir()`, …), `seeds.rs` `SRE_PROMPT_TOML` + asset seeding, `path_audit.rs` the M6 path-audit gate, `lifecycle.rs` the M6 artifact-lifecycle policy table |
 | `src/scheduler.rs` | `ScheduleStore` (atomic JSON persistence); `ActionOn` enum (`Alert`/`Script`/`Ghost`); `ScheduleKind` (`Once`/`Every`/`Cron`); `parse_cron()` helper |
 | `src/scripts.rs` | Script management in `~/.daemoneye/scripts/` (chmod 700, path-traversal validation); `install_sudoers()` |
 | `src/runbook.rs` | TOML runbook loader; `watchdog_system_prompt()` for AI watchdog analysis |
 | `src/session_store.rs` | Named session persistence: `save/load/list/delete/rename_session()`; `ArtifactRef`; `backfill_session_origin()`; `build_resumed_banner()` |
 | `src/memory.rs` | Memory module: CRUD types, `add_memory()`/`update_memory()` enforce size cap, fcntl lock, masking, index sync (G1); G2 schema fields (`volatility`, `lifecycle`, `confidence`, `source`, `pinned`, `last_verified`, `verified_by`, `usefulness_score`), schema validation, version history |
 | `src/memory/index.rs` | **Stub.** `fts5_search()` returns an empty `Vec` — there is no SQLite index, no `var/index/memory.db`, and no BM25 scoring. Its only caller is `memory_prompt::ftsearch_memories()`, which therefore always finds nothing. Real memory search is the grep scan in `src/search.rs`. Un-stubbing is future work (see `docs/architecture.md` § 5) |
+| `src/memory/review.rs` | Memory review scoring: `effective_confidence()` |
 | `src/memory/tags.rs` | G5 SessionTags derivation: tag inference from cwd, command, hostname, recent keywords |
 | `src/daemon/memory_prompt.rs` | G5 tiered memory prompt: stable ambient block + dynamic turn-relevant block |
 | `src/header.rs` | Inline header parser/renderer for all artifact types; `inject_yaml_session_origin()` / `inject_comment_session_origin()` |
