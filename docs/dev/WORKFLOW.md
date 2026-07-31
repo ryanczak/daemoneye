@@ -719,6 +719,53 @@ turns). All Qwen3.6-27B-AEON. The 05a/05b split contained the blast radius both
 times — the executor's additive files survived; only the delete-heavy file
 needed architect reconstruction.)*
 
+### A NoProgressStall is usually a nearly-finished phase — diagnose the tree before choosing a lever
+
+The read-only-stall governor asked for in the fold above **now exists and works**
+(`read_only_stall_threshold`). It fires cleanly on the pathology it was built for:
+the executor writes most of a phase, then loops re-reading one file instead of
+running a gate. What the governor cannot tell you is *how much of the phase is
+already correct* — and the answer is consistently "most of it."
+
+**So on any `NoProgressStall` hard_fail, before picking a lever, run the gates
+against the partial tree yourself.** `cargo build`, then the lint, then the tests.
+This takes a minute and decides everything:
+
+- **It tells you which lever is right.** If the missing piece is small and the
+  executor simply ran out of turns, **resume** with the diagnosis — that is the
+  cheap path and it preserves the model-vs-spec data point. If the missing piece
+  is *the very edit it stalled on*, **take over** — a resume re-enters the same
+  wall, and verifying a patch precisely enough to specify it safely means writing
+  it anyway, at which point handing it back to be retyped adds risk and yields no
+  data.
+- **It finds defects nobody else will.** The executor stalled *before* running any
+  gate, so its partial work is unverified by construction. Across three stalls
+  this surfaced a self-contradictory assertion (a test asserting a file was absent
+  and then reading it), an unused import failing `-D warnings`, and a dead_code
+  error from a second `mod harness;`. None of these were visible in the briefing.
+
+**Do not treat the stall itself as evidence the work is bad.** In all three cases
+the executor's *design* was right — the seam it was asked for, the table, the
+gate — and what was missing was integration into a large existing file.
+
+**On prevention, be honest:** the fold above established that runtime pathologies
+need runtime fixes and that spec-level instructions are ineffective against them.
+Nothing here contradicts that. An anti-stall line in resume guidance ("after each
+edit, run the one command that checks it; never re-read a file you just wrote")
+coincided with a clean 57-turn completion once, but that run also supplied the
+missing diagnosis, so the instruction is unproven on its own. What *is* supported:
+all three stalls happened while integrating into a large pre-existing file, so
+front-loading the exact integration point — the enclosing function, how values
+reach it, the surrounding lines — reduces the surface the executor has to
+rediscover.
+
+*(Folded 2026-07-30 after three occurrences in M6: phase-04 (stalled re-reading
+`path_audit.rs` after landing `classify_text`), phase-06b (stalled after writing
+the whole phase, gates never run), phase-08 (68 consecutive reads of
+`daemon/mod.rs`, daemon integration never written). Partial work was correct in
+all three; two resumed to completion once given the diagnosis, one needed
+takeover because the stalled-on edit *was* the remaining work.)*
+
 ### Validation features depend on the target toolchain — verify availability at design time
 
 Validation features (a verifier that runs the project's checker, code-intelligence

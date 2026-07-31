@@ -107,7 +107,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 06b | [webhook-to-ghost-e2e](phase-06b-webhook-to-ghost-e2e.md) — observability seam for the ghost spawn + the pipeline scenario: severity-less payload through to `ghost_start` | done      |
 | 07 | [artifact-lifecycle-policy](phase-07-artifact-lifecycle-policy.md) — **design-discovery**: one policy table covering every artifact class, with defaults; the test that fails on an uncovered class | done                   |
 | 08 | [daemon-log-rotation](phase-08-daemon-log-rotation.md) — bound the 25.8 MB unrotated log under the 07 policy | done |
-| 09 | pane-and-archive-retention — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days` | todo |
+| 09 | pane-and-archive-retention — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days`; **must add operator-tunable config keys** for panes + mailbox retention (PE decision 2026-07-30) | todo |
 | 10 | pane-prefs-redesign — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | todo |
 | 11 | runtime-tree-hygiene — orphan removal, the `lib/` decision, doc-comment corrections | todo |
 | 12 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
@@ -295,6 +295,14 @@ Rationale: the discarded handle is a real observability defect independent of
 testing — nothing in production can answer whether a triggered ghost started —
 so fixing it makes the criterion satisfiable as written rather than negotiating
 it down.
+
+**PE decision 2026-07-30 — retention values and their knobs.** Phase 07's table
+originally carried executor-invented defaults for two classes with no config key
+(`var/log/panes` 30 days, `agents/*/mailbox` 7 days). The PE set **both to 7
+days** and ruled that these values **must be operator-configurable** — "we either
+do it now or we do it later." Phase 09 therefore adds the config keys alongside
+the sweeps, rather than shipping hard-coded retention. The table's `config_key`
+stays `None` only until 09 lands them, and both entries now say so explicitly.
 
 **05 before 06.** The gate fix is small and fully understood; the E2E scenario is
 the thing that proves it *and* opens the unexplored ground behind it. Doing 06 first

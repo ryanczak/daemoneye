@@ -91,13 +91,16 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
     LifecycleEntry {
         path: "var/log/panes",
         intent: LifecycleIntent::Sweep {
-            default_retention_days: 30,
+            default_retention_days: 7,
         },
         config_key: None,
         implemented: ImplementationStatus::Pending {
             owned_by: "phase-09",
         },
-        note: "264 files, no sweep at all; phase-09 adds retention",
+        note: "264 files, no sweep at all. 7-day default set by PE decision \
+               2026-07-30. config_key is None only because the knob does not \
+               exist yet — phase-09 MUST add it; an operator-tunable retention \
+               is required, not optional",
         lazy: false,
     },
     LifecycleEntry {
@@ -197,6 +200,10 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
     LifecycleEntry {
         path: "agents/*/mailbox",
         intent: LifecycleIntent::Sweep {
+            // 7-day default confirmed by PE decision 2026-07-30, matching
+            // var/log/panes. config_key is None only because the knob does not
+            // exist yet — phase-09 MUST add it; operator-tunable retention is
+            // required, not optional.
             default_retention_days: 7,
         },
         config_key: None,
