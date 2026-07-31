@@ -1,64 +1,68 @@
 # NEXT
 
-**Active phase: 11 — runtime-tree-hygiene.**
-Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-11-runtime-tree-hygiene.md`
+**Active phase: 12 — roadmap-correction. This is M6's LAST in-scope phase.**
+Doc: `docs/dev/milestones/M6-verification-and-hygiene/phase-12-roadmap-correction.md`
 Status: `todo` — drafted 2026-07-31, not yet dispatched.
 
-Dispatch with `/rexymcp:dispatch phase-11`.
+Dispatch with `/rexymcp:dispatch phase-12`.
 
-## What phase 11 does
+**When phase 12 is approved the loop stops at the milestone boundary** — an
+absolute human gate. The retrospective, any calibration folds, and the go/no-go
+for M7 are all yours.
 
-Makes `~/.daemoneye/` contain nothing the code does not deliberately produce, and
-nothing the docs describe that the code does not create. Three concrete items plus
-a gate:
+## What phase 12 does
 
-1. **`lib/` — decided: drop it.** Created on every install, empty since 26 March
-   in the only live tree available, documenting `de_sdk`/Python helpers that exist
-   nowhere in the repo. The phase removes it from `ensure_dirs()`, the path-audit
-   inventory, the lifecycle table and the knowledge-memory asset.
-2. **The CLI help strings** at `src/main.rs:17` and `:30` still name
-   `~/.daemoneye/daemon.log`; the real path is `var/log/daemon.log`. Same drift
-   class phase 03 fixed in the assets — but the phase-02 gate only audits assets,
-   so CLI help was never covered.
-3. **`.gitignore` gets a `.daemoneye/` entry.** During phase 04 a full 168 KB
-   seeded tree appeared untracked in the repo root and had to be moved out before
-   a `git add -A` swept it in. Two reviews recommended this; both correctly
-   declined as out of scope.
+Two things, plus one deliberate omission.
 
-Plus the durable part: a test asserting the directories `ensure_dirs()` creates
-are exactly the set the policy table documents — Direction A already covers "no
-directory without an entry"; the missing half is "no non-lazy entry without a
-directory", which is precisely `lib`-shaped drift.
+1. **Brings `docs/architecture.md` § 5 up to date.** The exit criterion said it
+   "no longer points at a superseded active milestone" — that was already fixed
+   when M6 was scoped, so § 5 correctly reads `Active milestone — M6`. What is
+   stale is M6's *own* entry: it claims the README has "twelve phases named, none
+   drafted". All twelve are drafted, eleven are `done`, and 06 was split into
+   06a/06b, so there are thirteen docs.
+2. **Removes a false belief the agent is still being told.** Found while
+   drafting: `agent-runtime-layout.md:40` describes `memory/var/index/memory.db`
+   as an FTS5 SQLite index. `src/memory/index.rs` is an eight-line stub returning
+   empty and nothing in `src/` references `memory.db` or `var/index` — the file
+   never exists. That is defect class 4/5 exactly, and it survived phases 02 and
+   03 only because it lives in a **code fence**, which the extractor is blind to
+   by design.
 
-## The interlock worth watching
+**Deliberately not done:** the phase does **not** relabel M6 as shipped and does
+**not** write the retrospective. Phase 12 makes § 5 true; the close makes it
+final, and that is your call.
 
-Removing `lib` from the path-audit inventory makes any surviving `lib/` mention
-in an audited asset an `Unknown` finding, turning the phase-02 gate red. So a
-partial job fails loudly rather than silently — the gates built earlier in this
-milestone now enforce this phase's completeness.
+## One thing verified rather than assumed
 
-## Two things left for you deliberately
-
-- **`~/.daemoneye/pane_prefs.json`** (12 bytes, 25 June) is dead —
-  `pane_prefs::prefs_path()` returns `var/run/pane_prefs.json`. The phase does
-  **not** delete it, because it lives in your real tree and this milestone has
-  been careful about code that removes user data. Remove it when convenient:
-  `rm ~/.daemoneye/pane_prefs.json`
-- **`~/.daemoneye/lib/`** likewise stays on disk; the phase only stops creating
-  it. `rmdir ~/.daemoneye/lib` once you are satisfied.
+§ 5's note that the FTS5 index is "currently a stub" is **still accurate** —
+`src/memory/index.rs` really is eight lines returning `Vec::new()`. The phase
+leaves that note alone; it is the doc being honest, and the agent-facing asset is
+what was wrong.
 
 ## Where things stand
 
-- Phases 01–10 `done`. 10 closed `approved_after_2` after two bounces; its
-  non-mutation test now asserts mtime as well as content, so a byte-identical
-  write-back is caught.
-- 989 lib + 30 integration (2 ignored) + 8 isolation (1 ignored); clippy clean;
-  twelve consecutive `cargo test --lib` runs clean.
+- Phases 01–11 `done`. **11 closed `escalated`** — architect takeover for the
+  end-to-end capture only; its `HOME`-flake fix was the executor's and is
+  verified at 0-in-16.
+- 990 lib + 30 integration (2 ignored) + 8 isolation (1 ignored); clippy clean.
 - Working tree clean. No daemon running; no tmux server running.
-- **Only phase 12 remains after this** — `docs/architecture.md` § 5 still names
-  M4 as the active milestone.
+- `~/.daemoneye/lib/` and `~/.daemoneye/pane_prefs.json` are still on disk by
+  design — the code no longer creates or reads either. Remove when convenient:
+  `rmdir ~/.daemoneye/lib && rm ~/.daemoneye/pane_prefs.json`
 
 ## Carried forward for milestone close
+
+- **`CLAUDE.md` over-describes the memory index.** It calls
+  `src/memory/index.rs` an "FTS5 index (`var/index/memory.db`): schema,
+  reconciliation, CRUD, BM25 search with grep fallback (G1); G2
+  `migrate_schema()`". The file is an eight-line stub. `CLAUDE.md` is
+  developer-facing rather than agent-facing so it sits outside the path-audit
+  gate, but it is the same drift class and shapes how work gets planned.
+- **~25 test files set `HOME` without restoring it**, of which only about five
+  do. Phase 11 fixed the four in `lifecycle.rs` and pinned the one victim in
+  `path_audit.rs`, which closed the observable flake — but the drift remains and
+  will resurface the next time an ambient reader is added. A cleanup phase of its
+  own.
 
 - **A spurious `boundary` activity row for phase-10** was journaled when a review
   subagent was interrupted by accident. It is an activity record, not a verdict,

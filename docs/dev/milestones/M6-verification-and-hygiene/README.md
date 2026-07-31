@@ -110,7 +110,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 09 | [pane-and-archive-retention](phase-09-pane-and-archive-retention.md) — `panes/` (264 files, unswept) and the off-by-default `archive_retention_days`; **must add operator-tunable config keys** for panes + mailbox retention (PE decision 2026-07-30) | done |
 | 10 | [pane-prefs-redesign](phase-10-pane-prefs-redesign.md) — **design-discovery**: stable identity for the session→pane mapping, or a deliberate scope reduction | done                          |
 | 11 | [runtime-tree-hygiene](phase-11-runtime-tree-hygiene.md) — orphan removal, the `lib/` decision, doc-comment corrections | done           |
-| 12 | roadmap-correction — `docs/architecture.md` § 5 through M6 | todo |
+| 12 | [roadmap-correction](phase-12-roadmap-correction.md) — `docs/architecture.md` § 5 through M6 | todo |
 
 Phases beyond 06 may be re-split or dropped once 01–06 land; the inventory below is
 what is *known*, and 01/06 will very likely add to it.
@@ -325,6 +325,18 @@ with no code anywhere in the repository. Phase 11 stops creating it and removes
 it from the path-audit inventory, the lifecycle table and the knowledge-memory
 asset. **It does not delete it from anyone's disk** — ceasing to create it is the
 change; an existing empty directory is inert. Open to PE override at close.
+
+**A gate-blindness instance found while drafting phase 12 (2026-07-31).**
+`assets/memory/knowledge/agent-runtime-layout.md:40` tells the agent that
+`memory/var/index/memory.db` is an "FTS5 full-text search index (SQLite)".
+`src/memory/index.rs` is an eight-line stub returning empty, and `grep -rn
+"memory.db\|var/index" src/` returns nothing — the file never exists. It survived
+phases 02 and 03 solely because it sits inside a **code fence**, which the
+backtick-delimited extractor is structurally blind to by design. Phase 03
+recorded that limitation deliberately and fixed the two instances then known;
+this is a third. Phase 12 removes it. Worth weighing at close whether the
+extractor should learn about fenced blocks — the counter-argument is still that a
+"contains a slash" rule false-positives on `/clear`, shebangs and the like.
 
 **05 before 06.** The gate fix is small and fully understood; the E2E scenario is
 the thing that proves it *and* opens the unexplored ground behind it. Doing 06 first
