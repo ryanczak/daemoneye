@@ -139,14 +139,22 @@ again is explicitly the acceptable outcome.
 
 ### 3. `get()` must not mutate
 
-Make it a read. Whatever pruning happens (task 4) must be deliberate and
-explicit, not a side effect of a lookup.
+Make it a read — no writes on any path reachable from a lookup.
+
+**(Corrected 2026-07-31.)** As first written, task 4 below offered "on load" as a
+pruning trigger, which contradicts this: `get()` *is* a load. The contradiction
+was the architect's, and it is resolved in task 4's favour of `save()` — see
+there.
 
 ### 4. Prune deliberately
 
 Entries whose pane no longer exists, or no longer matches its fingerprint, must
-not accumulate. Drop them and persist the pruned map. Say in a comment when
-pruning runs — on load, on save, or on an explicit call — and make sure it is
+not accumulate. Drop them and persist the pruned map.
+
+**Prune inside `save()`, not on read.** `save()` already fetches live pane data
+for the fingerprint and is already writing, so pruning there is free and no
+lookup ever mutates. **(Corrected 2026-07-31** — this originally offered "on
+load" as an option, which conflicted with task 3.**)** The pruning logic must be
 reachable from a test.
 
 ### 5. Keep the four `save()` call sites working
@@ -263,6 +271,145 @@ No new dependencies. No changes to `docs/architecture.md`.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-07-31 (refined re-dispatch after bounce 1)
+
+**READ THIS BEFORE ANYTHING ELSE.**
+
+**All four gates are green and the tree is clean. Expected — and not evidence
+this is done.**
+
+**The safety property is PROVEN and ACCEPTED.** The reviewer forced `matches()`
+to always return `true` and the three fingerprint-rejection tests failed
+(`exit=101`); reverting restored 10/10. Frozen, do not touch:
+
+- `matches()` and the `PanePreference` fingerprint (pane_id + window_name +
+  current_path).
+- `get()`'s fingerprint gate — a recycled or moved pane is correctly rejected.
+- Old-format `{session: "pane_id"}` tolerance and the garbage-JSON path.
+- The corrected doc comment (`var/run/pane_prefs.json`).
+- All six tests' `HOME` set/restore pairs. Twelve consecutive `cargo test --lib`
+  runs are clean — do not regress that.
+
+**Two defects left, and the first one is partly the architect's fault.**
+
+---
+
+**Bug-10-1(a) — `prune()` inside `get()` makes every read write to disk.**
+
+The spec contradicted itself: task 3 said `get()` must not mutate, task 4 offered
+"on load" as a pruning trigger, and `get()` is a load. **That was the architect's
+error and the spec above is now corrected** — prune belongs in `save()`.
+
+It is still a real defect, not just a wording problem. `prune()` calls
+`save_all()`, a plain `fs::write` with no lock and no atomic rename. Every `get()`
+therefore does an unsynchronised read-modify-write, so a daemon and a CLI running
+concurrently can have a `get()`-triggered prune clobber a just-saved preference —
+undermining the persistence this feature exists for.
+
+**The architect implemented and verified the fix** (builds, `clippy -D warnings`
+exit 0, all 10 existing tests still pass). Apply it:
+
+1. Add a narrow, test-constructible pane type and a fetch helper — `RichPaneInfo`
+   has 17 fields and derives nothing, so tests must not be forced to build one:
+
+```rust
+/// The three live pane facts the fingerprint check needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LivePane {
+    pub pane_id: String,
+    pub window_name: String,
+    pub current_path: String,
+}
+
+fn live_panes() -> Option<Vec<LivePane>> {
+    Some(crate::tmux::list_panes_detailed().ok()?.into_iter().map(|p| LivePane {
+        pane_id: p.pane_id,
+        window_name: p.window_name,
+        current_path: p.current_path,
+    }).collect())
+}
+```
+
+2. Make the two decisions pure, taking the pane list as a parameter:
+
+```rust
+pub fn prune_map(
+    prefs: &HashMap<String, PanePreference>,
+    panes: &[LivePane],
+) -> HashMap<String, PanePreference> { /* keep only entries whose pane matches */ }
+
+pub fn get_from(
+    prefs: &HashMap<String, PanePreference>,
+    session_name: &str,
+    panes: &[LivePane],
+) -> Option<String> { /* existing gate, but pure */ }
+```
+
+3. `get()` becomes a read — **delete the `prune()` call and the old `prune()`
+   function**:
+
+```rust
+pub fn get(session_name: &str) -> Option<String> {
+    // A read. Pruning happens in `save()`, which already holds live pane data
+    // and is already writing — so a lookup never mutates the store.
+    let prefs = load_all();
+    let panes = live_panes()?;
+    get_from(&prefs, session_name, &panes)
+}
+```
+
+4. `save()` prunes in the pass it is already writing:
+
+```rust
+let panes = live_panes().unwrap_or_default();
+let mut prefs = prune_map(&load_all(), &panes);
+prefs.insert(session_name.to_string(), pref);
+save_all(&prefs);
+```
+
+---
+
+**Bug-10-1(b) — `get_does_not_mutate_stored_map` is vacuous.**
+
+The reviewer instrumented it: `list_panes_detailed()` returns `Err` in the test
+environment (no tmux server), so both `prune()` and `get()` short-circuit before
+any write is reachable. **It would pass unchanged even if `get()` did mutate on a
+machine with tmux** — it proves the short-circuit, not the property. That is
+exactly the vacuous-coverage shape this milestone exists to eliminate.
+
+With the seams above it becomes testable for real. Rewrite it to:
+
+- Build a `Vec<LivePane>` by hand (no tmux needed).
+- Write a prefs file containing one matching and one stale entry.
+- Call `get_from(...)` and assert it returns the matching pane.
+- **Assert the on-disk file is byte-identical afterwards** — that is the
+  non-mutation property, and it must be checked against the file, not inferred.
+- Separately, drive `prune_map(...)` and assert the stale entry is dropped and the
+  matching one kept.
+
+**Mutation-check the new test:** make `get_from` write to the file (or re-add the
+`prune()` call in `get()`), confirm the non-mutation assertion **fails**, revert,
+confirm it passes. A non-mutation test that cannot fail is worse than none.
+
+---
+
+**Out of scope, deliberately.** `save_all()`'s lack of atomic-rename is real but
+becomes near-moot once writes only happen on `save()` (user-initiated and rare)
+rather than on every read. Do not add locking or atomic writes here — note it in
+the Update Log if you like and it can be scoped separately.
+
+**Finish condition.**
+
+- `cargo test --lib pane_prefs` green; total lib count **989 or 990** — the
+  rewrite replaces one test and may add one, so state which and why.
+- Twelve consecutive `cargo test --lib` runs, zero failures.
+- `git diff --name-only` should list `src/pane_prefs.rs` and this phase doc only.
+- All four gates green.
+- A new `### Update — <date> (end-to-end verification)` entry with the RED/GREEN
+  mutation capture and the twelve-run flake block, each ending in an `exit=`
+  marker.
+
 
 ### Update — 2026-07-31 02:35 (started)
 
@@ -508,3 +655,19 @@ executor's resolution of it has a demonstrable correctness cost, so it is
 filed as a bug rather than a documentation fix. The stale doc-comment fix
 (defect 4, `var/run/pane_prefs.json`) is confirmed correct and not part of
 this bounce.
+
+### Update — 2026-07-31 (escalation)
+
+**Chosen lever:** refined re-dispatch
+
+**Rationale:** A green bounce on a phase whose headline safety property is
+already proven by mutation, and the executor completed in 63 turns without
+stalling. Half of bug-10-1 traces to a contradiction the architect wrote into the
+spec (task 3 forbade mutation on lookup; task 4 offered "on load" as a pruning
+trigger) — that text is now corrected in favour of pruning inside `save()`. The
+other half is genuine and the reviewer proved it by instrumentation: the
+non-mutation test is vacuous because `list_panes_detailed()` errors without a
+tmux server, so it would pass even if `get()` did mutate. The architect
+implemented and verified the restructure (a narrow `LivePane` type plus pure
+`prune_map` / `get_from` seams) before specifying it — it builds, lints clean at
+`-D warnings`, and leaves all ten existing tests passing.
