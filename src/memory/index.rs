@@ -59,20 +59,17 @@ pub fn fts5_search(_query: &str, _limit: usize) -> Vec<(String, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::env;
 
     #[test]
     fn open_index_creates_database_and_schema() {
         let _guard = crate::test_home_guard();
-        unsafe { std::env::set_var("HOME", env::temp_dir().join("daemoneye-test-index-1")) };
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
 
-        let conn = open_index().expect("open_index should succeed");
         let path = crate::config::memory_index_path();
-        assert!(
-            path.exists(),
-            "database file should exist at {}",
-            path.display()
-        );
+        assert!(!path.exists(), "fresh HOME must not already have an index");
+        let conn = open_index().expect("open_index should succeed");
+        assert!(path.exists(), "open_index must create {}", path.display());
 
         let count: i64 = conn
             .query_row(
@@ -87,7 +84,8 @@ mod tests {
     #[test]
     fn open_index_sets_schema_version() {
         let _guard = crate::test_home_guard();
-        unsafe { std::env::set_var("HOME", env::temp_dir().join("daemoneye-test-index-2")) };
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
 
         let conn = open_index().expect("open_index should succeed");
         let version: i64 = conn
@@ -99,7 +97,8 @@ mod tests {
     #[test]
     fn open_index_is_idempotent() {
         let _guard = crate::test_home_guard();
-        unsafe { std::env::set_var("HOME", env::temp_dir().join("daemoneye-test-index-3")) };
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
 
         open_index().expect("first open_index should succeed");
         let conn = open_index().expect("second open_index should succeed");
