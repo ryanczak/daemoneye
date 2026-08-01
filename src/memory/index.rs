@@ -109,6 +109,10 @@ pub fn remove_from_index(
 }
 
 /// What a reconcile pass changed.
+// The operator-facing repair path. Exercised by this phase's reconciliation
+// tests; a production caller (startup or a `reindex` subcommand) is deliberately
+// deferred — see this phase's Out of scope.
+#[allow(dead_code)]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ReconcileReport {
     /// Rows present in the index at the start of the pass.
@@ -118,7 +122,11 @@ pub struct ReconcileReport {
 }
 
 /// Rebuild the whole index from the memory files on disk.
-pub fn reconcile_index() -> Result<ReconcileReport> {
+// The operator-facing repair path. Exercised by this phase's reconciliation
+// tests; a production caller (startup or a `reindex` subcommand) is deliberately
+// deferred — see this phase's Out of scope.
+#[allow(dead_code)]
+pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
     let mut conn = open_index()?;
 
     let rows_before: i64 = conn
@@ -140,7 +148,9 @@ pub fn reconcile_index() -> Result<ReconcileReport> {
         crate::memory::MemoryCategory::Incident,
     ];
 
-    let tx = conn.transaction().context("beginning reconcile transaction")?;
+    let tx = conn
+        .transaction()
+        .context("beginning reconcile transaction")?;
     tx.execute("DELETE FROM memories", [])
         .context("clearing index")?;
 
@@ -516,9 +526,11 @@ mod tests {
 
         let conn = open_index().expect("open_index should succeed");
         let total: i64 = conn
-            .query_row("SELECT count(*) FROM memories WHERE key = 'shared-key'", [], |r| {
-                r.get::<_, i64>(0)
-            })
+            .query_row(
+                "SELECT count(*) FROM memories WHERE key = 'shared-key'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
             .expect("count rows for key");
         assert_eq!(total, 2, "same key in two namespaces should be 2 rows");
 
@@ -561,9 +573,13 @@ mod tests {
         assert!(result.is_ok(), "add_memory must return Ok when index fails");
 
         // The memory file must still exist on disk
-        let mem_path = tmp.path()
+        let mem_path = tmp
+            .path()
             .join(".daemoneye/memory/knowledge/resilient-key.md");
-        assert!(mem_path.exists(), "memory file must be written despite index failure");
+        assert!(
+            mem_path.exists(),
+            "memory file must be written despite index failure"
+        );
     }
 
     #[test]
@@ -634,12 +650,8 @@ mod tests {
         .unwrap();
 
         // Delete one
-        crate::memory::delete_memory(
-            "k2",
-            crate::memory::MemoryCategory::Knowledge,
-            "global",
-        )
-        .unwrap();
+        crate::memory::delete_memory("k2", crate::memory::MemoryCategory::Knowledge, "global")
+            .unwrap();
 
         // Now reconcile — should find exactly what the incremental hooks left
         let report = reconcile_index().expect("reconcile should succeed");
