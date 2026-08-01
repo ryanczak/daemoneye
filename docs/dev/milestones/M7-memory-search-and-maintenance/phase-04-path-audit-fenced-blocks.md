@@ -1,7 +1,7 @@
 # Phase 04: Path Audit — Fenced Code Blocks
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** in-progress (bounced at review — see `bugs/bug-04-1.md`)
 **Depends on:** phase-03 (test-sleep-removal, done)
 **Estimated diff:** ~90 lines in `src/config/path_audit.rs` (one function + tests)
 

@@ -63,7 +63,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 01 | [dependency-currency](phase-01-dependency-currency.md) — update every direct dependency to latest stable; hold `libc` back from its alpha | done |
 | 02 | [bug-tracker-truth](phase-02-bug-tracker-truth.md) — a gate failing when a bug doc is `open` while its phase is `done`; close the five stale M2/M4 docs it catches | done |
 | 03 | [test-sleep-removal](phase-03-test-sleep-removal.md) — the three live-test `sleep` sites `STANDARDS.md` §3.3 forbids | done |
-| 04 | [path-audit-fenced-blocks](phase-04-path-audit-fenced-blocks.md) — extend extraction to fenced code blocks, multi-segment rule (Part A of M6 item 5) | review      |
+| 04 | [path-audit-fenced-blocks](phase-04-path-audit-fenced-blocks.md) — extend extraction to fenced code blocks, multi-segment rule (Part A of M6 item 5) | in-progress |
 | 05 | generated-runtime-tree — derive `agent-runtime-layout.md`'s tree from the policy table (Part B of M6 item 5) | todo |
 | 06 | fts5-index-schema — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and the `var/index/memory.db` lifecycle entry | todo |
 | 07 | fts5-write-path — index maintained on add/update/delete, with reconciliation | todo |
