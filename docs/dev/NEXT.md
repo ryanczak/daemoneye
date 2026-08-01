@@ -1,27 +1,27 @@
 # NEXT
 
-**Active phase: M7 phase-04 — path-audit-fenced-blocks** (drafted 2026-07-31;
-bounced at review 2026-07-31 — see `bugs/bug-04-1.md`; **round 2 dispatched**,
-in flight as of 2026-07-31). The phase doc's own `Status:` line is authoritative
-— the executor moves it `in-progress` → `review` as it runs.
+**Active phase: none.** Draft the next one with `/rexymcp:architect next` —
+phase 05 (generated-runtime-tree) is next in the table.
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-04-path-audit-fenced-blocks.md`
+Phases 01–04 are `done`. 01–03 approved_first_try; **04 approved_after_1**
+(`bugs/bug-04-1.md`, minor, `scope_deviation` — the fence rewrite dropped the
+`on_line` guard from the *non-fence* branch; round 2 restored it as a `closed`
+flag and pinned it). M6 open question 5 Part A is resolved.
 
-Review round 2 with `/rexymcp:review phase-04` once it lands.
+**Two things phase 05 should carry forward:**
 
-**Round 1 bounced on one minor finding** (`scope_deviation`): the fence-aware
-rewrite dropped the `on_line` guard from the *non-fence* branch, so an
-unterminated backtick span now extracts where it was previously discarded. Spec
-task 1 required that branch be left unchanged, and the doc's
-"behaviour-preserving" argument rests on that discard. Latent, not live —
-seeded assets stay clean and `clean-audit-exit=0` reproduces.
-
-Everything else reviewed clean on round 1: four gates green at the exact counts
-the spec names (1001 / 30 / 8 / 6), the E2E block reproduced verbatim at review,
-`extracts_real_path_spans` untouched, and both mutation probes (drop the
-multi-segment rule; no-op the fence branch) are caught by the new tests.
-
-Phases 01-03 are `done`, all approved_first_try.
+1. **`tests/isolation.rs` is intermittently flaky.** A full `cargo test` failed
+   once at review in `hooks_land_on_private_server`, then went green across 5
+   full-suite and 12 isolation-only runs. Ruled out as phase-04's doing
+   (`path_audit`'s only caller is `src/cli/commands/audit_prompts.rs`;
+   `tests/isolation.rs` never references the audit) and as phase-03's
+   (`4472293` does not touch that file). The test spawns a real daemon and tmux
+   server. Pre-existing; worth its own phase if it recurs.
+2. **The fence toggle is a flip-flop, not a nesting parser.** `in_fence` inverts
+   on any line starting with ` ``` `, so a nested fence inside a fence — which
+   this phase's own Update Log now contains — mis-tracks. Harmless while
+   `audit-prompts` only scans installed assets, but it bites the moment the
+   audit is pointed at `docs/`.
 
 **This phase resolves M6 open question 5**, which was deferred because a naive
 "contains a slash" rule false-positives on `/clear` and shebangs. Both candidate

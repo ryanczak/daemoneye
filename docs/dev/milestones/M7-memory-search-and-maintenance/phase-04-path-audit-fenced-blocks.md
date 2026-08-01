@@ -1,7 +1,7 @@
 # Phase 04: Path Audit — Fenced Code Blocks
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-03 (test-sleep-removal, done)
 **Estimated diff:** ~90 lines in `src/config/path_audit.rs` (one function + tests)
 
@@ -599,3 +599,65 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c7c1b11d18288981afa52a5d1577de9e1a0eaa2f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-31
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-04-1.md`, minor, `scope_deviation`)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** one, now fixed. Round 1 dropped the `on_line` guard from
+  the *non-fence* branch while rewriting the function, widening extraction where
+  spec task 1 said "unchanged". Round 2 restored it as a `closed` flag and pinned
+  it with `unterminated_backtick_span_is_discarded`.
+- **Calibration:** see "Rewriting a function silently dropped a guard" below.
+
+**Independent verification at review (round 2):**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1002** / integration **30** (2 ignored) / isolation **8**
+  (1 ignored) / bug_tracker **6** — exactly the counts the acceptance criteria
+  name, +1 lib over round 1 for the new regression test.
+- E2E block re-run verbatim by the reviewer: `clean-audit-exit=0`,
+  `dirty-audit-exit=1`, and the audit names ``~/.daemoneye/var/index/memory.db``.
+  Reproduces the executor's transcript line for line.
+- **Mutation proof for the round-2 fix**, as `bug-04-1` § Verification required:
+  stubbing the restored guard (`if closed {` → `if true {`) fails exactly
+  `unterminated_backtick_span_is_discarded` (23 passed, 1 failed). File restored;
+  24 pass.
+- **Mutation proofs carried from round 1**, both still valid (the fence branch is
+  untouched by round 2): replacing `n.contains('/')` with `!n.is_empty()` — i.e.
+  dropping the multi-segment rule — fails 3 tests including
+  `fenced_bare_top_level_dir_is_skipped` and
+  `seeded_assets_have_no_unknown_fenced_paths`; making the fence branch a no-op,
+  the false-success mode the Test plan names, fails the 3 positive tests.
+- `extracts_real_path_spans` untouched across both rounds; all 27 `must_extract`
+  literals intact.
+- Only `src/config/path_audit.rs` among `.rs` files, both rounds.
+
+**One observation, not a finding.** A full `cargo test` failed once for the
+reviewer in `tests/isolation.rs`, then went green across 5 consecutive full-suite
+runs and 12 consecutive isolation-only runs. The executor hit the same test
+(`hooks_land_on_private_server`) and called it a transient port-bind collision;
+that was verified rather than accepted. It is **not** attributable to this phase:
+`path_audit` has exactly one caller in the tree (`src/cli/commands/audit_prompts.rs`),
+`tests/isolation.rs` never references the audit, and the test spawns a real daemon
+and tmux server. Phase-03's sleep removal was also ruled out — commit `4472293`
+does not touch `tests/isolation.rs`. Pre-existing environmental flakiness, worth
+its own phase if it recurs.
+
+#### Calibration — rewriting a function silently dropped a guard
+
+The round-1 deviation is worth naming because the spec did everything right and
+it still happened. Spec task 1 said the non-fence branch must run "unchanged",
+and § "Line-by-line processing is behaviour-preserving" explained *why* the
+rewrite was safe — an argument that rested entirely on the `on_line` discard the
+executor then removed. The model reproduced the branch from intent rather than
+transplanting it, and the guard did not survive the paraphrase.
+
+No test covered the discard in either direction, so nothing caught it; it
+surfaced only because review diffed the new function against the old one and
+probed the difference. The general shape: **when a spec says "reproduce this
+logic unchanged", the reviewer should diff that region specifically rather than
+read it** — a paraphrased branch looks correct in isolation. This is one
+occurrence, so it is recorded here rather than folded into `WORKFLOW.md`.
