@@ -1,11 +1,21 @@
 # NEXT
 
 **Active phase: M7 phase-08 — fts5-search** (`in-progress`, drafted 2026-08-01,
-**bounced at review 2026-08-01** — see `bugs/bug-08-1.md`).
+**bounced at review 2026-08-01**, and **round 2 returned a no-op** — see
+`bugs/bug-08-1.md` and the phase doc's Notes for executor, round 3).
 
 Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-08-fts5-search.md`
 
 Re-dispatch with `/rexymcp:dispatch phase-08`.
+
+**Round 2 changed nothing** — `complete` with an empty diff after 23 turns. That
+is the documented green-bounce pathology: the phase bounced on *test strength*,
+so all four gates were green and the tree clean, and the executor's "is there
+work to do?" heuristic found no signal. A plain re-dispatch never works on that
+shape; round 3 carries the prescribed refined treatment (loud header, work
+enumerated, fix inlined, falsifiable finish condition of **1032** not 1031, and a
+self-mutation-check). **If round 3 also no-ops, takeover is the proportionate
+lever** rather than a third refinement.
 
 **Round 1 bounced on test strength, not correctness** (`missing_spec_test`). The
 implementation is right — 1031/30/8/6, clippy clean, both `allow(dead_code)`
