@@ -1,7 +1,7 @@
 # Phase 04: Path Audit — Fenced Code Blocks
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** in-progress (bounced at review — see `bugs/bug-04-1.md`)
+**Status:** review
 **Depends on:** phase-03 (test-sleep-removal, done)
 **Estimated diff:** ~90 lines in `src/config/path_audit.rs` (one function + tests)
 
@@ -467,5 +467,135 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - `src/config/path_audit.rs` — +202 -27
 
 **Commit:** 721224a1f1e48a1ef58d928e622880d9156a149c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — ts=1785553399224 (complete, server-authored)
+
+**Summary:** All tests pass now — the previous failure was a transient port-bind collision in the isolation test harness (`hooks_land_on_private_server`), unrelated to my changes. A clean re-run shows all green: lib 1002, integration 30 (2 ignored), isolation 8 (1 ignored), bug_tracker 6.
+
+**Summary:** Fixed the bug from `bugs/bug-04-1.md`: the non-fence branch of `extract_path_literals` had been widened in the prior rewrite, dropping the guard that discarded unterminated backtick spans. Restored the `closed` flag so a span is only kept when a closing backtick is found on the same line, matching the original `on_line` behaviour. Added `unterminated_backtick_span_is_discarded` test to pin the behaviour. All 1002 tests pass, clippy is clean, only `src/config/path_audit.rs` changed. The working tree is clean after commit `c7c1b11`.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+sts::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test memory::tests::update_memory_partial_update_preserves_other_fields ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test session_store::tests::list_returns_newest_first ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test test_home_guard_tests::guard_restores_home_on_drop ... ok
+
+test result: ok. 1002 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_strips_trailing_prose ... ok
+test header_status_reads_bare_word ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_uses_first_occurrence_only ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_append_read ... ok
+test schedule_store_persistence ... ok
+test event_log_entry_format ... ok
+test config_pricing_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test g4_briefing_masking_applied ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1ad9304635fe6e0b)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e13fd526e8666cb6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-3a042278c054277a)
+     Running tests/integration.rs (target/debug/deps/integration-15c2cb829537d34b)
+     Running tests/isolation.rs (target/debug/deps/isolation-783d9644f0ac8667)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/config/path_audit.rs` — +19 -6
+
+**Commit:** c7c1b11d18288981afa52a5d1577de9e1a0eaa2f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
