@@ -1,7 +1,7 @@
 # Phase 10: Tree and Doc Truth
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-05 (generated-runtime-tree, done) — this phase edits
 `RUNTIME_TREE` and the asset it renders to. **Independent of the FTS5 chain
 (06–09); dispatchable out of numeric order.**
@@ -627,3 +627,80 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** cff1ad8f126d287be71b37eac3c327e70004cbb4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (the Update Log's "started" entry
+  self-reports "Claude (executor LLM)"; the configured executor is Qwen. Second
+  occurrence of an unreliable model self-report — see Calibration.)
+- **Scope deviations:** none
+- **Calibration:** see below.
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1015** / integration **30** (2 ignored) / isolation **8**
+  (1 ignored) / bug_tracker **6** — exactly the counts the criteria name, +2 lib
+  for the two new tests.
+- E2E block re-run verbatim: singular count **0**, plural count **2**,
+  `clean-audit-exit=0`, `memory/` holds only `knowledge` and `session`, and both
+  `CLAUDE.md` false-claim greps return **0**.
+- **Both required red runs reproduced by the reviewer, not taken on trust:**
+  1. Reverting `stamp_artifact_origin` to the hardcoded `["knowledge",
+     "session", "incident"]` fails `incident_memory_gets_session_origin_stamped`
+     with `unexpected errors: ["memory/outage-report"]` — byte-identical to the
+     executor's quoted transcript. The bug was real.
+  2. Reverting only the annotated `incidents/` tree node to `incident/` while
+     **keeping** the new `POLICY_TABLE` entry fails
+     `every_policy_path_appears_in_tree` with `Policy paths not found in tree:
+     ["memory/incidents"]`. **The gate genuinely fires — the six new entries are
+     not inert**, which was the phase's whole thesis.
+- **A third mutation**, added by the reviewer: deleting the `memory/incidents`
+  `POLICY_TABLE` entry fails `policy_table_covers_every_memory_category` with
+  `POLICY_TABLE missing entry for memory/incidents`. That test derives its
+  expectation from `dir_name()` rather than hardcoding, so it will also catch a
+  future rename — which is the durable half of the fix.
+- The `lazy` flags are right: `memory/session` and `memory/knowledge` eager
+  (seeded by `ensure_dirs`), `memory/incidents` and all three `agents/*/memory/*`
+  lazy. `every_eager_policy_entry_is_created_by_ensure_dirs` passes.
+- Wildcard forms correctly kept **out** of the path-audit `INVENTORY`, per spec.
+- `unwrap` occurrences are test-only; no `unsafe`, `#[allow]`, `#[ignore]`,
+  `TODO` or `dbg!` introduced.
+
+**The "no path-building singular" criterion was checked, not assumed.** Eleven
+`"incident"` hits remain in `src/`; each was inspected. All are tool-argument
+category names (`canonical_name`, `from_str`, JSON schema enums, test
+fixtures) — correct and intended. Two were path-adjacent enough to read
+properly: `src/cli/status.rs:332`'s `KNOWN_CATS` is display keys against the
+`memory_breakdown` map, not paths, and `src/daemon/context/epochs.rs:622`
+already pairs `("incident", "incidents")` and builds its path from the second.
+
+**One observation, not a finding.** `epochs.rs:618-623` hardcodes the
+category→directory mapping rather than calling `dir_name()`. It is correct
+today, but it is the same latent drift this phase just removed from
+`session_store.rs`: a future rename of `dir_name()` would silently break it.
+Out of scope here (the spec scoped task 1 to `session_store.rs`) and not worth
+its own phase — worth folding into whichever phase next touches that file.
+
+#### Calibration — two notes, neither actionable yet
+
+**1. The executor's self-reported model name is unreliable.** Phase 06 round 1
+self-reported `claude-opus-4-5-20251101`; this phase self-reports "Claude
+(executor LLM)". The configured executor is `Qwen/Qwen3.6-27B-FP8` in both
+cases. Second occurrence, so it is a trend rather than a one-off — but the
+authoritative source is `rexymcp.toml`, the telemetry store records the real
+model, and no decision depends on the Update Log's claim. Recorded so that a
+future reader does not mistake the self-report for evidence a different model
+ran. No fix proposed.
+
+**2. Prototyping-before-spec is now 4 for 4.** Phases 04, 05, 06 and 10 each had
+their load-bearing facts executed against the real system before the spec was
+written — here, the exact tree lines from the phase-05 renderer, the `lazy`
+split from an actual `daemoneye setup`, all four E2E grep counts calibrated
+against the pre-fix tree, and every `CLAUDE.md` claim checked one at a time. All
+four landed clean on the parts that were prototyped; 06's single bounce was in
+the one area that was not. The pattern is consistent enough to be worth stating
+plainly at milestone close.
