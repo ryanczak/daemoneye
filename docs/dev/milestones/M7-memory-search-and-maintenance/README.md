@@ -72,7 +72,7 @@ refers to "phase 08" and "phase 09" by number, stays accurate.
 | 04 | [path-audit-fenced-blocks](phase-04-path-audit-fenced-blocks.md) — extend extraction to fenced code blocks, multi-segment rule (Part A of M6 item 5) | done |
 | 05 | [generated-runtime-tree](phase-05-generated-runtime-tree.md) — render `agent-runtime-layout.md`'s tree from a table in Rust, with an equality test against the shipped asset (Part B of M6 item 5) | done |
 | 06 | [fts5-index-schema](phase-06-fts5-index-schema.md) — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and registering `var/index/memory.db` in all four gates | done |
-| 07 | [fts5-write-path](phase-07-fts5-write-path.md) — index maintained on add/update/delete, with reconciliation | in-progress |
+| 07 | [fts5-write-path](phase-07-fts5-write-path.md) — index maintained on add/update/delete, with reconciliation | review      |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
 | 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
 | 10 | [tree-and-doc-truth](phase-10-tree-and-doc-truth.md) — `memory/incident` → `incidents` (incl. a live stamping bug), the per-category `POLICY_TABLE` entries that close the gate gap, `agents/*/memory/`, and two false `CLAUDE.md` rows | done |
