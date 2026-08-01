@@ -53,10 +53,11 @@ pub fn add_memory(key: &str, value: &str, category: MemoryCategory, namespace: &
 removes the file if it exists. Each ends with a `stats::` counter bump — the
 index hook goes in the same place.
 
-**Note:** `CLAUDE.md` claims these functions "enforce size cap, fcntl lock,
-masking, index sync (G1)". They do **none** of those things today. Do not go
-looking for that machinery; it is not there. Correcting that claim belongs to
-phase 09 — **do not edit `CLAUDE.md` in this phase.**
+**Note:** these functions do **no** size-capping, locking or masking — masking
+and `SESSION_MEMORY_CAP` live in `load_session_memory_block()`. Do not go looking
+for that machinery; it is not there. `CLAUDE.md` used to claim otherwise and
+**phase 10 already corrected it**, so there is nothing to fix — **do not edit
+`CLAUDE.md` in this phase.**
 
 ### Five facts, each verified against the real code before this spec was written
 
@@ -111,11 +112,10 @@ parameter. For a full rebuild the set is `"global"` plus one entry per agent:
 `dir_name()` for paths and `canonical_name()` for the value stored in the
 index's `category` column, exactly as `list_memories_with_tags` already does.
 
-> **Do not "fix" the runtime tree.** `RUNTIME_TREE` and the shipped asset say
-> `incident/`, which is wrong — that directory never exists. It is a real defect
-> and it is **out of scope here**; editing the tree would break
-> `render_matches_shipped_asset` and drag an unrelated asset change into this
-> phase. It has its own phase queued. Just don't propagate the singular into
+> **The runtime tree is already correct — leave it alone.** It used to say
+> `incident/`, a directory that never exists; **phase 10 fixed that** and added
+> the `agents/*/memory/` entries. Editing `RUNTIME_TREE` or the asset now would
+> break `render_matches_shipped_asset`. Just don't propagate the singular into
 > any path you build.
 
 ## Spec
@@ -294,8 +294,9 @@ Name them exactly:
 - [ ] `cargo build` zero new warnings; `cargo fmt --all` leaves the tree
       unchanged.
 - [ ] `cargo test` passes. Lib count rises by the number of tests added (8 by
-      this spec, so **1021**); integration stays **30** (2 ignored), isolation
-      **8** (1 ignored), `bug_tracker` **6**.
+      this spec, so **1023** — the baseline is **1015** since phase 10 landed);
+      integration stays **30** (2 ignored), isolation **8** (1 ignored),
+      `bug_tracker` **6**.
 - [ ] Only `src/memory/index.rs` and `src/memory.rs` change.
 
 ## Test plan
@@ -400,10 +401,10 @@ even when every claim in it is true.
 - **Calling `reconcile_index()` from daemon startup.** This phase provides and
   tests the function. Wiring it into the boot path is a separate decision with
   its own cost (it walks every memory file) — leave it uncalled outside tests.
-- **Fixing `incident/` → `incidents/` in `RUNTIME_TREE` and the asset.** Real
-  defect, its own phase. See the boxed note in Current state.
-- **`agents/*/memory/` missing from `POLICY_TABLE` and `RUNTIME_TREE`.** Same
-  phase as the above.
+- **`RUNTIME_TREE`, the shipped asset, `POLICY_TABLE` and the path-audit
+  `INVENTORY`.** Phase 10 already corrected `incident/` → `incidents/` and added
+  the `agents/*/memory/` entries. Nothing here needs touching, and editing the
+  tree would break `render_matches_shipped_asset`.
 - **Masking memory content before indexing.** The files on disk are not masked
   either, and the database sits inside the same private `~/.daemoneye/` tree.
   Not this phase's problem to invent.
