@@ -233,20 +233,24 @@ pub fn extract_path_literals(text: &str) -> Vec<String> {
                 if c == '`' {
                     chars.next();
                     let mut span = String::new();
+                    let mut closed = false;
                     while let Some(&ch) = chars.peek() {
                         if ch == '`' {
                             chars.next();
+                            closed = true;
                             break;
                         }
                         span.push(ch);
                         chars.next();
                     }
-                    let trimmed_span = span.trim();
-                    if PATH_PREFIXES
-                        .iter()
-                        .any(|&pfx| trimmed_span.starts_with(pfx))
-                    {
-                        found.push(trimmed_span.to_string());
+                    if closed {
+                        let trimmed_span = span.trim();
+                        if PATH_PREFIXES
+                            .iter()
+                            .any(|&pfx| trimmed_span.starts_with(pfx))
+                        {
+                            found.push(trimmed_span.to_string());
+                        }
                     }
                 } else {
                     chars.next();
@@ -776,6 +780,15 @@ grep x var/lib/old.json
         let text = "use `etc/config.toml` for configuration";
         let found = extract_path_literals(text);
         assert_eq!(found, vec!["etc/config.toml"]);
+    }
+
+    #[test]
+    fn unterminated_backtick_span_is_discarded() {
+        // A backtick span that is never closed on the same line must be
+        // discarded, matching the pre-phase behaviour.
+        let text = "see `var/log/unterminated.txt\nnext line\n";
+        let found = extract_path_literals(text);
+        assert!(found.is_empty(), "expected nothing, got {found:?}");
     }
 
     // ── Fence-aware extraction: negative cases ──────────────────────────────
