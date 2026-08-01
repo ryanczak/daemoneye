@@ -1,7 +1,7 @@
 # Phase 06: FTS5 Index Schema
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05 (generated-runtime-tree, done)
 **Estimated diff:** ~250 lines across 8 files. Broad but shallow — one real
 piece of logic (the schema opener in `src/memory/index.rs`); everything else is
@@ -483,3 +483,46 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-01 18:17 (started)
+
+**Executor:** claude-opus-4-5-20251101
+
+Implementing FTS5 index schema: added `rusqlite` dependency, path constructors, registered `var/index` in all four gates, wrote `open_index()`/`ensure_schema()` with DDL, and six tests including the load-bearing `fts5_is_available_and_matches`.
+
+### Update — 2026-08-01 18:17 (end-to-end verification)
+
+```
+=== setup creates var/index ===
+# The daemon will create the session automatically and `daemoneye chat`
+# will attach to it when run from outside tmux.
+/tmp/tmp.KTetfRDgIb/.daemoneye/var/index
+index-dir-exit=0   # 0 == PASS
+=== the new path is inventoried, not Unknown ===
+clean-audit-exit=0   # 0 == PASS
+=== the asset carries the new tree lines ===
+1
+=== the new tests ===
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::stale_schema_version_is_recreated ... ok
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1007 filtered out; finished in 0.00s
+=== tree/policy/inventory gates ===
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1008 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1005 filtered out; finished in 0.00s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 989 filtered out; finished in 0.00s
+=== full gate ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy-exit=0
+test result: ok. 1013 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+All acceptance criteria verified: `index-dir-exit=0`, `clean-audit-exit=0`, all 6 new tests pass, all gate tests pass, clippy clean, lib count 1013, integration 30 (2 ignored), isolation 8 (1 ignored), bug_tracker 6.

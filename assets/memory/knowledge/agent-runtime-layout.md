@@ -51,6 +51,9 @@ automation, configuration, and logs live under it.
       sessions/
         <id>.jsonl           ← per-session JSONL conversation history (ephemeral)
 
+    index/
+      memory.db              ← SQLite FTS5 memory index (derived; rebuildable)
+
     sessions/                ← named session persistent store
       index.json             ← session index (name → metadata)
       <name>/

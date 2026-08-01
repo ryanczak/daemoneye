@@ -36,6 +36,16 @@ pub fn pane_logs_dir() -> PathBuf {
     config_dir().join("var/log/panes")
 }
 
+/// `~/.daemoneye/var/index/` — derived indexes (FTS5 memory index).
+pub fn var_index_dir() -> PathBuf {
+    config_dir().join("var/index")
+}
+
+/// `~/.daemoneye/var/index/memory.db` — SQLite FTS5 memory index.
+pub fn memory_index_path() -> PathBuf {
+    var_index_dir().join("memory.db")
+}
+
 /// `~/.daemoneye/bin/` — symlinks/wrappers for the compiled agent and scripts.
 pub fn bin_dir() -> PathBuf {
     config_dir().join("bin")

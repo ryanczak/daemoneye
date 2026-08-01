@@ -106,6 +106,16 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         note: "cleared at daemon start; no persistence expected",
         lazy: false,
     },
+    // ── Derived indexes ────────────────────────────────────────────────────────
+    LifecycleEntry {
+        path: "var/index",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "derived FTS5 memory index; rebuildable from the memory files on disk \
+               — reconciliation lands in phase 07",
+        lazy: false,
+    },
     // ── Runtime state ────────────────────────────────────────────────────────
     LifecycleEntry {
         path: "var/run",

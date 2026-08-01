@@ -99,6 +99,16 @@ pub static INVENTORY: &[InventoryEntry] = &[
         source: "config::pipe_log_dir()",
     },
     InventoryEntry {
+        path: "var/index",
+        status: PathStatus::Current,
+        source: "config::var_index_dir()",
+    },
+    InventoryEntry {
+        path: "var/index/memory.db",
+        status: PathStatus::Current,
+        source: "config::memory_index_path()",
+    },
+    InventoryEntry {
         path: "var/log/sessions",
         status: PathStatus::Current,
         source: "config::sessions_dir()",
@@ -542,6 +552,8 @@ mod tests {
             crate::config::var_log_dir,
             crate::config::pipe_log_dir,
             crate::config::pane_logs_dir,
+            crate::config::var_index_dir,
+            crate::config::memory_index_path,
             crate::config::bin_dir,
             crate::config::default_log_path,
             crate::config::default_socket_path,

@@ -284,6 +284,17 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                     ],
                 },
                 TreeNode {
+                    name: "index/",
+                    note: None,
+                    blank_before: true,
+                    children: &[TreeNode {
+                        name: "memory.db",
+                        note: Some("SQLite FTS5 memory index (derived; rebuildable)"),
+                        blank_before: false,
+                        children: &[],
+                    }],
+                },
+                TreeNode {
                     name: "sessions/",
                     note: Some("named session persistent store"),
                     blank_before: true,

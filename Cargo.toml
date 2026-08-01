@@ -24,6 +24,7 @@ log = "0.4"
 nix = { version = "0.31.3", features = ["fs"] }
 regex = "1"
 reqwest = { version = "0.13.4", features = ["json", "stream"] }
+rusqlite = { version = "0.40.1", features = ["bundled"] }
 # `scrolling-regions` makes the inline viewport's `insert_before` scroll new
 # transcript lines in above the viewport via DECSTBM instead of clearing and
 # repainting the input box — this stops the input border from flashing on every
