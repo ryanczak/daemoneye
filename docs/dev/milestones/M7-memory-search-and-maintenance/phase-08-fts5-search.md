@@ -1,7 +1,7 @@
 # Phase 08: FTS5 Search
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** in-progress (bounced at review — see `bugs/bug-08-1.md`)
 **Depends on:** phase-07 (fts5-write-path, done)
 **Estimated diff:** ~310 lines — `src/memory/index.rs` (the query path + tests)
 plus ~10 lines in `src/daemon/memory_prompt.rs`.
@@ -358,11 +358,15 @@ pass. The ranking test is the guard, which is why it must assert **order**, not
 "contains".
 
 A second, quieter one: quoting the whole query instead of per-term. That
-compiles, raises no errors, passes `hyphenated_query_does_not_error` and
-`empty_query_returns_no_hits` — and returns zero hits for every realistic user
-turn. `search_finds_text_hit_when_tags_miss` and
-`fresh_index_is_reconciled_on_first_search` both use multi-word queries and are
-what catch it.
+compiles, raises no errors, and returns zero hits for every realistic user turn.
+
+**Corrected 2026-08-01 at review — the original claim here was wrong.** It said
+`search_finds_text_hit_when_tags_miss` and
+`fresh_index_is_reconciled_on_first_search` "both use multi-word queries and are
+what catch it". They do not: both use single-word queries, where phrase quoting
+and per-term `OR` are identical. Verified by mutation — the naive form passes all
+22 tests. Catching it needs a query whose words are **not adjacent** in the
+target memory; see `bugs/bug-08-1.md` fix 2.
 
 ## End-to-end verification
 
