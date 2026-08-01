@@ -1,23 +1,28 @@
 # NEXT
 
-**Active phase: M7 phase-03 — test-sleep-removal** (`todo`, drafted 2026-07-31).
+**Active phase: M7 phase-04 — path-audit-fenced-blocks** (`todo`, drafted 2026-07-31).
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-03-test-sleep-removal.md`
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-04-path-audit-fenced-blocks.md`
 
-Dispatch with `/rexymcp:dispatch phase-03`.
+Dispatch with `/rexymcp:dispatch phase-04`.
 
-Phases 01 and 02 are `done`, both approved_first_try.
+Phases 01-03 are `done`, all approved_first_try.
 
-**The milestone README's "four sleep sites" was wrong and has been corrected.**
-Re-scanning by enclosing-function attributes rather than by text grep found
-**three** live sites — including a 3-second wall-clock wait in
-`liveness_is_unresponsive_when_peer_never_replies` that the original count
-missed entirely — while five of the originally-listed sites turned out to be
-already compliant inside `#[ignore]`d tests.
+**This phase resolves M6 open question 5**, which was deferred because a naive
+"contains a slash" rule false-positives on `/clear` and shebangs. Both candidate
+rules were prototyped against the real assets before the spec was written:
 
-All three fixes were applied, run and reverted before the spec was written:
-`start_paused = true` takes the 3 s test to `0.00s`, and both changed tests held
-green across 15 consecutive runs each.
+- **Naive** (every prefix-matching token in a fence): 11 extractions, **4 false
+  `Unknown` findings** — `audit-prompts` would exit 1 on a clean tree.
+- **Narrow** (only tokens whose normalised form is multi-segment): 1 extraction,
+  **0 false findings**, audit stays at exit 0 — and it still catches a fenced
+  `var/index/memory.db`, the phantom that slipped through M6.
+
+The false positives are context-loss, not drift: `agent-runtime-layout.md`'s tree
+is indentation-relative, so a bare `prompts/` means `etc/prompts/`.
+
+The E2E block carries phase-03's post-mortem rules: **no heredocs**, and every
+tree-walking command wrapped in `timeout`.
 
 ## The phase-06 dependency decision is settled
 
