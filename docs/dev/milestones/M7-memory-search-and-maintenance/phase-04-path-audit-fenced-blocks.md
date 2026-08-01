@@ -1,7 +1,7 @@
 # Phase 04: Path Audit — Fenced Code Blocks
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03 (test-sleep-removal, done)
 **Estimated diff:** ~90 lines in `src/config/path_audit.rs` (one function + tests)
 
@@ -296,3 +296,41 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-01 00:51 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Working on:** Spec tasks 1–4: fence-aware `extract_path_literals`, positive tests, negative tests, regression test.
+
+### Update — 2026-08-01 00:53 (end-to-end verification)
+
+**End-to-end verification transcript:**
+
+```
+=== clean seeded tree: audit must exit 0 ===
+#
+# The daemon will create the session automatically and `daemoneye chat`
+# will attach to it when run from outside tmux.
+clean-audit-exit=0   # 0 == PASS
+=== inject a fenced phantom path into a seeded knowledge memory ===
+
+```
+sqlite3 ~/.daemoneye/var/index/memory.db "select 1"
+```
+exit=0
+=== audit must now exit 1 and name the path ===
+  ✗ `~/.daemoneye/var/index/memory.db` — unknown
+grep-exit=0   # 0 == the path was reported == PASS
+dirty-audit-exit=1   # 1 == PASS
+=== the new tests ===
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 978 filtered out; finished in 0.00s
+exit=0
+=== full gate ===
+clippy-exit=0
+test result: ok. 1001 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.22s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+exit=0
+```
+
+`clean-audit-exit=0` and `dirty-audit-exit=1` together confirm: the gate is quiet on a correct tree and loud on a stale one. Lib count is 1001 (up 9 from 992, matching the 9 new tests). Integration stays 30 (2 ignored), isolation 8 (1 ignored), bug_tracker 6.

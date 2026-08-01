@@ -189,41 +189,69 @@ const PATH_PREFIXES: &[&str] = &[
     "sessions/",
 ];
 
-/// Extract backtick-delimited path literals from text.
+/// Characters to strip from both ends of a token inside a fenced block.
+const FENCE_TRIM_CHARS: &[char] = &[
+    '`', '\'', '"', ',', ';', ':', '(', ')', '[', ']', '{', '}', '<', '>', '│', '├', '└', '─', '|',
+    '*',
+];
+
+/// Extract path literals from text, handling fenced code blocks.
 ///
-/// A span is kept only if, after trimming whitespace, it starts with one of
-/// the recognised path prefixes. Everything else (slash commands, shebangs,
-/// tool names, etc.) is discarded.
+/// Outside fences: extracts backtick-delimited spans that start with a
+/// `PATH_PREFIXES` entry (unchanged from the original behaviour).
+///
+/// Inside fences: splits lines on whitespace, trims surrounding punctuation,
+/// and keeps a token only if it starts with a `PATH_PREFIXES` entry **and**
+/// its normalised form contains a `/` (multi-segment rule).
 pub fn extract_path_literals(text: &str) -> Vec<String> {
     let mut found = Vec::new();
-    let mut chars = text.chars().peekable();
+    let mut in_fence = false;
 
-    while let Some(&c) = chars.peek() {
-        if c == '`' {
-            // Consume the opening backtick
-            chars.next();
-            let mut span = String::new();
-            let mut on_line = true;
-            while let Some(&ch) = chars.peek() {
-                if ch == '`' {
-                    chars.next(); // consume closing backtick
-                    break;
-                }
-                if ch == '\n' {
-                    on_line = false;
-                    break;
-                }
-                span.push(ch);
-                chars.next();
-            }
-            if on_line {
-                let trimmed = span.trim();
-                if PATH_PREFIXES.iter().any(|&pfx| trimmed.starts_with(pfx)) {
-                    found.push(trimmed.to_string());
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+
+        if in_fence {
+            // Inside a fenced block: split on whitespace, trim punctuation,
+            // keep only multi-segment paths.
+            for token in line.split_whitespace() {
+                let stripped = token.trim_matches(FENCE_TRIM_CHARS);
+                if PATH_PREFIXES.iter().any(|&pfx| stripped.starts_with(pfx))
+                    && let Some(n) = normalise(stripped)
+                    && n.contains('/')
+                {
+                    found.push(stripped.to_string());
                 }
             }
         } else {
-            chars.next();
+            // Outside a fence: original backtick-span logic.
+            let mut chars = line.chars().peekable();
+            while let Some(&c) = chars.peek() {
+                if c == '`' {
+                    chars.next();
+                    let mut span = String::new();
+                    while let Some(&ch) = chars.peek() {
+                        if ch == '`' {
+                            chars.next();
+                            break;
+                        }
+                        span.push(ch);
+                        chars.next();
+                    }
+                    let trimmed_span = span.trim();
+                    if PATH_PREFIXES
+                        .iter()
+                        .any(|&pfx| trimmed_span.starts_with(pfx))
+                    {
+                        found.push(trimmed_span.to_string());
+                    }
+                } else {
+                    chars.next();
+                }
+            }
         }
     }
 
@@ -712,5 +740,152 @@ mod tests {
             .find(|(l, _)| l == "var/log/does-not-exist.log");
         assert!(unknown.is_some(), "unknown literal missing");
         assert_eq!(unknown.unwrap().1, PathClassification::Unknown);
+    }
+
+    // ── Fence-aware extraction: positive cases ──────────────────────────────
+
+    #[test]
+    fn fenced_block_yields_multi_segment_paths() {
+        let text = "```
+sqlite3 ~/.daemoneye/var/index/memory.db \"select 1\"
+```";
+        let found = extract_path_literals(text);
+        assert_eq!(found, vec!["~/.daemoneye/var/index/memory.db"]);
+    }
+
+    #[test]
+    fn fenced_block_yields_bare_relative_path() {
+        let text = "```
+grep x var/lib/old.json
+```";
+        let found = extract_path_literals(text);
+        assert_eq!(found, vec!["var/lib/old.json"]);
+    }
+
+    #[test]
+    fn fenced_token_strips_surrounding_punctuation() {
+        let text = "```
+(var/log/daemon.log)
+```";
+        let found = extract_path_literals(text);
+        assert_eq!(found, vec!["var/log/daemon.log"]);
+    }
+
+    #[test]
+    fn inline_backticks_still_extracted_outside_fences() {
+        let text = "use `etc/config.toml` for configuration";
+        let found = extract_path_literals(text);
+        assert_eq!(found, vec!["etc/config.toml"]);
+    }
+
+    // ── Fence-aware extraction: negative cases ──────────────────────────────
+
+    #[test]
+    fn fenced_shebang_is_not_a_path() {
+        let text = "```
+#!/usr/bin/env python3
+#!/bin/bash
+```";
+        let found = extract_path_literals(text);
+        assert!(found.is_empty(), "expected nothing, got {found:?}");
+    }
+
+    #[test]
+    fn fenced_slash_command_is_not_a_path() {
+        let text = "```
+/clear
+/limits reset
+```";
+        let found = extract_path_literals(text);
+        assert!(found.is_empty(), "expected nothing, got {found:?}");
+    }
+
+    #[test]
+    fn fenced_absolute_system_path_is_not_a_path() {
+        let text = "```
+ls /bin/sh
+```";
+        let found = extract_path_literals(text);
+        assert!(found.is_empty(), "expected nothing, got {found:?}");
+    }
+
+    #[test]
+    fn fenced_bare_top_level_dir_is_skipped() {
+        // Bare top-level names like etc/, var/, prompts/ normalise to a single
+        // segment. In an indented tree these are children relative to their
+        // parent, so a bare prompts/ would be read as a top-level directory
+        // that does not exist.
+        let text = "```
+etc/
+var/
+prompts/
+```";
+        let found = extract_path_literals(text);
+        assert!(found.is_empty(), "expected nothing, got {found:?}");
+    }
+
+    #[test]
+    fn fenced_url_is_not_a_path() {
+        let text = "```
+https://example.com/var/x
+```";
+        let found = extract_path_literals(text);
+        assert!(found.is_empty(), "expected nothing, got {found:?}");
+    }
+
+    // ── Regression: seeded assets stay clean ────────────────────────────────
+
+    #[test]
+    fn seeded_assets_have_no_unknown_fenced_paths() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::config::Config::ensure_dirs().unwrap();
+
+        // Read every *.md under memory/knowledge/
+        let knowledge_dir = crate::config::config_dir().join("memory/knowledge");
+        let mut unknowns = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&knowledge_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("md") {
+                    let text = std::fs::read_to_string(&path).unwrap_or_default();
+                    let results = classify_text(&text);
+                    for (literal, classification) in &results {
+                        if matches!(classification, PathClassification::Unknown) {
+                            unknowns.push(format!(
+                                "{}: '{}' -> Unknown",
+                                path.file_name().unwrap().to_string_lossy(),
+                                literal
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check etc/prompts/sre.toml
+        let sre_path = crate::config::config_dir().join("etc/prompts/sre.toml");
+        if let Ok(text) = std::fs::read_to_string(&sre_path) {
+            let results = classify_text(&text);
+            for (literal, classification) in &results {
+                if matches!(classification, PathClassification::Unknown) {
+                    unknowns.push(format!("sre.toml: '{}' -> Unknown", literal));
+                }
+            }
+        }
+
+        assert!(
+            unknowns.is_empty(),
+            "seeded assets have unknown fenced paths:\n{}",
+            unknowns.join("\n")
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 }
