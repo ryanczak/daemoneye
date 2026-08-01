@@ -1,10 +1,25 @@
 # NEXT
 
-**Active phase: M7 phase-04 — path-audit-fenced-blocks** (`todo`, drafted 2026-07-31).
+**Active phase: M7 phase-04 — path-audit-fenced-blocks** (drafted 2026-07-31;
+bounced at review 2026-07-31 — see `bugs/bug-04-1.md`; **round 2 dispatched**,
+in flight as of 2026-07-31). The phase doc's own `Status:` line is authoritative
+— the executor moves it `in-progress` → `review` as it runs.
 
 Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-04-path-audit-fenced-blocks.md`
 
-Dispatch with `/rexymcp:dispatch phase-04`.
+Review round 2 with `/rexymcp:review phase-04` once it lands.
+
+**Round 1 bounced on one minor finding** (`scope_deviation`): the fence-aware
+rewrite dropped the `on_line` guard from the *non-fence* branch, so an
+unterminated backtick span now extracts where it was previously discarded. Spec
+task 1 required that branch be left unchanged, and the doc's
+"behaviour-preserving" argument rests on that discard. Latent, not live —
+seeded assets stay clean and `clean-audit-exit=0` reproduces.
+
+Everything else reviewed clean on round 1: four gates green at the exact counts
+the spec names (1001 / 30 / 8 / 6), the E2E block reproduced verbatim at review,
+`extracts_real_path_spans` untouched, and both mutation probes (drop the
+multi-segment rule; no-op the fence branch) are caught by the new tests.
 
 Phases 01-03 are `done`, all approved_first_try.
 
