@@ -1,7 +1,7 @@
 # Phase 05: Generated Runtime Tree
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-04 (path-audit-fenced-blocks, done)
 **Estimated diff:** ~260 lines — one new file `src/config/runtime_tree.rs`
 (data + renderer + tests), one line in `src/config/mod.rs`. **No change to any
@@ -477,3 +477,137 @@ test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; fin
 test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
+
+### Update — ts=1785557192713 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review:**
+
+Created `src/config/runtime_tree.rs` with the `TreeNode` struct, `render_tree()` renderer, `tree_block_of()` asset extractor, and the full `RUNTIME_TREE` data table transcribed from the shipped asset. Wired into `src/config/mod.rs` alongside existing modules. All 5 tests pass: `render_matches_shipped_asset` confirms byte-for-byte equality with the asset, `every_policy_path_appears_in_tree` cross-checks all 15 POLICY_TABLE entries against the tree (with wildcard/placeholder matching), `annotation_column_is_not_overflowed` guards alignment, `tree_block_of_finds_the_block` validates extraction, and `tree_block_mismatch_is_detected` proves the comparison is real. The asset file is untouched (`asset-in-diff=0`), `audit-prompts` exits 0 on a seeded tree, lib test count is 1007, clippy is clean, and the working tree is clean. No deviations from spec.
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+
+
+TEST
+ok
+test session_store::tests::collision_allowed_with_force ... ok
+test session_store::tests::collision_rejected_without_force ... ok
+test session_store::tests::delete_nonexistent_errors ... ok
+test session_store::tests::delete_removes_dir_and_index ... ok
+test memory::tests::update_memory_replace_body ... ok
+test session_store::tests::load_messages_max_count_truncates ... ok
+test session_store::tests::rename_nonexistent_errors ... ok
+test session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test session_store::tests::save_and_load_round_trip ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test test_home_guard_tests::guard_restores_home_on_drop ... ok
+
+test result: ok. 1007 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test header_status_strips_trailing_prose ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test event_log_entry_format ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test schedule_store_persistence ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 9 tests
+test webhook_ghost_e2e_http ... ignored
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-1ad9304635fe6e0b)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e13fd526e8666cb6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-3a042278c054277a)
+     Running tests/integration.rs (target/debug/deps/integration-15c2cb829537d34b)
+     Running tests/isolation.rs (target/debug/deps/isolation-783d9644f0ac8667)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M7-memory-search-and-maintenance/README.md` — +1 -1
+- `docs/dev/milestones/M7-memory-search-and-maintenance/phase-05-generated-runtime-tree.md` — +36 -1
+- `src/config/mod.rs` — +2 -0
+- `src/config/runtime_tree.rs` — +456 -0
+
+**Commit:** 1b4379348e62ace5ae7a6db8a7fe9d421ebae2c0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
