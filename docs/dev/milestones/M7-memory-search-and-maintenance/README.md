@@ -55,7 +55,7 @@ run at close. One capability (working memory search) and one maintenance axis.
 
 ## Phases
 
-Phases 01–05 are drafted; 06–09 are named only. Draft each with `/rexymcp:architect next` when its
+Phases 01–06 are drafted; 07–09 are named only. Draft each with `/rexymcp:architect next` when its
 predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 
 | #  | Phase | Status |
@@ -65,7 +65,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 03 | [test-sleep-removal](phase-03-test-sleep-removal.md) — the three live-test `sleep` sites `STANDARDS.md` §3.3 forbids | done |
 | 04 | [path-audit-fenced-blocks](phase-04-path-audit-fenced-blocks.md) — extend extraction to fenced code blocks, multi-segment rule (Part A of M6 item 5) | done |
 | 05 | [generated-runtime-tree](phase-05-generated-runtime-tree.md) — render `agent-runtime-layout.md`'s tree from a table in Rust, with an equality test against the shipped asset (Part B of M6 item 5) | done |
-| 06 | fts5-index-schema — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and the `var/index/memory.db` lifecycle entry | todo |
+| 06 | [fts5-index-schema](phase-06-fts5-index-schema.md) — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and registering `var/index/memory.db` in all four gates | todo |
 | 07 | fts5-write-path — index maintained on add/update/delete, with reconciliation | todo |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
 | 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
@@ -124,10 +124,24 @@ prevent. Both phases are hygiene, both are cheap, and neither blocks anything.
 
 **04 and 05 before the FTS5 work, deliberately.** Phase 06 adds
 `var/index/memory.db` — a path that must appear in the path-audit inventory, the
-lifecycle policy table, and the runtime-layout tree. Landing the *generated* tree
-first means phase 06 adds one inventory entry and the tree updates itself; landing
-it after means hand-editing the tree again, which is the drift this milestone is
-removing.
+lifecycle policy table, and the runtime-layout tree.
+
+*Corrected after phase 05 landed (2026-08-01).* This originally read "phase 06
+adds one inventory entry and the tree updates itself." That is not what phase 05
+built, and phase 06's spec should not inherit the wrong expectation. The tree
+carries files, the `memory/{session,knowledge,incident}` split, and purpose
+annotations that `POLICY_TABLE` does not have, so it has its own table
+(`RUNTIME_TREE`) rather than being derived from the policy table. Phase 06
+therefore makes **four** one-entry edits — `POLICY_TABLE`, `RUNTIME_TREE`, the
+asset the tree renders to, and the path-audit `INVENTORY`.
+
+The ordering still earns its place, just for a sharper reason: **none of those
+four edits can be silently skipped.** `every_policy_path_appears_in_tree` fails
+until the tree entry exists, `render_matches_shipped_asset` fails until the asset
+matches, `every_existing_directory_has_a_policy_entry` fails until the policy
+entry exists, and `audit-prompts` reports the path `Unknown` until it is
+inventoried. Landing 04 and 05 after 06 would mean hand-editing the tree with no
+gate watching — the drift this milestone is removing.
 
 **06 → 07 → 08 as schema → write → read.** The schema is the load-bearing
 decision; the write path is where reconciliation bugs live; the search path is
