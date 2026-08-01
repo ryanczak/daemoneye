@@ -1,44 +1,78 @@
 # NEXT
 
-**Active phase: none.** Draft the next one with `/rexymcp:architect next` —
-phase 07 (fts5-write-path) is next in the table.
+**Active phase: M7 phase-07 — fts5-write-path** (`todo`, drafted 2026-08-01).
 
-**The FTS5 foundation is in.** `rusqlite 0.40.1` (`bundled`), the schema at
-`var/index/memory.db`, and the path registered in all four gates. `fts5_search()`
-is still a stub by design.
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-07-fts5-write-path.md`
 
-## Phase 07 has three hard requirements before anything else
+Dispatch with `/rexymcp:dispatch phase-07`.
 
-1. **Delete `#![allow(dead_code)]` from `src/memory/index.rs:3`, and make that
-   an acceptance criterion.** It is required *today* — `memory` is `pub(crate)`,
-   so `SCHEMA_VERSION`/`open_index`/`ensure_schema` are genuinely unreferenced
-   and `clippy -- -D warnings` fails without it (verified at review). Phase 07
-   wires them in, so the attribute becomes deletable and **must** be deleted. It
-   is the only `allow(dead_code)` in `src/`, it is module-wide, and the file
-   grows a lot in 07/08 — left in place it will mask genuinely-dead code.
-2. **Say what to do about the lint gate for any code 07 lands unused for 08.**
-   This is the calibration lesson from 06: a spec that asks for an API nothing
-   calls yet, under a deny-warnings gate, forces the executor to invent a
-   resolution that then looks like a DoD violation at review. Decide it in the
-   spec.
-3. **Name concrete APIs, not just patterns.** 06's bounce came from "use a temp
-   `HOME`, see the pattern at `path_audit.rs`" without naming
-   `tempfile::tempdir()`. The executor used a fixed `/tmp` path — compliant with
-   the letter, and it silently disabled a test's only assertion on warm runs.
+Phase 06's foundation is in — `rusqlite 0.40.1` (`bundled`), the schema at
+`var/index/memory.db`, the path in all four gates. Phase 07 makes it live:
+`add_memory` / `update_memory` / `delete_memory` maintain the index, plus a
+`reconcile_index()` rebuild. `fts5_search()` stays a stub until 08.
 
-## Also for phase 07
+**All three of phase 06's carried requirements are folded into the 07 spec**:
+deleting `#![allow(dead_code)]` is task 1 and an acceptance criterion; the
+lint-gate question is answered (nothing 07 lands stays unused, so the attribute
+simply goes); and every API is named concretely rather than gestured at —
+`tempfile::tempdir()`, `super::parse_memory_frontmatter`, `list_agents()`,
+`log::warn!`.
 
+**Five facts verified against the real code before the spec was written**, so
+the executor is not guessing:
+
+- **FTS5 has no upsert** — `ON CONFLICT` errors with *"UPSERT not implemented
+  for virtual table"*. Update must be scoped `DELETE` then `INSERT`; verified
+  that a scoped delete keys correctly on `namespace` and leaves other namespaces
+  intact.
+- **`memory::index` can call `memory`'s private `parse_memory_frontmatter`** —
+  `pub mod index;` is declared inside `src/memory.rs`, so it is a descendant
+  module. Compiled and run to confirm, so the spec says "use
+  `super::parse_memory_frontmatter`" instead of inviting a second parser or a
+  needless `pub`.
+- **`MemoryInfo` carries no body**, so the reconciler cannot be built on
+  `list_memories_with_tags` alone — it must read and parse each file.
+- **Namespaces must be enumerated** — `"global"` plus `list_agents()` names.
+- **The incident directory is `incidents`, plural** (see below).
+
+**The load-bearing test is `reconcile_after_incremental_writes_is_a_no_op`** — a
+full rebuild after a mixed add/update/delete sequence must find the same row
+count. It asserts that two independent paths to the same state agree rather than
+a hand-computed number, which is the milestone's "verified by a reconciliation
+test rather than by construction order" criterion expressed as code.
+
+## A phase is missing from the table
+
+Two runtime-tree defects surfaced while drafting 06 and 07. Both were held out of
+those phases deliberately to keep them focused, and **both still need a phase**
+before M7 closes. Recorded with full detail in the milestone README §
+"Runtime-tree defects found mid-milestone":
+
+1. **`memory/incident/` does not exist — the real directory is
+   `memory/incidents/`.** `dir_name()` returns the plural, `canonical_name()` the
+   singular, and `RUNTIME_TREE` plus the shipped asset document the singular.
+   Verified empirically: after `daemoneye setup`, `memory/` holds only
+   `knowledge` and `session`, and `incidents/` appears lazily on first write. The
+   agent-facing knowledge memory is telling the AI a path that cannot exist —
+   exactly the defect class M6 item 5 was about. Phase 05's gates missed it
+   because `POLICY_TABLE` carries only `memory`, not the per-category paths.
+2. **`agents/*/memory/` is in neither `POLICY_TABLE` nor `RUNTIME_TREE`.**
+
+They share a fix shape and one asset regeneration, so they want one phase, not
+two.
+
+## Also outstanding
+
+- **`CLAUDE.md` overstates `add_memory`/`update_memory`** — it claims they
+  "enforce size cap, fcntl lock, masking, index sync (G1)". Verified at drafting:
+  they do none of those. Phase 09 owns the correction; phase 07 is explicitly
+  forbidden from touching `CLAUDE.md`.
 - **The FTS5 `MATCH` quoting gotcha** — a bare `-` or `:` is query syntax, so
   `MATCH 'runtime-layout'` raises *"no such column: layout"* and memory keys are
-  kebab-case. 07 builds the write path, so it may not hit this; **phase 08 owns
-  it**, but 07 should not introduce an unquoted `MATCH` either.
-- **Schema-version bumps are free.** `ensure_schema` drops and recreates on any
-  `user_version` mismatch, and `stale_schema_version_is_recreated` pins that. If
-  07 needs a column, bump `SCHEMA_VERSION`; do not write a migration.
-- **A row is (namespace, category, key)**, not key alone —
-  `memory_dir_for_namespace()` (`src/memory.rs:240`) puts global memories under
-  `memory/<category>/` and agent memories under
-  `agents/<ns>/memory/<category>/`. The write path has to walk both.
+  kebab-case. **Phase 08 owns it.**
+- **Schema-version bumps are free** — `ensure_schema` drops and recreates on a
+  `user_version` mismatch, pinned by `stale_schema_version_is_recreated`. If a
+  later phase needs a column, bump `SCHEMA_VERSION`; do not write a migration.
 
 **M6 open question 5 is fully resolved** — Part A (phase 04, the audit reads
 fenced blocks) and Part B (phase 05, the tree renders from Rust data with a

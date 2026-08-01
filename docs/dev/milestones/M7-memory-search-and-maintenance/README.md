@@ -55,8 +55,11 @@ run at close. One capability (working memory search) and one maintenance axis.
 
 ## Phases
 
-Phases 01–06 are drafted; 07–09 are named only. Draft each with `/rexymcp:architect next` when its
+Phases 01–07 are drafted; 08–09 are named only. Draft each with `/rexymcp:architect next` when its
 predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
+
+**Two defects found while drafting 06 and 07 need a phase of their own**, and it
+is not yet in this table — see Notes § "Runtime-tree defects found mid-milestone".
 
 | #  | Phase | Status |
 |----|-------|--------|
@@ -66,7 +69,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 04 | [path-audit-fenced-blocks](phase-04-path-audit-fenced-blocks.md) — extend extraction to fenced code blocks, multi-segment rule (Part A of M6 item 5) | done |
 | 05 | [generated-runtime-tree](phase-05-generated-runtime-tree.md) — render `agent-runtime-layout.md`'s tree from a table in Rust, with an equality test against the shipped asset (Part B of M6 item 5) | done |
 | 06 | [fts5-index-schema](phase-06-fts5-index-schema.md) — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and registering `var/index/memory.db` in all four gates | done |
-| 07 | fts5-write-path — index maintained on add/update/delete, with reconciliation | todo |
+| 07 | [fts5-write-path](phase-07-fts5-write-path.md) — index maintained on add/update/delete, with reconciliation | todo |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
 | 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
 
@@ -207,3 +210,32 @@ the justification comment §3.3 requires — compliant, and out of scope.
 - **On a `NoProgressStall`, run the gates against the partial tree before
   choosing a lever** (`WORKFLOW.md`). Four occurrences in M6; the partial work was
   correct every time.
+
+### Runtime-tree defects found mid-milestone (2026-08-01)
+
+Two defects in the runtime-layout tree surfaced while drafting phases 06 and 07.
+Both are in scope for M7's *spirit* — this milestone exists partly to stop the
+tree from lying — but neither belongs to a drafted phase, and both were
+explicitly held out of 06 and 07 so those phases stayed focused. **They need a
+phase of their own before the milestone closes.**
+
+1. **`memory/incident/` does not exist; the real directory is
+   `memory/incidents/`.** `MemoryCategory::Incident.dir_name()` returns
+   `"incidents"` (`src/memory.rs:18`) while `canonical_name()` returns
+   `"incident"` (`:31`). `RUNTIME_TREE` and the shipped asset document the
+   singular. Verified empirically: after `daemoneye setup`, `memory/` contains
+   only `knowledge` and `session`, and `incidents/` is created lazily on first
+   write — the singular form is never created by anything. So an agent reading
+   this knowledge memory is told a path that cannot exist. This is the exact
+   defect class M6 item 5 was about, and phase 05's gates did not catch it
+   because `POLICY_TABLE` carries only `memory`, not the per-category
+   subdirectories.
+2. **`agents/*/memory/` is in neither `POLICY_TABLE` nor `RUNTIME_TREE`.**
+   `memory_dir_for_namespace()` (`src/memory.rs:240`) creates
+   `agents/<ns>/memory/<category>/` for every non-global namespace, and no table
+   lists it.
+
+The two share a fix shape — add the missing entries, correct the singular, and
+consider whether `POLICY_TABLE` should carry the per-category paths so the
+cross-check test can see them at all. Doing it in one phase also means one asset
+regeneration instead of two.
