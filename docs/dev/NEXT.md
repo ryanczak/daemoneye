@@ -1,10 +1,34 @@
 # NEXT
 
-**Active phase: M7 phase-06 — fts5-index-schema** (`todo`, drafted 2026-08-01).
+**Active phase: M7 phase-06 — fts5-index-schema** (`in-progress`, drafted
+2026-08-01, **bounced at review 2026-08-01** — see `bugs/bug-06-1.md`).
 
 Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-06-fts5-index-schema.md`
 
-Dispatch with `/rexymcp:dispatch phase-06`.
+Re-dispatch with `/rexymcp:dispatch phase-06`.
+
+**Round 1 bounced on one minor finding, classed `spec_bug`** (architect fault,
+not the model's): the three `HOME` tests point at fixed `/tmp/daemoneye-test-index-N`
+paths instead of `tempfile::tempdir()`, so they leave SQLite databases behind and
+`open_index_creates_database_and_schema` stops proving creation after its first
+run — the file is already there before the test body starts. The spec said "temp
+`HOME`" and pointed at a pattern without naming `tempfile::tempdir()`; that
+under-specification is mine.
+
+**`#![allow(dead_code)]` in `src/memory/index.rs` is accepted, not a finding.**
+It is required: `memory` is `pub(crate)`, so `open_index`/`ensure_schema`/
+`SCHEMA_VERSION` are genuinely unreferenced until phase 07 calls them, and
+without it `clippy -- -D warnings` fails with three `never used` warnings
+(reproduced at review). It is the **first** `allow(dead_code)` anywhere in
+`src/`, and it is module-wide — **phase 07 must delete it** once the functions
+are wired in, and phase 07's spec must pin that. Left alone deliberately, since
+it will silently mask genuinely-dead code in a file that triples in size in
+07/08.
+
+Everything else reviewed clean on round 1: four gates green at 1013 / 30 / 8 / 6,
+all four path gates satisfied, the asset carries the new `index/` lines exactly
+as the phase-05 renderer computed them, and `fts5_search()` is still a stub as
+required.
 
 This starts the FTS5 work that is the milestone's actual capability. It is
 **foundation only** — `rusqlite`, the schema, the database file, and registering
@@ -44,11 +68,16 @@ user-supplied query must be double-quoted. Phase 06 builds no query path;
    creates `agents/<ns>/memory/<category>/` for non-global namespaces and no
    table lists it. A real pre-existing gap, explicitly out of scope for phase 06
    because fixing it drags in an unrelated asset change. Needs its own phase.
-3. **`tests/isolation.rs` is intermittently flaky** — a full `cargo test` failed
-   once during phase-04 review in `hooks_land_on_private_server`, then went green
-   across 5 full-suite and 12 isolation-only runs. Ruled out as phase-04's doing
-   and as phase-03's. The test spawns a real daemon and tmux server. Pre-existing;
-   worth its own phase if it recurs. Do not let it be mistaken for FTS5 fallout.
+3. **`tests/isolation.rs` is flaky — now twice, which makes it a trend.**
+   Occurrence 1: phase-04 review, `hooks_land_on_private_server`, then green
+   across 5 full-suite and 12 isolation-only runs. Occurrence 2: phase-06's own
+   run, `stub_returns_canned_response_via_make_client`, an `AddrInUse` port-bind
+   race, green on re-run. **Two different tests in the same file, both binding
+   ports / spawning real daemons** — that is a shared root cause, not two
+   coincidences. Ruled out as phase-03/04/05/06 fallout each time. Per
+   `WORKFLOW.md` § Calibration, one is data and two is a trend: this now warrants
+   its own phase (ephemeral-port allocation, or serialising the port-binding
+   tests) rather than another carry-forward line.
 4. **The phase-04 fence toggle is a flip-flop, not a nesting parser.** `in_fence`
    inverts on any line starting with ` ``` `, so a nested fence inside a fence
    mis-tracks. Harmless while `audit-prompts` only scans installed assets, but it

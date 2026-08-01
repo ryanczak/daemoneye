@@ -1,7 +1,7 @@
 # Phase 06: FTS5 Index Schema
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** in-progress (bounced at review — see `bugs/bug-06-1.md`)
 **Depends on:** phase-05 (generated-runtime-tree, done)
 **Estimated diff:** ~250 lines across 8 files. Broad but shallow — one real
 piece of logic (the schema opener in `src/memory/index.rs`); everything else is
