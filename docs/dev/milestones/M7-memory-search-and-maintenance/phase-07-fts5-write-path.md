@@ -122,13 +122,37 @@ index's `category` column, exactly as `list_memories_with_tags` already does.
 
 ### 1. Delete `#![allow(dead_code)]`
 
-Remove the attribute at `src/memory/index.rs:3`. Phase 06 added it because
-nothing called `open_index`/`ensure_schema`/`SCHEMA_VERSION` yet; this phase
-calls all three, so it must go. An acceptance criterion pins this.
+Remove the **module-level** attribute at `src/memory/index.rs:3`. Phase 06 added
+it because nothing called `open_index`/`ensure_schema`/`SCHEMA_VERSION` yet; this
+phase calls all three, so the blanket form must go.
 
-If a `dead_code` warning survives after the rest of this phase lands, that is a
-signal something the spec asked for is not actually wired up — **fix the wiring,
-do not re-add the attribute.**
+**`reconcile_index` and `ReconcileReport` are the exception, and they need a
+narrow allow.** They are deliberately left with no production caller (see Out of
+scope), so under `-D warnings` they raise exactly two errors:
+
+```
+error: struct `ReconcileReport` is never constructed
+error: function `reconcile_index` is never used
+```
+
+Put an item-level `#[allow(dead_code)]` on each, with a comment naming why:
+
+```rust
+// The operator-facing repair path. Exercised by this phase's reconciliation
+// tests; a production caller (startup or a `reindex` subcommand) is deliberately
+// deferred — see this phase's Out of scope.
+#[allow(dead_code)]
+pub struct ReconcileReport { … }
+
+#[allow(dead_code)]
+pub fn reconcile_index() -> anyhow::Result<ReconcileReport> { … }
+```
+
+**Do not** add an allow to anything else, and do not restore the module-level
+form. Two named items is strictly narrower than what phase 06 had, which is the
+direction phase 06's review asked for. If a `dead_code` error appears on any
+*other* item, that one really is unwired — fix the wiring rather than silencing
+it.
 
 ### 2. Index write helpers in `src/memory/index.rs`
 
@@ -282,8 +306,12 @@ Name them exactly:
 
 ## Acceptance criteria
 
-- [ ] `#![allow(dead_code)]` is **gone** from `src/memory/index.rs`, and
-      `cargo clippy --all-targets --all-features -- -D warnings` still exits 0.
+- [ ] The **module-level** `#![allow(dead_code)]` is gone from
+      `src/memory/index.rs`; the only remaining allows are the two item-level
+      ones on `reconcile_index` and `ReconcileReport`
+      (`grep -c 'allow(dead_code)' src/memory/index.rs` returns **2**, and
+      `grep -c '#!\[allow' src/memory/index.rs` returns **0**).
+      `cargo clippy --all-targets --all-features -- -D warnings` exits 0.
 - [ ] All eight tests named in spec task 5 pass.
 - [ ] `add_memory` returns `Ok` when the index cannot be opened, and the memory
       file is still written — pinned by `index_failure_does_not_fail_add_memory`.
@@ -398,9 +426,12 @@ even when every claim in it is true.
   `-` or `:` is FTS5 query syntax, so `MATCH 'runtime-layout'` raises *"no such
   column: layout"*. The `MATCH` calls in this phase's own tests use literals you
   control, so quote them and move on.
-- **Calling `reconcile_index()` from daemon startup.** This phase provides and
-  tests the function. Wiring it into the boot path is a separate decision with
-  its own cost (it walks every memory file) — leave it uncalled outside tests.
+- **Calling `reconcile_index()` from daemon startup, or adding a `reindex`
+  subcommand.** This phase provides and tests the function. Wiring it into the
+  boot path has a real cost (it walks every memory file) and a CLI command is its
+  own small feature — both are deferred. **This is why the two item-level allows
+  in task 1 are required**; the function is genuinely unreferenced outside tests
+  and that is intended, not an oversight.
 - **`RUNTIME_TREE`, the shipped asset, `POLICY_TABLE` and the path-audit
   `INVENTORY`.** Phase 10 already corrected `incident/` → `incidents/` and added
   the `agents/*/memory/` entries. Nothing here needs touching, and editing the
@@ -419,3 +450,42 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-08-01
+
+**Your implementation was correct. The spec was not.** Everything you wrote is
+on disk and verified working — the architect temporarily added the two allows
+described in task 1 and got `cargo test` at **1023 lib** (exactly this phase's
+target) / 30 integration (2 ignored) / 8 isolation (1 ignored) / 6 bug_tracker,
+with clippy exit 0. Then reverted, so the tree is back in your state. **Do not
+redo any of it.**
+
+The run hard-failed on a `NoProgressStall` after 60 consecutive read-only calls,
+and that stall was the spec's fault. Task 1 said "delete the allow; if a
+`dead_code` warning survives, fix the wiring, do not re-add the attribute" while
+Out of scope said "leave `reconcile_index()` uncalled outside tests". Those two
+instructions cannot both be satisfied: `reconcile_index` and `ReconcileReport`
+have no production caller *by design*, so `-D warnings` raises two `dead_code`
+errors and the spec forbade both available fixes. You spent the stall grepping
+for a non-test caller that the spec had told you not to create. That was an
+impossible search, not a mistake.
+
+**Task 1 has been rewritten** with the resolution: item-level
+`#[allow(dead_code)]` on `reconcile_index` and `ReconcileReport` only, with the
+comment shown, and the module-level `#![allow(dead_code)]` staying deleted. The
+acceptance criterion now pins the exact grep counts (2 item-level, 0
+module-level).
+
+**There is exactly one edit left**: add those two attributes. Then run the
+gates and the End-to-end block. `cargo test` must report **1023** lib — if it
+reports more, something got added that should not have been.
+
+### Update — 2026-08-01 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the implementation is complete and independently verified correct
+on disk; the only blocker was an unsatisfiable instruction in the spec, now
+fixed. Re-dispatching from the top risks re-deriving 450 lines of working code,
+and a takeover would forfeit the model data point on work the model actually got
+right. A fresh briefing-seeded context also breaks the read-only loop that the
+stale instruction produced.

@@ -362,6 +362,9 @@ pub fn update_memory(args: UpdateMemoryArgs<'_>) -> Result<()> {
     std::fs::write(&path, &content)
         .with_context(|| format!("writing updated memory key '{}'", key))?;
     crate::daemon::stats::inc_memories_created();
+    if let Err(e) = crate::memory::index::index_memory_file(key, category, namespace) {
+        log::warn!("memory index update failed for '{key}': {e:#}");
+    }
     Ok(())
 }
 
@@ -373,6 +376,9 @@ pub fn add_memory(key: &str, value: &str, category: MemoryCategory, namespace: &
     let path = dir.join(format!("{}.md", key));
     std::fs::write(&path, value).with_context(|| format!("writing memory key '{}'", key))?;
     crate::daemon::stats::inc_memories_created();
+    if let Err(e) = crate::memory::index::index_memory_file(key, category, namespace) {
+        log::warn!("memory index update failed for '{key}': {e:#}");
+    }
     Ok(())
 }
 
@@ -381,6 +387,9 @@ pub fn delete_memory(key: &str, category: MemoryCategory, namespace: &str) -> Re
     if path.exists() {
         std::fs::remove_file(&path)?;
         crate::daemon::stats::inc_memories_deleted();
+        if let Err(e) = crate::memory::index::remove_from_index(key, category, namespace) {
+            log::warn!("memory index delete failed for '{key}': {e:#}");
+        }
     }
     Ok(())
 }

@@ -1,7 +1,5 @@
 //! G5: FTS5 memory index.
 
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 
 /// Bump when the FTS5 schema changes. A database at any other version is
@@ -54,6 +52,160 @@ pub fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
 /// Search the FTS5 index. Returns empty results until the index is implemented.
 pub fn fts5_search(_query: &str, _limit: usize) -> Vec<(String, f64)> {
     Vec::new()
+}
+
+/// Read the memory file for (namespace, category, key), parse it, and upsert
+/// the row. A missing file is not an error — it is treated as a delete.
+pub fn index_memory_file(
+    key: &str,
+    category: crate::memory::MemoryCategory,
+    namespace: &str,
+) -> Result<()> {
+    let path = super::memory_dir_for_namespace(namespace, &category).join(format!("{key}.md"));
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Missing file → treat as delete
+            return remove_from_index(key, category, namespace);
+        }
+        Err(e) => return Err(e).with_context(|| format!("reading memory file {}", path.display())),
+    };
+    let (fm, body) = super::parse_memory_frontmatter(&raw);
+    let tags = fm.tags.join(" ");
+    let summary = fm.summary.unwrap_or_default();
+    let cat_name = category.canonical_name();
+
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    tx.execute(
+        "DELETE FROM memories WHERE key = ?1 AND namespace = ?2 AND category = ?3",
+        (&key, &namespace, &cat_name),
+    )
+    .context("deleting old row")?;
+    tx.execute(
+        "INSERT INTO memories (key, namespace, category, tags, summary, body)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        (&key, &namespace, &cat_name, &tags, &summary, &body),
+    )
+    .context("inserting row")?;
+    tx.commit().context("committing transaction")
+}
+
+/// Remove the row for (namespace, category, key). Removing a row that is not
+/// there is a no-op, not an error.
+pub fn remove_from_index(
+    key: &str,
+    category: crate::memory::MemoryCategory,
+    namespace: &str,
+) -> Result<()> {
+    let conn = open_index()?;
+    let cat_name = category.canonical_name();
+    conn.execute(
+        "DELETE FROM memories WHERE key = ?1 AND namespace = ?2 AND category = ?3",
+        (&key, &namespace, &cat_name),
+    )
+    .context("deleting row from index")?;
+    Ok(())
+}
+
+/// What a reconcile pass changed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ReconcileReport {
+    /// Rows present in the index at the start of the pass.
+    pub rows_before: usize,
+    /// Rows present after the rebuild.
+    pub rows_after: usize,
+}
+
+/// Rebuild the whole index from the memory files on disk.
+pub fn reconcile_index() -> Result<ReconcileReport> {
+    let mut conn = open_index()?;
+
+    let rows_before: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let namespaces: Vec<String> = {
+        let mut ns = vec!["global".to_string()];
+        let agents = crate::agents::list_agents()?;
+        for a in agents {
+            ns.push(a.name);
+        }
+        ns
+    };
+
+    let categories = [
+        crate::memory::MemoryCategory::Session,
+        crate::memory::MemoryCategory::Knowledge,
+        crate::memory::MemoryCategory::Incident,
+    ];
+
+    let tx = conn.transaction().context("beginning reconcile transaction")?;
+    tx.execute("DELETE FROM memories", [])
+        .context("clearing index")?;
+
+    for namespace in &namespaces {
+        for category in &categories {
+            let dir = super::memory_dir_for_namespace(namespace, category);
+            if !dir.exists() {
+                continue;
+            }
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if !path.is_file() {
+                    continue;
+                }
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                let Ok(raw) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                // Skip expired memories
+                let (fm, _) = super::parse_memory_frontmatter(&raw);
+                let info = crate::memory::MemoryInfo {
+                    key: stem.to_string(),
+                    category: category.canonical_name().to_string(),
+                    namespace: namespace.clone(),
+                    tags: fm.tags.clone(),
+                    summary: fm.summary.clone(),
+                    relates_to: fm.relates_to,
+                    created: fm.created.clone(),
+                    updated: fm.updated.clone(),
+                    expires: fm.expires.clone(),
+                    pinned: None,
+                };
+                if info.is_expired() {
+                    continue;
+                }
+                let (fm, body) = super::parse_memory_frontmatter(&raw);
+                let tags = fm.tags.join(" ");
+                let summary = fm.summary.unwrap_or_default();
+                let cat_name = category.canonical_name();
+                tx.execute(
+                    "INSERT INTO memories (key, namespace, category, tags, summary, body)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    (stem, namespace, cat_name, &tags, &summary, &body),
+                )
+                .with_context(|| format!("indexing {}", path.display()))?;
+            }
+        }
+    }
+
+    tx.commit().context("committing reconcile transaction")?;
+
+    let rows_after: i64 = conn
+        .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    Ok(ReconcileReport {
+        rows_before: rows_before as usize,
+        rows_after: rows_after as usize,
+    })
 }
 
 #[cfg(test)]
@@ -220,6 +372,302 @@ mod tests {
         assert_eq!(
             count, 1,
             "namespace filter should narrow results to the matching row"
+        );
+    }
+
+    #[test]
+    fn add_memory_indexes_the_row() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "zephyr-fact",
+            "The zephyr blows softly",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE memories MATCH 'zephyr'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH query");
+        assert_eq!(count, 1, "should find exactly 1 row matching 'zephyr'");
+
+        let key: String = conn
+            .query_row(
+                "SELECT key FROM memories WHERE memories MATCH 'zephyr'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .expect("fetch key");
+        assert_eq!(key, "zephyr-fact");
+    }
+
+    #[test]
+    fn update_memory_replaces_the_row_not_duplicates_it() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "replace-me",
+            "old body with zebra",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        crate::memory::update_memory(crate::memory::UpdateMemoryArgs {
+            key: "replace-me",
+            category: crate::memory::MemoryCategory::Knowledge,
+            body: Some("new body with quokka"),
+            append: false,
+            tags: None,
+            summary: None,
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
+        .expect("update_memory should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+        let total: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE key = 'replace-me'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("count rows for key");
+        assert_eq!(total, 1, "should have exactly 1 row after update, not 2");
+
+        let old_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE memories MATCH 'zebra'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH old body");
+        assert_eq!(old_count, 0, "old body text should no longer be indexed");
+    }
+
+    #[test]
+    fn delete_memory_removes_the_row() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "delete-me",
+            "gone with the wind",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        crate::memory::delete_memory(
+            "delete-me",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("delete_memory should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE key = 'delete-me'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("count rows for key");
+        assert_eq!(count, 0, "deleted memory should have 0 rows");
+    }
+
+    #[test]
+    fn same_key_in_two_namespaces_is_two_rows() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Create an agent directory so the agent namespace exists
+        let agent_dir = tmp.path().join(".daemoneye/agents/agent-x");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+
+        crate::memory::add_memory(
+            "shared-key",
+            "global content",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add global memory");
+
+        crate::memory::add_memory(
+            "shared-key",
+            "agent content",
+            crate::memory::MemoryCategory::Knowledge,
+            "agent-x",
+        )
+        .expect("add agent memory");
+
+        let conn = open_index().expect("open_index should succeed");
+        let total: i64 = conn
+            .query_row("SELECT count(*) FROM memories WHERE key = 'shared-key'", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .expect("count rows for key");
+        assert_eq!(total, 2, "same key in two namespaces should be 2 rows");
+
+        // Delete the global one
+        crate::memory::delete_memory(
+            "shared-key",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("delete global memory");
+
+        let agent_row: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE key = 'shared-key' AND namespace = 'agent-x'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("count agent rows");
+        assert_eq!(agent_row, 1, "agent row should survive global delete");
+    }
+
+    #[test]
+    fn index_failure_does_not_fail_add_memory() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Create a file named `var/index` where the directory is expected —
+        // create_dir_all then fails, so open_index() errors.
+        let bad_index = tmp.path().join(".daemoneye/var/index");
+        std::fs::create_dir_all(bad_index.parent().unwrap()).unwrap();
+        std::fs::write(&bad_index, "not a directory").unwrap();
+
+        let result = crate::memory::add_memory(
+            "resilient-key",
+            "I still get written",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        );
+        assert!(result.is_ok(), "add_memory must return Ok when index fails");
+
+        // The memory file must still exist on disk
+        let mem_path = tmp.path()
+            .join(".daemoneye/memory/knowledge/resilient-key.md");
+        assert!(mem_path.exists(), "memory file must be written despite index failure");
+    }
+
+    #[test]
+    fn reconcile_rebuilds_from_disk() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Write memory files directly, bypassing add_memory
+        let knowledge_dir = tmp.path().join(".daemoneye/memory/knowledge");
+        std::fs::create_dir_all(&knowledge_dir).unwrap();
+        std::fs::write(
+            knowledge_dir.join("alpha.md"),
+            "---\nnamespace: global\n---\nalpha body text",
+        )
+        .unwrap();
+        std::fs::write(
+            knowledge_dir.join("beta.md"),
+            "---\nnamespace: global\n---\nbeta body text",
+        )
+        .unwrap();
+
+        let report = reconcile_index().expect("reconcile should succeed");
+        assert_eq!(report.rows_after, 2, "reconcile should find 2 rows");
+    }
+
+    #[test]
+    fn reconcile_after_incremental_writes_is_a_no_op() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Add three memories across two categories
+        crate::memory::add_memory(
+            "k1",
+            "first knowledge",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+        crate::memory::add_memory(
+            "k2",
+            "second knowledge",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+        crate::memory::add_memory(
+            "s1",
+            "first session",
+            crate::memory::MemoryCategory::Session,
+            "global",
+        )
+        .unwrap();
+
+        // Update one
+        crate::memory::update_memory(crate::memory::UpdateMemoryArgs {
+            key: "k1",
+            category: crate::memory::MemoryCategory::Knowledge,
+            body: Some("updated knowledge"),
+            append: false,
+            tags: None,
+            summary: None,
+            relates_to: None,
+            expires: None,
+            namespace: "global",
+        })
+        .unwrap();
+
+        // Delete one
+        crate::memory::delete_memory(
+            "k2",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+
+        // Now reconcile — should find exactly what the incremental hooks left
+        let report = reconcile_index().expect("reconcile should succeed");
+        assert_eq!(
+            report.rows_before, report.rows_after,
+            "reconcile after incremental writes should be a no-op (rows_before == rows_after)"
+        );
+    }
+
+    #[test]
+    fn expired_memory_is_not_indexed() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Write a memory file with a past expiration date
+        let knowledge_dir = tmp.path().join(".daemoneye/memory/knowledge");
+        std::fs::create_dir_all(&knowledge_dir).unwrap();
+        std::fs::write(
+            knowledge_dir.join("expired.md"),
+            "---\nnamespace: global\nexpires: \"2020-01-01\"\n---\nold expired content",
+        )
+        .unwrap();
+
+        let report = reconcile_index().expect("reconcile should succeed");
+        assert_eq!(
+            report.rows_after, 0,
+            "expired memory should not contribute any row"
         );
     }
 }
