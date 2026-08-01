@@ -55,11 +55,14 @@ run at close. One capability (working memory search) and one maintenance axis.
 
 ## Phases
 
-Phases 01–07 are drafted; 08–09 are named only. Draft each with `/rexymcp:architect next` when its
-predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
+Phases 01–07 and 10 are drafted; 08–09 are named only. Draft each with `/rexymcp:architect next`
+when its predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 
-**Two defects found while drafting 06 and 07 need a phase of their own**, and it
-is not yet in this table — see Notes § "Runtime-tree defects found mid-milestone".
+**Phase 10 is numbered last but is independent of the FTS5 chain and may be
+dispatched at any point** — it touches `src/session_store.rs`, the runtime tree,
+the policy table and `CLAUDE.md`, none of which phases 07–08 go near. It is
+numbered 10 rather than inserted at 08 so that phase 07's spec, which already
+refers to "phase 08" and "phase 09" by number, stays accurate.
 
 | #  | Phase | Status |
 |----|-------|--------|
@@ -72,6 +75,7 @@ is not yet in this table — see Notes § "Runtime-tree defects found mid-milest
 | 07 | [fts5-write-path](phase-07-fts5-write-path.md) — index maintained on add/update/delete, with reconciliation | todo |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
 | 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
+| 10 | [tree-and-doc-truth](phase-10-tree-and-doc-truth.md) — `memory/incident` → `incidents` (incl. a live stamping bug), the per-category `POLICY_TABLE` entries that close the gate gap, `agents/*/memory/`, and two false `CLAUDE.md` rows | todo |
 
 Phases 06–08 may be re-split once 06 lands; the FTS5 work is the least-known part
 of this milestone and the phase boundaries are a guess until the schema exists.
@@ -239,3 +243,24 @@ The two share a fix shape — add the missing entries, correct the singular, and
 consider whether `POLICY_TABLE` should carry the per-category paths so the
 cross-check test can see them at all. Doing it in one phase also means one asset
 regeneration instead of two.
+
+**Drafted as phase 10 (2026-08-01), and it grew on contact.** Tracing the
+singular through the tree turned up a **third** site that is a live bug, not doc
+drift: `stamp_artifact_origin` (`src/session_store.rs:374`) builds
+`memory/incident/<name>.md`, a path that never exists, so **an incident memory
+created inside a named session never gets its `session_origin` stamped.** No
+test covered it — the existing backfill test uses a knowledge memory, which
+works.
+
+The phase also answers the "should `POLICY_TABLE` carry the per-category paths"
+question above with **yes**, and that is its centre of gravity rather than the
+spelling fix. `is_covered()` treats a directory as covered if it is a
+*subdirectory of* a table entry, so `memory/incidents` on disk was "covered" by
+the bare `memory` entry without ever being named — and phase 05's tree
+cross-check had nothing per-category to compare against. Adding the six entries
+is what makes the gate able to catch this class at all, and the phase requires a
+quoted red run proving it does.
+
+Two `CLAUDE.md` rows were folded in for the same reason (they assert machinery
+`src/memory.rs` does not have — verified claim by claim), on the grounds that
+one doc-truth phase beats three.

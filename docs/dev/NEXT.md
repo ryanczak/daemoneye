@@ -1,10 +1,48 @@
 # NEXT
 
-**Active phase: M7 phase-07 — fts5-write-path** (`todo`, drafted 2026-08-01).
+**Active phase: M7 phase-10 — tree-and-doc-truth** (`todo`, drafted 2026-08-01,
+PE asked for it out of order).
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-07-fts5-write-path.md`
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-10-tree-and-doc-truth.md`
 
-Dispatch with `/rexymcp:dispatch phase-07`.
+Dispatch with `/rexymcp:dispatch phase-10`.
+
+**Phase 07 is drafted and ready too** — the two are independent (07 touches
+`src/memory.rs` + `src/memory/index.rs`; 10 touches `src/session_store.rs`, the
+runtime tree, the policy table and `CLAUDE.md`), so either order works. 10 is
+numbered last only so phase 07's spec, which refers to "phase 08" and "phase 09"
+by number, stays accurate.
+
+## Phase 10 — what it is
+
+Fixes the `memory/incident` → `incidents` defect, and it **grew on contact**. The
+singular turns out to have a third site that is a **live bug**, not doc drift:
+`stamp_artifact_origin` (`src/session_store.rs:374`) builds
+`memory/incident/<name>.md`, which never exists, so **an incident memory created
+inside a named session never gets its `session_origin` stamped.** No test covered
+it — the existing backfill test uses a knowledge memory, which works.
+
+**The centre of the phase is not the spelling, it is the gate gap.**
+`POLICY_TABLE` carries `memory` and nothing below it, and `is_covered()` counts a
+directory as covered if it is a *subdirectory of* an entry — so `memory/incidents`
+was "covered" without ever being named, and phase 05's tree cross-check had
+nothing per-category to compare against. That is why a non-existent path sat in
+an agent-facing document through two gate-building phases. The phase adds six
+per-category entries and **requires a quoted red run** showing
+`every_policy_path_appears_in_tree` fails before the tree is fixed — without that,
+the six entries might be inert and the phase is just a typo fix.
+
+Also folded in: `agents/*/memory/` (in neither table), and two `CLAUDE.md` rows
+that assert machinery `src/memory.rs` does not have. Verified claim by claim —
+the mutators do no size-capping, locking, masking or index sync (masking and
+`SESSION_MEMORY_CAP` live in `load_session_memory_block()`), 7 of the 8 listed G2
+schema fields do not appear in the file at all, and there is no schema validation
+or version history. The `src/memory/index.rs` row still says "there is no SQLite
+index, no `var/index/memory.db`", which phase 06 made untrue. Phase 09 still owns
+the full index-doc rewrite; phase 10 makes the minimal correction so the file
+stops asserting things that are false today.
+
+## Phase 07 — what it is
 
 Phase 06's foundation is in — `rusqlite 0.40.1` (`bundled`), the schema at
 `var/index/memory.db`, the path in all four gates. Phase 07 makes it live:
