@@ -1,41 +1,55 @@
 # NEXT
 
-**Active phase: none.** Draft the next one with `/rexymcp:architect next` —
-phase 08 (fts5-search) is next, and it is the phase that finally makes the
-milestone's headline capability real.
+**Active phase: M7 phase-08 — fts5-search** (`todo`, drafted 2026-08-01).
 
-**Phases 01–07 and 10 are `done`; only 08 and 09 remain.** The index is built
-(06), maintained on every add/update/delete with a reconciliation rebuild (07),
-and the runtime tree and docs no longer lie (10). `fts5_search()` is still a stub
-by design — 08 wires it.
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-08-fts5-search.md`
 
-## Phase 08 must resolve three things, two of them load-bearing
+Dispatch with `/rexymcp:dispatch phase-08`.
 
-1. **A fresh install has an empty index — this is the big one.** Seeded memories
-   are written by `seed_memory_inner` with a direct `fs::write`
-   (`src/config/seeds.rs:80`), which bypasses `add_memory` and therefore the
-   index hook. **None of the seven built-in knowledge memories is ever indexed**,
-   so on a fresh install the index has zero rows. Wire `fts5_search()` without
-   fixing this and M7 ships a search feature that cannot find its own seed data —
-   the exact recall failure the milestone exists to remove. `reconcile_index()`
-   is the fix and is precisely the production caller phase 07 deferred. **Decide
-   where it is called**: daemon startup, lazily on first search, or an operator
-   `reindex` command.
-2. **Quote every user query before it reaches `MATCH`.** A bare `-` or `:` is
-   FTS5 query syntax, so `MATCH 'runtime-layout'` raises *"no such column:
-   layout"* — and memory keys are kebab-case, so this fires on ordinary input.
-   Verified against `sqlite3 3.53.4`; double-quoting fixes it. Pin a negative
-   test on a hyphenated query.
-3. **Deciding (1) may let the two item-level `#[allow(dead_code)]` on
-   `reconcile_index` / `ReconcileReport` come off.** If 08 gives them a
-   production caller, delete the attributes — `grep -c 'allow(dead_code)'
-   src/memory/index.rs` should go to 0. If 08 defers again, say so explicitly in
-   the spec rather than leaving it implied.
+**This is the milestone's headline capability** — BM25-ranked memory search, and
+M7's first exit criterion. After it, only phase 09 (the doc correction) remains.
 
-**Write the lint-gate decision into the spec explicitly.** This trap has now
-cost two phases: 06 bounced on it, and 07 hard-failed for 90 turns on a spec
-that decided it *inconsistently* (delete the allow / leave the function
-uncalled — both, impossibly). See phase 07's verdict § Calibration.
+**Every fact in the spec was executed against SQLite 3.53.4 before drafting.**
+That is deliberate: the rule that fell out of phases 06 and 07 is *do not assert
+a fact about the system in a spec unless it was executed*, and this is the first
+spec written under it end to end.
+
+What the prototyping found, and why the spec looks the way it does:
+
+- **`bm25()` is negative and more-negative is better** (`-0.000001812` vs
+  `-0.000000798` for the same term), so `ORDER BY bm25(memories)` ascending is
+  best-first. Easy to get backwards.
+- **Double-quoting the *whole* query makes search useless.** Quoting turns the
+  expression into a phrase match, and the caller passes the **entire user turn**
+  (`ftsearch_memories(user_turn, 10, …)`, `memory_prompt.rs:73`). Executed:
+  `MATCH '"how do I tune shared_buffers for postgres?"'` → **0 rows**, against a
+  memory that is literally about that. Per-term quoting joined with `OR` → **1
+  row**. The spec pins per-term construction with a worked example.
+- **`OR` lets noise in and `bm25` handles it** — a relevant doc scored
+  `-0.000003162` against a stopword-only match at `-0.000001903`. So the spec
+  asks for no stopword list; ranking is the mechanism, and the ranking test must
+  assert **order**, not membership.
+- **A fresh install reconciles to exactly 9 rows** (7 knowledge + 2 session).
+  Measured by running `reconcile_index()` in a seeded temp `HOME`, not counted by
+  hand.
+- **The dynamic `IN (…)` clause with `params_from_iter` was compiled and run**
+  before being pasted into the spec; it returned `[("global","k",-1e-6)]`.
+
+**Three design decisions settled in the spec rather than left open:**
+
+1. **`fts5_search` gains a `namespaces` parameter** and returns
+   `(namespace, key, score)`. Today it filters nothing, so `limit` is applied
+   before the caller drops out-of-namespace hits — asking for 10 can yield 3 —
+   and `m.key == key` ignores namespace even though phase 07 proved the same key
+   can exist in two.
+2. **Reconcile-on-empty, triggered by row count, not a `Once` latch.** This is
+   the fix for the empty-fresh-install gap phase 07 recorded. A process-global
+   latch would fire in whichever test ran first and leave the rest unreconciled —
+   the same trap that rules out a cached `Connection`.
+3. **Both `#[allow(dead_code)]` come off** — task 2 gives `reconcile_index()` its
+   first production caller. The spec states plainly that nothing is left
+   deliberately unused, which is the lint-gate decision that phases 06 and 07
+   each got wrong in a different way.
 
 ## Phase 10 — what landed
 
