@@ -1,7 +1,7 @@
 # Phase 06: FTS5 Index Schema
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-05 (generated-runtime-tree, done)
 **Estimated diff:** ~250 lines across 8 files. Broad but shallow — one real
 piece of logic (the schema opener in `src/memory/index.rs`); everything else is
@@ -796,3 +796,83 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 35062468d1181f2a98561f3d5101afec84417746
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-01
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-06-1.md`, minor, `spec_bug`)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (round 1 self-reported as
+  `claude-opus-4-5-20251101` in its own Update Log entry; the configured
+  executor is Qwen — treat the self-report as unreliable, not as evidence a
+  different model ran)
+- **Scope deviations:** one accepted, documented below (`#![allow(dead_code)]`).
+- **Calibration:** see "The spec created a lint conflict it did not resolve".
+
+**Independent verification at review (round 2):**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1013** / integration **30** (2 ignored) / isolation **8**
+  (1 ignored) / bug_tracker **6** — the counts the acceptance criteria name.
+- E2E block re-run verbatim: `index-dir-exit=0`, `clean-audit-exit=0`, the asset
+  carries the `memory.db` line, all six `memory::index` tests pass, and the
+  `runtime_tree` / `lifecycle` / `path_audit` gate suites are green (5 / 8 / 24).
+- `fts5_search()` confirmed still a stub returning `Vec::new()`.
+- **Four mutations, each caught:**
+  1. `Connection::open(&path)` → `open_in_memory()` fails
+     `open_index_creates_database_and_schema` — the bug-06-1 proof.
+  2. Dropping `porter` from the tokenizer fails `fts5_is_available_and_matches`,
+     confirming stemming is genuinely active and not incidentally passing.
+  3. Removing `UNINDEXED` from `namespace` fails
+     `unindexed_columns_filter_but_do_not_match`.
+  4. (Round 1, still valid) removing `#![allow(dead_code)]` produces three
+     `never used` warnings and fails the lint gate — which is what makes the
+     attribute load-bearing rather than cosmetic.
+- Production code in `src/memory/index.rs` has no `unwrap`/`expect`/`panic!`;
+  the three `unsafe` blocks are the edition-2024 `set_var` requirement in tests,
+  matching the repo idiom.
+- No `/tmp/daemoneye-test-index-*` litter after two consecutive runs.
+
+#### Accepted deviation — `#![allow(dead_code)]` stays, and phase 07 must remove it
+
+`src/memory/index.rs:3` carries a module-level `#![allow(dead_code)]`. It is
+**required**, not cosmetic: `memory` is `pub(crate)` (`src/lib.rs`), so
+`SCHEMA_VERSION`, `open_index` and `ensure_schema` are genuinely unreferenced
+until phase 07 calls them, and without the attribute
+`cargo clippy -- -D warnings` fails with three `never used` warnings.
+
+This is the **first** `allow(dead_code)` anywhere in `src/`, and it is
+module-wide in a file that will grow substantially across phases 07 and 08 —
+where it would silently mask genuinely-dead code. **Phase 07 must delete it**
+once the functions are wired in, and phase 07's spec must pin that as an
+acceptance criterion. Recorded in `NEXT.md`.
+
+The executor flagged this in its own completion summary rather than letting it
+pass silently, which is the behaviour we want.
+
+#### Calibration — the spec created a lint conflict it did not resolve
+
+The bounce is classed `spec_bug` and the accepted deviation has the same root
+cause: **this spec asked for an API that nothing calls, under a deny-warnings
+gate, and never said how to reconcile the two.** Dead-code warnings were the
+inevitable consequence and the executor had to invent a resolution mid-phase.
+
+The bounce itself was narrower but the same shape: the spec said tests must use
+"a temp `HOME`" and pointed at `src/config/path_audit.rs`'s pattern **without
+naming `tempfile::tempdir()`**. The executor used a fixed `/tmp` path — literally
+a temp HOME, and compliant with what was written — which left SQLite databases
+behind and made `open_index_creates_database_and_schema` unable to fail on any
+warm run. Pointing at a pattern is not the same as naming the API; the
+pre-injection guidance's own anti-pattern list says as much, and this spec fell
+into it while believing it had complied.
+
+Two lessons for the phases that build on this one, both about **foundation
+phases specifically** — a phase whose deliverable is an API for a *later* phase
+has failure modes a self-contained phase does not:
+
+1. When a phase deliberately lands unused code, the spec must say what to do
+   about the lint gate. Silence forces the executor to choose, and any choice it
+   makes will look like a DoD violation at review.
+2. "See the pattern at `file:line`" needs the concrete API named alongside it.
+
+One occurrence each; recorded here rather than folded into `WORKFLOW.md`.

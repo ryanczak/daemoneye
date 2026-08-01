@@ -1,60 +1,55 @@
 # NEXT
 
-**Active phase: M7 phase-06 — fts5-index-schema** (`in-progress`, drafted
-2026-08-01, **bounced at review 2026-08-01** — see `bugs/bug-06-1.md`).
+**Active phase: none.** Draft the next one with `/rexymcp:architect next` —
+phase 07 (fts5-write-path) is next in the table.
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-06-fts5-index-schema.md`
+**The FTS5 foundation is in.** `rusqlite 0.40.1` (`bundled`), the schema at
+`var/index/memory.db`, and the path registered in all four gates. `fts5_search()`
+is still a stub by design.
 
-Re-dispatch with `/rexymcp:dispatch phase-06`.
+## Phase 07 has three hard requirements before anything else
 
-**Round 1 bounced on one minor finding, classed `spec_bug`** (architect fault,
-not the model's): the three `HOME` tests point at fixed `/tmp/daemoneye-test-index-N`
-paths instead of `tempfile::tempdir()`, so they leave SQLite databases behind and
-`open_index_creates_database_and_schema` stops proving creation after its first
-run — the file is already there before the test body starts. The spec said "temp
-`HOME`" and pointed at a pattern without naming `tempfile::tempdir()`; that
-under-specification is mine.
+1. **Delete `#![allow(dead_code)]` from `src/memory/index.rs:3`, and make that
+   an acceptance criterion.** It is required *today* — `memory` is `pub(crate)`,
+   so `SCHEMA_VERSION`/`open_index`/`ensure_schema` are genuinely unreferenced
+   and `clippy -- -D warnings` fails without it (verified at review). Phase 07
+   wires them in, so the attribute becomes deletable and **must** be deleted. It
+   is the only `allow(dead_code)` in `src/`, it is module-wide, and the file
+   grows a lot in 07/08 — left in place it will mask genuinely-dead code.
+2. **Say what to do about the lint gate for any code 07 lands unused for 08.**
+   This is the calibration lesson from 06: a spec that asks for an API nothing
+   calls yet, under a deny-warnings gate, forces the executor to invent a
+   resolution that then looks like a DoD violation at review. Decide it in the
+   spec.
+3. **Name concrete APIs, not just patterns.** 06's bounce came from "use a temp
+   `HOME`, see the pattern at `path_audit.rs`" without naming
+   `tempfile::tempdir()`. The executor used a fixed `/tmp` path — compliant with
+   the letter, and it silently disabled a test's only assertion on warm runs.
 
-**`#![allow(dead_code)]` in `src/memory/index.rs` is accepted, not a finding.**
-It is required: `memory` is `pub(crate)`, so `open_index`/`ensure_schema`/
-`SCHEMA_VERSION` are genuinely unreferenced until phase 07 calls them, and
-without it `clippy -- -D warnings` fails with three `never used` warnings
-(reproduced at review). It is the **first** `allow(dead_code)` anywhere in
-`src/`, and it is module-wide — **phase 07 must delete it** once the functions
-are wired in, and phase 07's spec must pin that. Left alone deliberately, since
-it will silently mask genuinely-dead code in a file that triples in size in
-07/08.
+## Also for phase 07
 
-Everything else reviewed clean on round 1: four gates green at 1013 / 30 / 8 / 6,
-all four path gates satisfied, the asset carries the new `index/` lines exactly
-as the phase-05 renderer computed them, and `fts5_search()` is still a stub as
-required.
-
-This starts the FTS5 work that is the milestone's actual capability. It is
-**foundation only** — `rusqlite`, the schema, the database file, and registering
-`var/index/memory.db` in the four gates that each fail independently if it is
-missing (`POLICY_TABLE`, `RUNTIME_TREE` + its asset, and the path-audit
-`INVENTORY`). `fts5_search()` stays a stub, pinned by an acceptance criterion;
-phase 07 owns the write path, phase 08 the query path.
+- **The FTS5 `MATCH` quoting gotcha** — a bare `-` or `:` is query syntax, so
+  `MATCH 'runtime-layout'` raises *"no such column: layout"* and memory keys are
+  kebab-case. 07 builds the write path, so it may not hit this; **phase 08 owns
+  it**, but 07 should not introduce an unquoted `MATCH` either.
+- **Schema-version bumps are free.** `ensure_schema` drops and recreates on any
+  `user_version` mismatch, and `stale_schema_version_is_recreated` pins that. If
+  07 needs a column, bump `SCHEMA_VERSION`; do not write a migration.
+- **A row is (namespace, category, key)**, not key alone —
+  `memory_dir_for_namespace()` (`src/memory.rs:240`) puts global memories under
+  `memory/<category>/` and agent memories under
+  `agents/<ns>/memory/<category>/`. The write path has to walk both.
 
 **M6 open question 5 is fully resolved** — Part A (phase 04, the audit reads
 fenced blocks) and Part B (phase 05, the tree renders from Rust data with a
 byte-for-byte equality test against the shipped asset).
 
-**Prototyped before the spec was written**, as with 04 and 05. Verified against
-`sqlite3 3.53.4` rather than assumed: the DDL is accepted, `PRAGMA user_version`
-round-trips, `porter` stemming makes `MATCH 'run'` find "running", an `UNINDEXED`
-column is filterable but not searchable, and `bm25()` is callable. Also confirmed
-`rusqlite-0.40.1` and `libsqlite3-sys-0.38.1` are already in the local cargo
-cache and `cc (GCC) 16.1.1` is installed — the bundled build needs no network.
-The exact three asset lines the tree change requires were computed with the
-phase-05 renderer and pasted into the spec.
-
-**One gotcha recorded now because it is easy to lose:** in an FTS5 `MATCH`
-expression a bare `-` or `:` is query syntax, not text — `MATCH 'runtime-layout'`
-raises *"no such column: layout"*. Memory keys are kebab-case, so every
-user-supplied query must be double-quoted. Phase 06 builds no query path;
-**phase 08 owns this.**
+**Prototyping the spec before writing it has now paid off three times** (04, 05,
+06). For 06 the schema was verified against `sqlite3 3.53.4` before a line of
+spec was written, and the asset lines were computed with the phase-05 renderer —
+neither the DDL nor the tree edit needed a correction. Both of 06's problems came
+from the parts of the spec that were *not* prototyped: the lint gate and the test
+idiom. Worth remembering when scoping 07.
 
 **Four things still carried forward:**
 
