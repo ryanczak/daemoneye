@@ -1,7 +1,7 @@
 # Phase 03: Test Sleep Removal
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (bug-tracker-truth, done)
 **Estimated diff:** ~25 lines across three test sites
 **Tags:** language=rust, kind=test, size=s
@@ -475,3 +475,55 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 447229397231f77b6f10c323ab1cafbef35fbe63
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-07-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (via rexyMCP, 67 turns)
+- **Scope deviations:** none. Only the three named tests changed; the two
+  neighbouring liveness tests kept their plain `#[tokio::test]`, and nothing
+  under `tests/` was touched.
+- **Calibration:** one architect-side spec defect, recorded not folded (first
+  occurrence of this kind). **The End-to-end verification block nested a
+  `python3 - <<'PY' … PY` heredoc inside a `{ … } > file` group.** That section
+  did not survive execution — the executor's captured transcript contains the
+  other four sections and silently omits the sleep-scan, which is the evidence
+  for acceptance criterion 1. The executor did not flag the omission.
+  **Rule for future specs: no nested heredocs inside an E2E capture block.**
+  Either check the scanner into the repo and invoke it by path, or express the
+  check in plain shell. A capture block that can partially fail produces a
+  transcript that looks complete and is not — the exact failure mode the
+  mechanical-capture requirement exists to prevent.
+
+**The omitted criterion was verified independently by the reviewer**, not waved
+through. Running the attribute-aware scan over `src/` and `tests/` — walking
+each `sleep(` back to its enclosing function and reading that function's
+attributes — reports `LIVE WALL-CLOCK SLEEPS: NONE`.
+
+**Mutation testing (reviewer).** Each of the three tests was checked to confirm
+its fix did not make it vacuous. All three fail correctly when mutated:
+
+| # | Mutation | Result |
+|---|---|---|
+| 1 | swap the two index timestamps in `list_returns_newest_first` | FAIL — ordering assertion fires |
+| 2 | expect `NotRunning` instead of `Unresponsive` in the liveness test | FAIL — reports `left: Unresponsive` |
+| 3 | flip the in-flight assertion in `spawn_is_noop_when_in_flight` | FAIL |
+
+Mutation 2 is the load-bearing one: it proves the probe genuinely returns
+`Unresponsive` under the paused clock, so the 2 s timeout is really exercised
+rather than short-circuited by virtual time.
+
+**Stability.** The paused clock changes timing semantics, so the suite was run
+**10 consecutive times in full** (parallel execution, where a paused-clock test
+interacts with 990 others): zero failures.
+
+**Measured effect — larger than the phase doc predicted.** The doc said the 3 s
+test ran in parallel so the suite wall time would be roughly unchanged. That was
+wrong: the lib suite went from **4.15 s to 1.24 s**, a ~70% reduction. The 3 s
+sleep was the suite's critical path, not a cost hidden by parallelism.
+
+**Gates re-run independently:** `cargo fmt --all --check` exit 0; `cargo build`
+zero warnings; `cargo clippy --all-targets --all-features -- -D warnings` exit 0;
+`cargo test` green at 991 lib / 6 bug_tracker / 30 integration (2 ignored) / 8
+isolation (1 ignored) — every count unchanged, as the spec required.
