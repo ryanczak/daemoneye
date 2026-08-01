@@ -55,7 +55,7 @@ run at close. One capability (working memory search) and one maintenance axis.
 
 ## Phases
 
-Phase 01 is drafted; the rest are named only. Draft each with `/rexymcp:architect next` when its
+Phases 01–05 are drafted; 06–09 are named only. Draft each with `/rexymcp:architect next` when its
 predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 
 | #  | Phase | Status |
@@ -64,7 +64,7 @@ predecessor is `done`. Ordering is deliberate — see Notes § "Why this order".
 | 02 | [bug-tracker-truth](phase-02-bug-tracker-truth.md) — a gate failing when a bug doc is `open` while its phase is `done`; close the five stale M2/M4 docs it catches | done |
 | 03 | [test-sleep-removal](phase-03-test-sleep-removal.md) — the three live-test `sleep` sites `STANDARDS.md` §3.3 forbids | done |
 | 04 | [path-audit-fenced-blocks](phase-04-path-audit-fenced-blocks.md) — extend extraction to fenced code blocks, multi-segment rule (Part A of M6 item 5) | done |
-| 05 | generated-runtime-tree — derive `agent-runtime-layout.md`'s tree from the policy table (Part B of M6 item 5) | todo |
+| 05 | [generated-runtime-tree](phase-05-generated-runtime-tree.md) — render `agent-runtime-layout.md`'s tree from a table in Rust, with an equality test against the shipped asset (Part B of M6 item 5) | todo |
 | 06 | fts5-index-schema — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and the `var/index/memory.db` lifecycle entry | todo |
 | 07 | fts5-write-path — index maintained on add/update/delete, with reconciliation | todo |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
