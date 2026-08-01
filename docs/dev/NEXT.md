@@ -1,10 +1,21 @@
 # NEXT
 
-**Active phase: M7 phase-08 — fts5-search** (`todo`, drafted 2026-08-01).
+**Active phase: M7 phase-08 — fts5-search** (`in-progress`, drafted 2026-08-01,
+**bounced at review 2026-08-01** — see `bugs/bug-08-1.md`).
 
 Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-08-fts5-search.md`
 
-Dispatch with `/rexymcp:dispatch phase-08`.
+Re-dispatch with `/rexymcp:dispatch phase-08`.
+
+**Round 1 bounced on test strength, not correctness** (`missing_spec_test`). The
+implementation is right — 1031/30/8/6, clippy clean, both `allow(dead_code)`
+gone — but each of the phase's two central mechanisms survives deletion with the
+suite green: removing `ORDER BY bm25` leaves `search_ranks_better_match_first`
+passing (its fixture inserts strong-then-weak, so rowid order equals rank order),
+and replacing `build_match_expr` with naive whole-query phrase quoting passes all
+22 tests (every search test uses a single-token query). Both fixes are proven in
+the bug doc. The phase doc's own claim that two named tests would catch the
+quoting mode was wrong and has been corrected in place — the architect's error.
 
 **This is the milestone's headline capability** — BM25-ranked memory search, and
 M7's first exit criterion. After it, only phase 09 (the doc correction) remains.
