@@ -1,69 +1,57 @@
 # NEXT
 
-**Active phase: M7 phase-05 — generated-runtime-tree** (`todo`, drafted
-2026-07-31).
+**Active phase: none.** Draft the next one with `/rexymcp:architect next` —
+phase 06 (fts5-index-schema) is next in the table, and it starts the FTS5 work
+that is the milestone's actual capability.
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-05-generated-runtime-tree.md`
+**M6 open question 5 is now fully resolved** — Part A (phase 04, the audit reads
+fenced blocks) and Part B (phase 05, the runtime tree renders from Rust data with
+a byte-for-byte equality test against the shipped asset).
 
-Dispatch with `/rexymcp:dispatch phase-05`.
+**Four things phase 06 inherits.** It adds `var/index/memory.db`, which touches
+most of them:
 
-**The design fork was settled before drafting** (PE, 2026-07-31): render the
-tree from a table in Rust and assert equality against the shipped asset, rather
-than a drift-test-only approach or a 05a/05b split. The tree carries data
-`POLICY_TABLE` does not have — files, the `memory/{session,knowledge,incident}`
-split, and purpose annotations — so it gets its own table with a cross-check
-test between the two. Phase 06 will need entries in **both** tables; the
-cross-check makes the second impossible to forget, which is the honest claim
-(not "the tree updates itself").
+1. **It needs entries in *two* tables, not one.** `POLICY_TABLE`
+   (`src/config/lifecycle.rs`) *and* `RUNTIME_TREE`
+   (`src/config/runtime_tree.rs`). The README's "the tree updates itself" framing
+   is optimistic — the tree carries files and purpose annotations the policy
+   table does not have, so it has its own table. What phase 05 guarantees is that
+   the second edit **cannot be forgotten**: `every_policy_path_appears_in_tree`
+   fails until it exists. Also add the path-audit `INVENTORY` entry, or the
+   phase-04 gate will report it `Unknown`.
+2. **`tree_block_of` has a loose error contract** — an unterminated fence returns
+   `Some` where the spec said `None`. Reviewed as a documented nit rather than a
+   bounce (no reachable consequence; every corruption path still fails loudly).
+   Phase 06 is already in this file — tighten it there with a `closed` flag, the
+   shape phase-04 landed in `extract_path_literals`. One line and a test.
+3. **`tests/isolation.rs` is intermittently flaky** — a full `cargo test` failed
+   once during phase-04 review in `hooks_land_on_private_server`, then went green
+   across 5 full-suite and 12 isolation-only runs. Ruled out as phase-04's doing
+   and as phase-03's. The test spawns a real daemon and tmux server. Pre-existing;
+   worth its own phase if it recurs. Do not let it be mistaken for FTS5 fallout.
 
-**Both load-bearing spec claims were prototyped against the real asset before
-the spec was written**, so the executor's job is mechanical:
+4. **The phase-04 fence toggle is a flip-flop, not a nesting parser.** `in_fence`
+   inverts on any line starting with ` ``` `, so a nested fence inside a fence
+   mis-tracks. Harmless while `audit-prompts` only scans installed assets, but it
+   bites the moment the audit is pointed at `docs/`.
 
-- The pre-injected `RUNTIME_TREE` literal plus the format rules (2-space indent,
-  `←` padded to column 29, 7 blank separators) render the shipped block
-  **byte-for-byte** — verified, `MATCH`.
-- All **15** `POLICY_TABLE` paths match a tree path under the segment-wise
-  wildcard rule (`agents/*/mailbox` ↔ `agents/<name>/mailbox`) — verified, no
-  misses.
+Phases 01–05 are `done`. 01–03 and **05** approved_first_try; **04
+approved_after_1** (`bugs/bug-04-1.md`, minor, `scope_deviation` — the fence
+rewrite dropped the `on_line` guard from the *non-fence* branch; round 2 restored
+it as a `closed` flag and pinned it).
 
-No `build.rs`: the asset stays a checked-in file behind `include_str!`. The
-first acceptance criterion is that the asset is **byte-for-byte unchanged** —
-if the renderer disagrees, the renderer is wrong.
+**Both 04 and 05 were prototyped before their specs were written**, and both
+landed clean as a result. For 04 the architect ran the two candidate extraction
+rules against the real assets (naive: 11 extractions and 4 false `Unknown`
+findings, which would have made `audit-prompts` exit 1 on a clean tree; narrow
+multi-segment: 1 extraction, 0 false findings). For 05 the architect built the
+renderer and the `RUNTIME_TREE` data as a throwaway prototype and confirmed
+byte-for-byte reproduction plus all 15 policy-path matches before writing a line
+of spec. On a transcription-shaped task a single wrong space would have made the
+primary acceptance criterion unsatisfiable — worth doing again for phase 06's
+schema work.
 
-Phases 01–04 are `done`. 01–03 approved_first_try; **04 approved_after_1**
-(`bugs/bug-04-1.md`, minor, `scope_deviation` — the fence rewrite dropped the
-`on_line` guard from the *non-fence* branch; round 2 restored it as a `closed`
-flag and pinned it). M6 open question 5 Part A is resolved.
-
-**Two things phase 05 should carry forward:**
-
-1. **`tests/isolation.rs` is intermittently flaky.** A full `cargo test` failed
-   once at review in `hooks_land_on_private_server`, then went green across 5
-   full-suite and 12 isolation-only runs. Ruled out as phase-04's doing
-   (`path_audit`'s only caller is `src/cli/commands/audit_prompts.rs`;
-   `tests/isolation.rs` never references the audit) and as phase-03's
-   (`4472293` does not touch that file). The test spawns a real daemon and tmux
-   server. Pre-existing; worth its own phase if it recurs.
-2. **The fence toggle is a flip-flop, not a nesting parser.** `in_fence` inverts
-   on any line starting with ` ``` `, so a nested fence inside a fence — which
-   phase-04's own Update Log now contains — mis-tracks. Harmless while
-   `audit-prompts` only scans installed assets, but it bites the moment the
-   audit is pointed at `docs/`.
-
-**This phase resolves M6 open question 5**, which was deferred because a naive
-"contains a slash" rule false-positives on `/clear` and shebangs. Both candidate
-rules were prototyped against the real assets before the spec was written:
-
-- **Naive** (every prefix-matching token in a fence): 11 extractions, **4 false
-  `Unknown` findings** — `audit-prompts` would exit 1 on a clean tree.
-- **Narrow** (only tokens whose normalised form is multi-segment): 1 extraction,
-  **0 false findings**, audit stays at exit 0 — and it still catches a fenced
-  `var/index/memory.db`, the phantom that slipped through M6.
-
-The false positives are context-loss, not drift: `agent-runtime-layout.md`'s tree
-is indentation-relative, so a bare `prompts/` means `etc/prompts/`.
-
-The E2E block carries phase-03's post-mortem rules: **no heredocs**, and every
+E2E blocks carry phase-03's post-mortem rules: **no heredocs**, and every
 tree-walking command wrapped in `timeout`.
 
 ## The phase-06 dependency decision is settled
@@ -81,9 +69,13 @@ natively.
 ## Where the tree stands
 
 - M6 closed: 13 phase docs `done`, retrospective in its README.
-- 991 lib + 30 integration (2 ignored) + 8 isolation (1 ignored); clippy clean;
-  20 consecutive `cargo test --lib` runs clean.
+- **1007 lib + 30 integration (2 ignored) + 8 isolation (1 ignored) + 6
+  bug_tracker**; clippy clean; `cargo fmt --all --check` clean. Independently
+  verified at phase-05 review. (M6 closed at a 991-lib baseline; phase 04 added
+  9 plus 1 for bug-04-1, phase 05 added 5. The residual +1 predates phase 04 —
+  phase-04's own run already reported a 992 starting point — and has not been
+  traced to a specific phase.)
 - Working tree clean. No daemon running; no tmux server running.
-- No live bugs: the five bug docs still marked `open` across M2/M4 were each
-  verified fixed against the code — M7 phase 02 closes them and lands a gate so
-  the tracker cannot drift again.
+- **No open bugs.** `bug-04-1` is `verified`; the five stale M2/M4 docs were
+  closed by phase 02, which also landed the `bug_tracker` gate so an `open` bug
+  on a `done` phase now fails the suite.

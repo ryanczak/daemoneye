@@ -1,7 +1,7 @@
 # Phase 05: Generated Runtime Tree
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-04 (path-audit-fenced-blocks, done)
 **Estimated diff:** ~260 lines — one new file `src/config/runtime_tree.rs`
 (data + renderer + tests), one line in `src/config/mod.rs`. **No change to any
@@ -611,3 +611,87 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1b4379348e62ace5ae7a6db8a7fe9d421ebae2c0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none in behaviour. One documented contract nit in
+  `tree_block_of` — see below.
+- **Calibration:** see "Prototyping the spec paid for itself" below.
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1007** / integration **30** (2 ignored) / isolation **8**
+  (1 ignored) / bug_tracker **6** — exactly the counts the acceptance criteria
+  name, +5 lib for the five specified tests.
+- **The asset is genuinely untouched.** `git diff --stat` across the entire
+  phase (`a740a15~1..HEAD -- assets/`) reports no change to any asset file, and
+  the phase commit `1b43793` does not list
+  `assets/memory/knowledge/agent-runtime-layout.md`. This was the phase's
+  load-bearing criterion — the renderer reproduces the shipped tree rather than
+  the tree having been bent to fit a renderer.
+- E2E block re-run verbatim: `asset-in-diff=0`, `clean-audit-exit=0`, the seeded
+  copy still carries the tree, five tests pass.
+- **Four independent mutations, each caught:**
+  1. Altering one annotation in `RUNTIME_TREE` (`"…(IPC)"` → `"…(IPCX)"`) fails
+     `render_matches_shipped_asset`.
+  2. `ANNOTATION_COL` 29 → 28 fails it.
+  3. Flipping `bin/`'s `blank_before` to `false` fails it.
+  4. Renaming the `mailbox/` node fails **both**
+     `render_matches_shipped_asset` and `every_policy_path_appears_in_tree` —
+     confirming the policy cross-check is real and not vacuously satisfied.
+- `unwrap`/`expect`/`panic!` occurrences are test-only (lines 335, 441, 450). No
+  `unsafe`, no `#[allow]`, no `#[ignore]`, no `TODO`/`dbg!`.
+- Only `src/config/runtime_tree.rs` (new) and `src/config/mod.rs` changed, plus
+  the expected status bookkeeping in this doc and the milestone README.
+
+#### Documented nit — `tree_block_of`'s `None` contract is looser than specified
+
+Spec task 4 said: *"Return `None` if the heading or either fence is missing."*
+Probed at review with a temporary test (since removed, file restored):
+
+```
+no heading       -> None          ✓ as specified
+heading, no fence-> None          ✓ as specified
+unterminated     -> Some("line one\nline two\n")   ✗ spec says None
+empty block      -> Some("\n")                     — undefined by spec
+```
+
+An opening fence with no closing fence returns `Some` rather than `None`.
+
+**Not bounced, deliberately.** The distinction from phase-04's bounce is that
+this deviation has no reachable consequence and it fails *safe*: the sole caller
+passes `AGENT_RUNTIME_LAYOUT_MEMORY`, a well-formed constant, and every asset-
+corruption scenario still makes `render_matches_shipped_asset` fail loudly. Drop
+the closing fence and the helper returns the block plus all following prose,
+which is not equal to `render_tree()`. Drop the opening fence and it collects
+from the closing fence to EOF, also unequal. There is no input that turns this
+into a false pass — unlike phase-04, where the dropped guard widened a shipped
+gate's behaviour. Bouncing a full dispatch round-trip for an unreachable error
+path would be disproportionate.
+
+Whoever next touches this file — phase 06 adds a `var/index/` entry here — should
+tighten it: track whether the closing fence was seen and return `None` if it was
+not, mirroring the `closed`-flag shape phase-04 landed in
+`extract_path_literals`. Worth one line and a test, not a dispatch.
+
+#### Calibration — prototyping the spec paid for itself
+
+This phase was `approved_first_try` on work whose failure mode was subtle: a
+single wrong space in a 44-line transcription would have made the primary
+acceptance criterion unsatisfiable, and the executor would have had no way to
+tell whether the asset or the spec was wrong. Before the spec was written, the
+architect built the renderer and the `RUNTIME_TREE` data as a throwaway
+prototype and confirmed two things against the real files — that the data plus
+the format rules reproduce the shipped block byte-for-byte, and that all 15
+`POLICY_TABLE` paths match under the segment-wise wildcard rule. Both claims went
+into the spec as verified facts rather than expectations.
+
+That is the same front-loading the M2 calibration fold describes, applied to a
+transcription-shaped task: the executor's job was reduced to mechanical
+transcription plus a 20-line renderer, and it landed clean in 61 turns. One
+occurrence; recorded here rather than folded into `WORKFLOW.md`.
