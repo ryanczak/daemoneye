@@ -367,9 +367,11 @@ H=$(mktemp -d)
   echo "=== the seeded knowledge memories are on disk ==="
   timeout 30 ls -1 "$H/.daemoneye/memory/knowledge/" | wc -l
 
-  echo "=== the index exists and is a real SQLite file ==="
-  timeout 30 ls -l "$H/.daemoneye/var/index/memory.db"
-  echo "db-exists-exit=$?   # 0 == PASS"
+  echo "=== ensure_dirs created the index directory ==="
+  timeout 30 ls -d "$H/.daemoneye/var/index"
+  echo "index-dir-exit=$?   # 0 == PASS"
+  echo "=== the .db file is NOT expected yet — see the note below ==="
+  timeout 30 ls "$H/.daemoneye/var/index/memory.db" 2>&1 | tail -1
 
   echo "=== the write-path tests ==="
   timeout 900 cargo test --lib memory::index 2>&1 | grep -E "^test |^test result"
@@ -391,10 +393,17 @@ cat /tmp/phase07-e2e.txt
 the proof that the attribute was removed rather than the warning suppressed
 somewhere else.
 
-Note the index file will exist because `ensure_dirs()` creates the directory and
-phase 06's `open_index()` creates the database — `daemoneye setup` does not
-itself add memories, so **do not** expect rows in it from `setup` alone. Row
-counts are what the unit tests assert.
+**Corrected 2026-08-01 after the first run.** The original block asserted the
+`.db` file exists after `setup`; it does not, and that claim was the architect's
+error. `ensure_dirs()` creates `var/index/` (the directory), but nothing calls
+`open_index()` during `setup` — the seeded memories are written by
+`seed_memory_inner` with a direct `std::fs::write` (`src/config/seeds.rs:80`),
+which bypasses `add_memory` and therefore bypasses the index hook entirely. The
+database is created lazily on the first real index write. Row counts are what the
+unit tests assert.
+
+**This is a real product gap, not just a test-block wrinkle** — see § "A finding
+for phase 08" below. It is out of scope here.
 
 Paste the captured file into an Update Log entry titled
 `### Update — <date> (end-to-end verification)`. **The server-authored
@@ -406,6 +415,22 @@ build/lint/test ran, not that this phase's acceptance criteria were exercised.
 blocker.** Do not re-run the surviving sections separately and paste the
 result — a transcript assembled from more than one run fails `STANDARDS.md` §1
 even when every claim in it is true.
+
+## A finding for phase 08 — a fresh install has an empty index
+
+Falling out of the E2E correction above: because `seed_memory_inner` writes
+seeded memories with a direct `fs::write`, **none of the seven built-in knowledge
+memories is ever indexed.** On a fresh install the index has zero rows until the
+user adds or updates a memory of their own. Once phase 08 wires `fts5_search()`,
+search on a fresh install would silently return nothing for content that is
+plainly on disk — which is the exact recall failure this milestone exists to fix.
+
+`reconcile_index()` is the fix, and it is precisely the production caller this
+phase deferred. **Phase 08 (or a small phase before it) must decide where it is
+called** — daemon startup, first search, or an operator `reindex` command. Left
+undecided, M7 ships a search feature that cannot find its own seed data.
+
+This is recorded, not actioned: it is out of scope for this phase.
 
 ## Authorizations
 
