@@ -1,7 +1,7 @@
 # Phase 07: FTS5 Write Path
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-06 (fts5-index-schema, done)
 **Estimated diff:** ~280 lines — most of it in `src/memory/index.rs`, plus three
 small hook sites in `src/memory.rs`.
@@ -697,3 +697,97 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 95d6aa502a3f946cf64cc00bb916ce2e8ff0abe0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-01
+
+- **Verdict:** escalated (resume) — approved on the resumed run
+- **Bounces:** none. One `hard_fail` + resume, **charged to the spec, not the
+  model** (`spec_bug`).
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none.
+- **Calibration:** see "Three architect errors in one phase" below.
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1023** / integration **30** (2 ignored) / isolation **8**
+  (1 ignored) / bug_tracker **6** — exactly the counts the criteria name.
+- **Allow accounting:** `grep -c 'allow(dead_code)'` = **2**,
+  `grep -c '#!\[allow'` = **0**. The module-level form phase 06 introduced is
+  genuinely gone, not relocated; the two item-level ones sit on
+  `ReconcileReport` and `reconcile_index` with the comment the spec named.
+- `fts5_search()` confirmed still returning `Vec::new()`.
+- Only `src/memory.rs` and `src/memory/index.rs` changed. Production code in
+  both is free of `unwrap`/`expect`/`panic!`; the eight `unsafe` blocks are the
+  edition-2024 `set_var` requirement in the `HOME` tests, all using
+  `tempfile::tempdir()` per the idiom bug-06-1 established.
+- All three hooks are best-effort `if let Err(e) = … log::warn!` next to the
+  existing `stats::` bump, as specified.
+- E2E block re-run (corrected form): 7 seeded knowledge memories on disk,
+  `index-dir-exit=0`, the `.db` correctly absent, allow counts 0/2.
+
+**Two mutations, both caught — and one instructive miss:**
+
+1. Replacing `add_memory`'s hook with `index_memory_file(…)?` fails
+   `index_failure_does_not_fail_add_memory` with *"add_memory must return Ok
+   when index fails"*. The derived-cache contract is genuinely pinned.
+
+   *The first attempt at this mutation did not fire, and the test was right.*
+   `update_memory` and `add_memory` end with byte-identical hook blocks, and a
+   naive "replace the first occurrence" hit `update_memory`'s. Re-aimed at the
+   second occurrence it failed immediately. Worth recording because a reviewer
+   who stopped at the first result would have wrongly called the test fake.
+2. Neutering the upsert's scoped `DELETE` (`… WHERE 0 AND key = ?1 …`) fails
+   **both** `reconcile_after_incremental_writes_is_a_no_op` and
+   `update_memory_replaces_the_row_not_duplicates_it`. The headline test earns
+   its billing: with duplicate rows left behind, the incremental state and the
+   rebuilt state diverge and it notices.
+
+#### The run that hard-failed was the spec's fault
+
+The first dispatch halted on `NoProgressStall { consecutive_read_only: 60 }`
+after 90 turns, with a tail of `grep`/`clippy` alternating A/B/A/B. The cause was
+an unsatisfiable instruction: task 1 said *"delete the allow; if a `dead_code`
+warning survives, fix the wiring, do not re-add the attribute"* while Out of
+scope said *"leave `reconcile_index()` uncalled outside tests"*. Those cannot
+both hold — the function has no production caller by design, so `-D warnings`
+raises two `dead_code` errors and the spec forbade both fixes. The executor spent
+the stall searching for a caller it had been told not to create.
+
+Its implementation was already complete and correct at that point: the architect
+temporarily added the two allows and measured 1023/30/8/6 with clippy clean, then
+reverted. That measurement is what made **resume** the right lever over
+re-dispatch (which risked re-deriving 450 working lines) or takeover (which would
+have forfeited the model data point on work the model got right). The resumed run
+made the one four-line edit and finished in 36 turns.
+
+#### The executor caught an architect error and reported it honestly
+
+The E2E block asserted the `.db` file exists after `daemoneye setup`. It does
+not, and the executor said so plainly rather than massaging the transcript —
+`ensure_dirs()` creates `var/index/`, but nothing calls `open_index()` during
+setup because `seed_memory_inner` writes seeded memories with a direct
+`fs::write` (`src/config/seeds.rs:80`), bypassing `add_memory` and the hook. The
+block is corrected, and the underlying gap is recorded as § "A finding for phase
+08 — a fresh install has an empty index".
+
+#### Calibration — three architect errors in one phase
+
+1. A stale lib-count acceptance criterion (**1021** against a baseline phase 10
+   had moved to 1015). Caught pre-dispatch.
+2. The allow / out-of-scope contradiction. Cost a 90-turn `hard_fail`.
+3. The E2E claim that the `.db` exists after `setup`. Caught by the executor.
+
+All three share a shape: **facts asserted about a system that was not executed.**
+The parts of this spec that *were* prototyped — FTS5's missing upsert, the
+descendant-module privacy rule, namespace enumeration, `MemoryInfo` lacking a
+body — needed no corrections at all, and the executor implemented against them
+cleanly on the first pass.
+
+Errors 2 and 3 also share a narrower shape with phase 06's bounce: **a phase that
+deliberately lands code for a later phase, colliding with the deny-warnings
+gate.** Phase 06 taught "decide the lint question in the spec"; this spec decided
+it, but decided it inconsistently. That is now two occurrences of the same
+underlying trap and a third of the general one — enough that it belongs in the
+milestone retrospective rather than another per-phase note.

@@ -1,17 +1,41 @@
 # NEXT
 
-**Active phase: M7 phase-07 — fts5-write-path** (`todo`, drafted 2026-08-01,
-already dispatch-ready).
+**Active phase: none.** Draft the next one with `/rexymcp:architect next` —
+phase 08 (fts5-search) is next, and it is the phase that finally makes the
+milestone's headline capability real.
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-07-fts5-write-path.md`
+**Phases 01–07 and 10 are `done`; only 08 and 09 remain.** The index is built
+(06), maintained on every add/update/delete with a reconciliation rebuild (07),
+and the runtime tree and docs no longer lie (10). `fts5_search()` is still a stub
+by design — 08 wires it.
 
-Dispatch with `/rexymcp:dispatch phase-07`.
+## Phase 08 must resolve three things, two of them load-bearing
 
-**Phase 10 is `done`** (approved_first_try, 2026-08-01) — dispatched out of order
-at PE request. `memory/incident` → `incidents` is fixed at all three sites
-including the live stamping bug, the gate gap is closed, and the two false
-`CLAUDE.md` rows are corrected. Detail below, kept because 08 and 09 both touch
-the same documents.
+1. **A fresh install has an empty index — this is the big one.** Seeded memories
+   are written by `seed_memory_inner` with a direct `fs::write`
+   (`src/config/seeds.rs:80`), which bypasses `add_memory` and therefore the
+   index hook. **None of the seven built-in knowledge memories is ever indexed**,
+   so on a fresh install the index has zero rows. Wire `fts5_search()` without
+   fixing this and M7 ships a search feature that cannot find its own seed data —
+   the exact recall failure the milestone exists to remove. `reconcile_index()`
+   is the fix and is precisely the production caller phase 07 deferred. **Decide
+   where it is called**: daemon startup, lazily on first search, or an operator
+   `reindex` command.
+2. **Quote every user query before it reaches `MATCH`.** A bare `-` or `:` is
+   FTS5 query syntax, so `MATCH 'runtime-layout'` raises *"no such column:
+   layout"* — and memory keys are kebab-case, so this fires on ordinary input.
+   Verified against `sqlite3 3.53.4`; double-quoting fixes it. Pin a negative
+   test on a hyphenated query.
+3. **Deciding (1) may let the two item-level `#[allow(dead_code)]` on
+   `reconcile_index` / `ReconcileReport` come off.** If 08 gives them a
+   production caller, delete the attributes — `grep -c 'allow(dead_code)'
+   src/memory/index.rs` should go to 0. If 08 defers again, say so explicitly in
+   the spec rather than leaving it implied.
+
+**Write the lint-gate decision into the spec explicitly.** This trap has now
+cost two phases: 06 bounced on it, and 07 hard-failed for 90 turns on a spec
+that decided it *inconsistently* (delete the allow / leave the function
+uncalled — both, impossibly). See phase 07's verdict § Calibration.
 
 ## Phase 10 — what landed
 
@@ -44,48 +68,8 @@ no SQLite index, no `var/index/memory.db`", which phase 06 made untrue.
 minimal correction, so 09 must still describe the index as built once search is
 real.
 
-## Phase 07 — what it is
-
-Phase 06's foundation is in — `rusqlite 0.40.1` (`bundled`), the schema at
-`var/index/memory.db`, the path in all four gates. Phase 07 makes it live:
-`add_memory` / `update_memory` / `delete_memory` maintain the index, plus a
-`reconcile_index()` rebuild. `fts5_search()` stays a stub until 08.
-
-**All three of phase 06's carried requirements are folded into the 07 spec**:
-deleting `#![allow(dead_code)]` is task 1 and an acceptance criterion; the
-lint-gate question is answered (nothing 07 lands stays unused, so the attribute
-simply goes); and every API is named concretely rather than gestured at —
-`tempfile::tempdir()`, `super::parse_memory_frontmatter`, `list_agents()`,
-`log::warn!`.
-
-**Five facts verified against the real code before the spec was written**, so
-the executor is not guessing:
-
-- **FTS5 has no upsert** — `ON CONFLICT` errors with *"UPSERT not implemented
-  for virtual table"*. Update must be scoped `DELETE` then `INSERT`; verified
-  that a scoped delete keys correctly on `namespace` and leaves other namespaces
-  intact.
-- **`memory::index` can call `memory`'s private `parse_memory_frontmatter`** —
-  `pub mod index;` is declared inside `src/memory.rs`, so it is a descendant
-  module. Compiled and run to confirm, so the spec says "use
-  `super::parse_memory_frontmatter`" instead of inviting a second parser or a
-  needless `pub`.
-- **`MemoryInfo` carries no body**, so the reconciler cannot be built on
-  `list_memories_with_tags` alone — it must read and parse each file.
-- **Namespaces must be enumerated** — `"global"` plus `list_agents()` names.
-- **The incident directory is `incidents`, plural** (see below).
-
-**The load-bearing test is `reconcile_after_incremental_writes_is_a_no_op`** — a
-full rebuild after a mixed add/update/delete sequence must find the same row
-count. It asserts that two independent paths to the same state agree rather than
-a hand-computed number, which is the milestone's "verified by a reconciliation
-test rather than by construction order" criterion expressed as code.
-
 ## Also outstanding
 
-- **The FTS5 `MATCH` quoting gotcha** — a bare `-` or `:` is query syntax, so
-  `MATCH 'runtime-layout'` raises *"no such column: layout"* and memory keys are
-  kebab-case. **Phase 08 owns it.**
 - **Schema-version bumps are free** — `ensure_schema` drops and recreates on a
   `user_version` mismatch, pinned by `stale_schema_version_is_recreated`. If a
   later phase needs a column, bump `SCHEMA_VERSION`; do not write a migration.
@@ -121,20 +105,22 @@ while `audit-prompts` only scans installed assets; and
 instead of calling `dir_name()` — correct today, but the same latent drift phase
 10 removed from `session_store.rs`.
 
-**Phases 01–06 and 10 are `done`; 07 is drafted, 08–09 named only.** Verdicts:
-01–03, 05 and 10 approved_first_try; **04 approved_after_1**
-(`bugs/bug-04-1.md`, minor, `scope_deviation`); **06 approved_after_1**
-(`bugs/bug-06-1.md`, minor, `spec_bug` — the architect's under-specification,
-not the model's).
+**Phases 01–07 and 10 are `done`; 08–09 named only.** Verdicts: 01–03, 05 and 10
+approved_first_try; **04 approved_after_1** (`bugs/bug-04-1.md`, minor,
+`scope_deviation`); **06 approved_after_1** (`bugs/bug-06-1.md`, minor,
+`spec_bug`); **07 escalated** (resume after a `hard_fail`, also `spec_bug`).
+Both of the last two are charged to the architect, not the model.
 
-**Prototyping the spec before writing it is now 4 for 4** (04, 05, 06, 10). Each
-had its load-bearing facts executed against the real system first — the two
-candidate extraction rules for 04, the renderer and tree data for 05, the FTS5
-DDL against `sqlite3 3.53.4` for 06, and for 10 the exact tree lines, the
-eager/lazy split from a real `daemoneye setup`, and every `CLAUDE.md` claim
-checked one at a time. All four landed clean on the prototyped parts; 06's single
-bounce was in the one area that was *not* prototyped (the test idiom). Worth
-stating plainly at milestone close.
+**Prototyped spec facts have never needed a correction; unprototyped ones have
+cost three phases.** 04, 05, 06, 07 and 10 each had their load-bearing facts
+executed against the real system before drafting — candidate extraction rules,
+the tree renderer, the FTS5 DDL and upsert semantics, the descendant-module
+privacy rule, the eager/lazy split. **Every one of those held.** All three
+failures came from the parts written from assumption: 06's test idiom
+(`bug-06-1`), 07's allow/out-of-scope contradiction (a 90-turn `hard_fail`), and
+07's claim that `setup` creates the `.db` file (caught by the executor). The rule
+that falls out is narrow and worth stating at milestone close: **do not assert a
+fact about the system in a spec unless it was executed.**
 
 E2E blocks carry phase-03's post-mortem rules: **no heredocs**, and every
 tree-walking command wrapped in `timeout`.
@@ -154,12 +140,12 @@ natively.
 ## Where the tree stands
 
 - M6 closed: 13 phase docs `done`, retrospective in its README.
-- **1015 lib + 30 integration (2 ignored) + 8 isolation (1 ignored) + 6
+- **1023 lib + 30 integration (2 ignored) + 8 isolation (1 ignored) + 6
   bug_tracker**; clippy clean; `cargo fmt --all --check` clean. Independently
-  verified at phase-10 review. (M6 closed at a 991-lib baseline; +9 phase 04,
-  +1 bug-04-1, +5 phase 05, +6 phase 06, +2 phase 10. The residual +1 predates
-  phase 04 — its own run already reported a 992 starting point — and has not
-  been traced to a specific phase.)
+  verified at phase-07 review. (M6 closed at a 991-lib baseline; +9 phase 04,
+  +1 bug-04-1, +5 phase 05, +6 phase 06, +2 phase 10, +8 phase 07. The residual
+  +1 predates phase 04 — its own run already reported a 992 starting point — and
+  has not been traced to a specific phase.)
 - Working tree clean. No daemon running; no tmux server running.
 - **No open bugs.** `bug-04-1` and `bug-06-1` are both `verified`; the five stale
   M2/M4 docs were closed by phase 02, which also landed the `bug_tracker` gate so
