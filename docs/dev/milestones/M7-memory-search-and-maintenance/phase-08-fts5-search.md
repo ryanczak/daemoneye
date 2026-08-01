@@ -1,7 +1,7 @@
 # Phase 08: FTS5 Search
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** in-progress (round 2 was a no-op — see Notes for executor, round 3)
 **Depends on:** phase-07 (fts5-write-path, done)
 **Estimated diff:** ~310 lines — `src/memory/index.rs` (the query path + tests)
 plus ~10 lines in `src/daemon/memory_prompt.rs`.
@@ -781,3 +781,85 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** de674da5834b870bf4184d5027c34a97ac575d62
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-08-01 (round 3)
+
+## READ THIS FIRST: green gates are EXPECTED here and are NOT evidence the phase is done
+
+Round 2 returned `complete` with an **empty diff** after 23 turns, having changed
+nothing. That happened because every gate was green and the tree was clean, which
+normally means "no work to do". **On this phase that inference is wrong.**
+
+**The production code is finished and approved. Do not touch it.**
+`build_match_expr`, `fts5_search`, the reconcile-on-empty block, the dynamic
+`IN (…)` clause, the `ORDER BY bm25(memories)` ordering, and the
+`(namespace, key)` match in `ftsearch_memories` were all reviewed and are
+correct. Rewriting any of them is the main way this round can go wrong.
+
+**The remaining work is entirely in the test module**, and the gates cannot tell
+you it is missing — that is precisely the defect. Two mechanisms currently
+survive deletion with all 22 tests green, which `bugs/bug-08-1.md` demonstrates
+by mutation.
+
+## There are exactly two edits left
+
+**Edit 1 — reorder one fixture.** In `search_ranks_better_match_first`, the
+`add_memory` call for `zephyr-weak` must come **before** the one for
+`zephyr-strong`. Swap the two blocks. Change nothing else in that test; its
+assertions are already correct. Today insertion order equals rank order, so the
+test passes even with `ORDER BY bm25(memories)` deleted.
+
+**Edit 2 — add one test.** Paste this verbatim into the same `#[cfg(test)]`
+module:
+
+```rust
+#[test]
+fn multi_word_query_matches_non_adjacent_terms() {
+    let _guard = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    crate::memory::add_memory(
+        "pg-tuning",
+        "increase shared_buffers when the working set grows",
+        crate::memory::MemoryCategory::Knowledge,
+        "global",
+    )
+    .expect("add_memory should succeed");
+
+    // A realistic user turn: the words are scattered, not a contiguous phrase.
+    // Whole-query phrase quoting returns 0 here; per-term OR finds the memory.
+    let results = fts5_search("how do I tune shared_buffers for postgres?", 10, &["global"]);
+    assert!(
+        !results.is_empty(),
+        "a multi-word user turn must match on individual terms, not as one phrase"
+    );
+}
+```
+
+Nothing else. No production changes, no other tests, no doc edits beyond your
+Update Log.
+
+## Finish condition you can check yourself
+
+`cargo test` must report **1032** lib tests, **not** 1031. A count of 1031 means
+edit 2 was not made. A count above 1032 means something was added that should not
+have been.
+
+## Mutation-check your own work before reporting
+
+Both edits exist to make a mutation fail. Verify that yourself:
+
+1. Delete `ORDER BY bm25(memories)` from the query (leave `LIMIT ?2`). Run
+   `cargo test --lib search_ranks_better_match_first` — it must **FAIL**. Restore.
+2. Replace `build_match_expr`'s body with whole-query phrase quoting:
+   ```rust
+   let t = query.trim();
+   if t.chars().all(|c| !c.is_alphanumeric()) { return None; }
+   Some(format!("\"{}\"", t.replace('"', "\"\"")))
+   ```
+   Run `cargo test --lib multi_word_query_matches_non_adjacent_terms` — it must
+   **FAIL**. Restore.
+
+Quote both red runs in your Update Log, then confirm the suite is green at 1032.
+A claimed mutation check is not one; the reviewer re-runs both independently.
