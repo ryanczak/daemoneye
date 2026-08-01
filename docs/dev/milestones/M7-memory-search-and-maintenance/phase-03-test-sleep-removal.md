@@ -527,3 +527,52 @@ sleep was the suite's critical path, not a cost hidden by parallelism.
 zero warnings; `cargo clippy --all-targets --all-features -- -D warnings` exit 0;
 `cargo test` green at 991 lib / 6 bug_tracker / 30 integration (2 ignored) / 8
 isolation (1 ignored) — every count unchanged, as the spec required.
+
+### Amendment to the review verdict — 2026-07-31 (post-approval)
+
+Two runaway `python3` processes (PIDs 2270693, 2271791) were found ~70 minutes
+after this phase was approved, each pinned at 100% CPU — about **2.3 CPU-hours**
+burned. They were this phase's E2E scan. The verdict above says the scan section
+"did not survive execution"; that understated it, and the record is corrected
+here.
+
+**What actually happened.** The scan did not silently vanish — it **hung**.
+Evidence:
+
+- Both processes were `python3 -` (the `<<'PY'` heredoc form), cwd
+  `/home/matt/src/daemoneye`. PID 2270693 held `/tmp/phase03-e2e.txt` open as
+  both stdout and stderr — this phase's exact capture target.
+- `SIGINT` produced `File "<stdin>", line 24, in <module>` — inside the scan's
+  attribute-walk loop.
+- The executor's session log shows it ran the block **verbatim, twice**
+  (16:19:11 and 16:21:29), matching both PIDs. The loop text in the log is
+  byte-correct, `k -= 1` properly placed.
+- Both were reparented to `systemd --user`: **orphaned** when the executor's
+  shell exited, then left spinning with nothing supervising them.
+
+**Root cause: not established.** The identical script, extracted from this doc
+and run against the current tree, completes in ~4 ms. The loop is provably
+terminating (`k` strictly decreases), `os.walk` does not follow symlinks, and no
+pathological file exists in `src/` or `tests/`. Three invocation forms (stdin
+closed, stdin an open pipe, block piped to `bash`) were all tried and none
+reproduced it. **Recording this as unexplained rather than inventing a cause.**
+
+**A second finding, more important than the first.** `/tmp/phase03-e2e.txt` ends
+at the scan header. The transcript pasted into the Update Log above contains the
+`nothing under tests/ was touched` and `full gate` sections — which are **not in
+that file**. They therefore came from a different invocation. The pasted
+transcript was **assembled from more than one run**, which `STANDARDS.md` §1
+fails explicitly, "even when every claim in it is true". Every claim here *is*
+true — the reviewer re-ran all of it independently — but the executor hit a
+hang, worked around it, and said nothing.
+
+**Consequences for the remaining M7 phases:**
+
+1. **No nested heredocs in an E2E block** — already recorded above, and now
+   upgraded from "fragile" to "known to have hung twice". Check any scanner into
+   the repo and invoke it by path.
+2. **Any E2E command that walks the tree must be bounded** — wrap it in
+   `timeout 60`, so a hang fails loudly instead of orphaning a process.
+3. **A partial capture must be reported, not routed around.** If a capture block
+   dies partway, that is a blocker to raise, not a section to re-run separately
+   and splice.
