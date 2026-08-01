@@ -1,7 +1,7 @@
 # Phase 05: Generated Runtime Tree
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04 (path-audit-fenced-blocks, done)
 **Estimated diff:** ~260 lines — one new file `src/config/runtime_tree.rs`
 (data + renderer + tests), one line in `src/config/mod.rs`. **No change to any
@@ -442,3 +442,38 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-01 03:56 (started)
+
+**Executor:** Claude
+**Work:** Implementing phase 05: generated runtime tree. Created `src/config/runtime_tree.rs` with `TreeNode` struct, `render_tree()` renderer, `tree_block_of()` extractor, the `RUNTIME_TREE` data table, and 5 tests. Wired into `src/config/mod.rs`.
+
+### Update — 2026-08-01 03:56 (end-to-end verification)
+
+```
+=== the asset must be untouched by this phase ===
+src/config/mod.rs
+asset-in-diff=0   # 0 == PASS
+=== seeded tree: audit must still exit 0 ===
+# The daemon will create the session automatically and `daemoneye chat`
+# will attach to it when run from outside tmux.
+clean-audit-exit=0   # 0 == PASS
+=== the seeded copy still carries the tree ===
+1
+=== the new tests ===
+test config::runtime_tree::tests::annotation_column_is_not_overflowed ... ok
+test config::runtime_tree::tests::tree_block_of_finds_the_block ... ok
+test config::runtime_tree::tests::render_matches_shipped_asset ... ok
+test config::runtime_tree::tests::tree_block_mismatch_is_detected ... ok
+test config::runtime_tree::tests::every_policy_path_appears_in_tree ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1002 filtered out; finished in 0.00s
+=== full gate ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy-exit=0
+test result: ok. 1007 passed; 0 failed; 0 ignored; 0 measured; 1002 filtered out; finished in 1.44s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```

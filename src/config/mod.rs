@@ -5,11 +5,13 @@
 mod lifecycle;
 mod load;
 pub mod path_audit;
+mod runtime_tree;
 mod seeds;
 mod types;
 
 pub use lifecycle::*;
 pub use load::*;
+pub use runtime_tree::*;
 pub use seeds::*;
 pub use types::*;
 
