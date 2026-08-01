@@ -148,6 +148,31 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                         children: &[],
                     },
                     TreeNode {
+                        name: "memory/",
+                        note: None,
+                        blank_before: false,
+                        children: &[
+                            TreeNode {
+                                name: "session/",
+                                note: None,
+                                blank_before: false,
+                                children: &[],
+                            },
+                            TreeNode {
+                                name: "knowledge/",
+                                note: None,
+                                blank_before: false,
+                                children: &[],
+                            },
+                            TreeNode {
+                                name: "incidents/",
+                                note: None,
+                                blank_before: false,
+                                children: &[],
+                            },
+                        ],
+                    },
+                    TreeNode {
                         name: "mailbox/",
                         note: None,
                         blank_before: false,
@@ -197,7 +222,7 @@ pub static RUNTIME_TREE: TreeNode = TreeNode {
                     children: &[],
                 },
                 TreeNode {
-                    name: "incident/",
+                    name: "incidents/",
                     note: Some("post-mortems, never auto-loaded"),
                     blank_before: false,
                     children: &[],

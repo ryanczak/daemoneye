@@ -134,6 +134,21 @@ pub static INVENTORY: &[InventoryEntry] = &[
         source: "memory::memory_dir_for_namespace(\"global\", …)",
     },
     InventoryEntry {
+        path: "memory/session",
+        status: PathStatus::Current,
+        source: "memory::memory_dir_for_namespace(\"global\", Session)",
+    },
+    InventoryEntry {
+        path: "memory/knowledge",
+        status: PathStatus::Current,
+        source: "memory::memory_dir_for_namespace(\"global\", Knowledge)",
+    },
+    InventoryEntry {
+        path: "memory/incidents",
+        status: PathStatus::Current,
+        source: "memory::memory_dir_for_namespace(\"global\", Incident)",
+    },
+    InventoryEntry {
         path: "runbooks",
         status: PathStatus::Current,
         source: "Config::runbooks_dir()",

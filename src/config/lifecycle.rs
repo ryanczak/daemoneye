@@ -176,6 +176,54 @@ pub static POLICY_TABLE: &[LifecycleEntry] = &[
         note: "knowledge and session memories — user content",
         lazy: false,
     },
+    LifecycleEntry {
+        path: "memory/session",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "session memories — user preferences, always injected at session start",
+        lazy: false,
+    },
+    LifecycleEntry {
+        path: "memory/knowledge",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "knowledge memories — technical facts, loaded on-demand via tags",
+        lazy: false,
+    },
+    LifecycleEntry {
+        path: "memory/incidents",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "incident memories — post-mortems, created lazily on first write",
+        lazy: true,
+    },
+    LifecycleEntry {
+        path: "agents/*/memory/session",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "per-agent session memories",
+        lazy: true,
+    },
+    LifecycleEntry {
+        path: "agents/*/memory/knowledge",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "per-agent knowledge memories",
+        lazy: true,
+    },
+    LifecycleEntry {
+        path: "agents/*/memory/incidents",
+        intent: LifecycleIntent::KeepForever,
+        config_key: None,
+        implemented: ImplementationStatus::Implemented,
+        note: "per-agent incident memories",
+        lazy: true,
+    },
     // ── Binaries ──────────────────────────────────────────────────────────────
     LifecycleEntry {
         path: "bin",
@@ -519,5 +567,24 @@ mod tests {
             None => unsafe { std::env::remove_var("HOME") },
         }
         let _ = std::fs::remove_dir_all(&tmp_home);
+    }
+
+    /// POLICY_TABLE must contain an entry for every MemoryCategory dir_name().
+    /// Deriving the expected path from dir_name() rather than hardcoding it is
+    /// what makes this test catch a future rename.
+    #[test]
+    fn policy_table_covers_every_memory_category() {
+        use crate::memory::MemoryCategory;
+        for category in [
+            MemoryCategory::Session,
+            MemoryCategory::Knowledge,
+            MemoryCategory::Incident,
+        ] {
+            let expected = format!("memory/{}", category.dir_name());
+            assert!(
+                POLICY_TABLE.iter().any(|e| e.path == expected),
+                "POLICY_TABLE missing entry for {expected}"
+            );
+        }
     }
 }

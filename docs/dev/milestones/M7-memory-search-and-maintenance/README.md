@@ -75,7 +75,7 @@ refers to "phase 08" and "phase 09" by number, stays accurate.
 | 07 | [fts5-write-path](phase-07-fts5-write-path.md) — index maintained on add/update/delete, with reconciliation | todo |
 | 08 | fts5-search — BM25 ranking wired into `ftsearch_memories()`, with the tag-miss/text-hit test | todo |
 | 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
-| 10 | [tree-and-doc-truth](phase-10-tree-and-doc-truth.md) — `memory/incident` → `incidents` (incl. a live stamping bug), the per-category `POLICY_TABLE` entries that close the gate gap, `agents/*/memory/`, and two false `CLAUDE.md` rows | todo |
+| 10 | [tree-and-doc-truth](phase-10-tree-and-doc-truth.md) — `memory/incident` → `incidents` (incl. a live stamping bug), the per-category `POLICY_TABLE` entries that close the gate gap, `agents/*/memory/`, and two false `CLAUDE.md` rows | in-progress |
 
 Phases 06–08 may be re-split once 06 lands; the FTS5 work is the least-known part
 of this milestone and the phase boundaries are a guess until the schema exists.

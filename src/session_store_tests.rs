@@ -576,3 +576,28 @@ fn backfill_missing_artifact_returns_error_name() {
         assert_eq!(errs, vec!["memory/nonexistent-key"]);
     });
 }
+
+#[test]
+fn incident_memory_gets_session_origin_stamped() {
+    with_temp_home(|| {
+        let base = crate::config::config_dir();
+        let inc_dir = base.join("memory/incidents");
+        std::fs::create_dir_all(&inc_dir).unwrap();
+        let inc_path = inc_dir.join("outage-report.md");
+        std::fs::write(&inc_path, "---\ntags: [outage]\n---\n# Outage Report\n").unwrap();
+
+        let artifacts = vec![ArtifactRef {
+            kind: "memory".to_string(),
+            name: "outage-report".to_string(),
+            at_turn: 1,
+        }];
+        let errs = backfill_session_origin(&artifacts, "incident-response");
+        assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
+
+        let patched = std::fs::read_to_string(&inc_path).unwrap();
+        assert!(
+            patched.contains("session_origin: \"incident-response\""),
+            "got: {patched}"
+        );
+    });
+}

@@ -1,7 +1,7 @@
 # Phase 10: Tree and Doc Truth
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05 (generated-runtime-tree, done) — this phase edits
 `RUNTIME_TREE` and the asset it renders to. **Independent of the FTS5 chain
 (06–09); dispatchable out of numeric order.**
@@ -426,6 +426,62 @@ even when every claim in it is true.
 
 ## Update Log
 
-(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+### Update — 2026-08-01 20:36 (started)
+
+**Executor:** Claude (executor LLM)
+
+Implementing all 6 spec tasks: fixing the `stamp_artifact_origin` bug, correcting the runtime tree and asset, closing the gate gap with per-category `POLICY_TABLE` entries, adding path-audit inventory entries, correcting two `CLAUDE.md` rows, and adding both regression tests.
+
+### Update — 2026-08-01 20:38 (end-to-end verification)
+
+**Pre-fix red run — `incident_memory_gets_session_origin_stamped`:**
+```
+unexpected errors: ["memory/outage-report"]
+test session_store::tests::incident_memory_gets_session_origin_stamped ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1014 filtered out
+```
+
+**Pre-tree-fix red run — `every_policy_path_appears_in_tree`:**
+```
+Policy paths not found in tree: ["memory/incidents"]
+test config::runtime_tree::tests::every_policy_path_appears_in_tree ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1012 filtered out
+```
+
+**Post-fix green runs — all gates:**
+```
+=== the tree no longer claims a directory that cannot exist ===
+0
+singular-count-above-must-be-0
+2
+plural-count-above-must-be-2
+
+=== seeded tree still audits clean ===
+# The daemon will create the session automatically and `daemoneye chat`
+# will attach to it when run from outside tmux.
+clean-audit-exit=0   # 0 == PASS
+
+=== what actually exists under memory/ ===
+knowledge
+session
+
+=== CLAUDE.md no longer carries the false claims ===
+0
+fcntl-count-above-must-be-0
+0
+no-index-claim-count-above-must-be-0
+
+=== the gates ===
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1010 filtered out    (runtime_tree)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 1006 filtered out    (lifecycle)
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 991 filtered out    (path_audit)
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 983 filtered out    (session_store)
+
+=== full gate ===
+clippy-exit=0
+test result: ok. 1015 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out    (lib)
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out      (integration)
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out       (isolation)
+```
 
 <!-- entries appended below this line -->

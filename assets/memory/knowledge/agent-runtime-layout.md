@@ -23,6 +23,10 @@ automation, configuration, and logs live under it.
     <name>/
       config.toml            ← named agent profile (prompt, model, tool policy, memory namespace)
       briefing.md            ← rolling post-session briefing (auto-generated on clean exit)
+      memory/
+        session/
+        knowledge/
+        incidents/
       mailbox/
         <job_id>.json        ← mailbox result written by child ghost on exit
 
@@ -34,7 +38,7 @@ automation, configuration, and logs live under it.
   memory/
     session/                 ← user prefs, always injected at session start
     knowledge/               ← technical facts, loaded on-demand via tags
-    incident/                ← post-mortems, never auto-loaded
+    incidents/               ← post-mortems, never auto-loaded
 
   var/
     run/

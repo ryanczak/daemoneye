@@ -375,10 +375,14 @@ fn stamp_artifact_origin(kind: &str, artifact_name: &str, session_name: &str) ->
     let base = crate::config::config_dir();
     match kind {
         "memory" => {
-            for dir_name in &["knowledge", "session", "incident"] {
+            for category in [
+                crate::memory::MemoryCategory::Knowledge,
+                crate::memory::MemoryCategory::Session,
+                crate::memory::MemoryCategory::Incident,
+            ] {
                 let path = base
                     .join("memory")
-                    .join(dir_name)
+                    .join(category.dir_name())
                     .join(format!("{}.md", artifact_name));
                 if path.exists() {
                     let content = std::fs::read_to_string(&path)?;
