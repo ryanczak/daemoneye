@@ -1,7 +1,7 @@
 # Phase 08: FTS5 Search
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07 (fts5-write-path, done)
 **Estimated diff:** ~310 lines — `src/memory/index.rs` (the query path + tests)
 plus ~10 lines in `src/daemon/memory_prompt.rs`.
@@ -454,3 +454,63 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-01 22:08 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Implementing FTS5 search: `build_match_expr()`, namespace-filtered `fts5_search()`, reconcile-on-empty, caller update in `memory_prompt.rs`, and 8 tests.
+
+### Update — 2026-08-01 22:15 (end-to-end verification)
+
+**End-to-end verification transcript:**
+
+```
+=== a fresh install has memories on disk and no index rows yet ===
+# will attach to it when run from outside tmux.
+7
+knowledge-file-count-above-should-be-7
+ls: cannot access '/tmp/tmp.NiTd0JC7Hi/.daemoneye/var/index/memory.db': No such file or directory
+
+=== the search tests ===
+test memory::index::tests::stale_schema_version_is_recreated ... ok
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::add_memory_indexes_the_row ... ok
+test memory::index::tests::delete_memory_removes_the_row ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::hyphenated_query_does_not_error ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 1009 filtered out; finished in 0.02s
+
+=== no allow(dead_code) remains ===
+0
+count-above-must-be-0
+
+=== audit still clean ===
+clean-audit-exit=0   # 0 == PASS
+
+=== full gate ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy-exit=0
+test result: ok. 1031 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.46s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```

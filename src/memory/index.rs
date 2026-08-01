@@ -49,9 +49,119 @@ pub fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-/// Search the FTS5 index. Returns empty results until the index is implemented.
-pub fn fts5_search(_query: &str, _limit: usize) -> Vec<(String, f64)> {
-    Vec::new()
+/// Turn arbitrary user text into a safe FTS5 MATCH expression.
+/// Returns `None` when the input yields no usable terms.
+fn build_match_expr(query: &str) -> Option<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut terms: Vec<String> = Vec::new();
+
+    for token in query.split_whitespace() {
+        if token.chars().all(|c| !c.is_alphanumeric()) {
+            continue;
+        }
+        let escaped = token.replace('"', "\"\"");
+        let lower = escaped.to_lowercase();
+        if !seen.iter().any(|s| s == &lower) {
+            seen.push(lower);
+            if seen.len() > 32 {
+                break;
+            }
+            terms.push(format!("\"{}\"", escaped));
+        }
+    }
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
+}
+
+/// Search the FTS5 index. Returns up to `limit` hits as
+/// `(namespace, key, bm25_score)`, best match first.
+///
+/// Best-effort: any failure returns an empty `Vec` after logging. The index is
+/// a derived cache and search degrading to "no hits" must never be fatal.
+pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(String, String, f64)> {
+    if namespaces.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(expr) = build_match_expr(query) else {
+        return Vec::new();
+    };
+
+    // Reconcile an empty index on first search
+    let conn = {
+        let conn = match open_index() {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("memory index open failed: {e:#}");
+                return Vec::new();
+            }
+        };
+
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .unwrap_or(0);
+        if count == 0 {
+            if let Err(e) = reconcile_index() {
+                log::warn!("memory index reconcile failed: {e:#}");
+            }
+            // Re-open the connection after reconcile (which may have dropped/recreated)
+            match open_index() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::warn!("memory index re-open after reconcile failed: {e:#}");
+                    return Vec::new();
+                }
+            }
+        } else {
+            conn
+        }
+    };
+
+    let placeholders = (0..namespaces.len())
+        .map(|i| format!("?{}", i + 3))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT namespace, key, bm25(memories) FROM memories
+         WHERE memories MATCH ?1 AND namespace IN ({placeholders})
+         ORDER BY bm25(memories) LIMIT ?2"
+    );
+
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(expr), Box::new(limit as i64)];
+    for ns in namespaces {
+        params.push(Box::new(ns.to_string()));
+    }
+
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("memory index prepare failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    let rows = match stmt.query_map(
+        rusqlite::params_from_iter(params.iter().map(|b| &**b)),
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, f64>(2)?,
+            ))
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::warn!("memory index query failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    rows.filter_map(|r| r.ok()).collect()
 }
 
 /// Read the memory file for (namespace, category, key), parse it, and upsert
@@ -109,10 +219,6 @@ pub fn remove_from_index(
 }
 
 /// What a reconcile pass changed.
-// The operator-facing repair path. Exercised by this phase's reconciliation
-// tests; a production caller (startup or a `reindex` subcommand) is deliberately
-// deferred — see this phase's Out of scope.
-#[allow(dead_code)]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ReconcileReport {
     /// Rows present in the index at the start of the pass.
@@ -122,10 +228,6 @@ pub struct ReconcileReport {
 }
 
 /// Rebuild the whole index from the memory files on disk.
-// The operator-facing repair path. Exercised by this phase's reconciliation
-// tests; a production caller (startup or a `reindex` subcommand) is deliberately
-// deferred — see this phase's Out of scope.
-#[allow(dead_code)]
 pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
     let mut conn = open_index()?;
 
@@ -680,6 +782,237 @@ mod tests {
         assert_eq!(
             report.rows_after, 0,
             "expired memory should not contribute any row"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 08: FTS5 search tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn search_finds_text_hit_when_tags_miss() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "zephyr-fact",
+            "The zephyr blows softly through the canyon",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        let results = fts5_search("zephyr", 10, &["global"]);
+        assert_eq!(
+            results.len(),
+            1,
+            "should find memory whose body mentions 'zephyr' even though tags do not"
+        );
+        assert_eq!(results[0].0, "global");
+        assert_eq!(results[0].1, "zephyr-fact");
+    }
+
+    #[test]
+    fn search_ranks_better_match_first() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Short body where "zephyr" dominates
+        crate::memory::add_memory(
+            "zephyr-strong",
+            "zephyr zephyr zephyr",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add strong memory");
+
+        // Long body where "zephyr" is buried in filler
+        crate::memory::add_memory(
+            "zephyr-weak",
+            "the quick brown fox jumps over the lazy dog many times and then zephyr appears once at the end of this long sentence with lots of other words that have nothing to do with zephyr at all",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add weak memory");
+
+        let results = fts5_search("zephyr", 10, &["global"]);
+        assert!(results.len() >= 2, "should find both memories");
+        assert_eq!(
+            results[0].1, "zephyr-strong",
+            "the memory where 'zephyr' dominates should rank first"
+        );
+        assert!(
+            results[0].2 < results[1].2,
+            "bm25 score for strong match should be more negative (better)"
+        );
+    }
+
+    #[test]
+    fn hyphenated_query_does_not_error() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "runtime-layout",
+            "the runtime layout includes var and log directories",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        // Must not raise "no such column: layout"
+        let results = fts5_search("runtime-layout", 10, &["global"]);
+        assert!(
+            !results.is_empty(),
+            "hyphenated query should find the memory without error"
+        );
+    }
+
+    #[test]
+    fn operator_words_are_treated_as_text() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "and-memory",
+            "a and b are both present in this memory",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        // Must not be interpreted as a boolean AND expression
+        let results = fts5_search("a AND b", 10, &["global"]);
+        assert!(
+            !results.is_empty(),
+            "'a AND b' should be treated as text terms, not a boolean operator"
+        );
+    }
+
+    #[test]
+    fn empty_query_returns_no_hits() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "some-memory",
+            "some content here",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        let results = fts5_search("", 10, &["global"]);
+        assert!(results.is_empty(), "empty query should return no hits");
+
+        let results = fts5_search("   ?  ", 10, &["global"]);
+        assert!(
+            results.is_empty(),
+            "punctuation-only query should return no hits"
+        );
+    }
+
+    #[test]
+    fn namespace_filter_excludes_other_namespaces() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "shared-key",
+            "quokka is a marsupial",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add global memory");
+
+        crate::memory::add_memory(
+            "shared-key",
+            "quokka is a marsupial",
+            crate::memory::MemoryCategory::Knowledge,
+            "agent-x",
+        )
+        .expect("add agent-x memory");
+
+        let results = fts5_search("quokka", 10, &["global"]);
+        assert_eq!(results.len(), 1, "should find exactly the global row");
+        assert_eq!(results[0].0, "global");
+        assert_eq!(results[0].1, "shared-key");
+    }
+
+    #[test]
+    fn fresh_index_is_reconciled_on_first_search() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed a fresh HOME with config dirs and knowledge memories, but do NOT
+        // call add_memory (so the index is never touched).
+        crate::config::Config::ensure_dirs().expect("ensure_dirs should succeed");
+
+        // The index file does not exist yet — nothing has called open_index().
+        let index_path = crate::config::memory_index_path();
+        assert!(
+            !index_path.exists(),
+            "fresh HOME must not already have an index file"
+        );
+
+        // Search for a word present in a seeded knowledge memory.
+        // "webhook" appears in webhook-setup.md but no index exists yet.
+        let results = fts5_search("webhook", 10, &["global"]);
+        assert!(
+            !results.is_empty(),
+            "search should find seeded knowledge memory after reconcile-on-empty"
+        );
+        assert_eq!(
+            results[0].1, "webhook-setup",
+            "should find the webhook-setup memory"
+        );
+
+        // Assert the index now holds 9 rows (7 knowledge + 2 session).
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .expect("count rows");
+        assert_eq!(
+            count, 9,
+            "reconciled index should have 9 rows (7 knowledge + 2 session)"
+        );
+    }
+
+    #[test]
+    fn ftsearch_memories_preserves_rank_order() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Add two memories where one has a much stronger match for "quokka"
+        crate::memory::add_memory(
+            "quokka-strong",
+            "quokka quokka quokka",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add strong memory");
+
+        crate::memory::add_memory(
+            "quokka-weak",
+            "the quick brown fox jumps over the lazy dog and then quokka appears once",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add weak memory");
+
+        let results = crate::daemon::memory_prompt::ftsearch_memories("quokka", 10, &["global"]);
+        assert!(results.len() >= 2, "should find both memories");
+        assert_eq!(
+            results[0].key, "quokka-strong",
+            "ftsearch_memories should preserve BM25 rank order: strong match first"
         );
     }
 }

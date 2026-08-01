@@ -199,12 +199,15 @@ pub fn expand_relates_to(keys: &[String], namespaces: &[&str]) -> Vec<MemoryInfo
 /// FTS5 search on memory index for matching memories.
 /// Returns top `limit` by BM25 score.
 pub fn ftsearch_memories(query: &str, limit: usize, namespaces: &[&str]) -> Vec<MemoryInfo> {
-    let results = index::fts5_search(query, limit);
+    let results = index::fts5_search(query, limit, namespaces);
     let all_memories = list_memories_with_tags(None, namespaces).unwrap_or_default();
 
     let mut found = Vec::new();
-    for (key, _) in results {
-        if let Some(info) = all_memories.iter().find(|m| m.key == key) {
+    for (namespace, key, _score) in results {
+        if let Some(info) = all_memories
+            .iter()
+            .find(|m| m.key == key && m.namespace == namespace)
+        {
             found.push(info.clone());
         }
     }
