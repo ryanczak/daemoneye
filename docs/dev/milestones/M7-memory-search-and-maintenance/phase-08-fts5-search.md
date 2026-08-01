@@ -1,7 +1,7 @@
 # Phase 08: FTS5 Search
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** in-progress (round 2 was a no-op — see Notes for executor, round 3)
+**Status:** in-progress
 **Depends on:** phase-07 (fts5-write-path, done)
 **Estimated diff:** ~310 lines — `src/memory/index.rs` (the query path + tests)
 plus ~10 lines in `src/daemon/memory_prompt.rs`.
@@ -863,3 +863,31 @@ Both edits exist to make a mutation fail. Verify that yourself:
 
 Quote both red runs in your Update Log, then confirm the suite is green at 1032.
 A claimed mutation check is not one; the reviewer re-runs both independently.
+
+<!-- entries appended below this line -->
+
+### Update — 2026-08-01 23:52 (started, round 3)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Implementing the two remaining edits from round 3: reorder fixture in `search_ranks_better_match_first` and add `multi_word_query_matches_non_adjacent_terms` test.
+
+### Update — 2026-08-01 23:53 (mutation checks)
+
+**Mutation check 1 — delete ORDER BY bm25(memories):**
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1031 filtered out; finished in 0.00s
+```
+
+`search_ranks_better_match_first` failed as expected — the test now catches insertion-order-only results.
+
+**Mutation check 2 — whole-query phrase quoting in build_match_expr:**
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1031 filtered out; finished in 0.00s
+```
+
+`multi_word_query_matches_non_adjacent_terms` failed as expected — the test catches phrase-quoting instead of per-term OR.
+
+Both mutations restored. Full suite green at 1032.

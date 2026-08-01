@@ -819,15 +819,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
 
-        // Short body where "zephyr" dominates
-        crate::memory::add_memory(
-            "zephyr-strong",
-            "zephyr zephyr zephyr",
-            crate::memory::MemoryCategory::Knowledge,
-            "global",
-        )
-        .expect("add strong memory");
-
         // Long body where "zephyr" is buried in filler
         crate::memory::add_memory(
             "zephyr-weak",
@@ -836,6 +827,15 @@ mod tests {
             "global",
         )
         .expect("add weak memory");
+
+        // Short body where "zephyr" dominates
+        crate::memory::add_memory(
+            "zephyr-strong",
+            "zephyr zephyr zephyr",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add strong memory");
 
         let results = fts5_search("zephyr", 10, &["global"]);
         assert!(results.len() >= 2, "should find both memories");
@@ -1013,6 +1013,33 @@ mod tests {
         assert_eq!(
             results[0].key, "quokka-strong",
             "ftsearch_memories should preserve BM25 rank order: strong match first"
+        );
+    }
+
+    #[test]
+    fn multi_word_query_matches_non_adjacent_terms() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        crate::memory::add_memory(
+            "pg-tuning",
+            "increase shared_buffers when the working set grows",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add_memory should succeed");
+
+        // A realistic user turn: the words are scattered, not a contiguous phrase.
+        // Whole-query phrase quoting returns 0 here; per-term OR finds the memory.
+        let results = fts5_search(
+            "how do I tune shared_buffers for postgres?",
+            10,
+            &["global"],
+        );
+        assert!(
+            !results.is_empty(),
+            "a multi-word user turn must match on individual terms, not as one phrase"
         );
     }
 }
