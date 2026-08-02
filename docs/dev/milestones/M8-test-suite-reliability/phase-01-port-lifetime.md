@@ -1,7 +1,7 @@
 # Phase 01: Port Lifetime
 
 **Milestone:** M8 — Test Suite Reliability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (first phase of M8; M7 closed 2026-08-02)
 **Estimated diff:** ~110 lines — `tests/harness/mod.rs` (the allocator and two
 hand-off sites) plus three one-word changes and one new test in
@@ -343,3 +343,51 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 03:51 (started)
+
+**Executor:** rexyMCP executor
+
+Replaced `alloc_free_port` with `alloc_held_port` that returns the listener
+alongside the port. Added `webhook_listener` and `stub_listener` fields to
+`IsolatedEnv` to hold both listeners. Stub hand-off now uses `TcpListener::from_std`
+instead of rebinding. Webhook listener dropped immediately before daemon spawn.
+Three call sites in `isolation.rs` changed to `let mut`. Added
+`held_port_cannot_be_rebound` test.
+
+### Update — 2026-08-02 03:54 (end-to-end verification)
+
+**End-to-end transcript** (captured mechanically from `/tmp/m8-phase01-e2e.txt`):
+
+```
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.53s
+=== the released-port allocator is gone ===
+0
+count-above-must-be-0
+=== the canary and the new guard both exist ===
+1 (x2)
+=== no src/ changes ===
+0
+src-files-changed-above-must-be-0
+=== 100 consecutive isolation runs (baseline before this phase: 5 failures) ===
+isolation-failures=0   # 0 == PASS
+=== full gate ===
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+clippy-exit=0
+test result: ok. 1032 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Red run for `held_port_cannot_be_rebound`:** Verified that adding `drop(listener)`
+before the return in `alloc_held_port` causes `held_port_cannot_be_rebound` to fail
+(the port is released and can be rebound). Reverted to correct implementation.
+
+**Final gate:** lib 1032, integration 30 (2 ignored), isolation 9 (1 ignored),
+bug_tracker 6, doc_truth 1. All green.

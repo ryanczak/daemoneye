@@ -54,7 +54,7 @@ fn daemon_boots_in_throwaway_root() {
         return;
     }
 
-    let env = IsolatedEnv::new();
+    let mut env = IsolatedEnv::new();
     env.start_daemon("de-test-boot");
 
     // Verify socket and PID file exist under the throwaway root.
@@ -102,7 +102,7 @@ fn hooks_land_on_private_server() {
         return;
     }
 
-    let env = IsolatedEnv::new();
+    let mut env = IsolatedEnv::new();
     env.start_daemon("de-test-hooks");
 
     // Check pane-died hook value on the private server (while daemon is live).
@@ -147,7 +147,7 @@ fn default_server_unchanged() {
         return;
     }
 
-    let env = IsolatedEnv::new();
+    let mut env = IsolatedEnv::new();
 
     // Snapshot the default server before starting the daemon.
     let before = snapshot_default_server(&env);
@@ -593,5 +593,20 @@ max_ghost_turns: 1
     assert!(
         found,
         "ghost_start did not appear in the event segment within 30 seconds"
+    );
+}
+
+/// Direct proof that the stub listener is genuinely held: attempting to bind
+/// the same port must fail with AddrInUse. If the allocator ever reverts to
+/// dropping the listener before returning, this fails immediately.
+#[test]
+fn held_port_cannot_be_rebound() {
+    let env = IsolatedEnv::new();
+    let err = std::net::TcpListener::bind(("127.0.0.1", env.stub_port()))
+        .expect_err("stub port must still be held by the env");
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::AddrInUse,
+        "expected AddrInUse, got {err:?}"
     );
 }

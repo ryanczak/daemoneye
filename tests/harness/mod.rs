@@ -12,8 +12,10 @@ use tempfile::TempDir;
 pub struct IsolatedEnv {
     root: TempDir,
     webhook_port: u16,
+    webhook_listener: Option<std::net::TcpListener>,
     stub_handle: Option<tokio::task::JoinHandle<()>>,
     stub_port: u16,
+    stub_listener: Option<std::net::TcpListener>,
     stub_response: Arc<std::sync::Mutex<String>>,
 }
 
@@ -36,14 +38,16 @@ impl IsolatedEnv {
             socket_path.display()
         );
 
-        let webhook_port = alloc_free_port();
-        let stub_port = alloc_free_port();
+        let (webhook_listener, webhook_port) = alloc_held_port();
+        let (stub_listener, stub_port) = alloc_held_port();
 
         Self {
             root,
             webhook_port,
+            webhook_listener: Some(webhook_listener),
             stub_handle: None,
             stub_port,
+            stub_listener: Some(stub_listener),
             stub_response: Arc::new(std::sync::Mutex::new(String::new())),
         }
     }
@@ -79,13 +83,19 @@ impl IsolatedEnv {
     /// // `message_stop` — more moving parts for the same test goal.
     pub async fn start_stub(&mut self) {
         let response = Arc::clone(&self.stub_response);
-        let port = self.stub_port;
 
-        // Bind before spawning: when this returns, the port is already
-        // accepting connections, so no readiness sleep is needed.
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .expect("bind stub server");
+        // Hand the already-bound listener to the stub — the port was reserved
+        // at construction and has been held since, so no readiness sleep is
+        // needed and no AddrInUse can occur.
+        let std_listener = self
+            .stub_listener
+            .take()
+            .expect("stub listener already taken — start_stub called twice");
+        std_listener
+            .set_nonblocking(true)
+            .expect("set stub listener non-blocking");
+        let listener =
+            tokio::net::TcpListener::from_std(std_listener).expect("adopt stub listener");
 
         let app = axum::Router::new().route(
             "/chat/completions",
@@ -193,7 +203,7 @@ bind_addr = "127.0.0.1"
     /// Runs `daemoneye setup` first (HOME-confined), then
     /// `daemoneye daemon --session <session>` without `--console`, waiting
     /// on the parent's exit status per the readiness handshake.
-    pub fn start_daemon(&self, session: &str) -> std::process::Output {
+    pub fn start_daemon(&mut self, session: &str) -> std::process::Output {
         // Run setup to create the directory tree.
         let setup_out = self
             .daemoneye(&["setup"])
@@ -210,6 +220,11 @@ bind_addr = "127.0.0.1"
         // Write the test config after setup — setup's ensure_dirs() overwrites
         // any pre-existing config.toml with the bundled default (empty api_key).
         self.write_test_config();
+
+        // Release the webhook port only now. Holding it through construction and
+        // config-writing is what stops another IsolatedEnv being handed the same
+        // port; the daemon binds it within milliseconds of this drop.
+        drop(self.webhook_listener.take());
 
         // Start the daemon (non-console, forks). The parent exits once the
         // child has bound its socket (readiness handshake).
@@ -321,12 +336,13 @@ impl IsolatedEnv {
     }
 }
 
-/// Allocate a free TCP port by binding to port 0 and reading the assigned port.
-fn alloc_free_port() -> u16 {
+/// Bind an ephemeral port and **keep the listener alive**, so no other caller
+/// can be handed the same port. The listener is released only when its real
+/// consumer takes over — see `start_stub` and `start_daemon`.
+fn alloc_held_port() -> (std::net::TcpListener, u16) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind to port 0");
     let port = listener.local_addr().expect("local addr").port();
-    drop(listener);
-    port
+    (listener, port)
 }
 
 /// Build SSE events for an OpenAI-compatible chat completion response.
