@@ -396,19 +396,19 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
-### Active milestone — M8 Test Suite Reliability
+### Active milestone — none
 
-Scoped 2026-08-02 (PE sign-off). Milestone README:
-`docs/dev/milestones/M8-test-suite-reliability/README.md` (two phases). Goal:
-make the test suite trustworthy. `cargo test --test isolation` fails about 5% of
-the time because the harness allocator releases a TCP port before its consumer
-binds it, so two `IsolatedEnv`s can be handed the same port; and four real-clock
-sleeps remain in non-`#[ignore]`d tests. Both are M7 leftovers and the second is
-M7's one unticked exit criterion.
+**M8 — Test Suite Reliability closed 2026-08-02**, two phases. The isolation
+suite went from a measured **5 failures / 100 runs** to **0 / 300**: the test
+harness's port allocator released each probe listener before its consumer bound
+the port, so two `IsolatedEnv`s could be handed the same one. It now holds the
+listener until hand-off. The four real-clock sleeps in non-`#[ignore]`d tests
+were also removed, which satisfied M7's one partly-met exit criterion.
 
 **M7 — Memory Search & Maintenance closed 2026-08-02**, ten phases. It made
 memory search real (BM25-ranked FTS5 over `var/index/memory.db`, maintained on
 every write, with `reconcile_index()` covering the fresh-install case), landed
-four drift gates, and fixed three latent defects found along the way. Nine of
-its ten exit criteria were met; the retrospective in its README records the one
-that was not and why.
+four drift gates, and fixed three latent defects found along the way.
+
+The next milestone has not been scoped; see `docs/dev/NEXT.md` for the
+carried-forward list.

@@ -5,7 +5,7 @@ teaches people to re-run it, and a suite that sleeps on the wall clock is slow
 for no benefit. Both are M7 leftovers, and one of them is M7's single unticked
 exit criterion.
 
-**Status:** planning
+**Status:** closed 2026-08-02 (all four exit criteria met)
 
 **Depends on:** M7 (Memory Search & Maintenance) — closed 2026-08-02.
 
@@ -15,17 +15,20 @@ and the diagnosis then arrived anyway during scoping (see Notes).
 
 **Exit criteria:**
 
-- [ ] **`cargo test --test isolation` passes 100 consecutive runs.** The
+- [x] **`cargo test --test isolation` passes 100 consecutive runs.** The
       measured baseline before any change is **5 failures / 100** (see Notes).
       Verified by running it, not asserted.
-- [ ] **`alloc_free_port()` no longer hands out a port it has released.** The
+- [x] **`alloc_free_port()` no longer hands out a port it has released.** The
       probe listener is held until the real consumer takes it over — the
       in-process stub receives the pre-bound listener directly; the daemon's
       webhook port is released only immediately before spawn.
-- [ ] **No real-clock `sleep` in a non-`#[ignore]`d test.** This is M7's
-      exit criterion 8, which closed partly-met. Four sites remain:
-      `src/cli/input/tty.rs:370,374` and `src/cli/commands/stream.rs:1265,1268`.
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo
+- [x] **No real-clock `sleep` in a non-`#[ignore]`d test.** This is M7's
+      exit criterion 8, which closed partly-met. All four sites are gone
+      (`tty.rs:370,374`, `stream.rs:1265,1268`). **One residual is named in the
+      retrospective**: `src/ai/mod.rs:364`, a 30 s sleep in a *spawned* task
+      simulating an unresponsive server — zero wall cost, cannot flake, and not
+      one of the four this criterion was written about.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo
       fmt --all --check` clean; `cargo test` green with no regression against the
       **1032 lib + 30 integration (2 ignored) + 8 isolation (1 ignored) + 6
       bug_tracker + 1 doc_truth** baseline M7 closed at.
@@ -115,3 +118,103 @@ the 100-run baseline, so there is no live evidence to work from, and phase 01
 will not claim to fix it. If it recurs after M8, it is a separate bug and wants
 its own investigation. M7's retrospective originally asserted a shared root cause
 for both flakes; that was an over-claim and has been corrected there.
+
+## M8 retrospective — closed 2026-08-02
+
+Two phases, both `done`, both `approved_first_try`, no bugs filed. Final gates:
+**1032 lib + 30 integration (2 ignored) + 9 isolation (1 ignored) + 6
+bug_tracker + 1 doc_truth**, clippy clean, `fmt --check` clean, tree clean.
+
+### The headline number
+
+| | before | after |
+|---|---|---|
+| `cargo test --test isolation` | **5 failures / 100** | **0 / 300** |
+
+300 runs total: 200 at phase-01 review, 100 more at close against the
+post-phase-02 tree. If the original 5% rate still held, zero failures in 300 runs
+has probability `0.95^300 ≈ 0.000002%`.
+
+### What made this milestone work
+
+**Measuring the baseline before writing the spec.** The acceptance criterion was
+a repeat count derived from a measured rate, not "the suite passes". That
+mattered because *one run of a 5%-flaky suite passes 95% of the time* — the
+automatic gate capture every phase receives could never have distinguished the
+fix from luck, and that is exactly how the bug survived two milestones of green
+gates and cost review attention twice before anyone measured it.
+
+**The generalisable rule, now earned rather than assumed:**
+
+> An acceptance criterion for an **intermittent** failure must be a repeat count
+> derived from a **measured** rate. A single green run is not evidence.
+
+### The mechanism, and how nearly it was mis-diagnosed
+
+`alloc_free_port()` released its probe listener before the consumer bound the
+port, so two `IsolatedEnv`s could be handed the same one. The fix holds the
+listener until hand-off: the in-process stub receives the pre-bound listener via
+`TcpListener::from_std`, and the daemon's webhook port is released only
+immediately before spawn.
+
+Worth recording that **the mechanism was hypothesised twice and disproven both
+times** during scoping — the kernel does not hand back a just-freed ephemeral
+port under tight sequential allocation (0/200), and a simplified concurrent
+model did not reproduce it (0/480). Only running the real suite 100 times
+produced evidence, and the decisive datum was not the `AddrInUse` panic everyone
+had been looking at but a single failure of
+`assert_ne!(env_a.stub_port(), env_b.stub_port())` — the collision itself.
+
+The fix aimed at the *plausible* mechanism would have worked anyway. That is
+luck. The method was measuring.
+
+### Calibration held; the automation did not
+
+Every acceptance-criterion command was run against the tree before each spec was
+committed, and that caught two would-be-unsatisfiable criteria in phase 02 alone:
+`stream.rs` has four `tokio::time::sleep` calls of which **three are production**
+(the streaming loop's timeout and tick), and `tty.rs` has six `from_millis(10)`
+of which **five are production** escape-sequence timeouts. A criterion demanding
+either reach zero would have been impossible, and a blanket deletion would have
+broken streaming with every test still green.
+
+Against that, **the automated sleep audit over-flagged on all three attempts** —
+at M7 close and twice here. It cannot see `#[tokio::test(start_paused = true)]`,
+it mis-attributes enclosing functions across closures, and it treats "after a
+`#[cfg(test)]`" as "inside the test module". Every conclusion in this milestone
+about which sleeps matter came from reading the code, not from the script. That
+is the honest reason no sleep-forbidding gate was built: **a scanner this
+architect could not get right in three attempts is not one to enforce in CI.**
+
+### Carried forward — none scheduled
+
+1. **One residual real-clock sleep** — `src/ai/mod.rs:364`, a 30 s
+   `tokio::time::sleep` inside a **spawned** task that simulates a server which
+   stops responding, so the client's 300 ms `read_timeout` fires. It costs no
+   wall time (the whole `ai::tests` module runs in 0.107 s) and cannot flake,
+   since it is an upper bound on silence rather than a wait for something.
+   `std::future::pending().await` expresses the same intent without a clock and
+   is the clean follow-up.
+2. **`read_key` has no timeout**, so a regression that stops bytes reaching it
+   makes the `cli::input::tty` tests **hang** rather than fail — confirmed by
+   mutation at phase-02 review. In CI a hang is worse than a failure. A bounded
+   `timeout()` wrapper is the fix.
+3. **`hooks_land_on_private_server`** — the phase-04-review flake, which binds no
+   ports. It did not fail once in 300 runs across this milestone. If it recurs it
+   is a separate bug.
+4. **`src/daemon/context/epochs.rs:618`** hardcodes the category→directory
+   mapping instead of calling `dir_name()`.
+5. **`tree_block_of`'s loose error contract** — an unterminated fence returns
+   `Some` where the spec said `None`. No reachable consequence.
+6. **The phase-04 fence toggle is a flip-flop, not a nesting parser.**
+7. **`reconcile_index()` has no operator entry point** — deferred twice; a
+   `reindex` subcommand or startup hook is the obvious home. **The only item on
+   this list with user-facing weight.**
+
+### One process note
+
+Phase 02 did not paste its end-to-end transcript into the Update Log — the first
+phase across M7 and M8 to skip that step. It was documented in the verdict rather
+than bounced, because the change was byte-for-byte what the spec prescribed and
+every criterion was independently re-verified. Recorded here so the requirement
+is not quietly eroded.
