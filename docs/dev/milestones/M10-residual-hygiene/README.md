@@ -21,8 +21,10 @@ reproduced in 300 runs, so there is nothing to fix.
       case (verified by mutation — killed at 25 s, see Notes).
 - [ ] **No real-clock `sleep` anywhere in the test suite**, including spawned
       tasks. This finishes what M8's exit criterion 3 left named-but-unfixed.
-- [ ] **`src/daemon/context/epochs.rs` derives its memory directory names from
-      `MemoryCategory`** rather than a hardcoded table.
+- [ ] **Every caller derives its memory directory names from `MemoryCategory`**
+      rather than a hardcoded table. Scoping named only `epochs.rs`; drafting
+      phase 02 found a **third** copy at `src/search.rs:56-63`, so the criterion
+      was widened rather than leaving two of three fixed.
 - [ ] **`daemoneye reindex` is documented** in `CLAUDE.md` and
       `docs/architecture.md`.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo
@@ -48,9 +50,9 @@ reproduced in 300 runs, so there is nothing to fix.
 |----|-------|--------|
 | 01 | [read-key-test-bound](phase-01-read-key-test-bound.md) — bound `read_key` in the tty tests so starvation fails instead of hanging | done        |
 
-**Phases 02–03 are not yet drafted.** The intended split, subject to change:
-phase 02 folds items 2 and 3 (both small and mechanical); phase 03 is the docs
-pass for item 4.
+| 02 | [derive-category-dirs](phase-02-derive-category-dirs.md) — derive the memory category dirs from `MemoryCategory` in three places; drop the last real-clock sleep | todo |
+
+**Phase 03 is not yet drafted.** It is the docs pass for item 4.
 
 ## Notes
 

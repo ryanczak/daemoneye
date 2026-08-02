@@ -1,56 +1,55 @@
 # NEXT
 
-**Active phase: M10 phase-01 — read-key-test-bound** (`todo`, drafted 2026-08-02).
+**Active phase: M10 phase-02 — derive-category-dirs** (`todo`, drafted 2026-08-02).
 
-Doc: `docs/dev/milestones/M10-residual-hygiene/phase-01-read-key-test-bound.md`
+Doc: `docs/dev/milestones/M10-residual-hygiene/phase-02-derive-category-dirs.md`
 
-Dispatch with `/rexymcp:dispatch phase-01`.
+Dispatch with `/rexymcp:dispatch phase-02`.
 
-**M10 — Residual Hygiene** was scoped 2026-08-02 (PE: "make 1–4 part of M10").
-It clears the four carried items M7, M8 and M9 left behind. None is a
-user-visible bug; each is a way the codebase can mislead someone later.
+**M10 phase-01 is `done`** (`approved_first_try`). The tty tests now fail in 5 s
+with a message naming the cause, where the same mutation used to hang until killed
+at 25 s.
+
+## Phase 02 — two carried items, and the one real risk
+
+Items 2 and 3 together: replace `src/ai/mod.rs:364`'s 30 s real-clock sleep with
+`std::future::pending()`, and derive the memory category→directory mapping from
+`MemoryCategory` instead of hardcoding it.
+
+Drafting found a **third** hardcoded copy at `src/search.rs:56-63`, so M10's exit
+criterion was widened from "`epochs.rs` derives" to "every caller derives" — fixing
+two of three would have left the drift in place.
+
+**The mechanical part is not the risk.** A working prototype of the whole refactor
+was built and mutation-tested before the spec was written:
+
+| Mutation | Caught? |
+|---|---|
+| `dir_name()` Incident → `"WRONG"` | **Yes** — 2 tests fail |
+| epochs label: `canonical_name()` → `dir_name()` | **NO — 1036 still pass** |
+| search label: `dir_name()` → `canonical_name()` | **NO — 1036 still pass** |
+
+`dir_name()` and `canonical_name()` differ for exactly one variant — `incidents`
+vs `incident` — and **neither label has any test**. Swap them and the refactor
+stays green while epochs silently prints `[incidents]` and search emits a
+`memory/incident` label matching no directory on disk. So the spec makes two tests
+mandatory and requires the executor to mutation-check both. A refactor whose only
+failure mode is invisible to the suite is not verifiable.
+
+The epochs test also needs a negative assertion, because `"[incidents]"` contains
+`"[incident]"` as a substring — asserting only the positive would prove nothing.
+
+Criteria calibrated against the tree: lib 1036 → **1038** (1039+ is scope creep,
+1036–1037 means a mandatory test is missing), `from_secs(30)` 1 → 0, ai sleeps
+3 → 2 (both remaining are production retry backoff), `"incidents"` literals 1 → 0
+in epochs and 2 → 0 in search while staying at 2 in `memory.rs`, and
+`MemoryCategory::ALL` in 0 → 3 files.
+
+## Remaining in M10
 
 | # | Item | Phase |
 |---|---|---|
-| 1 | `read_key` starvation hangs the tty tests instead of failing them | 01 (drafted) |
-| 2 | Residual real-clock sleep at `src/ai/mod.rs:364` | 02 (not drafted) |
-| 3 | `epochs.rs:618` hardcodes the category→directory map | 02 (not drafted) |
 | 4 | `daemoneye reindex` undocumented in `CLAUDE.md` / `architecture.md` | 03 (not drafted) |
-
-Carried item 7 (`hooks_land_on_private_server`) is **excluded**: 0 failures in
-300 runs across M8 and M9, so there is no evidence to work from.
-
-## Phase 01 — what it is, and the fix that would be wrong
-
-Ten tty tests call `read_key(&stdin).await` directly. `read_key`'s **first**
-`read_byte()` (`src/cli/input/tty.rs:164`) is unbounded — every subsequent read is
-capped at 30 ms. So a regression that stops bytes reaching it makes the tests
-**hang**, not fail. Verified by mutation before drafting: the mutated test was
-killed externally at **25 s**. In CI a hang is worse than a failure.
-
-**The obvious repair is a bug.** Production awaits `read_key` inside a
-`tokio::select!` (`stream.rs:686`, `:711`) racing daemon messages and a tick; the
-unbounded first-byte wait is exactly how the chat loop waits for the user to type.
-A timeout there would return spuriously, and since `None` already means EOF, the
-loop could not tell "the user is thinking" from "the terminal closed." The spec
-says this in its own section, because "`read_key` has no timeout" invites precisely
-the wrong fix.
-
-So the bound goes in the tests: a `read_key_bounded` helper, all ten call sites
-routed through it, and one new test proving the guard fires.
-
-**The guard test has a trap, measured both ways:**
-
-| Pipe write end | `timeout(50ms, read_key(&stdin))` |
-|---|---|
-| Held (`_write_file`) | `Err(Elapsed)` → helper panics → test passes |
-| Dropped (bare `_`) | `Ok(None)` → EOF, no panic → the test passes for nothing |
-
-Pinned as a negative case in the spec.
-
-Criteria calibrated against the tree: 10 bare call sites → 0, lib 1035 → **1036**
-(1037+ is scope creep), tty module 10 → 11, and production pinned by
-`sed -n '164p'` plus a `from_millis(30)` count that must stay at 10.
 
 ## The rules M7–M9 earned
 
