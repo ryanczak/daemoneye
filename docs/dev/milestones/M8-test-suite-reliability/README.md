@@ -45,7 +45,7 @@ and the diagnosis then arrived anyway during scoping (see Notes).
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [port-lifetime](phase-01-port-lifetime.md) — hold the probe listener until its consumer takes over; verify 0/100 against a measured 5/100 baseline | done |
-| 02 | [test-sleep-removal-2](phase-02-test-sleep-removal-2.md) — the four real-clock sleeps in `tty.rs` and `stream.rs`; finishes M7's exit criterion 8 | todo |
+| 02 | [test-sleep-removal-2](phase-02-test-sleep-removal-2.md) — the four real-clock sleeps in `tty.rs` and `stream.rs`; finishes M7's exit criterion 8 | in-progress |
 
 **Both phases are drafted.** Phase 01 is `done`; phase 02 is the last in-scope
 phase of the milestone.

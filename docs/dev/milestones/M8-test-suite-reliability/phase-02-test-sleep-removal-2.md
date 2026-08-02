@@ -1,7 +1,7 @@
 # Phase 02: Test Sleep Removal (2)
 
 **Milestone:** M8 — Test Suite Reliability
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (port-lifetime, done)
 **Estimated diff:** ~30 lines — the same six-line helper in two files.
 
@@ -295,3 +295,12 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 04:47 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+
+Replacing both copies of the `write_bytes` test helper in `src/cli/input/tty.rs`
+and `src/cli/commands/stream.rs`: `std::thread::sleep(1ms)` → `tokio::task::yield_now().await`
+with `ErrorKind::WouldBlock` assert; deleting the trailing `tokio::time::sleep(10ms)`
+and its comment.

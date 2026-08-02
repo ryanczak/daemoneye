@@ -351,7 +351,8 @@ mod tests {
         (stdin, write_file)
     }
 
-    /// Write bytes into the write file and wait a bit for them to be available.
+    /// Write bytes into the write file. Returns once every byte is in the pipe
+    /// buffer; the reader sees them immediately, so no wait is needed.
     async fn write_bytes(file: &std::fs::File, bytes: &[u8]) {
         let fd = file.as_raw_fd();
         let mut remaining = bytes;
@@ -366,12 +367,17 @@ mod tests {
             if n > 0 {
                 remaining = &remaining[n as usize..];
             } else {
-                // EAGAIN is fine, just loop
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                // A short write on this pipe can only mean EAGAIN; anything else is
+                // a real bug and must fail loudly rather than spin forever.
+                let err = std::io::Error::last_os_error();
+                assert_eq!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock,
+                    "write to test pipe failed: {err}"
+                );
+                tokio::task::yield_now().await;
             }
         }
-        // Give the async reader time to see the data
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
     #[tokio::test]

@@ -1262,10 +1262,17 @@ mod stream_seam_tests {
             if n > 0 {
                 remaining = &remaining[n as usize..];
             } else {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                // A short write on this pipe can only mean EAGAIN; anything else is
+                // a real bug and must fail loudly rather than spin forever.
+                let err = std::io::Error::last_os_error();
+                assert_eq!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock,
+                    "write to test pipe failed: {err}"
+                );
+                tokio::task::yield_now().await;
             }
         }
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
     /// The regression guard for bug-phase-11-1 / bug-phase-11-2: a daemon read
