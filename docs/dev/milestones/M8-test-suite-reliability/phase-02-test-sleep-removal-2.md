@@ -1,7 +1,7 @@
 # Phase 02: Test Sleep Removal (2)
 
 **Milestone:** M8 — Test Suite Reliability
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (port-lifetime, done)
 **Estimated diff:** ~30 lines — the same six-line helper in two files.
 
@@ -450,3 +450,99 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 15888c780ee483e85bbd7cc4d83df79026ae4b4b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** one process deviation — the required end-to-end
+  transcript was not pasted into the Update Log. Documented below rather than
+  bounced; the reviewer produced the evidence independently and it is recorded
+  here so the doc still carries it.
+- **Calibration:** see "Two calibration traps the spec caught in advance".
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1032** (unchanged, as required) / integration **30**
+  (2 ignored) / isolation **9** (1 ignored) / `bug_tracker` **6** /
+  `doc_truth` **1**.
+- Only `src/cli/input/tty.rs` and `src/cli/commands/stream.rs` changed.
+
+**Every calibrated grep landed exactly on its target:**
+
+| Check | Required | Actual |
+|---|---|---|
+| `thread::sleep` in `tty.rs` | 0 | **0** |
+| `thread::sleep` in `stream.rs` | 0 | **0** |
+| `tokio::time::sleep` in `tty.rs` | 0 | **0** |
+| `tokio::time::sleep` in `stream.rs` | **exactly 3** (production) | **3** |
+| `from_millis(10)` in `tty.rs` | **exactly 5** (production) | **5** |
+
+The two "must survive" numbers are the ones that mattered: `stream.rs`'s three
+production sleeps drive the streaming loop's timeout and tick, and `tty.rs`'s
+five `from_millis(10)` are the escape-sequence reader's `timeout()` calls. Both
+survived intact — the blanket-deletion failure mode did not occur.
+
+**30 consecutive runs per module, run by the reviewer:**
+
+```
+cli::input::tty          failures: 0 / 30
+cli::commands::stream    failures: 0 / 30
+```
+
+**Mutation proof that the tests exercise the helper.** Making `write_bytes` a
+no-op does not merely fail the tty tests — it **hangs** them (killed at a 120 s
+timeout), because `read_key` awaits bytes that never arrive. So the twenty-four
+tests calling `write_bytes` are genuine coverage for the change, not bystanders.
+
+The second `ErrorKind::WouldBlock` in `tty.rs` (line 69) is pre-existing
+production code on the non-blocking read path; line 375 is the new assert. Both
+correct.
+
+#### The process deviation — the E2E transcript was not pasted
+
+The phase doc required the captured block in an Update Log entry titled
+`### Update — <date> (end-to-end verification)`, and said in bold that the
+server-authored `(complete)` entry does not satisfy it. The Update Log contains
+only a `(started)` entry and the server-authored one. The executor's completion
+summary *asserts* the numbers, but assertion in a summary is exactly what that
+requirement exists to replace.
+
+**Not bounced**, for three reasons: the change is byte-for-byte what the spec
+prescribed and what the architect had already prototyped; every acceptance
+criterion is independently verified above, including the 30-run loops; and the
+durability goal — evidence living in the doc rather than in a transient
+summary — is met by this verdict. Bouncing a correct, fully-verified change for
+a paste step would have been disproportionate.
+
+It is worth naming because **this is the first phase across M7 and M8 to skip
+it**, and the requirement only holds if a miss is recorded rather than absorbed.
+
+#### An observation, not a finding
+
+`read_key` has no timeout, so a regression that stops bytes reaching it makes
+these tests **hang** rather than fail — as the mutation above demonstrated. In
+CI that is worse than a failure: a hang burns the job's wall clock and reports
+nothing useful. Pre-existing, not introduced here, and out of this phase's
+scope. Worth a bounded `timeout()` wrapper whenever that module is next open.
+
+#### Two calibration traps the spec caught in advance
+
+Both would have produced an unsatisfiable acceptance criterion, and both were
+caught only by running the greps against the tree *before* committing the spec:
+
+1. `stream.rs` has **four** `tokio::time::sleep` calls, three of them
+   production. "Remove the sleeps from stream.rs" would have broken streaming
+   while every test stayed green, because those paths have no unit coverage.
+2. `tty.rs` has **six** `from_millis(10)`, five of them production `timeout()`
+   calls. The first draft of the criteria demanded that grep reach 0 — literally
+   impossible.
+
+That is the same failure shape as an earlier phase whose spec demanded a lib
+count of 1021 against a baseline that had moved. The habit that catches it is
+cheap and now has three saves: **run every acceptance-criterion command against
+the current tree before the spec is committed, and record the expected
+before/after values.**

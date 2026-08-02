@@ -1,11 +1,17 @@
 # NEXT
 
-**Active phase: M8 phase-02 — test-sleep-removal-2** (`todo`, drafted
-2026-08-02). **This is M8's last in-scope phase.**
+**Phase 02 is `done` (approved_first_try). Both M8 phases are now `done`.**
 
-Doc: `docs/dev/milestones/M8-test-suite-reliability/phase-02-test-sleep-removal-2.md`
+**The milestone is at its boundary — a human gate.** Run `/rexymcp:architect` to
+close it: write the retrospective, fold the calibration lessons, and set this
+file's active phase to "none". **That has deliberately not been done here** —
+the review step does not write retrospectives or close milestones, so this
+pointer is left mid-state on purpose rather than by oversight.
 
-Dispatch with `/rexymcp:dispatch phase-02`.
+**M7's exit criterion 8 is now satisfied**, which is worth carrying into the
+close: it was the one criterion M7 shipped partly-met.
+
+## Phase 02 — what it was
 
 ## Phase 02 — what it is
 
