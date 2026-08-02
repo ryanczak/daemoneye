@@ -173,14 +173,33 @@ This is the M9 lesson recurring in a new form, and now generalised:
 
 | Observation | Count | Status |
 |---|---|---|
-| Executor mislabels its own model in the Update Log | **3** (M9-01, M10-01, M10-03) | **at fold threshold — PE decision pending** |
+| Executor mislabels its own model in the Update Log | **3** (M9-01, M10-01, M10-03) | **resolved at close** — no template requests the line; nothing to fold, and review should stop correcting it |
 | E2E transcript summarised instead of pasted | 2 (M8-02, M10-02) | trend; phase 03 pasted it, so no fold |
 | Architect criterion invalidated by the phase's own work | 2 (M10-02, ×2 in one phase) | trend; watch |
 
 The mislabel is cosmetic in effect — the server-authored tail records the correct
 model and telemetry is unaffected — but the phase doc is the human-readable record
-sitting next to it, and it has now been wrong three times. Folding `WORKFLOW.md`
-requires PE sign-off, so it is recorded here rather than acted on.
+sitting next to it, and it has now been wrong three times.
+
+**PE decision at close: drop the model line from the executor's own entry.** On
+going to apply it, the premise turned out to be wrong: **no template asks for that
+line.** `docs/dev/WORKFLOW.md` § "Update Log entries" defines three entry types —
+progress, blocker, completion — and **none** carries an `**Executor:**` field. The
+only `**Executor:** <model name>` in the file is at `:347`, in the **Review
+verdict** template, which the *architect* writes and which has been correct every
+time. The embedded executor contract does not ask for it either.
+
+So the executor has been adding the line unprompted, and there is nothing to
+delete. The decision's intent — remove the failure mode rather than ask the
+executor to try harder — is therefore already satisfied by the templates as they
+stand, and the practical consequence is for **review**: an unrequested,
+self-reported model name in an executor entry is not a defect against any spec and
+should not be corrected in place at review. It was corrected three times on the
+assumption it was contract-mandated.
+
+If the PE later wants it actively suppressed, that is an edit to
+`executor/templates/executor_contract.md` in the **rexyMCP** repo, not this one —
+out of bounds for a target-project architect session and needing its own.
 
 ### Carried forward — one item, unscheduled
 

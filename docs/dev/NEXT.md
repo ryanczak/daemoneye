@@ -19,19 +19,28 @@ Everything else carried out of M7 and M8 is closed: the tty tests fail instead o
 hanging, the memory category→directory mapping is derived in all three callers,
 the last real-clock sleep is gone, and `daemoneye reindex` is documented and gated.
 
-## One decision waiting on the PE
+## One calibration item, resolved at close
 
-The executor has now mislabelled its own model in its Update Log entry **three
-times** (M9 phase-01 "Claude (sonnet-4.5)", M10 phase-01 "Claude executor", M10
-phase-03 "Claude (claude-opus-4-5-20251101)"). It is Qwen3.6-27B-FP8 every time;
-each was corrected at review, and the server-authored tail always records the
-correct model, so telemetry is unaffected.
+The executor mislabelled its own model in its Update Log entry three times (M9
+phase-01, M10 phase-01, M10 phase-03) — it is Qwen3.6-27B-FP8 every time. Three
+occurrences hit the fold threshold, and the PE's decision was to drop the model
+line from the executor's own entry.
 
-Three occurrences is the fold threshold in `WORKFLOW.md` § Calibration. Folding
-requires PE sign-off, so nothing has been changed. The options are roughly: state
-in the executor contract that the Update Log must carry the configured model
-name; drop the model line from the executor's own entry and rely on the
-server-authored tail; or accept it as cosmetic and stop correcting it.
+**Applying it revealed the premise was wrong: no template asks for that line.**
+`docs/dev/WORKFLOW.md` § "Update Log entries" defines progress, blocker and
+completion entries, and none has an `**Executor:**` field. The only one in the
+file is at `:347` in the **Review verdict** template — the architect's line, which
+has been correct throughout. The embedded executor contract does not request it
+either.
+
+The executor adds it unprompted, so there is nothing to delete and no fold to
+file. The operative consequence is for review: **an unrequested, self-reported
+model name in an executor entry is not a defect against any spec, and should not
+be corrected in place.** It was corrected three times on the assumption it was
+contract-mandated.
+
+Actively suppressing it would mean editing `executor/templates/executor_contract.md`
+in the **rexyMCP** repo — out of bounds from a target-project architect session.
 
 ## The rules M7–M10 earned
 
