@@ -129,6 +129,14 @@ enum Commands {
     /// against the known inventory. Exits non-zero if any path is superseded or
     /// unknown. Never writes or modifies any file.
     AuditPrompts,
+    /// Rebuild the memory search index from the memory files on disk.
+    ///
+    /// The index at ~/.daemoneye/var/index/memory.db is a derived cache; this
+    /// discards it and rebuilds from every memory file, reporting the row count
+    /// before and after. Safe to run while the daemon is up — the rebuild is a
+    /// single transaction, so a concurrent search sees the old index or the new
+    /// one, never a partial one. Needs no daemon and never modifies a memory file.
+    Reindex,
 }
 
 #[derive(Subcommand)]
@@ -483,6 +491,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::AuditPrompts => {
             cli::run_audit_prompts();
+        }
+        Commands::Reindex => {
+            cli::run_reindex();
         }
     }
 

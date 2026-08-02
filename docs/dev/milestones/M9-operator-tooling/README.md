@@ -37,7 +37,7 @@ highest-weight carried item and the only one a user could actually hit.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [reindex-command](phase-01-reindex-command.md) — `daemoneye reindex`, wired to `reconcile_index()`, with a before/after report | todo |
+| 01 | [reindex-command](phase-01-reindex-command.md) — `daemoneye reindex`, wired to `reconcile_index()`, with a before/after report | in-progress |
 
 ## Notes
 

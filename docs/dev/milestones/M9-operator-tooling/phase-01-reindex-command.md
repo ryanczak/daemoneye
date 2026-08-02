@@ -1,7 +1,7 @@
 # Phase 01: Reindex Command
 
 **Milestone:** M9 — Operator Tooling
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (first phase of M9; M8 closed 2026-08-02)
 **Estimated diff:** ~130 lines — one new file `src/cli/commands/reindex.rs`,
 plus four wiring lines across `src/main.rs` and `src/cli/commands/mod.rs`.
@@ -344,3 +344,44 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 05:17 (started)
+
+**Executor:** Claude (sonnet-4.5)
+
+Implementing `daemoneye reindex`: new subcommand variant in `main.rs`, new `src/cli/commands/reindex.rs` with `format_report()` and `run_reindex()`, wired through `src/cli/commands/mod.rs`. Three unit tests on `format_report`.
+
+### Update — 2026-08-02 05:17 (end-to-end verification)
+
+```
+=== the subcommand is registered ===
+1
+help-mentions-reindex-above-must-be-at-least-1
+=== bare HOME, no ~/.daemoneye at all, no daemon ===
+Index rebuilt: 0 → 9 rows (9 added).
+bare-exit=0   # 0 == PASS
+=== seeded HOME: first run should report 0 -> 9 ===
+# will attach to it when run from outside tmux.
+Index rebuilt: 0 → 9 rows (9 added).
+first-exit=0   # 0 == PASS
+=== second run: unchanged count, and must NOT claim a no-op ===
+second-exit=0   # 0 == PASS
+Index rebuilt: 9 rows (count unchanged — the rebuild still replaced every row).
+0
+forbidden-wording-count-above-must-be-0
+=== reconcile_index was not modified ===
+0
+index-rs-changed-above-must-be-0
+=== full gate ===
+    Finished `dev` profile [unoptimized+debuginfo] target(s) in 0.08s
+clippy-exit=0
+test result: ok. 1035 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+All acceptance criteria verified: subcommand registered in `--help`, bare HOME exits 0 with `0 → 9`, seeded HOME first run `0 → 9`, second run shows "count unchanged" without forbidden wording, `src/memory/index.rs` unchanged, clippy clean, 1035 lib tests pass.
