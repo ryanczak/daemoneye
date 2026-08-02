@@ -1,7 +1,7 @@
 # Phase 01: Port Lifetime
 
 **Milestone:** M8 — Test Suite Reliability
-**Status:** review
+**Status:** done
 **Depends on:** none (first phase of M8; M7 closed 2026-08-02)
 **Estimated diff:** ~110 lines — `tests/harness/mod.rs` (the allocator and two
 hand-off sites) plus three one-word changes and one new test in
@@ -528,3 +528,81 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1c8c98ed67a3b0b0e0684be8e54654b3b3a44ca2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. Only `tests/harness/mod.rs` and
+  `tests/isolation.rs` changed; no `src/` file was touched.
+- **Calibration:** see "Prototyping held; the 200-run bar was the right shape"
+  below.
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1032** / integration **30** (2 ignored) /
+  **isolation 9 (1 ignored)** — one more than before, for the new guard —
+  `bug_tracker` **6**, `doc_truth` **1**.
+- `alloc_free_port` is gone (`grep -c` → 0). The canary
+  `webhook_ports_differ_between_environments` survived and passes.
+- No `unsafe`, `#[allow]`, `#[ignore]`, `TODO` or `dbg!` introduced.
+
+**The decisive check, run by the reviewer rather than read:**
+
+```
+100 consecutive `cargo test --test isolation` runs → 0 failures
+a further 100                                     → 0 failures
+                                        cumulative → 0 / 200
+```
+
+Against the **measured 5/100 baseline** taken before the fix. If the old rate
+still held, the probability of seeing zero failures in 200 runs is
+`0.95^200 ≈ 0.003%`. This is the one acceptance criterion that could not be
+satisfied by the automatic gate capture: at a 5% rate a single green run happens
+95% of the time on the *unfixed* code, which is exactly how this bug survived two
+milestones of green gates.
+
+**Mutation proof of the regression guard.** Making `alloc_held_port` release its
+listener and hand back a re-bound one fails `held_port_cannot_be_rebound`:
+
+```
+test held_port_cannot_be_rebound ... FAILED
+stub port must still be held by the env: TcpListener { addr: 127.0.0.1:34651, fd: 5 }
+```
+
+File restored; 9 pass. So the invariant is pinned in one second, not only by a
+200-run loop.
+
+**The implementation matches the spec exactly** — `alloc_held_port` returns
+`(TcpListener, u16)`, both listeners live on `IsolatedEnv`, the stub is handed
+its listener via `from_std` after `set_nonblocking(true)` with no rebind at all,
+and the webhook listener is dropped immediately before the daemon spawn, after
+`write_test_config()`. The three `let mut` call sites are the three the spec
+named.
+
+#### Prototyping held; the 200-run bar was the right shape
+
+M7's closing lesson was *do not assert a fact about the system in a spec unless
+it was executed*. This phase is the first written entirely under it, and the
+executed material behaved as M7 predicted: the `from_std` hand-off, the 8/8
+distinct held allocations, the three `let mut` sites enumerated by walking the
+file, and the 5/100 baseline all landed without correction, and the phase
+approved first try.
+
+Worth recording the part that nearly went wrong. During scoping the mechanism was
+hypothesised **twice and disproven both times** — the kernel does not hand back a
+just-freed ephemeral port under tight sequential allocation (0/200), and a
+simplified concurrent model did not reproduce it (0/480). Only running the real
+suite 100 times produced the evidence, and the decisive datum was not the
+`AddrInUse` panic everyone had been looking at but a single failure of
+`assert_ne!(env_a.stub_port(), env_b.stub_port())` — the collision itself. **A
+plausible mechanism and a measured one are different things**, and here the
+plausible ones were both wrong while the fix aimed at them would still have
+worked. That is luck, not method; the method was measuring the baseline.
+
+The generalisable form, for any future flake phase: **an acceptance criterion for
+an intermittent failure must be a repeat count derived from a measured rate, not
+a single green run.** One run of a 5%-flaky suite passes 95% of the time.

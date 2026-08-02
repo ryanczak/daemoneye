@@ -1,48 +1,26 @@
 # NEXT
 
-**Active phase: M8 phase-01 — port-lifetime** (`todo`, drafted 2026-08-02).
+**Active phase: none.** M8 phase-01 (port-lifetime) is `done`
+(approved_first_try, 2026-08-02). **Phase 02 is next and is not yet drafted** —
+run `/rexymcp:architect next`.
 
-Doc: `docs/dev/milestones/M8-test-suite-reliability/phase-01-port-lifetime.md`
+## Phase 01 — what landed
 
-Dispatch with `/rexymcp:dispatch phase-01`.
+`cargo test --test isolation` no longer flakes. `alloc_free_port` is replaced by
+`alloc_held_port`, which keeps the listener alive; the stub is handed its
+pre-bound listener via `from_std` (no rebind at all), and the webhook listener is
+released only immediately before the daemon spawn.
 
-**M8 — Test Suite Reliability** was scoped 2026-08-02 (PE): two phases, one axis.
-M7 closed the same day; both M8 items are its leftovers, and phase 02 finishes
-M7's single unticked exit criterion.
+**Verified by the reviewer, not read from the transcript: 0 failures in 200
+consecutive runs**, against a measured 5/100 baseline. If the old rate still
+held, that outcome has ~0.003% probability. A single green run could not have
+distinguished the fix from luck — at 5%, one run passes 95% of the time on the
+unfixed code, which is how the bug survived two milestones of green gates.
 
-## Phase 01 — what it is
-
-`cargo test --test isolation` fails about **5% of the time**. Fix: hold the probe
-listener from allocation until its real consumer takes over, so two
-`IsolatedEnv`s can no longer be handed the same port.
-
-**The mechanism is confirmed, not guessed.** A 100-run baseline gave **5
-failures**, at two sites:
-
-| Site | Count | What it is |
-|---|---|---|
-| `tests/harness/mod.rs:88` | 4 | `bind stub server: AddrInUse` |
-| `tests/isolation.rs:184` | 1 | `assert_ne!(env_a.stub_port(), env_b.stub_port())` |
-
-The second is the proof — a test whose only job is to assert two environments get
-different ports, failing. So the collision is real; the `AddrInUse` failures are
-it seen one step downstream.
-
-**Two hypotheses were disproven first** and are recorded so nobody re-runs them:
-the kernel does not hand back a just-freed ephemeral port under tight sequential
-allocation (0/200), and a simplified concurrent model did not reproduce it either
-(0/480). The real suite differs by running nine tests in parallel while spawning
-daemons that consume ephemeral ports of their own.
-
-**The hand-off API was compiled and run before drafting** —
-`tokio::net::TcpListener::from_std` adopts the already-bound `std` listener after
-`set_nonblocking(true)`, port intact. And eight concurrent allocations with
-listeners **held** gave 8/8 distinct ports, which is why the fix works.
-
-**The acceptance criterion is a 100-run loop, not a unit test.** At a 5% rate a
-single green run happens 95% of the time on the *unfixed* code — one run cannot
-distinguish a fix from luck. A warm isolation run is ~0.33 s, so 100 runs is
-about 35 seconds.
+`held_port_cannot_be_rebound` pins the invariant in one second; releasing the
+listener again makes it fail immediately. The canary
+`webhook_ports_differ_between_environments` survived — it was never flaky, it was
+the detector.
 
 ## Phase 02 — named only
 
