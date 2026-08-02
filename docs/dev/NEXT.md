@@ -1,8 +1,47 @@
 # NEXT
 
-**Active phase: none.** M8 phase-01 (port-lifetime) is `done`
-(approved_first_try, 2026-08-02). **Phase 02 is next and is not yet drafted** —
-run `/rexymcp:architect next`.
+**Active phase: M8 phase-02 — test-sleep-removal-2** (`todo`, drafted
+2026-08-02). **This is M8's last in-scope phase.**
+
+Doc: `docs/dev/milestones/M8-test-suite-reliability/phase-02-test-sleep-removal-2.md`
+
+Dispatch with `/rexymcp:dispatch phase-02`.
+
+## Phase 02 — what it is
+
+The four real-clock sleeps in non-`#[ignore]`d tests, which are two byte-identical
+copies of one `write_bytes` helper. Finishes M7's single unticked exit criterion.
+
+**Measured before drafting, not reasoned about:**
+
+- **The 10 ms "give the reader time" wait is unnecessary.** Deleted both and ran
+  each module 30 times: 0 failures, full lib suite green at 1032. `write()`
+  returns once the bytes are in the pipe buffer and the caller reads the same fd
+  — there was never anything to wait for.
+- **The 1 ms EAGAIN backoff needs replacing, not deleting.** Replaced with
+  `tokio::task::yield_now().await` plus an `ErrorKind::WouldBlock` assert:
+  clippy clean, 0/30 per module. The assert matters because the current code
+  says "EAGAIN is fine" and never checks, so *any* write error spins forever.
+
+**Two calibration traps found while writing the acceptance criteria**, both of
+which would have produced an unsatisfiable spec:
+
+1. `stream.rs` has **four** `tokio::time::sleep` calls, and **three are
+   production** (lines 681/705/727 — the streaming loop's timeout and tick). A
+   blanket "remove sleeps from stream.rs" breaks streaming. The criterion pins
+   the count at exactly 3 afterwards.
+2. `tty.rs` has **six** `from_millis(10)` occurrences, and **five are
+   production** — `timeout(Duration::from_millis(10), stdin.read_byte())` in the
+   escape-sequence reader. Grepping that literal as a proxy for "the sleep is
+   gone" would demand 0 and be impossible. The criterion greps
+   `tokio::time::sleep` instead and records that `from_millis(10)` must end at 5.
+
+**Deliberately no gate.** A test that forbids real-clock sleeps would be the
+durable answer, but a correct scanner must separate production from
+`#[cfg(test)]` and exempt `#[ignore]`d tests — the M7 close-out audit got that
+wrong twice before getting it right by hand. A naive grep gate would fire on
+`stream.rs:681` and on four legitimate `#[ignore]`d tests. Recorded as future
+work rather than shipped wrong.
 
 ## Phase 01 — what landed
 
