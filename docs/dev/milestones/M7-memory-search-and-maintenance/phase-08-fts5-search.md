@@ -1,7 +1,7 @@
 # Phase 08: FTS5 Search
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-07 (fts5-write-path, done)
 **Estimated diff:** ~310 lines — `src/memory/index.rs` (the query path + tests)
 plus ~10 lines in `src/daemon/memory_prompt.rs`.
@@ -1024,3 +1024,82 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c04c1ca520841c208130ffafdc8ad217ced36086
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-01
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 — `bugs/bug-08-1.md` (major, `missing_spec_test`), then a
+  round-2 no-op (`false_completion`, no second bug filed)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. Round 3 changed only the test module (every diff
+  hunk at line 822+, against a `#[cfg(test)]` boundary at 323).
+- **Calibration:** see "Three rounds, two of them avoidable" below.
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1032** / integration **30** (2 ignored) / isolation **8**
+  (1 ignored) / bug_tracker **6**.
+- `grep -c 'allow(dead_code)' src/memory/index.rs` = **0**.
+- E2E: 7 seeded knowledge files, the `.db` correctly absent after `setup` alone,
+  `clean-audit-exit=0`.
+- Production code in `src/memory/index.rs` (lines 1–322) has no
+  `unwrap`/`expect`/`panic!`; the nine `unsafe` blocks across the phase are the
+  edition-2024 `set_var` requirement in `HOME` tests, all using
+  `tempfile::tempdir()`.
+
+**Both round-1 mutation escapes now fail, re-run by the reviewer:**
+
+1. Deleting `ORDER BY bm25(memories)` fails `search_ranks_better_match_first`
+   with *"the memory where 'zephyr' dominates should rank first"*. In round 1
+   this mutation left that test green.
+2. Replacing `build_match_expr` with whole-query phrase quoting fails
+   `multi_word_query_matches_non_adjacent_terms` with *"a multi-word user turn
+   must match on individual terms, not as one phrase"*. In round 1 the same
+   mutation passed all 22 tests.
+
+That is the whole point of the bounce: the phase's two central mechanisms were
+unguarded, and both are now pinned.
+
+#### Round 2 was a no-op, and the cause is documented
+
+Round 2 returned `complete` with an empty diff after 23 turns, having changed
+nothing — verified at the time (no new test, fixture unswapped, count still
+1031). This is the green-bounce pathology `WORKFLOW.md` describes: a phase
+bounced on *test strength* has four green gates and a clean tree, so the
+executor's "is there work to do?" heuristic finds no signal and reports done
+without engaging the bug doc.
+
+**The plain re-dispatch was the architect's error** — that guidance says
+explicitly that a green bounce always needs the refined treatment. Round 3
+applied it (loud header naming the production code as approved and off-limits,
+the work enumerated as exactly two edits, the new test inlined verbatim, a
+falsifiable finish condition of 1032-not-1031, and a self-mutation-check) and
+landed in 49 turns. The executor's self-reported mutation checks matched the
+reviewer's independent re-runs exactly.
+
+#### Calibration — three rounds, two of them avoidable
+
+Both extra rounds trace to the architect, not the model:
+
+- **Round 1's bounce** was a real coverage gap, but the phase doc had *named*
+  both false-success modes and then pointed at tests that could not catch
+  either — every search test used a single-token query, where phrase quoting and
+  per-term `OR` are indistinguishable. Naming a false-success mode is worthless
+  unless the guard is checked against it. **A spec that names a mutation should
+  state the fixture property that makes the mutation detectable** — here, "the
+  query's words must not be adjacent in the target memory" and "insertion order
+  must not equal rank order".
+- **Round 2** was a plain re-dispatch of a green bounce, which the workflow
+  already documents as never working.
+
+The contrast with the prototyped material is again sharp: every executed fact in
+this spec — bm25's sign and ordering, the phrase-vs-per-term measurement, the
+9-row fresh install, the dynamic `IN` clause — was implemented correctly on the
+first pass and needed no correction. The failures were in the *test design*,
+which was the one part reasoned about rather than run.
+
+**This is the third phase in a row whose only defects were architect-side**
+(06 `spec_bug`, 07 `spec_bug`, 08 `missing_spec_test` + `false_completion`).
+Worth stating plainly in the milestone retrospective.
