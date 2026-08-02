@@ -108,32 +108,60 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Adding a new AI tool (checklist)
 
-1. `src/ai/types.rs`: add `PendingCall::ToolName { ... }` variant + `to_tool_call()` arm + `id()` arm + `tool_name()` arm.
-2. `src/ai/types.rs`: add a `summary()` arm for the new variant (used for `ToolStarted` display). Add a `should_emit_tool_feedback()` arm: return `true` for silent (non-approval-gated) tools so the executor emits `ToolStarted`/`ToolFinished`; return `false` (via the catch-all `_ => false`) for approval-gated tools that already have richer UI.
-3. `src/ai/types.rs`: add `AiEvent::ToolName { ... }` variant.
-4. `src/ai/tools.rs`: add a `ToolDef` entry to the `TOOLS` slice (all three backends share it via `render_gemini(TOOLS)`); add dispatch arm in `dispatch_tool_event()`.
-5. `src/ai/backends/gemini.rs`: no separate entry needed — Gemini tool definitions are auto-generated from `TOOLS` via `render_gemini(TOOLS)`.
-6. `src/daemon/stream.rs`: add `AiEvent::ToolName` arm in the streaming match.
-7. `src/daemon/executor/mod.rs`: add `PendingCall::ToolName` arm in `execute_tool_call()`. Agent tools (create/read/list/delete agent) dispatch to `executor/knowledge.rs` alongside runbook/memory tools.
-8. `src/config.rs` (`SRE_PROMPT_TOML` / `assets/prompts/sre.toml`): document the new tool.
+1. `src/ai/types/pending.rs`: add `PendingCall::ToolName { ... }` variant + `to_tool_call()` arm + `id()` arm + `tool_name()` arm.
+2. `src/ai/types/pending.rs`: add a `summary()` arm for the new variant (used for `ToolStarted` display). Add a `should_emit_tool_feedback()` arm: return `true` for silent (non-approval-gated) tools so the executor emits `ToolStarted`/`ToolFinished`; return `false` (via the catch-all `_ => false`) for approval-gated tools that already have richer UI.
+3. `src/ai/types/events.rs`: add `AiEvent::ToolName { ... }` variant.
+4. `src/ai/tools/defs.rs`: add a `ToolDef` entry to the `TOOLS` slice (all three backends share it via `render_gemini(TOOLS)`). **`deferred_group` is required**: `None` makes the tool core — sent with every request and prose-documented in `sre.toml`; `Some("group")` makes it deferred — omitted from the default render and pulled in by `load_tools`. Default to `None` unless the tool is rarely used and its schema is large.
+5. `src/ai/tools/dispatch.rs`: add the dispatch arm in `dispatch_tool_event()`.
+6. `src/ai/backends/gemini.rs`: no separate entry needed — Gemini tool definitions are auto-generated from `TOOLS` via `render_gemini(TOOLS)`.
+7. `src/daemon/stream.rs`: add `AiEvent::ToolName` arm in the streaming match.
+8. `src/daemon/executor/mod.rs`: add `PendingCall::ToolName` arm in `execute_tool_call()`. Agent tools (create/read/list/delete agent) dispatch to `executor/knowledge.rs` alongside runbook/memory tools.
+9. `src/config/seeds.rs` (`SRE_PROMPT_TOML` / `assets/prompts/sre.toml`): document the new tool.
+10. `CLAUDE.md`: add a row to the Current AI tools table below, with the right `Loaded` value.
 
 ### Current AI tools
 
-| Tool | Description |
-|---|---|
-| `run_terminal_command` | Foreground (user pane) or background (daemon host window) |
-| `schedule_command` | One-shot or recurring scheduled jobs |
-| `list_schedules` / `cancel_schedule` / `delete_schedule` | Schedule management |
-| `write_script` / `read_script` / `list_scripts` / `delete_script` | Script CRUD in `~/.daemoneye/scripts/` |
-| `watch_pane` | Block until regex `pattern` matches pane output, or command exits, or timeout |
-| `read_file` | Paginated daemon-host file read with optional grep filter; masks sensitive data; path `canonicalize()`d to resolve symlinks; **blocked only from `etc/config.toml` and `etc/prompts/sre.toml`** (API credential files) |
-| `edit_file` | File operations on daemon host (or remote via `target_pane`): `operation="edit"` (atomic string replacement, requires `old_string`/`new_string`), `operation="create"` (new file from `content`), `operation="delete"` (remove file), `operation="copy"` (duplicate `path` to `dest_path`). All require user approval with colored unified diff. Atomic writes via `.de_tmp` → rename. **Blocked from `~/.daemoneye/`**. IPC: `EditFilePrompt` / `EditFileResponse`. |
-| `write_runbook` / `read_runbook` / `delete_runbook` / `list_runbooks` | Runbook CRUD |
-| `add_memory` / `read_memory` / `delete_memory` / `list_memories` | Persistent memory |
-| `search_repository` | Grep across runbooks / scripts / memory / events |
-| `get_terminal_context` | Fresh tmux snapshot on demand |
-| `list_panes` | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
-| `spawn_ghost_shell` | Delegate a task to an autonomous background Ghost Shell that follows a named runbook |
+**33 tools: 24 core + 9 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+`src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
+name means the tool is omitted until `load_tools` pulls the group in. **Note the
+asymmetry**: for scripts, runbooks and memory the *write* side is core while the
+*read* side is deferred, so a row like "script CRUD" would be wrong.
+
+| Tool | Loaded | Description |
+|---|---|---|
+| `run_terminal_command` | core | Foreground (user pane) or background (daemon host window) |
+| `edit_file` | core | File operations on daemon host (or remote via `target_pane`): `operation="edit"` (atomic string replacement, requires `old_string`/`new_string`), `operation="create"` (new file from `content`), `operation="delete"` (remove file), `operation="copy"` (duplicate `path` to `dest_path`). All require user approval with colored unified diff. Atomic writes via `.de_tmp` → rename. **Blocked from `~/.daemoneye/`**. IPC: `EditFilePrompt` / `EditFileResponse`. |
+| `read_file` | core | Paginated daemon-host file read with optional grep filter; masks sensitive data; path `canonicalize()`d to resolve symlinks; **blocked only from `etc/config.toml` and `etc/prompts/sre.toml`** (API credential files) |
+| `search_repository` | core | Grep across runbooks / scripts / memory / events |
+| `get_terminal_context` | core | Fresh tmux snapshot on demand |
+| `list_panes` | core | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
+| `watch_pane` | core | Block until regex `pattern` matches pane output, or command exits, or timeout |
+| `close_background_window` | core | Close a finished background window, freeing its slot rather than waiting for cap eviction (up to 5 exist per session) |
+| `recall_context` | core | Retrieve archived turns compacted out of live context — by substring query, by turn range, or both. The answer to an `[elided: …]` placeholder or a too-coarse epoch summary. |
+| `load_tools` | core | Pull one or more deferred groups into the active tool set for the rest of the session. `groups` is an array of group names. |
+| `write_script` | core | Create/update a script in `~/.daemoneye/scripts/` (chmod 700); approval-gated with a diff |
+| `delete_script` | core | Delete a script; approval-gated |
+| `read_script` | **scripts** | Read a script's content |
+| `list_scripts` | **scripts** | List scripts with sizes |
+| `write_runbook` | core | Create/update a runbook in `~/.daemoneye/runbooks/`; approval-gated with a diff |
+| `delete_runbook` | core | Delete a runbook; approval-gated |
+| `read_runbook` | **runbooks** | Read a runbook's full content |
+| `list_runbooks` | **runbooks** | List runbooks with their tags |
+| `add_memory` | core | Store a persistent memory entry under `<category>/<key>.md` |
+| `read_memory` | core | Read one entry by key + category |
+| `update_memory` | core | Patch individual frontmatter/body fields in place; omitted fields are preserved, `updated` is stamped automatically. Preferred over read+delete+add. |
+| `list_memories` | core | List keys, optionally filtered by category |
+| `delete_memory` | **memory** | Remove an entry |
+| `schedule_command` | core | One-shot, interval, or cron job — command, script, or ghost shell (`ghost_runbook`) |
+| `list_schedules` | core | List jobs with status and next fire time |
+| `cancel_schedule` | core | Cancel a job by UUID (kept in the store) |
+| `delete_schedule` | core | Permanently delete a job by UUID |
+| `spawn_ghost_shell` | core | Delegate a task to an autonomous background Ghost Shell that follows a named runbook |
+| `await_agent_result` | core | Block on a spawned agent's mailbox for the `job_id` returned by `spawn_ghost_shell`, until the result lands or the timeout expires |
+| `create_agent` | **agents** | Create/update `~/.daemoneye/agents/<name>/config.toml`; approval-gated |
+| `read_agent` | **agents** | Read a named agent's full config |
+| `list_agents` | **agents** | List agents with descriptions and models |
+| `delete_agent` | **agents** | Delete an agent; approval-gated, warns if runbooks reference it |
 
 ## Important Invariants
 
