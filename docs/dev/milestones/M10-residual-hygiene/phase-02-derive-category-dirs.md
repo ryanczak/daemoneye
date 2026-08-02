@@ -1,7 +1,7 @@
 # Phase 02: Derive memory category dirs, and drop the last real-clock sleep
 
 **Milestone:** M10 — Residual Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (`done`)
 **Estimated diff:** ~110 lines across four source files, most of it two new tests.
 
@@ -322,7 +322,7 @@ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
 
 ### Update — 2026-08-02 18:53 (started)
 
-**Executor:** Claude (Anthropic)
+**Executor:** Qwen/Qwen3.6-27B-FP8 (corrected at review — the entry self-reported as Claude)
 
 Implementing all six tasks: adding `MemoryCategory::ALL`, deriving category dirs in `epochs.rs` and `search.rs`, adding two mandatory label-pinning tests, and replacing the last real-clock sleep with `std::future::pending()`.
 
@@ -468,3 +468,78 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2aa06abea81b1b05f1a057550917053924adf16f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — exactly the four source files the spec authorized.
+- **Calibration:** **two acceptance criteria were mis-formulated by me.** The
+  executor met the intent of both, reported the shortfall honestly rather than
+  gaming the grep, and was right on both counts.
+
+**Independently re-run:** `cargo fmt --all --check` clean, `cargo build` clean,
+`cargo clippy --all-targets --all-features -- -D warnings` exit 0, and **1038**
+lib + 30 integration (2 ignored) + 9 isolation (1 ignored) + 6 bug_tracker + 1
+doc_truth. 1038 is exactly the spec's target.
+
+`filetime`, used by the new epochs test, was already a `[dev-dependencies]` entry
+before this phase — no new production dependency.
+
+#### The gap this phase existed to close is closed
+
+Before phase 02, both label mutations passed all 1036 tests. Re-run against the
+landed tree, each is now killed by exactly the right test and no other:
+
+| Mutation | Result |
+|---|---|
+| epochs `canonical_name()` → `dir_name()` | `scan_artifacts_span_labels_incident_memory_singular` FAILED |
+| search `dir_name()` → `canonical_name()` | `memory_search_dirs_label_incidents_plural` FAILED — "label must be memory/incidents (plural), not memory/incident" |
+
+The epochs test carries the required negative assertion, which is what makes it
+meaningful: `"[incidents]"` contains `"[incident]"` as a substring, so the
+positive assertion alone would survive the mutation.
+
+#### Calibration 1 — a criterion that the mandated test necessarily violates
+
+I wrote `grep -c '"incidents"' src/daemon/context/epochs.rs` must be **0**, and
+the same for `src/search.rs`. Both come back **1**, because the tests I made
+*mandatory* create the `incidents` directory and must name it. The criterion was
+calibrated against a tree that did not yet contain the test it required.
+
+Scoped to production, the intent holds exactly:
+
+| File | Production | Tests |
+|---|---|---|
+| `epochs.rs` (prod = lines 1–807) | **0** | 1 — `create_dir_all(… "incidents")` |
+| `search.rs` (prod = lines 1–318) | **0** | 1 — same |
+| `memory.rs` | **2** — `dir_name()` + `from_str()`, unchanged as specified | — |
+
+A whole-file `grep -c` cannot express "no hardcoded mapping in production" once
+the phase also adds a test that must reference the directory by name. The lesson
+is narrow and worth keeping: **when a spec mandates a test, re-calibrate the file-
+level greps against the tree that test will produce, not the tree in front of you.**
+
+#### Calibration 2 — the grep missed the declaration site
+
+I wrote `grep -rl 'MemoryCategory::ALL' src/ | wc -l` must be **3**. It returns
+**2**, because the declaration in `memory.rs` reads `pub const ALL: …` — the
+qualified form appears only at the two *use* sites. Searching
+`'MemoryCategory::ALL\|pub const ALL'` gives 3, with the declaration at
+`memory.rs:17` and uses at `epochs.rs:619` and `search.rs:54`. The requirement was
+met; my pattern could not see it.
+
+Both errors share a shape with M9's: a criterion asserted about a *future* tree
+state without executing it against that state. Calibrating against the current
+tree catches unsatisfiable criteria but not criteria the phase's own work
+invalidates.
+
+#### On the executor's conduct
+
+Worth recording: it would have been trivial to satisfy both greps by building the
+path from a variable to dodge the literal. Instead it wrote the clear test and
+reported the mismatch with reasons. That is the behaviour the review gate wants
+from a spec defect, and it is why both were caught here rather than surviving as
+a false green.
+
