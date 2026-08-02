@@ -396,19 +396,23 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
-### Active milestone — none
+### Active milestone — M9 Operator Tooling
+
+Scoped 2026-08-02 (PE sign-off). Milestone README:
+`docs/dev/milestones/M9-operator-tooling/README.md` (one phase). Goal: give the
+operator a way to repair the memory index. `reconcile_index()` exists and has a
+single caller that fires only when the index is empty, so a *stale* index — rows
+present but wrong — is currently unreachable and unfixable short of deleting
+`var/index/memory.db` by hand. `daemoneye reindex` closes that.
 
 **M8 — Test Suite Reliability closed 2026-08-02**, two phases. The isolation
 suite went from a measured **5 failures / 100 runs** to **0 / 300**: the test
 harness's port allocator released each probe listener before its consumer bound
-the port, so two `IsolatedEnv`s could be handed the same one. It now holds the
-listener until hand-off. The four real-clock sleeps in non-`#[ignore]`d tests
-were also removed, which satisfied M7's one partly-met exit criterion.
+the port. It now holds the listener until hand-off. The four real-clock sleeps in
+non-`#[ignore]`d tests were also removed, satisfying M7's one partly-met exit
+criterion.
 
 **M7 — Memory Search & Maintenance closed 2026-08-02**, ten phases. It made
 memory search real (BM25-ranked FTS5 over `var/index/memory.db`, maintained on
 every write, with `reconcile_index()` covering the fresh-install case), landed
 four drift gates, and fixed three latent defects found along the way.
-
-The next milestone has not been scoped; see `docs/dev/NEXT.md` for the
-carried-forward list.
