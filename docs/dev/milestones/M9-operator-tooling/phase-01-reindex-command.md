@@ -1,7 +1,7 @@
 # Phase 01: Reindex Command
 
 **Milestone:** M9 — Operator Tooling
-**Status:** review
+**Status:** done
 **Depends on:** none (first phase of M9; M8 closed 2026-08-02)
 **Estimated diff:** ~130 lines — one new file `src/cli/commands/reindex.rs`,
 plus four wiring lines across `src/main.rs` and `src/cli/commands/mod.rs`.
@@ -347,7 +347,7 @@ even when every claim in it is true.
 
 ### Update — 2026-08-02 05:17 (started)
 
-**Executor:** Claude (sonnet-4.5)
+**Executor:** Qwen/Qwen3.6-27B-FP8 (corrected at review — the entry self-reported as Claude)
 
 Implementing `daemoneye reindex`: new subcommand variant in `main.rs`, new `src/cli/commands/reindex.rs` with `format_report()` and `run_reindex()`, wired through `src/cli/commands/mod.rs`. Three unit tests on `format_report`.
 
@@ -523,3 +523,69 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** b9a9c4a9e16e2095f1ef22467e616e48c427a2af
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — exactly the three source files the spec named
+  (`src/main.rs`, `src/cli/commands/mod.rs`, `src/cli/commands/reindex.rs`);
+  `src/memory/index.rs` untouched.
+- **Calibration:** two facts **I** asserted were falsified at review; the
+  executor's work was correct in both cases.
+
+**Independently re-run, not taken on trust:** `cargo fmt --all --check` clean,
+`cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings`
+exit 0, and **1035** lib + 30 integration (2 ignored) + 9 isolation (1 ignored)
++ 6 bug_tracker + 1 doc_truth. 1035 is exactly the spec's target.
+
+**The E2E was re-run from scratch against the shipped binary**, all four cases:
+`reindex` appears in `--help`; bare `$HOME` exits 0; seeded first run reports
+`0 → 9`; second run reports the unchanged-count wording with **zero** occurrences
+of `up to date` / `no changes` / `no-op` / `nothing to do`.
+
+**Both load-bearing tests were mutation-checked**, and each was killed by exactly
+the right test and no other:
+
+| Mutation | Result |
+|---|---|
+| Equal arm reworded to `(already up to date)` | only `..._does_not_claim_no_op` FAILED |
+| `added` computed as `rows_after` instead of the delta | only `..._when_rows_grow` FAILED |
+
+#### Calibration 1 — my named false success cannot actually happen
+
+The spec justified the E2E block by claiming a subcommand *declared but never
+wired into the dispatch `match`* "compiles clean and passes every unit test."
+**That is false.** I deleted the `Commands::Reindex` dispatch arm and built:
+
+```
+error[E0004]: non-exhaustive patterns: `Commands::Reindex` not covered
+```
+
+`main.rs`'s `match` has **no wildcard arm**, so exhaustiveness checking catches
+an unwired subcommand at compile time. The E2E still earns its place — it is what
+verifies the wording, the exit codes, and the bare-`$HOME` path against the real
+binary — but it is *not* the thing that catches unwired dispatch, and I should not
+have claimed a failure mode without executing it. This is the same rule M7 earned,
+applied to a *negative* claim: **naming a false-success mode is worthless unless
+the guard is checked against it** — and checking it here showed the mode was
+imaginary.
+
+#### Calibration 2 — the bare-`$HOME` row was measured the wrong way
+
+The milestone README and `NEXT.md` both recorded bare `$HOME` as `0 → 0`. The
+shipped command reports **`0 → 9`**, and creates `~/.daemoneye/` on the way. My
+probe measured `reconcile_index()` **in-process**, which does no first-run
+seeding; the real binary seeds the tree before reaching the command, so nine
+memory files exist by the time the rebuild runs. The executor's own E2E reported
+`0 → 9` for this case and was **right** — I read the discrepancy as executor error
+and re-ran it myself before concluding otherwise. Both docs are corrected.
+
+Worth keeping: `setup` alone still does **not** create `memory.db` (verified again
+here — the file is absent after `setup` and present only after `reindex`), which is
+the M7 empty-fresh-install gap this command now gives operators a way to close.
+
+The executor's Update Log entry self-reported its model as `Claude (sonnet-4.5)`.
+It is Qwen3.6-27B-FP8; corrected in place so the doc matches telemetry.
+

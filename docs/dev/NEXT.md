@@ -23,7 +23,7 @@ wrong — is unreachable by any current code path.
 
 | Tree | `rows_before` → `rows_after` |
 |---|---|
-| Bare `$HOME`, no `~/.daemoneye/` | `0 → 0`, returns `Ok` |
+| Bare `$HOME`, no `~/.daemoneye/` | `0 → 9` — the binary seeds the tree first |
 | Freshly `setup` | `0 → 9` |
 | Same tree again | `9 → 9` |
 

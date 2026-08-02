@@ -37,7 +37,7 @@ highest-weight carried item and the only one a user could actually hit.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [reindex-command](phase-01-reindex-command.md) — `daemoneye reindex`, wired to `reconcile_index()`, with a before/after report | review      |
+| 01 | [reindex-command](phase-01-reindex-command.md) — `daemoneye reindex`, wired to `reconcile_index()`, with a before/after report | done        |
 
 ## Notes
 
@@ -60,7 +60,7 @@ shape: rebuild is a thing you ask for when you suspect a problem.
 
 | Tree | `rows_before` → `rows_after` |
 |---|---|
-| Bare `$HOME`, no `~/.daemoneye/` at all | `0 → 0`, returns `Ok` |
+| Bare `$HOME`, no `~/.daemoneye/` at all | `0 → 9` — the binary seeds the tree first |
 | Freshly `setup` `$HOME` | `0 → 9` (7 knowledge + 2 session) |
 | Same tree, second pass | `9 → 9` |
 
