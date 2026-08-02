@@ -358,12 +358,23 @@ Phase 08 round 2 was a plain re-dispatch of a test-strength bounce and returned
 
 ### Carried forward — none of these are scheduled
 
-1. **`tests/isolation.rs` is flaky — a trend, not a one-off.** Two occurrences
-   in two different port-binding tests (`hooks_land_on_private_server` during
-   phase-04 review; `stub_returns_canned_response_via_make_client` during
-   phase-06's run), both `AddrInUse`-shaped, both green on re-run, both ruled out
-   as the phase's doing. Wants ephemeral-port allocation or serialised
-   port-binding tests.
+1. **`tests/isolation.rs` is flaky — a trend, not a one-off.** Two occurrences:
+   `hooks_land_on_private_server` (phase-04 review) and
+   `stub_returns_canned_response_via_make_client` (phase-06's run), both green on
+   re-run, both ruled out as the phase's doing.
+
+   *Corrected 2026-08-02, after investigation.* This originally said "two
+   different port-binding tests … a shared root cause". **That was an
+   over-claim.** `hooks_land_on_private_server` binds no ports at all — it starts
+   a daemon and asserts tmux hook values — so the two occurrences may well be
+   two different bugs. Reproduced at review-close: **1 failure in 25 runs**, and
+   the failing site is pinned to `tests/harness/mod.rs:88`
+   (`bind stub server: AddrInUse`). Two mechanisms were hypothesised and
+   **both disproven** by experiment — the kernel does not hand back a
+   just-freed ephemeral port on sequential allocation (0/200), and a concurrent
+   model of the alloc-close-rebind pattern did not reproduce it either (0/480).
+   The mechanism is still unexplained; do not scope a fix around a guessed
+   cause.
 2. **Exit criterion 8 is only partly met — see the note on that checkbox.**
    Four short real-clock sleeps remain in non-`#[ignore]`d tests, in PTY-write
    helpers (`src/cli/input/tty.rs:370,374`, `src/cli/commands/stream.rs:1265,1268`).
