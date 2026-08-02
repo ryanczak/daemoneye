@@ -360,8 +360,9 @@ mod stream_idle_tests {
                     )
                     .await;
                 let _ = sock.flush().await;
-                // Hold the connection open, sending nothing further.
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                // Hold the connection open, sending nothing further. `pending()`
+                // never resolves, so the socket stays open with no clock involved.
+                std::future::pending::<()>().await;
             }
         });
         format!("http://{addr}/")

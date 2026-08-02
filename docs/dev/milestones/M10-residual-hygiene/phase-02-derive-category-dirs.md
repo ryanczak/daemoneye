@@ -1,7 +1,7 @@
 # Phase 02: Derive memory category dirs, and drop the last real-clock sleep
 
 **Milestone:** M10 — Residual Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (`done`)
 **Estimated diff:** ~110 lines across four source files, most of it two new tests.
 
@@ -319,3 +319,9 @@ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 18:53 (started)
+
+**Executor:** Claude (Anthropic)
+
+Implementing all six tasks: adding `MemoryCategory::ALL`, deriving category dirs in `epochs.rs` and `search.rs`, adding two mandatory label-pinning tests, and replacing the last real-clock sleep with `std::future::pending()`.

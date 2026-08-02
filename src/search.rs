@@ -51,14 +51,11 @@ pub fn search_repository_with_namespaces(
                 } else {
                     base.join("agents").join(ns).join("memory")
                 };
-                if mem_base.join("session").exists() {
-                    dirs.push((mem_base.join("session"), "memory/session".to_string()));
-                }
-                if mem_base.join("knowledge").exists() {
-                    dirs.push((mem_base.join("knowledge"), "memory/knowledge".to_string()));
-                }
-                if mem_base.join("incidents").exists() {
-                    dirs.push((mem_base.join("incidents"), "memory/incidents".to_string()));
+                for category in crate::memory::MemoryCategory::ALL {
+                    let dir = mem_base.join(category.dir_name());
+                    if dir.exists() {
+                        dirs.push((dir, format!("memory/{}", category.dir_name())));
+                    }
                 }
             }
             // For "all", also include runbooks and scripts
@@ -485,5 +482,32 @@ mod tests {
             results.is_empty(),
             "idx=0 should not appear — only the last EVENTS_TAIL_LINES lines are searched"
         );
+    }
+
+    #[test]
+    fn memory_search_dirs_label_incidents_plural() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let incidents_dir = crate::config::config_dir().join("memory").join("incidents");
+            std::fs::create_dir_all(&incidents_dir).unwrap();
+            std::fs::write(
+                incidents_dir.join("test-incident.md"),
+                "# test incident\n\nThis is a test incident file.",
+            )
+            .unwrap();
+
+            let results = search_repository("test incident", "memory", 0);
+            assert!(!results.is_empty(), "should find the test incident file");
+
+            // The label must be the plural directory name "memory/incidents"
+            for r in &results {
+                if r.kind.starts_with("memory/") {
+                    assert_eq!(
+                        r.kind, "memory/incidents",
+                        "label must be memory/incidents (plural), not memory/incident"
+                    );
+                }
+            }
+        });
     }
 }

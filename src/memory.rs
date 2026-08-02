@@ -13,6 +13,13 @@ pub enum MemoryCategory {
 }
 
 impl MemoryCategory {
+    /// Every category, for callers that enumerate the memory directories.
+    pub const ALL: [MemoryCategory; 3] = [
+        MemoryCategory::Session,
+        MemoryCategory::Knowledge,
+        MemoryCategory::Incident,
+    ];
+
     /// Filesystem directory name under ~/.daemoneye/memory/.
     pub fn dir_name(&self) -> &'static str {
         match self {

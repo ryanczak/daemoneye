@@ -616,12 +616,11 @@ pub fn scan_artifacts_span(
     );
 
     // Memories (three category subdirs) — format as "memory:{key} [{category}]"
-    for (category, dir_name) in &[
-        ("session", "session"),
-        ("knowledge", "knowledge"),
-        ("incident", "incidents"),
-    ] {
-        let dir = config::config_dir().join("memory").join(dir_name);
+    for category in crate::memory::MemoryCategory::ALL {
+        let dir = config::config_dir()
+            .join("memory")
+            .join(category.dir_name());
+        let category = category.canonical_name();
         scan_dir_in_range(
             &dir,
             since_systime,
@@ -1720,5 +1719,46 @@ mod tests {
         let uncovered = uncovered_epochs(&epochs);
         assert_eq!(uncovered.len(), 1);
         assert_eq!(uncovered[0].seq, 3);
+    }
+
+    #[test]
+    fn scan_artifacts_span_labels_incident_memory_singular() {
+        with_test_home(|| {
+            let incidents_dir = config::config_dir().join("memory").join("incidents");
+            std::fs::create_dir_all(&incidents_dir).unwrap();
+
+            let file = incidents_dir.join("test-incident.md");
+            std::fs::write(&file, "# test incident").unwrap();
+
+            // Set mtime to inside the scan window
+            let since = chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+            let until = chrono::NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+            let mtime = filetime::FileTime::from_system_time(since.into());
+            filetime::set_file_mtime(&file, mtime).unwrap();
+
+            let artifacts = scan_artifacts_span(since, until);
+            let joined = artifacts.join("\n");
+
+            // Must contain the singular canonical label
+            assert!(
+                joined.contains("[incident]"),
+                "expected [incident] in: {}",
+                joined
+            );
+            // Must NOT contain the plural directory name as a label
+            assert!(
+                !joined.contains("[incidents]"),
+                "label must be [incident] (singular), not [incidents]: {}",
+                joined
+            );
+        });
     }
 }
