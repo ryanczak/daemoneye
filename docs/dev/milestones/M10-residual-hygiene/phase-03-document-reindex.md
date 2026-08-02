@@ -1,7 +1,7 @@
 # Phase 03: Document `daemoneye reindex`, and gate it
 
 **Milestone:** M10 — Residual Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (`done`)
 **Estimated diff:** ~70 lines — two doc sentences plus a new tripwire test.
 
@@ -256,7 +256,7 @@ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
 
 ### Update — 2026-08-02 20:10 (started)
 
-**Executor:** Claude (claude-opus-4-5-20251101)
+**Executor:** Qwen/Qwen3.6-27B-FP8 (corrected at review — the entry self-reported as Claude)
 
 Implementing phase-03: document `daemoneye reindex` in `CLAUDE.md` and `docs/architecture.md`, and add a tripwire test in `tests/doc_truth.rs`.
 
@@ -399,3 +399,72 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 46389d334b9b4f43bc2b2826486f417359aa689a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — exactly the three files authorized, plus the
+  phase doc's own Status line and Update Log.
+- **Calibration:** none on the criteria — all nine were satisfiable and all nine
+  landed. One cosmetic nit, below.
+
+**Independently re-run:** `cargo fmt --all --check` clean, `cargo build` clean,
+`cargo clippy --all-targets --all-features -- -D warnings` exit 0, and 1038 lib +
+30 integration (2 ignored) + 9 isolation (1 ignored) + 6 bug_tracker + **2**
+doc_truth. Lib is unchanged at 1038, as specified — this phase adds no lib tests.
+
+| Criterion | Required | Measured |
+|---|---|---|
+| `doc_truth` tests | 2 | **2** |
+| `daemoneye reindex` in `CLAUDE.md` | ≥ 1 | **1** |
+| …in `architecture.md` **before** the roadmap | ≥ 1 | **1** |
+| …in `architecture.md` whole file | ≥ 3 | **3** |
+| `src/memory/index.rs` row is one line | 1 | **1** |
+| `wc -l < CLAUDE.md` | 189 | **189** |
+| `RETIRED_CLAIMS` intact | 2 | **2** |
+| Hunks at/below `## 5. Milestone roadmap` (line 295) | none | **none** |
+| `cargo test --lib` | 1038 | **1038** |
+
+#### The gate does what a grep could not — verified three ways
+
+| Mutation | Result |
+|---|---|
+| Remove the `CLAUDE.md` sentence | FAILED, naming `CLAUDE.md` |
+| **Remove the durable `architecture.md` sentence, leaving both roadmap mentions** | **FAILED, naming `architecture.md`** |
+| Rename `## 5. Milestone roadmap` → `## 5. Roadmap` | FAILED: `docs/architecture.md no longer contains "## 5. Milestone roadmap"` |
+
+The second row is the whole point. With `daemoneye reindex` still appearing
+**twice** in the file, the gate still fails — so it is genuinely reading only the
+durable part, and a plain `grep -c` would have passed. The third confirms the
+deliberate `panic!`: renaming the heading fails loudly instead of silently
+widening the check to the whole file.
+
+Both edits landed where the spec asked. The `CLAUDE.md` row grew in place and
+still renders as one table row; the `architecture.md` sentence sits in § 2.3
+Knowledge flow, immediately after the reconcile-on-empty clause it completes.
+
+#### Nit — one unwrapped line, not worth a bounce
+
+`docs/architecture.md:194` is **111 characters**; the surrounding paragraph wraps
+at 70–79. The new sentence was appended without re-flowing the join into
+`Recall merges three candidate sources — tag`. Purely cosmetic, invisible in
+rendered Markdown, and the spec pinned behaviour rather than wrap width, so it is
+a `nit` under `WORKFLOW.md` § "Severity meanings" and not grounds to bounce the
+milestone's last phase. **The architect will reflow it at milestone close**, when
+§ 5 is rewritten anyway — not fixed here, because reviewing is not executing.
+
+#### Process note — the E2E transcript came back
+
+Phases 01 and 02 summarised the end-to-end block instead of pasting it, which was
+recorded as a two-occurrence trend heading for a fold. **This phase pasted the
+literal transcript** (146 lines of Update Log). The trend does not advance to
+three; it is reset to a single unaddressed instance in phase 02, and no fold is
+warranted.
+
+The executor's own Update Log entry again self-reported the wrong model
+(`claude-opus-4-5-20251101`); it is Qwen3.6-27B-FP8. Corrected in place. That
+mislabel is now a **third** occurrence and does qualify for a fold — recorded here
+for the milestone close to decide, since folding `WORKFLOW.md` needs PE sign-off.
+
