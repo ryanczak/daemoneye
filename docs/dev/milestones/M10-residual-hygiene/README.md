@@ -46,7 +46,7 @@ reproduced in 300 runs, so there is nothing to fix.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [read-key-test-bound](phase-01-read-key-test-bound.md) — bound `read_key` in the tty tests so starvation fails instead of hanging | review      |
+| 01 | [read-key-test-bound](phase-01-read-key-test-bound.md) — bound `read_key` in the tty tests so starvation fails instead of hanging | done        |
 
 **Phases 02–03 are not yet drafted.** The intended split, subject to change:
 phase 02 folds items 2 and 3 (both small and mechanical); phase 03 is the docs

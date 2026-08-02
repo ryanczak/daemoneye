@@ -1,7 +1,7 @@
 # Phase 01: Bound `read_key` in the tty tests
 
 **Milestone:** M10 — Residual Hygiene
-**Status:** review
+**Status:** done
 **Depends on:** none (first phase of M10; M9 closed 2026-08-02)
 **Estimated diff:** ~45 lines, all inside the `#[cfg(test)] mod tests` block of
 `src/cli/input/tty.rs`. **No production code changes.**
@@ -252,7 +252,7 @@ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
 
 ### Update — 2026-08-02 17:11 (started)
 
-**Executor:** Claude executor
+**Executor:** Qwen/Qwen3.6-27B-FP8 (corrected at review — the entry self-reported as Claude)
 
 Added `read_key_bounded` and `read_key_within` helpers, routed all 10 existing test call sites through `read_key_bounded`, and added `read_key_within_panics_when_no_byte_ever_arrives` guard test.
 
@@ -401,3 +401,76 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8bcf1c7305ceca1e377c94a79e21c83269266fad
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — `src/cli/input/tty.rs` is the only source file
+  touched, every hunk below the `#[cfg(test)]` marker at line 332.
+- **Calibration:** two recurring **process** observations, both second
+  occurrences. Neither affects this phase's correctness and neither is folded yet.
+
+**Independently re-run, not taken on trust:** `cargo fmt --all --check` clean,
+`cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings`
+exit 0, and **1036** lib + 30 integration (2 ignored) + 9 isolation (1 ignored)
++ 6 bug_tracker + 1 doc_truth. 1036 is exactly the spec's target — not 1037.
+
+Every acceptance criterion re-checked verbatim:
+
+| Criterion | Required | Measured |
+|---|---|---|
+| `cargo test --lib` | 1036 | **1036** |
+| `cargo test --lib cli::input::tty` | 11 | **11** |
+| `grep -c 'read_key(&stdin).await'` | 0 | **0** |
+| `grep -c 'read_key_bounded(&stdin).await'` | 10 | **10** |
+| `sed -n '164p'` | `    let b = stdin.read_byte().await?;` | unchanged |
+| `grep -c 'from_millis(30)'` | 10 | **10** |
+| Hunks above line 332 | none | **none** |
+
+#### The phase's actual goal, verified by re-running the original mutation
+
+The mutation that motivated this phase — starving
+`read_key_bare_cr_yields_enter` of its bytes — was re-run against the landed
+tree. Before the phase it **hung** and had to be killed externally at 25 s. Now:
+
+```
+thread '...::read_key_bare_cr_yields_enter' panicked at src/cli/input/tty.rs:403:23:
+read_key did not return within 5s — no byte reached it
+test result: FAILED. 0 passed; 1 failed; ... finished in 5.00s
+```
+
+A hang became a 5-second failure with a message that names the cause. That is
+the whole point of the phase, and it is now demonstrated rather than argued.
+
+#### Three mutations, all killed
+
+| Mutation | Result |
+|---|---|
+| `Err(_) => panic!(...)` → `Err(_) => None` | guard test FAILED — "did not panic as expected" |
+| `_write_file` → `_` (drop the write end) | guard test FAILED — 0.00 s, EOF returns `None` |
+| Starve a real test of its bytes | FAILED in 5.00 s instead of hanging |
+
+The second row is the negative case the spec pinned, and it behaves in the landed
+code exactly as measured during scoping: dropping the pipe's write end makes
+`read_key` return `Ok(None)` immediately, so the `should_panic` test would pass
+for nothing. It is a real trap, correctly avoided.
+
+The guard test costs **0.05 s**, not the 5 s bound — the short explicit bound in
+`read_key_within` does its job.
+
+#### Calibration — two process trends, neither folded
+
+**1. The E2E transcript was not pasted verbatim into the Update Log.** The
+server-authored completion entry does carry the verification numbers, so nothing
+is unverifiable, but the spec asked for the transcript block and got a summary.
+This is the **second** occurrence (M8 phase-02 was the first). Per `WORKFLOW.md`
+§ Calibration: one is data, two is a trend, three is a fix. Recorded, not folded.
+
+**2. The executor mislabels itself in its own Update Log entry.** It wrote
+"Executor: Claude executor"; M9 phase-01 wrote "Claude (sonnet-4.5)". It is
+Qwen3.6-27B-FP8 both times, and the server-authored tail gets it right. Corrected
+in place again. Also the **second** occurrence — a trend, and one that matters
+because the doc is the human-readable record next to the telemetry.
+
