@@ -4,6 +4,97 @@ DaemonEye is a lightweight background daemon that integrates an AI-powered syste
 
 I wrote DaemonEye after discovering OpenClaw and being completely blown away by its agency and power — and then turning it off because I was afraid of it running amok. DaemonEye is the result of wanting that power with boundaries I trust. It limits command execution to what is explicitly allowed, provides mechanisms to make complex tasks autonomous (even those requiring root access), and tracks exactly what it spends on your behalf.
 
+**Linux only.** DaemonEye uses `fork(2)`, Unix domain sockets, and Linux-specific tmux hooks — it will not build or run on macOS or Windows.
+
+---
+
+## Quickstart
+
+```sh
+# 1. Build
+git clone <repo> && cd daemoneye
+cargo build --release
+
+# 2. Install — creates ~/.daemoneye/, copies the binary, writes a systemd
+#    user service, and prints the tmux keybinding to add
+./target/release/daemoneye setup
+
+# 3. Add your API key
+$EDITOR ~/.daemoneye/etc/config.toml     # set [models.default] api_key
+
+# 4. Start the daemon
+daemoneye daemon
+
+# 5. Ask it something
+daemoneye ask "why is nginx returning 502?"
+
+# …or open an interactive chat pane inside tmux
+daemoneye chat
+```
+
+To have the daemon start on login instead of step 4:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now daemoneye
+```
+
+Add the printed keybinding to `~/.tmux.conf` so you can summon a chat pane with `Ctrl+b T`:
+
+```sh
+bind-key T split-window -v '~/.daemoneye/bin/daemoneye chat'
+```
+
+Then `tmux source-file ~/.tmux.conf`. The bind-key uses the full path so it works even when `~/.cargo/bin` is not in the `PATH` tmux inherits.
+
+---
+
+## Requirements
+
+| Dependency | Notes |
+|---|---|
+| Linux | `fork(2)`, Unix domain sockets, Linux-specific tmux hooks |
+| Rust 1.79+ | Required by Rust edition 2024 |
+| tmux 2.6+ | Required for hook support (`pane-focus-in`, `client-attached`, `after-new-session`) |
+
+```sh
+sudo apt install tmux      # Debian/Ubuntu
+sudo dnf install tmux      # Fedora
+```
+
+To install the binary into `~/.cargo/bin` instead of building in place: `cargo install --path .`
+
+---
+
+## How it works
+
+DaemonEye runs as a background daemon holding a Unix domain socket. The chat client connects to it, and the daemon does the work:
+
+```
+you type ──→ chat client ──→ daemon
+                               │  captures your pane, masks secrets,
+                               │  assembles context, streams from the model
+                               ▼
+                          model wants to run something
+                               │
+                               ▼
+                    approval prompt in your chat pane
+                    [Y]es  [A]pprove for session  [N]o  ·  or type a redirect
+                               │
+                     approved  ▼
+                    command runs — foreground in your pane,
+                    or background in a dedicated de-bg-* window
+                               │
+                               ▼
+                    output captured → back to the model → loop
+```
+
+Three properties are load-bearing:
+
+- **Nothing runs without a gate.** Every command, script write, runbook write, and file edit goes through an explicit approval prompt. Typing a message instead of `Y`/`A`/`N` redirects the agent mid-stream.
+- **Context is masked before it leaves the machine.** A regex filter scrubs credentials, keys, tokens, and connection strings before any provider sees them. See [Security](#security).
+- **Privilege escalation needs two keys.** A `sudo` command in an autonomous session requires *both* an `auto_approve_scripts` entry in the runbook *and* a matching NOPASSWD sudoers rule. Either alone is insufficient.
+
 ---
 
 ## ✨ Key Features
@@ -16,6 +107,8 @@ When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a
 - **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Two keys are required for every privilege escalation.
 - **Turn Budget** — A configurable hard ceiling on AI turns (default 20) ensures the agent cannot loop indefinitely. Individual runbooks may set a lower limit, but never a higher one.
 - **Catch-up Brief** — On re-attach, new completions, alerts, and watchdog results are summarised in a `[Catch-up]` message before the first AI token. AI spend during the detach window is included: `Cost during detach: $0.34 (architect $0.20 · ghost-anonymous $0.14)`.
+
+Full walkthrough: [Ghost Shells & Autonomous Remediation](#ghost-shells--autonomous-remediation).
 
 ---
 
@@ -36,6 +129,8 @@ auto_approve_read_only = true
 [tools]
 allow = ["read_file", "read_memory", "list_memories", "search_repository", "run_terminal_command"]
 ```
+
+Manage them from the CLI with `daemoneye agent list|show|create|delete|briefing`, or from chat with the `create_agent` / `read_agent` / `list_agents` / `delete_agent` tools.
 
 **Persistent briefing state.** After each clean ghost exit, the daemon asks the model to summarise what it found, what it did, and what to watch for next time. This briefing is written to `~/.daemoneye/agents/<name>/briefing.md` (masked before write) and injected as context on the next invocation. A `postgres-dba` agent accumulates six months of port mappings, slow-query patterns, and incident history — and brings all of it to every new alert automatically.
 
@@ -129,9 +224,15 @@ The chat client is built on a `ratatui` inline viewport that treats your termina
 - **Two-press interrupt** — While the agent is streaming, press ESC or Ctrl+C once to warn, twice to abort the turn.
 - **Color-coded panels** — Committed command-output panels use a blood-red border and deep-yellow title so executed actions stand out in the scrollback.
 
+---
+
 ### 🧰 On-Demand Tool Loading
 
 DaemonEye's AI tools are split into a **core** set (sent with every request) and **deferred** groups that are omitted by default to keep each request's context small. When the model needs a rarely-used capability it pulls the group in with a single `load_tools` call, and those tool schemas appear on subsequent turns. This is a context-budget optimization and is independent of the `ToolPolicy` / `GhostPolicy` gates, which restrict tools at execution time.
+
+See [AI tools](#ai-tools) for the full inventory.
+
+---
 
 ### 🧠 Context Management
 
@@ -161,11 +262,12 @@ Long sessions don't get truncated at an arbitrary message count — DaemonEye ma
 
 ---
 
-### 📖 Runbooks & Knowledge
+### 📖 Runbooks, Memory & Search
 
 - **Procedure Runbooks** — Store troubleshooting steps in `~/.daemoneye/runbooks/` as Markdown with YAML frontmatter. When an alert fires, DaemonEye finds the matching runbook and uses it to guide the investigation.
-- **Durable Memory** — Three-tier persistence for session context, knowledge facts, and incident records. Session memories are injected into every AI turn automatically; knowledge and incident memories are available on demand. Entries carry structured frontmatter — `tags` (with synonyms for broader matching), `summary` (one-liner surfaced in listings and contextual auto-search), `relates_to` (links to related memories, runbooks, or scripts), and `expires` (TTL for time-bounded facts). Use `update_memory` to update individual fields in place without a full rewrite. Contextual auto-search pre-loads matching knowledge into the first turn and follows `relates_to` links to pull in related entries automatically.
-- **Built-in Guides** — Six knowledge memory files are seeded on first run covering webhooks, runbook format, ghost shell usage, scheduling, scripts, and sudoers setup — the AI can reference them without any manual setup.
+- **Durable Memory** — Three-tier persistence for session context (`session`), knowledge facts (`knowledge`), and incident records (`incidents`). Session memories are injected into every AI turn automatically; knowledge and incident memories are available on demand. Entries carry structured frontmatter — `tags` (with synonyms for broader matching), `summary` (one-liner surfaced in listings), `relates_to` (links to related memories, runbooks, or scripts), and `expires` (TTL for time-bounded facts). Use `update_memory` to change individual fields in place without a full rewrite.
+- **Full-text memory search** — Memory is indexed in a SQLite **FTS5** database at `~/.daemoneye/var/index/memory.db`, maintained best-effort on every add, update, and delete. Recall merges three candidate sources: tag overlap, one-hop `relates_to` expansion, and **BM25-ranked** full-text hits against your turn. The index is namespaced, so agent-scoped memories stay separate from global ones. It rebuilds automatically whenever it is found empty — and when it is populated but stale, `daemoneye reindex` forces a rebuild (single transaction, safe to run while the daemon is up).
+- **Built-in Guides** — Seven knowledge memory files are seeded on first run — `agent-runtime-layout`, `ghost-shell-guide`, `runbook-format`, `runbook-ghost-template`, `scheduling-guide`, `scripts-and-sudoers`, and `webhook-setup` — so the AI can reference them without any manual setup.
 - **Named Sessions** — Save and resume conversation history with `/session save <name>`. Artifacts (runbooks, scripts, memories) created during a named session are tagged with `session_origin` so you can trace which session produced them.
 
 ---
@@ -193,117 +295,130 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 
 ---
 
-### 🔒 Security & Privacy
+## Command reference
 
-Context is filtered before it ever leaves your machine.
+### CLI subcommands
 
-- **Sensitive Data Redaction** — A built-in regex filter scrubs AWS access keys, PEM private key blocks, GCP service-account JSON, JWT bearer tokens, GitHub personal access tokens (classic and fine-grained), database and broker connection URLs with embedded credentials, password and API key assignments, URL query-param secrets, credit card numbers, and US Social Security Numbers — each replaced with a labelled placeholder (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.) before context reaches any AI provider.
-- **User-Defined Patterns** — Add org-specific regexes to `extra_patterns` in `config.toml` to extend the built-in set without replacing it. Per-category hit counts are shown in `daemoneye status` for a continuous audit view.
-- **Sudo Password Handling** — When a command requires `sudo`, the daemon first checks whether credentials are already cached (`sudo -n true`). If not, the chat interface prompts for your password with terminal echo disabled — for both foreground and background commands the password is always typed in the chat pane, eliminating the risk of keystrokes landing in the wrong terminal window. Up to 3 attempts are allowed; a wrong password is detected and re-prompted automatically. If all attempts fail, the AI receives a structured error with an `install-sudoers` suggestion. The password is never written to disk, stored in a log, or transmitted to the AI.
-- **`sudoers.d` Integration** — `daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the approved script — no wildcards, no `ALL`. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
-- **Agent configs cannot be written by AI tools** without user approval (same gate as `edit_file`). An agent cannot modify its own config or another agent's config.
-- **Ghost briefings are masked** before write — the masking filter runs before `briefing.md` is written to disk so a model cannot launder a secret through a briefing file.
-
----
-
-## Platform Support
-
-**Linux only.** DaemonEye uses `fork(2)`, Unix domain sockets, and Linux-specific tmux hooks — it will not build or run on macOS or Windows.
-
----
-
-## Requirements
-
-| Dependency | Notes |
+| Command | Description |
 |---|---|
-| Rust 1.79+ | Required by Rust edition 2024 |
-| tmux 2.6+ | Required for hook support (`pane-focus-in`, `client-attached`, `after-new-session`) |
+| `daemoneye daemon` | Start the background daemon |
+| `daemoneye daemon --console` | Log to the console instead of a file (troubleshooting; required for `Type=simple` systemd) |
+| `daemoneye daemon --log-file FILE` | Write the daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
+| `daemoneye daemon --session NAME` | Override the managed tmux session name from config |
+| `daemoneye stop` | Stop the daemon gracefully |
+| `daemoneye ping` | Check whether the daemon is running |
+| `daemoneye status` | Daemon status: uptime, sessions, ghost shells, cost today, redactions, circuit state |
+| `daemoneye logs` | Tail `daemon.log` |
+| `daemoneye chat` | Start an interactive multi-turn chat session |
+| `daemoneye chat --session NAME` | Open a chat window in a specific tmux session and attach to it |
+| `daemoneye ask <query>` | Send a single question to the AI |
+| `daemoneye setup` | Initialise `~/.daemoneye/`, install the binary, write the systemd service, print tmux config |
+| `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
+| `daemoneye setup --overwrite-memory` | Refresh the built-in knowledge memory files from the current binary |
+| `daemoneye setup --overwrite-all` | Refresh binary, memories, and the built-in SRE prompt (your `config.toml` is never touched) |
+| `daemoneye prompts` | List available prompts in `~/.daemoneye/etc/prompts/` |
+| `daemoneye scripts` | List scripts in `~/.daemoneye/scripts/` |
+| `daemoneye agent list` | List all named agents |
+| `daemoneye agent show <name>` | Show the full config for a named agent |
+| `daemoneye agent create <name>` | Create an agent (opens `$EDITOR` with a starter config) |
+| `daemoneye agent delete <name>` | Delete a named agent |
+| `daemoneye agent briefing <name>` | Show or clear an agent's rolling briefing |
+| `daemoneye schedule list` | List scheduled jobs and their status |
+| `daemoneye schedule cancel <id>` | Cancel a scheduled job by UUID |
+| `daemoneye schedule delete <id>` | Permanently delete a scheduled job by UUID |
+| `daemoneye schedule windows` | List leftover `de-*` tmux windows from failed scheduled jobs |
+| `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
+| `daemoneye costs` | Show AI spend from the event log (no daemon required) |
+| `daemoneye costs --since DATE --until DATE --by agent` | Filter and group the cost report; `--agent NAME`, `--json` also available |
+| `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
+| `daemoneye reindex` | Rebuild the memory search index from the memory files on disk; reports rows before and after |
+| `daemoneye audit-prompts` | Audit installed prompt and knowledge memory files for stale path references; exits non-zero on findings, never writes |
+| `daemoneye notify` | Internal — out-of-band notifications from tmux hooks; not intended for direct use |
 
-On Debian/Ubuntu:
+Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to run while one is up: the rebuild is a single transaction, so a concurrent search sees the old index or the new one, never a half-empty one.
 
-```sh
-sudo apt install tmux 
-```
+### In-chat slash commands
 
-On Fedora:
+| Command | Description |
+|---|---|
+| `/help` | Show the in-app command list (aliases: `help`, `?`, `/?`) |
+| `/exit` | Quit the chat session (alias: `/quit`) |
+| `/clear` | Reset the session (alias: `/new`) |
+| `/refresh` | Resync host context |
+| `/model` | List or switch the active model (alias: `/models`) |
+| `/prompt` | List or switch the system prompt |
+| `/pane` | List panes, or `/pane %N` to pin the foreground target (alias: `/panes`) |
+| `/approvals` | Inspect approval state; `on`/`off`/`revoke [class]` (alias: `/approval`) |
+| `/limits` | Show active limits and live session counters; `/limits reset` |
+| `/session` | `save`/`load`/`list`/`delete`/`rename`/`diff`/`tag` (alias: `/sessions`) |
 
-```sh
-sudo dnf install tmux
-```
+At a tool-approval prompt, typing a message instead of `Y`/`A`/`N` redirects the agent. Up/Down navigate the input; at the top or bottom edge they recall history.
 
 ---
 
-## Build
+## AI tools
 
-```sh
-git clone <repo>
-cd daemoneye
-cargo build --release
-```
+The model has **33 tools**. The 24 **core** tools are sent with every request; the 9 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
-The compiled binary is at `target/release/daemoneye`.
+Tools marked **⚠** require explicit user approval before they execute.
 
-To install it into your `~/.cargo/bin` path:
+### Core
 
-```sh
-cargo install --path .
-```
+| Tool | What it does |
+|---|---|
+| `run_terminal_command` **⚠** | Run a bash command — foreground in your pane, or background in a dedicated tmux window |
+| `edit_file` **⚠** | Create, edit, delete, or copy a file; shows a coloured unified diff before approval |
+| `write_script` **⚠** | Create or update a script in `~/.daemoneye/scripts/` (written `chmod 700`) |
+| `delete_script` **⚠** | Delete a script |
+| `write_runbook` **⚠** | Create or update a runbook in `~/.daemoneye/runbooks/` |
+| `delete_runbook` **⚠** | Delete a runbook |
+| `read_file` | Paginated file read with optional grep filter; masks sensitive data |
+| `search_repository` | Search runbooks, scripts, memory, or the event log |
+| `get_terminal_context` | Capture a fresh tmux snapshot on demand |
+| `list_panes` | Enumerate panes with ID, window-relative index, window, command, cwd, title |
+| `watch_pane` | Block until a pane matches a regex, the command exits, or a timeout elapses |
+| `close_background_window` | Close a background tmux window that is no longer needed |
+| `add_memory` | Store a persistent memory entry |
+| `read_memory` | Read a memory entry by key and category |
+| `update_memory` | Update individual fields of a memory entry in place |
+| `list_memories` | List memory keys, optionally filtered by category |
+| `recall_context` | Retrieve archived turns from this session by query, turn range, or both |
+| `schedule_command` | Schedule a one-shot, interval, or cron job — command, script, or ghost shell |
+| `list_schedules` | List scheduled jobs with status and next fire time |
+| `cancel_schedule` | Cancel a scheduled job |
+| `delete_schedule` | Permanently delete a scheduled job |
+| `spawn_ghost_shell` | Delegate a task to an autonomous background Ghost Shell |
+| `await_agent_result` | Wait for a spawned agent ghost shell and return its result |
+| `load_tools` | Pull a deferred tool group into the active tool set |
+
+### Deferred
+
+| Group | Tools |
+|---|---|
+| `agents` | `create_agent` **⚠**, `read_agent`, `list_agents`, `delete_agent` **⚠** |
+| `runbooks` | `read_runbook`, `list_runbooks` |
+| `scripts` | `read_script`, `list_scripts` |
+| `memory` | `delete_memory` |
 
 ---
 
-## Usage
+## Installation details
 
-DaemonEye requires the daemon to be running in the background.
+### `daemoneye setup`
 
-### 1. Start the daemon
-
-```sh
-daemoneye daemon
-```
-
-To stream the daemon logs:
-
-```sh
-daemoneye logs
-```
-
-To log directly to the console (useful when troubleshooting):
-
-```sh
-daemoneye daemon --console
-```
-
-To write daemon logs to a custom path:
-
-```sh
-daemoneye daemon --log-file /var/log/daemoneye.log
-```
-
-Event records (command history, AI turn counts, lifecycle info) are written to `~/.daemoneye/var/log/events.jsonl` by default.
-
-You can also manage the daemon with systemd — run `daemoneye setup` to write the service file and get the enable commands (see [Install DaemonEye](#2-install-daemoneye) below).
-
-### 2. Install DaemonEye
-
-Run `daemoneye setup` once after building. It initialises the full `~/.daemoneye/` directory tree, copies the binary to a stable location, writes a systemd user service file, and prints the tmux keybinding to add to `~/.tmux.conf`.
-
-After an upgrade, use the overwrite flags to refresh installed files:
+Run it once after building. It initialises the full `~/.daemoneye/` tree, copies the binary to a stable location, writes a systemd user service file, and prints the tmux keybinding.
 
 | Flag | Effect |
 |---|---|
-| `--overwrite-bin` | Copy the current binary to `~/.daemoneye/bin/daemoneye`, replacing the previously installed version. |
-| `--overwrite-memory` | Overwrite the six built-in knowledge memory files in `~/.daemoneye/memory/knowledge/` with the versions bundled in the new binary. Any user-created memory files are not affected. |
-| `--overwrite-all` | Combines `--overwrite-bin` and `--overwrite-memory`, and also refreshes `~/.daemoneye/etc/prompts/sre.toml`. Your `config.toml` is never overwritten. |
+| `--overwrite-bin` | Copy the current binary to `~/.daemoneye/bin/daemoneye`, replacing the installed copy. |
+| `--overwrite-memory` | Overwrite the built-in knowledge memory files in `~/.daemoneye/memory/knowledge/` with the versions bundled in the new binary. User-created memories are not affected. |
+| `--overwrite-all` | Combines both, and also refreshes `~/.daemoneye/etc/prompts/sre.toml`. Your `config.toml` is never overwritten. |
 
-On first run all seeded files (binary, memories, prompt) are written automatically regardless of flags.
+On first run all seeded files (binary, memories, prompt) are written automatically regardless of flags. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe.
 
-```sh
-daemoneye setup
-```
+### Directory layout
 
-#### Directory layout
-
-`daemoneye setup` creates the following tree. Directories and files that already exist are never overwritten, so re-running `setup` after an upgrade is safe. `~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, agent profiles, logs — lives in a single place:
+`~/.daemoneye/` is the shared root for both the daemon process and the AI agent. Everything — configuration, scripts, runbooks, memory, agent profiles, logs — lives in one place. `setup` creates the core tree; paths marked *(on first use)* appear the first time something needs them:
 
 ```
 ~/.daemoneye/
@@ -313,27 +428,30 @@ daemoneye setup
     config.toml           ← main configuration (created once; your edits are preserved)
     prompts/
       sre.toml            ← built-in SRE system prompt (recreated only if missing)
-  lib/                    ← place shared SDK modules or Python helpers here
+  lib/                    ← shared SDK modules or Python helpers (on first use)
   agents/                 ← named agent profiles
     <name>/
       config.toml         ← AgentConfig: prompt, model, tool policy, memory namespace
       briefing.md         ← rolling summary of last invocation (generated by daemon, masked)
       mailbox/            ← agent-to-agent delegation results (<job_id>.json)
   memory/
-    knowledge/
-      ghost-shell-guide.md       ← guide to ghost shell usage (seeded once)
-      runbook-format.md          ← runbook markdown format reference (seeded once)
-      runbook-ghost-template.md  ← ghost-enabled runbook template (seeded once)
-      scheduling-guide.md        ← scheduler usage guide (seeded once)
-      scripts-and-sudoers.md     ← scripts and sudoers setup guide (seeded once)
-      webhook-setup.md           ← webhook integration guide (seeded once)
+    knowledge/            ← seven built-in guides, seeded once:
+      agent-runtime-layout.md      ← agent runtime directory layout
+      ghost-shell-guide.md         ← guide to ghost shell usage
+      runbook-format.md            ← runbook markdown format reference
+      runbook-ghost-template.md    ← ghost-enabled runbook template
+      scheduling-guide.md          ← scheduler usage guide
+      scripts-and-sudoers.md       ← scripts and sudoers setup guide
+      webhook-setup.md             ← webhook integration guide
+    session/              ← session-context memories (injected into every turn)
+    incidents/            ← incident records (on first use)
   runbooks/               ← your procedure runbooks (Markdown + frontmatter)
   scripts/                ← your automation scripts (set chmod 700 on write)
   var/
     log/
       daemon.log          ← daemon process log (tailed by `daemoneye logs`)
       events.jsonl        ← legacy structured event log (read for history; never rotated or deleted)
-      events/
+      events/             ← (on first use)
         events-YYYYMMDD.jsonl  ← dated event segments (command history, AI turns, costs, lifecycle)
       sessions/
         <id>.jsonl        ← live working-set history for an ephemeral session
@@ -346,12 +464,12 @@ daemoneye setup
       daemoneye.sock      ← Unix domain socket (created when the daemon starts)
       pane_prefs.json     ← per-session target-pane preferences
       schedules.json      ← scheduled job store
-    sessions/             ← named session store (<name>/meta.toml + messages.jsonl)
+    sessions/             ← named session store, <name>/meta.toml + messages.jsonl (on first use)
     index/
-      memory.db           ← FTS5 full-text search index (memory, namespaced)
+      memory.db           ← FTS5 full-text search index, namespaced (built on first index write)
 ```
 
-#### systemd user service
+### systemd user service
 
 `daemoneye setup` writes `~/.config/systemd/user/daemoneye.service` — a user-scoped service that runs `~/.daemoneye/bin/daemoneye daemon --console` automatically on login. The `--console` flag is required for `Type=simple` systemd services: without it the daemon forks, the parent exits, and systemd loses track of the process.
 
@@ -365,53 +483,17 @@ tmux_session = "myserver"   # override the default "daemoneye" session name
 ```
 
 ```sh
-# Enable and start the daemon on login
 systemctl --user daemon-reload
-systemctl --user enable --now daemoneye
-
-# Check status
-systemctl --user status daemoneye
-
-# Stop the daemon
+systemctl --user enable --now daemoneye     # enable and start on login
+systemctl --user status daemoneye           # check status
+systemctl --user restart daemoneye          # restart after a config change
 systemctl --user stop daemoneye
-
-# Restart after a config change
-systemctl --user restart daemoneye
-
-# Disable autostart
-systemctl --user disable daemoneye
+systemctl --user disable daemoneye          # disable autostart
 ```
 
-View daemon logs directly:
+View logs with `daemoneye logs` (tails `~/.daemoneye/var/log/daemon.log`) or through journald: `journalctl --user -u daemoneye -f`.
 
-```sh
-daemoneye logs          # tails ~/.daemoneye/var/log/daemon.log
-```
-
-Or through journald:
-
-```sh
-journalctl --user -u daemoneye -f
-```
-
-#### tmux keybinding
-
-Add the printed `bind-key` line to `~/.tmux.conf`:
-
-```sh
-# ~/.tmux.conf
-bind-key T split-window -v '~/.daemoneye/bin/daemoneye chat'
-```
-
-Reload your tmux config:
-
-```sh
-tmux source-file ~/.tmux.conf
-```
-
-The bind-key uses the full path to `~/.daemoneye/bin/daemoneye` so it works even when `~/.cargo/bin` is not in the `PATH` that tmux inherits.
-
-#### Shell hook (optional)
+### Shell hook (optional)
 
 Add the appropriate snippet to your shell config to enable accurate exit-code tracking for foreground commands in `daemoneye status`:
 
@@ -428,47 +510,6 @@ precmd_functions+=(_de_precmd)
 ```
 
 Without this hook foreground commands still appear in `daemoneye status` but are always recorded as succeeded regardless of their actual exit code.
-
-### 3. Interact with the AI
-
-Press your configured hotkey (e.g., `Ctrl+b T`) inside a tmux session to open a new split pane connected to DaemonEye. Ask it questions about errors in your other panes, or request it to execute commands.
-
-You can also interact directly from the command line:
-
-```sh
-# Single question (non-interactive)
-daemoneye ask "why is nginx returning 502?"
-
-# Interactive multi-turn chat
-daemoneye chat
-```
-
-### All subcommands
-
-| Command | Description |
-|---|---|
-| `daemoneye daemon` | Start the background daemon |
-| `daemoneye daemon --console` | Start daemon with output on the console (troubleshooting) |
-| `daemoneye daemon --log-file FILE` | Write daemon log to `FILE` instead of `~/.daemoneye/var/log/daemon.log` |
-| `daemoneye daemon --session NAME` | Override the managed tmux session name from config |
-| `daemoneye stop` | Stop the daemon gracefully |
-| `daemoneye logs` | Tails the `daemon.log` file |
-| `daemoneye chat` | Start an interactive multi-turn chat session |
-| `daemoneye chat --session NAME` | Open a chat window in a specific tmux session and attach to it |
-| `daemoneye ask <query>` | Send a single question to the AI |
-| `daemoneye costs` | Show AI spend from `events.jsonl` (no daemon required) |
-| `daemoneye costs --since DATE --until DATE --by agent` | Filter and group cost report |
-| `daemoneye status` | Show daemon status: uptime, sessions, ghost shells, cost today, circuit state |
-| `daemoneye setup` | Initialise `~/.daemoneye/`, install binary, write systemd service, print tmux config |
-| `daemoneye setup --overwrite-bin` | Re-copy the current binary to `~/.daemoneye/bin/daemoneye` |
-| `daemoneye setup --overwrite-memory` | Refresh built-in knowledge memory files from the current binary |
-| `daemoneye setup --overwrite-all` | Refresh binary, memories, and built-in SRE prompt (user `config.toml` is never touched) |
-| `daemoneye scripts` | List scripts in `~/.daemoneye/scripts/` |
-| `daemoneye schedule list` | List scheduled jobs and their status |
-| `daemoneye schedule cancel <id>` | Cancel a scheduled job |
-| `daemoneye schedule windows` | List leftover tmux windows from failed scheduled jobs (`de-*`) |
-| `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
-| `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
 
 ---
 
@@ -490,19 +531,16 @@ model    = "claude-sonnet-4-6"
 # [models.opus]
 # provider = "anthropic"
 # model    = "claude-opus-4-6"
-#
+
 # [models.local]
 # provider  = "ollama"
 # model     = "llama3.2"
 # base_url  = "http://localhost:11434/v1"
 # context_window_tokens = 8192
-#
+
 # [models.gpt]
 # provider = "openai"
 # model    = "gpt-4o"
-
-[ai]
-prompt = "sre"
 
 # [masking]
 # extra_patterns = ["MYCO-[A-Z0-9]{32}", "sk_live_[A-Za-z0-9]{32}"]
@@ -517,7 +555,7 @@ prompt = "sre"
 # tool_result_chars         = 16000  # max chars fed back to the AI per tool result (0 = unlimited)
 # max_turns                 = 0      # max AI turns per chat session (0 = unlimited; ghosts use max_ghost_turns)
 # max_tool_calls_per_session = 0     # cumulative non-approval tool calls per session (0 = unlimited)
-#
+
 # [limits.per_tool]
 # read_file         = 200   # override per_tool_batch for this tool only (0 = unlimited for this tool)
 # search_repository = 50
@@ -591,8 +629,6 @@ For `lmstudio`, start the local server from the LM Studio app and load a model.
 |---|---|---|---|
 | `extra_patterns` | list of strings | `[]` | Additional regex patterns to redact before context is sent to the AI. Each match is replaced with `<REDACTED>`. Built-in patterns always run; these extend the set. |
 
-Example:
-
 ```toml
 [masking]
 extra_patterns = [
@@ -606,8 +642,6 @@ extra_patterns = [
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `on_alert` | string | `""` | Shell command to run when a watchdog alert fires. Available env vars: `$DAEMONEYE_JOB` (job name), `$DAEMONEYE_MSG` (alert message). |
-
-Example:
 
 ```toml
 [notifications]
@@ -627,8 +661,6 @@ on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
 
 #### Prometheus Alertmanager integration
-
-Add a DaemonEye receiver to your Alertmanager configuration:
 
 ```yaml
 receivers:
@@ -732,7 +764,7 @@ Controls named session persistence — saving and resuming conversation history 
 | `load_recent_turns` | integer | `10` | Number of most-recent turns loaded when resuming a saved session with `/session load`. `0` loads the complete history (may exceed the context window). |
 | `archive_retention_days` | integer | `0` | Delete session archive files (`<id>.archive.jsonl`) whose mtime is older than this many days. `0` = keep forever. Archives belonging to active sessions are never swept. |
 
-**In-chat session commands** (type these in the chat pane):
+**In-chat session commands:**
 
 | Command | Description |
 |---|---|
@@ -745,6 +777,15 @@ Controls named session persistence — saving and resuming conversation history 
 | `/session diff [name]` | Show a summary of what changed since the session was last saved |
 
 Artifacts (runbooks, scripts, memories) created during a named session are tagged with `session_origin: "<name>"` in their frontmatter, so you can trace which session produced them. On first save, any artifacts created before the session was named are retroactively tagged.
+
+### Environment variables
+
+| Variable | Effect |
+|---|---|
+| `ANTHROPIC_API_KEY` | API key for the `anthropic` provider (used if `api_key` is not set in config). |
+| `OPENAI_API_KEY` | API key for the `openai` provider (used if `api_key` is not set in config). |
+| `GEMINI_API_KEY` | API key for the `gemini` provider (used if `api_key` is not set in config). |
+| `OPENAI_API_BASE` | Override the base URL for the `openai` provider (fallback; prefer `base_url` in config). |
 
 ---
 
@@ -1029,106 +1070,13 @@ tmux list-windows -a | grep de-gs-
 - **Coordinator depth capped at 2.** A coordinator ghost can spawn specialist sub-agents; specialists cannot spawn further agents. The daemon enforces this at the IPC layer.
 - **All actions are logged.** Every command approval, execution, result, and AI cost is recorded in `events.jsonl` for post-incident audit.
 
-### Environment variables
-
-| Variable | Effect |
-|---|---|
-| `ANTHROPIC_API_KEY` | API key for the `anthropic` provider (used if `api_key` is not set in config). |
-| `OPENAI_API_KEY` | API key for the `openai` provider (used if `api_key` is not set in config). |
-| `GEMINI_API_KEY` | API key for the `gemini` provider (used if `api_key` is not set in config). |
-| `OPENAI_API_BASE` | Override the base URL for the `openai` provider (fallback; prefer `base_url` in config). |
-
 ---
 
-## Project Structure
+## Security
 
-```
-src/
-├── main.rs              # CLI entry point — parses subcommands
-├── ipc.rs               # Request/Response enums — the full wire protocol; GhostConfig struct
-├── config/              # config.toml parsing (types / load / seeds); prompt loading; directory helpers
-├── cost.rs              # compute_cost(); CostAttribution; CostRecord; built-in pricing rates
-├── daemon/
-│   ├── mod.rs           # Daemon entry point; supervise() task supervisor; hook installation
-│   ├── server/          # IPC dispatch (handlers) + handle_ask orchestrator (ask) + build_catchup_brief() (catchup)
-│   ├── hook.rs          # 9 IPC hook notification handlers (NotifyActivity, NotifyComplete, etc.)
-│   ├── auto_name.rs     # Session auto-naming + diff summary
-│   ├── prompt.rs        # Prompt assembly via PromptCtx (first-turn and subsequent-turn)
-│   ├── stream.rs        # AI event streaming loop; tool execution; response persistence; ai_cost emission
-│   ├── executor/        # Tool call dispatch; approval gate (ToolCallOutcome); foreground/background execution
-│   ├── background/      # run_background_in_window(); respawn; notify_job_completion(); GC lifecycle
-│   ├── briefing.rs      # generate_and_save_briefing(); read_briefing(); clear_briefing()
-│   ├── context/         # token-pressure context management
-│   │   ├── estimate.rs  # per-message token estimate; EMA calibration against provider usage
-│   │   ├── epochs.rs    # EpochRecord persistence; compact_with_epochs(); ledger/chapter render
-│   │   ├── background.rs # async (off-interactive-path) compaction; spawn_compaction()
-│   │   ├── recall.rs    # recall_context tool over the append-only session archive
-│   │   └── ghost_ws.rs  # synchronous, model-call-free working-set guard for ghost sessions
-│   ├── digest.rs        # budget planner; graduated elision; tail-boundary repair
-│   ├── ghost.rs         # GhostManager::start_session(); check_ghost_capacity()
-│   ├── policy.rs        # GhostPolicy — non-sudo always allowed; sudo requires auto_approve_scripts + sudoers
-│   ├── memory_prompt.rs # Tiered memory prompt: stable ambient block + dynamic turn-relevant block
-│   ├── session.rs       # SessionStore, SessionEntry (cost, detach timestamps, token calibration); <id>.meta.json
-│   ├── scheduled.rs     # Scheduled job execution
-│   ├── stats.rs         # compute_cost_today(); ghost shell counters; COST_TODAY_CACHE
-│   └── utils/           # sum_cost_between(); event logger; shell-escape; sudo; normalize_output helpers
-├── agents/
-│   ├── mod.rs           # AgentConfig CRUD; apply_agent_to_ghost_config()
-│   ├── policy.rs        # ToolPolicy — permits(); format_tool_restriction_block()
-│   └── mailbox.rs       # write_mailbox(); read_mailbox(); MailboxResult
-├── cli/                 # IPC client: chat interface, terminal rendering, subcommands
-│   ├── render_ratatui.rs # ratatui inline-viewport renderer (committed scrollback + fixed bottom region)
-│   ├── markdown/        # markdown rendering + syntax highlighting (split from render.rs)
-│   ├── input/           # termios/AsyncStdin (tty) + multi-line InputLine editor (editor)
-│   └── commands/
-│       ├── chat.rs      # run_chat_inner + the ratatui chat loop + slash-command handling
-│       └── costs.rs     # aggregate_costs(reader, since, until, group_by, agent_filter)
-├── scheduler.rs         # ScheduledJob, ScheduleStore (JSON persistence), ScheduleKind, ActionOn
-├── runbook.rs           # Runbook markdown loader (frontmatter parser, CRUD); watchdog prompt builder
-├── webhook/             # HTTP alert ingestion (axum): parse / process / server submodules; evaluate_watchdog_response()
-├── memory/
-│   ├── mod.rs           # Persistent memory CRUD; namespace-aware add/read/delete/list
-│   ├── index.rs         # FTS5 index (namespace column); BM25 search with grep fallback
-│   └── migrate.rs       # Schema migration tool (idempotent)
-├── scripts.rs           # Script management: list, write (chmod 700), read, delete, resolve
-├── session_store.rs     # Named session persistence: save/load/list/delete/rename; ArtifactRef
-├── sys_context.rs       # One-time host audit (OS, uptime, memory, processes, shell history)
-├── tmux/
-│   ├── mod.rs           # tmux interoperability layer (capture-pane, send-keys, job windows, etc.)
-│   ├── cache.rs         # Background poller; SessionCache; PaneState; get_labeled_context()
-│   └── session.rs       # Session-level helpers: other_sessions_context(); client_dimensions()
-└── ai/
-    ├── mod.rs           # AiClient trait; send_with_retry(); CircuitBreaker
-    ├── types/           # PendingCall / AiEvent enums; wire types; TokenBreakdown; Message; AiUsage
-    ├── tools/           # Tool definitions (schema / defs / args / dispatch); core + deferred TOOLS; dispatch_tool_event()
-    ├── backends/        # Per-provider SSE streaming: anthropic.rs, openai.rs, gemini.rs
-    └── filter.rs        # Regex-based sensitive-data masking; init_masking()
-```
+### Sensitive-data redaction
 
----
-
-## Command Audit Log
-
-Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in a dated segment under `~/.daemoneye/var/log/events/` (`events-YYYYMMDD.jsonl`, UTC). AI cost records are written to the same segment after each completed turn:
-
-```
-[1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
-[1748000001] session=abc123 mode=foreground pane=%3 status=denied cmd=sudo rm -rf /tmp/old out=
-{"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
-```
-
-Fields for command records: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
-
-Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
-
-Control with `--command-log-file FILE` or `--no-command-log` on `daemoneye daemon`.
-
----
-
-## Security Notes
-
-Before sending terminal context to an AI provider, DaemonEye applies a regex-based
-filter that masks:
+Before sending terminal context to an AI provider, DaemonEye applies a regex-based filter that masks:
 
 - AWS access key IDs (`AKIA…`)
 - PEM private key blocks (RSA, EC, OpenSSH, etc.)
@@ -1143,24 +1091,63 @@ filter that masks:
 
 Masked values are replaced with placeholder tokens (`<REDACTED>`, `<JWT>`, `<DB_URL>`, `<GITHUB_TOKEN>`, etc.). Review the context shown in the AI pane before submitting if you handle highly sensitive data.
 
-To register organisation-specific patterns, add them to your config (see [masking] below). Built-in patterns always run — user patterns extend the set, never replace it. Redaction counts by type are tracked across the daemon's lifetime and displayed under **Redactions** in `daemoneye status`, giving operators a quick audit view of what categories of sensitive data have been filtered. All built-in types are always shown (including those with a zero count), and any hits from user-configured `extra_patterns` are tallied separately as `"User Defined"`.
+Add organisation-specific patterns to `extra_patterns` in `[masking]`. Built-in patterns always run — user patterns extend the set, never replace it. Redaction counts by type are tracked across the daemon's lifetime and displayed under **Redactions** in `daemoneye status`, giving a continuous audit view of what categories have been filtered. All built-in types are always shown (including those with a zero count), and hits from user-configured `extra_patterns` are tallied separately as `"User Defined"`.
+
+The same filter runs on webhook alert payloads before they enter the conversation, and on ghost briefings before `briefing.md` is written to disk — so a model cannot launder a secret through a briefing file.
 
 ### Sudo passwords
 
-When a command (foreground or background) requires `sudo`, the daemon first checks
-whether credentials are already cached (`sudo -n true`). If cached, the command
-runs without any interruption. If not cached, the chat interface prompts for your
-password with terminal echo disabled — you always type it in the chat pane, not
-in the terminal pane, eliminating the risk of keystrokes landing in the wrong window.
+When a command (foreground or background) requires `sudo`, the daemon first checks whether credentials are already cached (`sudo -n true`). If cached, the command runs without any interruption. If not cached, the chat interface prompts for your password with terminal echo disabled — you always type it in the chat pane, not in the terminal pane, eliminating the risk of keystrokes landing in the wrong window.
 
-Up to 3 attempts are permitted. A wrong password is detected from the pane output
-("Sorry, try again.") and you are re-prompted automatically. If all attempts fail
-or you cancel, the AI receives a structured error describing what happened and
-suggesting `daemoneye install-sudoers` where appropriate.
+Up to 3 attempts are permitted. A wrong password is detected from the pane output ("Sorry, try again.") and you are re-prompted automatically. If all attempts fail or you cancel, the AI receives a structured error describing what happened and suggesting `daemoneye install-sudoers` where appropriate.
 
-The password is never written to disk, stored in a log file, or transmitted to the
-AI. The in-memory credential is held in a `zeroize::Zeroizing<String>` that
-overwrites the allocation on drop.
+The password is never written to disk, stored in a log file, or transmitted to the AI. The in-memory credential is held in a `zeroize::Zeroizing<String>` that overwrites the allocation on drop.
+
+### `sudoers.d` integration
+
+`daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the approved script — no wildcards, no `ALL`. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
+
+### Agent config protection
+
+Agent configs cannot be written by AI tools without user approval (the same gate as `edit_file`). An agent cannot modify its own config or another agent's config.
+
+---
+
+## Command audit log
+
+Every command the AI proposes — whether approved, denied, or timed out — is recorded as a JSON object in a dated segment under `~/.daemoneye/var/log/events/` (`events-YYYYMMDD.jsonl`, UTC). AI cost records are written to the same segment after each completed turn:
+
+```
+[1748000000] session=abc123 mode=background pane=- status=approved cmd=ps aux --sort=-%mem out=USER PID ...
+[1748000001] session=abc123 mode=foreground pane=%3 status=denied cmd=sudo rm -rf /tmp/old out=
+{"event":"ai_cost","ts":"2026-05-16T10:23:01Z","agent_name":"chat","provider":"anthropic","cost":{"total_cost_usd":0.0847},...}
+```
+
+Fields for command records: Unix timestamp · session ID · `background` or `foreground` · tmux pane ID · `approved` / `denied` / `timeout` / `send-failed` · command · first 200 chars of output.
+
+Segments older than `[events] retention_days` (default 90) are swept automatically by the daemon. A pre-rotation `var/log/events.jsonl` is still read by every consumer (`daemoneye costs`, `daemoneye status`, `search_repository`, epoch tallies) and is never rotated or deleted — date-ranged reads span the legacy file and the segments transparently.
+
+---
+
+## Architecture & contributing
+
+The design documentation lives alongside the code and is kept current by tests:
+
+| Document | Contents |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | System layers, major data flows, non-goals, milestone roadmap |
+| [`CLAUDE.md`](CLAUDE.md) | Module-by-module map, key invariants, the add-a-tool checklist |
+| [`docs/dev/STANDARDS.md`](docs/dev/STANDARDS.md) | Engineering Definition of Done |
+| [`docs/dev/WORKFLOW.md`](docs/dev/WORKFLOW.md) | Phase lifecycle and review process |
+
+A `tests/doc_truth.rs` tripwire guards these documents (and this README) against reintroducing claims that have stopped being true, and against silently dropping ones that must stay.
+
+```sh
+cargo build
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+cargo fmt --all --check
+```
 
 ---
 

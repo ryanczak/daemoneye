@@ -25,6 +25,16 @@ const RETIRED_CLAIMS: &[(&str, &str, &str)] = &[
         "returns an empty `Vec`",
         "fts5_search returns BM25-ranked hits",
     ),
+    (
+        "README.md",
+        "grep fallback",
+        "there is no grep fallback for recall; fts5_search returns BM25-ranked hits",
+    ),
+    (
+        "README.md",
+        "migrate.rs",
+        "src/memory/migrate.rs does not exist; the module is index.rs / review.rs / tags.rs",
+    ),
 ];
 
 /// (doc path, required substring, why it must be documented)
@@ -42,6 +52,16 @@ const REQUIRED_CLAIMS: &[(&str, &str, &str)] = &[
         "docs/architecture.md",
         "daemoneye reindex",
         "the operator entry point to reconcile_index() must stay documented",
+    ),
+    (
+        "README.md",
+        "daemoneye reindex",
+        "the operator entry point to reconcile_index() must stay documented",
+    ),
+    (
+        "README.md",
+        "daemoneye audit-prompts",
+        "audit-prompts is a shipped subcommand and went undocumented for four milestones",
     ),
 ];
 
