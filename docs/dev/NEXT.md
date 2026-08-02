@@ -1,56 +1,52 @@
 # NEXT
 
-**Active phase: M10 phase-03 — document-reindex** (`todo`, drafted 2026-08-02).
-**This is M10's last in-scope phase.**
+**Active phase: none.**
 
-Doc: `docs/dev/milestones/M10-residual-hygiene/phase-03-document-reindex.md`
+**M10 — Residual Hygiene closed 2026-08-02** (three phases, all
+`approved_first_try`, zero bugs, zero bounces). Retrospective:
+`docs/dev/milestones/M10-residual-hygiene/README.md`.
 
-Dispatch with `/rexymcp:dispatch phase-03`.
+M7, M8, M9 and M10 are all closed and **no milestone is scoped**. Starting one is
+a human decision — the architect does not cross a milestone boundary on its own.
 
-**Phases 01 and 02 are `done`**, both `approved_first_try`. The tty tests now fail
-in 5 s where they used to hang; the memory category→directory mapping is derived
-from `MemoryCategory` in all three callers; and the last real-clock sleep is gone.
+## The carried list is empty except for one unreproducible item
 
-## Phase 03 — and why a plain grep would be a false green
+1. **`hooks_land_on_private_server`** — the old phase-04-review flake. Binds no
+   ports; **0 failures in 300 runs** across M8, M9 and M10. No evidence to work
+   from. Only a bug if it recurs.
 
-`daemoneye reindex` shipped in M9 and neither `CLAUDE.md` nor
-`docs/architecture.md` describes it. The phase documents it in both and adds a
-tripwire so it cannot silently vanish again.
+Everything else carried out of M7 and M8 is closed: the tty tests fail instead of
+hanging, the memory category→directory mapping is derived in all three callers,
+the last real-clock sleep is gone, and `daemoneye reindex` is documented and gated.
 
-**The trap, measured:**
+## One decision waiting on the PE
 
-| Scope | `daemoneye reindex` mentions today |
-|---|---|
-| `CLAUDE.md`, whole file | **0** |
-| `docs/architecture.md`, whole file | **2** — both transient |
-| `docs/architecture.md`, before `## 5. Milestone roadmap` | **0** |
+The executor has now mislabelled its own model in its Update Log entry **three
+times** (M9 phase-01 "Claude (sonnet-4.5)", M10 phase-01 "Claude executor", M10
+phase-03 "Claude (claude-opus-4-5-20251101)"). It is Qwen3.6-27B-FP8 every time;
+each was corrected at review, and the server-authored tail always records the
+correct model, so telemetry is unaffected.
 
-Both existing mentions sit inside `### Active milestone`, which **the architect
-rewrites at every milestone close**. So `grep -c 'reindex' docs/architecture.md
->= 1` is *already satisfied before any work* and would keep passing after the
-durable documentation was deleted. The gate and the criteria therefore read only
-the part of the file **above** the roadmap heading.
+Three occurrences is the fold threshold in `WORKFLOW.md` § Calibration. Folding
+requires PE sign-off, so nothing has been changed. The options are roughly: state
+in the executor contract that the Update Log must carry the configured model
+name; drop the model line from the executor's own entry and rely on the
+server-authored tail; or accept it as cosmetic and stop correcting it.
 
-The tripwire is the symmetric case to the existing `RETIRED_CLAIMS` table — a
-`REQUIRED_CLAIMS` table for strings that must be *present*. It was compiled and
-run against the current tree before the spec was committed, and **it fails today
-naming both docs**, which is the proof it is not satisfied by the roadmap prose.
-The spec requires the executor to confirm that by deleting its `architecture.md`
-sentence while leaving the roadmap mentions in place: if the test still passes,
-the gate is worthless.
-
-Criteria calibrated: doc_truth 1 → **2** tests, `CLAUDE.md` 0 → ≥1, architecture
-durable part 0 → ≥1, lib unchanged at **1038** (no lib tests added), `CLAUDE.md`
-still **189** lines so the table row grows in place, and `RETIRED_CLAIMS` intact.
-Calibration caught one bad criterion: `grep -c 'grep fallback' tests/doc_truth.rs`
-is **2**, not 1 — the phrase appears as both the forbidden string and its
-rationale.
-
-## The rules M7–M9 earned
+## The rules M7–M10 earned
 
 > **Do not assert a fact about the system in a spec unless it was executed.**
 > A *claimed failure mode* is such a fact — M9 justified a test with a
 > compile-time impossibility one `cargo build` would have disproven.
+>
+> **A criterion about the tree the phase will produce must be validated against
+> that tree**, not the one in front of you. Calibrating against the current tree
+> catches unsatisfiable criteria; it does not catch criteria the phase's own work
+> invalidates, or criteria that already pass without the work being done.
+>
+> **Prototype the change and mutate it before writing the spec.** M10 phase 02's
+> real risk — two labels with no test, where a swap left 1036 tests green — was
+> invisible until the prototype was mutated.
 >
 > **An acceptance criterion for an intermittent failure must be a repeat count
 > derived from a measured rate.** A single green run is not evidence.

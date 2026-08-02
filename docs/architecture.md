@@ -189,12 +189,12 @@ retroactive backfill on first save. Ghost sessions are excluded. Memory is
 indexed in a SQLite FTS5 database at `var/index/memory.db`, maintained
 best-effort on every add/update/delete and rebuilt by `reconcile_index()`
 whenever the index is found empty. To force a rebuild when the index is
-populated but stale, run `daemoneye reindex`; it rebuilds from the memory
-files on disk, reports the row count before and after, and is safe to run
-while the daemon is up because the rebuild is a single transaction. Recall merges three candidate sources — tag
-overlap, one-hop `relates_to` expansion, and BM25-ranked FTS5 hits against the
-user's turn. The grep scan in `src/search.rs` serves the `search_repository`
-tool and is **not** a fallback for recall.
+populated but stale, run `daemoneye reindex`; it rebuilds from the memory files
+on disk, reports the row count before and after, and is safe to run while the
+daemon is up because the rebuild is a single transaction. Recall merges three
+candidate sources — tag overlap, one-hop `relates_to` expansion, and
+BM25-ranked FTS5 hits against the user's turn. The grep scan in `src/search.rs`
+serves the `search_repository` tool and is **not** a fallback for recall.
 
 ### 2.4 Remote-host execution model
 
@@ -399,23 +399,23 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
-### Active milestone — M10 Residual Hygiene
+### Active milestone — none
 
-Scoped 2026-08-02 (PE sign-off). Milestone README:
-`docs/dev/milestones/M10-residual-hygiene/README.md`. It clears the four carried
-items M7, M8 and M9 left behind: the tty tests hang rather than fail when
-`read_key` is starved; one real-clock sleep remains in a spawned test task;
-`epochs.rs` hardcodes the memory category→directory map instead of deriving it
-from `MemoryCategory`; and `daemoneye reindex` is undocumented in the
-project-level docs. None is user-visible — each is a way the codebase can mislead
-someone later.
+**M10 — Residual Hygiene closed 2026-08-02**, three phases, all
+`approved_first_try`, zero bugs. It cleared the four items carried out of M7 and
+M8: the tty tests now fail in five seconds where a starved `read_key` used to
+hang the suite indefinitely; the memory category→directory mapping is derived
+from `MemoryCategory::ALL` in all three callers instead of being hardcoded; the
+last real-clock sleep in the test suite is gone; and `daemoneye reindex` is
+documented in both `CLAUDE.md` and this file, with a `doc_truth` tripwire that
+reads only the durable part of the file so a mention surviving in the
+milestone-roadmap section cannot satisfy it.
 
-**M9 — Operator Tooling closed 2026-08-02**, one phase, `approved_first_try`.
-`daemoneye reindex` rebuilds the memory index from the files on disk and reports
-the row count before and after. It needs no daemon, tolerates a bare `$HOME`, and
-is idempotent. The rebuild is a single transaction, so it is safe to run while the
-daemon is serving searches. This closed the last carried item with user-facing
-weight: `reconcile_index()` previously had one caller that fired only when the
+**M9 — Operator Tooling closed 2026-08-02**, one phase. `daemoneye reindex`
+rebuilds the memory index from the files on disk and reports the row count before
+and after. It needs no daemon, tolerates a bare `$HOME`, and is idempotent; the
+rebuild is a single transaction, so it is safe to run while the daemon is serving
+searches. Before it, `reconcile_index()` had one caller that fired only when the
 index was empty, leaving a *stale* index unreachable and unfixable short of
 deleting `var/index/memory.db` by hand.
 
@@ -428,3 +428,6 @@ the port. It now holds the listener until hand-off.
 memory search real (BM25-ranked FTS5 over `var/index/memory.db`, maintained on
 every write, with `reconcile_index()` covering the fresh-install case), landed
 four drift gates, and fixed three latent defects found along the way.
+
+No milestone is scoped. The carried list is empty apart from
+`hooks_land_on_private_server`, a flake that has not reproduced in 300 runs.
