@@ -1,55 +1,50 @@
 # NEXT
 
-**Active phase: M10 phase-02 — derive-category-dirs** (`todo`, drafted 2026-08-02).
+**Active phase: M10 phase-03 — document-reindex** (`todo`, drafted 2026-08-02).
+**This is M10's last in-scope phase.**
 
-Doc: `docs/dev/milestones/M10-residual-hygiene/phase-02-derive-category-dirs.md`
+Doc: `docs/dev/milestones/M10-residual-hygiene/phase-03-document-reindex.md`
 
-Dispatch with `/rexymcp:dispatch phase-02`.
+Dispatch with `/rexymcp:dispatch phase-03`.
 
-**M10 phase-01 is `done`** (`approved_first_try`). The tty tests now fail in 5 s
-with a message naming the cause, where the same mutation used to hang until killed
-at 25 s.
+**Phases 01 and 02 are `done`**, both `approved_first_try`. The tty tests now fail
+in 5 s where they used to hang; the memory category→directory mapping is derived
+from `MemoryCategory` in all three callers; and the last real-clock sleep is gone.
 
-## Phase 02 — two carried items, and the one real risk
+## Phase 03 — and why a plain grep would be a false green
 
-Items 2 and 3 together: replace `src/ai/mod.rs:364`'s 30 s real-clock sleep with
-`std::future::pending()`, and derive the memory category→directory mapping from
-`MemoryCategory` instead of hardcoding it.
+`daemoneye reindex` shipped in M9 and neither `CLAUDE.md` nor
+`docs/architecture.md` describes it. The phase documents it in both and adds a
+tripwire so it cannot silently vanish again.
 
-Drafting found a **third** hardcoded copy at `src/search.rs:56-63`, so M10's exit
-criterion was widened from "`epochs.rs` derives" to "every caller derives" — fixing
-two of three would have left the drift in place.
+**The trap, measured:**
 
-**The mechanical part is not the risk.** A working prototype of the whole refactor
-was built and mutation-tested before the spec was written:
-
-| Mutation | Caught? |
+| Scope | `daemoneye reindex` mentions today |
 |---|---|
-| `dir_name()` Incident → `"WRONG"` | **Yes** — 2 tests fail |
-| epochs label: `canonical_name()` → `dir_name()` | **NO — 1036 still pass** |
-| search label: `dir_name()` → `canonical_name()` | **NO — 1036 still pass** |
+| `CLAUDE.md`, whole file | **0** |
+| `docs/architecture.md`, whole file | **2** — both transient |
+| `docs/architecture.md`, before `## 5. Milestone roadmap` | **0** |
 
-`dir_name()` and `canonical_name()` differ for exactly one variant — `incidents`
-vs `incident` — and **neither label has any test**. Swap them and the refactor
-stays green while epochs silently prints `[incidents]` and search emits a
-`memory/incident` label matching no directory on disk. So the spec makes two tests
-mandatory and requires the executor to mutation-check both. A refactor whose only
-failure mode is invisible to the suite is not verifiable.
+Both existing mentions sit inside `### Active milestone`, which **the architect
+rewrites at every milestone close**. So `grep -c 'reindex' docs/architecture.md
+>= 1` is *already satisfied before any work* and would keep passing after the
+durable documentation was deleted. The gate and the criteria therefore read only
+the part of the file **above** the roadmap heading.
 
-The epochs test also needs a negative assertion, because `"[incidents]"` contains
-`"[incident]"` as a substring — asserting only the positive would prove nothing.
+The tripwire is the symmetric case to the existing `RETIRED_CLAIMS` table — a
+`REQUIRED_CLAIMS` table for strings that must be *present*. It was compiled and
+run against the current tree before the spec was committed, and **it fails today
+naming both docs**, which is the proof it is not satisfied by the roadmap prose.
+The spec requires the executor to confirm that by deleting its `architecture.md`
+sentence while leaving the roadmap mentions in place: if the test still passes,
+the gate is worthless.
 
-Criteria calibrated against the tree: lib 1036 → **1038** (1039+ is scope creep,
-1036–1037 means a mandatory test is missing), `from_secs(30)` 1 → 0, ai sleeps
-3 → 2 (both remaining are production retry backoff), `"incidents"` literals 1 → 0
-in epochs and 2 → 0 in search while staying at 2 in `memory.rs`, and
-`MemoryCategory::ALL` in 0 → 3 files.
-
-## Remaining in M10
-
-| # | Item | Phase |
-|---|---|---|
-| 4 | `daemoneye reindex` undocumented in `CLAUDE.md` / `architecture.md` | 03 (not drafted) |
+Criteria calibrated: doc_truth 1 → **2** tests, `CLAUDE.md` 0 → ≥1, architecture
+durable part 0 → ≥1, lib unchanged at **1038** (no lib tests added), `CLAUDE.md`
+still **189** lines so the table row grows in place, and `RETIRED_CLAIMS` intact.
+Calibration caught one bad criterion: `grep -c 'grep fallback' tests/doc_truth.rs`
+is **2**, not 1 — the phrase appears as both the forbidden string and its
+rationale.
 
 ## The rules M7–M9 earned
 
