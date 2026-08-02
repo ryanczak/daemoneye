@@ -55,8 +55,8 @@ run at close. One capability (working memory search) and one maintenance axis.
 
 ## Phases
 
-Phases 01–08 and 10 are drafted; only 09 is named only. Draft it with `/rexymcp:architect next`
-when 08 is `done`. Ordering is deliberate — see Notes § "Why this order".
+**All ten phases are drafted.** Nine are `done`; phase 09 is the last in-scope
+phase. Ordering is deliberate — see Notes § "Why this order".
 
 **Phase 10 is numbered last but is independent of the FTS5 chain and may be
 dispatched at any point** — it touches `src/session_store.rs`, the runtime tree,
@@ -74,7 +74,7 @@ refers to "phase 08" and "phase 09" by number, stays accurate.
 | 06 | [fts5-index-schema](phase-06-fts5-index-schema.md) — add `rusqlite` (`bundled`, authorized — see Notes); FTS5 schema, creation, and registering `var/index/memory.db` in all four gates | done |
 | 07 | [fts5-write-path](phase-07-fts5-write-path.md) — index maintained on add/update/delete, with reconciliation | done |
 | 08 | [fts5-search](phase-08-fts5-search.md) — BM25 ranking wired into `ftsearch_memories()`, per-term query building, reconcile-on-empty, and the tag-miss/text-hit test | done |
-| 09 | index-doc-correction — `CLAUDE.md` and architecture.md § 5 describe the index as built | todo |
+| 09 | [index-doc-correction](phase-09-index-doc-correction.md) — correct five stale/never-true claims in `CLAUDE.md` and architecture.md, plus a tripwire so the retired ones cannot return | todo |
 | 10 | [tree-and-doc-truth](phase-10-tree-and-doc-truth.md) — `memory/incident` → `incidents` (incl. a live stamping bug), the per-category `POLICY_TABLE` entries that close the gate gap, `agents/*/memory/`, and two false `CLAUDE.md` rows | done |
 
 Phases 06–08 may be re-split once 06 lands; the FTS5 work is the least-known part

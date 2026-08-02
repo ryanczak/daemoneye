@@ -1,76 +1,59 @@
 # NEXT
 
-**Active phase: M7 phase-08 — fts5-search** (`in-progress`, drafted 2026-08-01,
-**bounced at review 2026-08-01**, and **round 2 returned a no-op** — see
-`bugs/bug-08-1.md` and the phase doc's Notes for executor, round 3).
+**Active phase: M7 phase-09 — index-doc-correction** (`todo`, drafted
+2026-08-01). **This is M7's last in-scope phase.**
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-08-fts5-search.md`
+Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-09-index-doc-correction.md`
 
-Re-dispatch with `/rexymcp:dispatch phase-08`.
+Dispatch with `/rexymcp:dispatch phase-09`.
 
-**Round 2 changed nothing** — `complete` with an empty diff after 23 turns. That
-is the documented green-bounce pathology: the phase bounced on *test strength*,
-so all four gates were green and the tree clean, and the executor's "is there
-work to do?" heuristic found no signal. A plain re-dispatch never works on that
-shape; round 3 carries the prescribed refined treatment (loud header, work
-enumerated, fix inlined, falsifiable finish condition of **1032** not 1031, and a
-self-mutation-check). **If round 3 also no-ops, takeover is the proportionate
-lever** rather than a third refinement.
+**Phase 08 is `done`** (approved_after_2) — BM25-ranked memory search is live,
+which is what makes the docs wrong and this phase owed.
 
-**Round 1 bounced on test strength, not correctness** (`missing_spec_test`). The
-implementation is right — 1031/30/8/6, clippy clean, both `allow(dead_code)`
-gone — but each of the phase's two central mechanisms survives deletion with the
-suite green: removing `ORDER BY bm25` leaves `search_ranks_better_match_first`
-passing (its fixture inserts strong-then-weak, so rowid order equals rank order),
-and replacing `build_match_expr` with naive whole-query phrase quoting passes all
-22 tests (every search test uses a single-token query). Both fixes are proven in
-the bug doc. The phase doc's own claim that two named tests would catch the
-quoting mode was wrong and has been corrected in place — the architect's error.
+## Phase 09 — what it is
 
-**This is the milestone's headline capability** — BM25-ranked memory search, and
-M7's first exit criterion. After it, only phase 09 (the doc correction) remains.
+Five prose sites across `docs/architecture.md` and `CLAUDE.md`, plus a tripwire.
+**Three of the five became wrong when phase 08 landed; two were never true**, and
+each was checked against the code before drafting:
 
-**Every fact in the spec was executed against SQLite 3.53.4 before drafting.**
-That is deliberate: the rule that fell out of phases 06 and 07 is *do not assert
-a fact about the system in a spec unless it was executed*, and this is the first
-spec written under it end to end.
+- **There is no grep fallback for recall, and there never was.**
+  `grep -c "crate::search" src/daemon/memory_prompt.rs` returns **0**. Recall
+  merges tag overlap, one-hop `relates_to`, and FTS5 hits. `src/search.rs` backs
+  the `search_repository` *tool* — its only caller is
+  `src/daemon/executor/knowledge/memory.rs:235`. Two sites claim otherwise.
+- **The "G2 schema" does not exist.** All four of `volatility`,
+  `usefulness_score`, `last_verified`, `verified_by` return **no files** under
+  `src/`. Phase 10 removed this claim from `CLAUDE.md`; architecture.md § 3 is
+  the surviving copy.
+- **§ 5 carries two stale counts** — "nine phases named, none drafted" (it is ten,
+  nine done) and "four test sleeps" (phase 03 corrected it to three).
+- **The stub note itself** — architecture.md § 5's "currently a **stub**"
+  paragraph, whose entire purpose was to be deleted by this phase.
 
-What the prototyping found, and why the spec looks the way it does:
+**The tripwire is `tests/doc_truth.rs`**, following the `tests/bug_tracker.rs`
+idiom: a table of four retired phrases that must not reappear. The spec records
+their pre-edit `grep -c` counts (2, 1, 1, 1) and **requires a reinsertion red
+run**, because a tripwire listing phrases that are already absent would pass
+forever while guarding nothing. The spec is also explicit that this is a
+tripwire for four named claims, not a general drift detector.
 
-- **`bm25()` is negative and more-negative is better** (`-0.000001812` vs
-  `-0.000000798` for the same term), so `ORDER BY bm25(memories)` ascending is
-  best-first. Easy to get backwards.
-- **Double-quoting the *whole* query makes search useless.** Quoting turns the
-  expression into a phrase match, and the caller passes the **entire user turn**
-  (`ftsearch_memories(user_turn, 10, …)`, `memory_prompt.rs:73`). Executed:
-  `MATCH '"how do I tune shared_buffers for postgres?"'` → **0 rows**, against a
-  memory that is literally about that. Per-term quoting joined with `OR` → **1
-  row**. The spec pins per-term construction with a worked example.
-- **`OR` lets noise in and `bm25` handles it** — a relevant doc scored
-  `-0.000003162` against a stopword-only match at `-0.000001903`. So the spec
-  asks for no stopword list; ranking is the mechanism, and the ranking test must
-  assert **order**, not membership.
-- **A fresh install reconciles to exactly 9 rows** (7 knowledge + 2 session).
-  Measured by running `reconcile_index()` in a seeded temp `HOME`, not counted by
-  hand.
-- **The dynamic `IN (…)` clause with `params_from_iter` was compiled and run**
-  before being pasted into the spec; it returned `[("global","k",-1e-6)]`.
+**Deliberately out of scope, because milestone close owns them:** rewriting § 5's
+narrative into a retrospective, ticking the README's exit-criteria checkboxes,
+and setting this file to "none". Phase 09 corrects prose and stops.
 
-**Three design decisions settled in the spec rather than left open:**
+## After phase 09
 
-1. **`fts5_search` gains a `namespaces` parameter** and returns
-   `(namespace, key, score)`. Today it filters nothing, so `limit` is applied
-   before the caller drops out-of-namespace hits — asking for 10 can yield 3 —
-   and `m.key == key` ignores namespace even though phase 07 proved the same key
-   can exist in two.
-2. **Reconcile-on-empty, triggered by row count, not a `Once` latch.** This is
-   the fix for the empty-fresh-install gap phase 07 recorded. A process-global
-   latch would fire in whichever test ran first and leave the rest unreconciled —
-   the same trap that rules out a cached `Connection`.
-3. **Both `#[allow(dead_code)]` come off** — task 2 gives `reconcile_index()` its
-   first production caller. The spec states plainly that nothing is left
-   deliberately unused, which is the lint-gate decision that phases 06 and 07
-   each got wrong in a different way.
+All ten phases will be `done` and M7 hits its boundary — a human gate. Close is
+`/rexymcp:architect`, which writes the retrospective and folds calibration. Three
+things are already queued for it:
+
+1. **Three consecutive phases whose only defects were architect-side** (06
+   `spec_bug`, 07 `spec_bug`, 08 `missing_spec_test` + `false_completion`), against
+   a perfect record for every fact that was *executed* before drafting.
+2. **`tests/isolation.rs` flakiness is a trend** — two occurrences, two different
+   port-binding tests, still unscheduled.
+3. **`epochs.rs:618` hardcodes the category→directory mapping** instead of calling
+   `dir_name()` — correct today, same latent drift phase 10 removed elsewhere.
 
 ## Phase 10 — what landed
 
