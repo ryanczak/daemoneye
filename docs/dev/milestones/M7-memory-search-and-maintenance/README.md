@@ -373,8 +373,13 @@ Phase 08 round 2 was a plain re-dispatch of a test-strength bounce and returned
    **both disproven** by experiment — the kernel does not hand back a
    just-freed ephemeral port on sequential allocation (0/200), and a concurrent
    model of the alloc-close-rebind pattern did not reproduce it either (0/480).
-   The mechanism is still unexplained; do not scope a fix around a guessed
-   cause.
+   **Mechanism confirmed 2026-08-02** with a 100-run baseline: **5 failures /
+   100**, at two sites — `harness/mod.rs:88` (×4, `bind stub server: AddrInUse`)
+   and `isolation.rs:184` (×1). That second site is
+   `assert_ne!(env_a.stub_port(), env_b.stub_port())`, so **two `IsolatedEnv`s
+   were handed the identical port**: the collision itself, not a downstream
+   symptom. `alloc_free_port()` drops its probe listener before returning, so the
+   port is free for the next caller to be given. Scoped as M8 phase 01.
 2. **Exit criterion 8 is only partly met — see the note on that checkbox.**
    Four short real-clock sleeps remain in non-`#[ignore]`d tests, in PTY-write
    helpers (`src/cli/input/tty.rs:370,374`, `src/cli/commands/stream.rs:1265,1268`).
