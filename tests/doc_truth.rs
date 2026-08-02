@@ -27,6 +27,57 @@ const RETIRED_CLAIMS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// (doc path, required substring, why it must be documented)
+///
+/// Checked against the **durable** part of each doc: for `docs/architecture.md`
+/// everything before the milestone roadmap, because that section is rewritten
+/// every milestone and a claim living only there disappears on the next close.
+const REQUIRED_CLAIMS: &[(&str, &str, &str)] = &[
+    (
+        "CLAUDE.md",
+        "daemoneye reindex",
+        "the operator entry point to reconcile_index() must stay documented",
+    ),
+    (
+        "docs/architecture.md",
+        "daemoneye reindex",
+        "the operator entry point to reconcile_index() must stay documented",
+    ),
+];
+
+/// The heading that begins the transient part of `docs/architecture.md`.
+const ROADMAP_HEADING: &str = "## 5. Milestone roadmap";
+
+fn durable_part(doc: &str, text: &str) -> String {
+    if doc == "docs/architecture.md" {
+        match text.find(ROADMAP_HEADING) {
+            Some(i) => text[..i].to_string(),
+            None => panic!("{doc} no longer contains {ROADMAP_HEADING:?}"),
+        }
+    } else {
+        text.to_string()
+    }
+}
+
+#[test]
+fn docs_document_the_reindex_command() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut missing = Vec::new();
+    for (doc, phrase, why) in REQUIRED_CLAIMS {
+        let path = root.join(doc);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+        if !durable_part(doc, &text).contains(phrase) {
+            missing.push(format!("{doc}: missing {phrase:?} — {why}"));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "docs no longer document these:\n{}",
+        missing.join("\n")
+    );
+}
+
 #[test]
 fn docs_do_not_carry_retired_index_claims() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

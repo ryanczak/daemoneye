@@ -52,7 +52,7 @@ reproduced in 300 runs, so there is nothing to fix.
 
 | 02 | [derive-category-dirs](phase-02-derive-category-dirs.md) — derive the memory category dirs from `MemoryCategory` in three places; drop the last real-clock sleep | done        |
 
-| 03 | [document-reindex](phase-03-document-reindex.md) — document `daemoneye reindex` in `CLAUDE.md` and `architecture.md`, and gate it against silent removal | todo |
+| 03 | [document-reindex](phase-03-document-reindex.md) — document `daemoneye reindex` in `CLAUDE.md` and `architecture.md`, and gate it against silent removal | in-progress |
 
 **All three phases are drafted.** Phase 03 is the last in-scope phase.
 

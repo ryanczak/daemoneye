@@ -1,7 +1,7 @@
 # Phase 03: Document `daemoneye reindex`, and gate it
 
 **Milestone:** M10 — Residual Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (`done`)
 **Estimated diff:** ~70 lines — two doc sentences plus a new tripwire test.
 
@@ -253,3 +253,9 @@ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 20:10 (started)
+
+**Executor:** Claude (claude-opus-4-5-20251101)
+
+Implementing phase-03: document `daemoneye reindex` in `CLAUDE.md` and `docs/architecture.md`, and add a tripwire test in `tests/doc_truth.rs`.

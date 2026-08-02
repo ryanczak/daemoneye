@@ -188,7 +188,10 @@ Memory, runbooks, and scripts created inside a *named* session are stamped with
 retroactive backfill on first save. Ghost sessions are excluded. Memory is
 indexed in a SQLite FTS5 database at `var/index/memory.db`, maintained
 best-effort on every add/update/delete and rebuilt by `reconcile_index()`
-whenever the index is found empty. Recall merges three candidate sources — tag
+whenever the index is found empty. To force a rebuild when the index is
+populated but stale, run `daemoneye reindex`; it rebuilds from the memory
+files on disk, reports the row count before and after, and is safe to run
+while the daemon is up because the rebuild is a single transaction. Recall merges three candidate sources — tag
 overlap, one-hop `relates_to` expansion, and BM25-ranked FTS5 hits against the
 user's turn. The grep scan in `src/search.rs` serves the `search_repository`
 tool and is **not** a fallback for recall.
