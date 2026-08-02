@@ -4,7 +4,7 @@
 dependency tree, the path-audit gate, and the bug tracker back to a state that
 does not silently lie.
 
-**Status:** planning
+**Status:** closed 2026-08-02 (nine of ten exit criteria met; see the retrospective for the one that is not)
 
 **Depends on:** M6 (Verification & Hygiene) — closed 2026-07-31.
 
@@ -13,33 +13,42 @@ run at close. One capability (working memory search) and one maintenance axis.
 
 **Exit criteria:**
 
-- [ ] **`fts5_search()` is real.** `src/memory/index.rs` maintains a SQLite FTS5
+- [x] **`fts5_search()` is real.** `src/memory/index.rs` maintains a SQLite FTS5
       index and returns BM25-ranked hits. Verified by a test that stores a memory
       whose *text* matches a query but whose *tags* do not, and asserts recall
       surfaces it — the case that cannot work today.
-- [ ] **The index survives edits.** Adding, updating and deleting a memory keeps
+- [x] **The index survives edits.** Adding, updating and deleting a memory keeps
       the index consistent with the files on disk, verified by a reconciliation
       test rather than by construction order.
-- [ ] **`CLAUDE.md` and `docs/architecture.md` describe the index as it is** once
+- [x] **`CLAUDE.md` and `docs/architecture.md` describe the index as it is** once
       it is real — including removing architecture.md § 5's "currently a stub"
       note, which is accurate today and must not become the next stale claim.
-- [ ] **Every direct dependency is on its latest stable release**, or carries a
+- [x] **Every direct dependency is on its latest stable release**, or carries a
       one-line note in `Cargo.toml` saying why it is pinned back. `cargo build`,
       `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test`
       all green afterwards.
-- [ ] **The path audit sees fenced code blocks.** A stale path inside a fenced
+- [x] **The path audit sees fenced code blocks.** A stale path inside a fenced
       shell command fails the gate. Demonstrated by the mutation, not asserted.
-- [ ] **`agent-runtime-layout.md`'s directory tree is generated, not
+- [x] **`agent-runtime-layout.md`'s directory tree is generated, not
       hand-maintained** — derived from `POLICY_TABLE` / `ensure_dirs()` so it
       cannot drift. Two of M6's three gate escapes were hand-edited tree lines.
-- [ ] **No bug doc is marked `open` while its phase is `done`.** Enforced by a
+- [x] **No bug doc is marked `open` while its phase is `done`.** Enforced by a
       test, not by discipline; the five currently-stale docs are closed as part of
       landing it.
-- [ ] **No real-clock `sleep` in a non-`#[ignore]`d test.** `STANDARDS.md` §3.3
-      already forbids it. **Three** live sites predate the rule (corrected from
-      "four" during phase-03 drafting — the original count came from a text grep
-      that both over- and under-counted; see phase-03 § Current state).
-- [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo
+- [~] **No real-clock `sleep` in a non-`#[ignore]`d test.** **Partly met — not
+      ticked.** Phase 03 removed the three sites it scoped and converted
+      `liveness_is_unresponsive_when_peer_never_replies` to
+      `#[tokio::test(start_paused = true)]`, so its 3 s sleep is virtual. But a
+      close-out audit found **four short real-clock sleeps still in
+      non-`#[ignore]`d tests**, in PTY-write helpers:
+      `src/cli/input/tty.rs:370,374` and `src/cli/commands/stream.rs:1265,1268`
+      (1 ms `thread::sleep` + 10 ms `tokio::time::sleep`, reached from ~9
+      non-ignored `#[tokio::test]`s). Every sleep in `tests/integration.rs` and
+      `tests/isolation.rs` **is** inside an `#[ignore]`d test — verified
+      individually. The phase-03 note that the original grep "both over- and
+      under-counted" appears to have been right about the under-count. Carried
+      forward; see the retrospective.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings` clean; `cargo
       test` green; no regression against the 991 lib + 30 integration + 8
       isolation baseline M6 closed at.
 
@@ -264,3 +273,108 @@ quoted red run proving it does.
 Two `CLAUDE.md` rows were folded in for the same reason (they assert machinery
 `src/memory.rs` does not have — verified claim by claim), on the grounds that
 one doc-truth phase beats three.
+
+## M7 retrospective — closed 2026-08-02
+
+Ten phases, all `done`. Final gates: **1032 lib + 30 integration (2 ignored) +
+8 isolation (1 ignored) + 6 bug_tracker + 1 doc_truth**, clippy clean,
+`cargo fmt --all --check` clean, working tree clean, no bug doc `open`.
+
+### Verdicts
+
+| Phase | Verdict | Bounce cause |
+|---|---|---|
+| 01 dependency-currency | approved_first_try | — |
+| 02 bug-tracker-truth | approved_first_try | — |
+| 03 test-sleep-removal | approved_first_try | — |
+| 04 path-audit-fenced-blocks | approved_after_1 | `scope_deviation` — dropped a guard while rewriting |
+| 05 generated-runtime-tree | approved_first_try | — |
+| 06 fts5-index-schema | approved_after_1 | **`spec_bug`** |
+| 07 fts5-write-path | escalated (resume) | **`spec_bug`** — a 90-turn `hard_fail` |
+| 08 fts5-search | approved_after_2 | **`missing_spec_test`** + **`false_completion`** |
+| 09 index-doc-correction | approved_first_try | — |
+| 10 tree-and-doc-truth | approved_first_try | — |
+
+Six of ten landed first try. **Every defect in phases 06–08 was architect-side.**
+
+### The one lesson worth carrying
+
+The correlation across all ten phases is stark, and it is not about the model.
+
+**Every spec fact that was executed against the real system before drafting was
+implemented correctly and needed no correction** — the two candidate extraction
+rules (04), the tree renderer's byte-for-byte output and all 15 policy-path
+matches (05), the FTS5 DDL and the absence of `ON CONFLICT` on a virtual table
+(06), descendant-module privacy and namespace enumeration (07), `bm25`'s sign
+and the phrase-vs-per-term measurement (08), the eager/lazy split and the
+`incidents` plural (10), the four `grep -c` counts (09).
+
+**Every defect came from the parts written from assumption:**
+
+- 06's bounce: the spec said "use a temp `HOME`" and pointed at a pattern
+  without naming `tempfile::tempdir()`. The executor used a fixed `/tmp` path —
+  compliant with the letter — which silently disabled a test's only assertion on
+  warm runs.
+- 07's `hard_fail`: the spec required deleting the `dead_code` allow *and*
+  leaving `reconcile_index()` uncalled. Both cannot hold. The executor spent 60
+  read-only calls searching for a caller it had been forbidden to create.
+- 07 again: the E2E block asserted the `.db` exists after `setup`. It does not.
+  The executor caught it and said so.
+- 08's bounce: the spec *named* both false-success modes and then pointed at
+  tests that could not detect either — every search test used a single-token
+  query, where phrase quoting and per-term `OR` are indistinguishable.
+
+> **Do not assert a fact about the system in a spec unless it was executed.**
+>
+> **Corollary (from 08): naming a false-success mode is worthless unless the
+> guard is checked against it.** A spec that names a mutation must state the
+> fixture property that makes the mutation detectable — "the query's words must
+> not be adjacent in the target memory", "insertion order must not equal rank
+> order".
+
+A second, narrower lesson, twice-earned: **a phase that deliberately lands code
+for a later phase collides with the deny-warnings gate**, and the spec must say
+how. 06 was silent about it; 07 answered it inconsistently.
+
+And one procedural one: **a green bounce always needs a refined re-dispatch.**
+Phase 08 round 2 was a plain re-dispatch of a test-strength bounce and returned
+`complete` with an empty diff after 23 turns — the documented pathology, which
+`WORKFLOW.md` already warns about and which this architect walked into anyway.
+
+### What the milestone actually shipped
+
+- **Memory search works.** BM25-ranked FTS5 over `var/index/memory.db`,
+  maintained best-effort on every write, with `reconcile_index()` covering the
+  fresh-install case where seeded memories bypass the mutators entirely.
+- **Four gates that did not exist before**: fenced-block path auditing, the
+  rendered runtime tree with a byte-for-byte asset check, the per-category
+  `POLICY_TABLE` cross-check, and the bug-tracker truth gate — plus
+  `tests/doc_truth.rs` guarding four retired doc claims.
+- **Three latent defects found and fixed while doing the above**: incident
+  memories never got a `session_origin` stamp (`memory/incident/` never
+  existed); the tree documented a directory that could not exist; and
+  `CLAUDE.md` described locking, capping, masking and a "G2 schema" that
+  `src/memory.rs` does not have.
+
+### Carried forward — none of these are scheduled
+
+1. **`tests/isolation.rs` is flaky — a trend, not a one-off.** Two occurrences
+   in two different port-binding tests (`hooks_land_on_private_server` during
+   phase-04 review; `stub_returns_canned_response_via_make_client` during
+   phase-06's run), both `AddrInUse`-shaped, both green on re-run, both ruled out
+   as the phase's doing. Wants ephemeral-port allocation or serialised
+   port-binding tests.
+2. **Exit criterion 8 is only partly met — see the note on that checkbox.**
+   Four short real-clock sleeps remain in non-`#[ignore]`d tests, in PTY-write
+   helpers (`src/cli/input/tty.rs:370,374`, `src/cli/commands/stream.rs:1265,1268`).
+   Phase 03 removed the three sites it scoped and converted the liveness test to
+   tokio's paused clock; these four were outside that scope and are still there.
+3. **`src/daemon/context/epochs.rs:618` hardcodes the category→directory
+   mapping** instead of calling `dir_name()`. Correct today; the same latent
+   drift phase 10 removed from `session_store.rs`.
+4. **`tree_block_of` has a loose error contract** — an unterminated fence returns
+   `Some` where phase 05's spec said `None`. No reachable consequence.
+5. **The phase-04 fence toggle is a flip-flop, not a nesting parser.** Harmless
+   while `audit-prompts` only scans installed assets.
+6. **`reconcile_index()` has no operator-facing entry point.** It runs on an
+   empty index; a `reindex` subcommand or a startup hook was deferred twice.
