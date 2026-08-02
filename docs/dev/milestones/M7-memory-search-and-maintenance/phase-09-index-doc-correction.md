@@ -1,7 +1,7 @@
 # Phase 09: Index Doc Correction
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** review
+**Status:** done
 **Depends on:** phase-08 (fts5-search, done) — the phase that made these docs
 wrong.
 **Estimated diff:** ~90 lines — five prose sites across two docs, plus one new
@@ -531,3 +531,78 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9734aa0f4fd47f0d217a832c02ec80154981fce6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** see "The one spec habit that worked every time" below.
+
+**Independent verification at review:**
+
+- Four gates re-run separately, all green: `fmt --check` clean, `build` zero
+  warnings, `clippy --all-targets --all-features -- -D warnings` exit 0,
+  `cargo test` at lib **1032** (unchanged, as specified) / `bug_tracker` **6** /
+  **`doc_truth` 1** (new binary) / integration **30** (2 ignored) / isolation
+  **8** (1 ignored).
+- **No `src/` file changed.** The phase touched `CLAUDE.md`,
+  `docs/architecture.md`, the milestone README's status row, its own doc, and the
+  new `tests/doc_truth.rs` — nothing else.
+- All four retired phrases now `grep -c` to **0**, as does `G2 schema` in
+  `docs/architecture.md`. The corrected claims are present:
+  `var/index/memory.db` ×2 in architecture.md, `BM25-ranked` ×1 in `CLAUDE.md`.
+
+**The tripwire is armed — all four entries, not just one.** The executor
+demonstrated the reinsertion red run for one phrase; the reviewer ran it for
+**every** table entry independently, reinserting each and reverting:
+
+```
+docs/architecture.md: retired claim "grep fallback" — there is no grep fallback for recall…
+docs/architecture.md: retired claim "currently a **stub**" — src/memory/index.rs is a real FTS5 index
+CLAUDE.md: retired claim "grep scan in `src/search.rs`. Un-stubbing" — the index is no longer a stub
+CLAUDE.md: retired claim "returns an empty `Vec`" — fts5_search returns BM25-ranked hits
+```
+
+Each fires and names its own phrase. Confirmed against the pre-phase tree
+(`git show 657215c`) that all four were genuinely present before the edits — a
+table listing already-absent phrases would pass forever while guarding nothing,
+which was this phase's named false-success mode.
+
+**The § 5 overreach did not happen.** The block keeps its narrative, with only
+the two counts corrected (ten phases / nine `done`; three test sleeps) and the
+spent stub note deleted. Rewriting it into a retrospective was the plausible
+failure here and the spec's prohibition held.
+
+**One observation, not a finding.** § 5 now reads "nine `done`, one remaining" —
+true as written, since this phase is the one remaining until it is approved.
+Milestone close owns that block's rewrite and will settle it.
+
+`tests/doc_truth.rs`'s single `unwrap_or_else(|e| panic!(…))` is on a file read
+in test code; that is the normal shape for a repo-hygiene gate that cannot
+proceed without the doc.
+
+#### Calibration — the one spec habit that worked every time
+
+M7 ran ten phases. The record on **executed** spec facts is perfect: every claim
+this architect verified against the real system before drafting — the two
+candidate extraction rules, the tree renderer's byte-for-byte output, the FTS5
+DDL and upsert semantics, the descendant-module privacy rule, `bm25`'s sign and
+ordering, the phrase-vs-per-term measurement, the 9-row fresh install, the
+eager/lazy split, and this phase's four `grep -c` counts — was implemented
+correctly and needed no correction.
+
+Every defect in the milestone's last four phases came from the parts written
+from assumption instead: 06's test idiom, 07's allow/out-of-scope contradiction
+and its `.db`-exists claim, 08's two false-success guards. The rule is narrow
+enough to state in one line and it is the milestone's main lesson:
+
+> **Do not assert a fact about the system in a spec unless it was executed.**
+
+The corollary 08 added: **naming a false-success mode is worthless unless the
+guard is checked against it.** A spec that names a mutation should state the
+fixture property that makes the mutation detectable.
+
+Both belong in the milestone retrospective, which is the human-gated close step
+and not this phase's to write.

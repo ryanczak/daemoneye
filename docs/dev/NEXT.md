@@ -1,14 +1,12 @@
 # NEXT
 
-**Active phase: M7 phase-09 — index-doc-correction** (`todo`, drafted
-2026-08-01). **This is M7's last in-scope phase.**
+**Phase 09 is `done` (approved_first_try). All ten M7 phases are now `done`.**
 
-Doc: `docs/dev/milestones/M7-memory-search-and-maintenance/phase-09-index-doc-correction.md`
-
-Dispatch with `/rexymcp:dispatch phase-09`.
-
-**Phase 08 is `done`** (approved_after_2) — BM25-ranked memory search is live,
-which is what makes the docs wrong and this phase owed.
+**The milestone is at its boundary — a human gate.** Run `/rexymcp:architect` to
+close it: write the retrospective, fold the calibration lessons, and set this
+file's active phase to "none". **That has deliberately not been done here** —
+the review step does not write retrospectives or close milestones, so this
+pointer is left mid-state on purpose rather than by oversight.
 
 ## Phase 09 — what it is
 
