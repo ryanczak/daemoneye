@@ -380,12 +380,36 @@ mod tests {
         }
     }
 
+    /// How long a test will wait for `read_key` before declaring the read starved.
+    ///
+    /// Generous on purpose: it is only ever paid when something is already broken,
+    /// so a slow machine must not trip it.
+    const KEY_READ_BOUND: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// `read_key`, but a starved read panics instead of hanging the suite.
+    ///
+    /// `read_key`'s first `read_byte()` is deliberately unbounded — production
+    /// awaits it in a `select!` while the user thinks. That is correct there and
+    /// fatal here: a regression that stops bytes reaching it would hang CI rather
+    /// than fail it.
+    async fn read_key_bounded(stdin: &AsyncStdin) -> Option<Key> {
+        read_key_within(stdin, KEY_READ_BOUND).await
+    }
+
+    /// `read_key_bounded` with an explicit bound, so the guard itself is testable.
+    async fn read_key_within(stdin: &AsyncStdin, bound: std::time::Duration) -> Option<Key> {
+        match tokio::time::timeout(bound, read_key(stdin)).await {
+            Ok(key) => key,
+            Err(_) => panic!("read_key did not return within {bound:?} — no byte reached it"),
+        }
+    }
+
     #[tokio::test]
     async fn read_key_bare_cr_yields_enter() {
         let (stdin, write_file) = make_pipe_stdin();
         // Write a bare CR
         write_bytes(&write_file, b"\r").await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(key, Some(Key::Enter), "bare CR should yield Enter");
     }
 
@@ -393,7 +417,7 @@ mod tests {
     async fn read_key_bare_lf_yields_enter() {
         let (stdin, write_file) = make_pipe_stdin();
         write_bytes(&write_file, b"\n").await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(key, Some(Key::Enter), "bare LF should yield Enter");
     }
 
@@ -402,7 +426,7 @@ mod tests {
         let (stdin, write_file) = make_pipe_stdin();
         // Alt+Enter: ESC followed by CR
         write_bytes(&write_file, &[0x1b, b'\r']).await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(
             key,
             Some(Key::CtrlJ),
@@ -415,7 +439,7 @@ mod tests {
         let (stdin, write_file) = make_pipe_stdin();
         // Alt+Enter: ESC followed by LF
         write_bytes(&write_file, &[0x1b, b'\n']).await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(
             key,
             Some(Key::CtrlJ),
@@ -432,7 +456,7 @@ mod tests {
             b'0', b'1', b'~',
         ];
         write_bytes(&write_file, &payload).await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert!(
             matches!(&key, Some(Key::Paste(s)) if s == "hello"),
             "bracketed paste should yield Paste(\"hello\"), got: {:?}",
@@ -449,7 +473,7 @@ mod tests {
             b'n', b'e', b'2', 0x1b, b'[', b'2', b'0', b'1', b'~',
         ];
         write_bytes(&write_file, &payload).await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert!(
             matches!(&key, Some(Key::Paste(s)) if s == "line1\nline2"),
             "multiline bracketed paste should yield Paste(\"line1\\nline2\"), got: {:?}",
@@ -466,7 +490,7 @@ mod tests {
             b'~',
         ];
         write_bytes(&write_file, &payload).await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         // Should be a single Paste, not Enter
         assert!(
             matches!(&key, Some(Key::Paste(s)) if s == "a\nb"),
@@ -479,7 +503,7 @@ mod tests {
     async fn read_key_backspace() {
         let (stdin, write_file) = make_pipe_stdin();
         write_bytes(&write_file, b"\x7f").await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(key, Some(Key::Backspace));
     }
 
@@ -487,7 +511,7 @@ mod tests {
     async fn read_key_arrow_up() {
         let (stdin, write_file) = make_pipe_stdin();
         write_bytes(&write_file, &[0x1b, b'[', b'A']).await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(key, Some(Key::Up));
     }
 
@@ -495,7 +519,17 @@ mod tests {
     async fn read_key_char() {
         let (stdin, write_file) = make_pipe_stdin();
         write_bytes(&write_file, b"x").await;
-        let key = read_key(&stdin).await;
+        let key = read_key_bounded(&stdin).await;
         assert_eq!(key, Some(Key::Char('x')));
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "read_key did not return within")]
+    async fn read_key_within_panics_when_no_byte_ever_arrives() {
+        // `_write_file` MUST stay bound: holding the pipe's write end open is what
+        // makes the read block. Dropping it closes the pipe and `read_key` returns
+        // `None` at once (EOF), which would pass this test for the wrong reason.
+        let (stdin, _write_file) = make_pipe_stdin();
+        let _ = read_key_within(&stdin, std::time::Duration::from_millis(50)).await;
     }
 }

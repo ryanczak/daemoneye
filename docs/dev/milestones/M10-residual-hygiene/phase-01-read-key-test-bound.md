@@ -1,7 +1,7 @@
 # Phase 01: Bound `read_key` in the tty tests
 
 **Milestone:** M10 — Residual Hygiene
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none (first phase of M10; M9 closed 2026-08-02)
 **Estimated diff:** ~45 lines, all inside the `#[cfg(test)] mod tests` block of
 `src/cli/input/tty.rs`. **No production code changes.**
@@ -249,3 +249,9 @@ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 17:11 (started)
+
+**Executor:** Claude executor
+
+Added `read_key_bounded` and `read_key_within` helpers, routed all 10 existing test call sites through `read_key_bounded`, and added `read_key_within_panics_when_no_byte_ever_arrives` guard test.
