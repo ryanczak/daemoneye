@@ -135,8 +135,8 @@ runtime via `/model`.
   the *only* place that shells out to `tmux`.
 - **Persistence** — `scheduler.rs` (`ScheduleStore`, atomic JSON),
   `scripts.rs` (script CRUD, chmod 700, sudoers install), `runbook.rs` (TOML
-  runbooks), `session_store.rs` (named-session persistence), `memory/` (CRUD +
-  FTS5 index with grep fallback), `config.rs` (`~/.daemoneye/config.toml`),
+  runbooks), `session_store.rs` (named-session persistence), `memory/` (CRUD + a SQLite
+  FTS5 index at `var/index/memory.db`), `config.rs` (`~/.daemoneye/config.toml`),
   `header.rs` (artifact frontmatter / comment-header injection).
 - **`agents/`** — named agents: config CRUD, `ToolPolicy` (allow/deny tool
   lists), and the mailbox for agent-to-agent delegation.
@@ -186,7 +186,12 @@ a synthetic tool error).
 Memory, runbooks, and scripts created inside a *named* session are stamped with
 `session_origin` frontmatter and tracked on the session; unnamed sessions get a
 retroactive backfill on first save. Ghost sessions are excluded. Memory is
-indexed in an FTS5 SQLite db with a grep fallback for search.
+indexed in a SQLite FTS5 database at `var/index/memory.db`, maintained
+best-effort on every add/update/delete and rebuilt by `reconcile_index()`
+whenever the index is found empty. Recall merges three candidate sources — tag
+overlap, one-hop `relates_to` expansion, and BM25-ranked FTS5 hits against the
+user's turn. The grep scan in `src/search.rs` serves the `search_repository`
+tool and is **not** a fallback for recall.
 
 ### 2.4 Remote-host execution model
 
@@ -299,8 +304,8 @@ speculation.
   context, pipe-pane logging.
 - **Foreground/background execution** — hook-based completion, PID-based local
   completion, respawn-pane retry, persistent background windows.
-- **Knowledge system** — runbooks, persistent memory (with FTS5 index, G2
-  schema, and per-agent namespacing), repository search, named agents with tool
+- **Knowledge system** — runbooks, persistent memory (with a BM25-ranked FTS5
+  index and per-agent namespacing), repository search, named agents with tool
   policies and persistent briefings.
 - **Scheduled operations** — `Once` / `Every` / `Cron` jobs with `Alert` /
   `Script` / `Ghost` actions; the unattended (Level 3) tier of the trust
@@ -394,16 +399,10 @@ phase; the milestone retrospective and close belong to the human gate.
 ### Active milestone — M7 Memory Search & Maintenance
 
 Scoped 2026-07-31 (PE sign-off). Milestone README:
-`docs/dev/milestones/M7-memory-search-and-maintenance/README.md` (nine phases
-named, none drafted). Goal: make memory recall match what the user actually said,
-and drain M6's carried-forward maintenance list. The FTS5 note below is the
-milestone's headline item — it is accurate today and M7 exists to make it stale.
-Also in scope: dependency currency, the path-audit gate's blindness to fenced
-code blocks, a generated runtime-layout tree, a bug-tracker truth gate, and four
-test sleeps that predate STANDARDS 3.3. Adding a SQLite dependency is a PE
-decision gating the FTS5 phases; phases 01-05 do not depend on it.
-
-One correction recorded during M4 scoping: the FTS5 memory index described in
-§1.4 / "Knowledge system" is currently a **stub** (`src/memory/index.rs`
-returns empty; real search is the grep scan in `src/search.rs`). Un-stubbing
-it is future work noted in the M4 design doc §8.
+`docs/dev/milestones/M7-memory-search-and-maintenance/README.md` (ten phases
+named, nine `done`, one remaining). Goal: make memory recall match what the user
+actually said, and drain M6's carried-forward maintenance list. Also in scope:
+dependency currency, the path-audit gate's blindness to fenced code blocks, a
+generated runtime-layout tree, a bug-tracker truth gate, and three test sleeps
+that predate STANDARDS 3.3. Adding a SQLite dependency is a PE decision gating
+the FTS5 phases; phases 01-05 do not depend on it.

@@ -1,7 +1,7 @@
 # Phase 09: Index Doc Correction
 
 **Milestone:** M7 — Memory Search & Maintenance
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-08 (fts5-search, done) — the phase that made these docs
 wrong.
 **Estimated diff:** ~90 lines — five prose sites across two docs, plus one new
@@ -339,3 +339,57 @@ even when every claim in it is true.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-02 03:13 (started)
+
+**Executor:** model executor
+
+Corrected five prose sites across `docs/architecture.md` and `CLAUDE.md` to
+reflect the real FTS5 memory index that phase 08 shipped. Created
+`tests/doc_truth.rs` tripwire to prevent these specific retired claims from
+returning.
+
+### Update — 2026-08-02 03:13 (end-to-end verification)
+
+```
+=== retired claims are gone ===
+0
+grep-fallback-count-above-must-be-0
+0
+stub-note-count-above-must-be-0
+0
+unstubbing-count-above-must-be-0
+0
+g2-schema-count-above-must-be-0
+=== the corrected claims are present ===
+2
+archdoc-mentions-the-db-above-must-be-at-least-1
+1
+claudemd-mentions-bm25-above-must-be-at-least-1
+=== no src/ changes ===
+0
+src-files-changed-above-must-be-0
+=== the gate ===
+test docs_do_not_carry_retired_index_claims ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+=== full gate ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy-exit=0
+test result: ok. 1032 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.30s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Reinsertion red run: temporarily added "grep fallback" back into
+`docs/architecture.md` § 3. The gate correctly failed:
+
+```
+docs/architecture.md: retired claim "grep fallback" — there is no grep fallback
+for recall; src/search.rs backs search_repository
+```
+
+Reverted the reinsertion; gate passes clean again.
