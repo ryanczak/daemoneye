@@ -50,7 +50,7 @@ reproduced in 300 runs, so there is nothing to fix.
 |----|-------|--------|
 | 01 | [read-key-test-bound](phase-01-read-key-test-bound.md) — bound `read_key` in the tty tests so starvation fails instead of hanging | done        |
 
-| 02 | [derive-category-dirs](phase-02-derive-category-dirs.md) — derive the memory category dirs from `MemoryCategory` in three places; drop the last real-clock sleep | in-progress |
+| 02 | [derive-category-dirs](phase-02-derive-category-dirs.md) — derive the memory category dirs from `MemoryCategory` in three places; drop the last real-clock sleep | review      |
 
 **Phase 03 is not yet drafted.** It is the docs pass for item 4.
 
