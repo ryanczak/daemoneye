@@ -396,14 +396,16 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
-### Active milestone — M9 Operator Tooling
+### Active milestone — none
 
-Scoped 2026-08-02 (PE sign-off). Milestone README:
-`docs/dev/milestones/M9-operator-tooling/README.md` (one phase). Goal: give the
-operator a way to repair the memory index. `reconcile_index()` exists and has a
-single caller that fires only when the index is empty, so a *stale* index — rows
-present but wrong — is currently unreachable and unfixable short of deleting
-`var/index/memory.db` by hand. `daemoneye reindex` closes that.
+**M9 — Operator Tooling closed 2026-08-02**, one phase, `approved_first_try`.
+`daemoneye reindex` rebuilds the memory index from the files on disk and reports
+the row count before and after. It needs no daemon, tolerates a bare `$HOME`, and
+is idempotent. The rebuild is a single transaction, so it is safe to run while the
+daemon is serving searches. This closed the last carried item with user-facing
+weight: `reconcile_index()` previously had one caller that fired only when the
+index was empty, leaving a *stale* index unreachable and unfixable short of
+deleting `var/index/memory.db` by hand.
 
 **M8 — Test Suite Reliability closed 2026-08-02**, two phases. The isolation
 suite went from a measured **5 failures / 100 runs** to **0 / 300**: the test
@@ -416,3 +418,7 @@ criterion.
 memory search real (BM25-ranked FTS5 over `var/index/memory.db`, maintained on
 every write, with `reconcile_index()` covering the fresh-install case), landed
 four drift gates, and fixed three latent defects found along the way.
+
+No milestone is scoped. Remaining known items are listed in `docs/dev/NEXT.md`;
+the heaviest is that `read_key` has no timeout, so a regression hangs the tty
+tests instead of failing them.
