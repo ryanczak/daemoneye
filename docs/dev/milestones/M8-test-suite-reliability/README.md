@@ -44,7 +44,7 @@ and the diagnosis then arrived anyway during scoping (see Notes).
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [port-lifetime](phase-01-port-lifetime.md) — hold the probe listener until its consumer takes over; verify 0/100 against a measured 5/100 baseline | in-progress |
+| 01 | [port-lifetime](phase-01-port-lifetime.md) — hold the probe listener until its consumer takes over; verify 0/100 against a measured 5/100 baseline | review      |
 | 02 | test-sleep-removal-2 — the four real-clock sleeps in `tty.rs` and `stream.rs`; finishes M7's exit criterion 8 | todo |
 
 Phase 02 is named only. Draft it with `/rexymcp:architect next` when 01 is
