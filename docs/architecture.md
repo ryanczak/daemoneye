@@ -396,7 +396,16 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
-### Active milestone — none
+### Active milestone — M10 Residual Hygiene
+
+Scoped 2026-08-02 (PE sign-off). Milestone README:
+`docs/dev/milestones/M10-residual-hygiene/README.md`. It clears the four carried
+items M7, M8 and M9 left behind: the tty tests hang rather than fail when
+`read_key` is starved; one real-clock sleep remains in a spawned test task;
+`epochs.rs` hardcodes the memory category→directory map instead of deriving it
+from `MemoryCategory`; and `daemoneye reindex` is undocumented in the
+project-level docs. None is user-visible — each is a way the codebase can mislead
+someone later.
 
 **M9 — Operator Tooling closed 2026-08-02**, one phase, `approved_first_try`.
 `daemoneye reindex` rebuilds the memory index from the files on disk and reports
@@ -410,15 +419,9 @@ deleting `var/index/memory.db` by hand.
 **M8 — Test Suite Reliability closed 2026-08-02**, two phases. The isolation
 suite went from a measured **5 failures / 100 runs** to **0 / 300**: the test
 harness's port allocator released each probe listener before its consumer bound
-the port. It now holds the listener until hand-off. The four real-clock sleeps in
-non-`#[ignore]`d tests were also removed, satisfying M7's one partly-met exit
-criterion.
+the port. It now holds the listener until hand-off.
 
 **M7 — Memory Search & Maintenance closed 2026-08-02**, ten phases. It made
 memory search real (BM25-ranked FTS5 over `var/index/memory.db`, maintained on
 every write, with `reconcile_index()` covering the fresh-install case), landed
 four drift gates, and fixed three latent defects found along the way.
-
-No milestone is scoped. Remaining known items are listed in `docs/dev/NEXT.md`;
-the heaviest is that `read_key` has no timeout, so a regression hangs the tty
-tests instead of failing them.
