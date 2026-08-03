@@ -1,5 +1,12 @@
-//! Repo-hygiene gate: fail when a doc reintroduces a claim about the memory
-//! index that stopped being true when FTS5 search landed.
+//! Repo-hygiene gates over the project's prose documentation. Three kinds:
+//!
+//! - **Retired claims** — strings that stopped being true and must not come
+//!   back (originally the memory-index claims that FTS5 search invalidated).
+//! - **Required claims** — facts that must stay documented, checked against the
+//!   *durable* part of each doc so a mention surviving only in a transient
+//!   milestone section does not count.
+//! - **Structural** — `CLAUDE.md`'s AI-tools table is cross-referenced against
+//!   the real `TOOLS` table, so it cannot silently fall behind the code.
 
 use std::path::Path;
 
@@ -65,6 +72,9 @@ const REQUIRED_CLAIMS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// The heading that opens the AI-tools table in `CLAUDE.md`.
+const TOOLS_HEADING: &str = "### Current AI tools";
+
 /// The heading that begins the transient part of `docs/architecture.md`.
 const ROADMAP_HEADING: &str = "## 5. Milestone roadmap";
 
@@ -114,5 +124,129 @@ fn docs_do_not_carry_retired_index_claims() {
         findings.is_empty(),
         "retired index claims are back in the docs:\n{}",
         findings.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CLAUDE.md § "Current AI tools" must mirror the real `TOOLS` table
+// ---------------------------------------------------------------------------
+//
+// This drifted twice: the table sat nine tools behind the code, and it grouped
+// `write_script / read_script / …` into one row when the write side is core and
+// the read side is deferred — a shape that cannot express the truth.
+//
+// The check links against `daemoneye::ai::tools::TOOLS` rather than parsing
+// `defs.rs`, so the code side of the comparison cannot itself go stale.
+
+/// The section of `CLAUDE.md` between the tools heading and the next `## `.
+fn tools_section(text: &str) -> &str {
+    let start = text
+        .find(TOOLS_HEADING)
+        .unwrap_or_else(|| panic!("CLAUDE.md no longer contains {TOOLS_HEADING:?}"));
+    let rest = &text[start + TOOLS_HEADING.len()..];
+    match rest.find("\n## ") {
+        Some(i) => &rest[..i],
+        None => rest,
+    }
+}
+
+/// `(tool name, Loaded cell)` for every table row. The Loaded cell is unwrapped
+/// from any `**bold**` emphasis so `**agents**` and `core` compare alike.
+fn documented_tools(section: &str) -> Vec<(String, String)> {
+    section
+        .lines()
+        .filter(|l| l.starts_with("| `"))
+        .filter_map(|l| {
+            let cells: Vec<&str> = l.split('|').collect();
+            // ["", " `name` ", " loaded ", " description ", ""]
+            if cells.len() < 4 {
+                return None;
+            }
+            let name = cells[1].trim().trim_matches('`').to_string();
+            let loaded = cells[2].trim().trim_matches('*').trim().to_string();
+            Some((name, loaded))
+        })
+        .collect()
+}
+
+#[test]
+fn claude_md_tools_table_matches_the_code() {
+    use daemoneye::ai::tools::TOOLS;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(root.join("CLAUDE.md")).expect("reading CLAUDE.md");
+    let section = tools_section(&text);
+    let documented = documented_tools(section);
+
+    let mut problems = Vec::new();
+
+    // Duplicate rows would let a wrong row hide behind a right one.
+    let mut seen = std::collections::BTreeSet::new();
+    for (name, _) in &documented {
+        if !seen.insert(name.clone()) {
+            problems.push(format!("{name}: listed more than once"));
+        }
+    }
+
+    let documented: std::collections::BTreeMap<_, _> = documented.into_iter().collect();
+    let actual: std::collections::BTreeMap<String, String> = TOOLS
+        .iter()
+        .map(|t| {
+            (
+                t.name.to_string(),
+                t.deferred_group.unwrap_or("core").to_string(),
+            )
+        })
+        .collect();
+
+    for (name, group) in &actual {
+        match documented.get(name) {
+            None => problems.push(format!(
+                "{name}: in TOOLS but missing from the CLAUDE.md table (Loaded = {group})"
+            )),
+            Some(doc_group) if doc_group != group => problems.push(format!(
+                "{name}: table says Loaded = {doc_group:?}, code says {group:?}"
+            )),
+            Some(_) => {}
+        }
+    }
+    for name in documented.keys() {
+        if !actual.contains_key(name) {
+            problems.push(format!(
+                "{name}: in the CLAUDE.md table but not in TOOLS — renamed or removed?"
+            ));
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "CLAUDE.md § \"Current AI tools\" is out of sync with src/ai/tools/defs.rs:\n{}\n\
+         \nThe table must list every tool with a Loaded value matching \
+         ToolDef.deferred_group (`core` for None, else the group name).",
+        problems.join("\n")
+    );
+}
+
+#[test]
+fn claude_md_tools_table_counts_are_accurate() {
+    use daemoneye::ai::tools::TOOLS;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(root.join("CLAUDE.md")).expect("reading CLAUDE.md");
+    let section = tools_section(&text);
+
+    let total = TOOLS.len();
+    let core = TOOLS.iter().filter(|t| t.deferred_group.is_none()).count();
+    let deferred = total - core;
+
+    // The prose above the table states these three numbers. A stale count is
+    // the exact defect that put "six built-in knowledge memory files" in the
+    // README while seven were seeded.
+    let expected = format!("**{total} tools: {core} core + {deferred} deferred.**");
+    assert!(
+        section.contains(&expected),
+        "CLAUDE.md § \"Current AI tools\" must state the real counts.\n\
+         expected to find: {expected}\n\
+         TOOLS currently holds {total} tools ({core} core, {deferred} deferred)."
     );
 }
