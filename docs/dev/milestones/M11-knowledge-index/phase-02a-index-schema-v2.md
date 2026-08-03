@@ -1,7 +1,7 @@
 # Phase 02a: Index schema v2 — all tables, plus the stored-content corpora
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced at review — see `bugs/bug-02a-1.md`)
 **Depends on:** phase-01 (done — write-time masking, so epoch text is safe to index)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
