@@ -1774,12 +1774,7 @@ mod tests {
 
     #[test]
     fn test_append_epoch_masks_narrative_tally_and_artifacts() {
-        let _guard = crate::test_home_guard();
-        let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-        }
+        let env = setup_test_env();
 
         let canary = "AKIAIOSFODNN7EXAMPLE";
         let rec = EpochRecord {
@@ -1800,7 +1795,7 @@ mod tests {
         };
         append_epoch("mask-test", &rec);
 
-        let path = tmp
+        let path = env
             .path()
             .join(".daemoneye")
             .join("var/log/sessions")
@@ -1819,24 +1814,11 @@ mod tests {
         let epochs = read_epochs("mask-test");
         assert_eq!(epochs.len(), 1);
         assert!(epochs[0].narrative.as_ref().unwrap().contains("<AWS_KEY>"));
-
-        // Restore HOME
-        unsafe {
-            match saved {
-                Some(h) => std::env::set_var("HOME", h),
-                None => std::env::remove_var("HOME"),
-            }
-        }
     }
 
     #[test]
     fn test_append_epoch_preserves_structure() {
-        let _guard = crate::test_home_guard();
-        let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", tmp.path());
-        }
+        let env = setup_test_env();
 
         let rec = EpochRecord {
             kind: "turn".to_string(),
@@ -1858,7 +1840,7 @@ mod tests {
 
         append_epoch("struct-test", &rec);
 
-        let path = tmp
+        let path = env
             .path()
             .join(".daemoneye")
             .join("var/log/sessions")
@@ -1878,13 +1860,5 @@ mod tests {
         assert_eq!(parsed["seq"], 42);
         assert_eq!(parsed["turn_start"], 1);
         assert_eq!(parsed["turn_end"], 3);
-
-        // Restore HOME
-        unsafe {
-            match saved {
-                Some(h) => std::env::set_var("HOME", h),
-                None => std::env::remove_var("HOME"),
-            }
-        }
     }
 }

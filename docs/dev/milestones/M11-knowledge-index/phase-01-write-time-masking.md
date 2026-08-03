@@ -452,3 +452,41 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 2cabf1ed1312153dcf272aa713dd7eaa8acf02da
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-03 17:49 (end-to-end verification)
+
+**Test output (`/tmp/phase01-tests.txt`):**
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 6 tests
+test ai::filter::tests::test_mask_json_value_leaves_keys_and_non_strings ... ok
+test ai::filter::tests::test_mask_json_value_masks_nested_string_values ... ok
+test daemon::context::epochs::tests::test_append_epoch_masks_narrative_tally_and_artifacts ... ok
+test daemon::context::epochs::tests::test_append_epoch_preserves_structure ... ok
+test daemon::utils::event_log::tests::test_log_event_masks_caller_fields ... ok
+test daemon::utils::event_log::tests::test_log_event_leaves_daemon_fields_and_numbers ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1038 filtered out; finished in 0.01s
+
+exit=0
+```
+
+**Writer grep (`/tmp/phase01-writers.txt`):**
+
+```
+src/daemon/context/epochs.rs:91:    let path = epochs_file(id);
+src/daemon/context/epochs.rs:115:    let path = epochs_file(id);
+src/daemon/utils/event_log.rs:15:    let path = crate::config::current_event_segment_path();
+src/daemon/utils/event_log.rs:516:            let seg = crate::config::current_event_segment_path();
+src/daemon/utils/event_log.rs:537:            let seg = crate::config::current_event_segment_path();
+src/daemon/utils/event_log.rs:549:            let seg = crate::config::current_event_segment_path();
+src/daemon/utils/event_log.rs:568:            let seg = crate::config::current_event_segment_path();
+src/daemon/utils/event_log.rs:588:            let seg = crate::config::current_event_segment_path();
+src/daemon/utils/event_log.rs:615:            let seg = crate::config::current_event_segment_path();
+exit=0
+```
+
+All 6 new tests pass. Writer grep confirms write uses only in `event_log.rs` and `epochs.rs`.
