@@ -10,6 +10,8 @@
 pub fn log_event(event: &str, mut fields: serde_json::Value) {
     use std::io::Write;
 
+    crate::ai::mask_json_value(&mut fields);
+
     let path = crate::config::current_event_segment_path();
     let ts = chrono::Utc::now().to_rfc3339();
 
@@ -568,6 +570,55 @@ mod tests {
             let line = content.lines().next().unwrap();
             let record: serde_json::Value = serde_json::from_str(line).unwrap();
             assert_eq!(record["pid"], 999_999);
+        });
+    }
+
+    #[test]
+    fn test_log_event_masks_caller_fields() {
+        with_test_home(|| {
+            let canary = "AKIAIOSFODNN7EXAMPLE";
+            log_event(
+                "mask_test",
+                serde_json::json!({
+                    "top_level": canary,
+                    "nested": { "inner": canary },
+                    "arr": [canary]
+                }),
+            );
+            let seg = crate::config::current_event_segment_path();
+            let content = std::fs::read_to_string(&seg).unwrap();
+            let line = content.lines().next().unwrap();
+            // All canary instances replaced
+            assert!(
+                line.contains("<AWS_KEY>"),
+                "expected masked value in: {line}"
+            );
+            assert!(!line.contains(canary), "canary still present in: {line}");
+            // Line still parses as valid JSON with daemon fields
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(record.get("ts").is_some(), "ts missing");
+            assert!(record.get("event").is_some(), "event missing");
+            assert!(record.get("pid").is_some(), "pid missing");
+        });
+    }
+
+    #[test]
+    fn test_log_event_leaves_daemon_fields_and_numbers() {
+        with_test_home(|| {
+            log_event(
+                "numbers_test",
+                serde_json::json!({
+                    "prompt_tokens": 123,
+                    "label": "safe"
+                }),
+            );
+            let seg = crate::config::current_event_segment_path();
+            let content = std::fs::read_to_string(&seg).unwrap();
+            let line = content.lines().next().unwrap();
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert_eq!(record["event"], "numbers_test");
+            assert_eq!(record["prompt_tokens"], 123);
+            assert_eq!(record["label"], "safe");
         });
     }
 }

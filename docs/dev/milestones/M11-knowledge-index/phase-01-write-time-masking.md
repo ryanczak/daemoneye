@@ -1,7 +1,7 @@
 # Phase 01: Write-time masking for epochs and events
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -304,4 +304,8 @@ Put the pasted output in an Update Log entry titled
 
 ## Update Log
 
-*(executor appends here)*
+### Update — 2026-08-03 17:04 (started)
+
+**Executor:** Claude (Anthropic)
+
+Implementing write-time masking for `log_event` and `append_epoch` per spec.

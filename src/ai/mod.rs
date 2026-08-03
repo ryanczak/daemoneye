@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub use filter::mask_sensitive;
+pub use filter::{mask_json_value, mask_sensitive};
 pub use types::{AiEvent, Message, PendingCall, TokenBreakdown, ToolResult};
 
 pub use backends::anthropic::AnthropicClient;

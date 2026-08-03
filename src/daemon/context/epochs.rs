@@ -116,8 +116,18 @@ pub fn append_epoch(id: &str, rec: &EpochRecord) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    let mut masked = rec.clone();
+    if let Some(n) = masked.narrative.as_mut() {
+        *n = crate::ai::mask_sensitive(n);
+    }
+    for (cmd, _code) in masked.tally.failed_cmds.iter_mut() {
+        *cmd = crate::ai::mask_sensitive(cmd);
+    }
+    for a in masked.artifacts.iter_mut() {
+        *a = crate::ai::mask_sensitive(a);
+    }
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-        if let Ok(line) = serde_json::to_string(rec)
+        if let Ok(line) = serde_json::to_string(&masked)
             && let Err(e) = writeln!(f, "{}", line)
         {
             log::warn!("Failed to append to epoch file {}: {}", path.display(), e);
@@ -1760,5 +1770,121 @@ mod tests {
                 joined
             );
         });
+    }
+
+    #[test]
+    fn test_append_epoch_masks_narrative_tally_and_artifacts() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let canary = "AKIAIOSFODNN7EXAMPLE";
+        let rec = EpochRecord {
+            kind: "turn".to_string(),
+            seq: 1,
+            turn_start: 0,
+            turn_end: 1,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 1,
+            covers: None,
+            narrative: Some(format!("narrative with {canary}")),
+            tally: EpochTally {
+                failed_cmds: vec![(format!("cmd {canary}"), 1)],
+                ..Default::default()
+            },
+            artifacts: vec![format!("artifact {canary}")],
+        };
+        append_epoch("mask-test", &rec);
+
+        let path = tmp
+            .path()
+            .join(".daemoneye")
+            .join("var/log/sessions")
+            .join("mask-test.epochs.jsonl");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let line = content.lines().next().unwrap();
+
+        // All canary instances replaced
+        assert!(
+            line.contains("<AWS_KEY>"),
+            "expected masked value in: {line}"
+        );
+        assert!(!line.contains(canary), "canary still present in: {line}");
+
+        // read_epochs round-trips the record
+        let epochs = read_epochs("mask-test");
+        assert_eq!(epochs.len(), 1);
+        assert!(epochs[0].narrative.as_ref().unwrap().contains("<AWS_KEY>"));
+
+        // Restore HOME
+        unsafe {
+            match saved {
+                Some(h) => std::env::set_var("HOME", h),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_append_epoch_preserves_structure() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", tmp.path());
+        }
+
+        let rec = EpochRecord {
+            kind: "turn".to_string(),
+            seq: 42,
+            turn_start: 1,
+            turn_end: 3,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 2,
+            covers: Some((1, 2)),
+            narrative: Some("safe narrative".to_string()),
+            tally: EpochTally {
+                failed_cmds: vec![],
+                ..Default::default()
+            },
+            artifacts: vec!["safe.txt".to_string()],
+        };
+        let expected_line = serde_json::to_string(&rec).unwrap();
+
+        append_epoch("struct-test", &rec);
+
+        let path = tmp
+            .path()
+            .join(".daemoneye")
+            .join("var/log/sessions")
+            .join("struct-test.epochs.jsonl");
+        let content = std::fs::read_to_string(&path).unwrap();
+        let line = content.lines().next().unwrap();
+
+        // Structural fields byte-identical (no secrets to mask, so line matches)
+        assert_eq!(
+            line, expected_line,
+            "line shape changed for record without secrets"
+        );
+
+        // Verify key fields are present and correct
+        let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(parsed["kind"], "turn");
+        assert_eq!(parsed["seq"], 42);
+        assert_eq!(parsed["turn_start"], 1);
+        assert_eq!(parsed["turn_end"], 3);
+
+        // Restore HOME
+        unsafe {
+            match saved {
+                Some(h) => std::env::set_var("HOME", h),
+                None => std::env::remove_var("HOME"),
+            }
+        }
     }
 }

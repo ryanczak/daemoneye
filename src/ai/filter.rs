@@ -160,9 +160,33 @@ pub fn mask_sensitive(text: &str) -> String {
     result.into_owned()
 }
 
+/// Recursively mask every string **value** in a JSON tree in place.
+/// Object keys, numbers, booleans and nulls are left untouched.
+pub fn mask_json_value(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::String(s) => {
+            let masked = mask_sensitive(s);
+            if masked != *s {
+                *s = masked;
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                mask_json_value(item);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (_k, item) in map.iter_mut() {
+                mask_json_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::compile_patterns;
+    use super::{compile_patterns, mask_json_value};
 
     /// Run patterns compiled fresh (bypasses the global OnceLock) so tests are
     /// isolated and can be run in any order without interfering with each other.
@@ -433,5 +457,41 @@ mod tests {
         let text = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY= user@host";
         let out = mask(text);
         assert!(out.contains("<SSH_PUBKEY>"));
+    }
+
+    #[test]
+    fn test_mask_json_value_masks_nested_string_values() {
+        let mut v = serde_json::json!({
+            "level1": {
+                "items": [
+                    { "key": "AKIAIOSFODNN7EXAMPLE" }
+                ],
+                "direct": "AKIAIOSFODNN7EXAMPLE"
+            },
+            "top": "AKIAIOSFODNN7EXAMPLE"
+        });
+        mask_json_value(&mut v);
+        // All string values should be masked
+        assert!(v.to_string().contains("<AWS_KEY>"));
+        assert!(!v.to_string().contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[test]
+    fn test_mask_json_value_leaves_keys_and_non_strings() {
+        let mut v = serde_json::json!({
+            "token_usage": 123,
+            "active": true,
+            "notes": null,
+            "label": "AKIAIOSFODNN7EXAMPLE"
+        });
+        mask_json_value(&mut v);
+        // Key name preserved
+        assert!(v.get("token_usage").is_some());
+        // Non-string values unchanged
+        assert_eq!(v.get("token_usage").and_then(|v| v.as_i64()), Some(123));
+        assert_eq!(v.get("active").and_then(|v| v.as_bool()), Some(true));
+        assert!(v.get("notes").is_some_and(|v| v.is_null()));
+        // String value masked
+        assert_eq!(v.get("label").and_then(|v| v.as_str()), Some("<AWS_KEY>"));
     }
 }
