@@ -1,7 +1,7 @@
 # Phase 02b: Populate the contentless corpora — turns and events
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02a (done — the seven tables and their DDL already exist)
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -303,4 +303,75 @@ results in prose instead of pasting the captured files.
 
 ## Update Log
 
-*(executor appends here)*
+### Update — 2026-08-03 22:26 (progress)
+
+**Executor:** claude-opus-4-5-20251101
+
+Implemented all five spec tasks: widened `json_to_readable` to `pub(crate)` in `src/search.rs`; added `DELETE FROM turns`, `DELETE FROM turns_map`, `DELETE FROM events`, `DELETE FROM events_map` to the reconcile transaction; implemented byte-offset scanning for `turns` (from `*.archive.jsonl`) and `events` (from `event_segment_paths_between`) using `BufRead::read_line` with proper offset tracking; applied `mask_sensitive` to both corpora before insert; added 8 new tests covering turns indexing, offset correctness, tool-result text search, turn:None skipping, event segment indexing, legacy segment labeling, masking verification, and idempotence.
+
+### Update — 2026-08-03 22:26 (end-to-end verification)
+
+**Test output:**
+```
+running 38 tests
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::stale_schema_version_is_recreated ... ok
+test memory::index::tests::add_memory_indexes_the_row ... ok
+test memory::index::tests::stale_v1_database_is_dropped_and_recreated ... ok
+test memory::index::tests::contentless_bodies_are_masked ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::delete_memory_removes_the_row ... ok
+test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::hyphenated_query_does_not_error ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::legacy_event_file_is_indexed_as_legacy_segment ... ok
+test memory::index::tests::multi_word_query_matches_non_adjacent_terms ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_indexes_archive_turns ... ok
+test memory::index::tests::reconcile_indexes_event_segments ... ok
+test memory::index::tests::reconcile_indexes_runbook_and_script_bodies ... ok
+test memory::index::tests::reconcile_indexes_epoch_narrative_and_failed_cmds ... ok
+test memory::index::tests::reconcile_leaves_contentless_corpora_empty ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::reconcile_report_per_corpus_sums_to_total ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::schema_v2_creates_every_table ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::second_reconcile_does_not_duplicate_contentless_rows ... ok
+test memory::index::tests::second_reconcile_reports_no_change ... ok
+test memory::index::tests::turns_body_includes_tool_result_text ... ok
+test memory::index::tests::turns_map_offsets_point_at_the_right_line ... ok
+test memory::index::tests::turns_skips_messages_without_turn_numbers ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
+
+test result: ok. 38 passed; 0 failed; 0 ignored; 0 measured; 1022 filtered out; finished in 0.09s
+
+exit=0
+```
+
+**Checks output:**
+```
+--- read_line used, .lines() not used for offset scanning ---
+486:                let n = reader.read_line(&mut line)?;
+541:            let n = reader.read_line(&mut line)?;
+1768:            let n = reader.read_line(&mut line).unwrap();
+--- no metadata read from contentless tables ---
+1807:                "SELECT count(*) FROM turns WHERE turns MATCH 'tool_output_42'",
+1879:                "SELECT count(*) FROM events WHERE events MATCH 'event:webhook_alert'",
+1947:                "SELECT count(*) FROM turns WHERE turns MATCH 'AKIAIOSFODNN7EXAMPLE'",
+1960:                "SELECT count(*) FROM turns WHERE turns MATCH 'AWS_KEY'",
+1973:                "SELECT count(*) FROM events WHERE events MATCH 'AKIAIOSFODNN7EXAMPLE'",
+1985:                "SELECT count(*) FROM events WHERE events MATCH 'AWS_KEY'",
+--- json_to_readable visibility ---
+256:pub(crate) fn json_to_readable(line: &str) -> String {
+exit=0
+```

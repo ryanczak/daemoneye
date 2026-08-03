@@ -1,6 +1,7 @@
 //! G5: FTS5 memory index.
 
 use anyhow::{Context, Result};
+use std::io::BufRead;
 
 /// Bump when the FTS5 schema changes. A database at any other version is
 /// dropped and recreated — the index is derived, so rebuilding is always safe.
@@ -342,6 +343,14 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         .context("clearing artifacts index")?;
     tx.execute("DELETE FROM epochs", [])
         .context("clearing epochs index")?;
+    tx.execute("DELETE FROM turns", [])
+        .context("clearing turns index")?;
+    tx.execute("DELETE FROM turns_map", [])
+        .context("clearing turns_map index")?;
+    tx.execute("DELETE FROM events", [])
+        .context("clearing events index")?;
+    tx.execute("DELETE FROM events_map", [])
+        .context("clearing events_map index")?;
 
     // ── memories corpus ──────────────────────────────────────────────────────
 
@@ -453,6 +462,105 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
                 )
                 .with_context(|| format!("indexing epoch {} seq {}", session_id, rec.seq))?;
             }
+        }
+    }
+
+    // ── turns corpus ──────────────────────────────────────────────────────────
+    if let Ok(sessions) = crate::config::sessions_dir().read_dir() {
+        for entry in sessions.filter_map(|e| e.ok()) {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.ends_with(".archive.jsonl") {
+                continue;
+            }
+            let session_id = &name_str[..name_str.len() - ".archive.jsonl".len()];
+            let path = entry.path();
+            let Ok(file) = std::fs::File::open(&path) else {
+                continue;
+            };
+            let mut reader = std::io::BufReader::new(file);
+            let mut offset: u64 = 0;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                let n = reader.read_line(&mut line)?;
+                if n == 0 {
+                    break;
+                }
+                if let Ok(msg) = serde_json::from_str::<crate::ai::types::Message>(line.trim_end())
+                    && let Some(turn) = msg.turn
+                {
+                    let mut body = msg.content.clone();
+                    if let Some(ref tool_results) = msg.tool_results {
+                        for tr in tool_results {
+                            body.push(' ');
+                            body.push_str(&tr.content);
+                        }
+                    }
+                    let body = crate::ai::mask_sensitive(&body);
+                    tx.execute(
+                        "INSERT INTO turns_map (session_id, turn, offset) VALUES (?1, ?2, ?3)",
+                        (session_id, turn as i64, offset as i64),
+                    )
+                    .with_context(|| {
+                        format!("inserting turn map row for {} turn {}", session_id, turn)
+                    })?;
+                    let rid = tx.last_insert_rowid();
+                    tx.execute(
+                        "INSERT INTO turns (rowid, body) VALUES (?1, ?2)",
+                        (rid, &body),
+                    )
+                    .with_context(|| {
+                        format!("inserting turn row for {} turn {}", session_id, turn)
+                    })?;
+                }
+                offset += n as u64;
+            }
+        }
+    }
+
+    // ── events corpus ─────────────────────────────────────────────────────────
+    let event_paths = crate::daemon::utils::event_segment_paths_between(None, None);
+    for path in event_paths {
+        let legacy_path = crate::config::events_path();
+        let segment = if path == legacy_path {
+            "legacy".to_string()
+        } else {
+            path.file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default()
+        };
+        let Ok(file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        let mut reader = std::io::BufReader::new(file);
+        let mut offset: u64 = 0;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = reader.read_line(&mut line)?;
+            if n == 0 {
+                break;
+            }
+            let trimmed = line.trim_end();
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)
+                && let Some(event_val) = v.get("event").and_then(|e| e.as_str())
+            {
+                let body = crate::search::json_to_readable(trimmed);
+                let body = crate::ai::mask_sensitive(&body);
+                tx.execute(
+                    "INSERT INTO events_map (segment, offset) VALUES (?1, ?2)",
+                    (segment.as_str(), offset as i64),
+                )
+                .with_context(|| format!("inserting event map row for segment {}", segment))?;
+                let rid = tx.last_insert_rowid();
+                tx.execute(
+                    "INSERT INTO events (rowid, event, body) VALUES (?1, ?2, ?3)",
+                    (rid, event_val, &body),
+                )
+                .with_context(|| format!("inserting event row for segment {}", segment))?;
+            }
+            offset += n as u64;
         }
     }
 
@@ -1574,6 +1682,378 @@ mod tests {
         assert_eq!(
             report2.rows_before, per_corpus_sum,
             "rows_before must equal the sum of per-corpus counts"
+        );
+    }
+
+    #[test]
+    fn reconcile_indexes_archive_turns() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Create a session archive with three turn-numbered messages
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive = sessions_dir.join("abc123.archive.jsonl");
+        let line1 = serde_json::json!({"role":"user","content":"hello","turn":0});
+        let line2 = serde_json::json!({"role":"assistant","content":"world","turn":1});
+        let line3 = serde_json::json!({"role":"user","content":"goodbye","turn":2});
+        let content = format!(
+            "{}\n{}\n{}\n",
+            serde_json::to_string(&line1).unwrap(),
+            serde_json::to_string(&line2).unwrap(),
+            serde_json::to_string(&line3).unwrap()
+        );
+        std::fs::write(&archive, &content).unwrap();
+
+        let report = reconcile_index().expect("reconcile should succeed");
+
+        let turns_count: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "turns")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(turns_count, 3, "should have 3 turn rows");
+
+        // Verify map rows too
+        let conn = open_index().expect("open_index should succeed");
+        let map_count: i64 = conn
+            .query_row("SELECT count(*) FROM turns_map", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(map_count, 3, "should have 3 turns_map rows");
+    }
+
+    #[test]
+    fn turns_map_offsets_point_at_the_right_line() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive = sessions_dir.join("offset-test.archive.jsonl");
+        // Use multi-byte UTF-8 to stress offset calculation
+        let line1 = serde_json::json!({"role":"user","content":"hello café","turn":0});
+        let line2 = serde_json::json!({"role":"assistant","content":"world","turn":1});
+        let line3 = serde_json::json!({"role":"user","content":"goodbye","turn":2});
+        let content = format!(
+            "{}\n{}\n{}\n",
+            serde_json::to_string(&line1).unwrap(),
+            serde_json::to_string(&line2).unwrap(),
+            serde_json::to_string(&line3).unwrap()
+        );
+        std::fs::write(&archive, &content).unwrap();
+
+        reconcile_index().expect("reconcile should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+        let mut stmt = conn
+            .prepare("SELECT turn, offset FROM turns_map ORDER BY offset")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+
+        // For each row, seek to the offset and verify the line's turn matches
+        for (expected_turn, offset) in &rows {
+            use std::io::Seek;
+            let mut reader = std::io::BufReader::new(std::fs::File::open(&archive).unwrap());
+            reader
+                .seek(std::io::SeekFrom::Start(*offset as u64))
+                .unwrap();
+            let mut line = String::new();
+            let n = reader.read_line(&mut line).unwrap();
+            assert!(n > 0, "should read a line at offset {}", offset);
+            let parsed: crate::ai::types::Message = serde_json::from_str(line.trim_end()).unwrap();
+            assert_eq!(
+                parsed.turn,
+                Some(*expected_turn as usize),
+                "line at offset {} should have turn {}",
+                offset,
+                expected_turn
+            );
+        }
+    }
+
+    #[test]
+    fn turns_body_includes_tool_result_text() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive = sessions_dir.join("toolres.archive.jsonl");
+        // The term "tool_output_42" appears ONLY in tool_results, not in content
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "here is the result",
+            "turn": 0,
+            "tool_results": [
+                {"tool_call_id": "t1", "tool_name": "grep", "content": "tool_output_42 found"}
+            ]
+        });
+        let content = format!("{}\n", serde_json::to_string(&msg).unwrap());
+        std::fs::write(&archive, &content).unwrap();
+
+        reconcile_index().expect("reconcile should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns WHERE turns MATCH 'tool_output_42'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "should find turn by tool_result text");
+    }
+
+    #[test]
+    fn turns_skips_messages_without_turn_numbers() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive = sessions_dir.join("noturn.archive.jsonl");
+        let line1 = serde_json::json!({"role":"user","content":"no turn here"});
+        let line2 = serde_json::json!({"role":"user","content":"has turn","turn":1});
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&line1).unwrap(),
+            serde_json::to_string(&line2).unwrap()
+        );
+        std::fs::write(&archive, &content).unwrap();
+
+        reconcile_index().expect("reconcile should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "should have only 1 turn row (turn:None skipped)");
+    }
+
+    #[test]
+    fn reconcile_indexes_event_segments() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let segment = events_dir.join("events-20260803.jsonl");
+        let line1 = serde_json::json!({"event":"webhook_alert","level":"warn","msg":"disk full"});
+        let line2 = serde_json::json!({"event":"cron_tick","level":"info","msg":"ok"});
+        let content = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&line1).unwrap(),
+            serde_json::to_string(&line2).unwrap()
+        );
+        std::fs::write(&segment, &content).unwrap();
+
+        reconcile_index().expect("reconcile should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+
+        // Check row count
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2, "should have 2 event rows");
+
+        // Check segment label is the file stem
+        let seg: String = conn
+            .query_row("SELECT segment FROM events_map LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seg, "events-20260803", "segment should be the file stem");
+
+        // Column-scoped match on event column
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'event:webhook_alert'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "should find webhook_alert by event column");
+    }
+
+    #[test]
+    fn legacy_event_file_is_indexed_as_legacy_segment() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let legacy_path = crate::config::events_path();
+        std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        let line = serde_json::json!({"event":"startup","level":"info","msg":"daemon started"});
+        let content = format!("{}\n", serde_json::to_string(&line).unwrap());
+        std::fs::write(&legacy_path, &content).unwrap();
+
+        reconcile_index().expect("reconcile should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "should have 1 event row from legacy file");
+
+        let seg: String = conn
+            .query_row("SELECT segment FROM events_map LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(seg, "legacy", "legacy file should have segment='legacy'");
+    }
+
+    #[test]
+    fn contentless_bodies_are_masked() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Archive with an AWS key in content
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive = sessions_dir.join("mask-test.archive.jsonl");
+        let msg = serde_json::json!({
+            "role": "user",
+            "content": "my key is AKIAIOSFODNN7EXAMPLE please help",
+            "turn": 0
+        });
+        let content = format!("{}\n", serde_json::to_string(&msg).unwrap());
+        std::fs::write(&archive, &content).unwrap();
+
+        // Event with the same key
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let segment = events_dir.join("events-20260804.jsonl");
+        let ev = serde_json::json!({"event":"api_call","level":"info","msg":"key AKIAIOSFODNN7EXAMPLE used"});
+        let ev_content = format!("{}\n", serde_json::to_string(&ev).unwrap());
+        std::fs::write(&segment, &ev_content).unwrap();
+
+        reconcile_index().expect("reconcile should succeed");
+
+        let conn = open_index().expect("open_index should succeed");
+
+        // The raw canary should NOT be matchable in turns (proves masking)
+        let turn_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns WHERE turns MATCH 'AKIAIOSFODNN7EXAMPLE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            turn_count, 0,
+            "raw AWS key should not be searchable in turns"
+        );
+
+        // The masked placeholder should be matchable (proves masking happened)
+        let turn_masked: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns WHERE turns MATCH 'AWS_KEY'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            turn_masked, 1,
+            "masked placeholder should be searchable in turns"
+        );
+
+        // Same for events
+        let ev_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'AKIAIOSFODNN7EXAMPLE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ev_count, 0,
+            "raw AWS key should not be searchable in events"
+        );
+
+        let ev_masked: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'AWS_KEY'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            ev_masked, 1,
+            "masked placeholder should be searchable in events"
+        );
+    }
+
+    #[test]
+    fn second_reconcile_does_not_duplicate_contentless_rows() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Create a session archive
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive = sessions_dir.join("idem.archive.jsonl");
+        let msg = serde_json::json!({"role":"user","content":"hello","turn":0});
+        let content = format!("{}\n", serde_json::to_string(&msg).unwrap());
+        std::fs::write(&archive, &content).unwrap();
+
+        // Create an event segment
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+        let segment = events_dir.join("events-20260805.jsonl");
+        let ev = serde_json::json!({"event":"tick","level":"info","msg":"ok"});
+        let ev_content = format!("{}\n", serde_json::to_string(&ev).unwrap());
+        std::fs::write(&segment, &ev_content).unwrap();
+
+        let report1 = reconcile_index().expect("first reconcile should succeed");
+        let turns1: usize = report1
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "turns")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        let events1: usize = report1
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "events")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+
+        let report2 = reconcile_index().expect("second reconcile should succeed");
+        let turns2: usize = report2
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "turns")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        let events2: usize = report2
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "events")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+
+        assert_eq!(
+            turns1, turns2,
+            "turns count should not change on second reconcile"
+        );
+        assert_eq!(
+            events1, events2,
+            "events count should not change on second reconcile"
+        );
+        assert_eq!(
+            report2.rows_before, report2.rows_after,
+            "second reconcile should report no change"
         );
     }
 }

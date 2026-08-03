@@ -253,7 +253,7 @@ fn search_events_in_segments(
 }
 
 /// Convert a JSON event line to a human-readable key=value string.
-fn json_to_readable(line: &str) -> String {
+pub(crate) fn json_to_readable(line: &str) -> String {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(line)
         && let Some(obj) = v.as_object()
     {
