@@ -1,7 +1,7 @@
 # Phase 02b: Populate the contentless corpora — turns and events
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced at review — see `bugs/bug-02b-1.md`)
 **Depends on:** phase-02a (done — the seven tables and their DDL already exist)
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m

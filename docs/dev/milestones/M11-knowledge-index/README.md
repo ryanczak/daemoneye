@@ -72,7 +72,7 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 |----|-------|--------|
 | 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | done |
 | 02a | [index-schema-v2](phase-02a-index-schema-v2.md) — all seven tables, SCHEMA_VERSION 2, `reconcile_index()` over the stored-content corpora (`artifacts`, `epochs`), per-corpus `reindex` report | done |
-| 02b | [contentless-corpora](phase-02b-contentless-corpora.md) — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | review      |
+| 02b | [contentless-corpora](phase-02b-contentless-corpora.md) — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | in-progress (bug-02b-1) |
 | 03 | incremental-hooks — best-effort index writes at the five choke points; row deletion from the two retention sweeps | todo |
 | 04 | recall-context-fts — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | todo |
 | 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
@@ -106,6 +106,16 @@ keep their existing ids.
   decision — the current default of 0/keep-forever stands), the
   `effective_confidence` stub, vector search, and the named-saved-sessions
   corpus. See the design doc's non-goals.
+- **Spec lesson for phase 03 (earned in 02b):** the byte-offset scanner recipe
+  the 02a/02b specs quoted used `reader.read_line(&mut line)?`. `read_line`
+  fills a `String` and so **errors on invalid UTF-8**, and the `?` propagates it
+  out of `reconcile_index()` — one bad byte in one file aborts the whole
+  rebuild. Filed as `bug-02b-1` Finding 1 and classified `spec_bug`, since the
+  executor implemented exactly what was quoted. Phase 03 reuses this recipe at
+  the incremental choke points: quote the **skip-and-warn** form, not the `?`
+  form. General shape of the lesson — in a routine whose contract is "always
+  safe to rerun", a per-file read error must not be `?`-propagated past the
+  file it came from.
 - **Adjacent defects noted at scoping, not all in scope:** the executor
   hardcodes `LimitsConfig::default()` for recall output
   (`src/daemon/executor/mod.rs`) — fold into phase 04 if the diff stays small;
