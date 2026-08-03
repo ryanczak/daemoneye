@@ -184,20 +184,20 @@ impl Config {
         }
     }
 
-    /// Return the path to the scripts directory: `~/.daemoneye/scripts/`.
-    pub fn scripts_dir() -> PathBuf {
-        config_dir().join("scripts")
-    }
-
-    /// Return the path to the runbooks directory: `~/.daemoneye/runbooks/`.
-    pub fn runbooks_dir() -> PathBuf {
-        config_dir().join("runbooks")
-    }
-
     /// Return the path to the schedules JSON store: `~/.daemoneye/var/run/schedules.json`.
     pub fn schedules_path() -> PathBuf {
         var_run_dir().join("schedules.json")
     }
+}
+
+/// Return the path to the scripts directory: `~/.daemoneye/scripts/`.
+pub fn scripts_dir() -> PathBuf {
+    config_dir().join("scripts")
+}
+
+/// Return the path to the runbooks directory: `~/.daemoneye/runbooks/`.
+pub fn runbooks_dir() -> PathBuf {
+    config_dir().join("runbooks")
 }
 
 /// Load a named prompt from ~/.daemoneye/prompts/<name>.toml.

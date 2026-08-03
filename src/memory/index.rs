@@ -302,9 +302,21 @@ pub struct ReconcileReport {
 pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
     let mut conn = open_index()?;
 
-    let rows_before: i64 = conn
-        .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
-        .unwrap_or(0);
+    // ── count rows across all corpora ────────────────────────────────────────
+
+    fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
+        conn.query_row(format!("SELECT COUNT(*) FROM {table}").as_str(), [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|n| n as usize)
+        .unwrap_or(0)
+    }
+
+    let rows_before = count_table(&conn, "memories")
+        + count_table(&conn, "artifacts")
+        + count_table(&conn, "epochs")
+        + count_table(&conn, "turns")
+        + count_table(&conn, "events");
 
     let namespaces: Vec<String> = {
         let mut ns = vec!["global".to_string()];
@@ -445,16 +457,6 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
     }
 
     tx.commit().context("committing reconcile transaction")?;
-
-    // ── count rows across all corpora ────────────────────────────────────────
-
-    fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
-        conn.query_row(format!("SELECT COUNT(*) FROM {table}").as_str(), [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .map(|n| n as usize)
-        .unwrap_or(0)
-    }
 
     let memories_count = count_table(&conn, "memories");
     let artifacts_count = count_table(&conn, "artifacts");
@@ -1527,5 +1529,51 @@ mod tests {
 
         // Must have exactly 5 corpus entries
         assert_eq!(report.per_corpus.len(), 5, "should have 5 corpus entries");
+    }
+
+    #[test]
+    fn second_reconcile_reports_no_change() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed a runbook
+        let runbooks_dir = crate::config::runbooks_dir();
+        std::fs::create_dir_all(&runbooks_dir).unwrap();
+        std::fs::write(
+            runbooks_dir.join("test-runbook.md"),
+            "---\ntags: test\n---\n\n# Test Runbook\n\nThis runbook body contains unique searchable text for verification.",
+        )
+        .unwrap();
+
+        // Seed a script
+        let scripts_dir = crate::config::scripts_dir();
+        std::fs::create_dir_all(&scripts_dir).unwrap();
+        std::fs::write(scripts_dir.join("test-script.sh"), "#!/bin/sh\necho hello").unwrap();
+
+        // First reconcile
+        let report1 = reconcile_index().expect("first reconcile should succeed");
+        let total1 = report1.rows_after;
+        assert!(total1 > 0, "first reconcile should have rows");
+
+        // Second reconcile — nothing changed on disk
+        let report2 = reconcile_index().expect("second reconcile should succeed");
+        assert_eq!(
+            report2.rows_before, report2.rows_after,
+            "second reconcile should report no change (rows_before == rows_after), \
+             got before={} after={}",
+            report2.rows_before, report2.rows_after
+        );
+        assert_eq!(
+            report2.rows_before, total1,
+            "rows_before on second reconcile should equal rows_after from first"
+        );
+
+        // rows_before must equal the sum of per_corpus
+        let per_corpus_sum: usize = report2.per_corpus.iter().map(|(_, c)| c).sum();
+        assert_eq!(
+            report2.rows_before, per_corpus_sum,
+            "rows_before must equal the sum of per-corpus counts"
+        );
     }
 }

@@ -151,12 +151,12 @@ pub static INVENTORY: &[InventoryEntry] = &[
     InventoryEntry {
         path: "runbooks",
         status: PathStatus::Current,
-        source: "Config::runbooks_dir()",
+        source: "crate::config::runbooks_dir()",
     },
     InventoryEntry {
         path: "scripts",
         status: PathStatus::Current,
-        source: "Config::scripts_dir()",
+        source: "crate::config::scripts_dir()",
     },
     InventoryEntry {
         path: "agents",
@@ -577,8 +577,8 @@ mod tests {
             crate::config::events_dir,
             crate::config::prompts_dir,
             crate::config::sessions_dir,
-            Config::scripts_dir,
-            Config::runbooks_dir,
+            crate::config::scripts_dir,
+            crate::config::runbooks_dir,
             Config::schedules_path,
         ];
 

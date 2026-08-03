@@ -21,8 +21,8 @@ impl Config {
         std::fs::create_dir_all(&pd)?;
         std::fs::create_dir_all(sessions_dir())?;
         // User-managed top-level directories
-        std::fs::create_dir_all(Self::scripts_dir())?;
-        std::fs::create_dir_all(Self::runbooks_dir())?;
+        std::fs::create_dir_all(scripts_dir())?;
+        std::fs::create_dir_all(runbooks_dir())?;
 
         let cfg_path = etc_dir().join("config.toml");
         if !cfg_path.exists() {
