@@ -1,12 +1,13 @@
 # NEXT
 
-**Active phase:
+**Active phase: none — M11 phase-01 is `done`; phase-02 is not yet drafted.**
+Draft it with `/rexymcp:architect next`.
+
 [M11 phase-01 — write-time-masking](milestones/M11-knowledge-index/phase-01-write-time-masking.md)
-(`in-progress` — bounced at review 2026-08-03, see
-[bug-01-1](milestones/M11-knowledge-index/bugs/bug-01-1.md)).** The
-implementation is correct and verified; the bounce is on the missing
-end-to-end verification artifact and the home-guard idiom in two tests.
-Re-dispatch with `/rexymcp:dispatch phase-01-write-time-masking`.
+**approved 2026-08-03** (`approved_after_1`; one bounce,
+[bug-01-1](milestones/M11-knowledge-index/bugs/bug-01-1.md), verified fixed).
+`append_epoch` and `log_event` now mask at the write choke point, so the epoch
+and event corpora are safe to index in phases 02–03.
 
 **M11 — Unified Knowledge Index scoped 2026-08-03** (PE decision). Seven phases
 planned; design settled in `docs/design/knowledge-index.md`; milestone README at

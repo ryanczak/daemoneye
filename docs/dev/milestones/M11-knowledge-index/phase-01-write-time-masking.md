@@ -1,7 +1,7 @@
 # Phase 01: Write-time masking for epochs and events
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -625,3 +625,34 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 456e64623fa8b662b4c88c6d468b4fa0da42cacf
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-03
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-01-1.md`, major — verified fixed in round 2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** one data point, no fold. The round-1 bounce was a missing
+  end-to-end verification artifact whose prose substitute was measurably wrong
+  (it cited `cargo test --lib masks`, a filter that runs 3 of the 6 new tests
+  plus 1 pre-existing one, leaving all three must-NOT-change negative cases
+  unexercised). The spec named the artifact, gave a runnable block, and
+  pre-empted the server-authored entry in bold — and it was still skipped. That
+  is the M6 fold's failure mode recurring once under a spec that already applied
+  the fold, which is new information; per WORKFLOW § Calibration one occurrence
+  is data, so it is recorded and held for recurrence. If it repeats, the fold
+  candidate is a spec-side evidence command that cannot silently under-select
+  (name the tests explicitly rather than relying on a substring filter — the
+  filter, not the executor, is what made the wrong claim easy to believe).
+  Recorded in telemetry as `missing_spec_test`, the closest class in the
+  canonical vocabulary; it is an imperfect fit, since every named test *was*
+  written and what was missing was the verification artifact.
+- **Independently verified at review:** all four gates re-run clean as separate
+  invocations (fmt/build/clippy exit 0; test 1044 lib + 6 bug_tracker + 4
+  doc_truth + 30 integration + 9 isolation, zero failures). Both masking
+  mechanisms mutation-proven twice, before and after the round-2 test rewrite:
+  deleting `mask_json_value(&mut fields)` fails `test_log_event_masks_caller_fields`;
+  reverting `to_string(&masked)` → `to_string(rec)` fails
+  `test_append_epoch_masks_narrative_tally_and_artifacts`. Writer-provenance grep
+  confirms the choke points still hold. The one `unwrap` in a changed file
+  (`event_log.rs:115`) predates this phase (commit `aa4cb46`).
