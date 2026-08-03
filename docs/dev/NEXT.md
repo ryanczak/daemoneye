@@ -2,7 +2,11 @@
 
 **Active phase:
 [M11 phase-02a — index-schema-v2](milestones/M11-knowledge-index/phase-02a-index-schema-v2.md)
-(`todo`, drafted 2026-08-03, not yet dispatched).** Dispatch with
+(`in-progress` — bounced at review 2026-08-03, see
+[bug-02a-1](milestones/M11-knowledge-index/bugs/bug-02a-1.md)).** The schema and
+both new corpora are correct and verified; the bounce is one arithmetic bug in
+the `reindex` report, where `rows_before` counts only `memories` while
+`rows_after` sums all five corpora. Re-dispatch with
 `/rexymcp:dispatch phase-02a`.
 
 The original phase 02 was split into 02a (schema + stored-content corpora) and
