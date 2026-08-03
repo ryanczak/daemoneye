@@ -70,7 +70,7 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | in-progress |
+| 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | review      |
 | 02 | index-schema-v2 — five FTS tables + two maps, SCHEMA_VERSION 2, `reconcile_index()` over all corpora, `reindex` coverage | todo |
 | 03 | incremental-hooks — best-effort index writes at the five choke points; row deletion from the two retention sweeps | todo |
 | 04 | recall-context-fts — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | todo |
