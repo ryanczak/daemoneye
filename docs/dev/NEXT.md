@@ -2,8 +2,11 @@
 
 **Active phase:
 [M11 phase-01 — write-time-masking](milestones/M11-knowledge-index/phase-01-write-time-masking.md)
-(`todo`, drafted 2026-08-03, not yet dispatched).** Dispatch with
-`/rexymcp:dispatch phase-01-write-time-masking`.
+(`in-progress` — bounced at review 2026-08-03, see
+[bug-01-1](milestones/M11-knowledge-index/bugs/bug-01-1.md)).** The
+implementation is correct and verified; the bounce is on the missing
+end-to-end verification artifact and the home-guard idiom in two tests.
+Re-dispatch with `/rexymcp:dispatch phase-01-write-time-masking`.
 
 **M11 — Unified Knowledge Index scoped 2026-08-03** (PE decision). Seven phases
 planned; design settled in `docs/design/knowledge-index.md`; milestone README at
