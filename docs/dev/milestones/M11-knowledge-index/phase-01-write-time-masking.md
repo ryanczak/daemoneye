@@ -1,7 +1,7 @@
 # Phase 01: Write-time masking for epochs and events
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced at review — see `bugs/bug-01-1.md`)
 **Depends on:** none
 **Estimated diff:** ~200 lines
 **Tags:** language=rust, kind=bugfix, size=s
