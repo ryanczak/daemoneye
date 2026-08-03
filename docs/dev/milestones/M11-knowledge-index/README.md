@@ -72,15 +72,15 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 |----|-------|--------|
 | 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | done |
 | 02a | [index-schema-v2](phase-02a-index-schema-v2.md) — all seven tables, SCHEMA_VERSION 2, `reconcile_index()` over the stored-content corpora (`artifacts`, `epochs`), per-corpus `reindex` report | done |
-| 02b | contentless-corpora — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | todo |
+| 02b | [contentless-corpora](phase-02b-contentless-corpora.md) — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | todo |
 | 03 | incremental-hooks — best-effort index writes at the five choke points; row deletion from the two retention sweeps | todo |
 | 04 | recall-context-fts — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | todo |
 | 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
 | 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
-Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01
-and 02a are drafted, 02b–07 are not yet.
+Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01,
+02a and 02b are drafted, 03–07 are not yet.
 
 **Why 02 split into 02a/02b:** the original phase 02 covered the schema plus
 `reconcile_index()` over all five corpora. The two contentless corpora need
