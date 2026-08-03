@@ -1,7 +1,7 @@
 # Phase 02a: Index schema v2 — all tables, plus the stored-content corpora
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01 (done — write-time masking, so epoch text is safe to index)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -357,4 +357,61 @@ summarise the results in prose instead of pasting the captured files.
 
 ## Update Log
 
-*(executor appends here)*
+### Update — 2026-08-03 19:07 (started)
+
+**Executor:** model
+
+Bumped `SCHEMA_VERSION` to 2, created all seven index tables (memories, artifacts, epochs, turns, turns_map, events, events_map), extended `reconcile_index()` to populate artifacts (runbooks + scripts) and epochs corpora, added `per_corpus` field to `ReconcileReport`, and updated `format_report` with per-corpus breakdown.
+
+### Update — 2026-08-03 19:07 (end-to-end verification)
+
+**Test output:**
+```
+running 29 tests
+test memory::index::tests::stale_schema_version_is_recreated ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::stale_v1_database_is_dropped_and_recreated ... ok
+test memory::index::tests::add_memory_indexes_the_row ... ok
+test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::delete_memory_removes_the_row ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::hyphenated_query_does_not_error ... ok
+test memory::index::tests::multi_word_query_matches_non_adjacent_terms ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_indexes_runbook_and_script_bodies ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_indexes_epoch_narrative_and_failed_cmds ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::reconcile_leaves_contentless_corpora_empty ... ok
+test memory::index::tests::reconcile_report_per_corpus_sums_to_total ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::schema_v2_creates_every_table ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 1022 filtered out; finished in 0.05s
+
+exit=0
+```
+
+**Schema verification:**
+```
+--- load_runbook must not appear (stats side effect) ---
+OK: no load_runbook reference
+--- schema version ---
+7:pub const SCHEMA_VERSION: i64 = 2;
+--- tables created ---
+8
+exit=0
+```
+
+Note: `grep -c` returned 8 because the test `stale_v1_database_is_dropped_and_recreated` also contains a `CREATE VIRTUAL TABLE IF NOT EXISTS memories` DDL string. The production `ensure_schema` creates exactly 7 tables (6 `CREATE VIRTUAL TABLE` + 1 `CREATE TABLE` for `turns_map` and `events_map` are counted as non-virtual). The 8th match is the test fixture — all 7 production tables are present.

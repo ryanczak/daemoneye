@@ -6,7 +6,7 @@ use std::process;
 
 /// Render the operator-facing report. Pure, so the wording is unit-testable.
 fn format_report(report: &ReconcileReport) -> String {
-    match report.rows_after.cmp(&report.rows_before) {
+    let total_line = match report.rows_after.cmp(&report.rows_before) {
         std::cmp::Ordering::Greater => {
             let added = report.rows_after - report.rows_before;
             format!(
@@ -27,6 +27,18 @@ fn format_report(report: &ReconcileReport) -> String {
                 report.rows_after
             )
         }
+    };
+
+    let breakdown: Vec<String> = report
+        .per_corpus
+        .iter()
+        .map(|(name, count)| format!("  {name}: {count}"))
+        .collect();
+
+    if breakdown.is_empty() {
+        total_line
+    } else {
+        format!("{total_line}\n{}", breakdown.join("\n"))
     }
 }
 
@@ -53,10 +65,19 @@ mod tests {
         let report = ReconcileReport {
             rows_before: 3,
             rows_after: 9,
+            per_corpus: vec![
+                ("memories".into(), 5),
+                ("artifacts".into(), 2),
+                ("epochs".into(), 2),
+                ("turns".into(), 0),
+                ("events".into(), 0),
+            ],
         };
         let out = format_report(&report);
         assert!(out.contains("3 → 9"), "output: {out}");
         assert!(out.contains("6 added"), "output: {out}");
+        assert!(out.contains("memories: 5"), "output: {out}");
+        assert!(out.contains("artifacts: 2"), "output: {out}");
     }
 
     #[test]
@@ -64,6 +85,13 @@ mod tests {
         let report = ReconcileReport {
             rows_before: 9,
             rows_after: 3,
+            per_corpus: vec![
+                ("memories".into(), 3),
+                ("artifacts".into(), 0),
+                ("epochs".into(), 0),
+                ("turns".into(), 0),
+                ("events".into(), 0),
+            ],
         };
         let out = format_report(&report);
         assert!(out.contains("9 → 3"), "output: {out}");
@@ -75,6 +103,13 @@ mod tests {
         let report = ReconcileReport {
             rows_before: 9,
             rows_after: 9,
+            per_corpus: vec![
+                ("memories".into(), 9),
+                ("artifacts".into(), 0),
+                ("epochs".into(), 0),
+                ("turns".into(), 0),
+                ("events".into(), 0),
+            ],
         };
         let out = format_report(&report);
         assert!(out.contains("9 rows"), "output: {out}");
@@ -86,5 +121,17 @@ mod tests {
             !out.contains("no changes"),
             "must not claim no changes: {out}"
         );
+    }
+
+    #[test]
+    fn report_with_empty_per_corpus_omits_breakdown() {
+        let report = ReconcileReport {
+            rows_before: 0,
+            rows_after: 0,
+            per_corpus: vec![],
+        };
+        let out = format_report(&report);
+        assert!(out.contains("0 rows"), "output: {out}");
+        assert!(!out.contains("memories"), "output: {out}");
     }
 }

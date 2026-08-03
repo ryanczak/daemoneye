@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 /// Bump when the FTS5 schema changes. A database at any other version is
 /// dropped and recreated — the index is derived, so rebuilding is always safe.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Open (creating if absent) the FTS5 memory index, applying the schema.
 pub fn open_index() -> Result<rusqlite::Connection> {
@@ -26,8 +26,16 @@ pub fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
         .with_context(|| "reading user_version")?;
 
     if current != 0 && current != SCHEMA_VERSION {
-        conn.execute_batch("DROP TABLE IF EXISTS memories")
-            .with_context(|| "dropping stale memories table")?;
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS memories;
+             DROP TABLE IF EXISTS artifacts;
+             DROP TABLE IF EXISTS epochs;
+             DROP TABLE IF EXISTS turns;
+             DROP TABLE IF EXISTS turns_map;
+             DROP TABLE IF EXISTS events;
+             DROP TABLE IF EXISTS events_map;",
+        )
+        .with_context(|| "dropping stale index tables")?;
     }
 
     conn.execute_batch(
@@ -42,6 +50,66 @@ pub fn ensure_schema(conn: &rusqlite::Connection) -> Result<()> {
         );",
     )
     .with_context(|| "creating memories FTS5 table")?;
+
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS artifacts USING fts5(
+            kind UNINDEXED,
+            name,
+            tags,
+            body,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        );",
+    )
+    .with_context(|| "creating artifacts FTS5 table")?;
+
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS epochs USING fts5(
+            session_id UNINDEXED,
+            seq UNINDEXED,
+            kind UNINDEXED,
+            body,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        );",
+    )
+    .with_context(|| "creating epochs FTS5 table")?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS turns_map (
+            id         INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            turn       INTEGER NOT NULL,
+            offset     INTEGER NOT NULL
+        );",
+    )
+    .with_context(|| "creating turns_map table")?;
+
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS turns USING fts5(
+            body,
+            content='', contentless_delete=1,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        );",
+    )
+    .with_context(|| "creating turns FTS5 table")?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS events_map (
+            id      INTEGER PRIMARY KEY,
+            segment TEXT NOT NULL,
+            offset  INTEGER NOT NULL
+        );",
+    )
+    .with_context(|| "creating events_map table")?;
+
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS events USING fts5(
+            event,
+            body,
+            content='', contentless_delete=1,
+            tokenize = 'porter unicode61 remove_diacritics 2'
+        );",
+    )
+    .with_context(|| "creating events FTS5 table")?;
 
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .with_context(|| "setting user_version")?;
@@ -225,6 +293,9 @@ pub struct ReconcileReport {
     pub rows_before: usize,
     /// Rows present after the rebuild.
     pub rows_after: usize,
+    /// Per-corpus row counts after the rebuild, in a stable order:
+    /// memories, artifacts, epochs, turns, events.
+    pub per_corpus: Vec<(String, usize)>,
 }
 
 /// Rebuild the whole index from the memory files on disk.
@@ -254,7 +325,13 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         .transaction()
         .context("beginning reconcile transaction")?;
     tx.execute("DELETE FROM memories", [])
-        .context("clearing index")?;
+        .context("clearing memories index")?;
+    tx.execute("DELETE FROM artifacts", [])
+        .context("clearing artifacts index")?;
+    tx.execute("DELETE FROM epochs", [])
+        .context("clearing epochs index")?;
+
+    // ── memories corpus ──────────────────────────────────────────────────────
 
     for namespace in &namespaces {
         for category in &categories {
@@ -308,15 +385,95 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         }
     }
 
+    // ── artifacts corpus (runbooks + scripts) ────────────────────────────────
+
+    for rb in crate::runbook::list_runbooks().unwrap_or_default() {
+        let rb_path = crate::runbook::runbooks_dir().join(format!("{}.md", rb.name));
+        let Ok(body) = std::fs::read_to_string(&rb_path) else {
+            continue;
+        };
+        let tags = rb.tags.join(" ");
+        tx.execute(
+            "INSERT INTO artifacts (kind, name, tags, body) VALUES (?1, ?2, ?3, ?4)",
+            ("runbook", &rb.name, &tags, &body),
+        )
+        .with_context(|| format!("indexing runbook {}", rb.name))?;
+    }
+
+    for (script, tags) in crate::scripts::list_scripts_with_tags().unwrap_or_default() {
+        let Ok(body) = crate::scripts::read_script(&script.name) else {
+            continue;
+        };
+        let tags = tags.join(" ");
+        tx.execute(
+            "INSERT INTO artifacts (kind, name, tags, body) VALUES (?1, ?2, ?3, ?4)",
+            ("script", &script.name, &tags, &body),
+        )
+        .with_context(|| format!("indexing script {}", script.name))?;
+    }
+
+    // ── epochs corpus ────────────────────────────────────────────────────────
+
+    if let Ok(sessions) = crate::config::sessions_dir().read_dir() {
+        for entry in sessions.filter_map(|e| e.ok()) {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.ends_with(".epochs.jsonl") {
+                continue;
+            }
+            let session_id = &name_str[..name_str.len() - ".epochs.jsonl".len()];
+            let records = crate::daemon::context::epochs::read_epochs(session_id);
+            for rec in records {
+                let mut body_parts: Vec<&str> = Vec::new();
+                if let Some(ref narrative) = rec.narrative {
+                    body_parts.push(narrative.as_str());
+                }
+                for (cmd, _) in &rec.tally.failed_cmds {
+                    body_parts.push(cmd.as_str());
+                }
+                for art in &rec.artifacts {
+                    body_parts.push(art.as_str());
+                }
+                let body = body_parts.join(" ");
+                tx.execute(
+                    "INSERT INTO epochs (session_id, seq, kind, body) VALUES (?1, ?2, ?3, ?4)",
+                    (session_id, rec.seq as i64, &rec.kind, &body),
+                )
+                .with_context(|| format!("indexing epoch {} seq {}", session_id, rec.seq))?;
+            }
+        }
+    }
+
     tx.commit().context("committing reconcile transaction")?;
 
-    let rows_after: i64 = conn
-        .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
-        .unwrap_or(0);
+    // ── count rows across all corpora ────────────────────────────────────────
+
+    fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
+        conn.query_row(format!("SELECT COUNT(*) FROM {table}").as_str(), [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|n| n as usize)
+        .unwrap_or(0)
+    }
+
+    let memories_count = count_table(&conn, "memories");
+    let artifacts_count = count_table(&conn, "artifacts");
+    let epochs_count = count_table(&conn, "epochs");
+    let turns_count = count_table(&conn, "turns");
+    let events_count = count_table(&conn, "events");
+
+    let rows_after = memories_count + artifacts_count + epochs_count + turns_count + events_count;
 
     Ok(ReconcileReport {
         rows_before: rows_before as usize,
-        rows_after: rows_after as usize,
+        rows_after,
+        per_corpus: vec![
+            ("memories".into(), memories_count),
+            ("artifacts".into(), artifacts_count),
+            ("epochs".into(), epochs_count),
+            ("turns".into(), turns_count),
+            ("events".into(), events_count),
+        ],
     })
 }
 
@@ -1041,5 +1198,334 @@ mod tests {
             !results.is_empty(),
             "a multi-word user turn must match on individual terms, not as one phrase"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 02a: schema v2 tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_v2_creates_every_table() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let conn = open_index().expect("open_index should succeed");
+
+        let expected_tables = [
+            "memories",
+            "artifacts",
+            "epochs",
+            "turns",
+            "turns_map",
+            "events",
+            "events_map",
+        ];
+        for tbl in &expected_tables {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name = ?1",
+                    [tbl],
+                    |r| r.get::<_, i64>(0),
+                )
+                .expect("query sqlite_master");
+            assert_eq!(count, 1, "table '{tbl}' should exist");
+        }
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .expect("query user_version");
+        assert_eq!(version, 2, "schema version should be 2");
+    }
+
+    #[test]
+    fn stale_v1_database_is_dropped_and_recreated() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open in-memory db");
+
+        // Create a v1 schema with a row
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS memories USING fts5(
+                key, namespace UNINDEXED, category UNINDEXED,
+                tags, summary, body,
+                tokenize = 'porter unicode61 remove_diacritics 2'
+            );
+             PRAGMA user_version = 1;",
+        )
+        .expect("setup v1 schema");
+        conn.execute(
+            "INSERT INTO memories (key, namespace, category, tags, summary, body)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                "stale-key",
+                "global",
+                "knowledge",
+                "",
+                "stale",
+                "stale body",
+            ],
+        )
+        .expect("insert stale row");
+
+        // Now upgrade
+        ensure_schema(&conn).expect("ensure_schema should succeed");
+
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .expect("query user_version");
+        assert_eq!(version, 2, "version should be 2 after upgrade");
+
+        let stale: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE key = 'stale-key'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("count stale rows");
+        assert_eq!(stale, 0, "stale v1 row should be gone");
+
+        // Verify all 7 tables exist
+        let expected_tables = [
+            "memories",
+            "artifacts",
+            "epochs",
+            "turns",
+            "turns_map",
+            "events",
+            "events_map",
+        ];
+        for tbl in &expected_tables {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name = ?1",
+                    [tbl],
+                    |r| r.get::<_, i64>(0),
+                )
+                .expect("query sqlite_master");
+            assert_eq!(count, 1, "table '{tbl}' should exist after upgrade");
+        }
+    }
+
+    #[test]
+    fn reconcile_indexes_runbook_and_script_bodies() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed a runbook with unique body text
+        let rb_dir = tmp.path().join(".daemoneye/runbooks");
+        std::fs::create_dir_all(&rb_dir).unwrap();
+        std::fs::write(
+            rb_dir.join("test-rb.md"),
+            "---\ntags: [test]\n---\nThis runbook covers the quokka deployment procedure.",
+        )
+        .unwrap();
+
+        // Seed a script with unique body text
+        let sc_dir = tmp.path().join(".daemoneye/scripts");
+        std::fs::create_dir_all(&sc_dir).unwrap();
+        std::fs::write(
+            sc_dir.join("test-sc.sh"),
+            "#!/bin/sh\n# This script handles the wombat migration\nset -euo pipefail\necho done",
+        )
+        .unwrap();
+
+        let report = reconcile_index().expect("reconcile should succeed");
+
+        // Two artifacts rows
+        let artifacts_count: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "artifacts")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(
+            artifacts_count, 2,
+            "should have 2 artifact rows (1 runbook + 1 script)"
+        );
+
+        // FTS query matching text in a runbook body
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE artifacts MATCH 'quokka'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH query on artifacts");
+        assert_eq!(count, 1, "should find runbook by body text 'quokka'");
+
+        // FTS query matching text in a script body
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE artifacts MATCH 'wombat'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH query on artifacts");
+        assert_eq!(count, 1, "should find script by body text 'wombat'");
+
+        // Verify runbooks-executed stat did NOT change
+        let before = crate::daemon::stats::get_runbooks_executed();
+        let _ = reconcile_index();
+        let after = crate::daemon::stats::get_runbooks_executed();
+        assert_eq!(
+            before, after,
+            "reconcile must not increment runbooks-executed stat"
+        );
+
+        // Negative: searching memories for an artifacts-only term returns nothing
+        let mem_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE memories MATCH 'quokka'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH query on memories");
+        assert_eq!(
+            mem_count, 0,
+            "corpora must not bleed: 'quokka' in artifacts should not appear in memories"
+        );
+    }
+
+    #[test]
+    fn reconcile_indexes_epoch_narrative_and_failed_cmds() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Write an epochs file with two records
+        let sessions_dir = tmp.path().join(".daemoneye/var/log/sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let epochs_path = sessions_dir.join("test-sess.epochs.jsonl");
+        let rec1 = crate::daemon::context::epochs::EpochRecord {
+            seq: 1,
+            kind: "epoch".into(),
+            turn_start: 0,
+            turn_end: 5,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 3,
+            narrative: Some("The ferret was found in the garden".into()),
+            tally: crate::daemon::context::epochs::EpochTally {
+                commands_fail: 1,
+                failed_cmds: vec![("rm -rf /tmp/bad".to_string(), -1)],
+                ..Default::default()
+            },
+            artifacts: vec!["runbook:deploy".to_string()],
+            covers: None,
+        };
+        let rec2 = crate::daemon::context::epochs::EpochRecord {
+            seq: 2,
+            kind: "epoch".into(),
+            turn_start: 6,
+            turn_end: 12,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 4,
+            narrative: Some("The gerbil escaped".into()),
+            tally: crate::daemon::context::epochs::EpochTally {
+                commands_fail: 1,
+                failed_cmds: vec![("curl http://example.com".to_string(), 0)],
+                ..Default::default()
+            },
+            artifacts: vec![],
+            covers: None,
+        };
+
+        // Write directly as JSONL (bypassing append_epoch to avoid masking)
+        use std::io::Write;
+        let mut f = std::fs::File::create(&epochs_path).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&rec1).unwrap()).unwrap();
+        writeln!(f, "{}", serde_json::to_string(&rec2).unwrap()).unwrap();
+
+        let report = reconcile_index().expect("reconcile should succeed");
+
+        let epochs_count: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "epochs")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(epochs_count, 2, "should have 2 epoch rows");
+
+        // Query matching narrative text
+        let conn = open_index().expect("open_index should succeed");
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM epochs WHERE epochs MATCH 'ferret'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH query on epochs");
+        assert_eq!(count, 1, "should find epoch by narrative text 'ferret'");
+
+        // Query matching failed_cmds text
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM epochs WHERE epochs MATCH 'bad'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .expect("MATCH query on epochs for failed_cmds");
+        assert_eq!(count, 1, "should find epoch by failed_cmds text 'bad'");
+    }
+
+    #[test]
+    fn reconcile_leaves_contentless_corpora_empty() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let report = reconcile_index().expect("reconcile should succeed");
+
+        let turns_count: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "turns")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(
+            turns_count, 0,
+            "turns should be empty (populated in phase 02b)"
+        );
+
+        let events_count: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "events")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(
+            events_count, 0,
+            "events should be empty (populated in phase 02b)"
+        );
+    }
+
+    #[test]
+    fn reconcile_report_per_corpus_sums_to_total() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed one memory
+        crate::memory::add_memory(
+            "test-mem",
+            "test content",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+
+        let report = reconcile_index().expect("reconcile should succeed");
+
+        let per_corpus_sum: usize = report.per_corpus.iter().map(|(_, c)| c).sum();
+        assert_eq!(
+            report.rows_after, per_corpus_sum,
+            "rows_after must equal the sum of per-corpus counts"
+        );
+
+        // Must have exactly 5 corpus entries
+        assert_eq!(report.per_corpus.len(), 5, "should have 5 corpus entries");
     }
 }
