@@ -1,7 +1,7 @@
 # Phase 02a: Index schema v2 — all tables, plus the stored-content corpora
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** in-progress (bounced at review — see `bugs/bug-02a-1.md`)
+**Status:** in-progress
 **Depends on:** phase-01 (done — write-time masking, so epoch text is safe to index)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -560,3 +560,9 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 00aea84b1fbfa1e059305a4e91e2d114dbc82385
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-03 19:41 (started — bounce fix)
+
+**Executor:** model
+
+Fixing bug-02a-1: `rows_before` was counting only `memories` while `rows_after` counted all five corpora, causing phantom "N added" on every reindex after the first. Now `rows_before` sums across all five tables using a shared `count_table` helper. Added `second_reconcile_reports_no_change` test. Also moved `scripts_dir()` and `runbooks_dir()` from `Config` impl to module-level functions in `config/load.rs` so they're accessible from `config/seeds.rs` without a `Config` instance.
