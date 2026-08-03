@@ -399,7 +399,19 @@ runtime-tree hygiene (orphan removal, `lib/` stopped on install, doc-comment
 corrections); and this phase's own roadmap correction. Phase 12 is the last in-scope
 phase; the milestone retrospective and close belong to the human gate.
 
-### Active milestone — none
+### Active milestone — M11 Unified Knowledge Index
+
+Scoped 2026-08-03 (PE sign-off); design doc `docs/design/knowledge-index.md`;
+milestone README `docs/dev/milestones/M11-knowledge-index/README.md`. Extends
+the M7 FTS5 index into a unified knowledge index: five corpora (memories,
+runbooks/scripts, epoch narratives, archived turns, events) in one
+`var/index/memory.db`, with contentless tables + byte-offset sidecar maps for
+the two high-volume append-only corpora. Read surfaces upgraded in-milestone:
+`recall_context` query mode (BM25, cross-session `scope`), `search_repository`
+(index routing, new kinds), and per-turn prompt assembly (real BM25 scores, no
+directory walks). Prerequisite phase closes the two mask-on-write gaps
+(`append_epoch`, `log_event`) before their corpora are indexed. Seven phases,
+none dispatched yet.
 
 **M10 — Residual Hygiene closed 2026-08-02**, three phases, all
 `approved_first_try`, zero bugs. It cleared the four items carried out of M7 and

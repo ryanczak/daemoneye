@@ -1,13 +1,17 @@
 # NEXT
 
-**Active phase: none.**
+**Active phase:
+[M11 phase-01 — write-time-masking](milestones/M11-knowledge-index/phase-01-write-time-masking.md)
+(`todo`, drafted 2026-08-03, not yet dispatched).** Dispatch with
+`/rexymcp:dispatch phase-01-write-time-masking`.
+
+**M11 — Unified Knowledge Index scoped 2026-08-03** (PE decision). Seven phases
+planned; design settled in `docs/design/knowledge-index.md`; milestone README at
+`docs/dev/milestones/M11-knowledge-index/README.md`.
 
 **M10 — Residual Hygiene closed 2026-08-02** (three phases, all
 `approved_first_try`, zero bugs, zero bounces). Retrospective:
 `docs/dev/milestones/M10-residual-hygiene/README.md`.
-
-M7, M8, M9 and M10 are all closed and **no milestone is scoped**. Starting one is
-a human decision — the architect does not cross a milestone boundary on its own.
 
 ## The carried list is empty except for one unreproducible item
 
