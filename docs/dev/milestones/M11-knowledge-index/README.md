@@ -71,15 +71,25 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | done |
-| 02 | index-schema-v2 — five FTS tables + two maps, SCHEMA_VERSION 2, `reconcile_index()` over all corpora, `reindex` coverage | todo |
+| 02a | [index-schema-v2](phase-02a-index-schema-v2.md) — all seven tables, SCHEMA_VERSION 2, `reconcile_index()` over the stored-content corpora (`artifacts`, `epochs`), per-corpus `reindex` report | todo |
+| 02b | contentless-corpora — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | todo |
 | 03 | incremental-hooks — best-effort index writes at the five choke points; row deletion from the two retention sweeps | todo |
 | 04 | recall-context-fts — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | todo |
 | 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
 | 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
-Phase docs are drafted one at a time via `/rexymcp:architect next`; phase 01
-is drafted, phases 02–07 are not yet.
+Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01
+and 02a are drafted, 02b–07 are not yet.
+
+**Why 02 split into 02a/02b:** the original phase 02 covered the schema plus
+`reconcile_index()` over all five corpora. The two contentless corpora need
+byte-offset scanning of every archive file and event segment — on its own that
+is comparable in size to the whole rest of the phase, and it lands
+> 500 lines together. 02a establishes the complete schema (so 02b touches no
+DDL) and the two straightforward stored-content corpora; 02b does the
+offset-computing scanners. Numbered a/b rather than renumbering so phases 03–07
+keep their existing ids.
 
 ## Notes
 

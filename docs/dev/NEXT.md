@@ -1,7 +1,13 @@
 # NEXT
 
-**Active phase: none — M11 phase-01 is `done`; phase-02 is not yet drafted.**
-Draft it with `/rexymcp:architect next`.
+**Active phase:
+[M11 phase-02a — index-schema-v2](milestones/M11-knowledge-index/phase-02a-index-schema-v2.md)
+(`todo`, drafted 2026-08-03, not yet dispatched).** Dispatch with
+`/rexymcp:dispatch phase-02a`.
+
+The original phase 02 was split into 02a (schema + stored-content corpora) and
+02b (contentless `turns`/`events` + offset maps) — together they exceeded one
+executor session. See the milestone README § Phases.
 
 [M11 phase-01 — write-time-masking](milestones/M11-knowledge-index/phase-01-write-time-masking.md)
 **approved 2026-08-03** (`approved_after_1`; one bounce,
