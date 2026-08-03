@@ -1,17 +1,16 @@
 # NEXT
 
-**Active phase:
-[M11 phase-02a — index-schema-v2](milestones/M11-knowledge-index/phase-02a-index-schema-v2.md)
-(`in-progress` — bounced at review 2026-08-03, see
-[bug-02a-1](milestones/M11-knowledge-index/bugs/bug-02a-1.md)).** The schema and
-both new corpora are correct and verified; the bounce is one arithmetic bug in
-the `reindex` report, where `rows_before` counts only `memories` while
-`rows_after` sums all five corpora. Re-dispatch with
-`/rexymcp:dispatch phase-02a`.
+**Active phase: none — M11 phase-02b is not yet drafted.** Draft it with
+`/rexymcp:architect next`. 02b populates the contentless `turns` and `events`
+corpora with their byte-offset sidecar maps; the tables and DDL already exist
+from 02a. (The original phase 02 was split into 02a/02b because together they
+exceeded one executor session — see the milestone README § Phases.)
 
-The original phase 02 was split into 02a (schema + stored-content corpora) and
-02b (contentless `turns`/`events` + offset maps) — together they exceeded one
-executor session. See the milestone README § Phases.
+[M11 phase-02a — index-schema-v2](milestones/M11-knowledge-index/phase-02a-index-schema-v2.md)
+**approved 2026-08-03** (`approved_after_1`; one bounce,
+[bug-02a-1](milestones/M11-knowledge-index/bugs/bug-02a-1.md), verified fixed).
+The index now carries all seven tables at SCHEMA_VERSION 2, with `artifacts` and
+`epochs` populated and `daemoneye reindex` reporting per-corpus counts truthfully.
 
 [M11 phase-01 — write-time-masking](milestones/M11-knowledge-index/phase-01-write-time-masking.md)
 **approved 2026-08-03** (`approved_after_1`; one bounce,

@@ -1,7 +1,7 @@
 # Phase 02a: Index schema v2 — all tables, plus the stored-content corpora
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-01 (done — write-time masking, so epoch text is safe to index)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -708,3 +708,49 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** dd12d9d7acaee838817ffe639b6e1f2fc755d272
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-03
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-02a-1.md`, major — verified fixed in round 2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** one, benign, accepted. Round 2 moved `scripts_dir()` and
+  `runbooks_dir()` from `Config` associated functions to module-level functions
+  in `src/config/load.rs`, updating `config/seeds.rs` and the `path_audit.rs`
+  INVENTORY strings to match. The phase doc's § Authorizations named only
+  `src/memory/index.rs` and `src/cli/commands/reindex.rs`. The refactor was
+  **unnecessary**: `crate::runbook::runbooks_dir()` and
+  `crate::scripts::scripts_dir()` already exist as module-level functions and are
+  used throughout the tree — including at `src/memory/index.rs:403`, in this
+  phase's own round-1 code. The stated rationale (needed so `config/seeds.rs`
+  could reach them without a `Config` instance) does not hold either; the prior
+  code called `Self::scripts_dir()` from inside that same impl block. Accepted
+  rather than bounced because it is provably harmless — same paths, no remaining
+  `Config::` callers, and the `path_audit` gate that guards these very strings
+  passes (24 tests). Net cost is one more duplicate accessor pair.
+- **Calibration:** **trend at 2 of 3 — hold, do not fold yet.** Round 2 shipped no
+  `(end-to-end verification)` Update Log entry; the binary-level claim the bug
+  doc required to be pasted was given as prose in the completion summary instead.
+  This is the same omission as M11 phase-01 round 1, so it is now two
+  occurrences. Per WORKFLOW § Calibration two is a trend and three is a fix, so
+  it is recorded here and held. **This was judged differently from phase-01 on
+  purpose, and the distinction is the point:** in phase-01 the prose substitute
+  was *measurably false* (it cited a test filter that ran 3 of 6 new tests plus
+  an unrelated pre-existing one), so the artifact requirement was protecting
+  against a real untruth. Here the prose claim is **true** — reverified below
+  through the same door the bug doc named — so the record ends up complete and
+  accurate, with the captured evidence living in `bugs/bug-02a-1.md` and this
+  verdict. A third occurrence should fold, and the fold candidate is to require
+  the e2e entry per *dispatch* rather than per *phase*, since a bounce-fix round
+  currently inherits the earlier round's entry and reads as satisfied.
+- **Independently verified at review:** all four gates re-run clean as separate
+  invocations (fmt/build/clippy exit 0; test green at 1052 lib + 6 bug_tracker +
+  4 doc_truth + 30 integration + 9 isolation). The fix was reproduced through the
+  shipped `daemoneye reindex` binary across four runs — two unchanged runs now
+  print the "count unchanged" message, and a fourth run after adding a runbook
+  correctly reports `12 → 13 rows (1 added)`, confirming the fix is not hardcoded
+  equality. Four mutations were each caught across the two rounds: emptying the
+  runbook loop, reintroducing the `load_runbook` stats side effect, dropping
+  `failed_cmds` from the epoch body, and reverting `rows_before` to memories-only.
+  Hygiene clean on every changed file; the one `.expect()` in `config/load.rs:121`
+  predates M11.

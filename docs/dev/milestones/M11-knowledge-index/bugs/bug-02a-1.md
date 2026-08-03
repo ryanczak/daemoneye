@@ -1,8 +1,32 @@
 # Bug 1 on phase-02a: `daemoneye reindex` reports phantom added rows on every run after the first
 
 **Severity:** major
-**Status:** open
+**Status:** verified
 **Filed:** 2026-08-03
+**Fixed:** 2026-08-03 (commit `0f09157`, round 2). `rows_before` now sums the same
+five tables `rows_after` does, via the shared `count_table` helper hoisted above
+the transaction (`src/memory/index.rs:305-320`).
+
+Independently reverified at review through the shipped binary, same reproduction
+as the original report plus one check the bug doc did not ask for — that a *real*
+delta is still reported, so the fix is not hardcoded equality:
+
+```
+=== run 1 (fresh index) ===
+Index rebuilt: 0 → 12 rows (12 added).
+=== run 2 (NOTHING changed) ===
+Index rebuilt: 12 rows (count unchanged — the rebuild still replaced every row).
+=== run 3 (NOTHING changed) ===
+Index rebuilt: 12 rows (count unchanged — the rebuild still replaced every row).
+=== run 4: after ADDING a runbook ===
+Index rebuilt: 12 → 13 rows (1 added).
+  artifacts: 4
+```
+
+The previously-unreachable `Ordering::Equal` branch fires, and run 4 confirms
+genuine changes are still counted. The regression guard is real: reverting
+`rows_before` to the memories-only query makes `second_reconcile_reports_no_change`
+FAIL.
 
 ## What's wrong
 
