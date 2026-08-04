@@ -1,14 +1,19 @@
 # NEXT
 
-**Active phase: none — M11 phase-03 is not yet drafted.** Draft it with
-`/rexymcp:architect next`.
+**Active phase:
+[M11 phase-03a — incremental-append-hooks](milestones/M11-knowledge-index/phase-03a-incremental-append-hooks.md)
+(`todo`, drafted 2026-08-04, not yet dispatched).** Dispatch with
+`/rexymcp:dispatch phase-03a`. It hooks the archive / event / epoch / artifact
+write choke points so new content is searchable without a reindex. Phase 03 was
+split into 03a/03b — see the milestone README § Phases.
 
-**A calibration fold is waiting on PE sign-off** — see the phase-02b Review
-verdict. The missing per-dispatch end-to-end entry has now occurred three times
-(phase-01 r1, phase-02a r2, phase-02b r2), hitting WORKFLOW § Calibration's
-three-is-a-fix threshold. Proposed: require the entry *per dispatch* rather than
-per phase, since a bounce-fix round currently inherits the earlier round's entry
-and reads as compliant. The architect does not amend `WORKFLOW.md` unilaterally.
+**Calibration fold landed 2026-08-04 (PE sign-off).** `docs/dev/WORKFLOW.md`
+§ "End-to-end verification" now requires the entry **per dispatch**, not per
+phase: a bounce-fix round needs its own, and an entry from an earlier round does
+not carry forward. Folded after three occurrences (phase-01 r1, phase-02a r2,
+phase-02b r2). **Not yet applied upstream** — the same clause belongs in
+rexyMCP's `plugin/templates/WORKFLOW.md`, which is out of bounds from a
+target-project architect session and needs a separate change in that repo.
 
 [M11 phase-02b — contentless-corpora](milestones/M11-knowledge-index/phase-02b-contentless-corpora.md)
 **approved 2026-08-04** (`approved_after_1`; one bounce,

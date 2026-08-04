@@ -73,14 +73,21 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | done |
 | 02a | [index-schema-v2](phase-02a-index-schema-v2.md) — all seven tables, SCHEMA_VERSION 2, `reconcile_index()` over the stored-content corpora (`artifacts`, `epochs`), per-corpus `reindex` report | done |
 | 02b | [contentless-corpora](phase-02b-contentless-corpora.md) — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | done |
-| 03 | incremental-hooks — best-effort index writes at the five choke points; row deletion from the two retention sweeps | todo |
+| 03a | [incremental-append-hooks](phase-03a-incremental-append-hooks.md) — best-effort index writes at the archive / event / epoch / artifact choke points, including the archive-seed case | todo |
+| 03b | sweep-deletions — `sweep_session_archives` and `sweep_event_segments` remove the rows for files they unlink | todo |
 | 04 | recall-context-fts — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | todo |
 | 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
 | 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01,
-02a and 02b are drafted, 03–07 are not yet.
+02a, 02b and 03a are drafted, 03b–07 are not yet.
+
+**Why 03 split into 03a/03b:** the append hooks alone carry the archive-seed
+case (one `fs::copy` can add many lines at once, none of which pass through the
+append path) plus a scanner extraction so the seed and the reconcile share one
+code path. Sweep deletion is independent of all of that and reads more clearly
+on its own. Same a/b convention as 02, so 04–07 keep their ids.
 
 **Why 02 split into 02a/02b:** the original phase 02 covered the schema plus
 `reconcile_index()` over all five corpora. The two contentless corpora need

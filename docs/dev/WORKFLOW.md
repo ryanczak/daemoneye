@@ -202,6 +202,18 @@ criteria were exercised against real artifacts. If the only new content in the
 Update Log is that block, the requirement is unmet no matter how accurately the
 completion summary describes what was run.
 
+**One entry per dispatch, not per phase.** A phase that bounces and is
+re-dispatched needs a **new** end-to-end entry for the round that changed the
+code. An entry written in an earlier round does not carry forward: it describes a
+tree that no longer exists, and the round whose diff is under review then has no
+captured evidence at all. This applies to bug-doc Verification items too — if a
+bug doc asks for a command to be run and its output pasted, that is this round's
+entry, not a box the earlier round's entry already ticked.
+
+Concretely: if the Update Log's newest content for the current dispatch is a
+`(progress)` entry plus the server-authored `(complete)` entry, the requirement
+is unmet, exactly as it would be on a first dispatch.
+
 **For the architect: give the commands as a runnable block, never as prose.**
 Write the exact shell the executor should run — redirect included, `exit=$?`
 marker included — rather than describing what to verify. Where a result's success
@@ -219,6 +231,20 @@ copy-pasteable block or prose, and whether it said in as many words that the
 server-authored `(complete)` block does not count. Both were used inline in M6
 phases 05 and 07 and worked immediately both times; omitting either failed in
 phases 03, 04, 09, 11 and 12.)*
+
+*(Per-dispatch clause folded 2026-08-04 after M11, on PE sign-off. Three
+occurrences hit the threshold: phase-01 round 1, where the prose substitute was
+measurably false — it cited a test filter that ran 3 of 6 new tests plus an
+unrelated pre-existing one; phase-02a round 2, prose but true; and phase-02b
+round 2, where no entry was written for the dispatch at all and a bug doc's
+binary-level Verification item went unperformed. All three share one mechanism:
+the phase already carried an entry from an earlier round, so it read as
+compliant while the round under review had no evidence. The prior wording said
+"an Update Log entry you author" without saying **when**, and could not
+distinguish the two cases. Note the failure mode this closes is not a wrong
+result — in the second and third cases the claims held up when checked
+independently — it is that the check moved from the executor to whoever reviews,
+silently.)*
 
 If the phase ships **no** runtime-loadable real artifact (a pure internal
 refactor, a new private type, a test-only helper), write:
