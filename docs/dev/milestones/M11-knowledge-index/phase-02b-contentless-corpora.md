@@ -1,7 +1,7 @@
 # Phase 02b: Populate the contentless corpora — turns and events
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-02a (done — the seven tables and their DDL already exist)
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -665,3 +665,41 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3a86e5a84b731ea3e35343ea36181a0c6f9f0cbb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-04
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (`bugs/bug-02b-1.md`, major — verified fixed in round 2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. Both changed files were authorized, and
+  `json_to_readable` was widened to exactly `pub(crate)` with its body untouched,
+  as specified.
+- **Calibration:** **threshold reached — 3 of 3 — escalated to the PE, not folded
+  here.** Round 2 again shipped no `(end-to-end verification)` Update Log entry
+  for its dispatch, and `bug-02b-1`'s Verification item 4 (a real-binary
+  `daemoneye reindex` against a corrupt archive) was not performed in any form.
+  That is the third occurrence of one pattern: M11 phase-01 round 1 (prose
+  substitute, measurably false), phase-02a round 2 (prose substitute, true), and
+  now phase-02b round 2 (no entry at all). WORKFLOW § Calibration makes three a
+  fix, but the architect does not amend `WORKFLOW.md` unilaterally — the PE signs
+  off first. **Proposed fold:** require the end-to-end entry *per dispatch*
+  rather than per phase. The mechanism behind all three is the same — a
+  bounce-fix round inherits the earlier round's entry, so the phase looks
+  compliant while the round that changed the code has no captured evidence. The
+  current wording cannot distinguish those cases.
+  Approved rather than bounced on the same test applied at phase-02a: the
+  substance was verified true, so the artifact's purpose — preventing an untrue
+  claim entering the record — is served, and the captured evidence now lives in
+  `bugs/bug-02b-1.md` and this verdict.
+- **Independently verified at review:** all four gates re-run clean as separate
+  invocations (fmt/build/clippy exit 0; test green at 1062 lib + 6 bug_tracker +
+  4 doc_truth + 30 integration + 9 isolation). Five mutations were caught across
+  the two rounds: the off-by-one offset accumulator (fails both offset tests),
+  removing the `tool_results` loop, removing `mask_sensitive`, and reverting the
+  `read_line` error handling to `?`. A probe confirmed partial-file retention and
+  termination on corrupt input, and the shipped `daemoneye reindex` binary exits 0
+  on a corrupt archive — evidence quoted in the bug doc. Hygiene clean on both
+  changed files.
+- **Carried to phase 03:** the milestone README § Notes records the `spec_bug`
+  lesson from Finding 1 — phase 03 reuses this scanner recipe at the incremental
+  choke points and must quote the skip-and-warn form, never the `?` form.

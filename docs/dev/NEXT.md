@@ -1,13 +1,20 @@
 # NEXT
 
-**Active phase:
+**Active phase: none — M11 phase-03 is not yet drafted.** Draft it with
+`/rexymcp:architect next`.
+
+**A calibration fold is waiting on PE sign-off** — see the phase-02b Review
+verdict. The missing per-dispatch end-to-end entry has now occurred three times
+(phase-01 r1, phase-02a r2, phase-02b r2), hitting WORKFLOW § Calibration's
+three-is-a-fix threshold. Proposed: require the entry *per dispatch* rather than
+per phase, since a bounce-fix round currently inherits the earlier round's entry
+and reads as compliant. The architect does not amend `WORKFLOW.md` unilaterally.
+
 [M11 phase-02b — contentless-corpora](milestones/M11-knowledge-index/phase-02b-contentless-corpora.md)
-(`in-progress` — bounced at review 2026-08-03, see
-[bug-02b-1](milestones/M11-knowledge-index/bugs/bug-02b-1.md)).** Both scanners
-are correct and mutation-guarded; the bounce covers an invalid-UTF-8 read error
-that aborts the whole reindex (a **spec** defect — the phase doc quoted the `?`
-form) plus one spec-named negative test that was not written. Re-dispatch with
-`/rexymcp:dispatch phase-02b`.
+**approved 2026-08-04** (`approved_after_1`; one bounce,
+[bug-02b-1](milestones/M11-knowledge-index/bugs/bug-02b-1.md), verified fixed).
+`turns` and `events` are populated with byte-offset sidecar maps, masked on
+index, and resilient to corrupt files. All five corpora now build from disk.
 
 [M11 phase-02a — index-schema-v2](milestones/M11-knowledge-index/phase-02a-index-schema-v2.md)
 **approved 2026-08-03** (`approved_after_1`; one bounce,

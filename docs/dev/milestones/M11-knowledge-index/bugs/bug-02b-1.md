@@ -1,8 +1,47 @@
 # Bug 1 on phase-02b: one invalid UTF-8 byte aborts the entire reindex; the spec-named malformed-line test is missing
 
 **Severity:** major
-**Status:** resolved
+**Status:** verified
 **Filed:** 2026-08-03
+**Fixed:** 2026-08-04 (commit `3a86e5a`, round 2). Both scanners replaced the
+propagating `?` with a `match` that logs a warning and `break`s out of that one
+file. Two tests added.
+
+Independently reverified at review, and the behaviour is **better than the
+shipped tests assert**. A probe with valid lines *before* the corrupt bytes
+(a case the shipped fixture does not cover — its bad file starts with the bad
+bytes) shows the earlier lines are retained, the rest of that file is abandoned,
+and unrelated archives are untouched:
+
+```
+PROBE UTF8FIX = Ok turns=3
+PROBE ROWS    = [("other", 5), ("partial", 1), ("partial", 2)]
+```
+
+`partial` turns 1 and 2 precede the corruption and survive; the line after it is
+correctly dropped; `other` is fully indexed. The probe returned in 0.01 s, so the
+`break` terminates rather than spinning — the specific hazard that made `break`
+the right choice over `continue`.
+
+Through the shipped binary, satisfying Verification item 4, against a `HOME`
+whose `bad.archive.jsonl` holds a valid line followed by raw `\xff\xfe\x80`:
+
+```
+$ daemoneye reindex
+Index rebuilt: 0 → 12 rows (12 added).
+  memories: 9
+  artifacts: 1
+  epochs: 0
+  turns: 2
+  events: 0
+exit=0
+```
+
+Both guards are real: reverting the turns scanner to the `?` form makes
+`invalid_utf8_file_does_not_abort_reconcile` FAIL, and an off-by-one offset
+accumulator makes **both** `turns_map_offsets_point_at_the_right_line` and the
+new `malformed_line_is_skipped_and_later_offsets_stay_correct` FAIL — so the new
+test catches offset drift, as this doc required.
 
 ## What's wrong
 
