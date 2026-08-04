@@ -2,11 +2,12 @@
 
 **Active phase:
 [M11 phase-02b — contentless-corpora](milestones/M11-knowledge-index/phase-02b-contentless-corpora.md)
-(`todo`, drafted 2026-08-03, not yet dispatched).** Dispatch with
-`/rexymcp:dispatch phase-02b`. It populates the contentless `turns` and `events`
-corpora with their byte-offset sidecar maps; the tables and DDL already exist
-from 02a. (The original phase 02 was split into 02a/02b because together they
-exceeded one executor session — see the milestone README § Phases.)
+(`in-progress` — bounced at review 2026-08-03, see
+[bug-02b-1](milestones/M11-knowledge-index/bugs/bug-02b-1.md)).** Both scanners
+are correct and mutation-guarded; the bounce covers an invalid-UTF-8 read error
+that aborts the whole reindex (a **spec** defect — the phase doc quoted the `?`
+form) plus one spec-named negative test that was not written. Re-dispatch with
+`/rexymcp:dispatch phase-02b`.
 
 [M11 phase-02a — index-schema-v2](milestones/M11-knowledge-index/phase-02a-index-schema-v2.md)
 **approved 2026-08-03** (`approved_after_1`; one bounce,
