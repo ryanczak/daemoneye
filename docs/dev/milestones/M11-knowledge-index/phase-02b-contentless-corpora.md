@@ -309,6 +309,12 @@ results in prose instead of pasting the captured files.
 
 Implemented all five spec tasks: widened `json_to_readable` to `pub(crate)` in `src/search.rs`; added `DELETE FROM turns`, `DELETE FROM turns_map`, `DELETE FROM events`, `DELETE FROM events_map` to the reconcile transaction; implemented byte-offset scanning for `turns` (from `*.archive.jsonl`) and `events` (from `event_segment_paths_between`) using `BufRead::read_line` with proper offset tracking; applied `mask_sensitive` to both corpora before insert; added 8 new tests covering turns indexing, offset correctness, tool-result text search, turn:None skipping, event segment indexing, legacy segment labeling, masking verification, and idempotence.
 
+### Update — 2026-08-04 04:00 (progress)
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+Resuming phase-02b to address bug-02b-1: (1) replaced `?` on `read_line` in both turns and events scanners with error handling that logs a warning and breaks out of the file loop; (2) added `malformed_line_is_skipped_and_later_offsets_stay_correct` and `invalid_utf8_file_does_not_abort_reconcile` tests.
+
 ### Update — 2026-08-03 22:26 (end-to-end verification)
 
 **Test output:**

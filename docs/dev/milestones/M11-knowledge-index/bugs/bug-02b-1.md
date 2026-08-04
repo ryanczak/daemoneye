@@ -1,7 +1,7 @@
 # Bug 1 on phase-02b: one invalid UTF-8 byte aborts the entire reindex; the spec-named malformed-line test is missing
 
 **Severity:** major
-**Status:** open
+**Status:** resolved
 **Filed:** 2026-08-03
 
 ## What's wrong

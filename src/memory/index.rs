@@ -483,7 +483,13 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
             let mut line = String::new();
             loop {
                 line.clear();
-                let n = reader.read_line(&mut line)?;
+                let n = match reader.read_line(&mut line) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        log::warn!("skipping {} at offset {offset}: {e}", path.display());
+                        break;
+                    }
+                };
                 if n == 0 {
                     break;
                 }
@@ -538,7 +544,13 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         let mut line = String::new();
         loop {
             line.clear();
-            let n = reader.read_line(&mut line)?;
+            let n = match reader.read_line(&mut line) {
+                Ok(n) => n,
+                Err(e) => {
+                    log::warn!("skipping {} at offset {offset}: {e}", path.display());
+                    break;
+                }
+            };
             if n == 0 {
                 break;
             }
@@ -2054,6 +2066,117 @@ mod tests {
         assert_eq!(
             report2.rows_before, report2.rows_after,
             "second reconcile should report no change"
+        );
+    }
+
+    #[test]
+    fn malformed_line_is_skipped_and_later_offsets_stay_correct() {
+        use std::io::Write;
+
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // Write an archive with 3 lines: valid, malformed, valid
+        let archive = sessions_dir.join("s1.archive.jsonl");
+        let mut f = std::fs::File::create(&archive).unwrap();
+        writeln!(f, r#"{{"role":"user","content":"first","turn":1}}"#).unwrap();
+        writeln!(f, "not json at all").unwrap();
+        writeln!(f, r#"{{"role":"user","content":"third","turn":3}}"#).unwrap();
+        drop(f);
+
+        let report = reconcile_index().unwrap();
+        let turns: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "turns")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(
+            turns, 2,
+            "malformed line should be skipped, 2 valid rows expected"
+        );
+
+        // Verify offsets by seeking and re-reading
+        let db_path = crate::config::memory_index_path();
+        let db = rusqlite::Connection::open(&db_path).unwrap();
+        let rows: Vec<(i64, i64)> = db
+            .prepare("SELECT turn, offset FROM turns_map ORDER BY offset")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0).unwrap(), r.get(1).unwrap())))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(rows.len(), 2, "should have exactly 2 map rows");
+        for (expected_turn, stored_offset) in &rows {
+            let mut fh = std::fs::File::open(&archive).unwrap();
+            use std::io::Seek;
+            fh.seek(std::io::SeekFrom::Start(*stored_offset as u64))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(fh);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+            let actual_turn: usize = parsed["turn"].as_u64().unwrap() as usize;
+            assert_eq!(
+                actual_turn as i64, *expected_turn,
+                "offset {stored_offset} should point to turn {expected_turn}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_utf8_file_does_not_abort_reconcile() {
+        use std::io::Write;
+
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // Write a valid archive with one message
+        let valid_archive = sessions_dir.join("good.archive.jsonl");
+        std::fs::write(
+            &valid_archive,
+            r#"{"role":"user","content":"hello world","turn":1}"#,
+        )
+        .unwrap();
+
+        // Write a corrupt archive whose first line is raw invalid UTF-8
+        // (no valid lines before the error, so zero rows from this file)
+        let bad_archive = sessions_dir.join("bad.archive.jsonl");
+        let mut f = std::fs::File::create(&bad_archive).unwrap();
+        f.write_all(&[0xff, 0xfe, 0x80]).unwrap();
+        drop(f);
+
+        // reconcile_index() should return Ok, not Err
+        let report = reconcile_index().unwrap();
+        let turns: usize = report
+            .per_corpus
+            .iter()
+            .find(|(n, _)| n == "turns")
+            .map(|(_, c)| *c)
+            .unwrap_or(0);
+        assert_eq!(
+            turns, 1,
+            "only the valid archive should contribute rows (1 from 'good', 0 from 'bad')"
+        );
+
+        // Verify the row came from the good archive
+        let db_path = crate::config::memory_index_path();
+        let db = rusqlite::Connection::open(&db_path).unwrap();
+        let session_id: String = db
+            .query_row("SELECT session_id FROM turns_map LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            session_id, "good",
+            "the indexed row should come from the valid archive"
         );
     }
 }
