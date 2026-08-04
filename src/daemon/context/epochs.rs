@@ -127,10 +127,32 @@ pub fn append_epoch(id: &str, rec: &EpochRecord) {
         *a = crate::ai::mask_sensitive(a);
     }
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-        if let Ok(line) = serde_json::to_string(&masked)
-            && let Err(e) = writeln!(f, "{}", line)
-        {
-            log::warn!("Failed to append to epoch file {}: {}", path.display(), e);
+        if let Ok(line) = serde_json::to_string(&masked) {
+            if let Err(e) = writeln!(f, "{}", line) {
+                log::warn!("Failed to append to epoch file {}: {}", path.display(), e);
+            } else {
+                // Index the epoch — compose the body the same way reconcile does.
+                let mut body_parts: Vec<&str> = Vec::new();
+                if let Some(ref narrative) = masked.narrative {
+                    body_parts.push(narrative.as_str());
+                }
+                for (cmd, _) in &masked.tally.failed_cmds {
+                    body_parts.push(cmd.as_str());
+                }
+                for art in &masked.artifacts {
+                    body_parts.push(art.as_str());
+                }
+                let body = body_parts.join(" ");
+                if let Err(e) =
+                    crate::memory::index::index_epoch(id, masked.seq, &masked.kind, &body)
+                {
+                    log::warn!(
+                        "epoch index update failed for session {} seq {}: {e:#}",
+                        id,
+                        masked.seq
+                    );
+                }
+            }
         }
     } else {
         log::warn!("Failed to open epoch file {} for append", path.display());

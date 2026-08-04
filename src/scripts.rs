@@ -52,6 +52,14 @@ pub fn write_script(name: &str, content: &str) -> Result<()> {
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
         .with_context(|| format!("chmod 700 {}", path.display()))?;
     crate::daemon::stats::inc_scripts_created();
+
+    // Best-effort index the script. Tags come from inline header parsing.
+    let tags = read_script_tags(name);
+    let tags_str = tags.join(",");
+    if let Err(e) = crate::memory::index::index_artifact("script", name, &tags_str, content) {
+        log::warn!("script index update failed for '{}': {e:#}", name);
+    }
+
     Ok(())
 }
 
@@ -70,6 +78,12 @@ pub fn delete_script(name: &str) -> Result<()> {
     let path = resolve_script(name)?;
     std::fs::remove_file(&path).with_context(|| format!("deleting script {}", path.display()))?;
     crate::daemon::stats::inc_scripts_deleted();
+
+    // Best-effort remove from index.
+    if let Err(e) = crate::memory::index::remove_artifact("script", name) {
+        log::warn!("script index removal failed for '{}': {e:#}", name);
+    }
+
     Ok(())
 }
 

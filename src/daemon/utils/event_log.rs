@@ -40,12 +40,33 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
+
+        // Determine segment label: "legacy" for the old single-file path,
+        // otherwise the file stem (e.g. "events-20260803").
+        let segment_label = if path == crate::config::events_path() {
+            "legacy".to_string()
+        } else {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        };
+
+        // Capture offset before the append.
+        let offset = std::fs::metadata(&path).ok().map(|m| m.len()).unwrap_or(0);
+
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
+            && f.write_all(line.as_bytes()).is_ok()
         {
-            let _ = f.write_all(line.as_bytes());
+            // Best-effort index the event.
+            let body = crate::search::json_to_readable(line.trim_end());
+            if let Err(e) = crate::memory::index::index_event(&segment_label, offset, event, &body)
+            {
+                log::warn!("event index update failed: {e:#}");
+            }
         }
     }
 }

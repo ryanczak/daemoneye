@@ -206,6 +206,15 @@ pub fn write_runbook(name: &str, content: &str) -> Result<()> {
     std::fs::write(&path, content)
         .with_context(|| format!("writing runbook at {}", path.display()))?;
     crate::daemon::stats::inc_runbooks_created();
+
+    // Best-effort index the runbook. Tags come from frontmatter parsing.
+    let (tags, _, _, _) = parse_frontmatter(content);
+    let tags_str = tags.join(",");
+    let body = content.to_string();
+    if let Err(e) = crate::memory::index::index_artifact("runbook", name, &tags_str, &body) {
+        log::warn!("runbook index update failed for '{}': {e:#}", name);
+    }
+
     Ok(())
 }
 
@@ -217,6 +226,11 @@ pub fn delete_runbook(name: &str) -> Result<()> {
         std::fs::remove_file(&path)
             .with_context(|| format!("deleting runbook at {}", path.display()))?;
         crate::daemon::stats::inc_runbooks_deleted();
+
+        // Best-effort remove from index.
+        if let Err(e) = crate::memory::index::remove_artifact("runbook", name) {
+            log::warn!("runbook index removal failed for '{}': {e:#}", name);
+        }
     }
     Ok(())
 }

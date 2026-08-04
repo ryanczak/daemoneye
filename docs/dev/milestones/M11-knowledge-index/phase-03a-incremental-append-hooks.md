@@ -1,7 +1,7 @@
 # Phase 03a: Incremental append hooks — index on write, not only on reconcile
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02b (done — all five corpora build from disk via reconcile)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -290,4 +290,30 @@ of pasting the captured files.
 
 ## Update Log
 
-*(executor appends here)*
+### Update — 2026-08-04 14:32 (started)
+
+**Executor:** Claude (sonnet-4-5-20250929)
+
+Implementing the five spec tasks: extraction of per-file archive indexer, four public hook functions, and wiring them at archive append, event log, epoch append, and artifact write/delete paths.
+
+### Update — 2026-08-04 15:10 (end-to-end verification)
+
+**End-to-end verification output** (captured mechanically from `/tmp/phase03a-tests.txt` and `/tmp/phase03a-checks.txt`):
+
+```
+cargo test --lib memory::index: 52 passed; 0 failed; exit=0
+cargo test --lib daemon::session: 21 passed; 0 failed; exit=0
+
+--- load_runbook must not appear in index or hook paths ---
+OK: no load_runbook reference
+--- no ?-propagated index errors at hook call sites ---
+src/daemon/session.rs:290:                    if let Err(e) = crate::memory::index::index_archive_file(&conn, id, &archive_path)
+src/daemon/session.rs:336:                    if let Err(e) = crate::memory::index::index_turn(id, turn, off, &body)
+src/daemon/utils/event_log.rs:66:            if let Err(e) = crate::memory::index::index_event(&segment_label, offset, event, &body)
+src/daemon/context/epochs.rs:147:                    crate::memory::index::index_epoch(id, masked.seq, &masked.kind, &body)
+src/runbook.rs:214:    if let Err(e) = crate::memory::index::index_artifact("runbook", name, &tags_str, &body)
+src/runbook.rs:231:        if let Err(e) = crate::memory::index::remove_artifact("runbook", name)
+src/scripts.rs:59:    if let Err(e) = crate::memory::index::index_artifact("script", name, &tags_str, content)
+src/scripts.rs:83:    if let Err(e) = crate::memory::index::remove_artifact("script", name)
+exit=0
+```

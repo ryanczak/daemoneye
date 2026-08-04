@@ -233,8 +233,140 @@ pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(Strin
     rows.filter_map(|r| r.ok()).collect()
 }
 
-/// Read the memory file for (namespace, category, key), parse it, and upsert
-/// the row. A missing file is not an error — it is treated as a delete.
+/// Scan one archive file and insert its turn rows into the index.
+///
+/// Takes a `&rusqlite::Connection` so it can be called with either a
+/// `&rusqlite::Transaction` (from reconcile) or a plain `&Connection`
+/// (from a hook), since `Transaction` derefs to `Connection`.
+pub fn index_archive_file(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    path: &std::path::Path,
+) -> Result<()> {
+    let file =
+        std::fs::File::open(path).with_context(|| format!("opening archive {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut offset: u64 = 0;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = match reader.read_line(&mut line) {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("skipping {} at offset {offset}: {e}", path.display());
+                break;
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        if let Ok(msg) = serde_json::from_str::<crate::ai::types::Message>(line.trim_end())
+            && let Some(turn) = msg.turn
+        {
+            let mut body = msg.content.clone();
+            if let Some(ref tool_results) = msg.tool_results {
+                for tr in tool_results {
+                    body.push(' ');
+                    body.push_str(&tr.content);
+                }
+            }
+            let body = crate::ai::mask_sensitive(&body);
+            conn.execute(
+                "INSERT INTO turns_map (session_id, turn, offset) VALUES (?1, ?2, ?3)",
+                (session_id, turn as i64, offset as i64),
+            )
+            .with_context(|| format!("inserting turn map row for {} turn {}", session_id, turn))?;
+            let rid = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO turns (rowid, body) VALUES (?1, ?2)",
+                (rid, &body),
+            )
+            .with_context(|| format!("inserting turn row for {} turn {}", session_id, turn))?;
+        }
+        offset += n as u64;
+    }
+    Ok(())
+}
+
+/// Index a single archived turn message. Best-effort: any failure is logged
+/// and returned as `Err` so the caller can swallow it.
+pub fn index_turn(session_id: &str, turn: usize, offset: u64, body: &str) -> Result<()> {
+    let body = crate::ai::mask_sensitive(body);
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    tx.execute(
+        "INSERT INTO turns_map (session_id, turn, offset) VALUES (?1, ?2, ?3)",
+        (session_id, turn as i64, offset as i64),
+    )
+    .context("inserting turn map row")?;
+    let rid = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO turns (rowid, body) VALUES (?1, ?2)",
+        (rid, &body),
+    )
+    .context("inserting turn row")?;
+    tx.commit().context("committing turn index transaction")
+}
+
+/// Index a single event log entry. Best-effort.
+pub fn index_event(segment: &str, offset: u64, event: &str, body: &str) -> Result<()> {
+    let body = crate::ai::mask_sensitive(body);
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    tx.execute(
+        "INSERT INTO events_map (segment, offset) VALUES (?1, ?2)",
+        (segment, offset as i64),
+    )
+    .context("inserting event map row")?;
+    let rid = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO events (rowid, event, body) VALUES (?1, ?2, ?3)",
+        (rid, event, &body),
+    )
+    .context("inserting event row")?;
+    tx.commit().context("committing event index transaction")
+}
+
+/// Index a single epoch record. Best-effort.
+pub fn index_epoch(session_id: &str, seq: u32, kind: &str, body: &str) -> Result<()> {
+    let conn = open_index()?;
+    conn.execute(
+        "INSERT INTO epochs (session_id, seq, kind, body) VALUES (?1, ?2, ?3, ?4)",
+        (session_id, seq as i64, kind, body),
+    )
+    .context("inserting epoch row")?;
+    Ok(())
+}
+
+/// Index (or replace) an artifact row. Deletes any existing row for
+/// `(kind, name)` before inserting, so repeated writes do not accumulate.
+/// Best-effort.
+pub fn index_artifact(kind: &str, name: &str, tags: &str, body: &str) -> Result<()> {
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    tx.execute(
+        "DELETE FROM artifacts WHERE kind = ?1 AND name = ?2",
+        (kind, name),
+    )
+    .context("deleting old artifact row")?;
+    tx.execute(
+        "INSERT INTO artifacts (kind, name, tags, body) VALUES (?1, ?2, ?3, ?4)",
+        (kind, name, tags, body),
+    )
+    .context("inserting artifact row")?;
+    tx.commit().context("committing artifact index transaction")
+}
+
+/// Remove an artifact row. Best-effort.
+pub fn remove_artifact(kind: &str, name: &str) -> Result<()> {
+    let conn = open_index()?;
+    conn.execute(
+        "DELETE FROM artifacts WHERE kind = ?1 AND name = ?2",
+        (kind, name),
+    )
+    .context("deleting artifact row from index")?;
+    Ok(())
+}
 pub fn index_memory_file(
     key: &str,
     category: crate::memory::MemoryCategory,
@@ -475,52 +607,8 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
             }
             let session_id = &name_str[..name_str.len() - ".archive.jsonl".len()];
             let path = entry.path();
-            let Ok(file) = std::fs::File::open(&path) else {
-                continue;
-            };
-            let mut reader = std::io::BufReader::new(file);
-            let mut offset: u64 = 0;
-            let mut line = String::new();
-            loop {
-                line.clear();
-                let n = match reader.read_line(&mut line) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        log::warn!("skipping {} at offset {offset}: {e}", path.display());
-                        break;
-                    }
-                };
-                if n == 0 {
-                    break;
-                }
-                if let Ok(msg) = serde_json::from_str::<crate::ai::types::Message>(line.trim_end())
-                    && let Some(turn) = msg.turn
-                {
-                    let mut body = msg.content.clone();
-                    if let Some(ref tool_results) = msg.tool_results {
-                        for tr in tool_results {
-                            body.push(' ');
-                            body.push_str(&tr.content);
-                        }
-                    }
-                    let body = crate::ai::mask_sensitive(&body);
-                    tx.execute(
-                        "INSERT INTO turns_map (session_id, turn, offset) VALUES (?1, ?2, ?3)",
-                        (session_id, turn as i64, offset as i64),
-                    )
-                    .with_context(|| {
-                        format!("inserting turn map row for {} turn {}", session_id, turn)
-                    })?;
-                    let rid = tx.last_insert_rowid();
-                    tx.execute(
-                        "INSERT INTO turns (rowid, body) VALUES (?1, ?2)",
-                        (rid, &body),
-                    )
-                    .with_context(|| {
-                        format!("inserting turn row for {} turn {}", session_id, turn)
-                    })?;
-                }
-                offset += n as u64;
+            if let Err(e) = index_archive_file(&tx, session_id, &path) {
+                log::warn!("indexing archive {}: {e:#}", path.display());
             }
         }
     }
@@ -602,6 +690,7 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufRead, Seek};
 
     #[test]
     fn open_index_creates_database_and_schema() {
@@ -2178,5 +2267,545 @@ mod tests {
             session_id, "good",
             "the indexed row should come from the valid archive"
         );
+    }
+
+    // ── Phase 03a tests ──────────────────────────────────────────────────────
+
+    fn make_test_message(role: &str, content: &str, turn: Option<usize>) -> crate::ai::Message {
+        crate::ai::Message {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn,
+        }
+    }
+
+    #[test]
+    fn append_archive_message_indexes_the_turn() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let session_id = "idx-test";
+        let msg = make_test_message("user", "hello from index test", Some(5));
+
+        // Append without any prior working file — no seed
+        crate::daemon::session::append_archive_message(session_id, &msg);
+
+        // Verify the turn is searchable
+        let conn = open_index().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns WHERE turns MATCH 'hello'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "appended turn should be searchable");
+
+        // Verify the map row exists
+        let map_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns_map WHERE session_id = ?1 AND turn = ?2",
+                (session_id, 5),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            map_count, 1,
+            "turns_map should have one row for the appended turn"
+        );
+    }
+
+    #[test]
+    fn appended_turn_offset_seeks_to_its_line() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let session_id = "offset-test";
+        let msg = make_test_message("user", "seekable content", Some(10));
+
+        crate::daemon::session::append_archive_message(session_id, &msg);
+
+        // Read the offset from the index
+        let conn = open_index().unwrap();
+        let offset: i64 = conn
+            .query_row(
+                "SELECT offset FROM turns_map WHERE session_id = ?1 AND turn = ?2",
+                (session_id, 10),
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        // Seek the archive to that offset and read the line
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let mut reader = std::io::BufReader::new(file);
+        reader
+            .seek(std::io::SeekFrom::Start(offset as u64))
+            .unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+
+        assert!(
+            line.contains("seekable content"),
+            "seeking to offset {offset} should yield the appended line, got: {line}"
+        );
+    }
+
+    #[test]
+    fn archive_seed_indexes_every_copied_line() {
+        use std::io::Write;
+
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let session_id = "seed-test";
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        // Create a working file with 3 messages (no archive yet)
+        let working_path = crate::daemon::session::session_file(session_id);
+        let mut f = std::fs::File::create(&working_path).unwrap();
+        writeln!(f, r#"{{"role":"user","content":"first seeded","turn":1}}"#).unwrap();
+        writeln!(
+            f,
+            r#"{{"role":"assistant","content":"second seeded","turn":1}}"#
+        )
+        .unwrap();
+        writeln!(f, r#"{{"role":"user","content":"third seeded","turn":2}}"#).unwrap();
+        drop(f);
+
+        // Ensure no archive exists
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        assert!(
+            !archive_path.exists(),
+            "archive should not exist before append"
+        );
+
+        // Append one more message — this triggers the seed + append
+        let msg = make_test_message("user", "appended fourth", Some(3));
+        crate::daemon::session::append_archive_message(session_id, &msg);
+
+        // Verify: 3 seeded + 1 appended = 4 rows
+        let conn = open_index().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns_map WHERE session_id = ?1",
+                (session_id,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 4,
+            "seeded archive (3 lines) + appended (1 line) = 4 turns rows"
+        );
+
+        // Verify each offset seeks to the right line
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let mut reader = std::io::BufReader::new(file);
+
+        let rows: Vec<(i64, i64)> = conn
+            .prepare("SELECT turn, offset FROM turns_map WHERE session_id = ?1 ORDER BY turn")
+            .unwrap()
+            .query_map((session_id,), |r| {
+                Ok((r.get(0).unwrap(), r.get(1).unwrap()))
+            })
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for (turn, offset) in &rows {
+            reader
+                .seek(std::io::SeekFrom::Start(*offset as u64))
+                .unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert!(
+                line.contains("turn"),
+                "offset {offset} for turn {turn} should point to a valid line, got: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn message_without_turn_is_not_indexed() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let session_id = "no-turn-test";
+        let msg = make_test_message("user", "no turn number", None);
+
+        crate::daemon::session::append_archive_message(session_id, &msg);
+
+        let conn = open_index().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM turns_map WHERE session_id = ?1",
+                (session_id,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "message with turn=None must not add a turns row");
+    }
+
+    #[test]
+    fn log_event_indexes_the_event() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let fields = serde_json::json!({"msg": "test event content here"});
+        crate::daemon::log_event("test_event", fields);
+
+        let conn = open_index().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'test_event'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "event should be searchable immediately");
+
+        // Verify segment label is the file stem
+        let segment: String = conn
+            .query_row(
+                "SELECT segment FROM events_map ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            segment.starts_with("events-"),
+            "segment label should be the file stem, got: {segment}"
+        );
+    }
+
+    #[test]
+    fn log_event_offset_seeks_to_its_line() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let fields = serde_json::json!({"msg": "seekable event"});
+        crate::daemon::log_event("seek_test", fields);
+
+        let conn = open_index().unwrap();
+        let offset: i64 = conn
+            .query_row(
+                "SELECT offset FROM events_map ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let path = crate::config::current_event_segment_path();
+        let file = std::fs::File::open(&path).unwrap();
+        let mut reader = std::io::BufReader::new(file);
+        reader
+            .seek(std::io::SeekFrom::Start(offset as u64))
+            .unwrap();
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+
+        assert!(
+            line.contains("seekable event"),
+            "seeking to offset {offset} should yield the event line, got: {line}"
+        );
+    }
+
+    #[test]
+    fn append_epoch_indexes_the_narrative() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let session_id = "epoch-idx-test";
+        let rec = crate::daemon::context::epochs::EpochRecord {
+            seq: 1,
+            kind: "epoch".to_string(),
+            turn_start: 0,
+            turn_end: 10,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 5,
+            narrative: Some("the daemon learned about indexing".to_string()),
+            tally: crate::daemon::context::epochs::EpochTally::default(),
+            artifacts: vec![],
+            covers: None,
+        };
+
+        crate::daemon::context::epochs::append_epoch(session_id, &rec);
+
+        let conn = open_index().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM epochs WHERE epochs MATCH 'indexing'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "epoch narrative should be searchable immediately");
+
+        // Verify the map row
+        let epoch_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM epochs WHERE session_id = ?1 AND seq = ?2",
+                (session_id, 1),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(epoch_count, 1, "epochs table should have one row");
+    }
+
+    #[test]
+    fn rewriting_a_runbook_replaces_its_artifact_row() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let name = "replace-me";
+        let content1 = "---\ntags: [initial]\n---\n# Runbook: replace-me\n\n## Alert Criteria\n\nFirst version of the runbook.";
+        let content2 = "---\ntags: [updated]\n---\n# Runbook: replace-me\n\n## Alert Criteria\n\nSecond version of the runbook.";
+
+        crate::runbook::write_runbook(name, content1).unwrap();
+        crate::runbook::write_runbook(name, content2).unwrap();
+
+        let conn = open_index().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE kind = 'runbook' AND name = ?1",
+                (name,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "rewriting a runbook must leave exactly one row, not two"
+        );
+
+        // Verify the content is the latest
+        let body: String = conn
+            .query_row(
+                "SELECT body FROM artifacts WHERE kind = 'runbook' AND name = ?1",
+                (name,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            body.contains("Second version"),
+            "artifact body should reflect the latest write"
+        );
+    }
+
+    #[test]
+    fn deleting_a_runbook_removes_its_artifact_row() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let name = "delete-me";
+        let content = "---\ntags: [cleanup]\n---\n# Runbook: delete-me\n\n## Alert Criteria\n\nThis runbook will be deleted.";
+
+        crate::runbook::write_runbook(name, content).unwrap();
+
+        let conn = open_index().unwrap();
+        let before: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE kind = 'runbook' AND name = ?1",
+                (name,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 1, "runbook should be indexed before deletion");
+
+        crate::runbook::delete_runbook(name).unwrap();
+
+        let conn = open_index().unwrap();
+        let after: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM artifacts WHERE kind = 'runbook' AND name = ?1",
+                (name,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, 0, "deleted runbook should have no artifact row");
+    }
+
+    #[test]
+    fn incremental_and_reconcile_agree() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // 1. Append an archived message
+        let session_id = "agree-test";
+        let msg = make_test_message("user", "incremental turn data", Some(1));
+        crate::daemon::session::append_archive_message(session_id, &msg);
+
+        // 2. Log an event
+        let fields = serde_json::json!({"msg": "incremental event data"});
+        crate::daemon::log_event("agree_event", fields);
+
+        // 3. Append an epoch
+        let rec = crate::daemon::context::epochs::EpochRecord {
+            seq: 1,
+            kind: "epoch".to_string(),
+            turn_start: 0,
+            turn_end: 5,
+            ts_start: chrono::Utc::now(),
+            ts_end: chrono::Utc::now(),
+            msg_count: 3,
+            narrative: Some("incremental epoch narrative".to_string()),
+            tally: crate::daemon::context::epochs::EpochTally::default(),
+            artifacts: vec![],
+            covers: None,
+        };
+        crate::daemon::context::epochs::append_epoch(session_id, &rec);
+
+        // 4. Write a runbook
+        crate::runbook::write_runbook("agree-rb", "---\ntags: [test]\n---\n# Runbook: agree-rb\n\n## Alert Criteria\n\nincremental runbook body").unwrap();
+
+        // 5. Write a script
+        crate::scripts::write_script("agree.sh", "#!/bin/sh\necho incremental script body")
+            .unwrap();
+
+        // Snapshot per-corpus counts from incremental writes
+        let conn = open_index().unwrap();
+        let turns_before: i64 = conn
+            .query_row("SELECT count(*) FROM turns_map", [], |r| r.get(0))
+            .unwrap();
+        let events_before: i64 = conn
+            .query_row("SELECT count(*) FROM events_map", [], |r| r.get(0))
+            .unwrap();
+        let epochs_before: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        let artifacts_before: i64 = conn
+            .query_row("SELECT count(*) FROM artifacts", [], |r| r.get(0))
+            .unwrap();
+
+        // 6. Run full reconcile
+        let report = reconcile_index().expect("reconcile should succeed");
+
+        // 7. Snapshot per-corpus counts after reconcile
+        let conn = open_index().unwrap();
+        let turns_after: i64 = conn
+            .query_row("SELECT count(*) FROM turns_map", [], |r| r.get(0))
+            .unwrap();
+        let events_after: i64 = conn
+            .query_row("SELECT count(*) FROM events_map", [], |r| r.get(0))
+            .unwrap();
+        let epochs_after: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        let artifacts_after: i64 = conn
+            .query_row("SELECT count(*) FROM artifacts", [], |r| r.get(0))
+            .unwrap();
+
+        assert_eq!(
+            turns_before, turns_after,
+            "turns count must agree: incremental={} reconcile={}",
+            turns_before, turns_after
+        );
+        assert_eq!(
+            events_before, events_after,
+            "events count must agree: incremental={} reconcile={}",
+            events_before, events_after
+        );
+        assert_eq!(
+            epochs_before, epochs_after,
+            "epochs count must agree: incremental={} reconcile={}",
+            epochs_before, epochs_after
+        );
+        assert_eq!(
+            artifacts_before, artifacts_after,
+            "artifacts count must agree: incremental={} reconcile={}",
+            artifacts_before, artifacts_after
+        );
+
+        // Reconcile should report no net change (rows_before == rows_after)
+        assert_eq!(
+            report.rows_before, report.rows_after,
+            "reconcile after incremental writes should report no net change"
+        );
+    }
+
+    #[test]
+    fn index_failure_does_not_break_append() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // First, create the index so it exists
+        let _ = open_index();
+
+        // Make the index directory unwritable
+        let index_path = crate::config::memory_index_path();
+        let index_dir = index_path.parent().unwrap();
+        let original_perms = std::fs::metadata(index_dir).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(index_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // append_archive_message should still succeed (file write + best-effort index)
+        let session_id = "fail-test";
+        let msg = make_test_message("user", "resilient content", Some(1));
+        crate::daemon::session::append_archive_message(session_id, &msg);
+
+        // Verify the archive file was written despite the index being unwritable
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        assert!(
+            archive_path.exists(),
+            "archive file should exist even when index is unwritable"
+        );
+        let content = std::fs::read_to_string(&archive_path).unwrap();
+        assert!(
+            content.contains("resilient content"),
+            "archive should contain the appended message"
+        );
+
+        // Restore permissions for other tests
+        std::fs::set_permissions(index_dir, original_perms).unwrap();
+    }
+
+    #[test]
+    fn index_failure_does_not_break_log_event() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Create the index first
+        let _ = open_index();
+
+        // Make the index directory unwritable
+        let index_path = crate::config::memory_index_path();
+        let index_dir = index_path.parent().unwrap();
+        let original_perms = std::fs::metadata(index_dir).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(index_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // log_event should still succeed (file write + best-effort index)
+        let fields = serde_json::json!({"msg": "resilient event"});
+        crate::daemon::log_event("resilient_event", fields);
+
+        // Verify the event segment file was written
+        let segment_path = crate::config::current_event_segment_path();
+        assert!(
+            segment_path.exists(),
+            "event segment should exist even when index is unwritable"
+        );
+        let content = std::fs::read_to_string(&segment_path).unwrap();
+        assert!(
+            content.contains("resilient event"),
+            "event segment should contain the logged event"
+        );
+
+        // Restore permissions for other tests
+        std::fs::set_permissions(index_dir, original_perms).unwrap();
     }
 }
