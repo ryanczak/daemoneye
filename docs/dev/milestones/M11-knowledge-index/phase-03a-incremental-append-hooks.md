@@ -1,7 +1,7 @@
 # Phase 03a: Incremental append hooks — index on write, not only on reconcile
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced 2026-08-05 — see `bugs/bug-03a-1.md`)
 **Depends on:** phase-02b (done — all five corpora build from disk via reconcile)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -464,3 +464,37 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 52eda9b16dbaa8f7d1f4a6cba697dffe3748180d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-08-05 (bounced)
+
+- **Verdict:** bounced — [bug-03a-1](bugs/bug-03a-1.md), severity blocker
+- **Bugs filed:** 1 (three findings)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Failure class:** `missing_spec_test`
+
+All four gates re-run independently and green: `cargo fmt --all --check` (0),
+`cargo build` (0), `cargo clippy --all-targets --all-features -- -D warnings`
+(0), `cargo test` (1074 passed, 0 failed). Every hook call site is best-effort
+as specced; `index_artifact` is correctly delete-then-insert; `mask_sensitive` is
+applied inside `index_turn`/`index_event`; no `load_runbook` reference; the § 1
+extraction is a clean pure extraction.
+
+The bounce is a correctness defect the green suite did not catch:
+`append_archive_message` hardcodes `Some(0)` as the appended line's offset on the
+seed path (`src/daemon/session.rs:306`), so the appended turn's `turns_map.offset`
+points at the first *seeded* line. Proven with a temporary probe test, output
+quoted in the bug. The spec-named test for this case exists but asserts
+`line.contains("turn")` — a substring present in every record — so it passes
+against the broken code. Classified `missing_spec_test` rather than
+`false_completion`: the gates were genuinely green and the spec named the check,
+but the check as written cannot fail.
+
+**Not** counted against the executor: the unspecced `create_dir_all` in
+`append_archive_message` is a reasonable, in-scope addition and is fine as-is.
+
+**Bookkeeping note, not a bounce reason.** The `(end-to-end verification)` entry
+summarises the two `cargo test` runs to one line each ("52 passed; 0 failed;
+exit=0") rather than pasting `/tmp/phase03a-tests.txt` verbatim, which
+`STANDARDS.md` §1 fails even when every claim is true. The checks file *is*
+verbatim. Fix this on the re-dispatch by pasting both files whole; it would not
+have bounced the phase on its own.

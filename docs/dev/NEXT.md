@@ -2,10 +2,27 @@
 
 **Active phase:
 [M11 phase-03a — incremental-append-hooks](milestones/M11-knowledge-index/phase-03a-incremental-append-hooks.md)
-(`todo`, drafted 2026-08-04, not yet dispatched).** Dispatch with
-`/rexymcp:dispatch phase-03a`. It hooks the archive / event / epoch / artifact
-write choke points so new content is searchable without a reindex. Phase 03 was
-split into 03a/03b — see the milestone README § Phases.
+(`in-progress`, **bounced 2026-08-05** —
+[bug-03a-1](milestones/M11-knowledge-index/bugs/bug-03a-1.md), blocker).**
+Re-dispatch with `/rexymcp:dispatch phase-03a` once fixed. It hooks the archive /
+event / epoch / artifact write choke points so new content is searchable without
+a reindex. Phase 03 was split into 03a/03b — see the milestone README § Phases.
+
+The bounce: `append_archive_message` hardcodes offset `0` for the appended line
+on the archive-seed path (`src/daemon/session.rs:306`), so that turn's
+`turns_map.offset` seeks to the first *seeded* line instead of its own. All four
+gates were green — the spec-named seed test asserts `line.contains("turn")`, a
+substring every JSONL record carries, so it passes against the broken code.
+Classified `missing_spec_test`. **Phase 03b is not drafted** — gated on this
+approving.
+
+**New lesson, first occurrence — hold for recurrence.** An acceptance criterion
+of the form "each X maps to *its own* Y" needs the spec to name the discriminator
+*and* forbid the vacuous one. "each offset seeks to its own line" was satisfiable
+by matching a JSON key common to every line. This is the fourth spec-shape lesson
+in M11's neighbourhood; if a second criterion bounces this way, fold a rule that
+identity criteria must pin distinctness explicitly (assert the values are
+pairwise distinct, not merely individually well-formed).
 
 **Calibration fold landed 2026-08-04 (PE sign-off).** `docs/dev/WORKFLOW.md`
 § "End-to-end verification" now requires the entry **per dispatch**, not per

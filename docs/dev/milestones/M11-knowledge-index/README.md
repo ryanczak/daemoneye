@@ -73,7 +73,7 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 01 | [write-time-masking](phase-01-write-time-masking.md) — `mask_sensitive` at the `append_epoch` and `log_event` choke points | done |
 | 02a | [index-schema-v2](phase-02a-index-schema-v2.md) — all seven tables, SCHEMA_VERSION 2, `reconcile_index()` over the stored-content corpora (`artifacts`, `epochs`), per-corpus `reindex` report | done |
 | 02b | [contentless-corpora](phase-02b-contentless-corpora.md) — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | done |
-| 03a | [incremental-append-hooks](phase-03a-incremental-append-hooks.md) — best-effort index writes at the archive / event / epoch / artifact choke points, including the archive-seed case | review      |
+| 03a | [incremental-append-hooks](phase-03a-incremental-append-hooks.md) — best-effort index writes at the archive / event / epoch / artifact choke points, including the archive-seed case | in-progress |
 | 03b | sweep-deletions — `sweep_session_archives` and `sweep_event_segments` remove the rows for files they unlink | todo |
 | 04 | recall-context-fts — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | todo |
 | 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
