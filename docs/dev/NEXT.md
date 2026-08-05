@@ -1,7 +1,18 @@
 # NEXT
 
-**Active phase: none drafted.** M11 phase-03a is `done`; **phase-03b —
-sweep-deletions is not yet drafted.** Draft it with `/rexymcp:architect next`.
+**Active phase:
+[M11 phase-03b — sweep-deletions](milestones/M11-knowledge-index/phase-03b-sweep-deletions.md)
+(`todo`, drafted 2026-08-05, not yet dispatched).** Dispatch with
+`/rexymcp:dispatch phase-03b`. It makes `sweep_session_archives` and
+`sweep_event_segments` remove the index rows for the files they unlink —
+the deletion half of the incremental-consistency exit criterion.
+
+Two facts in that spec were **executed, not asserted**, per the rule 03a
+re-earned: a targeted `DELETE ... WHERE rowid IN (SELECT id FROM …_map …)` does
+work on a `contentless_delete=1` table, and reversing the two statements deletes
+0 FTS rows **silently** (map-first makes the subquery match nothing). Both
+transcripts are quoted in the phase doc, and the spec carries a mutation check
+for exactly that swap.
 
 [M11 phase-03a — incremental-append-hooks](milestones/M11-knowledge-index/phase-03a-incremental-append-hooks.md)
 **approved 2026-08-05** (`approved_after_1`; one review bounce,
