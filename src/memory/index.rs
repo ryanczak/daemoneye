@@ -2404,12 +2404,21 @@ mod tests {
             "seeded archive (3 lines) + appended (1 line) = 4 turns rows"
         );
 
-        // Verify each offset seeks to the right line
+        // Verify each offset seeks to the right line.
+        // The four rows in offset order are: first seeded, second seeded,
+        // third seeded, appended fourth.
+        let expected_in_order = [
+            "first seeded",
+            "second seeded",
+            "third seeded",
+            "appended fourth",
+        ];
+
         let file = std::fs::File::open(&archive_path).unwrap();
         let mut reader = std::io::BufReader::new(file);
 
         let rows: Vec<(i64, i64)> = conn
-            .prepare("SELECT turn, offset FROM turns_map WHERE session_id = ?1 ORDER BY turn")
+            .prepare("SELECT turn, offset FROM turns_map WHERE session_id = ?1 ORDER BY offset ASC")
             .unwrap()
             .query_map((session_id,), |r| {
                 Ok((r.get(0).unwrap(), r.get(1).unwrap()))
@@ -2418,15 +2427,25 @@ mod tests {
             .filter_map(|r| r.ok())
             .collect();
 
-        for (turn, offset) in &rows {
+        // All offsets must be distinct
+        let offsets: std::collections::HashSet<i64> = rows.iter().map(|(_, o)| *o).collect();
+        assert_eq!(
+            offsets.len(),
+            rows.len(),
+            "all offsets must be distinct, got {:?}",
+            rows
+        );
+
+        for (i, (_turn, offset)) in rows.iter().enumerate() {
             reader
                 .seek(std::io::SeekFrom::Start(*offset as u64))
                 .unwrap();
             let mut line = String::new();
             reader.read_line(&mut line).unwrap();
             assert!(
-                line.contains("turn"),
-                "offset {offset} for turn {turn} should point to a valid line, got: {line}"
+                line.contains(expected_in_order[i]),
+                "offset {offset} (row {i}) should contain '{expected}', got: {line}",
+                expected = expected_in_order[i]
             );
         }
     }

@@ -283,34 +283,26 @@ pub fn append_archive_message(id: &str, msg: &crate::ai::Message) {
     }
 
     // Seed: if the archive doesn't exist but the working file does, copy it.
-    let seeded = if !archive_path.exists() && working_path.exists() {
-        if std::fs::copy(&working_path, &archive_path).is_ok() {
-            // Index the entire seeded file so copied lines are searchable.
-            if let Ok(conn) = crate::memory::index::open_index() {
-                if let Err(e) = crate::memory::index::index_archive_file(&conn, id, &archive_path) {
-                    log::warn!("indexing seeded archive for session {}: {e:#}", id);
-                }
-            } else {
-                log::warn!("index open failed for seed, skipping");
+    if !archive_path.exists()
+        && working_path.exists()
+        && std::fs::copy(&working_path, &archive_path).is_ok()
+    {
+        // Index the entire seeded file so copied lines are searchable.
+        if let Ok(conn) = crate::memory::index::open_index() {
+            if let Err(e) = crate::memory::index::index_archive_file(&conn, id, &archive_path) {
+                log::warn!("indexing seeded archive for session {}: {e:#}", id);
             }
-            true
         } else {
-            false
+            log::warn!("index open failed for seed, skipping");
         }
-    } else {
-        false
-    };
+    }
 
     // Compute the byte offset of the line about to be appended.
     // Must be computed after any seed (which writes the file) and before the append.
-    let offset = if seeded {
-        Some(0)
-    } else {
-        std::fs::metadata(&archive_path)
-            .ok()
-            .map(|m| m.len())
-            .or(Some(0))
-    };
+    let offset = std::fs::metadata(&archive_path)
+        .ok()
+        .map(|m| m.len())
+        .or(Some(0));
 
     let line = serde_json::to_string(msg).unwrap_or_default();
     match std::fs::OpenOptions::new()
