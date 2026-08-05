@@ -1,7 +1,7 @@
 # Bug 1 on phase-03a: appended turn is indexed at offset 0 when the archive was seeded
 
 **Severity:** blocker
-**Status:** open
+**Status:** resolved 2026-08-05 — Findings 1 and 3 fixed; **Finding 2 withdrawn (architect spec_bug)**
 **Filed:** 2026-08-05
 
 ## What's wrong
@@ -127,3 +127,54 @@ treat that test passing as evidence the fix landed.
 - [ ] `.or(Some(0))` no longer appears in `append_archive_message`.
 - [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
       --all-features -- -D warnings`, `cargo test` all clean.
+
+---
+
+## Resolution — 2026-08-05
+
+**Finding 1 (seeded-append offset): fixed.** `append_archive_message` computes the
+length unconditionally after the seed block. Verified by mutation at review —
+restoring the `if seeded { Some(0) }` form makes
+`archive_seed_indexes_every_copied_line` fail on the distinct-offset assertion:
+
+```
+assertion `left == right` failed: all offsets must be distinct,
+got [(1, 0), (3, 0), (1, 50), (2, 106)]
+```
+
+**Finding 3 (vacuous test assertion): fixed.** The test now orders rows by
+`offset ASC` and zips against `["first seeded", "second seeded", "third seeded",
+"appended fourth"]`, keyed by file position rather than by `turn` — necessary
+because the fixture writes two rows at `turn: 1`. The distinct-offset assertion
+is present.
+
+**Finding 2 (`.or(Some(0))`): WITHDRAWN — this finding was wrong.**
+
+The bug doc asserted that `.or(Some(0))` "records a knowingly-wrong offset" and
+instructed removing it, prescribing
+`let offset = std::fs::metadata(&archive_path).ok().map(|m| m.len());`. Applying
+that instruction verbatim at review **breaks three tests**:
+
+```
+test memory::index::tests::append_archive_message_indexes_the_turn ... FAILED
+test memory::index::tests::appended_turn_offset_seeks_to_its_line ... FAILED
+test memory::index::tests::incremental_and_reconcile_agree ... FAILED
+  assertion failed: turns count must agree: incremental=0 reconcile=1
+```
+
+The dominant reason `metadata` fails here is that **the archive file does not
+exist yet** — the common fresh-session append, where `metadata` legitimately
+errors and offset `0` is the *correct* answer, because the line is about to be
+written at byte 0. Without the fallback the first message of every new archive is
+never indexed. The executor re-added `.or(Some(0))` on the resume run and was
+right to; that was a correct restoration, not a regression.
+
+The residual case the finding was actually reaching for — `metadata` failing on an
+archive that *does* exist — is a bare IO error that would almost certainly fail the
+immediately following append too, and STANDARDS §2.2 ("no error handling for cases
+that can't happen") argues against branching on it. No further change.
+
+**Classified `spec_bug`** against the architect, per the M7–M10 rule that a spec
+must not assert a system fact that was not executed. Finding 2 claimed a failure
+mode from reasoning about `.or(Some(0))` in isolation, without running the removal
+it prescribed. One `cargo test` would have disproven it.

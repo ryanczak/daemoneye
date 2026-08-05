@@ -1,7 +1,7 @@
 # Phase 03a: Incremental append hooks — index on write, not only on reconcile
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-02b (done — all five corpora build from disk via reconcile)
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -774,3 +774,47 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 06e1a0ebd068e47298d5bc036167153a081c38fc
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-05
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (review bug-03a-1), plus one `hard_fail` resolved by resume
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** one architect `spec_bug` — see below
+
+All four gates re-run independently and green: `cargo fmt --all --check` (0),
+`cargo build` (0), `cargo clippy --all-targets --all-features -- -D warnings`
+(0), `cargo test` (1074 passed, 0 failed). Count held at 1074 as the resume
+guidance required, so the fix added no scope.
+
+**Mutation check verified independently, not taken on report.** Restoring the
+original `if seeded { Some(0) }` form makes the seed test fail:
+
+```
+assertion `left == right` failed: all offsets must be distinct,
+got [(1, 0), (3, 0), (1, 50), (2, 106)]
+```
+
+Reverting restores green. The test now genuinely catches the defect that shipped
+the first time. `index_failure_does_not_break_append` was also spot-checked and is
+real — it chmods the index dir to `0o000` and asserts the archive write survives.
+
+DoD greps clean on the changed production paths: no TODO/FIXME/XXX, no
+`dbg!`/`println!`, no new `unwrap`/`expect`/`panic!`, no new `unsafe` (every
+`unsafe` hit is a test-module `env::set_var`, required by edition 2024), no
+`#[allow]`/`#[ignore]`. End-to-end verification is now pasted verbatim, clearing
+the bookkeeping note from the first review.
+
+**Calibration — Finding 2 of `bug-03a-1` was my error, classified `spec_bug`.**
+I filed `.or(Some(0))` as a defect and prescribed its removal without running the
+removal. Applying my own instruction at review breaks three tests: `metadata`
+fails principally because the archive *does not exist yet* on a fresh append, and
+offset `0` is then correct. The executor re-added the fallback on the resume run
+and was right to. Withdrawn in the bug doc with the failing output recorded.
+
+This is the M7–M10 rule biting the architect rather than the executor: **do not
+assert a system fact in a spec unless it was executed** — including inside a bug
+report, where a prescribed fix is exactly such a fact. Second occurrence in M11
+(after `bug-02b-1` Finding 1's `read_line` recipe); one more and it folds into
+WORKFLOW.md as a bug-report-specific clause.

@@ -1,28 +1,44 @@
 # NEXT
 
-**Active phase:
+**Active phase: none drafted.** M11 phase-03a is `done`; **phase-03b —
+sweep-deletions is not yet drafted.** Draft it with `/rexymcp:architect next`.
+
 [M11 phase-03a — incremental-append-hooks](milestones/M11-knowledge-index/phase-03a-incremental-append-hooks.md)
-(`in-progress`, **bounced 2026-08-05** —
-[bug-03a-1](milestones/M11-knowledge-index/bugs/bug-03a-1.md), blocker).**
-Re-dispatch with `/rexymcp:dispatch phase-03a` once fixed. It hooks the archive /
-event / epoch / artifact write choke points so new content is searchable without
-a reindex. Phase 03 was split into 03a/03b — see the milestone README § Phases.
+**approved 2026-08-05** (`approved_after_1`; one review bounce,
+[bug-03a-1](milestones/M11-knowledge-index/bugs/bug-03a-1.md), plus one
+`hard_fail` resolved by resume rather than takeover). Archive, event, epoch and
+artifact writes now index incrementally, including the archive-seed case; the
+seed test's per-row offsets were verified by mutation at review.
 
-The bounce: `append_archive_message` hardcodes offset `0` for the appended line
-on the archive-seed path (`src/daemon/session.rs:306`), so that turn's
-`turns_map.offset` seeks to the first *seeded* line instead of its own. All four
-gates were green — the spec-named seed test asserts `line.contains("turn")`, a
-substring every JSONL record carries, so it passes against the broken code.
-Classified `missing_spec_test`. **Phase 03b is not drafted** — gated on this
-approving.
+## Two lessons out of 03a, both at the fold threshold
 
-**New lesson, first occurrence — hold for recurrence.** An acceptance criterion
-of the form "each X maps to *its own* Y" needs the spec to name the discriminator
-*and* forbid the vacuous one. "each offset seeks to its own line" was satisfiable
-by matching a JSON key common to every line. This is the fourth spec-shape lesson
-in M11's neighbourhood; if a second criterion bounces this way, fold a rule that
-identity criteria must pin distinctness explicitly (assert the values are
-pairwise distinct, not merely individually well-formed).
+**1. Identity criteria must pin distinctness — second occurrence, one from a
+fold.** An acceptance criterion of the form "each X maps to *its own* Y" needs
+the spec to name the discriminator *and* forbid the vacuous one. "each offset
+seeks to its own line" was satisfied by `line.contains("turn")` — a JSON key
+every record carries. The fix that worked was asserting the values are **pairwise
+distinct**, not merely individually well-formed. If this recurs, fold it.
+
+**2. A prescribed fix in a bug report is a system fact, and must be executed
+before it is written — `spec_bug`, second occurrence in M11.** `bug-03a-1`
+Finding 2 called `.or(Some(0))` a defect and prescribed removing it. Applying
+that instruction at review breaks three tests: `metadata` fails principally
+because the archive *does not exist yet* on a fresh append, where offset `0` is
+correct. The executor restored the fallback and was right to; the finding was
+withdrawn. The M7–M10 rule ("do not assert a fact about the system in a spec
+unless it was executed") was written for phase specs and had not been applied to
+bug reports, where the prescribed fix is exactly such an assertion. First
+occurrence was `bug-02b-1` Finding 1's `read_line` recipe. **One more and this
+folds into WORKFLOW.md as a bug-report clause.**
+
+**3. The executor verify-loop pathology recurred (second occurrence).** The first
+re-dispatch of 03a hard-failed on `NoProgressStall` after 60 consecutive
+read-only turns grepping for the import path of `crate::ai::Message` — unrelated
+to the remaining work. Resume with pointed guidance (name the stall, mark the
+already-correct files do-not-touch, inline the fix, give an inverted test-count
+finish condition) cleared it in 48 turns. Prefer resume over takeover here; the
+prior note said prefer takeover, which would have cost the telemetry point
+unnecessarily.
 
 **Calibration fold landed 2026-08-04 (PE sign-off).** `docs/dev/WORKFLOW.md`
 § "End-to-end verification" now requires the entry **per dispatch**, not per
