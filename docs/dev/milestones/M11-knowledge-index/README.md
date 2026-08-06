@@ -79,11 +79,20 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 05a | [search-repository-fts](phase-05a-search-repository-fts.md) — index routing for the four existing kinds (memory/runbooks/scripts/events), stemming + ranking, output shape preserved | done |
 | 05b | [search-repository-new-kinds](phase-05b-search-repository-new-kinds.md) — new kinds `turns` and `epochs` | done |
 | 05c | [reconcile-scope-fix](phase-05c-reconcile-scope-fix.md) — a search over an empty corpus must not wipe every other corpus ([bug-05c-1](bugs/bug-05c-1.md)) | done |
-| 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
+| 06 | [prompt-scoring-fix](phase-06-prompt-scoring-fix.md) — BM25 scores used, `(namespace, key)` merge keys, one directory listing instead of four | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01,
-02a–05c are drafted, 06 and 07 are not yet.
+02a–06 are drafted, 07 is not yet.
+
+**Reading of the "stops walking directories" exit criterion (settled at 06
+drafting):** the criterion is scoped to *the FTS resolution path*, and that is
+what phase 06 delivers — FTS hits resolve against an already-materialized
+listing and add zero scans of their own, taking the function from four full
+memory-dir scans per turn to one. The remaining listing is load-bearing for
+`relates_to` expansion (no reverse index exists) and for the expiry/confidence
+filter (neither field is queryable from the index). Eliminating it needs both of
+those built, which is a phase of its own and is not M11 scope.
 
 **Why 03 split into 03a/03b:** the append hooks alone carry the archive-seed
 case (one `fs::copy` can add many lines at once, none of which pass through the

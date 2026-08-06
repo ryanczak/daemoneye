@@ -1,22 +1,38 @@
 # NEXT
 
 **Active phase:
+[M11 phase-06 — prompt-scoring-fix](milestones/M11-knowledge-index/phase-06-prompt-scoring-fix.md)
+(`todo`, drafted 2026-08-06, not yet dispatched).**
+
+The last read surface. `assemble_turn_relevant_memory` is the one per-turn
+consumer of the memory index and today it discards everything the index tells
+it: FTS hits are scored with a flat `0.2` regardless of match strength, the
+candidate merge is keyed by bare `key` so `global` and an agent namespace
+collide on the same key, and four full memory-dir scans run per turn (one in the
+parent, one in each of three helpers). Five tasks: thread a single listing into
+the helpers, extract `score_candidates` and `pack_within_budget` as testable
+seams, normalize BM25 against the best hit in the result set
+(`FTS_WEIGHT * mag/mag_max`), key the merge by `(namespace, key)` with max-wins,
+and log the entries actually emitted rather than the first N by rank.
+
+**Two things pre-injected because they are the traps here:** `bm25()` returns a
+*negative* number with ~1e-6 magnitudes on a small corpus (measured, quoted in
+the phase doc), so any normalization assuming an absolute range is wrong; and
+`effective_confidence` is a `1.0` stub, so no test may depend on it varying.
+
+**The mutation is the deliverable's proof, and its restore is checked at
+review** by grepping the shipped source for the flat constant — three phases in
+this milestone have now shipped a mutation that was never undone.
+
 [M11 phase-05c — reconcile-scope-fix](milestones/M11-knowledge-index/phase-05c-reconcile-scope-fix.md)
-(`todo`, **unblocked 2026-08-06 — PE chose Option 1, per-corpus reconcile**).**
-`/rexymcp:auto` resumed.
+**approved 2026-08-06** (`approved_after_1`; one bounce,
+[bug-05c-2](milestones/M11-knowledge-index/bugs/bug-05c-2.md) — the transcript
+was not mechanically captured, the code fix was correct first time). A search
+over an empty corpus no longer wipes every other corpus:
+`open_and_reconcile_if_empty(table)` rebuilds only that corpus, and phase 05b's
+whole-index seeding workaround is gone.
 
-The blocker is resolved: `open_and_reconcile_if_empty(table)` will rebuild only
-that corpus. `reconcile_index()` keeps its exact contract (same signature, same
-`ReconcileReport`, same order) and becomes a thin caller of five extracted
-per-corpus rebuild functions, each owning its own DELETE. The paired tables are
-the trap — `turns`/`turns_map` and `events`/`events_map` are one corpus each and
-must be cleared together.
-
-**The acceptance test that proves it:** phase 05b's guard test currently seeds
-*every* corpus as a workaround. 05c must delete that seeding and the test must
-still fail under mutation — that is the end-to-end proof the wipe is gone.
-
-## Calibration earned this run
+## Calibration earned on 05c
 
 1. **A mutation check the executor performs on itself is not trustworthy.** On
    05b it applied the mutation and failed to restore it *twice* — once rewriting
