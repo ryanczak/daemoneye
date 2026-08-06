@@ -80,10 +80,23 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 05b | [search-repository-new-kinds](phase-05b-search-repository-new-kinds.md) — new kinds `turns` and `epochs` | done |
 | 05c | [reconcile-scope-fix](phase-05c-reconcile-scope-fix.md) — a search over an empty corpus must not wipe every other corpus ([bug-05c-1](bugs/bug-05c-1.md)) | done |
 | 06 | [prompt-scoring-fix](phase-06-prompt-scoring-fix.md) — BM25 scores used, `(namespace, key)` merge keys, one directory listing instead of four | done |
-| 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
+| 07a | [situational-turns-epochs](phase-07a-situational-turns-epochs.md) — a budget-capped `[SITUATIONAL]` block carrying one cross-session turn and one epoch; `read_line_at_offset` de-duplicated | todo |
+| 07b | situational-knowledge-hooks — ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01,
-02a–06 are drafted, 07 is not yet.
+02a–07a are drafted, 07b is not yet.
+
+**Why 07 split into 07a/07b:** the design doc's situational-awareness bullet is
+three independent features in three unrelated files — the dynamic prompt block
+(`src/daemon/situational.rs` + `prompt.rs`), ghost cold-start seeding
+(`ghost.rs`), and incident `relates_to` auto-linking
+(`executor/knowledge/memory.rs`). Together they land well over 500 lines, and
+this is the milestone's one design-latitude phase, so it is also the highest-risk
+one to oversize. 07a takes the prompt-block feature plus the
+`read_line_at_offset` de-duplication its third caller would otherwise force;
+07b takes the two knowledge-write hooks, which share a shape (run an FTS query at
+a choke point and use the result) but nothing else. Same a/b convention as 02,
+03 and 05.
 
 **Reading of the "stops walking directories" exit criterion (settled at 06
 drafting):** the criterion is scoped to *the FTS resolution path*, and that is

@@ -1,28 +1,57 @@
 # NEXT
 
 **Active phase:
-[M11 phase-06 — prompt-scoring-fix](milestones/M11-knowledge-index/phase-06-prompt-scoring-fix.md)
+[M11 phase-07a — situational-turns-epochs](milestones/M11-knowledge-index/phase-07a-situational-turns-epochs.md)
 (`todo`, drafted 2026-08-06, not yet dispatched).**
 
-The last read surface. `assemble_turn_relevant_memory` is the one per-turn
-consumer of the memory index and today it discards everything the index tells
-it: FTS hits are scored with a flat `0.2` regardless of match strength, the
-candidate merge is keyed by bare `key` so `global` and an agent namespace
-collide on the same key, and four full memory-dir scans run per turn (one in the
-parent, one in each of three helpers). Five tasks: thread a single listing into
-the helpers, extract `score_candidates` and `pack_within_budget` as testable
-seams, normalize BM25 against the best hit in the result set
-(`FTS_WEIGHT * mag/mag_max`), key the merge by `(namespace, key)` with max-wins,
-and log the entries actually emitted rather than the first N by rank.
+The last read surface, and the milestone's one design-latitude phase. Every
+corpus is populated and searchable, but the per-turn prompt still reads only
+`memories`. 07a adds a budget-capped `[SITUATIONAL]` block carrying at most one
+past turn and one past epoch **from other sessions** matching the current turn,
+and de-duplicates `read_line_at_offset` — which exists twice today — before
+adding its third caller.
 
-**Two things pre-injected because they are the traps here:** `bm25()` returns a
-*negative* number with ~1e-6 magnitudes on a small corpus (measured, quoted in
-the phase doc), so any normalization assuming an absolute range is wrong; and
-`effective_confidence` is a `1.0` stub, so no test may depend on it varying.
+**07 split into 07a/07b at drafting.** The design doc's situational bullet is
+three features in three unrelated files; together they land well over 500 lines,
+and oversizing the highest-latitude phase in the milestone is the wrong risk to
+take. 07b holds the ghost cold-start seeding and the incident `relates_to`
+auto-linking.
 
-**The mutation is the deliverable's proof, and its restore is checked at
-review** by grepping the shipped source for the flat constant — three phases in
-this milestone have now shipped a mutation that was never undone.
+**Three things pre-injected because they are the traps here:**
+
+1. **`build_match_expr` ORs every term** (`src/memory/index.rs:123-141`,
+   verified), so a whole user turn matches almost anything. The phase guards on
+   the *query's* shape (≥ 3 terms of ≥ 4 chars) and caps output at two lines. An
+   absolute BM25 cutoff is explicitly out of scope — phase 06 established that
+   scores are corpus-relative.
+2. **`PromptCtx` has no `session_id`** and the dynamic-memory call site passes
+   `None`. Without it there is no way to exclude the session's own history,
+   which is already in context. There is exactly **one** construction site
+   (`ask.rs:645`) and the id is already in scope there, so the field is a
+   one-site addition — authorized in the phase doc.
+3. **The `TestHomeGuard` must be bound in the test body**, and a setup helper
+   must *return* it. Phase 06 lost a whole dispatch to a helper that bound the
+   guard locally, dropping it on return and letting the tests race over `HOME`.
+
+**Deliberately not pinned:** the tree-wide `read_line_at_offset` reference count.
+It is 5 before and 5 after (two definitions plus three call sites becomes one
+plus four), so it is satisfied without doing any of the work — the criterion
+counts definitions per file instead. Phase 06's first stall was an acceptance
+criterion that could not be satisfied; this is the mirror failure, one that
+passes for free.
+
+[M11 phase-06 — prompt-scoring-fix](milestones/M11-knowledge-index/phase-06-prompt-scoring-fix.md)
+**completed 2026-08-06** (`escalated` — architect takeover after two
+`NoProgressStall` hard_fails; 0 bug docs, neither failure was a defect in
+shipped work). FTS hits now score `FTS_WEIGHT * mag/mag_max * eff`, the merge is
+keyed by `(namespace, key)` with max-wins, production code makes one memory-dir
+listing per turn instead of four, and `memory_retrieved` logs what it emitted.
+The executor wrote the production code and five of six test fixtures; the
+architect fixed the sixth and captured the mutation pair. Two calibration items
+recorded in the phase doc — an acceptance criterion invalidated by the spec's own
+Test plan (`spec_bug`, second occurrence of the general class), and a worked
+example that showed the correct shape without the failure mode it prevents
+(first occurrence).
 
 [M11 phase-05c — reconcile-scope-fix](milestones/M11-knowledge-index/phase-05c-reconcile-scope-fix.md)
 **approved 2026-08-06** (`approved_after_1`; one bounce,
@@ -32,7 +61,7 @@ over an empty corpus no longer wipes every other corpus:
 `open_and_reconcile_if_empty(table)` rebuilds only that corpus, and phase 05b's
 whole-index seeding workaround is gone.
 
-## Calibration earned on 05c
+## Calibration earned on 05c (superseded items are marked in each phase doc)
 
 1. **A mutation check the executor performs on itself is not trustworthy.** On
    05b it applied the mutation and failed to restore it *twice* — once rewriting
