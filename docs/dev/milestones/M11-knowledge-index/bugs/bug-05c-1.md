@@ -1,7 +1,7 @@
 # Bug 1 on phase-05c: a search over an empty corpus wipes every other corpus
 
 **Severity:** major
-**Status:** open — **PE chose Option 1 (per-corpus reconcile) on 2026-08-06**; spec written into phase-05c, awaiting dispatch
+**Status:** resolved 2026-08-06 — fixed by phase-05c (Option 1, per-corpus reconcile), verified at review
 **Filed:** 2026-08-05
 **Introduced by:** phase-05a (architect takeover — this is my defect, not the
 executor's)
@@ -111,3 +111,28 @@ the same wipe.
 - [ ] `all_kind_excludes_turns_and_epochs` still fails under mutation **without**
       needing every corpus pre-seeded (i.e. the test's workaround can be removed).
 - [ ] `cargo test` green; no regression against the 1111 baseline.
+
+---
+
+## Resolution — 2026-08-06
+
+Fixed by [phase-05c](../phase-05c-reconcile-scope-fix.md) via Option 1.
+`open_and_reconcile_if_empty(table)` now resolves the table to a `Corpus` and
+calls `reconcile_corpus`, which rebuilds only that corpus;
+`reconcile_index()` keeps its exact contract as a thin caller of the five
+extracted `rebuild_*` functions, each owning its own DELETE (with `turns`/
+`turns_map` and `events`/`events_map` cleared as pairs). An unrecognised table
+name now reconciles **nothing** rather than falling back to a full rebuild.
+
+Verified independently at review by mutation — reverting to `reconcile_index()`:
+
+```
+empty_corpus_search_preserves_other_corpora ... FAILED
+  turn rows must be preserved after searching empty memory corpus
+  left: 0   right: 1
+```
+
+The Verification checklist is met, including its strongest item: **phase-05b's
+every-corpus seeding workaround was removed** from
+`all_kind_excludes_turns_and_epochs`, and that test still fails under its own
+mutation without it. That was the end-to-end proof the wipe is gone.

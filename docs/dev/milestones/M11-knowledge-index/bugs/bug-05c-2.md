@@ -1,7 +1,7 @@
 # Bug 2 on phase-05c: end-to-end verification entry is a prose summary, not a mechanical transcript
 
 **Severity:** major
-**Status:** open
+**Status:** resolved 2026-08-06 — verified fixed at review
 **Filed:** 2026-08-06
 
 ## What's wrong
@@ -104,3 +104,24 @@ fix on the phase doc.
 - [ ] A name-by-name diff of the pasted test output against a live re-run of
       `cargo test --lib memory::index` and `cargo test --lib search` shows
       zero omissions and zero fabricated names.
+
+---
+
+## Resolution — 2026-08-06
+
+**Fixed.** The re-dispatch pasted both captured files whole. Verified by diffing
+the pasted names against live runs rather than reading them:
+
+```
+claimed=97  real=97  FABRICATED: 0  OMITTED: 0
+memory::index — entry reports 63 passed; live run has 63 names
+search        — entry reports 40 passed; live run has 40 names
+```
+
+No elision (`…`) remains in the entry, and the per-group totals match their
+listings exactly. The union is 97 rather than 103 because `--lib search` also
+matches `memory::index` tests whose names contain "search".
+
+The fix round changed **no source at all** — `git diff 7897e6d..HEAD -- src/` is
+empty and the test count held at 1122, exactly as the inverted finish condition
+required.

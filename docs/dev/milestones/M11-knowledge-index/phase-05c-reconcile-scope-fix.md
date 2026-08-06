@@ -1,7 +1,7 @@
 # Phase 05c: reconcile scope — an empty corpus must not wipe the others
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-05b (done — surfaced the defect)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -939,3 +939,49 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** c343f9f7a80d373c7e556d864891fe13537f4277
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-06 (approval)
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-05c-2](bugs/bug-05c-2.md), transcript not mechanical)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** see below
+
+All four gates green: `cargo fmt --all --check` (0), `cargo build` (0),
+`cargo clippy --all-targets --all-features -- -D warnings` (0), `cargo test`
+(1122 passed, 0 failed). `git diff 7897e6d..HEAD -- src/` is **empty** — the fix
+round was documentation-only, and the count held at 1122 as required.
+
+**Transcript verified by diffing names against live runs, not by reading it:**
+
+```
+claimed=97  real=97  FABRICATED: 0  OMITTED: 0
+```
+
+**The bug is genuinely fixed, verified independently at both reviews.** Reverting
+`open_and_reconcile_if_empty` to call `reconcile_index()`:
+
+```
+empty_corpus_search_preserves_other_corpora ... FAILED
+  turn rows must be preserved after searching empty memory corpus
+  left: 0   right: 1
+```
+
+Restored → passes. And the end-to-end proof holds: phase-05b's every-corpus
+seeding workaround is **gone** from `all_kind_excludes_turns_and_epochs`, and
+that test still fails under its own mutation. That was the acceptance criterion
+chosen precisely because it cannot pass by accident.
+
+**Calibration — the blunt mutation-check language worked.** After 05b shipped an
+unreverted mutation twice, this phase's doc spelled out break → observe →
+**restore**, forbade rewriting a test to match mutated code, and required a
+self-grep proving no `reconcile_index()` call remained in
+`open_and_reconcile_if_empty`. The executor restored correctly on the first
+attempt. Worth keeping that wording in any phase that asks for a mutation check.
+
+**Calibration — the green-bounce treatment worked again.** Second local
+confirmation. A documentation-only bounce with four green gates re-dispatched
+with the full treatment (loud header, do-not-touch list, one enumerated task,
+inverted count "1122, not 1123") landed in 65 turns touching **only** the phase
+doc. Without it the documented failure mode is `complete` with an empty diff.
