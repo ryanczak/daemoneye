@@ -288,6 +288,53 @@ pub fn index_archive_file(
     Ok(())
 }
 
+/// Index a single event segment file. Best-effort: per-file read errors are
+/// logged and break the loop, never propagated.
+#[cfg(test)]
+pub fn index_event_segment(segment: &str) -> Result<()> {
+    let path = crate::config::events_dir().join(format!("{segment}.jsonl"));
+    let Ok(file) = std::fs::File::open(&path) else {
+        return Ok(());
+    };
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut offset: u64 = 0;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = match reader.read_line(&mut line) {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("skipping {} at offset {offset}: {e}", path.display());
+                break;
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed)
+            && let Some(event_val) = v.get("event").and_then(|e| e.as_str())
+        {
+            let body = crate::search::json_to_readable(trimmed);
+            let body = crate::ai::mask_sensitive(&body);
+            tx.execute(
+                "INSERT INTO events_map (segment, offset) VALUES (?1, ?2)",
+                (segment, offset as i64),
+            )?;
+            let rid = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO events (rowid, event, body) VALUES (?1, ?2, ?3)",
+                (rid, event_val, &body),
+            )?;
+        }
+        offset += n as u64;
+    }
+    tx.commit()
+        .context("committing event segment index transaction")
+}
+
 /// Index a single archived turn message. Best-effort: any failure is logged
 /// and returned as `Err` so the caller can swallow it.
 pub fn index_turn(session_id: &str, turn: usize, offset: u64, body: &str) -> Result<()> {
@@ -367,6 +414,54 @@ pub fn remove_artifact(kind: &str, name: &str) -> Result<()> {
     .context("deleting artifact row from index")?;
     Ok(())
 }
+
+/// Remove all turns rows belonging to a session. Must delete FTS rows
+/// before map rows so the subquery in the FTS delete still sees the ids.
+pub fn remove_session_turns(session_id: &str) -> Result<()> {
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    tx.execute(
+        "DELETE FROM turns WHERE rowid IN (SELECT id FROM turns_map WHERE session_id = ?1)",
+        (session_id,),
+    )
+    .context("deleting turns FTS rows")?;
+    tx.execute("DELETE FROM turns_map WHERE session_id = ?1", (session_id,))
+        .context("deleting turns_map rows")?;
+    tx.commit().context("committing turns removal")
+}
+
+/// Remove all events rows belonging to a segment. Must delete FTS rows
+/// before map rows so the subquery in the FTS delete still sees the ids.
+pub fn remove_event_segment(segment: &str) -> Result<()> {
+    let mut conn = open_index()?;
+    let tx = conn.transaction().context("beginning transaction")?;
+    tx.execute(
+        "DELETE FROM events WHERE rowid IN (SELECT id FROM events_map WHERE segment = ?1)",
+        (segment,),
+    )
+    .context("deleting events FTS rows")?;
+    tx.execute("DELETE FROM events_map WHERE segment = ?1", (segment,))
+        .context("deleting events_map rows")?;
+    tx.commit().context("committing events removal")
+}
+
+/// Construct a test message for indexing. Used by daemon::utils sweep tests.
+#[cfg(test)]
+#[doc(hidden)]
+pub fn make_test_message_for_index(
+    role: &str,
+    content: &str,
+    turn: Option<usize>,
+) -> crate::ai::Message {
+    crate::ai::Message {
+        role: role.to_string(),
+        content: content.to_string(),
+        tool_calls: None,
+        tool_results: None,
+        turn,
+    }
+}
+
 pub fn index_memory_file(
     key: &str,
     category: crate::memory::MemoryCategory,

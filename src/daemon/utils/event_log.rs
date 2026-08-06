@@ -269,6 +269,17 @@ pub fn sweep_event_segments(retention_days: u32) {
             log::info!("events: deleting expired segment {}", path.display());
             if let Err(e) = std::fs::remove_file(&path) {
                 log::warn!("events: failed to delete {}: {}", path.display(), e);
+            } else {
+                let segment = path.file_stem().map(|s| s.to_string_lossy().to_string());
+                if let Some(seg) = segment
+                    && let Err(e) = crate::memory::index::remove_event_segment(&seg)
+                {
+                    log::warn!(
+                        "events: failed to remove index rows for segment {}: {}",
+                        seg,
+                        e
+                    );
+                }
             }
         }
     }
@@ -641,5 +652,218 @@ mod tests {
             assert_eq!(record["prompt_tokens"], 123);
             assert_eq!(record["label"], "safe");
         });
+    }
+
+    #[test]
+    fn sweeping_a_segment_removes_its_events_rows() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+
+        let seg_name = "events-20260101";
+        let seg_path = events_dir.join(format!("{}.jsonl", seg_name));
+        write_event(
+            &seg_path,
+            "unique sweep event target",
+            "2026-01-01T00:00:00Z",
+        );
+
+        crate::memory::index::index_event_segment(seg_name).unwrap();
+
+        let conn = crate::memory::index::open_index().unwrap();
+        let events_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'unique sweep event'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(events_count, 1, "events should be indexed before sweep");
+
+        let map_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events_map WHERE segment = ?1",
+                (seg_name,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(map_count, 1, "events_map should have a row before sweep");
+
+        sweep_event_segments(14);
+
+        assert!(!seg_path.exists(), "expired segment should be deleted");
+
+        let conn = crate::memory::index::open_index().unwrap();
+        let events_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'unique sweep event'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            events_count, 0,
+            "events FTS rows should be removed after sweep"
+        );
+
+        let map_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events_map WHERE segment = ?1",
+                (seg_name,),
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            map_count, 0,
+            "events_map rows should be removed after sweep"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn sweeping_a_segment_leaves_other_segments_indexed() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+
+        let seg_path_old = events_dir.join("events-20260101.jsonl");
+        write_event(
+            &seg_path_old,
+            "old segment alpha event",
+            "2026-01-01T00:00:00Z",
+        );
+        crate::memory::index::index_event_segment("events-20260101").unwrap();
+
+        let seg_path_new = events_dir.join("events-20260803.jsonl");
+        write_event(
+            &seg_path_new,
+            "new segment beta event",
+            "2026-08-03T00:00:00Z",
+        );
+        crate::memory::index::index_event_segment("events-20260803").unwrap();
+
+        sweep_event_segments(14);
+
+        assert!(!seg_path_old.exists(), "old segment should be deleted");
+        let conn = crate::memory::index::open_index().unwrap();
+        let old_events: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'old segment alpha'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_events, 0, "old events should be removed");
+
+        assert!(seg_path_new.exists(), "new segment should survive");
+        let new_events: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'new segment beta'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_events, 1, "new events should survive");
+
+        let new_map: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events_map WHERE segment = 'events-20260803'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_map, 1, "new map rows should survive");
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn sweep_event_segments_zero_retention_removes_nothing() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+
+        let seg_path = events_dir.join("events-20260101.jsonl");
+        write_event(&seg_path, "zero retention event", "2026-01-01T00:00:00Z");
+        crate::memory::index::index_event_segment("events-20260101").unwrap();
+
+        sweep_event_segments(0);
+
+        assert!(
+            seg_path.exists(),
+            "segment should survive with retention_days=0"
+        );
+
+        let conn = crate::memory::index::open_index().unwrap();
+        let events_count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM events WHERE events MATCH 'zero retention'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            events_count, 1,
+            "events should survive with retention_days=0"
+        );
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
+    }
+
+    #[test]
+    fn sweep_event_segments_survives_unwritable_index() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let old_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+
+        let seg_path = events_dir.join("events-20260101.jsonl");
+        write_event(&seg_path, "unwritable event sweep", "2026-01-01T00:00:00Z");
+        crate::memory::index::index_event_segment("events-20260101").unwrap();
+
+        let index_path = crate::config::memory_index_path();
+        let index_dir = index_path.parent().unwrap();
+        let original_perms = std::fs::metadata(index_dir).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(index_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        sweep_event_segments(14);
+
+        assert!(
+            !seg_path.exists(),
+            "segment should be deleted even when index is unwritable"
+        );
+
+        std::fs::set_permissions(index_dir, original_perms).unwrap();
+
+        match old_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
+        }
     }
 }
