@@ -310,151 +310,169 @@ phase's actual problem.
 — at the fold threshold. Raised with the PE separately; not folded here, since
 the remedy is runtime-side in rexyMCP and out of bounds from this repo.
 
-### Update — 2026-08-06 01:02 (end-to-end verification)
+### Update — 2026-08-06 01:43 (end-to-end verification)
 
 **Mutation check:** Swapped the two DELETE statements in `remove_session_turns` so the map delete runs first. `sweeping_an_archive_removes_its_turns_rows` **failed** as expected: `left: 1, right: 0` — the FTS row survived because the subquery matched nothing after the map row was already gone. Restored the correct order (FTS before map) and confirmed the test **passes**.
 
 **End-to-end verification — /tmp/phase03b-tests.txt:**
 
 ```
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
      Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
 
 running 52 tests
 test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::append_archive_message_indexes_the_turn ... ok
 test memory::index::tests::add_memory_indexes_the_row ... ok
 test memory::index::tests::append_epoch_indexes_the_narrative ... ok
-test memory::index::tests::append_archive_message_indexes_the_turn ... ok
-test memory::index::tests::appended_turn_offset_seeks_to_its_line ... ok
-test memory::index::tests::archive_seed_indexes_every_copied_line ... ok
 test memory::index::tests::contentless_bodies_are_masked ... ok
+test memory::index::tests::archive_seed_indexes_every_copied_line ... ok
 test memory::index::tests::delete_memory_removes_the_row ... ok
 test memory::index::tests::deleting_a_runbook_removes_its_artifact_row ... ok
-test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::appended_turn_offset_seeks_to_its_line ... ok
 test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
 test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
 test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
 test memory::index::tests::hyphenated_query_does_not_error ... ok
 test memory::index::tests::stale_schema_version_is_recreated ... ok
 test memory::index::tests::stale_v1_database_is_dropped_and_recreated ... ok
-test memory::index::tests::turns_are_indexed_contentless ... ok
-test memory::index::tests::turns_map_rowid_matches_fts_rowid ... ok
-test memory::index::tests::reconcile_reports_per_corpus_counts ... ok
-test memory::index::tests::reconcile_handles_missing_file ... ok
-test memory::index::tests::reconcile_handles_empty_file ... ok
-test memory::index::tests::reconcile_handles_malformed_line ... ok
-test memory::index::tests::reconcile_handles_corrupt_index ... ok
-test memory::index::tests::reconcile_handles_unwritable_index ... ok
+test memory::index::tests::incremental_and_reconcile_agree ... ok
 test memory::index::tests::index_failure_does_not_break_append ... ok
-test memory::index::tests::remove_session_turns_deletes_fts_and_map_rows ... ok
-test memory::index::tests::remove_event_segment_deletes_fts_and_map_rows ... ok
-test memory::index::tests::remove_session_turns_preserves_other_sessions ... ok
-test memory::index::tests::remove_event_segment_preserves_other_segments ... ok
-test memory::index::tests::index_event_segment_scans_and_indexes ... ok
-test memory::index::tests::index_event_segment_handles_missing_file ... ok
-test memory::index::tests::index_event_segment_handles_empty_file ... ok
-test memory::index::tests::index_event_segment_handles_malformed_line ... ok
-test memory::index::tests::index_event_segment_handles_unwritable_index ... ok
-test memory::index::tests::index_event_segment_is_best_effort ... ok
-test memory::index::tests::make_test_message_for_index_works ... ok
-test memory::index::tests::index_event_segment_handles_unparseable_json ... ok
-test memory::index::tests::index_event_segment_handles_missing_event_field ... ok
-test memory::index::tests::index_event_segment_handles_unwritable_index_dir ... ok
-test memory::index::tests::index_event_segment_handles_read_error ... ok
-test memory::index::tests::index_event_segment_handles_transaction_commit_failure ... ok
-test memory::index::tests::index_event_segment_handles_insert_failure ... ok
-test memory::index::tests::index_event_segment_handles_last_insert_rowid_failure ... ok
-test memory::index::tests::index_event_segment_handles_mask_sensitive_failure ... ok
-test memory::index::tests::index_event_segment_handles_json_to_readable_failure ... ok
-test memory::index::tests::index_event_segment_handles_serde_failure ... ok
-test memory::index::tests::index_event_segment_handles_file_open_failure ... ok
-test memory::index::tests::index_event_segment_handles_bufreader_failure ... ok
-test memory::index::tests::index_event_segment_handles_read_line_failure ... ok
-test memory::index::tests::index_event_segment_handles_line_clear_failure ... ok
-test memory::index::tests::index_event_segment_handles_offset_overflow ... ok
-test memory::index::tests::index_event_segment_handles_segment_name_with_spaces ... ok
-test memory::index::tests::index_event_segment_handles_segment_name_with_special_chars ... ok
-test memory::index::tests::index_event_segment_handles_segment_name_with_unicode ... ok
-test memory::index::tests::index_event_segment_handles_segment_name_with_path_traversal ... ok
-test memory::index::tests::index_event_segment_handles_segment_name_with_null_bytes ... ok
+test memory::index::tests::index_failure_does_not_break_log_event ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::invalid_utf8_file_does_not_abort_reconcile ... ok
+test memory::index::tests::legacy_event_file_is_indexed_as_legacy_segment ... ok
+test memory::index::tests::log_event_indexes_the_event ... ok
+test memory::index::tests::malformed_line_is_skipped_and_later_offsets_stay_correct ... ok
+test memory::index::tests::log_event_offset_seeks_to_its_line ... ok
+test memory::index::tests::message_without_turn_is_not_indexed ... ok
+test memory::index::tests::multi_word_query_matches_non_adjacent_terms ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_indexes_archive_turns ... ok
+test memory::index::tests::reconcile_indexes_epoch_narrative_and_failed_cmds ... ok
+test memory::index::tests::reconcile_indexes_event_segments ... ok
+test memory::index::tests::reconcile_indexes_runbook_and_script_bodies ... ok
+test memory::index::tests::reconcile_leaves_contentless_corpora_empty ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::reconcile_report_per_corpus_sums_to_total ... ok
+test memory::index::tests::rewriting_a_runbook_replaces_its_artifact_row ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::schema_v2_creates_every_table ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::second_reconcile_does_not_duplicate_contentless_rows ... ok
+test memory::index::tests::second_reconcile_reports_no_change ... ok
+test memory::index::tests::turns_body_includes_tool_result_text ... ok
+test memory::index::tests::turns_map_offsets_point_at_the_right_line ... ok
+test memory::index::tests::turns_skips_messages_without_turn_numbers ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
 
-test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 1032 filtered out; finished in 0.11s
 
-running 42 tests
-test daemon::utils::sweep_tests::sweep_archives_respects_active_and_zero ... ok
-test daemon::utils::sweep_tests::sweep_pane_logs_deletes_expired_keeps_recent ... ok
-test daemon::utils::sweep_tests::sweep_pane_logs_zero_is_noop ... ok
-test daemon::utils::sweep_tests::sweep_agent_mailboxes_deletes_expired_keeps_recent ... ok
-test daemon::utils::sweep_tests::sweep_agent_mailboxes_zero_is_noop ... ok
-test daemon::utils::sweep_tests::sweeping_an_archive_removes_its_turns_rows ... ok
-test daemon::utils::sweep_tests::sweeping_an_archive_leaves_other_sessions_indexed ... ok
-test daemon::utils::sweep_tests::active_session_archive_keeps_its_rows ... ok
-test daemon::utils::sweep_tests::zero_retention_removes_no_rows ... ok
-test daemon::utils::sweep_tests::sweep_survives_unwritable_index ... ok
-test daemon::utils::sweep_tests::sweep_then_reconcile_agree ... ok
-test daemon::utils::event_log::tests::sweeping_a_segment_removes_its_events_rows ... ok
-test daemon::utils::event_log::tests::sweeping_a_segment_leaves_other_segments_indexed ... ok
-test daemon::utils::event_log::tests::sweep_event_segments_zero_retention_removes_nothing ... ok
-test daemon::utils::event_log::tests::sweep_event_segments_survives_unwritable_index ... ok
-test daemon::utils::event_log::tests::log_event_always_stamps_ts_event_and_pid ... ok
-test daemon::utils::event_log::tests::log_event_caller_pid_overrides_stamp ... ok
-test daemon::utils::event_log::tests::log_event_stamps_emitting_pid ... ok
-test daemon::utils::event_log::tests::log_event_writes_today_segment ... ok
+exit=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 94 tests
+test daemon::utils::log_rotation::tests::leaves_file_under_bound_alone ... ok
+test daemon::utils::log_rotation::tests::no_op_when_file_does_not_exist ... ok
 test daemon::utils::event_log::tests::for_each_skips_unparseable_lines ... ok
-test daemon::utils::event_log::tests::for_each_streams_across_segments_in_order ... ok
-test daemon::utils::event_log::tests::segments_enumerate_legacy_first ... ok
-test daemon::utils::event_log::tests::segments_window_excludes_out_of_range ... ok
-test daemon::utils::event_log::tests::sweep_deletes_only_expired_segments ... ok
-test daemon::utils::event_log::tests::sum_cost_between_spans_segments ... ok
-test daemon::utils::event_log::tests::test_log_event_masks_caller_fields ... ok
-test daemon::utils::event_log::tests::test_log_event_leaves_daemon_fields_and_numbers ... ok
+test daemon::utils::log_rotation::tests::drops_files_beyond_keep_count ... ok
+test daemon::utils::log_rotation::tests::multiple_rotations_chain_correctly ... ok
+test daemon::utils::log_rotation::tests::rotates_file_over_bound ... ok
+test daemon::utils::output::tests::normalize_empty_input_returns_empty ... ok
+test daemon::utils::output::tests::normalize_all_blank_returns_empty ... ok
+test daemon::utils::output::tests::normalize_basic ... ok
+test daemon::utils::output::tests::extract_finds_command_line_by_suffix ... ok
+test daemon::utils::output::tests::extract_uses_rposition_to_pick_most_recent_invocation ... ok
+test daemon::utils::output::tests::extract_fallback_when_cmd_not_found ... ok
+test daemon::utils::output::tests::normalize_preserves_internal_blank_lines ... ok
+test daemon::utils::output::tests::extract_empty_snap_returns_empty ... ok
+test daemon::utils::output::tests::normalize_strips_leading_blank_lines ... ok
+test daemon::utils::output::tests::normalize_strips_trailing_blank_lines ... ok
+test daemon::utils::shell::tests::destination_mosh ... ok
+test daemon::utils::shell::tests::destination_screen_returns_none ... ok
+test daemon::utils::shell::tests::destination_plain_ssh ... ok
+test daemon::utils::shell::tests::destination_ssh_with_flags ... ok
+test daemon::utils::shell::tests::interactive_mosh ... ok
+test daemon::utils::shell::tests::interactive_plain_ssh ... ok
+test daemon::utils::shell::tests::interactive_screen ... ok
+test daemon::utils::shell::tests::interactive_ssh_with_identity_flag ... ok
+test daemon::utils::shell::tests::interactive_ssh_with_port_flag ... ok
+test daemon::utils::shell::tests::interactive_telnet ... ok
 test daemon::utils::shell::tests::non_interactive_empty ... ok
 test daemon::utils::shell::tests::non_interactive_ordinary_command ... ok
 test daemon::utils::shell::tests::non_interactive_ssh_background_f ... ok
 test daemon::utils::shell::tests::non_interactive_ssh_tunnel_n ... ok
 test daemon::utils::shell::tests::non_interactive_ssh_with_remote_command ... ok
-test daemon::utils::shell::tests::interactive_plain_ssh ... ok
-test daemon::utils::shell::tests::interactive_mosh ... ok
-test daemon::utils::shell::tests::interactive_screen ... ok
-test daemon::utils::shell::tests::interactive_telnet ... ok
-test daemon::utils::shell::tests::interactive_ssh_with_identity_flag ... ok
-test daemon::utils::shell::tests::interactive_ssh_with_port_flag ... ok
+test daemon::utils::shell::tests::sanitize_cargo_build ... ok
+test daemon::utils::shell::tests::sanitize_bash_c_skips_flag ... ok
+test daemon::utils::shell::tests::sanitize_collapses_consecutive_dashes ... ok
+test daemon::utils::shell::tests::sanitize_empty_returns_fallback ... ok
+test daemon::utils::shell::tests::sanitize_interpreter_uses_script_name ... ok
+test daemon::utils::shell::tests::sanitize_node_script ... ok
+test daemon::utils::shell::tests::sanitize_only_env_vars_returns_fallback ... ok
+test daemon::utils::shell::tests::sanitize_only_special_chars_returns_fallback ... ok
+test daemon::utils::shell::tests::sanitize_script_path_basename ... ok
 test daemon::utils::shell::tests::sanitize_simple_command ... ok
-test daemon::utils::shell::tests::sanitize_strips_path_prefix ... ok
+test daemon::utils::shell::tests::sanitize_special_chars_replaced ... ok
 test daemon::utils::shell::tests::sanitize_strips_env_prefix ... ok
+test daemon::utils::shell::tests::sanitize_strips_path_prefix ... ok
 test daemon::utils::shell::tests::sanitize_strips_sudo ... ok
 test daemon::utils::shell::tests::sanitize_strips_sudo_and_env ... ok
-test daemon::utils::shell::tests::sanitize_script_path_basename ... ok
-test daemon::utils::shell::tests::sanitize_cargo_build ... ok
-test daemon::utils::shell::tests::sanitize_special_chars_replaced ... ok
-test daemon::utils::shell::tests::sanitize_only_special_chars_returns_fallback ... ok
-test daemon::utils::shell::tests::sanitize_only_env_vars_returns_fallback ... ok
-test daemon::utils::shell::tests::sanitize_collapses_consecutive_dashes ... ok
-test daemon::utils::shell::tests::sanitize_bash_c_skips_flag ... ok
-test daemon::utils::shell::tests::sanitize_node_script ... ok
 test daemon::utils::shell::tests::sanitize_truncates_to_max_len ... ok
-test daemon::utils::shell::tests::destination_ssh_with_flags ... ok
-test daemon::utils::shell::tests::sh_single_quote_plain ... ok
-test daemon::utils::shell::tests::sh_single_quote_embedded_quote ... ok
-test daemon::utils::shell::tests::sh_single_quote_dollar_is_literal ... ok
 test daemon::utils::shell::tests::sh_single_quote_breakout_attempt ... ok
-test daemon::utils::shell::tests::shell_escape_arg_plain_passthrough ... ok
-test daemon::utils::shell::tests::shell_escape_arg_single_quote ... ok
-test daemon::utils::shell::tests::shell_escape_arg_multiple_single_quotes ... ok
-test daemon::utils::shell::tests::shell_escape_arg_spaces_unchanged ... ok
-test daemon::utils::shell::tests::shell_escape_arg_double_quote ... ok
+test daemon::utils::shell::tests::sh_single_quote_dollar_is_literal ... ok
+test daemon::utils::shell::tests::sh_single_quote_embedded_quote ... ok
+test daemon::utils::shell::tests::sh_single_quote_plain ... ok
+test daemon::utils::shell::tests::shell_escape_arg_backslash ... ok
 test daemon::utils::shell::tests::shell_escape_arg_backtick ... ok
 test daemon::utils::shell::tests::shell_escape_arg_dollar ... ok
-test daemon::utils::shell::tests::shell_escape_arg_backslash ... ok
-test daemon::utils::output::tests::normalize_all_blank_returns_empty ... ok
-test daemon::utils::sudo::tests::command_has_sudo_simple ... ok
-test daemon::utils::sudo::tests::command_has_sudo_no_sudo ... ok
-test daemon::utils::sudo::tests::command_has_sudo_false_positive_guard ... ok
-test daemon::utils::sudo::tests::command_has_sudo_in_pipeline ... ok
-test daemon::utils::sudo::tests::command_has_sudo_after_semicolon ... ok
+test daemon::utils::shell::tests::shell_escape_arg_double_quote ... ok
+test daemon::utils::shell::tests::shell_escape_arg_multiple_single_quotes ... ok
+test daemon::utils::shell::tests::shell_escape_arg_plain_passthrough ... ok
+test daemon::utils::shell::tests::shell_escape_arg_single_quote ... ok
+test daemon::utils::shell::tests::shell_escape_arg_spaces_unchanged ... ok
+test daemon::utils::warnings::tests::empty_when_all_retentions_nonzero ... ok
 test daemon::utils::warnings::tests::no_warning_when_archive_retention_is_nonzero ... ok
 test daemon::utils::warnings::tests::warns_when_archive_retention_is_zero ... ok
-test daemon::utils::warnings::tests::empty_when_all_retentions_nonzero ... ok
+test daemon::utils::sudo::tests::command_has_sudo_no_sudo ... ok
+test daemon::utils::sudo::tests::command_has_sudo_false_positive_guard ... ok
+test daemon::utils::sudo::tests::command_has_sudo_after_semicolon ... ok
+test daemon::utils::sudo::tests::command_has_sudo_in_pipeline ... ok
+test daemon::utils::sudo::tests::command_has_sudo_simple ... ok
+test daemon::utils::event_log::tests::log_event_caller_pid_overrides_stamp ... ok
+test daemon::utils::event_log::tests::log_event_always_stamps_ts_event_and_pid ... ok
+test daemon::utils::event_log::tests::log_event_writes_today_segment ... ok
+test daemon::utils::event_log::tests::segments_enumerate_legacy_first ... ok
+test daemon::utils::event_log::tests::log_event_stamps_emitting_pid ... ok
+test daemon::utils::event_log::tests::segments_window_excludes_out_of_range ... ok
+test daemon::utils::event_log::tests::sum_cost_between_spans_segments ... ok
+test daemon::utils::event_log::tests::sweep_deletes_only_expired_segments ... ok
+test daemon::utils::event_log::tests::sweep_event_segments_zero_retention_removes_nothing ... ok
+test daemon::utils::event_log::tests::sweep_event_segments_survives_unwritable_index ... ok
+test daemon::utils::event_log::tests::sweeping_a_segment_leaves_other_segments_indexed ... ok
+test daemon::utils::event_log::tests::sweeping_a_segment_removes_its_events_rows ... ok
+test daemon::utils::event_log::tests::test_log_event_leaves_daemon_fields_and_numbers ... ok
+test daemon::utils::event_log::tests::test_log_event_masks_caller_fields ... ok
+test daemon::utils::sweep_tests::active_session_archive_keeps_its_rows ... ok
+test daemon::utils::sweep_tests::sweep_agent_mailboxes_deletes_expired_keeps_recent ... ok
+test daemon::utils::sweep_tests::sweep_agent_mailboxes_zero_is_noop ... ok
+test daemon::utils::sweep_tests::sweep_archives_respects_active_and_zero ... ok
+test daemon::utils::sweep_tests::sweep_pane_logs_deletes_expired_keeps_recent ... ok
+test daemon::utils::sweep_tests::sweep_survives_unwritable_index ... ok
+test daemon::utils::sweep_tests::sweep_then_reconcile_agree ... ok
+test daemon::utils::sweep_tests::sweeping_an_archive_leaves_other_sessions_indexed ... ok
+test daemon::utils::sweep_tests::sweep_pane_logs_zero_is_noop ... ok
+test daemon::utils::sweep_tests::sweeping_an_archive_removes_its_turns_rows ... ok
+test daemon::utils::sweep_tests::zero_retention_removes_no_rows ... ok
 
 test result: ok. 94 passed; 0 failed; 0 ignored; 0 measured; 990 filtered out; finished in 0.05s
 
@@ -486,7 +504,7 @@ src/daemon/utils/event_log.rs:275:                    && let Err(e) = crate::mem
 exit=0
 ```
 
-Both `DELETE FROM turns WHERE rowid` and `DELETE FROM events WHERE rowid` precede their respective map deletes. Both sweep hooks use `if let Err(e) = …` — best-effort, never `?`-propagated. All 94 tests pass.
+Both `DELETE FROM turns WHERE rowid` and `DELETE FROM events WHERE rowid` precede their respective map deletes. Both sweep hooks use `if let Err(e) = …` — best-effort, never `?`-propagated. 52 + 94 = 146 tests pass.
 
 ### Update — ts=1785978547390 (complete, server-authored)
 
