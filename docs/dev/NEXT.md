@@ -26,44 +26,43 @@ that repo. This is the second batch carrying that caveat.
    never entered.
 
 **Active phase:
+[M11 phase-07b — situational-knowledge-hooks](milestones/M11-knowledge-index/phase-07b-situational-knowledge-hooks.md)
+(`todo`, drafted 2026-08-06, not yet dispatched). **This is the last phase of
+M11** — after it, the milestone hits its human gate.**
+
+The two remaining write/read choke points that ignore the index. An
+incident-response ghost starts cold on every alert with no memory of the last
+time the same one fired; and `add_memory` to `incidents` never fills
+`relates_to`, so `expand_relates_to` — which already consumes that field on the
+prompt path — has nothing to walk. Five tasks: an additive
+`fts5_search_in_category` (leaving `fts5_search` a wrapper so its two callers are
+untouched), `inject_yaml_relates_to` mirroring the `session_origin` injector,
+auto-linking on incident writes, an `assemble_incident_context` block seeded into
+the ghost's first user turn, and tests.
+
+**The one trap that would silently void this phase:** the index stores the
+category's **`canonical_name()`** — `"incident"`, singular — while
+`dir_name()` is `"incidents"`. Filtering on the plural matches zero rows and
+every test built on it passes vacuously. Verified at drafting
+(`src/memory.rs:24-40`, `src/memory/index.rs:785`), pre-injected, and pinned as a
+negative criterion.
+
+**First phase drafted under the three folds.** Its acceptance criteria are split
+into five that **fail against the current tree** (progress markers, each run at
+drafting) and two that **already pass** (no-regression guards, labelled as such
+so neither is mistaken for evidence of work). And where 07a's spec would have
+prescribed a fix, the E2E block now says: if the mutation leaves every test
+green, **report a blocker rather than adjusting a test to make it fail** — that
+is precisely what cost 07a a dispatch.
+
 [M11 phase-07a — situational-turns-epochs](milestones/M11-knowledge-index/phase-07a-situational-turns-epochs.md)
-(`todo`, drafted 2026-08-06, not yet dispatched).**
-
-The last read surface, and the milestone's one design-latitude phase. Every
-corpus is populated and searchable, but the per-turn prompt still reads only
-`memories`. 07a adds a budget-capped `[SITUATIONAL]` block carrying at most one
-past turn and one past epoch **from other sessions** matching the current turn,
-and de-duplicates `read_line_at_offset` — which exists twice today — before
-adding its third caller.
-
-**07 split into 07a/07b at drafting.** The design doc's situational bullet is
-three features in three unrelated files; together they land well over 500 lines,
-and oversizing the highest-latitude phase in the milestone is the wrong risk to
-take. 07b holds the ghost cold-start seeding and the incident `relates_to`
-auto-linking.
-
-**Three things pre-injected because they are the traps here:**
-
-1. **`build_match_expr` ORs every term** (`src/memory/index.rs:123-141`,
-   verified), so a whole user turn matches almost anything. The phase guards on
-   the *query's* shape (≥ 3 terms of ≥ 4 chars) and caps output at two lines. An
-   absolute BM25 cutoff is explicitly out of scope — phase 06 established that
-   scores are corpus-relative.
-2. **`PromptCtx` has no `session_id`** and the dynamic-memory call site passes
-   `None`. Without it there is no way to exclude the session's own history,
-   which is already in context. There is exactly **one** construction site
-   (`ask.rs:645`) and the id is already in scope there, so the field is a
-   one-site addition — authorized in the phase doc.
-3. **The `TestHomeGuard` must be bound in the test body**, and a setup helper
-   must *return* it. Phase 06 lost a whole dispatch to a helper that bound the
-   guard locally, dropping it on return and letting the tests race over `HOME`.
-
-**Deliberately not pinned:** the tree-wide `read_line_at_offset` reference count.
-It is 5 before and 5 after (two definitions plus three call sites becomes one
-plus four), so it is satisfied without doing any of the work — the criterion
-counts definitions per file instead. Phase 06's first stall was an acceptance
-criterion that could not be satisfied; this is the mirror failure, one that
-passes for free.
+**completed 2026-08-06** (`escalated` — architect takeover after 2 bounces and a
+`NoProgressStall`; [bug-07a-1](milestones/M11-knowledge-index/bugs/bug-07a-1.md)
+minor, fixed). A `[SITUATIONAL]` block now carries one cross-session turn and one
+epoch into the per-turn prompt, `read_line_at_offset` lives once in
+`src/memory/index.rs`, and `PromptCtx` carries `session_id`. All three failures
+traced to my specs, not the executor: a prescribed fix that was wrong twice, and
+a stale acceptance-criteria set. Those are the three folds above.
 
 [M11 phase-06 — prompt-scoring-fix](milestones/M11-knowledge-index/phase-06-prompt-scoring-fix.md)
 **completed 2026-08-06** (`escalated` — architect takeover after two
