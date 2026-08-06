@@ -656,6 +656,7 @@ where
         ghost_turn_limit,
         inject_snapshot,
         memory_namespaces: &memory_namespaces,
+        session_id: session_id.as_deref(),
         tool_policy: tool_policy_owned.as_ref(),
         agent_name: agent_name_owned.as_deref(),
     };

@@ -154,7 +154,7 @@ fn fts_query_search(
 
     for hit in &hits {
         let archive_path = crate::daemon::session::archive_file(&hit.session_id);
-        let line = read_line_at_offset(&archive_path, hit.offset as u64);
+        let line = crate::memory::index::read_line_at_offset(&archive_path, hit.offset as u64);
         let Ok(msg) = serde_json::from_str::<Message>(&line) else {
             continue;
         };
@@ -180,25 +180,6 @@ fn fts_query_search(
     }
 
     apply_mask_and_truncate(&output, limits)
-}
-
-/// Read a single line from the archive file at the given byte offset.
-fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
-    let Ok(file) = File::open(path) else {
-        return String::new();
-    };
-    let reader = BufReader::new(file);
-    let mut current_offset: u64 = 0;
-    for line in reader.lines() {
-        let Ok(l) = line else {
-            break;
-        };
-        if current_offset == offset {
-            return l;
-        }
-        current_offset += l.len() as u64 + 1; // +1 for newline
-    }
-    String::new()
 }
 
 /// Choose which field to excerpt from, and whether to label it.

@@ -44,6 +44,9 @@ pub struct PromptCtx<'a> {
     pub inject_snapshot: bool,
     /// Memory namespaces for this session (e.g. `["agent-name", "global"]`).
     pub memory_namespaces: &'a [&'a str],
+    /// Current session id, used to exclude this session's own history from the
+    /// situational block. `None` for callers with no session.
+    pub session_id: Option<&'a str>,
     /// Agent-level tool policy, if this session has one.
     pub tool_policy: Option<&'a crate::agents::ToolPolicy>,
     /// Agent name for briefing injection (ghost shells only).
@@ -225,11 +228,16 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         &session_tags,
         ctx.safe_query,
         ctx.config,
-        None, // session_id not available in PromptCtx; memory functions use namespaces directly
+        ctx.session_id,
         ctx.this_turn_count,
         ctx.memory_namespaces,
     )
     .unwrap_or_default();
+
+    let situational =
+        crate::daemon::situational::assemble_situational_block(ctx.safe_query, ctx.session_id)
+            .map(|s| format!("{}\n\n", s))
+            .unwrap_or_default();
 
     let tool_restriction_block = ctx
         .tool_policy
@@ -244,14 +252,14 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         let session_summary =
             prepend_foreground_target(&session_summary, ctx.default_target_pane, ctx.cache);
         format!(
-            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{pane_map}{current_time_line}\
+            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
              [Terminal snapshot — auto-refreshed (pane activity detected)]\n\
              ```\n{session_summary}\n```\n\nUser: {}",
             ctx.safe_query
         )
     } else {
         format!(
-            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{pane_map}{current_time_line}User: {}",
+            "{budget_note}{fg_target_line}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}User: {}",
             ctx.safe_query
         )
     }

@@ -422,7 +422,7 @@ fn search_events_fts(
         let events_dir = crate::config::events_dir();
         // `segment` is the file stem the index stores; the file is `<stem>.jsonl`.
         let seg_path = events_dir.join(format!("{}.jsonl", hit.segment));
-        let matched_line = read_line_at_offset(&seg_path, hit.offset);
+        let matched_line = crate::memory::index::read_line_at_offset(&seg_path, hit.offset);
 
         if matched_line.is_empty() {
             log::warn!(
@@ -461,7 +461,7 @@ fn search_turns_fts(query: &str, results: &mut Vec<SearchResult>) {
         }
 
         let archive_path = crate::daemon::session::archive_file(&hit.session_id);
-        let line = read_line_at_offset(&archive_path, hit.offset as u64);
+        let line = crate::memory::index::read_line_at_offset(&archive_path, hit.offset as u64);
         if line.is_empty() {
             log::warn!(
                 "search_turns_fts: could not read line at offset {} for session {}",
@@ -524,25 +524,6 @@ fn search_epochs_fts(query: &str, results: &mut Vec<SearchResult>) {
             context_after: Vec::new(),
         });
     }
-}
-
-/// Read a single line from a file at the given byte offset.
-fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
-    let Ok(file) = std::fs::File::open(path) else {
-        return String::new();
-    };
-    let reader = std::io::BufReader::new(file);
-    let mut current_offset: u64 = 0;
-    for line in std::io::BufRead::lines(reader) {
-        let Ok(l) = line else {
-            break;
-        };
-        if current_offset == offset {
-            return l;
-        }
-        current_offset += l.len() as u64 + 1; // +1 for newline
-    }
-    String::new()
 }
 
 #[allow(dead_code)]

@@ -1305,6 +1305,7 @@ fn g4_briefing_injects_on_next_run() {
         ghost_turn_limit: None,
         inject_snapshot: false,
         memory_namespaces: &memory_namespaces,
+        session_id: None,
         tool_policy: None,
         agent_name: Some("inject-test-agent"),
     };

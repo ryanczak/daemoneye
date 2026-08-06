@@ -147,6 +147,31 @@ fn build_match_expr(query: &str) -> Option<String> {
     }
 }
 
+/// Read the single line beginning at `offset` bytes into `path`.
+///
+/// The inverse of the byte offsets this module stores in `turns_map` and
+/// `events_map`, which is why it lives here: the append-only invariant that
+/// makes those offsets stable is documented in this module. Returns an empty
+/// string when the file is missing, unreadable, or has no line at that offset —
+/// callers treat that as "no excerpt", never as an error.
+pub fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
+    let Ok(file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let reader = std::io::BufReader::new(file);
+    let mut current_offset: u64 = 0;
+    for line in std::io::BufRead::lines(reader) {
+        let Ok(l) = line else {
+            break;
+        };
+        if current_offset == offset {
+            return l;
+        }
+        current_offset += l.len() as u64 + 1; // +1 for newline
+    }
+    String::new()
+}
+
 /// Open the index connection and reconcile the given corpus table if it is
 /// empty. Returns the connection on success, or logs and returns `None` on
 /// failure. The caller should use the returned connection for its query.
@@ -455,7 +480,6 @@ pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
 pub struct EpochHit {
     pub session_id: String,
     pub seq: i64,
-    #[allow(dead_code)]
     pub kind: String,
     pub body: String,
     #[allow(dead_code)]

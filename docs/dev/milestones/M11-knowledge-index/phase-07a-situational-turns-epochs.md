@@ -1,7 +1,7 @@
 # Phase 07a: situational injections — turns and epochs in the dynamic block
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~365 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -460,3 +460,72 @@ No new dependencies. No `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-06 18:25 (progress)
+
+Executor: rexyMCP. Implemented all four tasks: (1) extracted `read_line_at_offset` to `src/memory/index.rs` and updated all three call sites in `search.rs` and `recall.rs`; (2) created `src/daemon/situational.rs` with `assemble_situational_block` implementing signal guard, turns lookup, epochs lookup, and rendering with masking/truncation; (3) threaded `session_id` through `PromptCtx` and wired the situational block into the prompt after `dynamic_memory` in both branches; (4) added 7 tests covering all test plan scenarios. Updated `tests/integration.rs` for the new `PromptCtx` field. Removed `#[allow(dead_code)]` from `EpochHit::kind`.
+
+### Update — 2026-08-06 18:25 (end-to-end verification)
+
+```
+== exactly one definition, and it is in index.rs ==
+src/memory/index.rs:157:pub fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
+exit=0
+== former homes define it no longer (expect 0 and 0) ==
+src/search.rs:0
+src/daemon/context/recall.rs:0
+exit=1
+== new caller exists (expect 1) ==
+1
+exit=0
+== stale session_id comment must be gone (expect no output, exit=1) ==
+exit=1
+== module registered ==
+43:pub mod situational;
+exit=0
+== baseline: module tests green ==
+test daemon::situational::tests::short_turn_injects_nothing ... ok
+test daemon::situational::tests::tool_result_only_match_still_renders ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1128 filtered out; finished in 0.04s
+
+exit=0
+== MUTATED: current-session exclusion removed ==
+
+---- daemon::situational::tests::current_session_turn_is_excluded_and_the_guard_is_not_vacuous stdout ----
+
+thread 'daemon::situational::tests::current_session_turn_is_excluded_and_the_guard_is_not_vacuous' (3638032) panicked at src/daemon/situational.rs:249:9:
+block must not name the current session
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- daemon::situational::tests::only_current_session_matches_yields_none stdout ----
+
+thread 'daemon::situational::tests::only_current_session_matches_yields_none' (3638036) panicked at src/daemon/situational.rs:279:9:
+should return None when only current session matches
+ (x2)
+failures:
+    daemon::situational::tests::current_session_turn_is_excluded_and_the_guard_is_not_vacuous
+    daemon::situational::tests::only_current_session_matches_yields_none
+
+test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 1128 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--lib`
+exit=0
+== RESTORED ==
+test daemon::situational::tests::short_turn_injects_nothing ... ok
+test daemon::situational::tests::tool_result_only_match_still_renders ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1128 filtered out; finished in 0.04s
+
+exit=0
+== restore proof: the exclusion must be present ==
+18:/// matches, or when every hit belongs to `current_session`.
+21:    current_session: Option<&str>,
+43:        .find(|hit| current_session.is_none_or(|cs| hit.session_id != cs))
+57:        .find(|hit| current_session.is_none_or(|cs| hit.session_id != cs) && !hit.body.is_empty())
+213:    fn current_session_turn_is_excluded_and_the_guard_is_not_vacuous() {
+261:    fn only_current_session_matches_yields_none() {
+exit=0
+```
+
+Mutation results: `current_session_turn_is_excluded_and_the_guard_is_not_vacuous` and `only_current_session_matches_yields_none` both failed when the exclusion was removed, proving the `current_session` filter is load-bearing.
