@@ -356,7 +356,11 @@ When the executor marks a phase **review**, the architect:
    evidence."
 5. Either **approves** (flips to `done`, updates the milestone README's phase
    table) or **rejects** (writes bug reports in the milestone's `bugs/`
-   directory and flips the phase back to `in-progress`).
+   directory, **refreshes the phase doc's acceptance criteria so the outstanding
+   work is expressed there and each new criterion fails against the current
+   tree**, and flips the phase back to `in-progress`). Skipping the criteria
+   refresh is what produces a re-dispatch that returns `complete` with an empty
+   diff — see § "Every acceptance criterion must be satisfiable".
 6. **Records a structured review verdict** (below) — at every approval, not just
    when something went wrong. This is the supervision label for model evaluation
    *and* the substrate for human project review. One write, two consumers.
@@ -395,13 +399,59 @@ File at `docs/dev/milestones/M<n>-<slug>/bugs/bug-<phase>-<n>.md`.
 ## What should happen
 <Concrete. Reference the architecture doc section or phase spec requirement.>
 
-## How to fix
-<Specific instruction: file path, what to change, expected result.>
+## Root cause
+<Why it happens, at the level of the mechanism — not the edit that fixes it.
+"`find` selects one candidate and `and_then` discards it on failure, so the
+remaining candidates are never examined." Name the file and symbol.>
 
-## Verification
+## Definition of done
 - [ ] <command produces expected output>
-- [ ] <test_name passes>
+- [ ] <test_name passes, and what it must assert>
 ```
+
+### State the symptom, the root cause and the DoD — not the fix
+
+**The three required sections are What's wrong, Root cause, and Definition of
+done. A `How to fix` section is optional, and admissible only when the architect
+has actually run the fix.** Otherwise, describe the constraint the solution has
+to satisfy and let the executor choose the edit.
+
+This inverts the earlier instinct, which was to prescribe the patch and lean on
+the executor to type it. The evidence says prescription is where architects are
+least reliable: a prescribed fix is a *system fact* — a claim that this edit,
+applied to this tree, produces that result — and it is authored from reasoning
+about code rather than from running it. Four of them in one milestone were
+wrong. Two of those the executor implemented faithfully and the phase bounced;
+one the executor correctly refused, and the finding was withdrawn; one was an
+impossible instruction the executor burned an entire dispatch trying to satisfy
+before the governor stopped it.
+
+The failure mode is specific and worth naming: **a prescribed fix is trusted
+precisely because it is specific.** A vague instruction gets sanity-checked
+against the code; a confident code block gets typed in. So the more precise the
+prescription, the more damage a wrong one does — and precision is not evidence
+of correctness when the author never executed it.
+
+What the executor is reliably good at, given a correct root cause, is finding
+the edit. It has the compiler, the linter, the test suite and the actual tree;
+the architect has none of those at spec-writing time. Give it the diagnosis and
+the finish line.
+
+**When you do include a worked example, it must be quoted from code that
+exists**, per § "Verify external APIs against live docs" and the green-bounce
+treatment's third part. Quoting an existing pattern is evidence. Authoring a new
+one is a guess wearing the costume of evidence — and the executor cannot tell
+them apart.
+
+*(Folded 2026-08-06 after four occurrences in M11, on PE sign-off: `bug-02b-1`
+Finding 1 prescribed a `read_line` recipe that errors on invalid UTF-8 and
+`?`-propagates out of a routine whose contract is "always safe to rerun";
+`bug-03a-1` Finding 2 prescribed removing an `.or(Some(0))` fallback that three
+tests depended on; `bug-07a-1` prescribed a closure form that its own lint gate
+rejects as `redundant_closure`, and a test fixture premised on repetition
+outranking brevity when BM25 normalizes by document length — the latter cost a
+full dispatch and a `NoProgressStall`. In every case the executor's behavior was
+correct given what it was told.)*
 
 ### Severity meanings
 
@@ -985,6 +1035,42 @@ assertions tautological; a test named for a branch it could not reach; a spec
 pinning a key order the serializer discards. All three were architect-authored — the
 executor implemented what was specified in each case.)*
 
+**When a test depends on the fixture being in a particular order, assert that
+order in the test.** The cases above are all "the property could not be
+observed". This is the neighbouring one: the property is observable, the fixture
+is non-empty, every assertion is real — and the code path under test is still
+never entered, because the *ordering premise* the fixture rests on is false.
+
+A fixture built so that "candidate A is tried first, fails, and B is used
+instead" is only testing the fallback if A really does come first. When that
+order is decided by something the spec author reasoned about rather than ran — a
+ranking function, a sort comparator, a hash iteration, a directory listing — it
+is a system fact like any other, and it is wrong often enough to matter. Get it
+wrong and B is tried first, succeeds, and the test passes without the fallback
+ever running.
+
+The remedy is one line and it is cheap enough to apply by default:
+
+```rust
+// Precondition: the unresolvable hit really is first. If ranking ever
+// changes, fail loudly here instead of passing vacuously.
+let hits = index::search_turns(query, 8, None);
+assert_eq!(hits.first().map(|h| h.turn), Some(100), "fixture precondition: …");
+```
+
+Asserting the premise converts a silent false pass into a loud, self-describing
+failure — including years later, when whatever decided the order changes and
+nobody remembers the test depended on it.
+
+*(Folded 2026-08-06 after M11 phase-07a round 3, on PE sign-off. The fixture was
+built on "repeating a term makes a document rank higher"; BM25 normalizes by
+document length, so the shorter exact-match body outranked the longer repeated
+one, the fallback never ran, and the test passed identically with and without the
+fix it existed to cover. It cost a full dispatch: the executor could not make the
+required mutation fail, and stalled after ~45 consecutive runs of that one test —
+which is the pathology working correctly, refusing to certify an unfalsifiable
+guard.)*
+
 ### A pasted transcript is a claim, not evidence
 
 **At review, re-run every command in the phase doc's End-to-end section and diff
@@ -1055,6 +1141,32 @@ command the shell guard blocks is not a refinement. That one cost a run even aft
 the diagnosis was correct.
 
 *(Folded 2026-07-27 after two hard-fails and one pre-dispatch catch.)*
+
+**A bounce makes the acceptance criteria stale, and stale criteria certify the
+phase as finished.** After a review rejects a phase, the criteria in the phase
+doc describe the tree the executor already built — so they all pass. Re-dispatch
+against them and the executor evaluates the phase doc's own definition of done,
+finds it satisfied, and reports `complete` with an empty diff. That report is
+honest; the spec lied.
+
+So **the bounce is not finished when the bug doc is written.** Before
+re-dispatching, edit the phase doc so that:
+
+- the outstanding work appears **as acceptance criteria**, and
+- **each of those criteria fails against the current tree** — run them and
+  confirm it, the same way § "Run every count criterion" requires for any other
+  pinned number, and
+- any count that the fix will change is re-pinned to its new exact value. "More
+  than 1128" was satisfied by the 1135 already on disk; "exactly 1136" is not.
+
+A bug doc is a supplement, not a substitute. The executor reads the phase doc to
+decide whether there is work to do; that is the document a bounce has to
+invalidate.
+
+*(Folded 2026-08-06 after M11 phase-07a round 2, on PE sign-off. First
+occurrence, folded on request rather than on recurrence: the failure is silent
+and self-certifying — every gate green, a clean tree, an accurate completion
+summary — and the only signal that anything was wrong was an empty diff.)*
 
 ### A phase that exhausts a trait's uses must say what happens to its import
 

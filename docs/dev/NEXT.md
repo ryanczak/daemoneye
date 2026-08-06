@@ -1,5 +1,30 @@
 # NEXT
 
+## Three calibration folds landed 2026-08-06 (PE sign-off)
+
+All three are in `docs/dev/WORKFLOW.md`. **None is applied upstream** — the same
+clauses belong in rexyMCP's `plugin/templates/WORKFLOW.md`, which is out of
+bounds from a target-project architect session and needs a separate change in
+that repo. This is the second batch carrying that caveat.
+
+1. **Bug reports state symptom / root cause / DoD, not the fix.** The template's
+   `How to fix` section is gone, replaced by `Root cause` + `Definition of done`;
+   a prescribed fix is now optional and admissible only when the architect has
+   run it. **This was the PE's counter-proposal to the fold I suggested** — I had
+   argued for "execute prescribed fixes before writing them", and giving the
+   executor the diagnosis plus the finish line instead is the better remedy: it
+   removes the class of error rather than adding a verification step to it. Four
+   occurrences in M11, and in every one the executor's behavior was correct given
+   what it was told.
+2. **A bounce must refresh the phase doc's acceptance criteria**, and each new
+   criterion must be confirmed to fail against the current tree. Folded on first
+   occurrence at the PE's direction, because the failure is silent and
+   self-certifying — green gates, clean tree, accurate summary, empty diff.
+3. **A fixture's ordering premise must be asserted in the test.** Extends the
+   vacuous-guard family: not an unobservable property or an empty fixture, but a
+   false assumption about which candidate comes first, so the path under test is
+   never entered.
+
 **Active phase:
 [M11 phase-07a — situational-turns-epochs](milestones/M11-knowledge-index/phase-07a-situational-turns-epochs.md)
 (`todo`, drafted 2026-08-06, not yet dispatched).**
