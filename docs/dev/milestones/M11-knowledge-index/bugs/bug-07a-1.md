@@ -1,7 +1,7 @@
 # Bug 1 on phase-07a: an unresolvable turn hit suppresses the whole turn line
 
 **Severity:** minor
-**Status:** open
+**Status:** fixed
 **Filed:** 2026-08-06
 
 ## READ THIS FIRST — the gates are green and that is expected
@@ -105,3 +105,38 @@ on `is_some()`, so an unrelated epoch line cannot satisfy it.
       `cargo test --lib daemon::situational`, and show
       `unresolvable_turn_hit_falls_through_to_the_next` failing. Then restore and
       show it passing, plus the two greps above as restore proof.
+
+---
+
+## Resolution — 2026-08-06 (architect takeover)
+
+Fixed. `src/daemon/situational.rs:43-46` now reads
+`.filter(exclusion).find_map(resolve_turn_hit)`, and
+`unresolvable_turn_hit_falls_through_to_the_next` covers it.
+
+**Correction to "How to fix" above.** This doc told the executor to write
+`|hit| resolve_turn_hit(hit)` because a bare function item "will not coerce"
+after `.filter()`. That is wrong — clippy rejects the closure as
+`redundant_closure` under `-D warnings`, and the bare `resolve_turn_hit`
+compiles. Shipped form is the bare function.
+
+**The test the executor first wrote was vacuous, and the reason was this doc's
+prescription.** It said to make the unresolvable hit rank first "by repeating
+the phrase several times". BM25 normalizes by document length, so the *longer*
+repeated body ranks **below** the shorter exact one — `find` picked the
+resolvable hit and the fallback never ran. The test passed with and without the
+fix. The executor then spent ~45 consecutive turns re-running that one test
+trying to make the mutation fail, and stalled. The fixture now inverts the
+lengths (short exact = unresolvable, long padded = resolvable), measured first:
+
+```
+$ sqlite3 :memory: "CREATE VIRTUAL TABLE t USING fts5(body, tokenize='porter unicode61 remove_diacritics 2');
+INSERT INTO t(rowid, body) VALUES(100, 'unresolvable subsystem failure');
+INSERT INTO t(rowid, body) VALUES(200, 'unresolvable subsystem failure plus a great deal of additional filler text that makes this document substantially longer than the other one so bm25 length normalization penalises it');
+SELECT rowid, bm25(t) FROM t WHERE t MATCH '\"unresolvable\" OR \"subsystem\" OR \"failure\"' ORDER BY bm25(t);"
+100|-4.4594594594594593e-06
+200|-2.26027397260274e-06
+```
+
+and the test now **asserts that ranking as a precondition**, so if BM25 ordering
+ever changes it fails loudly instead of passing vacuously.

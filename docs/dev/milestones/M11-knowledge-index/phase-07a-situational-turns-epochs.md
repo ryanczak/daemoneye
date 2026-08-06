@@ -1,7 +1,7 @@
 # Phase 07a: situational injections — turns and epochs in the dynamic block
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~365 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -472,6 +472,185 @@ No new dependencies. No `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-06 (escalation, round 3)
+
+**Chosen lever:** session takeover
+**Rationale:** three rounds, three failures, and every one traced to a defect in
+my spec rather than the executor's capability — the decision table's takeover
+trigger (repeated same-class failure after refinement), reached the hard way.
+
+- **Round 1** shipped correct code with one spec deviation (`bug-07a-1`).
+- **Round 2** returned `complete` with an empty diff because the phase doc's
+  acceptance criteria were stale and still passed; the executor's report was
+  honest against the inputs it had.
+- **Round 3** hard-failed on `NoProgressStall` after ~45 consecutive runs of one
+  test. The executor had added the test and was trying to satisfy the mutation
+  requirement I imposed — but the test could not fail, because the fixture recipe
+  in `bug-07a-1` was wrong about BM25 ranking. It was doing exactly the right
+  thing against an impossible instruction.
+
+**What I changed:** the one-line fix, and a rebuilt fixture for the new test
+based on a measured BM25 ranking rather than an assumed one. Both corrections are
+recorded in [bug-07a-1](bugs/bug-07a-1.md) § Resolution.
+
+### Update — 2026-08-06 (end-to-end verification)
+
+Captured mechanically to `/tmp/p07a-e2e.txt`, pasted verbatim:
+
+```
+== exactly one definition, and it is in index.rs ==
+src/memory/index.rs:157:pub fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
+exit=0
+== former homes define it no longer (expect 0 and 0) ==
+src/search.rs:0
+src/daemon/context/recall.rs:0
+exit=1
+== new caller exists (expect 1) ==
+1
+exit=0
+== stale session_id comment must be gone (expect no output, exit=1) ==
+exit=1
+== module registered ==
+43:pub mod situational;
+exit=0
+== bug-07a-1 fix present ==
+46:        .find_map(resolve_turn_hit);
+exit=0
+exit=1
+== baseline: module tests green ==
+test daemon::situational::tests::tool_result_only_match_still_renders ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1128 filtered out; finished in 0.04s
+
+exit=0
+== MUTATED: fix reverted to .find(...).and_then(resolve_turn_hit) ==
+
+---- daemon::situational::tests::unresolvable_turn_hit_falls_through_to_the_next stdout ----
+
+thread 'daemon::situational::tests::unresolvable_turn_hit_falls_through_to_the_next' (3753441) panicked at src/daemon/situational.rs:440:28:
+should fall through to the resolvable turn
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    daemon::situational::tests::unresolvable_turn_hit_falls_through_to_the_next
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 1128 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--lib`
+exit=0
+== RESTORED ==
+test daemon::situational::tests::tool_result_only_match_still_renders ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 1128 filtered out; finished in 0.04s
+
+exit=0
+== restore proof: find_map present ==
+46:        .find_map(resolve_turn_hit);
+exit=0
+== restore proof: and_then(resolve_turn_hit) absent (expect exit=1) ==
+exit=1
+== full suite ==
+test result: ok. 1136 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.46s
+exit=0
+```
+
+**Mutation result:** reverting the fix to `.find(...).and_then(resolve_turn_hit)`
+fails `unresolvable_turn_hit_falls_through_to_the_next` at its `expect`. Restored,
+and the two greps above prove it against the shipped source — `find_map` present,
+`and_then(resolve_turn_hit)` gone. Note this is the mutation the *previous*
+version of the test could not produce; it is the whole reason the fixture was
+rebuilt.
+
+### Update — 2026-08-06 (complete, architect takeover)
+
+**Summary:** all four tasks are implemented and `bug-07a-1` is fixed.
+`read_line_at_offset` lives once, in `src/memory/index.rs`, with four callers;
+`src/daemon/situational.rs` assembles a `[SITUATIONAL]` block of at most one
+cross-session turn and one epoch, guarded by a minimum-signal query check,
+masked, flattened to one line and char-truncated; `session_id` is threaded
+through `PromptCtx` and the block is wired in after `dynamic_memory` in both
+prompt branches. The executor wrote all of the production code, the module, and
+all eight tests across three dispatches; the architect supplied the one-line
+`filter`/`find_map` fix and rebuilt the new test's fixture.
+
+**Acceptance criteria:** all met, including the six added at the round-2 bounce.
+
+**Commands** (each run bare, as separate invocations):
+
+```
+$ cargo fmt --all
+fmt exit=0
+
+$ cargo build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.01s
+build exit=0
+
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.90s
+lint exit=0
+
+$ cargo test
+test result: ok. 1136 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 6 passed; 0 failed (bug_tracker)
+test result: ok. 4 passed; 0 failed (doc_truth)
+test result: ok. 30 passed; 0 failed; 2 ignored (integration)
+test result: ok. 9 passed; 0 failed; 1 ignored (isolation)
+test exit=0
+```
+
+`1136` lib tests — the pinned finish condition exactly.
+
+**Files changed:** `src/memory/index.rs`, `src/search.rs`,
+`src/daemon/context/recall.rs`, `src/daemon/mod.rs`, `src/daemon/prompt.rs`,
+`src/daemon/server/ask.rs`, `src/daemon/situational.rs` (new),
+`tests/integration.rs`.
+
+**New tests:** the seven pinned in § Test plan plus
+`unresolvable_turn_hit_falls_through_to_the_next`, all in
+`src/daemon/situational.rs`.
+
+**Notes for review:** no `unwrap`/`expect`/`panic!`/`unsafe` in production code;
+no `#[allow]`, `TODO`, `dbg!` or `println!` in the new module. `EpochHit::kind`'s
+`#[allow(dead_code)]` removed (now live); `score`'s retained.
+
+### Review verdict — 2026-08-06
+
+- **Verdict:** escalated
+- **Bounces:** 2 (bug: [bug-07a-1](bugs/bug-07a-1.md) — minor, verified fixed),
+  plus one `NoProgressStall` hard_fail
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (all production code, the module, all eight
+  tests); Claude (direct) for the takeover — the one-line fix and the test
+  fixture
+- **Scope deviations:** none against the final spec
+- **Calibration:** three items, below — all three are architect-side
+
+**1. A bug doc's prescribed fix is a system fact and must be executed before it
+is written — `spec_bug`, now at its third occurrence in M11 and past the fold
+threshold.** `bug-07a-1` asserted two things I had not run: that a bare function
+item would not coerce after `.filter()` (clippy rejects the closure I mandated),
+and that repeating a term makes a document rank higher (BM25 length
+normalization does the opposite). The second one cost an entire dispatch and a
+`NoProgressStall`. `NEXT.md` already tracks this rule at two occurrences
+(`bug-02b-1` Finding 1, `bug-03a-1` Finding 2); this is the third. **It should
+now be folded into `WORKFLOW.md` as a bug-report clause, with PE sign-off.**
+
+**2. A bounce must update the phase doc's acceptance criteria, not only file a
+bug doc.** Round 2's `complete`-with-empty-diff happened because the phase doc
+still certified itself as finished while the bug doc sat beside it unread-for-
+purpose. The executor evaluates the phase doc to decide it is done; criteria that
+still pass after a bounce are worse than none. First occurrence, noted at the
+round-2 bounce.
+
+**3. The vacuous-guard rule needs to cover fixtures whose *ordering* premise is
+unverified.** `NEXT.md` records "verify the guard is not vacuous belongs inside
+every exclusion criterion" at two occurrences. This is a third instance of the
+same family with a new mechanism: not an empty fixture, but a fixture whose
+assumed rank order was wrong, so the code path under test was never entered. The
+remedy that worked is cheap and general — **assert the precondition in the test**
+(`hits.first().map(|h| h.turn) == Some(100)`), so a premise that goes stale fails
+loudly instead of passing silently.
 
 ### Notes for executor — 2026-08-06 (round 3)
 

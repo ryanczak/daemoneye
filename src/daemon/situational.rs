@@ -38,10 +38,12 @@ pub fn assemble_situational_block(
 
     // Turns lookup
     let turn_hits = index::search_turns(user_turn, 8, None);
+    // Skip hits that cannot be resolved (missing archive line, undeserializable,
+    // empty excerpt) and try the next candidate rather than dropping the line.
     let turn_result = turn_hits
         .iter()
-        .find(|hit| current_session.is_none_or(|cs| hit.session_id != cs))
-        .and_then(resolve_turn_hit);
+        .filter(|hit| current_session.is_none_or(|cs| hit.session_id != cs))
+        .find_map(resolve_turn_hit);
 
     if let Some((session_id, turn, excerpt)) = turn_result {
         parts.push(format!(
@@ -376,6 +378,74 @@ mod tests {
         assert!(
             block.contains("unexpected"),
             "excerpt should contain the phrase from tool_results"
+        );
+    }
+
+    #[test]
+    fn unresolvable_turn_hit_falls_through_to_the_next() {
+        let (_guard, _tmp) = setup();
+
+        // The unresolvable hit must rank FIRST, or this test proves nothing —
+        // `find` would pick the resolvable one and the fallback path would never
+        // run. BM25 normalizes by document length, so the *shorter, exact* body
+        // outranks the longer one; repeating a term in the longer body does not
+        // overcome the length penalty. The rank precondition is asserted below
+        // rather than assumed.
+        let query = "unresolvable subsystem failure";
+
+        // Turn 100 — shortest, exact match, so it ranks first. Indexed at an
+        // offset past the end of the archive, so it can never resolve.
+        let bad_body = query;
+        let msg_bad = Message {
+            role: "user".to_string(),
+            content: bad_body.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: Some(100),
+        };
+        let line_bad = serde_json::to_string(&msg_bad).unwrap();
+
+        // Turn 200 — same terms but much longer, so it ranks second. Resolves.
+        let good_body = "unresolvable subsystem failure plus a great deal of additional \
+                         filler text that makes this document substantially longer than \
+                         the other one so bm25 length normalization penalises it";
+        let msg_good = Message {
+            role: "user".to_string(),
+            content: good_body.to_string(),
+            tool_calls: None,
+            tool_results: None,
+            turn: Some(200),
+        };
+        let line_good = serde_json::to_string(&msg_good).unwrap();
+
+        let archive_path = archive_file("other");
+        std::fs::create_dir_all(archive_path.parent().unwrap()).unwrap();
+        std::fs::write(&archive_path, format!("{line_bad}\n{line_good}\n")).unwrap();
+
+        let _ = index::index_turn("other", 100, 9_999_999, bad_body);
+        let good_offset = (line_bad.len() + 1) as u64; // +1 for the newline
+        let _ = index::index_turn("other", 200, good_offset, good_body);
+
+        // Precondition: the unresolvable hit really is first. If BM25 ordering
+        // ever changes this, fail loudly here instead of passing vacuously.
+        let hits = index::search_turns(query, 8, None);
+        assert_eq!(
+            hits.first().map(|h| h.turn),
+            Some(100),
+            "fixture precondition: the unresolvable turn must rank first, \
+             otherwise the fallback path is never exercised"
+        );
+
+        let result = assemble_situational_block(query, Some("current"));
+        let block = result.expect("should fall through to the resolvable turn");
+
+        assert!(
+            block.contains("turn 200"),
+            "block should contain the second, resolvable turn"
+        );
+        assert!(
+            !block.contains("turn 100"),
+            "block must not contain the unresolvable first turn"
         );
     }
 }
