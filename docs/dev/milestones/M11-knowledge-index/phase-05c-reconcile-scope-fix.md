@@ -486,6 +486,259 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 <!-- entries appended below this line -->
 
+### Update — 2026-08-06 (end-to-end verification)
+
+**End-to-end verification transcript:**
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 63 tests
+test memory::index::tests::corpus_from_table_rejects_map_and_unknown_tables ... ok
+test memory::index::tests::corpus_from_table_resolves_known_tables ... ok
+test memory::index::tests::corpus_table_name_roundtrips ... ok
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::add_memory_indexes_the_row ... ok
+test memory::index::tests::all_kind_search_preserves_turns_and_epochs ... ok
+test memory::index::tests::append_archive_message_indexes_the_turn ... ok
+test memory::index::tests::appended_turn_offset_seeks_to_its_line ... ok
+test memory::index::tests::append_epoch_indexes_the_narrative ... ok
+test memory::index::tests::archive_seed_indexes_every_copied_line ... ok
+test memory::index::tests::contentless_bodies_are_masked ... ok
+test memory::index::tests::delete_memory_removes_the_row ... ok
+test memory::index::tests::deleting_a_runbook_removes_its_artifact_row ... ok
+test memory::index::tests::empty_corpus_search_preserves_other_corpora ... ok
+test memory::index::tests::empty_artifacts_corpus_still_self_heals ... ok
+test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::hyphenated_query_does_not_error ... ok
+test memory::index::tests::incremental_and_reconcile_agree ... ok
+test memory::index::tests::index_failure_does_not_break_append ... ok
+test memory::index::tests::index_failure_does_not_break_log_event ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::stale_schema_version_is_recreated ... ok
+test memory::index::tests::second_reconcile_reports_no_change ... ok
+test memory::index::tests::stale_v1_database_is_dropped_and_recreated ... ok
+test memory::index::tests::legacy_event_file_is_indexed_as_legacy_segment ... ok
+test memory::index::tests::log_event_offset_seeks_to_its_line ... ok
+test memory::index::tests::message_without_turn_is_not_indexed ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::log_event_indexes_the_event ... ok
+test memory::index::tests::malformed_line_is_skipped_and_later_offsets_stay_correct ... ok
+test memory::index::tests::multi_word_query_matches_non_adjacent_terms ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_corpus_events_clears_both_tables ... ok
+test memory::index::tests::reconcile_corpus_rebuilds_only_its_own_corpus ... ok
+test memory::index::tests::reconcile_corpus_turns_clears_both_tables ... ok
+test memory::index::tests::reconcile_index_report_is_unchanged ... ok
+test memory::index::tests::reconcile_indexes_archive_turns ... ok
+test memory::index::tests::reconcile_indexes_epoch_narrative_and_failed_cmds ... ok
+test memory::index::tests::reconcile_indexes_event_segments ... ok
+test memory::index::tests::reconcile_indexes_runbook_and_script_bodies ... ok
+test memory::index::tests::reconcile_leaves_contentless_corpora_empty ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::reconcile_report_per_corpus_sums_to_total ... ok
+test memory::index::tests::rewriting_a_runbook_replaces_its_artifact_row ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::schema_v2_creates_every_table ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::second_reconcile_does_not_duplicate_contentless_rows ... ok
+test memory::index::tests::invalid_utf8_file_does_not_abort_reconcile ... ok
+test memory::index::tests::turns_body_includes_tool_result_text ... ok
+test memory::index::tests::turns_map_offsets_point_at_the_right_line ... ok
+test memory::index::tests::turns_skips_messages_without_turn_numbers ... ok
+test memory::index::tests::unknown_table_name_reconciles_nothing ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
+
+test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 1059 filtered out; finished in 0.13s
+
+exit=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 40 tests
+test ai::types::pending::tests::summary_search_repository_truncated ... ok
+test manifest::tests::auto_search_deduplicates ... ok
+test manifest::tests::auto_search_empty_on_no_match ... ok
+test manifest::tests::auto_search_follows_relates_to_links ... ok
+test manifest::tests::auto_search_matches_memory_key ... ok
+test manifest::tests::auto_search_matches_memory_tags ... ok
+test manifest::tests::auto_search_matches_runbook_tag ... ok
+test manifest::tests::auto_search_matches_runbook_name ... ok
+test manifest::tests::auto_search_matches_summary_text ... ok
+test manifest::tests::auto_search_max_three_items ... ok
+test manifest::tests::auto_search_respects_4kb_cap ... ok
+test memory::index::tests::all_kind_search_preserves_turns_and_epochs ... ok
+test memory::index::tests::empty_corpus_search_preserves_other_corpora ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test search::tests::epochs_kind_finds_narrative ... ok
+test search::tests::epochs_results_are_rank_ordered ... ok
+test search::tests::all_kind_excludes_turns_and_epochs ... ok
+test search::tests::events_kind_finds_webhook_alert_by_free_text ... ok
+test search::tests::file_matching_name_and_body_appears_once ... ok
+test search::tests::filename_match_still_returned_without_body_match ... ok
+test search::tests::memory_search_dirs_label_incidents_plural ... ok
+test search::tests::new_kinds_survive_unwritable_index ... ok
+test search::tests::non_matching_document_is_absent ... ok
+test search::tests::results_are_rank_ordered_not_alphabetical ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::stemmed_hit_renders_a_non_empty_matched_line ... ok
+test search::tests::search_survives_unwritable_index ... ok
+test search::tests::stemmed_query_finds_memory_entry ... ok
+test search::tests::stemmed_query_finds_runbook_with_root_word ... ok
+test search::tests::stemmed_query_finds_script ... ok
+test search::tests::turns_hit_shows_tool_result_text ... ok
+test search::tests::turns_hit_with_missing_archive_is_skipped ... ok
+test search::tests::turns_kind_finds_archived_turn ... ok
+test search::tests::turns_results_are_rank_ordered ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 1082 filtered out; finished in 1.13s
+
+exit=0
+--- each rebuild owns its own DELETE ---
+676:        "DELETE FROM artifacts WHERE kind = ?1 AND name = ?2",
+692:        "DELETE FROM artifacts WHERE kind = ?1 AND name = ?2",
+705:        "DELETE FROM turns WHERE rowid IN (SELECT id FROM turns_map WHERE session_id = ?1)",
+709:    tx.execute("DELETE FROM turns_map WHERE session_id = ?1", (session_id,))
+720:        "DELETE FROM events WHERE rowid IN (SELECT id FROM events_map WHERE segment = ?1)",
+724:    tx.execute("DELETE FROM events_map WHERE segment = ?1", (segment,))
+768:        "DELETE FROM memories WHERE key = ?1 AND namespace = ?2 AND category = ?3",
+791:        "DELETE FROM memories WHERE key = ?1 AND namespace = ?2 AND category = ?3",
+835:    tx.execute("DELETE FROM memories", [])
+909:    tx.execute("DELETE FROM artifacts", [])
+941:    tx.execute("DELETE FROM epochs", [])
+978:    tx.execute("DELETE FROM turns", [])
+980:    tx.execute("DELETE FROM turns_map", [])
+1002:    tx.execute("DELETE FROM events", [])
+1004:    tx.execute("DELETE FROM events_map", [])
+--- open_and_reconcile_if_empty no longer calls reconcile_index ---
+fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
+    let conn = match open_index() {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("memory index open failed: {e:#}");
+            return None;
+        }
+    };
+
+    let count_sql = format!("SELECT count(*) FROM {table}");
+    let count: i64 = conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0);
+    if count == 0 {
+        let Some(corpus) = Corpus::from_table(table) else {
+            log::warn!(
+                "table '{}' is not a recognised corpus — skipping reconcile",
+                table
+            );
+            return Some(conn);
+        };
+        if let Err(e) = reconcile_corpus(corpus) {
+            log::warn!("memory index reconcile failed: {e:#}");
+        }
+        // Re-open because reconcile may have dropped and recreated the DB
+        return match open_index() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("memory index re-open after reconcile failed: {e:#}");
+                None
+            }
+        };
+    }
+    Some(conn)
+}
+--- 05b workaround removed from the guard test ---
+    fn all_kind_excludes_turns_and_epochs() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            // Write a turn
+            let session_id = format!(
+                "test-sess-all-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let sessions_dir = crate::config::sessions_dir();
+            std::fs::create_dir_all(&sessions_dir).unwrap();
+
+            let archive_path = crate::daemon::session::archive_file(&session_id);
+            let line = r#"{"role":"user","content":"needle in the haystack"}"#;
+            std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+            crate::memory::index::index_turn(&session_id, 1, 0, "needle in the haystack").unwrap();
+
+            // Write an epoch
+            crate::memory::index::index_epoch(
+                &session_id,
+                1,
+                "compaction",
+                "needle in the haystack",
+            )
+            .unwrap();
+
+            let results = search_repository("needle", "all", 0);
+            for r in &results {
+                assert!(
+                    r.kind != "turns",
+                    "kind='all' must NOT include turns. Found kind={}",
+                    r.kind
+                );
+                assert!(
+                    r.kind != "epochs",
+                    "kind='all' must NOT include epochs. Found kind={}",
+                    r.kind
+                );
+            }
+        });
+    }
+exit=0
+```
+
+**Mutation check:** Temporarily restored `open_and_reconcile_if_empty` to call `reconcile_index()` — `empty_corpus_search_preserves_other_corpora` **failed** (turn rows wiped from 1→0). Restored to `reconcile_corpus(corpus)` — test **passed**. Mutation check confirms the fix is real.
+
+**grep proof — `reconcile_index()` not called from `open_and_reconcile_if_empty`:**
+```
+$ grep -n "reconcile_index()" src/memory/index.rs
+1101:pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
+1538:        let report = reconcile_index().expect("reconcile should succeed");
+1590:        let report = reconcile_index().expect("reconcile should succeed");
+1612:        let report = reconcile_index().expect("reconcile should succeed");
+2006:        let report = reconcile_index().expect("reconcile should succeed");
+2043:        let _ = reconcile_index();
+2116:        let report = reconcile_index().expect("reconcile should succeed");
+2154:        let report = reconcile_index().expect("reconcile should succeed");
+2194:        let report = reconcile_index().expect("reconcile should succeed");
+2227:        let report1 = reconcile_index().expect("first reconcile should succeed");
+2232:        let report2 = reconcile_index().expect("second reconcile should succeed");
+2273:        let report = reconcile_index().expect("reconcile should succeed");
+2312:        reconcile_index().expect("reconcile should succeed");
+2366:        reconcile_index().expect("reconcile should succeed");
+2397:        reconcile_index().expect("reconcile should succeed");
+2424:        reconcile_index().expect("reconcile should succeed");
+2463:        reconcile_index().expect("reconcile should succeed");
+2504:        reconcile_index().expect("reconcile should succeed");
+2582:        let report1 = reconcile_index().expect("first reconcile should succeed");
+2596:        let report2 = reconcile_index().expect("second reconcile should succeed");
+2643:        let report = reconcile_index().unwrap();
+2710:        // reconcile_index() should return Ok, not Err
+2711:        let report = reconcile_index().unwrap();
+3176:        let report = reconcile_index().expect("reconcile should succeed");
+3581:        let report = reconcile_index().unwrap();
+```
+All remaining calls are in test code or the definition itself — none inside `open_and_reconcile_if_empty`.
+
+<!-- entries appended below this line -->
+
 ### Review verdict — 2026-08-06
 
 - **Verdict:** bounced
