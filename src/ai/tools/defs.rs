@@ -551,7 +551,8 @@ pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "search_repository",
         description: "Search across runbooks, scripts, memory, or the event log for a keyword. \
-                      kind: 'runbooks' | 'scripts' | 'memory' | 'events' | 'all'.",
+                      Matching uses stemming (e.g. 'restarting' finds 'restart') and results \
+                      are relevance-ranked. kind: 'runbooks' | 'scripts' | 'memory' | 'events' | 'all'.",
         params: &[
             ParamDef {
                 name: "query",

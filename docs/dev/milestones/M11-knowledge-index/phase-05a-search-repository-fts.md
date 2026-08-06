@@ -1,7 +1,7 @@
 # Phase 05a: search_repository on FTS — stemming and ranking for the four existing kinds
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** done
 **Depends on:** phase-04 (done — `search_turns` established the
 index-search + offset-round-trip shape this phase reuses)
 **Estimated diff:** ~400 lines
@@ -259,4 +259,287 @@ without it is not testing it.
 
 ## Update Log
 
+### Update — 2026-08-06 04:18 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Status:** implementing phase 05a — FTS routing for search_repository's four existing kinds
+
 <!-- entries appended below this line -->
+
+### Update — 2026-08-05 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the spec held — the executor built the whole design correctly
+(`+134` in `src/memory/index.rs`, `+375/-32` in `src/search.rs`, 1/3 tasks
+complete) and hard-failed at `stage verify` on **eight instances of one trivial
+borrow mistake**, not on any design question.
+
+**Verified state of the failed run's working tree** (dirty, uncommitted):
+
+`cargo build` fails with 8 × `E0308`, every one the same shape — an owned value
+passed where a borrow is expected at the new call sites:
+
+```
+src/search.rs:45  search_artifact_dir_fts(dir, kind_label, query, query_lower, …)
+                    dir:         expected `&Path`, found `PathBuf`
+                    query_lower: expected `&str`,  found `String`
+src/search.rs:51  search_memory_fts(query, query_lower, …)   expected `&str`, found `String`
+src/search.rs:54  search_events_fts(query, query_lower, …)   expected `&str`, found `String`
+src/search.rs:58  search_memory_fts(…)                       expected `&str`, found `String`
+src/search.rs:61  search_artifact_dir_fts(…)                 &Path / &str
+```
+
+No design defect, no missing example, no spec ambiguity — a refined re-dispatch
+would re-derive work that is already correct on disk. The remaining edit is
+adding `&` / `.as_path()` at roughly eight call sites.
+
+### Update — 2026-08-05 (escalation 2)
+
+**Chosen lever:** resume (`continue_phase`), assist 2 of 3
+**Rationale:** assist 1 achieved its stated goal — the 8 `E0308` borrow errors are
+gone, `cargo build` and `cargo clippy` are clean, and the tool-description task
+landed. The run then stalled *again* (turn 214, `tool:read_file`, diff frozen
+since turn 167) on a **new** problem it could not diagnose. This executor applies
+a stated fix reliably and stalls when it has to diagnose, so the fix is to hand it
+the diagnosis, not to take the phase over.
+
+**Diagnosis — 7 failing tests, one root cause, and it is a real production bug.**
+All seven fail with an empty result set, and **two of them are pre-existing tests**
+(`search_finds_match_in_runbooks`, `search_respects_kind_filter`), so this is a
+regression, not just unmet new criteria:
+
+```
+stemmed_query_finds_runbook_with_root_word  … Results: []
+search_finds_match_in_runbooks              … assertion failed: !results.is_empty()
+search_respects_kind_filter                 … assertion failed: !results.is_empty()
+```
+
+Root cause, verified by inspection of all four index searches:
+
+```
+fts5_search       → reconciles when `SELECT count(*) FROM memories` is 0
+search_artifacts  → NO reconcile-on-empty
+search_events     → NO reconcile-on-empty
+search_turns      → NO reconcile-on-empty
+```
+
+`fts5_search` rebuilds the index when its corpus is empty; the three newer
+searches do not. Now that `search_repository` routes *through* those searches, a
+fresh or empty index makes it return nothing at all. This is not a test-fixture
+artifact — on a fresh install, or after any `SCHEMA_VERSION` bump drops and
+recreates the DB, the first `search_repository` for runbooks would return empty
+until something else happened to trigger a reconcile.
+
+**It also reveals a latent gap in phase 04.** `search_turns` has the same hole, so
+`recall_context` query mode returns no hits on a fresh index. Phase 04's spec never
+required reconcile-on-empty and its criteria all passed, so this is not a defect
+against that phase — but leaving it knowingly broken would be shipping a bug, so
+this assist authorizes fixing all four searches through one shared helper.
+
+### Update — 2026-08-05 (architect takeover)
+
+**Executor:** Claude (direct) — takeover after 2 assists on the same stall class.
+
+**What the executor had right and I kept:** `search_artifacts` / `search_events`
+and their SQL, the FTS routing in `search.rs`, the stemmed-hit fallback, the
+`open_and_reconcile_if_empty` helper wired into all four searches, and the tool
+description. None of that was rewritten.
+
+**What I fixed — three bugs, two of them one class.** An index hit was resolved to
+a path without its extension, so `read_to_string` failed and every hit was
+silently skipped:
+
+1. `search_artifact_dir_fts` joined `hit.name` bare. Runbooks are stored as
+   `<name>.md` (`runbook.rs:186`), scripts as `<name>` with no extension
+   (`scripts.rs:69`). Now branches on `kind_label`. This alone fixed 5 of 7
+   failures.
+2. `search_events_fts` joined `hit.segment` bare. The indexed label is the file
+   *stem*; the file is `<stem>.jsonl`. Now formats the extension.
+3. De-dup key mismatch: `index_hit_names` stores the bare artifact name but the
+   filename branch compared `path.file_name()` (with extension), so a file hit
+   both ways was emitted twice. Now compares against the stem.
+
+**Two test defects, one of them mine.**
+
+- `events_kind_finds_webhook_alert_by_free_text` was malformed: it wrote the
+  segment as `events-2026-01-01` (real segments are `events-YYYYMMDD.jsonl`),
+  inserted only the `event` column leaving `body` empty, and reversed the
+  map/FTS insert order the schema requires. Rewritten to go through the real
+  `index_event` hook.
+- `file_matching_name_and_body_appears_once` asserted a count of 1 against a
+  fixture with **two** matching body lines. **That was my spec error, not the
+  executor's** — my acceptance criterion said "appears exactly once" without
+  accounting for the pre-existing one-result-per-matching-line semantics, which
+  `search_dir` has always had. Fixed the fixture to have exactly one matching
+  body line so the assertion tests de-dup rather than line counting.
+
+**Mutation check (run, not claimed).** Disabling the stemmed-hit fallback:
+
+```
+test search::tests::stemmed_hit_renders_a_non_empty_matched_line ... FAILED
+  panicked at src/search.rs:947
+```
+
+Restored → `ok. 1 passed`. The fallback is genuinely load-bearing.
+
+### Update — 2026-08-05 (end-to-end verification)
+
+Captured mechanically; both files pasted whole.
+
+**/tmp/phase05a-tests.txt:**
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 30 tests
+test ai::types::pending::tests::summary_search_repository_truncated ... ok
+test manifest::tests::auto_search_empty_on_no_match ... ok
+test manifest::tests::auto_search_deduplicates ... ok
+test manifest::tests::auto_search_follows_relates_to_links ... ok
+test manifest::tests::auto_search_matches_runbook_name ... ok
+test manifest::tests::auto_search_matches_memory_key ... ok
+test manifest::tests::auto_search_max_three_items ... ok
+test manifest::tests::auto_search_matches_memory_tags ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test manifest::tests::auto_search_respects_4kb_cap ... ok
+test manifest::tests::auto_search_matches_summary_text ... ok
+test manifest::tests::auto_search_matches_runbook_tag ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test search::tests::events_kind_finds_webhook_alert_by_free_text ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test search::tests::memory_search_dirs_label_incidents_plural ... ok
+test search::tests::file_matching_name_and_body_appears_once ... ok
+test search::tests::filename_match_still_returned_without_body_match ... ok
+test search::tests::non_matching_document_is_absent ... ok
+test search::tests::results_are_rank_ordered_not_alphabetical ... ok
+test search::tests::search_events_returns_tail_not_head_when_segment_exceeds_cap ... ok
+test search::tests::search_finds_match_in_runbooks ... ok
+test search::tests::search_respects_kind_filter ... ok
+test search::tests::search_returns_empty_for_no_match ... ok
+test search::tests::search_survives_unwritable_index ... ok
+test search::tests::stemmed_hit_renders_a_non_empty_matched_line ... ok
+test search::tests::stemmed_query_finds_memory_entry ... ok
+test search::tests::stemmed_query_finds_script ... ok
+test search::tests::stemmed_query_finds_runbook_with_root_word ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 1073 filtered out; finished in 1.13s
+
+exit=0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 52 tests
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::add_memory_indexes_the_row ... ok
+test memory::index::tests::archive_seed_indexes_every_copied_line ... ok
+test memory::index::tests::appended_turn_offset_seeks_to_its_line ... ok
+test memory::index::tests::delete_memory_removes_the_row ... ok
+test memory::index::tests::append_archive_message_indexes_the_turn ... ok
+test memory::index::tests::append_epoch_indexes_the_narrative ... ok
+test memory::index::tests::contentless_bodies_are_masked ... ok
+test memory::index::tests::deleting_a_runbook_removes_its_artifact_row ... ok
+test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::hyphenated_query_does_not_error ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::stale_schema_version_is_recreated ... ok
+test memory::index::tests::stale_v1_database_is_dropped_and_recreated ... ok
+test memory::index::tests::incremental_and_reconcile_agree ... ok
+test memory::index::tests::index_failure_does_not_break_append ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::unindexed_columns_filter_but_do_not_match ... ok
+test memory::index::tests::index_failure_does_not_break_log_event ... ok
+test memory::index::tests::legacy_event_file_is_indexed_as_legacy_segment ... ok
+test memory::index::tests::invalid_utf8_file_does_not_abort_reconcile ... ok
+test memory::index::tests::log_event_indexes_the_event ... ok
+test memory::index::tests::log_event_offset_seeks_to_its_line ... ok
+test memory::index::tests::multi_word_query_matches_non_adjacent_terms ... ok
+test memory::index::tests::message_without_turn_is_not_indexed ... ok
+test memory::index::tests::malformed_line_is_skipped_and_later_offsets_stay_correct ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_indexes_archive_turns ... ok
+test memory::index::tests::reconcile_indexes_epoch_narrative_and_failed_cmds ... ok
+test memory::index::tests::reconcile_indexes_event_segments ... ok
+test memory::index::tests::reconcile_indexes_runbook_and_script_bodies ... ok
+test memory::index::tests::reconcile_leaves_contentless_corpora_empty ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::reconcile_report_per_corpus_sums_to_total ... ok
+test memory::index::tests::rewriting_a_runbook_replaces_its_artifact_row ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::schema_v2_creates_every_table ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::second_reconcile_does_not_duplicate_contentless_rows ... ok
+test memory::index::tests::second_reconcile_reports_no_change ... ok
+test memory::index::tests::turns_body_includes_tool_result_text ... ok
+test memory::index::tests::turns_map_offsets_point_at_the_right_line ... ok
+test memory::index::tests::turns_skips_messages_without_turn_numbers ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 1051 filtered out; finished in 0.11s
+
+exit=0
+```
+
+**/tmp/phase05a-checks.txt:**
+
+```
+--- new index searches are best-effort (return Vec, not Result) ---
+339:pub fn search_artifacts(query: &str, limit: usize, kind: Option<&str>) -> Vec<ArtifactHit> {
+401:pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
+--- bm25 ordering ascending, no DESC ---
+206:         ORDER BY bm25(memories) LIMIT ?2"
+271:             ORDER BY bm25(turns)
+280:             ORDER BY bm25(turns)
+354:             ORDER BY bm25(artifacts)
+362:             ORDER BY bm25(artifacts)
+414:               ORDER BY bm25(events)
+--- SearchResult fields unchanged ---
+4:pub struct SearchResult {
+5-    pub kind: String,
+6-    pub name: String,
+7-    pub line_number: usize,
+8-    pub matched_line: String,
+9-    pub context_before: Vec<String>,
+10-    pub context_after: Vec<String>,
+11-}
+12-
+exit=0
+```
+
+### Review verdict — 2026-08-05
+
+- **Verdict:** escalated (architect takeover)
+- **Bounces:** 0 reviews; 2 assists + 3 `hard_fail`s, all `NoProgressStall`
+- **Executor:** Claude (direct) — Qwen/Qwen3.6-27B-FP8 for the bulk of the code
+- **Scope deviations:** one authorized — `search_turns` gained reconcile-on-empty
+  (a latent phase-04 gap; leaving it knowingly broken was not acceptable)
+- **Calibration:** see below
+
+All four gates green: `cargo fmt --all --check` (0), `cargo build` (0),
+`cargo clippy --all-targets --all-features -- -D warnings` (0), `cargo test`
+(1103 passed, 0 failed).
+
+**Calibration — the takeover was called one assist early, deliberately.**
+`max_assists` is 3 and only 2 were spent. Assist 1 succeeded at its stated goal
+(8 compile errors → 0). Assist 2 carried a complete written diagnosis and the
+executor still stalled — which disproved the working theory that this executor
+reliably applies a stated fix. A third identical attempt had no new information
+behind it, so the honest move was to take over rather than spend the budget to
+reach the same conclusion.
+
+**Calibration — my assist-2 diagnosis was wrong, and that cost a run.** I
+identified missing reconcile-on-empty as the root cause. That was a real bug and
+the fix was correct, but it was **not** why the tests failed: the failing test
+calls `index_artifact` directly, so its corpus was never empty. The actual cause
+was the missing `.md`. I asserted a root cause from reading code instead of
+running the failing test first — the same "execute, don't assert" rule this
+milestone keeps re-earning, applied to diagnosis rather than to specs.

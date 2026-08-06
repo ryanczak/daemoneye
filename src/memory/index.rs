@@ -124,18 +124,19 @@ fn build_match_expr(query: &str) -> Option<String> {
     let mut seen: Vec<String> = Vec::new();
     let mut terms: Vec<String> = Vec::new();
 
-    for token in query.split_whitespace() {
-        if token.chars().all(|c| !c.is_alphanumeric()) {
+    // Split on non-alphanumeric characters so "runtime-layout" becomes
+    // "runtime" and "layout", which FTS5 can match independently.
+    for token in query.split(|c: char| !c.is_alphanumeric()) {
+        if token.is_empty() {
             continue;
         }
-        let escaped = token.replace('"', "\"\"");
-        let lower = escaped.to_lowercase();
+        let lower = token.to_lowercase();
         if !seen.iter().any(|s| s == &lower) {
-            seen.push(lower);
+            seen.push(lower.clone());
             if seen.len() > 32 {
                 break;
             }
-            terms.push(format!("\"{}\"", escaped));
+            terms.push(lower);
         }
     }
 
@@ -144,6 +145,36 @@ fn build_match_expr(query: &str) -> Option<String> {
     } else {
         Some(terms.join(" OR "))
     }
+}
+
+/// Open the index connection and reconcile the given corpus table if it is
+/// empty. Returns the connection on success, or logs and returns `None` on
+/// failure. The caller should use the returned connection for its query.
+fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
+    let conn = match open_index() {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("memory index open failed: {e:#}");
+            return None;
+        }
+    };
+
+    let count_sql = format!("SELECT count(*) FROM {table}");
+    let count: i64 = conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0);
+    if count == 0 {
+        if let Err(e) = reconcile_index() {
+            log::warn!("memory index reconcile failed: {e:#}");
+        }
+        // Re-open because reconcile may have dropped and recreated the DB
+        return match open_index() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("memory index re-open after reconcile failed: {e:#}");
+                None
+            }
+        };
+    }
+    Some(conn)
 }
 
 /// Search the FTS5 index. Returns up to `limit` hits as
@@ -160,34 +191,9 @@ pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(Strin
         return Vec::new();
     };
 
-    // Reconcile an empty index on first search
-    let conn = {
-        let conn = match open_index() {
-            Ok(c) => c,
-            Err(e) => {
-                log::warn!("memory index open failed: {e:#}");
-                return Vec::new();
-            }
-        };
-
-        let count: i64 = conn
-            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
-            .unwrap_or(0);
-        if count == 0 {
-            if let Err(e) = reconcile_index() {
-                log::warn!("memory index reconcile failed: {e:#}");
-            }
-            // Re-open the connection after reconcile (which may have dropped/recreated)
-            match open_index() {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("memory index re-open after reconcile failed: {e:#}");
-                    return Vec::new();
-                }
-            }
-        } else {
-            conn
-        }
+    let conn = match open_and_reconcile_if_empty("memories") {
+        Some(c) => c,
+        None => return Vec::new(),
     };
 
     let placeholders = (0..namespaces.len())
@@ -252,12 +258,9 @@ pub fn search_turns(query: &str, limit: usize, session_id: Option<&str>) -> Vec<
         return Vec::new();
     };
 
-    let conn = match open_index() {
-        Ok(c) => c,
-        Err(e) => {
-            log::warn!("memory index open failed: {e:#}");
-            return Vec::new();
-        }
+    let conn = match open_and_reconcile_if_empty("turns") {
+        Some(c) => c,
+        None => return Vec::new(),
     };
 
     let (sql, params): (&str, Vec<String>) = if let Some(sid) = session_id {
@@ -302,6 +305,138 @@ pub fn search_turns(query: &str, limit: usize, session_id: Option<&str>) -> Vec<
         Ok(rows) => rows,
         Err(e) => {
             log::warn!("search_turns query failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+/// A hit from an artifact FTS search.
+pub struct ArtifactHit {
+    #[allow(dead_code)]
+    pub kind: String,
+    pub name: String,
+    #[allow(dead_code)]
+    pub score: f64,
+}
+
+/// A hit from an events FTS search.
+pub struct EventHit {
+    pub segment: String,
+    pub offset: u64,
+    #[allow(dead_code)]
+    pub event: String,
+    #[allow(dead_code)]
+    pub score: f64,
+}
+
+/// Search the `artifacts` FTS corpus. Returns up to `limit` hits ordered by
+/// BM25 (best first). When `kind` is `Some`, restricts to that kind
+/// (`"runbook"` or `"script"` — the singular labels `index_artifact` stores).
+///
+/// Best-effort: any failure logs and returns an empty `Vec`.
+pub fn search_artifacts(query: &str, limit: usize, kind: Option<&str>) -> Vec<ArtifactHit> {
+    let Some(expr) = build_match_expr(query) else {
+        return Vec::new();
+    };
+
+    let conn = match open_and_reconcile_if_empty("artifacts") {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+
+    let (sql, params): (&str, Vec<String>) = match kind {
+        Some(k) => (
+            "SELECT kind, name, bm25(artifacts)
+             FROM artifacts
+             WHERE artifacts MATCH ?1 AND kind = ?2
+             ORDER BY bm25(artifacts)
+             LIMIT ?3",
+            vec![expr, k.to_string(), limit.to_string()],
+        ),
+        None => (
+            "SELECT kind, name, bm25(artifacts)
+             FROM artifacts
+             WHERE artifacts MATCH ?1
+             ORDER BY bm25(artifacts)
+             LIMIT ?2",
+            vec![expr, limit.to_string()],
+        ),
+    };
+
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("search_artifacts prepare failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    let rows = match stmt.query_map(
+        rusqlite::params_from_iter(params.iter().map(|b| &**b)),
+        |r| {
+            Ok(ArtifactHit {
+                kind: r.get(0)?,
+                name: r.get(1)?,
+                score: r.get(2)?,
+            })
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::warn!("search_artifacts query failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    rows.filter_map(|r| r.ok()).collect()
+}
+
+/// Search the `events` FTS corpus. Returns up to `limit` hits ordered by BM25
+/// (best first). Joins `events` to `events_map` on `m.id = e.rowid` to get
+/// the segment and offset for each hit.
+///
+/// Best-effort: any failure logs and returns an empty `Vec`.
+pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
+    let Some(expr) = build_match_expr(query) else {
+        return Vec::new();
+    };
+
+    let conn = match open_and_reconcile_if_empty("events") {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+
+    let sql = "SELECT m.segment, m.offset, e.event, bm25(events)
+               FROM events e JOIN events_map m ON m.id = e.rowid
+               WHERE events MATCH ?1
+               ORDER BY bm25(events)
+               LIMIT ?2";
+    let params = [expr, limit.to_string()];
+
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("search_events prepare failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    let rows = match stmt.query_map(
+        rusqlite::params_from_iter(params.iter().map(|b| &**b)),
+        |r| {
+            Ok(EventHit {
+                segment: r.get(0)?,
+                offset: r.get::<_, i64>(1)? as u64,
+                event: r.get(2)?,
+                score: r.get(3)?,
+            })
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::warn!("search_events query failed: {e:#}");
             return Vec::new();
         }
     };

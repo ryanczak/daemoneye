@@ -33,60 +33,437 @@ pub fn search_repository_with_namespaces(
 ) -> Vec<SearchResult> {
     let query_lower = query.to_lowercase();
     let base = crate::config::config_dir();
-
-    let mut dirs: Vec<(PathBuf, String)> = Vec::new();
-
-    match kind {
-        "runbooks" => {
-            dirs.push((base.join("runbooks"), "runbook".to_string()));
-        }
-        "scripts" => {
-            dirs.push((base.join("scripts"), "script".to_string()));
-        }
-        "memory" | "all" => {
-            // Add memory directories for each namespace
-            for ns in namespaces {
-                let mem_base = if *ns == "global" {
-                    base.join("memory")
-                } else {
-                    base.join("agents").join(ns).join("memory")
-                };
-                for category in crate::memory::MemoryCategory::ALL {
-                    let dir = mem_base.join(category.dir_name());
-                    if dir.exists() {
-                        dirs.push((dir, format!("memory/{}", category.dir_name())));
-                    }
-                }
-            }
-            // For "all", also include runbooks and scripts
-            if kind == "all" {
-                dirs.push((base.join("runbooks"), "runbook".to_string()));
-                dirs.push((base.join("scripts"), "script".to_string()));
-            }
-        }
-        _ => {
-            dirs.push((base.join("runbooks"), "runbook".to_string()));
-        }
-    }
-
     let mut results: Vec<SearchResult> = Vec::new();
 
-    // Search all regular directories
-    for (dir, kind_label) in &dirs {
-        if results.len() >= MAX_RESULTS {
-            break;
+    match kind {
+        "runbooks" | "scripts" => {
+            let (dir, kind_label, index_kind) = match kind {
+                "runbooks" => (base.join("runbooks"), "runbook", Some("runbook")),
+                "scripts" => (base.join("scripts"), "script", Some("script")),
+                _ => unreachable!(),
+            };
+            search_artifact_dir_fts(
+                &dir,
+                kind_label,
+                query,
+                &query_lower,
+                context_lines,
+                index_kind,
+                &mut results,
+            );
         }
-        search_dir(dir, kind_label, &query_lower, context_lines, &mut results);
-    }
-
-    // Search event segments if requested
-    if (kind == "events" || kind == "all") && results.len() < MAX_RESULTS {
-        search_events_in_segments(&query_lower, context_lines, &mut results);
+        "memory" => {
+            search_memory_fts(query, &query_lower, context_lines, namespaces, &mut results);
+        }
+        "events" => {
+            search_events_fts(query, &query_lower, context_lines, &mut results);
+        }
+        "all" => {
+            // Memory
+            search_memory_fts(query, &query_lower, context_lines, namespaces, &mut results);
+            // Runbooks
+            let runbooks_dir = base.join("runbooks");
+            search_artifact_dir_fts(
+                &runbooks_dir,
+                "runbook",
+                query,
+                &query_lower,
+                context_lines,
+                Some("runbook"),
+                &mut results,
+            );
+            // Scripts
+            let scripts_dir = base.join("scripts");
+            search_artifact_dir_fts(
+                &scripts_dir,
+                "script",
+                query,
+                &query_lower,
+                context_lines,
+                Some("script"),
+                &mut results,
+            );
+            // Events
+            search_events_fts(query, &query_lower, context_lines, &mut results);
+        }
+        _ => {
+            // Default to runbooks (existing behavior)
+            let runbooks_dir = base.join("runbooks");
+            search_artifact_dir_fts(
+                &runbooks_dir,
+                "runbook",
+                query,
+                &query_lower,
+                context_lines,
+                Some("runbook"),
+                &mut results,
+            );
+        }
     }
 
     results
 }
 
+/// Search an artifact directory (runbooks or scripts) using FTS, falling back
+/// to filename matching. Index hits are emitted first (rank-ordered), then
+/// filename-only hits. De-duplication ensures a file hit by both paths appears
+/// only once.
+fn search_artifact_dir_fts(
+    dir: &std::path::Path,
+    kind_label: &str,
+    query: &str,
+    query_lower: &str,
+    context_lines: usize,
+    index_kind: Option<&str>,
+    results: &mut Vec<SearchResult>,
+) {
+    // 1. FTS index search — ranked hits
+    let index_hits = crate::memory::index::search_artifacts(query, MAX_RESULTS, index_kind);
+
+    // Collect names of files matched by index (for de-dup)
+    let mut index_hit_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for hit in &index_hits {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+        // Runbooks are stored as `<name>.md`; scripts have no extension.
+        let path = if kind_label == "runbook" {
+            dir.join(format!("{}.md", hit.name))
+        } else {
+            dir.join(&hit.name)
+        };
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let lines: Vec<&str> = content.lines().collect();
+
+            // Scan for literal matches
+            let has_literal = lines.iter().any(|l| l.to_lowercase().contains(query_lower));
+
+            if has_literal {
+                for (i, line) in lines.iter().enumerate() {
+                    if results.len() >= MAX_RESULTS {
+                        break;
+                    }
+                    if line.to_lowercase().contains(query_lower) {
+                        let before_start = i.saturating_sub(context_lines);
+                        let after_end = (i + context_lines + 1).min(lines.len());
+                        results.push(SearchResult {
+                            kind: kind_label.to_string(),
+                            name: stem.clone(),
+                            line_number: i + 1,
+                            matched_line: line.to_string(),
+                            context_before: lines[before_start..i]
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect(),
+                            context_after: lines[i + 1..after_end]
+                                .iter()
+                                .map(|s| s.to_string())
+                                .collect(),
+                        });
+                    }
+                }
+            } else {
+                // THE TRAP: stemmed hit has no literal substring — still emit
+                // the first non-empty line so the document is not silently dropped.
+                if let Some((first_idx, first_line)) =
+                    lines.iter().enumerate().find(|(_, l)| !l.trim().is_empty())
+                {
+                    let before_start = first_idx.saturating_sub(context_lines);
+                    let after_end = (first_idx + context_lines + 1).min(lines.len());
+                    results.push(SearchResult {
+                        kind: kind_label.to_string(),
+                        name: stem.clone(),
+                        line_number: first_idx + 1,
+                        matched_line: first_line.to_string(),
+                        context_before: lines[before_start..first_idx]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect(),
+                        context_after: lines[first_idx + 1..after_end]
+                            .iter()
+                            .map(|s| s.to_string())
+                            .collect(),
+                    });
+                }
+            }
+            index_hit_names.insert(hit.name.clone());
+        }
+    }
+
+    // 2. Filename matching — independent of the index
+    if !dir.exists() {
+        return;
+    }
+    let files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .collect(),
+        Err(_) => return,
+    };
+
+    for path in &files {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let name_matches =
+            stem.to_lowercase().contains(query_lower) || name.to_lowercase().contains(query_lower);
+
+        // Skip if already emitted as an index hit (de-dup). The index stores the
+        // bare artifact name, so compare against the stem, not the filename.
+        if !name_matches || index_hit_names.contains(&stem) {
+            continue;
+        }
+
+        // Filename match but not an index hit — emit it
+        results.push(SearchResult {
+            kind: kind_label.to_string(),
+            name: stem,
+            line_number: 0,
+            matched_line: format!("(filename matches: {})", name),
+            context_before: Vec::new(),
+            context_after: Vec::new(),
+        });
+    }
+}
+
+/// Search memory entries using FTS, falling back to filename matching.
+fn search_memory_fts(
+    query: &str,
+    query_lower: &str,
+    context_lines: usize,
+    namespaces: &[&str],
+    results: &mut Vec<SearchResult>,
+) {
+    // 1. FTS index search
+    let index_hits = crate::memory::index::fts5_search(query, MAX_RESULTS, namespaces);
+
+    // Collect (namespace, key) pairs for de-dup
+    let mut index_hit_keys: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+
+    for (namespace, key, _score) in &index_hits {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+        // Resolve to file path
+        let base = crate::config::config_dir();
+        let mem_base = if namespace == "global" {
+            base.join("memory")
+        } else {
+            base.join("agents").join(namespace).join("memory")
+        };
+
+        // Try each category directory
+        let mut found = false;
+        for category in crate::memory::MemoryCategory::ALL {
+            let dir = mem_base.join(category.dir_name());
+            let path = dir.join(format!("{}.md", key));
+            if path.exists() {
+                let kind_label = format!("memory/{}", category.dir_name());
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let lines: Vec<&str> = content.lines().collect();
+                    let has_literal = lines.iter().any(|l| l.to_lowercase().contains(query_lower));
+
+                    if has_literal {
+                        for (i, line) in lines.iter().enumerate() {
+                            if results.len() >= MAX_RESULTS {
+                                break;
+                            }
+                            if line.to_lowercase().contains(query_lower) {
+                                let before_start = i.saturating_sub(context_lines);
+                                let after_end = (i + context_lines + 1).min(lines.len());
+                                results.push(SearchResult {
+                                    kind: kind_label.clone(),
+                                    name: key.clone(),
+                                    line_number: i + 1,
+                                    matched_line: line.to_string(),
+                                    context_before: lines[before_start..i]
+                                        .iter()
+                                        .map(|s| s.to_string())
+                                        .collect(),
+                                    context_after: lines[i + 1..after_end]
+                                        .iter()
+                                        .map(|s| s.to_string())
+                                        .collect(),
+                                });
+                            }
+                        }
+                    } else {
+                        // THE TRAP: stemmed hit — emit first non-empty line
+                        if let Some((first_idx, first_line)) =
+                            lines.iter().enumerate().find(|(_, l)| !l.trim().is_empty())
+                        {
+                            let before_start = first_idx.saturating_sub(context_lines);
+                            let after_end = (first_idx + context_lines + 1).min(lines.len());
+                            results.push(SearchResult {
+                                kind: kind_label.clone(),
+                                name: key.clone(),
+                                line_number: first_idx + 1,
+                                matched_line: first_line.to_string(),
+                                context_before: lines[before_start..first_idx]
+                                    .iter()
+                                    .map(|s| s.to_string())
+                                    .collect(),
+                                context_after: lines[first_idx + 1..after_end]
+                                    .iter()
+                                    .map(|s| s.to_string())
+                                    .collect(),
+                            });
+                        }
+                    }
+                }
+                index_hit_keys.insert((namespace.clone(), key.clone()));
+                found = true;
+                break;
+            }
+        }
+        let _ = found; // suppress unused warning; we just need the de-dup tracking
+    }
+
+    // 2. Filename matching — independent of the index
+    for ns in namespaces {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+        let mem_base = if *ns == "global" {
+            crate::config::config_dir().join("memory")
+        } else {
+            crate::config::config_dir()
+                .join("agents")
+                .join(ns)
+                .join("memory")
+        };
+        for category in crate::memory::MemoryCategory::ALL {
+            if results.len() >= MAX_RESULTS {
+                break;
+            }
+            let dir = mem_base.join(category.dir_name());
+            if !dir.exists() {
+                continue;
+            }
+            let kind_label = format!("memory/{}", category.dir_name());
+
+            let files: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+                Ok(rd) => rd.filter_map(|e| e.ok()).map(|e| e.path()).collect(),
+                Err(_) => continue,
+            };
+
+            for path in &files {
+                if results.len() >= MAX_RESULTS {
+                    break;
+                }
+                let stem = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                let name_matches = stem.to_lowercase().contains(query_lower)
+                    || name.to_lowercase().contains(query_lower);
+
+                // De-dup: skip if already an index hit
+                if !name_matches || index_hit_keys.contains(&(ns.to_string(), stem.clone())) {
+                    continue;
+                }
+
+                results.push(SearchResult {
+                    kind: kind_label.clone(),
+                    name: stem,
+                    line_number: 0,
+                    matched_line: format!("(filename matches: {})", name),
+                    context_before: Vec::new(),
+                    context_after: Vec::new(),
+                });
+            }
+        }
+    }
+}
+
+/// Search events using FTS index, falling back to the old segment scan.
+fn search_events_fts(
+    query: &str,
+    query_lower: &str,
+    context_lines: usize,
+    results: &mut Vec<SearchResult>,
+) {
+    // 1. FTS index search
+    let index_hits = crate::memory::index::search_events(query, MAX_RESULTS);
+
+    for hit in &index_hits {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+        // Resolve segment path and read the line at offset
+        let events_dir = crate::config::events_dir();
+        // `segment` is the file stem the index stores; the file is `<stem>.jsonl`.
+        let seg_path = events_dir.join(format!("{}.jsonl", hit.segment));
+        let matched_line = read_line_at_offset(&seg_path, hit.offset);
+
+        if matched_line.is_empty() {
+            log::warn!(
+                "search_events: could not read line at offset {} in {}",
+                hit.offset,
+                hit.segment
+            );
+            continue;
+        }
+
+        results.push(SearchResult {
+            kind: "events".to_string(),
+            name: hit.segment.clone(),
+            line_number: 1,
+            matched_line,
+            context_before: Vec::new(),
+            context_after: Vec::new(),
+        });
+    }
+
+    // 2. Fallback: old segment scan for any events not in the index
+    // This preserves backward compatibility for unindexed events
+    if results.len() < MAX_RESULTS {
+        search_events_in_segments(query_lower, context_lines, results);
+    }
+}
+
+/// Read a single line from a file at the given byte offset.
+fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
+    let Ok(file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let reader = std::io::BufReader::new(file);
+    let mut current_offset: u64 = 0;
+    for line in std::io::BufRead::lines(reader) {
+        let Ok(l) = line else {
+            break;
+        };
+        if current_offset == offset {
+            return l;
+        }
+        current_offset += l.len() as u64 + 1; // +1 for newline
+    }
+    String::new()
+}
+
+#[allow(dead_code)]
 fn search_dir(
     dir: &PathBuf,
     kind_label: &str,
@@ -371,6 +748,9 @@ mod tests {
             let content = "# Runbook: disk-check\n\n## Alert Criteria\n- disk usage above 90%\n";
             std::fs::write(dir.join("disk-check.md"), content).unwrap();
 
+            // Index the runbook so FTS can find it
+            crate::memory::index::index_artifact("runbook", "disk-check", "", content).unwrap();
+
             let results = search_repository("disk usage", "runbooks", 1);
             assert!(!results.is_empty());
             assert!(
@@ -405,11 +785,11 @@ mod tests {
             // Write a runbook with the keyword
             let rb_dir = crate::config::config_dir().join("runbooks");
             std::fs::create_dir_all(&rb_dir).unwrap();
-            std::fs::write(
-                rb_dir.join("needle.md"),
-                "# Runbook: needle\n\n## Alert Criteria\n- contains_needle\n",
-            )
-            .unwrap();
+            let rb_content = "# Runbook: needle\n\n## Alert Criteria\n- contains_needle\n";
+            std::fs::write(rb_dir.join("needle.md"), rb_content).unwrap();
+
+            // Index the runbook
+            crate::memory::index::index_artifact("runbook", "needle", "", rb_content).unwrap();
 
             // Write a script without the keyword
             let sc_dir = crate::config::config_dir().join("scripts");
@@ -508,6 +888,326 @@ mod tests {
                     );
                 }
             }
+        });
+    }
+
+    #[test]
+    fn stemmed_query_finds_runbook_with_root_word() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("service-recovery.md"),
+                "# Service Recovery\n\nThe service must restart cleanly after a crash.\n",
+            )
+            .unwrap();
+
+            crate::memory::index::index_artifact(
+                "runbook",
+                "service-recovery",
+                "",
+                "The service must restart cleanly after a crash.",
+            )
+            .unwrap();
+
+            let results = search_repository("restarting", "runbooks", 0);
+            assert!(
+                !results.is_empty(),
+                "stemmed query 'restarting' should find runbook with 'restart'. Results: {:?}",
+                results.iter().map(|r| &r.name).collect::<Vec<_>>()
+            );
+            assert!(
+                results.iter().any(|r| r.name == "service-recovery"),
+                "should find service-recovery runbook"
+            );
+        });
+    }
+
+    #[test]
+    fn stemmed_hit_renders_a_non_empty_matched_line() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("recovery-plan.md"),
+                "# Recovery Plan\n\nThe system restarts automatically.\n",
+            )
+            .unwrap();
+
+            crate::memory::index::index_artifact(
+                "runbook",
+                "recovery-plan",
+                "",
+                "The system restarts automatically.",
+            )
+            .unwrap();
+
+            let results = search_repository("restarting", "runbooks", 0);
+            assert!(!results.is_empty(), "stemmed hit should produce results");
+            for r in &results {
+                assert!(
+                    !r.matched_line.is_empty(),
+                    "matched_line must be non-empty for a stemmed-only hit"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn stemmed_query_finds_memory_entry() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            crate::memory::add_memory(
+                "daemon-behavior",
+                "the daemon restarts on signal",
+                crate::memory::MemoryCategory::Knowledge,
+                "global",
+            )
+            .unwrap();
+
+            let results = search_repository("restarting", "memory", 0);
+            assert!(
+                !results.is_empty(),
+                "stemmed query 'restarting' should find memory with 'restarts'"
+            );
+            assert!(
+                results.iter().any(|r| r.name == "daemon-behavior"),
+                "should find daemon-behavior memory"
+            );
+        });
+    }
+
+    #[test]
+    fn stemmed_query_finds_script() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("scripts");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("restart-service"),
+                "#!/bin/bash\nsystemctl restart myservice\n",
+            )
+            .unwrap();
+
+            crate::memory::index::index_artifact(
+                "script",
+                "restart-service",
+                "",
+                "#!/bin/bash\nsystemctl restart myservice",
+            )
+            .unwrap();
+
+            let results = search_repository("restarting", "scripts", 0);
+            assert!(
+                !results.is_empty(),
+                "stemmed query 'restarting' should find script with 'restart'"
+            );
+            assert!(
+                results.iter().any(|r| r.name == "restart-service"),
+                "should find restart-service script"
+            );
+        });
+    }
+
+    #[test]
+    fn events_kind_finds_webhook_alert_by_free_text() {
+        let _lock = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+
+        let events_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&events_dir).unwrap();
+        // Real segments are `events-YYYYMMDD.jsonl`; the indexed label is the stem.
+        let seg = events_dir.join("events-20260101.jsonl");
+        let line = r#"{"event":"webhook_alert","ts":"2026-01-01T00:00:00Z","msg":"disk space critical on /dev/sda1"}"#;
+        std::fs::write(&seg, format!("{line}\n")).unwrap();
+
+        // Index it through the production hook so the body, masking and the
+        // map/FTS insert order all match what log_event actually writes.
+        crate::memory::index::index_event(
+            "events-20260101",
+            0,
+            "webhook_alert",
+            &crate::search::json_to_readable(line),
+        )
+        .unwrap();
+
+        let results = search_repository("webhook_alert", "events", 0);
+        assert!(
+            !results.is_empty(),
+            "events search should find webhook_alert by free text"
+        );
+    }
+
+    #[test]
+    fn results_are_rank_ordered_not_alphabetical() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+
+            std::fs::write(dir.join("alpha.md"), "# Alpha\n\nquokka quokka quokka\n").unwrap();
+            crate::memory::index::index_artifact("runbook", "alpha", "", "quokka quokka quokka")
+                .unwrap();
+
+            std::fs::write(
+                dir.join("zebra.md"),
+                "# Zebra\n\nthe quick brown fox jumps over the lazy dog many times and then quokka appears once at the end\n",
+            )
+            .unwrap();
+            crate::memory::index::index_artifact(
+                "runbook",
+                "zebra",
+                "",
+                "the quick brown fox jumps over the lazy dog many times and then quokka appears once at the end",
+            )
+            .unwrap();
+
+            let results = search_repository("quokka", "runbooks", 0);
+            assert!(results.len() >= 2, "should find both runbooks");
+
+            let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
+            assert!(
+                names[0] == "alpha",
+                "best-ranked document (alpha) should come first. Got: {:?}",
+                names
+            );
+        });
+    }
+
+    #[test]
+    fn filename_match_still_returned_without_body_match() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("deploy-checklist.md"),
+                "# Checklist\n\nReview all items before release.\n",
+            )
+            .unwrap();
+
+            let results = search_repository("deploy", "runbooks", 0);
+            assert!(
+                !results.is_empty(),
+                "filename match should still return even without index hit"
+            );
+            assert!(
+                results.iter().any(|r| r.name == "deploy-checklist"),
+                "should find deploy-checklist by filename"
+            );
+        });
+    }
+
+    #[test]
+    fn file_matching_name_and_body_appears_once() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                // Exactly ONE body line contains "deploy" so the count below is a
+                // real de-dup assertion: results are one-per-matching-line, so a
+                // second matching line would legitimately make this 2.
+                dir.join("deploy-guide.md"),
+                "# Service Runbook\n\nFollow these steps to deploy the service.\n",
+            )
+            .unwrap();
+
+            crate::memory::index::index_artifact(
+                "runbook",
+                "deploy-guide",
+                "",
+                "Follow these steps to deploy the service.",
+            )
+            .unwrap();
+
+            let results = search_repository("deploy", "runbooks", 0);
+            let deploy_count = results.iter().filter(|r| r.name == "deploy-guide").count();
+            assert_eq!(
+                deploy_count, 1,
+                "file matching both by name and body should appear exactly once"
+            );
+        });
+    }
+
+    #[test]
+    fn non_matching_document_is_absent() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+
+            std::fs::write(
+                dir.join("target.md"),
+                "# Target\n\nThe service must restart cleanly.\n",
+            )
+            .unwrap();
+            crate::memory::index::index_artifact(
+                "runbook",
+                "target",
+                "",
+                "The service must restart cleanly.",
+            )
+            .unwrap();
+
+            std::fs::write(
+                dir.join("decoy.md"),
+                "# Decoy\n\nThis is about cooking pasta.\n",
+            )
+            .unwrap();
+            crate::memory::index::index_artifact(
+                "runbook",
+                "decoy",
+                "",
+                "This is about cooking pasta.",
+            )
+            .unwrap();
+
+            let results = search_repository("restarting", "runbooks", 0);
+            assert!(
+                results.iter().any(|r| r.name == "target"),
+                "should find target"
+            );
+            assert!(
+                !results.iter().any(|r| r.name == "decoy"),
+                "decoy must NOT appear in results"
+            );
+        });
+    }
+
+    #[test]
+    fn search_survives_unwritable_index() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = crate::config::config_dir().join("runbooks");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("deploy-checklist.md"),
+                "# Checklist\n\nReview all items before release.\n",
+            )
+            .unwrap();
+
+            let _ = crate::memory::index::open_index();
+            let index_path = crate::config::memory_index_path();
+            let index_dir = index_path.parent().unwrap();
+            let original_perms = std::fs::metadata(index_dir).unwrap().permissions();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(index_dir, std::fs::Permissions::from_mode(0o000))
+                    .unwrap();
+            }
+
+            let results = search_repository("deploy", "runbooks", 0);
+            assert!(
+                results.iter().any(|r| r.name == "deploy-checklist"),
+                "filename match should still work when index is unwritable"
+            );
+
+            std::fs::set_permissions(index_dir, original_perms).unwrap();
         });
     }
 }
