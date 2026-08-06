@@ -162,7 +162,14 @@ fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
     let count_sql = format!("SELECT count(*) FROM {table}");
     let count: i64 = conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0);
     if count == 0 {
-        if let Err(e) = reconcile_index() {
+        let Some(corpus) = Corpus::from_table(table) else {
+            log::warn!(
+                "table '{}' is not a recognised corpus — skipping reconcile",
+                table
+            );
+            return Some(conn);
+        };
+        if let Err(e) = reconcile_corpus(corpus) {
             log::warn!("memory index reconcile failed: {e:#}");
         }
         // Re-open because reconcile may have dropped and recreated the DB
@@ -788,37 +795,45 @@ pub fn remove_from_index(
     Ok(())
 }
 
-/// What a reconcile pass changed.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct ReconcileReport {
-    /// Rows present in the index at the start of the pass.
-    pub rows_before: usize,
-    /// Rows present after the rebuild.
-    pub rows_after: usize,
-    /// Per-corpus row counts after the rebuild, in a stable order:
-    /// memories, artifacts, epochs, turns, events.
-    pub per_corpus: Vec<(String, usize)>,
+/// Which corpus a table belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Corpus {
+    Memories,
+    Artifacts,
+    Epochs,
+    Turns,
+    Events,
 }
 
-/// Rebuild the whole index from the memory files on disk.
-pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
-    let mut conn = open_index()?;
-
-    // ── count rows across all corpora ────────────────────────────────────────
-
-    fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
-        conn.query_row(format!("SELECT COUNT(*) FROM {table}").as_str(), [], |r| {
-            r.get::<_, i64>(0)
-        })
-        .map(|n| n as usize)
-        .unwrap_or(0)
+impl Corpus {
+    /// The FTS table name for this corpus.
+    fn table_name(self) -> &'static str {
+        match self {
+            Corpus::Memories => "memories",
+            Corpus::Artifacts => "artifacts",
+            Corpus::Epochs => "epochs",
+            Corpus::Turns => "turns",
+            Corpus::Events => "events",
+        }
     }
 
-    let rows_before = count_table(&conn, "memories")
-        + count_table(&conn, "artifacts")
-        + count_table(&conn, "epochs")
-        + count_table(&conn, "turns")
-        + count_table(&conn, "events");
+    /// Resolve a table name to its corpus.
+    /// Returns `None` for map tables (`turns_map`, `events_map`) and unknown names.
+    fn from_table(name: &str) -> Option<Corpus> {
+        match name {
+            "memories" => Some(Corpus::Memories),
+            "artifacts" => Some(Corpus::Artifacts),
+            "epochs" => Some(Corpus::Epochs),
+            "turns" => Some(Corpus::Turns),
+            "events" => Some(Corpus::Events),
+            _ => None,
+        }
+    }
+}
+
+fn rebuild_memories(tx: &rusqlite::Connection) -> anyhow::Result<()> {
+    tx.execute("DELETE FROM memories", [])
+        .context("clearing memories index")?;
 
     let namespaces: Vec<String> = {
         let mut ns = vec!["global".to_string()];
@@ -834,26 +849,6 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         crate::memory::MemoryCategory::Knowledge,
         crate::memory::MemoryCategory::Incident,
     ];
-
-    let tx = conn
-        .transaction()
-        .context("beginning reconcile transaction")?;
-    tx.execute("DELETE FROM memories", [])
-        .context("clearing memories index")?;
-    tx.execute("DELETE FROM artifacts", [])
-        .context("clearing artifacts index")?;
-    tx.execute("DELETE FROM epochs", [])
-        .context("clearing epochs index")?;
-    tx.execute("DELETE FROM turns", [])
-        .context("clearing turns index")?;
-    tx.execute("DELETE FROM turns_map", [])
-        .context("clearing turns_map index")?;
-    tx.execute("DELETE FROM events", [])
-        .context("clearing events index")?;
-    tx.execute("DELETE FROM events_map", [])
-        .context("clearing events_map index")?;
-
-    // ── memories corpus ──────────────────────────────────────────────────────
 
     for namespace in &namespaces {
         for category in &categories {
@@ -907,7 +902,12 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         }
     }
 
-    // ── artifacts corpus (runbooks + scripts) ────────────────────────────────
+    Ok(())
+}
+
+fn rebuild_artifacts(tx: &rusqlite::Connection) -> anyhow::Result<()> {
+    tx.execute("DELETE FROM artifacts", [])
+        .context("clearing artifacts index")?;
 
     for rb in crate::runbook::list_runbooks().unwrap_or_default() {
         let rb_path = crate::runbook::runbooks_dir().join(format!("{}.md", rb.name));
@@ -934,7 +934,12 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         .with_context(|| format!("indexing script {}", script.name))?;
     }
 
-    // ── epochs corpus ────────────────────────────────────────────────────────
+    Ok(())
+}
+
+fn rebuild_epochs(tx: &rusqlite::Connection) -> anyhow::Result<()> {
+    tx.execute("DELETE FROM epochs", [])
+        .context("clearing epochs index")?;
 
     if let Ok(sessions) = crate::config::sessions_dir().read_dir() {
         for entry in sessions.filter_map(|e| e.ok()) {
@@ -966,7 +971,15 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
         }
     }
 
-    // ── turns corpus ──────────────────────────────────────────────────────────
+    Ok(())
+}
+
+fn rebuild_turns(tx: &rusqlite::Connection) -> anyhow::Result<()> {
+    tx.execute("DELETE FROM turns", [])
+        .context("clearing turns index")?;
+    tx.execute("DELETE FROM turns_map", [])
+        .context("clearing turns_map index")?;
+
     if let Ok(sessions) = crate::config::sessions_dir().read_dir() {
         for entry in sessions.filter_map(|e| e.ok()) {
             let name = entry.file_name();
@@ -976,13 +989,21 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
             }
             let session_id = &name_str[..name_str.len() - ".archive.jsonl".len()];
             let path = entry.path();
-            if let Err(e) = index_archive_file(&tx, session_id, &path) {
+            if let Err(e) = index_archive_file(tx, session_id, &path) {
                 log::warn!("indexing archive {}: {e:#}", path.display());
             }
         }
     }
 
-    // ── events corpus ─────────────────────────────────────────────────────────
+    Ok(())
+}
+
+fn rebuild_events(tx: &rusqlite::Connection) -> anyhow::Result<()> {
+    tx.execute("DELETE FROM events", [])
+        .context("clearing events index")?;
+    tx.execute("DELETE FROM events_map", [])
+        .context("clearing events_map index")?;
+
     let event_paths = crate::daemon::utils::event_segment_paths_between(None, None);
     for path in event_paths {
         let legacy_path = crate::config::events_path();
@@ -1032,6 +1053,79 @@ pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
             offset += n as u64;
         }
     }
+
+    Ok(())
+}
+
+/// Reconcile a single corpus from disk, rebuilding only its own tables.
+pub fn reconcile_corpus(corpus: Corpus) -> anyhow::Result<usize> {
+    let mut conn = open_index()?;
+    let tx = conn
+        .transaction()
+        .context("beginning corpus reconcile transaction")?;
+
+    match corpus {
+        Corpus::Memories => rebuild_memories(&tx)?,
+        Corpus::Artifacts => rebuild_artifacts(&tx)?,
+        Corpus::Epochs => rebuild_epochs(&tx)?,
+        Corpus::Turns => rebuild_turns(&tx)?,
+        Corpus::Events => rebuild_events(&tx)?,
+    }
+
+    tx.commit()
+        .context("committing corpus reconcile transaction")?;
+
+    let count: i64 = conn
+        .query_row(
+            format!("SELECT COUNT(*) FROM {}", corpus.table_name()).as_str(),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    Ok(count as usize)
+}
+
+/// What a reconcile pass changed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ReconcileReport {
+    /// Rows present in the index at the start of the pass.
+    pub rows_before: usize,
+    /// Rows present after the rebuild.
+    pub rows_after: usize,
+    /// Per-corpus row counts after the rebuild, in a stable order:
+    /// memories, artifacts, epochs, turns, events.
+    pub per_corpus: Vec<(String, usize)>,
+}
+
+/// Rebuild the whole index from the memory files on disk.
+pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
+    let mut conn = open_index()?;
+
+    // ── count rows across all corpora ────────────────────────────────────────
+
+    fn count_table(conn: &rusqlite::Connection, table: &str) -> usize {
+        conn.query_row(format!("SELECT COUNT(*) FROM {table}").as_str(), [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|n| n as usize)
+        .unwrap_or(0)
+    }
+
+    let rows_before = count_table(&conn, "memories")
+        + count_table(&conn, "artifacts")
+        + count_table(&conn, "epochs")
+        + count_table(&conn, "turns")
+        + count_table(&conn, "events");
+
+    let tx = conn
+        .transaction()
+        .context("beginning reconcile transaction")?;
+
+    rebuild_memories(&tx)?;
+    rebuild_artifacts(&tx)?;
+    rebuild_epochs(&tx)?;
+    rebuild_turns(&tx)?;
+    rebuild_events(&tx)?;
 
     tx.commit().context("committing reconcile transaction")?;
 
@@ -3195,5 +3289,365 @@ mod tests {
 
         // Restore permissions for other tests
         std::fs::set_permissions(index_dir, original_perms).unwrap();
+    }
+
+    #[test]
+    fn corpus_from_table_resolves_known_tables() {
+        assert_eq!(Corpus::from_table("memories"), Some(Corpus::Memories));
+        assert_eq!(Corpus::from_table("artifacts"), Some(Corpus::Artifacts));
+        assert_eq!(Corpus::from_table("epochs"), Some(Corpus::Epochs));
+        assert_eq!(Corpus::from_table("turns"), Some(Corpus::Turns));
+        assert_eq!(Corpus::from_table("events"), Some(Corpus::Events));
+    }
+
+    #[test]
+    fn corpus_from_table_rejects_map_and_unknown_tables() {
+        assert_eq!(Corpus::from_table("turns_map"), None);
+        assert_eq!(Corpus::from_table("events_map"), None);
+        assert_eq!(Corpus::from_table("nonsense"), None);
+        assert_eq!(Corpus::from_table(""), None);
+    }
+
+    #[test]
+    fn corpus_table_name_roundtrips() {
+        for corpus in [
+            Corpus::Memories,
+            Corpus::Artifacts,
+            Corpus::Epochs,
+            Corpus::Turns,
+            Corpus::Events,
+        ] {
+            assert_eq!(
+                Corpus::from_table(corpus.table_name()),
+                Some(corpus),
+                "roundtrip failed for {:?}",
+                corpus
+            );
+        }
+    }
+
+    #[test]
+    fn empty_corpus_search_preserves_other_corpora() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Index a turn
+        let session_id = "test-sess-preserve";
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        let line = r#"{"role":"user","content":"preserved turn content"}"#;
+        std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+        index_turn(session_id, 1, 0, "preserved turn content").unwrap();
+
+        // Index an epoch
+        index_epoch(session_id, 1, "compaction", "preserved epoch content").unwrap();
+
+        // Verify both are findable before the search
+        let conn = open_index().unwrap();
+        let turns_before: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let epochs_before: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        assert!(turns_before > 0, "should have turn rows before search");
+        assert!(epochs_before > 0, "should have epoch rows before search");
+
+        // Search with kind="memory" — memories corpus is empty, so
+        // open_and_reconcile_if_empty fires. With the fix, it only rebuilds
+        // memories, not turns or epochs.
+        let _results = crate::search::search_repository("anything", "memory", 0);
+
+        // Verify both turn and epoch rows are still there
+        let conn = open_index().unwrap();
+        let turns_after: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let epochs_after: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            turns_after, turns_before,
+            "turn rows must be preserved after searching empty memory corpus"
+        );
+        assert_eq!(
+            epochs_after, epochs_before,
+            "epoch rows must be preserved after searching empty memory corpus"
+        );
+    }
+
+    #[test]
+    fn all_kind_search_preserves_turns_and_epochs() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Index a turn
+        let session_id = "test-sess-all-preserve";
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        let line = r#"{"role":"user","content":"preserved all kind content"}"#;
+        std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+        index_turn(session_id, 1, 0, "preserved all kind content").unwrap();
+
+        // Index an epoch
+        index_epoch(session_id, 1, "compaction", "preserved all kind epoch").unwrap();
+
+        let conn = open_index().unwrap();
+        let turns_before: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let epochs_before: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        assert!(turns_before > 0);
+        assert!(epochs_before > 0);
+
+        // kind="all" chain hits memories first (empty) → per-corpus reconcile only
+        let _results = crate::search::search_repository("anything", "all", 0);
+
+        let conn = open_index().unwrap();
+        let turns_after: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let epochs_after: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            turns_after, turns_before,
+            "turns preserved after all-kind search"
+        );
+        assert_eq!(
+            epochs_after, epochs_before,
+            "epochs preserved after all-kind search"
+        );
+    }
+
+    #[test]
+    fn reconcile_corpus_rebuilds_only_its_own_corpus() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed a turn
+        let session_id = "test-sess-reconcile-own";
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        let line = r#"{"role":"user","content":"own corpus test"}"#;
+        std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+        index_turn(session_id, 1, 0, "own corpus test").unwrap();
+
+        // Seed an epoch
+        index_epoch(session_id, 1, "compaction", "own corpus epoch").unwrap();
+
+        let conn = open_index().unwrap();
+        let turns_before: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let epochs_before: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        assert!(turns_before > 0);
+        assert!(epochs_before > 0);
+
+        // Reconcile only memories — turns and epochs must be unchanged
+        reconcile_corpus(Corpus::Memories).unwrap();
+
+        let conn = open_index().unwrap();
+        let turns_after: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let epochs_after: i64 = conn
+            .query_row("SELECT count(*) FROM epochs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            turns_after, turns_before,
+            "turns unchanged after memories reconcile"
+        );
+        assert_eq!(
+            epochs_after, epochs_before,
+            "epochs unchanged after memories reconcile"
+        );
+    }
+
+    #[test]
+    fn reconcile_corpus_turns_clears_both_tables() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        let session_id = "test-sess-turns-clear";
+        let sessions_dir = crate::config::sessions_dir();
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        // Include "turn" field so index_archive_file can parse it during reconcile
+        let line = r#"{"role":"user","content":"turns clear test","turn":1}"#;
+        std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+        index_turn(session_id, 1, 0, "turns clear test").unwrap();
+
+        let conn = open_index().unwrap();
+        let turns_before: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let turns_map_before: i64 = conn
+            .query_row("SELECT count(*) FROM turns_map", [], |r| r.get(0))
+            .unwrap();
+        assert!(turns_before > 0, "should have turn rows");
+        assert!(turns_map_before > 0, "should have turns_map rows");
+
+        // Reconcile turns — should clear both tables and rebuild
+        let count = reconcile_corpus(Corpus::Turns).unwrap();
+        assert_eq!(
+            count, turns_before as usize,
+            "reconciled turns count matches"
+        );
+
+        let conn = open_index().unwrap();
+        let turns_after: i64 = conn
+            .query_row("SELECT count(*) FROM turns", [], |r| r.get(0))
+            .unwrap();
+        let turns_map_after: i64 = conn
+            .query_row("SELECT count(*) FROM turns_map", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(turns_after, turns_before, "turns rebuilt to same count");
+        assert_eq!(
+            turns_map_after, turns_map_before,
+            "turns_map rebuilt to same count"
+        );
+    }
+
+    #[test]
+    fn reconcile_corpus_events_clears_both_tables() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Write an event segment
+        let ev_dir = crate::config::events_dir();
+        std::fs::create_dir_all(&ev_dir).unwrap();
+        let ev_line = r#"{"event":"test_event_clear","ts":"2026-01-01T00:00:00Z"}"#;
+        std::fs::write(ev_dir.join("events-20260101.jsonl"), format!("{ev_line}\n")).unwrap();
+        index_event("events-20260101", 0, "test_event_clear", ev_line).unwrap();
+
+        let conn = open_index().unwrap();
+        let events_before: i64 = conn
+            .query_row("SELECT count(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        let events_map_before: i64 = conn
+            .query_row("SELECT count(*) FROM events_map", [], |r| r.get(0))
+            .unwrap();
+        assert!(events_before > 0, "should have event rows");
+        assert!(events_map_before > 0, "should have events_map rows");
+
+        let count = reconcile_corpus(Corpus::Events).unwrap();
+        assert_eq!(
+            count, events_before as usize,
+            "reconciled events count matches"
+        );
+
+        let conn = open_index().unwrap();
+        let events_after: i64 = conn
+            .query_row("SELECT count(*) FROM events", [], |r| r.get(0))
+            .unwrap();
+        let events_map_after: i64 = conn
+            .query_row("SELECT count(*) FROM events_map", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(events_after, events_before, "events rebuilt to same count");
+        assert_eq!(
+            events_map_after, events_map_before,
+            "events_map rebuilt to same count"
+        );
+    }
+
+    #[test]
+    fn reconcile_index_report_is_unchanged() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed one memory so the index isn't empty
+        crate::memory::add_memory(
+            "report-test",
+            "report test body",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+
+        let report = reconcile_index().unwrap();
+        assert_eq!(
+            report.per_corpus.len(),
+            5,
+            "report must have 5 corpus entries"
+        );
+        let names: Vec<&str> = report.per_corpus.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["memories", "artifacts", "epochs", "turns", "events"],
+            "per_corpus order must be stable"
+        );
+        assert_eq!(
+            report.rows_after, 1,
+            "rows_after should match seeded memory"
+        );
+    }
+
+    #[test]
+    fn unknown_table_name_reconciles_nothing() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed a memory
+        crate::memory::add_memory(
+            "unknown-table-guard",
+            "unknown table guard body",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .unwrap();
+
+        let conn = open_index().unwrap();
+        let mem_before: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mem_before, 1);
+
+        // open_and_reconcile_if_empty with an unknown table name must not
+        // trigger any reconcile — the memory must survive
+        let _conn = open_and_reconcile_if_empty("nonsense");
+
+        let conn = open_index().unwrap();
+        let mem_after: i64 = conn
+            .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            mem_after, mem_before,
+            "unknown table must not trigger reconcile"
+        );
+    }
+
+    #[test]
+    fn empty_artifacts_corpus_still_self_heals() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Create a runbook on disk
+        let rb_dir = crate::runbook::runbooks_dir();
+        std::fs::create_dir_all(&rb_dir).unwrap();
+        std::fs::write(rb_dir.join("self-heal.md"), "# Self Heal\n\nhealing body\n").unwrap();
+
+        // The artifacts corpus is empty in the index. Searching it should
+        // trigger a per-corpus reconcile that finds the runbook.
+        let results = crate::search::search_repository("healing", "artifact", 0);
+        assert!(
+            results.iter().any(|r| r.name == "self-heal"),
+            "self-healing artifacts corpus should find disk runbook"
+        );
     }
 }

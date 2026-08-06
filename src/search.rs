@@ -1508,32 +1508,6 @@ mod tests {
             )
             .unwrap();
 
-            // Seed a memory FIRST so the `memories` corpus is non-empty. Without
-            // this the "all" path hits open_and_reconcile_if_empty("memories"),
-            // which rebuilds the whole index from disk and wipes the turn/epoch
-            // rows above — making the assertions below pass vacuously.
-            // Seed EVERY corpus the "all" chain touches. Any empty corpus makes
-            // open_and_reconcile_if_empty fire a full reconcile_index(), which
-            // rebuilds from disk and wipes the turn/epoch rows above — which
-            // would make the assertions below pass vacuously. See bug-05c-1.
-            crate::memory::add_memory(
-                "all-kind-guard",
-                "needle in the haystack",
-                crate::memory::MemoryCategory::Knowledge,
-                "global",
-            )
-            .unwrap();
-            crate::memory::index::index_artifact("runbook", "guard-rb", "", "unrelated body")
-                .unwrap();
-            crate::memory::index::index_artifact("script", "guard-sc", "", "unrelated body")
-                .unwrap();
-            let ev_dir = crate::config::events_dir();
-            std::fs::create_dir_all(&ev_dir).unwrap();
-            let ev_line = r#"{"event":"guard_event","ts":"2026-01-01T00:00:00Z"}"#;
-            std::fs::write(ev_dir.join("events-20260101.jsonl"), format!("{ev_line}\n")).unwrap();
-            crate::memory::index::index_event("events-20260101", 0, "guard_event", ev_line)
-                .unwrap();
-
             let results = search_repository("needle", "all", 0);
             for r in &results {
                 assert!(

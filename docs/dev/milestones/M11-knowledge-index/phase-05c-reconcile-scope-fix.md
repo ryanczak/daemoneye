@@ -1,7 +1,7 @@
 # Phase 05c: reconcile scope — an empty corpus must not wipe the others
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05b (done — surfaced the defect)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -234,5 +234,113 @@ call sites are `reconcile_index`'s own definition and its tests — **never** in
 - Any change to the incremental hooks from 03a/03b.
 
 ## Update Log
+
+### Update — 2026-08-06 14:22 (started)
+
+**Executor:** model
+
+Implemented per-corpus reconcile: extracted `Corpus` enum, five `rebuild_*` functions, `reconcile_corpus()` targeted entry point, and rewired `open_and_reconcile_if_empty` to use per-corpus reconcile instead of full `reconcile_index()`. Now writing tests and removing the 05b workaround.
+
+### Update — 2026-08-06 14:35 (end-to-end verification)
+
+**Tests:** 63 memory::index tests passed, 40 search tests passed. All green.
+
+**Mutation check:** Temporarily restored `open_and_reconcile_if_empty` to call `reconcile_index()` — `empty_corpus_search_preserves_other_corpora` **failed** (turn rows wiped from 1→0). Restored to `reconcile_corpus(corpus)` — test **passed**. Mutation check confirms the fix is real.
+
+**End-to-end verification transcript:**
+
+```
+--- each rebuild owns its own DELETE ---
+835:    tx.execute("DELETE FROM memories", [])
+909:    tx.execute("DELETE FROM artifacts", [])
+941:    tx.execute("DELETE FROM epochs", [])
+978:    tx.execute("DELETE FROM turns", [])
+980:    tx.execute("DELETE FROM turns_map", [])
+1002:    tx.execute("DELETE FROM events", [])
+1004:    tx.execute("DELETE FROM events_map", [])
+--- open_and_reconcile_if_empty no longer calls reconcile_index ---
+fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
+    let conn = match open_index() {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("memory index open failed: {e:#}");
+            return None;
+        }
+    };
+
+    let count_sql = format!("SELECT count(*) FROM {table}");
+    let count: i64 = conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0);
+    if count == 0 {
+        let Some(corpus) = Corpus::from_table(table) else {
+            log::warn!(
+                "table '{}' is not a recognised corpus — skipping reconcile",
+                table
+            );
+            return Some(conn);
+        };
+        if let Err(e) = reconcile_corpus(corpus) {
+            log::warn!("memory index reconcile failed: {e:#}");
+        }
+        // Re-open because reconcile may have dropped and recreated the DB
+        return match open_index() {
+            Ok(c) => Some(c),
+            Err(e) => {
+                log::warn!("memory index re-open after reconcile failed: {e:#}");
+                None
+            }
+        };
+    }
+    Some(conn)
+}
+--- 05b workaround removed from the guard test ---
+    fn all_kind_excludes_turns_and_epochs() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            // Write a turn
+            let session_id = format!(
+                "test-sess-all-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let sessions_dir = crate::config::sessions_dir();
+            std::fs::create_dir_all(&sessions_dir).unwrap();
+
+            let archive_path = crate::daemon::session::archive_file(&session_id);
+            let line = r#"{"role":"user","content":"needle in the haystack"}"#;
+            std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+            crate::memory::index::index_turn(&session_id, 1, 0, "needle in the haystack").unwrap();
+
+            // Write an epoch
+            crate::memory::index::index_epoch(
+                &session_id,
+                1,
+                "compaction",
+                "needle in the haystack",
+            )
+            .unwrap();
+
+            let results = search_repository("needle", "all", 0);
+            for r in &results {
+                assert!(
+                    r.kind != "turns",
+                    "kind='all' must NOT include turns. Found kind={}",
+                    r.kind
+                );
+                assert!(
+                    r.kind != "epochs",
+                    "kind='all' must NOT include epochs. Found kind={}",
+                    r.kind
+                );
+            }
+        });
+    }
+```
+
+**grep proof — `reconcile_index()` not called from `open_and_reconcile_if_empty`:**
+```
+$ grep -n "reconcile_index()" src/memory/index.rs
+1101:pub fn reconcile_index() -> anyhow::Result<ReconcileReport> {
+1538:        let report = reconcile_index().expect("reconcile should succeed");
+… (all remaining calls are in test code or the definition itself)
+```
 
 <!-- entries appended below this line -->
