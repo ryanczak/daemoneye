@@ -1,7 +1,7 @@
 # Phase 07a: situational injections — turns and epochs in the dynamic block
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~365 lines
 **Tags:** language=rust, kind=feature, size=m
