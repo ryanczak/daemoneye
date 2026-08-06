@@ -1,7 +1,7 @@
 # Phase 04: recall_context on FTS — ranked query mode, correct excerpts, cross-session scope
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** in-progress
+**Status:** review
 **Depends on:** phase-03b (done — the `turns` corpus is populated incrementally
 and swept on retention)
 **Estimated diff:** ~400 lines
@@ -415,3 +415,151 @@ OK: no MAX_MATCHES
 ```
 
 <!-- entries appended below this line -->
+
+### Update — ts=1785989316218 (complete, server-authored)
+
+**Summary:** All verification gates pass. Here's the summary:
+
+**Summary:** Moved `recall_context` query mode from a substring scan to BM25-ranked search over the `turns` FTS corpus. Added `search_turns()` in `src/memory/index.rs` that joins the FTS table to `turns_map` and returns hits ordered by BM25 score. Rewrote `query_search` to re-read archive lines at indexed offsets and choose the excerpt source based on which field actually matched — fixing Defect 1 (tool-result matches now excerpt from the tool result, not `msg.content`). Fixed Defect 2 (range mode now renders tool-result bodies). Fixed Defect 3 (removed `MAX_MATCHES` constant; cap is now the limit argument). Added `scope` parameter through the full tool chain — `scope: "all"` searches every session with cross-session hits labeled `[session <id>]`; unknown values safely default to current-session. Range mode ignores scope.
+
+**Notes for review:** The `read_line_at_offset` function uses byte-offset seeking (matching how `turns_map.offset` is stored), not line enumeration — this was necessary because the original code used `enumerate()` which was line-number-based and didn't match the byte offset stored in `turns_map`. The `query_results_are_bm25_ordered_not_file_ordered` test was verified by mutation: changing to `ORDER BY m.turn` causes it to fail (chronological order), restoring `ORDER BY bm25(turns)` makes it pass (best match first).
+
+**Executor:** Qwen/Qwen3.6-27B-FP8
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.04s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s
+
+
+TEST
+est session_store::tests::rename_to_existing_errors ... ok
+test session_store::tests::rename_updates_dir_and_index ... ok
+test pane_prefs::tests::load_all_tolerates_missing_file ... ok
+test session_store::tests::update_in_place_allowed ... ok
+test test_home_guard_tests::guard_restores_home_on_drop ... ok
+
+test result: ok. 1093 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test header_status_reads_bare_word ... ok
+test header_status_strips_trailing_prose ... ok
+test header_status_uses_first_occurrence_only ... ok
+test open_bug_on_in_progress_phase_is_clean ... ok
+test open_bug_on_done_phase_is_a_finding ... ok
+test repository_bug_tracker_is_consistent ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 32 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 10 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test hooks_land_on_private_server ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e700f2084319867a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-9b22636ef5c08466)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c00c74ef4ffe9c11)
+     Running tests/integration.rs (target/debug/deps/integration-6230826c10f36795)
+     Running tests/isolation.rs (target/debug/deps/isolation-66949bca409172a9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `docs/dev/milestones/M11-knowledge-index/README.md` — +1 -1
+- `docs/dev/milestones/M11-knowledge-index/phase-04-recall-context-fts.md` — +109 -1
+- `src/ai/tools/args.rs` — +4 -0
+- `src/ai/tools/defs.rs` — +6 -0
+- `src/ai/types/events.rs` — +1 -0
+- `src/ai/types/pending.rs` — +4 -2
+- `src/daemon/context/recall.rs` — +424 -65
+- `src/daemon/executor/mod.rs` — +2 -0
+- `src/daemon/ghost.rs` — +2 -0
+- `src/daemon/stream.rs` — +2 -0
+- `src/memory/index.rs` — +76 -0
+
+**Commit:** 8f61ad802fb36cb06450be3fecea9ae29b8fba56
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
