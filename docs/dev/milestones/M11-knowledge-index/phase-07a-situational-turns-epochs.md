@@ -1,7 +1,7 @@
 # Phase 07a: situational injections — turns and epochs in the dynamic block
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-06 (done)
 **Estimated diff:** ~365 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -324,8 +324,20 @@ pinned in § Test plan.
 - [ ] `cargo test --lib daemon::situational` passes and reports **more than 0**
       tests — the module does not exist today, so a filter matching nothing
       would also "pass".
-- [ ] `cargo test --lib` reports **more than 1128** passed, 0 failed. 1128 is
-      the baseline measured at drafting; no existing test may be removed.
+- [ ] `cargo test --lib` reports **exactly 1136** passed, 0 failed — 1128 at
+      drafting, plus the seven tests of the first dispatch, plus the one test
+      [bug-07a-1](bugs/bug-07a-1.md) requires. Above 1136 means tests were added
+      that nobody asked for; below means one was lost or the bug fix's test is
+      missing. No existing test may be removed.
+- [ ] **[bug-07a-1](bugs/bug-07a-1.md) is fixed.** These four currently **fail**
+      and are the outstanding work of this phase:
+      - [ ] `grep -n "find_map" src/daemon/situational.rs` finds the new call.
+      - [ ] `grep -n "and_then(resolve_turn_hit)" src/daemon/situational.rs`
+            finds nothing (exit 1).
+      - [ ] `cargo test --lib daemon::situational` reports **8 passed**, 0
+            failed.
+      - [ ] Test `unresolvable_turn_hit_falls_through_to_the_next` exists and
+            passes.
 - [ ] `cargo fmt --all`, `cargo build`, and
       `cargo clippy --all-targets --all-features -- -D warnings` are clean.
 - [ ] The mutation pair in § End-to-end verification is captured, and the
@@ -460,6 +472,41 @@ No new dependencies. No `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-08-06 (round 3)
+
+**STOP: green gates and a clean tree are EXPECTED here and are NOT evidence
+this phase is done.** Round 2 reported `complete` with an empty diff on exactly
+that reasoning. The gates pass because the *first* dispatch's code is correct and
+committed. One defect remains, and no gate can see it.
+
+**Why round 2 was not your fault.** The acceptance criteria above were stale —
+they described the state before the review, so they all passed and the phase
+read as finished. They have now been corrected: four of them **fail right now**,
+deliberately. Check them, and you will see the outstanding work.
+
+**Already correct and committed — do not re-derive, re-read, or modify:**
+`src/memory/index.rs` (the `read_line_at_offset` extraction, the
+`EpochHit::kind` allow removal), `src/search.rs`, `src/daemon/context/recall.rs`,
+`src/daemon/mod.rs`, `src/daemon/prompt.rs`, `src/daemon/server/ask.rs`,
+`tests/integration.rs`, the epoch lookup in `src/daemon/situational.rs`, and all
+seven existing tests.
+
+**There is exactly one edit and one new test, both specified in full in
+[bug-07a-1](bugs/bug-07a-1.md). Read that file.** In one sentence: line 44 of
+`src/daemon/situational.rs` uses `.find(exclusion).and_then(resolve_turn_hit)`,
+so if the first non-current hit fails to resolve, the turn line is dropped and
+the other seven candidates are never tried; replace it with `.filter(exclusion)`
++ `.find_map(|hit| resolve_turn_hit(hit))`, and add
+`unresolvable_turn_hit_falls_through_to_the_next`.
+
+**Finish condition: `cargo test --lib` must report 1136, not 1135.** A run that
+leaves the count at 1135 has done nothing.
+
+**The mutation belongs to this round.** The end-to-end entry from the first
+dispatch does not carry forward. Capture a new one: revert the fix, show
+`unresolvable_turn_hit_falls_through_to_the_next` failing, restore, show it
+passing, and paste both greps as restore proof.
 
 ### Update — 2026-08-06 18:25 (progress)
 
