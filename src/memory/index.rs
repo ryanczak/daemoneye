@@ -1839,10 +1839,12 @@ mod tests {
         )
         .expect("add weak memory");
 
-        let results = crate::daemon::memory_prompt::ftsearch_memories("quokka", 10, &["global"]);
+        let all = crate::memory::list_memories_with_tags(None, &["global"]).unwrap();
+        let results =
+            crate::daemon::memory_prompt::ftsearch_memories(&all, "quokka", 10, &["global"]);
         assert!(results.len() >= 2, "should find both memories");
         assert_eq!(
-            results[0].key, "quokka-strong",
+            results[0].0.key, "quokka-strong",
             "ftsearch_memories should preserve BM25 rank order: strong match first"
         );
     }

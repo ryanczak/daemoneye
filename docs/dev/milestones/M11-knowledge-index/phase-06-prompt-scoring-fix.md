@@ -1,7 +1,7 @@
 # Phase 06: prompt scoring — real BM25, namespace-keyed merge, one listing
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** in-progress
+**Status:** done
 **Depends on:** phase-05c (done)
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -555,3 +555,203 @@ was an unsatisfiable acceptance criterion I wrote, and what remains is one lint,
 one test-harness idiom, and the Update Log; a fresh re-dispatch would rebuild
 correct work, and a takeover would forfeit the telemetry point for a fix the
 executor can plainly reach.
+
+### Update — 2026-08-06 (escalation, round 2)
+
+**Chosen lever:** session takeover
+**Rationale:** second `NoProgressStall` on the same phase after one refinement —
+the decision table's takeover trigger. The resume landed two of the three items
+(the clippy fix and the `TestHomeGuard` harness fix, both correct), then spent
+its final ~60 read-only turns grepping `src/memory.rs` for `category:` and
+`parse_frontmatter_fields` — chasing the memory-file layout, which is precisely
+the one edit that remained. Per WORKFLOW § "A NoProgressStall is usually a
+nearly-finished phase": when the missing piece *is* the edit it stalled on, a
+resume re-enters the same wall.
+
+**What the resume got right and I kept unchanged:** `setup_test_env` now returns
+`(crate::TestHomeGuard, tempfile::TempDir)` and all six tests bind
+`let (_guard, _tmp) = …`, which fixed three of the four failures; the
+`useless_conversion` lint at the packing fixture is gone.
+
+**The one edit I made.** `expired_memory_is_excluded_and_the_guard_is_not_vacuous`
+wrote its expired fixture to a hardcoded
+`{HOME}/.daemoneye/memory/knowledge/global/expired-match.md`. For the `global`
+namespace `memory_dir_for_namespace` resolves to `<config>/memory/knowledge/`
+with **no** per-namespace subdirectory (`src/memory.rs:247-258`), so the file
+landed in an orphan directory, `add_memory`'s non-expired copy was what got read,
+and the exclusion assertion failed. Replaced the string with a call to the same
+helper the production code uses:
+
+```rust
+let knowledge_dir = crate::memory::memory_dir_for_namespace(
+    "global",
+    &crate::memory::MemoryCategory::Knowledge,
+);
+std::fs::create_dir_all(&knowledge_dir).expect("create knowledge dir");
+let expired_path = knowledge_dir.join("expired-match.md");
+```
+
+Note this is the failure the test's own anti-vacuity clause was written to catch,
+and it caught it: the control-memory assertion is what proved the fixture was
+live while the exclusion assertion was failing for a fixture-path reason.
+
+### Update — 2026-08-06 (end-to-end verification)
+
+Captured mechanically to `/tmp/p06-e2e.txt` by the block in § End-to-end
+verification, pasted verbatim:
+
+```
+== structural: production-code listing count (expect 1) ==
+1
+exit=0
+== structural: flat constant must be absent (expect no output, exit=1) ==
+exit=1
+== structural: FTS_WEIGHT const + use site ==
+36:const FTS_WEIGHT: f64 = 0.6;
+175:                FTS_WEIGHT * normalized * crate::memory::review::effective_confidence(info);
+exit=0
+== baseline: module tests green ==
+test daemon::memory_prompt::tests::same_key_in_two_namespaces_scores_separately ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1122 filtered out; finished in 0.01s
+
+exit=0
+== MUTATED: FTS contribution forced to flat 0.2 ==
+---- daemon::memory_prompt::tests::same_key_in_two_namespaces_scores_separately stdout ----
+
+thread 'daemon::memory_prompt::tests::same_key_in_two_namespaces_scores_separately' (3555567) panicked at src/daemon/memory_prompt.rs:430:9:
+assertion `left != right` failed: different namespace entries must get distinct scores
+  left: 0.2
+ right: 0.2
+
+---- daemon::memory_prompt::tests::tag_hit_does_not_suppress_a_stronger_fts_hit stdout ----
+
+thread 'daemon::memory_prompt::tests::tag_hit_does_not_suppress_a_stronger_fts_hit' (3555568) panicked at src/daemon/memory_prompt.rs:480:9:
+score should equal FTS_WEIGHT for the strongest FTS hit
+
+
+failures:
+    daemon::memory_prompt::tests::fts_hits_get_pairwise_distinct_scores
+    daemon::memory_prompt::tests::fts_score_is_not_the_flat_constant
+    daemon::memory_prompt::tests::same_key_in_two_namespaces_scores_separately
+    daemon::memory_prompt::tests::tag_hit_does_not_suppress_a_stronger_fts_hit
+
+test result: FAILED. 2 passed; 4 failed; 0 ignored; 0 measured; 1122 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`
+exit=0
+== RESTORED ==
+test daemon::memory_prompt::tests::same_key_in_two_namespaces_scores_separately ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1122 filtered out; finished in 0.01s
+
+exit=0
+== restore proof: the flat constant must be absent (expect exit=1, no output) ==
+exit=1
+== restore proof: the real formula must be present ==
+175:                FTS_WEIGHT * normalized * crate::memory::review::effective_confidence(info);
+exit=0
+```
+
+**Mutation result:** forcing the FTS contribution to the flat `0.2` fails **four
+of six** tests — `fts_hits_get_pairwise_distinct_scores`,
+`fts_score_is_not_the_flat_constant`, `same_key_in_two_namespaces_scores_separately`
+and `tag_hit_does_not_suppress_a_stronger_fts_hit`. The scoring change is
+load-bearing, not decorative. The mutation is restored, and the two greps above
+prove it against the shipped source.
+
+### Update — 2026-08-06 (complete, architect takeover)
+
+**Summary:** all five spec tasks are implemented. The three helpers take a
+materialized `&[MemoryInfo]`; production code makes exactly one
+`list_memories_with_tags` call (down from four); `score_candidates` and
+`pack_within_budget` are extracted seams; FTS hits are scored
+`FTS_WEIGHT * (mag_i / mag_max) * effective_confidence` instead of a flat `0.2`;
+the merge is keyed by `(namespace, key)` with max-wins via `merge_max`; and the
+`memory_retrieved` event logs the entries actually emitted rather than the first
+N by rank. The executor wrote all of the production code and five of six test
+fixtures; the architect fixed one fixture path (above).
+
+**Acceptance criteria:** all met.
+
+**Commands** (each run bare, as separate invocations):
+
+```
+$ cargo fmt --all
+fmt exit=0
+
+$ cargo build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.99s
+build exit=0
+
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.92s
+lint exit=0
+
+$ cargo test
+running 1128 tests
+test result: ok. 1128 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.58s
+running 6 tests   (integration)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+running 4 tests
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+running 32 tests
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out
+running 10 tests
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+test exit=0
+```
+
+`1128` lib tests — the inverted finish condition exactly (1122 baseline + 6).
+
+**Files changed:**
+- `src/daemon/memory_prompt.rs` — the whole phase; +478/−117 across both files
+- `src/memory/index.rs` — the one test call site for the new `ftsearch_memories`
+  signature (6 lines)
+
+**New tests:** the six named in § Test plan, all in
+`src/daemon/memory_prompt.rs`'s `mod tests`.
+
+**Notes for review:** no `unwrap`/`expect`/`panic!`/`unsafe` in production code
+(all confined to the test module); no `#[allow]`, `#[ignore]`, `TODO`, `dbg!` or
+`println!` anywhere in the file.
+
+### Review verdict — 2026-08-06
+
+- **Verdict:** escalated
+- **Bounces:** 2 hard_fails, both `NoProgressStall` at 60 read-only turns (no bug
+  docs filed — neither was a defect in shipped work)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (production code + 5/6 test fixtures);
+  Claude (direct) for the takeover — one fixture path, the mutation pair, and
+  the Update Log
+- **Scope deviations:** none. All five tasks landed as specced; nothing was cut
+  or deferred.
+- **Calibration:** two lessons, below.
+
+**1. An acceptance criterion must be validated against the tests the spec asks
+for, not only against its production tasks — `spec_bug`, and the cause of the
+first stall.** Criterion 1 counted `list_memories_with_tags(` across the whole
+file and demanded `1`; the phase's own six test fixtures legitimately call it
+five more times, so no correct implementation could satisfy it. WORKFLOW
+§ "Every acceptance criterion must be satisfiable" already requires re-reading
+criteria against the spec body — but its two named failure modes are
+contradiction with the spec's *tasks* and under-specified baselines. This is a
+third shape: a criterion invalidated by the spec's own **Test plan**. **Second
+occurrence of the general class in this project** (M5 had two, both
+task-invalidated). If a criterion is ever again invalidated by the tests rather
+than the tasks, fold this shape explicitly.
+
+**2. A worked example must show the failure mode it prevents, not just the
+correct shape.** Task 5 cited `src/memory/index.rs:1820` for the `test_home_guard`
+preamble — a correct example. The executor still hoisted the guard into a setup
+helper, where it dropped on return and let the tests race over `HOME`. The
+example showed *what right looks like* without saying *what makes it right*, so
+a refactor that preserved the tokens and destroyed the semantics looked
+equivalent. The repo's own memory records this trap generally; the phase doc did
+not. **First occurrence** — noted, not folded.
+
+**3. On the read-only stall: now 7 occurrences, and this run adds a wrinkle.**
+The second stall's tail was ~11 byte-identical `grep -n "category:" src/memory.rs
+| head -5` calls, which should have tripped `identical_call_threshold = 6` before
+the read-only governor at 60. Worth reporting upstream — the remedy is
+runtime-side in rexyMCP and out of bounds from this repo.
