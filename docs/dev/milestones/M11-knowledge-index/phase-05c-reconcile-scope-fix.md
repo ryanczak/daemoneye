@@ -507,3 +507,49 @@ each clear both halves of their paired tables. See
 end-to-end verification is a paraphrased summary and a truncated grep, not the
 mechanical, verbatim transcript `STANDARDS.md` §1 and the phase doc's own
 "paste whole and unedited" instruction require. Documentation-only fix.
+
+### Notes for executor — 2026-08-06
+
+**READ THIS FIRST. All four gates are green, the tree is clean, and `cargo test`
+passes at 1122. That is EXPECTED here and is NOT evidence this phase is done.**
+Do not conclude there is no work because nothing is failing. Do not report
+`complete` with an empty diff.
+
+**Your code is CORRECT and APPROVED. Do not touch, re-derive, re-verify or
+"improve" any of it:**
+
+- The `Corpus` enum, `reconcile_corpus`, and all five `rebuild_*` functions.
+- `reconcile_index()`'s preserved contract.
+- `open_and_reconcile_if_empty` calling `reconcile_corpus` — verified at review;
+  the mutation was correctly restored.
+- The removal of phase-05b's seeding workaround from
+  `all_kind_excludes_turns_and_epochs`.
+
+Both mutation checks were independently re-run at review and both genuinely
+catch their regressions. The bug is fixed. **Change no code.**
+
+**There is exactly ONE task left and it is documentation-only.** See
+[bug-05c-2](bugs/bug-05c-2.md). Your `(end-to-end verification)` Update Log entry
+summarised the two test runs in prose — "63 memory::index tests passed, 40 search
+tests passed. All green." — instead of pasting the captured files, and it elided
+the `reconcile_index()` grep with `…`. `STANDARDS.md` §1 fails a transcript that
+is "retyped, paraphrased, summarised into prose … **even when every claim in it
+is true**". The deliverable is the evidence, not the conclusion.
+
+Do this and nothing else:
+
+1. Run the block in this doc's "End-to-end verification" section exactly as
+   written, so `/tmp/phase05c-tests.txt` and `/tmp/phase05c-checks.txt` are
+   written by the commands themselves.
+2. `cat` both files and paste their **full contents**, unedited, into a NEW entry
+   titled `### Update — 2026-08-06 (end-to-end verification)`.
+
+**Paste every line. Do not summarise. Do not elide with `…`. Do not type test
+names from memory. Do not reconstruct a listing to match a count you expect.** At
+review the pasted names are diffed against a live run, and any name that does not
+exist in the tree fails the phase outright. If the output is long, it is still
+pasted whole.
+
+**FINISH CONDITION — this task adds NOTHING.** `cargo test` must report **1122**,
+not 1123 or more. A rising count means you added scope you were not asked for. No
+file under `src/` may change. All four gates stay green.
