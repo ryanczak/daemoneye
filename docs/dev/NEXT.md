@@ -1,33 +1,29 @@
 # NEXT
 
 **Active phase:
-[M11 phase-05a — search-repository-fts](milestones/M11-knowledge-index/phase-05a-search-repository-fts.md)
+[M11 phase-05b — search-repository-new-kinds](milestones/M11-knowledge-index/phase-05b-search-repository-new-kinds.md)
 (`todo`, drafted 2026-08-05, running under `/rexymcp:auto`).**
 
-[M11 phase-04 — recall-context-fts](milestones/M11-knowledge-index/phase-04-recall-context-fts.md)
-**approved 2026-08-05** (`approved_first_try`, zero bounces — the milestone's
-first). Query mode is BM25-ranked over `turns` with the 8-match ceiling gone,
-excerpts come from the field that actually matched, range mode renders
-`tool_results` bodies, and `scope: "all"` searches every session with hits
-labeled by session id.
+[M11 phase-05a — search-repository-fts](milestones/M11-knowledge-index/phase-05a-search-repository-fts.md)
+**done 2026-08-05 by architect takeover** after 3 `hard_fail`s (all
+`NoProgressStall`) and 2 assists. The executor's design was sound and was kept;
+three bugs were fixed at takeover, two of them one class — **an index hit
+resolved to a path without its file extension**, so `read_to_string` failed and
+every hit was silently skipped (runbooks are `<name>.md`, event segments are
+`<stem>.jsonl`), plus a de-dup key comparing `file_name()` against bare stems.
 
-**Phase 05 was split into 05a/05b** on the 02/03 precedent — see the README.
-Routing the four existing kinds through the index is the risky half (preserve
-line context, filename matching, de-duplication, the 50-cap, and the stemmed-hit
-trap); the two new corpora are independent and read more clearly alone.
+**Two calibration items from 05a, both worth keeping:**
 
-**The stemming fact both 04 and 05a depend on was executed, not assumed:**
-
-```
-PROBE05 query=restarting   hits=1     (body contains only "restart")
-PROBE05 literal substring 'restarting' in body = false
-```
-
-That is why both phases require an explicit fallback: a stemmed index hit has no
-literal substring, so a line-level scan inside the matched document finds
-nothing. Without the fallback, 05a would find the document and then throw it
-away — making search *worse* while every naive test still passed. Both specs pin
-it and 05a mutation-checks it.
+1. **Takeover was called one assist early, on purpose.** Assist 1 hit its stated
+   goal (8 compile errors → 0). Assist 2 carried a complete written diagnosis and
+   the executor stalled anyway — disproving the theory that it reliably applies a
+   stated fix. A third identical attempt had no new information behind it.
+2. **My assist-2 diagnosis was wrong and cost a run.** I named missing
+   reconcile-on-empty as the root cause from *reading* code. It was a real bug
+   and worth fixing, but it was not why the tests failed — the failing test calls
+   `index_artifact` directly, so its corpus was never empty. Running the failing
+   test first would have shown the missing `.md` immediately. **"Execute, don't
+   assert" applies to diagnosis, not just to specs.**
 
 ## The rule 03b earned: re-run a pasted transcript, never read it
 

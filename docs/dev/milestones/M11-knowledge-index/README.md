@@ -77,12 +77,12 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 03b | [sweep-deletions](phase-03b-sweep-deletions.md) — `sweep_session_archives` and `sweep_event_segments` remove the rows for files they unlink | done |
 | 04 | [recall-context-fts](phase-04-recall-context-fts.md) — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | done        |
 | 05a | [search-repository-fts](phase-05a-search-repository-fts.md) — index routing for the four existing kinds (memory/runbooks/scripts/events), stemming + ranking, output shape preserved | done |
-| 05b | search-repository-new-kinds — new kinds `turns` and `epochs` | todo |
+| 05b | [search-repository-new-kinds](phase-05b-search-repository-new-kinds.md) — new kinds `turns` and `epochs` | todo |
 | 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01,
-02a, 02b, 03a, 03b, 04 and 05a are drafted, 05b–07 are not yet.
+02a–05b are drafted, 06 and 07 are not yet.
 
 **Why 03 split into 03a/03b:** the append hooks alone carry the archive-seed
 case (one `fs::copy` can add many lines at once, none of which pass through the
