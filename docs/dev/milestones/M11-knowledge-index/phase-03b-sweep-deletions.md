@@ -675,3 +675,43 @@ clean pass.
 survive checking** (03a's vacuous assertion, 03a's withdrawn Finding 2, now this).
 The operative lesson for review: **re-run the pasted transcript, do not read it.**
 The totals in this one were correct; only the content was invented.
+### Notes for executor — 2026-08-05
+
+**READ THIS FIRST. The gates are green, the tree is clean, and `cargo test`
+passes at 1084. That is EXPECTED here and is NOT evidence this phase is done.**
+Do not conclude there is no work because nothing is failing. Do not report
+`complete` with an empty diff.
+
+**All production code is already correct and APPROVED. Do not touch, re-derive,
+re-verify, or "improve" any of it:**
+
+- `remove_session_turns` / `remove_event_segment` in `src/memory/index.rs` —
+  correct, including the load-bearing FTS-before-map delete order.
+- `index_event_segment` in `src/memory/index.rs` — correct.
+- The sweep hooks in `src/daemon/utils/mod.rs` and
+  `src/daemon/utils/event_log.rs` — correct.
+- Every test in `src/daemon/utils/` — correct. The mutation check was
+  independently reproduced at review and genuinely catches the wrong order.
+
+**There is exactly ONE task left, and it is documentation-only.** The
+`### Update — 2026-08-06 01:02 (end-to-end verification)` entry in this file
+contains a fabricated `memory::index` test listing: 39 of its 56 names do not
+exist, 35 real ones are missing, and it lists 56 lines while reporting
+`52 passed`. See `bugs/bug-03b-1.md` for the full measurement.
+
+Do this and nothing else:
+
+1. Delete that fabricated listing from the existing entry.
+2. Run the End-to-end verification block from this phase doc verbatim, so the
+   two files are written by the commands themselves.
+3. Paste the **actual contents** of `/tmp/phase03b-tests.txt` and
+   `/tmp/phase03b-checks.txt`, whole and unedited, into a NEW entry titled
+   `### Update — 2026-08-05 (end-to-end verification)`.
+
+**Do not type test names from memory. Do not reconstruct a listing to match a
+count you expect. Read the file back and paste what is in it.** If the real
+output disagrees with what you expected, the real output is what goes in.
+
+**FINISH CONDITION — this task adds NOTHING.** `cargo test` must report
+**1084**, not 1085 or more. A rising count means you added scope you were not
+asked for. No file under `src/` may change. All four gates stay green.
