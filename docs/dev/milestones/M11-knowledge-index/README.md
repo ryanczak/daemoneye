@@ -76,18 +76,26 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 03a | [incremental-append-hooks](phase-03a-incremental-append-hooks.md) — best-effort index writes at the archive / event / epoch / artifact choke points, including the archive-seed case | done |
 | 03b | [sweep-deletions](phase-03b-sweep-deletions.md) — `sweep_session_archives` and `sweep_event_segments` remove the rows for files they unlink | done |
 | 04 | [recall-context-fts](phase-04-recall-context-fts.md) — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | done        |
-| 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
+| 05a | [search-repository-fts](phase-05a-search-repository-fts.md) — index routing for the four existing kinds (memory/runbooks/scripts/events), stemming + ranking, output shape preserved | todo |
+| 05b | search-repository-new-kinds — new kinds `turns` and `epochs` | todo |
 | 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; phases 01,
-02a, 02b, 03a, 03b and 04 are drafted, 05–07 are not yet.
+02a, 02b, 03a, 03b, 04 and 05a are drafted, 05b–07 are not yet.
 
 **Why 03 split into 03a/03b:** the append hooks alone carry the archive-seed
 case (one `fs::copy` can add many lines at once, none of which pass through the
 append path) plus a scanner extraction so the seed and the reconcile share one
 code path. Sweep deletion is independent of all of that and reads more clearly
 on its own. Same a/b convention as 02, so 04–07 keep their ids.
+
+**Why 05 split into 05a/05b:** routing the four existing kinds through the index
+is the risky half — it must preserve line-level context output, filename
+matching, de-duplication and the 50-result cap, and it carries the stemmed-hit
+trap (an index hit whose document contains no literal substring). Adding two new
+corpora on top of that in one phase compounds the risk for no benefit. Same a/b
+convention as 02 and 03, so 06 and 07 keep their ids.
 
 **Why 02 split into 02a/02b:** the original phase 02 covered the schema plus
 `reconcile_index()` over all five corpora. The two contentless corpora need

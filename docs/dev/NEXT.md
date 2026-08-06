@@ -1,20 +1,33 @@
 # NEXT
 
 **Active phase:
-[M11 phase-04 — recall-context-fts](milestones/M11-knowledge-index/phase-04-recall-context-fts.md)
+[M11 phase-05a — search-repository-fts](milestones/M11-knowledge-index/phase-05a-search-repository-fts.md)
 (`todo`, drafted 2026-08-05, running under `/rexymcp:auto`).**
 
-Three defects were **reproduced on this build** before the spec asserted them
-(probe added, run, reverted): query mode excerpts `msg.content` even when the
-match was in a `tool_results` body, so the matched text never appears; range mode
-drops tool-result bodies entirely; and `MAX_MATCHES = 8` caps hits in file order
-with no ranking. Real output for the first two is quoted in the phase doc.
+[M11 phase-04 — recall-context-fts](milestones/M11-knowledge-index/phase-04-recall-context-fts.md)
+**approved 2026-08-05** (`approved_first_try`, zero bounces — the milestone's
+first). Query mode is BM25-ranked over `turns` with the 8-match ceiling gone,
+excerpts come from the field that actually matched, range mode renders
+`tool_results` bodies, and `scope: "all"` searches every session with hits
+labeled by session id.
 
-A fourth fact was executed and changed the spec: `fts5_search` is memory-only SQL
-(`FROM memories`), so phase 04 writes a separate `search_turns` rather than
-generalising it. And the `LimitsConfig::default()` hardcode the milestone README
-floated folding in here is **out of scope** — `SessionCtx` carries no config, so
-it would change `execute_tool_call`'s signature and every call site.
+**Phase 05 was split into 05a/05b** on the 02/03 precedent — see the README.
+Routing the four existing kinds through the index is the risky half (preserve
+line context, filename matching, de-duplication, the 50-cap, and the stemmed-hit
+trap); the two new corpora are independent and read more clearly alone.
+
+**The stemming fact both 04 and 05a depend on was executed, not assumed:**
+
+```
+PROBE05 query=restarting   hits=1     (body contains only "restart")
+PROBE05 literal substring 'restarting' in body = false
+```
+
+That is why both phases require an explicit fallback: a stemmed index hit has no
+literal substring, so a line-level scan inside the matched document finds
+nothing. Without the fallback, 05a would find the document and then throw it
+away — making search *worse* while every naive test still passed. Both specs pin
+it and 05a mutation-checks it.
 
 ## The rule 03b earned: re-run a pasted transcript, never read it
 
