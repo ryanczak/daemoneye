@@ -2,35 +2,19 @@
 
 **Active phase:
 [M11 phase-05c — reconcile-scope-fix](milestones/M11-knowledge-index/phase-05c-reconcile-scope-fix.md)
-(`todo`, **BLOCKED — needs a PE design decision before dispatch**).**
+(`todo`, **unblocked 2026-08-06 — PE chose Option 1, per-corpus reconcile**).**
+`/rexymcp:auto` resumed.
 
-`/rexymcp:auto` ran 2026-08-05 and **stopped here on a blocker**, having landed
-three phases: 04 (`approved_first_try`), 05a and 05b (both architect takeover).
+The blocker is resolved: `open_and_reconcile_if_empty(table)` will rebuild only
+that corpus. `reconcile_index()` keeps its exact contract (same signature, same
+`ReconcileReport`, same order) and becomes a thin caller of five extracted
+per-corpus rebuild functions, each owning its own DELETE. The paired tables are
+the trap — `turns`/`turns_map` and `events`/`events_map` are one corpus each and
+must be cleared together.
 
-## The blocker — a production bug in already-approved work
-
-[bug-05c-1](milestones/M11-knowledge-index/bugs/bug-05c-1.md), severity major.
-**A `search_repository` call over an empty corpus wipes every other corpus.**
-`open_and_reconcile_if_empty` fires `reconcile_index()`, which clears all seven
-tables and rebuilds from disk — so rows with no reproducible on-disk source
-(epochs especially) are destroyed. Reproduced:
-
-```
-PROBE all(before)                -> 0 hits
-PROBE turns AFTER an 'all' call  -> 0 hits   ← findable immediately before
-PROBE kind=turns (re-seeded)     -> 1 hits
-```
-
-It triggers in the normal state of a fresh install (no memories, no runbooks, or
-right after a `SCHEMA_VERSION` bump) and is silent. **It is my defect** — phase
-05a's takeover shipped it.
-
-**Why the loop stopped rather than fixing it:** the fix changes
-`reconcile_index()`'s contract and there are two viable shapes — scope the
-reconcile per corpus (root fix, larger, must keep `turns_map` consistent) or drop
-reconcile-on-empty from the three newer searches (surgical, loses self-healing).
-Both are argued in the phase doc. Choosing is a design decision, and **05c should
-land before 06**, which reads the index every turn.
+**The acceptance test that proves it:** phase 05b's guard test currently seeds
+*every* corpus as a workaround. 05c must delete that seeding and the test must
+still fail under mutation — that is the end-to-end proof the wipe is gone.
 
 ## Calibration earned this run
 

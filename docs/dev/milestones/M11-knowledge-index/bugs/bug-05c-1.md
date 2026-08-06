@@ -1,7 +1,7 @@
 # Bug 1 on phase-05c: a search over an empty corpus wipes every other corpus
 
 **Severity:** major
-**Status:** open — this bug IS the specification for phase 05c
+**Status:** open — **PE chose Option 1 (per-corpus reconcile) on 2026-08-06**; spec written into phase-05c, awaiting dispatch
 **Filed:** 2026-08-05
 **Introduced by:** phase-05a (architect takeover — this is my defect, not the
 executor's)
