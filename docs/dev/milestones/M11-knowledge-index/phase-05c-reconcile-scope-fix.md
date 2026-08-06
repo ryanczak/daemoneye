@@ -1,7 +1,7 @@
 # Phase 05c: reconcile scope — an empty corpus must not wipe the others
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced — see [bug-05c-2](bugs/bug-05c-2.md))
 **Depends on:** phase-05b (done — surfaced the defect)
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -483,3 +483,27 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 7897e6da290a6554ccd915dc3c3c45dd16f208ef
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+<!-- entries appended below this line -->
+
+### Review verdict — 2026-08-06
+
+- **Verdict:** bounced
+- **Bounces:** 1
+- **Executor:** Claude Sonnet 5 (review)
+- **Scope deviations:** none
+- **Calibration:** none
+
+Independent re-verification confirmed the code fix is correct: all four gates
+green (`cargo fmt --all --check`, `cargo build`, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test` — 1122 passed), both prescribed
+mutation checks reproduce the described failure and restore cleanly, the
+phase-05b workaround is genuinely removed from `all_kind_excludes_turns_and_epochs`
+(and that removal is itself mutation-proven), `reconcile_index()` is never
+called from `open_and_reconcile_if_empty`, the `ReconcileReport` contract is
+unchanged (same 5-entry `per_corpus` order), and `rebuild_turns`/`rebuild_events`
+each clear both halves of their paired tables. See
+[bug-05c-2](bugs/bug-05c-2.md) for the bounce reason: the entry's
+end-to-end verification is a paraphrased summary and a truncated grep, not the
+mechanical, verbatim transcript `STANDARDS.md` §1 and the phase doc's own
+"paste whole and unedited" instruction require. Documentation-only fix.
