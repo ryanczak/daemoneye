@@ -1,14 +1,20 @@
 # NEXT
 
-**Active phase: none drafted.** M11 phases 01–03b are all `done`; **04–07 are
-not yet drafted.** Draft the next with `/rexymcp:architect next`.
+**Active phase:
+[M11 phase-04 — recall-context-fts](milestones/M11-knowledge-index/phase-04-recall-context-fts.md)
+(`todo`, drafted 2026-08-05, running under `/rexymcp:auto`).**
 
-[M11 phase-03b — sweep-deletions](milestones/M11-knowledge-index/phase-03b-sweep-deletions.md)
-**approved 2026-08-05** (`approved_after_1`; one bounce,
-[bug-03b-1](milestones/M11-knowledge-index/bugs/bug-03b-1.md), plus one
-`hard_fail` resolved by resume). Retention sweeps now remove the index rows for
-the archives and event segments they unlink, completing the milestone's
-incremental-consistency criterion together with 03a.
+Three defects were **reproduced on this build** before the spec asserted them
+(probe added, run, reverted): query mode excerpts `msg.content` even when the
+match was in a `tool_results` body, so the matched text never appears; range mode
+drops tool-result bodies entirely; and `MAX_MATCHES = 8` caps hits in file order
+with no ranking. Real output for the first two is quoted in the phase doc.
+
+A fourth fact was executed and changed the spec: `fts5_search` is memory-only SQL
+(`FROM memories`), so phase 04 writes a separate `search_turns` rather than
+generalising it. And the `LimitsConfig::default()` hardcode the milestone README
+floated folding in here is **out of scope** — `SessionCtx` carries no config, so
+it would change `execute_tool_call`'s signature and every call site.
 
 ## The rule 03b earned: re-run a pasted transcript, never read it
 
