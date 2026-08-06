@@ -75,7 +75,7 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 02b | [contentless-corpora](phase-02b-contentless-corpora.md) — populate `turns` + `events` with byte-offset sidecar maps; `reconcile_index()` coverage for both | done |
 | 03a | [incremental-append-hooks](phase-03a-incremental-append-hooks.md) — best-effort index writes at the archive / event / epoch / artifact choke points, including the archive-seed case | done |
 | 03b | [sweep-deletions](phase-03b-sweep-deletions.md) — `sweep_session_archives` and `sweep_event_segments` remove the rows for files they unlink | done |
-| 04 | [recall-context-fts](phase-04-recall-context-fts.md) — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | review      |
+| 04 | [recall-context-fts](phase-04-recall-context-fts.md) — query mode on `turns`, range-mode `tool_results` rendering, excerpt-from-matched-field, `scope: "all"` | done        |
 | 05 | search-repository-fts — index routing for memory/runbooks/scripts/events; new kinds `turns`, `epochs` | todo |
 | 06 | prompt-scoring-fix — BM25 scores used, `(namespace, key)` merge keys, targeted reads instead of directory walks | todo |
 | 07 | situational-injections — turns/epochs lines in the dynamic block, ghost cold-start seeding, incident `relates_to` auto-linking | todo |

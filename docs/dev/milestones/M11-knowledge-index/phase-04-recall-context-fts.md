@@ -1,7 +1,7 @@
 # Phase 04: recall_context on FTS — ranked query mode, correct excerpts, cross-session scope
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-03b (done — the `turns` corpus is populated incrementally
 and swept on retention)
 **Estimated diff:** ~400 lines
@@ -563,3 +563,96 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 8f61ad802fb36cb06450be3fecea9ae29b8fba56
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-05
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** none
+
+**Independent re-run of all four gates** (separate invocations, not chained):
+`cargo fmt --all --check` exit 0; `cargo build` exit 0 (no warnings); `cargo
+clippy --all-targets --all-features -- -D warnings` exit 0; `cargo test` exit 0
+— `test result: ok. 1093 passed; 0 failed; 0 ignored` (lib) plus 6 + 4 + 30 + 9
+across the four integration binaries, matching the server-authored gate
+capture.
+
+**DoD walk:** no `TODO`/`FIXME`/`XXX`, no `dbg!`/`println!`, no new `unsafe`,
+no new `#[allow]`/`#[ignore]` in the diff (`2de52ae..8f61ad8`). The ten new
+`.unwrap()` call sites are all inside `#[cfg(test)] mod tests` in
+`src/daemon/context/recall.rs` (module starts at line 301; every new `.unwrap()`
+is at line ≥359) — none in production code. The single production `.unwrap()`
+at `recall.rs:80` (`args.query.as_ref().unwrap()`) is unchanged by this diff
+(pre-existing, guarded by the `has_query`/`has_range` branch above it).
+
+**Mutation check, reproduced independently:** changed both `ORDER BY
+bm25(turns)` occurrences in `src/memory/index.rs` to `ORDER BY m.turn`, ran
+`query_results_are_bm25_ordered_not_file_ordered` — **failed**:
+```
+thread '...query_results_are_bm25_ordered_not_file_ordered' panicked at src/daemon/context/recall.rs:776:9:
+BM25 best match (turn 3, written last) should appear first, got: ["1 (user): the server is online", "2 (user): the service needs a restart", "3 (user): the server crashed and the server needs a restart and the server rebooted"]
+test result: FAILED. 0 passed; 1 failed
+```
+Restored the file, re-ran — **passed**: `test result: ok. 1 passed; 0 failed`.
+`git status` confirmed clean after restore.
+
+**Transcript-diff verification** (live run vs. the pasted end-to-end entry,
+`comm` against `cargo test --lib <module> | grep '^test ' | sed 's/ \.\.\..*//' | sort`):
+
+- `daemon::context::recall`: 19 claimed, 19 real, **0 fabricated, 0 omitted** —
+  exact match.
+- `memory::index`: 49 claimed, 52 real, **0 fabricated, 3 omitted**
+  (`stale_schema_version_is_recreated`, `stale_v1_database_is_dropped_and_recreated`,
+  `unindexed_columns_filter_but_do_not_match` — all three pre-existing,
+  pre-M11 tests unrelated to this phase's diff, confirmed present at commit
+  `8f61ad8` via `git show 8f61ad8:src/memory/index.rs`). The block's header
+  (`running 52 tests`) and footer (`52 passed`) are both accurate for the true
+  count even though 3 of the 52 individual lines are missing from the paste —
+  no name is invented, no total is wrong, only a subset of lines dropped.
+  Per the precedent recorded in `bug-03b-1.md`'s resolution (a 2-of-94
+  omission with a correct total, "recorded rather than bounced" because it
+  "make[s] no false claim"), this is the same shape and is recorded here
+  rather than bounced.
+
+**Acceptance criteria** — all nine checked concretely, not accepted on the
+executor's say-so:
+- Defect 1 (tool-result excerpt): `choose_excerpt` (`recall.rs:206`) implements
+  the exact 4-step resolution order from the spec, including the stemming-only
+  fallback (`build_excerpt(&msg.content, &msg.content, EXCERPT_HALF)`, which
+  self-matches at byte 0 to excerpt from the head). Test
+  `query_excerpt_comes_from_the_matched_tool_result` asserts the matched text
+  (`KERNELPANIC`) appears in output — verified passing.
+- Defect 2 (range mode tool results): `range_query` (`recall.rs:113-118`)
+  appends `tool_result {name}: {content}` beneath the message line; empty
+  `tool_results` adds nothing. `range_mode_renders_tool_result_bodies` passes.
+- `MAX_MATCHES` deleted (confirmed absent by grep); cap is the `100` argument
+  to `search_turns`. `query_mode_returns_more_than_eight_matches` passes with
+  12 fixture turns.
+- BM25 ordering: pinned by the mutation check above.
+- `scope: "all"` cross-session labeling: `scope_all_finds_another_session_and_labels_it`
+  asserts both the foreign text and the `[session <id>]` prefix — passes.
+- Default scope excludes other sessions: `default_scope_excludes_other_sessions`
+  asserts the foreign session's prefix is **absent** — passes.
+- Unknown scope value (`"everything"`) behaves as current:
+  `unknown_scope_value_behaves_as_current` passes.
+- Stemming-only match renders a block: `stemmed_only_match_still_renders_a_block`
+  passes.
+- Range mode ignores scope: `range_mode_ignores_scope` (scope `"all"` on a
+  range query) passes.
+- Full tool-chain wiring (`defs.rs`, `args.rs`, `pending.rs`,
+  `executor/mod.rs`) confirmed present and correctly threaded by direct
+  inspection. `CLAUDE.md`'s `recall_context` row updated to mention `scope`;
+  tool-count line untouched (correct — no tool added). The out-of-scope
+  `LimitsConfig::default()` line at `executor/mod.rs:538` (now `540` after the
+  +2 diff) is untouched, as required.
+
+All nine new tests were spot-checked for being real assertions on rendered
+output (including four negative assertions — text must be *absent*), not
+trivial or `unwrap_or_default`-masked checks.
+
+**Verdict: approved_first_try.** No production defect found; the one
+transcript imperfection (3 omitted, non-fabricated lines with a correct
+header/footer count) matches an established in-milestone precedent for
+"recorded, not bounced."
