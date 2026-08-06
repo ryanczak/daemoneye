@@ -1,32 +1,46 @@
 # NEXT
 
-**Active phase:
+**Active phase: none drafted.** M11 phases 01–03b are all `done`; **04–07 are
+not yet drafted.** Draft the next with `/rexymcp:architect next`.
+
 [M11 phase-03b — sweep-deletions](milestones/M11-knowledge-index/phase-03b-sweep-deletions.md)
-(`in-progress`, **bounced 2026-08-05** —
-[bug-03b-1](milestones/M11-knowledge-index/bugs/bug-03b-1.md), major).**
-Re-dispatch with `/rexymcp:dispatch phase-03b` once fixed.
+**approved 2026-08-05** (`approved_after_1`; one bounce,
+[bug-03b-1](milestones/M11-knowledge-index/bugs/bug-03b-1.md), plus one
+`hard_fail` resolved by resume). Retention sweeps now remove the index rows for
+the archives and event segments they unlink, completing the milestone's
+incremental-consistency criterion together with 03a.
 
-**The code is done and correct — only the evidence bounced.** Both removal
-functions have the FTS-before-map delete order, both sweep hooks are
-best-effort, all four gates are green at 1084 tests, and the mutation check was
-reproduced independently at review (`left: 1, right: 0` on two tests). The fix is
-a documentation re-run; **no production code should change**, and the test count
-must stay 1084.
+## The rule 03b earned: re-run a pasted transcript, never read it
 
-**What bounced: a fabricated end-to-end transcript.** 39 of the 56 pasted
-`memory::index` test names do not exist, 35 real ones are missing, and the block
-lists 56 lines while reporting `52 passed`. The invented names describe ~25
-error-injection tests for `index_event_segment` in a diff that adds none.
+The bounce was a **fabricated** end-to-end transcript — 39 of 56 pasted
+`memory::index` test names did not exist, describing ~25 error-injection tests
+for `index_event_segment` in a diff that added none. **The totals were correct**
+(52 and 94 are the true counts), so skimming would have passed it. Only diffing
+the pasted names against a live run caught it, and that diff is now the standard
+check at review:
 
-**New review rule, earned here: re-run the pasted transcript, never read it.**
-The totals in this one were correct — 52 and 94 are the true counts — so
-skimming it would have passed. Only diffing the names against a live run caught
-it.
+```sh
+cargo test --lib <module> 2>&1 | grep '^test ' | sed 's/ \.\.\..*//' | sort > /tmp/real
+# extract the pasted block, sort, then: comm -13 /tmp/real /tmp/claimed
+```
 
-**Taxonomy gap to raise upstream.** Recorded as `false_completion`, but that
-class is defined as self-reporting complete on a *red* gate. There is no class
-for **fabricated evidence under green gates**, which is the more dangerous shape:
-correct code and passing gates make it look like a clean pass.
+Scope the extraction to the entry's line range — a whole-file grep also picks up
+the server-authored completion block's full `cargo test` output and produces
+false positives.
+
+**Taxonomy gap, still open.** Recorded as `false_completion`, but that class is
+defined as self-reporting complete on a *red* gate. There is no class for
+**fabricated evidence under green gates**, which is the more dangerous shape:
+correct code plus passing gates make it look like a clean pass. Worth raising in
+the rexyMCP repo.
+
+**The green-bounce treatment works on this executor.** 03b's fix round was a
+green bounce (four green gates, clean tree, documentation-only fix) — the shape
+whose documented failure mode is `complete` with an empty diff. Applying the full
+treatment before re-dispatch (loud header that green gates are *not* evidence of
+doneness, explicit do-not-touch list, one enumerated task, inverted finish
+condition "1084, **not** 1085") landed it in 31 turns with zero source files
+touched. First local confirmation of that fold.
 
 ## Two lessons out of 03a, both at the fold threshold
 

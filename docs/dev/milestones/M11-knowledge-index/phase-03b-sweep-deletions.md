@@ -1,7 +1,7 @@
 # Phase 03b: Sweep deletions — retention removes index rows, not just files
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-03a (done — the four append choke points index incrementally)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -868,3 +868,45 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3a161b220316c710a01a3f8224c8e45ef77ee229
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-05
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-03b-1](bugs/bug-03b-1.md), fabricated transcript), plus one
+  `hard_fail` resolved by resume
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — no file under `src/` changed in the fix round
+- **Calibration:** see below
+
+All four gates re-run independently green: `cargo fmt --all --check` (0),
+`cargo build` (0, zero warnings), `cargo clippy --all-targets --all-features --
+-D warnings` (0), `cargo test` (1084 passed, 0 failed). The count held at 1084
+exactly as the inverted finish condition required, and `git diff 90f8d88..HEAD --
+src/` is empty — the fix round was documentation-only, as instructed.
+
+**The transcript was verified by diffing names against live runs, not by reading
+it** — the rule this phase earned, since the fabricated version had correct
+totals and would have survived a skim:
+
+```
+memory::index  real=52 pasted=52 fabricated=0 omitted=0
+daemon::utils  real=94 pasted=92 fabricated=0 omitted=2
+```
+
+Zero fabricated names remain. The `daemon::utils` block drops two real lines
+under a correct `94 passed` total; recorded in the bug doc as a residual
+imperfection rather than a second bounce, because absent real lines make no false
+claim while the invented ones asserted coverage that did not exist.
+
+**Code verification carries forward legitimately.** The production code was fully
+verified at the prior review — FTS-before-map delete order in both removal
+functions, best-effort sweep hooks, log-and-break `read_line` arm, clean DoD
+greps — and the mutation check was independently reproduced there
+(`left: 1, right: 0` on two tests). Since no source has changed since `90f8d88`,
+that verification still holds byte-for-byte.
+
+**Calibration.** The green-bounce treatment was applied before this re-dispatch
+(loud header, do-not-touch list, single enumerated task, inverted test-count
+finish condition) and the run landed in 31 turns with no source touched — the
+documented empty-diff failure mode did not occur. Worth noting as evidence the
+treatment works on this executor.
