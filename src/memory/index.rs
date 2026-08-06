@@ -444,6 +444,69 @@ pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
     rows.filter_map(|r| r.ok()).collect()
 }
 
+/// A hit from an epochs FTS search.
+pub struct EpochHit {
+    pub session_id: String,
+    pub seq: i64,
+    #[allow(dead_code)]
+    pub kind: String,
+    pub body: String,
+    #[allow(dead_code)]
+    pub score: f64,
+}
+
+/// Search the `epochs` FTS corpus. Returns up to `limit` hits ordered by BM25
+/// (best first). The epochs table is stored-content, so `body` is selected
+/// directly — no offset, no file round-trip.
+///
+/// Best-effort: any failure logs and returns an empty `Vec`.
+pub fn search_epochs(query: &str, limit: usize) -> Vec<EpochHit> {
+    let Some(expr) = build_match_expr(query) else {
+        return Vec::new();
+    };
+
+    let conn = match open_and_reconcile_if_empty("epochs") {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+
+    let sql = "SELECT session_id, seq, kind, body, bm25(epochs)
+               FROM epochs
+               WHERE epochs MATCH ?1
+               ORDER BY bm25(epochs)
+               LIMIT ?2";
+    let params = [expr, limit.to_string()];
+
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("search_epochs prepare failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    let rows = match stmt.query_map(
+        rusqlite::params_from_iter(params.iter().map(|b| &**b)),
+        |r| {
+            Ok(EpochHit {
+                session_id: r.get(0)?,
+                seq: r.get(1)?,
+                kind: r.get(2)?,
+                body: r.get(3)?,
+                score: r.get(4)?,
+            })
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::warn!("search_epochs query failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    rows.filter_map(|r| r.ok()).collect()
+}
+
 /// Scan one archive file and insert its turn rows into the index.
 ///
 /// Takes a `&rusqlite::Connection` so it can be called with either a

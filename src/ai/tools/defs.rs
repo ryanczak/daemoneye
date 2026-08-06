@@ -550,9 +550,11 @@ pub static TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "search_repository",
-        description: "Search across runbooks, scripts, memory, or the event log for a keyword. \
-                      Matching uses stemming (e.g. 'restarting' finds 'restart') and results \
-                      are relevance-ranked. kind: 'runbooks' | 'scripts' | 'memory' | 'events' | 'all'.",
+        description: "Search across runbooks, scripts, memory, the event log, archived turns, \
+                      or epoch narratives for a keyword. Matching uses stemming (e.g. \
+                      'restarting' finds 'restart') and results are relevance-ranked. \
+                      kind: 'runbooks' | 'scripts' | 'memory' | 'events' | 'turns' | 'epochs' | 'all'. \
+                      Note: 'turns' and 'epochs' are opt-in and are NOT included in 'all'.",
         params: &[
             ParamDef {
                 name: "query",
@@ -564,7 +566,8 @@ pub static TOOLS: &[ToolDef] = &[
                 name: "kind",
                 ty: ParamTy::Str,
                 required: true,
-                description: "'runbooks', 'scripts', 'memory', 'events', or 'all'.",
+                description: "'runbooks', 'scripts', 'memory', 'events', 'turns', 'epochs', or 'all'. \
+                              'turns' and 'epochs' are opt-in and not included in 'all'.",
             },
         ],
         deferred_group: None,

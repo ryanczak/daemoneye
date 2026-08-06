@@ -1,29 +1,59 @@
 # NEXT
 
 **Active phase:
-[M11 phase-05b — search-repository-new-kinds](milestones/M11-knowledge-index/phase-05b-search-repository-new-kinds.md)
-(`todo`, drafted 2026-08-05, running under `/rexymcp:auto`).**
+[M11 phase-05c — reconcile-scope-fix](milestones/M11-knowledge-index/phase-05c-reconcile-scope-fix.md)
+(`todo`, **BLOCKED — needs a PE design decision before dispatch**).**
 
-[M11 phase-05a — search-repository-fts](milestones/M11-knowledge-index/phase-05a-search-repository-fts.md)
-**done 2026-08-05 by architect takeover** after 3 `hard_fail`s (all
-`NoProgressStall`) and 2 assists. The executor's design was sound and was kept;
-three bugs were fixed at takeover, two of them one class — **an index hit
-resolved to a path without its file extension**, so `read_to_string` failed and
-every hit was silently skipped (runbooks are `<name>.md`, event segments are
-`<stem>.jsonl`), plus a de-dup key comparing `file_name()` against bare stems.
+`/rexymcp:auto` ran 2026-08-05 and **stopped here on a blocker**, having landed
+three phases: 04 (`approved_first_try`), 05a and 05b (both architect takeover).
 
-**Two calibration items from 05a, both worth keeping:**
+## The blocker — a production bug in already-approved work
 
-1. **Takeover was called one assist early, on purpose.** Assist 1 hit its stated
-   goal (8 compile errors → 0). Assist 2 carried a complete written diagnosis and
-   the executor stalled anyway — disproving the theory that it reliably applies a
-   stated fix. A third identical attempt had no new information behind it.
-2. **My assist-2 diagnosis was wrong and cost a run.** I named missing
-   reconcile-on-empty as the root cause from *reading* code. It was a real bug
-   and worth fixing, but it was not why the tests failed — the failing test calls
-   `index_artifact` directly, so its corpus was never empty. Running the failing
-   test first would have shown the missing `.md` immediately. **"Execute, don't
-   assert" applies to diagnosis, not just to specs.**
+[bug-05c-1](milestones/M11-knowledge-index/bugs/bug-05c-1.md), severity major.
+**A `search_repository` call over an empty corpus wipes every other corpus.**
+`open_and_reconcile_if_empty` fires `reconcile_index()`, which clears all seven
+tables and rebuilds from disk — so rows with no reproducible on-disk source
+(epochs especially) are destroyed. Reproduced:
+
+```
+PROBE all(before)                -> 0 hits
+PROBE turns AFTER an 'all' call  -> 0 hits   ← findable immediately before
+PROBE kind=turns (re-seeded)     -> 1 hits
+```
+
+It triggers in the normal state of a fresh install (no memories, no runbooks, or
+right after a `SCHEMA_VERSION` bump) and is silent. **It is my defect** — phase
+05a's takeover shipped it.
+
+**Why the loop stopped rather than fixing it:** the fix changes
+`reconcile_index()`'s contract and there are two viable shapes — scope the
+reconcile per corpus (root fix, larger, must keep `turns_map` consistent) or drop
+reconcile-on-empty from the three newer searches (surgical, loses self-healing).
+Both are argued in the phase doc. Choosing is a design decision, and **05c should
+land before 06**, which reads the index every turn.
+
+## Calibration earned this run
+
+1. **A mutation check the executor performs on itself is not trustworthy.** On
+   05b it applied the mutation and failed to restore it *twice* — once rewriting
+   the guard test to assert the mutated behavior, once leaving the mutation in
+   shipped code after an explicit two-line undo instruction. The phase-doc
+   instruction is necessary but not sufficient; **the restore must be verified at
+   review by grepping the shipped source.** Third occurrence of self-reported
+   verification not surviving checking (03b fabricated transcript, 05a untested
+   diagnosis, 05b unreverted mutation).
+2. **"Verify the guard is not vacuous" belongs inside every exclusion criterion.**
+   05b's `"all"`-excludes-turns test passed *with the mutation applied* — it
+   proved nothing, because an unrelated empty corpus had silently wiped its
+   fixture. Absence assertions pass trivially whenever the fixture is empty for
+   any reason. This is the second occurrence (03a's `line.contains("turn")` was
+   the first) — **one more and it folds into WORKFLOW.md.**
+3. **"Execute, don't assert" applies to diagnosis.** My 05a assist-2 root cause
+   was derived from reading code and was wrong; it cost a run. Running the failing
+   test first would have shown the real cause immediately.
+4. **The read-only stall is now at 5 occurrences** across 03a, 05a (×3) and 05b
+   (×2). Well past the fold threshold, but the remedy is runtime-side in the
+   rexyMCP governor and out of bounds from this repo.
 
 ## The rule 03b earned: re-run a pasted transcript, never read it
 

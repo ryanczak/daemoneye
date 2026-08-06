@@ -58,6 +58,12 @@ pub fn search_repository_with_namespaces(
         "events" => {
             search_events_fts(query, &query_lower, context_lines, &mut results);
         }
+        "turns" => {
+            search_turns_fts(query, &mut results);
+        }
+        "epochs" => {
+            search_epochs_fts(query, &mut results);
+        }
         "all" => {
             // Memory
             search_memory_fts(query, &query_lower, context_lines, namespaces, &mut results);
@@ -441,6 +447,82 @@ fn search_events_fts(
     // This preserves backward compatibility for unindexed events
     if results.len() < MAX_RESULTS {
         search_events_in_segments(query_lower, context_lines, results);
+    }
+}
+
+/// Search the `turns` FTS corpus and resolve hits through the archive files.
+fn search_turns_fts(query: &str, results: &mut Vec<SearchResult>) {
+    use crate::ai::types::Message;
+
+    let hits = crate::memory::index::search_turns(query, MAX_RESULTS, None);
+    for hit in hits {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+
+        let archive_path = crate::daemon::session::archive_file(&hit.session_id);
+        let line = read_line_at_offset(&archive_path, hit.offset as u64);
+        if line.is_empty() {
+            log::warn!(
+                "search_turns_fts: could not read line at offset {} for session {}",
+                hit.offset,
+                hit.session_id
+            );
+            continue;
+        }
+
+        let msg: Message = match serde_json::from_str(line.trim_end()) {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!(
+                    "search_turns_fts: failed to deserialize message at offset {} for session {}: {e}",
+                    hit.offset,
+                    hit.session_id
+                );
+                continue;
+            }
+        };
+
+        // Build matched_line from content + tool_results so a match that exists
+        // only in a tool result is visible (same fix as phase 04 for recall_context).
+        let mut matched_line = msg.content.clone();
+        if let Some(tool_results) = &msg.tool_results {
+            for tr in tool_results {
+                if !matched_line.is_empty() {
+                    matched_line.push('\n');
+                }
+                matched_line.push_str(&tr.content);
+            }
+        }
+
+        results.push(SearchResult {
+            kind: "turns".to_string(),
+            name: format!("{} turn {}", hit.session_id, hit.turn),
+            line_number: 1,
+            matched_line,
+            context_before: Vec::new(),
+            context_after: Vec::new(),
+        });
+    }
+}
+
+/// Search the `epochs` FTS corpus. Epochs are stored-content, so no file
+/// round-trip is needed — `body` is selected directly from the index.
+fn search_epochs_fts(query: &str, results: &mut Vec<SearchResult>) {
+    let hits = crate::memory::index::search_epochs(query, MAX_RESULTS);
+    for hit in hits {
+        if results.len() >= MAX_RESULTS {
+            break;
+        }
+
+        results.push(SearchResult {
+            kind: "epochs".to_string(),
+            name: format!("{} epoch {}", hit.session_id, hit.seq),
+            line_number: 1,
+            matched_line: hit.body,
+            context_before: Vec::new(),
+            context_after: Vec::new(),
+        });
     }
 }
 
@@ -1205,6 +1287,315 @@ mod tests {
             assert!(
                 results.iter().any(|r| r.name == "deploy-checklist"),
                 "filename match should still work when index is unwritable"
+            );
+
+            std::fs::set_permissions(index_dir, original_perms).unwrap();
+        });
+    }
+
+    #[test]
+    fn turns_kind_finds_archived_turn() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let session_id = format!(
+                "test-sess-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let sessions_dir = crate::config::sessions_dir();
+            std::fs::create_dir_all(&sessions_dir).unwrap();
+
+            let archive_path = crate::daemon::session::archive_file(&session_id);
+            let line = r#"{"role":"user","content":"tell me about quokka recovery"}"#;
+            std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+
+            crate::memory::index::index_turn(&session_id, 1, 0, "tell me about quokka recovery")
+                .unwrap();
+
+            let results = search_repository("quokka recovery", "turns", 0);
+            assert!(
+                !results.is_empty(),
+                "turns search should find archived turn"
+            );
+            assert!(
+                results
+                    .iter()
+                    .any(|r| r.name.contains(&session_id) && r.name.contains("turn 1")),
+                "result name should contain session id and turn number. Got: {:?}",
+                results.iter().map(|r| &r.name).collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[test]
+    fn turns_hit_shows_tool_result_text() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let session_id = format!(
+                "test-sess-tr-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let sessions_dir = crate::config::sessions_dir();
+            std::fs::create_dir_all(&sessions_dir).unwrap();
+
+            let archive_path = crate::daemon::session::archive_file(&session_id);
+            // Message with empty content but a tool_result containing the search term
+            let line = r#"{"role":"assistant","content":"","tool_results":[{"tool_call_id":"tc1","tool_name":"disk_check","content":"disk usage at 95 percent on sda1"}]}"#;
+            std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+
+            crate::memory::index::index_turn(&session_id, 1, 0, "disk usage at 95 percent on sda1")
+                .unwrap();
+
+            let results = search_repository("disk usage", "turns", 0);
+            assert!(
+                !results.is_empty(),
+                "turns search should find a turn matching only in tool_results"
+            );
+            // The matched_line must include the tool result text
+            let matched = results.iter().find(|r| r.kind == "turns");
+            assert!(matched.is_some(), "should have a turns result");
+            assert!(
+                matched
+                    .unwrap()
+                    .matched_line
+                    .contains("disk usage at 95 percent"),
+                "matched_line must include tool result text. Got: {:?}",
+                results.iter().map(|r| &r.matched_line).collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[test]
+    fn epochs_kind_finds_narrative() {
+        let _lock = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().unwrap();
+
+        let session_id = format!(
+            "test-sess-ep-{}",
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        crate::memory::index::index_epoch(
+            &session_id,
+            1,
+            "compaction",
+            "The system experienced a cascading failure during the quokka migration",
+        )
+        .unwrap();
+
+        let results = search_repository("cascading failure", "epochs", 0);
+        assert!(
+            !results.is_empty(),
+            "epochs search should find narrative by free text"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|r| r.name.contains(&session_id) && r.name.contains("epoch 1")),
+            "result name should contain session id and seq. Got: {:?}",
+            results.iter().map(|r| &r.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn turns_results_are_rank_ordered() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let session_id = format!(
+                "test-sess-rank-t-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let sessions_dir = crate::config::sessions_dir();
+            std::fs::create_dir_all(&sessions_dir).unwrap();
+
+            let archive_path = crate::daemon::session::archive_file(&session_id);
+            // Write two lines: the weaker match first, the stronger match second.
+            // The stronger match (written last) should be returned first.
+            let weak = r#"{"role":"user","content":"the quick brown fox quokka"}"#;
+            let strong = r#"{"role":"user","content":"quokka quokka quokka quokka quokka"}"#;
+            let content = format!("{weak}\n{strong}\n");
+            std::fs::write(&archive_path, &content).unwrap();
+
+            let weak_offset = 0u64;
+            let strong_offset = (weak.len() + 1) as u64;
+
+            crate::memory::index::index_turn(
+                &session_id,
+                1,
+                weak_offset,
+                "the quick brown fox quokka",
+            )
+            .unwrap();
+            crate::memory::index::index_turn(
+                &session_id,
+                2,
+                strong_offset,
+                "quokka quokka quokka quokka quokka",
+            )
+            .unwrap();
+
+            let results = search_repository("quokka", "turns", 0);
+            assert!(results.len() >= 2, "should find both turns");
+            // The stronger match (turn 2, more occurrences of "quokka") should be first
+            assert!(
+                results[0].name.contains("turn 2"),
+                "best-ranked turn (turn 2) should come first. Got: {:?}",
+                results.iter().map(|r| &r.name).collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[test]
+    fn epochs_results_are_rank_ordered() {
+        let _lock = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().unwrap();
+
+        let session_id = format!(
+            "test-sess-rank-e-{}",
+            COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        // Write the weaker match first, the stronger match last.
+        crate::memory::index::index_epoch(
+            &session_id,
+            1,
+            "compaction",
+            "the quick brown fox quokka",
+        )
+        .unwrap();
+        crate::memory::index::index_epoch(
+            &session_id,
+            2,
+            "compaction",
+            "quokka quokka quokka quokka quokka",
+        )
+        .unwrap();
+
+        let results = search_repository("quokka", "epochs", 0);
+        assert!(results.len() >= 2, "should find both epochs");
+        // The stronger match (seq 2) should be first
+        assert!(
+            results[0].name.contains("epoch 2"),
+            "best-ranked epoch (epoch 2) should come first. Got: {:?}",
+            results.iter().map(|r| &r.name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn all_kind_excludes_turns_and_epochs() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            // Write a turn
+            let session_id = format!(
+                "test-sess-all-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            let sessions_dir = crate::config::sessions_dir();
+            std::fs::create_dir_all(&sessions_dir).unwrap();
+
+            let archive_path = crate::daemon::session::archive_file(&session_id);
+            let line = r#"{"role":"user","content":"needle in the haystack"}"#;
+            std::fs::write(&archive_path, format!("{line}\n")).unwrap();
+            crate::memory::index::index_turn(&session_id, 1, 0, "needle in the haystack").unwrap();
+
+            // Write an epoch
+            crate::memory::index::index_epoch(
+                &session_id,
+                1,
+                "compaction",
+                "needle in the haystack",
+            )
+            .unwrap();
+
+            // Seed a memory FIRST so the `memories` corpus is non-empty. Without
+            // this the "all" path hits open_and_reconcile_if_empty("memories"),
+            // which rebuilds the whole index from disk and wipes the turn/epoch
+            // rows above — making the assertions below pass vacuously.
+            // Seed EVERY corpus the "all" chain touches. Any empty corpus makes
+            // open_and_reconcile_if_empty fire a full reconcile_index(), which
+            // rebuilds from disk and wipes the turn/epoch rows above — which
+            // would make the assertions below pass vacuously. See bug-05c-1.
+            crate::memory::add_memory(
+                "all-kind-guard",
+                "needle in the haystack",
+                crate::memory::MemoryCategory::Knowledge,
+                "global",
+            )
+            .unwrap();
+            crate::memory::index::index_artifact("runbook", "guard-rb", "", "unrelated body")
+                .unwrap();
+            crate::memory::index::index_artifact("script", "guard-sc", "", "unrelated body")
+                .unwrap();
+            let ev_dir = crate::config::events_dir();
+            std::fs::create_dir_all(&ev_dir).unwrap();
+            let ev_line = r#"{"event":"guard_event","ts":"2026-01-01T00:00:00Z"}"#;
+            std::fs::write(ev_dir.join("events-20260101.jsonl"), format!("{ev_line}\n")).unwrap();
+            crate::memory::index::index_event("events-20260101", 0, "guard_event", ev_line)
+                .unwrap();
+
+            let results = search_repository("needle", "all", 0);
+            for r in &results {
+                assert!(
+                    r.kind != "turns",
+                    "kind='all' must NOT include turns. Found kind={}",
+                    r.kind
+                );
+                assert!(
+                    r.kind != "epochs",
+                    "kind='all' must NOT include epochs. Found kind={}",
+                    r.kind
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn turns_hit_with_missing_archive_is_skipped() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let session_id = format!(
+                "test-sess-missing-{}",
+                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            // Index a turn but do NOT create the archive file
+            crate::memory::index::index_turn(&session_id, 1, 0, "some content here").unwrap();
+
+            // Should not panic — the missing archive is silently skipped
+            let results = search_repository("some content", "turns", 0);
+            assert!(
+                results.is_empty(),
+                "missing archive file should produce empty results, not a panic"
+            );
+        });
+    }
+
+    #[test]
+    fn new_kinds_survive_unwritable_index() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let _ = crate::memory::index::open_index();
+            let index_path = crate::config::memory_index_path();
+            let index_dir = index_path.parent().unwrap();
+            let original_perms = std::fs::metadata(index_dir).unwrap().permissions();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(index_dir, std::fs::Permissions::from_mode(0o000))
+                    .unwrap();
+            }
+
+            // Both new kinds should return empty (not panic) when index is unwritable
+            let results = search_repository("anything", "turns", 0);
+            assert!(
+                results.is_empty(),
+                "turns should return empty on unwritable index"
+            );
+
+            let results = search_repository("anything", "epochs", 0);
+            assert!(
+                results.is_empty(),
+                "epochs should return empty on unwritable index"
             );
 
             std::fs::set_permissions(index_dir, original_perms).unwrap();
