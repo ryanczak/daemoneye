@@ -137,7 +137,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `list_panes` | core | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
 | `watch_pane` | core | Block until regex `pattern` matches pane output, or command exits, or timeout |
 | `close_background_window` | core | Close a finished background window, freeing its slot rather than waiting for cap eviction (up to 5 exist per session) |
-| `recall_context` | core | Retrieve archived turns compacted out of live context — by substring query, by turn range, or both. The answer to an `[elided: …]` placeholder or a too-coarse epoch summary. |
+| `recall_context` | core | Retrieve archived turns compacted out of live context — by BM25 query (ranked), by turn range, or both. Optional `scope: "all"` searches every session; cross-session hits are labeled. The answer to an `[elided: …]` placeholder or a too-coarse epoch summary. |
 | `load_tools` | core | Pull one or more deferred groups into the active tool set for the rest of the session. `groups` is an array of group names. |
 | `write_script` | core | Create/update a script in `~/.daemoneye/scripts/` (chmod 700); approval-gated with a diff |
 | `delete_script` | core | Delete a script; approval-gated |

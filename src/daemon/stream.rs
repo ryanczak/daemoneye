@@ -474,6 +474,7 @@ where
                     query,
                     turn_start,
                     turn_end,
+                    scope,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::RecallContext {
@@ -482,6 +483,7 @@ where
                         query,
                         turn_start,
                         turn_end,
+                        scope,
                     });
                 }
                 AiEvent::GetTerminalContext {

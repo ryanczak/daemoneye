@@ -527,6 +527,7 @@ where
             query,
             turn_start,
             turn_end,
+            scope,
             ..
         } => {
             let result = if let Some(sid) = session_id {
@@ -534,6 +535,7 @@ where
                     query: query.clone(),
                     turn_start: *turn_start,
                     turn_end: *turn_end,
+                    scope: scope.clone(),
                 };
                 let limits = crate::config::LimitsConfig::default();
                 match crate::daemon::context::recall::recall(sid, &args, &limits) {

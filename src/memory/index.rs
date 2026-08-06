@@ -233,6 +233,82 @@ pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(Strin
     rows.filter_map(|r| r.ok()).collect()
 }
 
+/// A hit from a turns FTS search.
+pub struct TurnHit {
+    pub session_id: String,
+    pub turn: i64,
+    pub offset: i64,
+    pub score: f64,
+}
+
+/// Search the `turns` FTS corpus. Returns up to `limit` hits ordered by BM25
+/// (best first). When `session_id` is `Some`, restricts to that session; when
+/// `None`, searches every session.
+///
+/// Best-effort: any failure logs and returns an empty `Vec`. Search degrading
+/// to "no hits" must never be fatal.
+pub fn search_turns(query: &str, limit: usize, session_id: Option<&str>) -> Vec<TurnHit> {
+    let Some(expr) = build_match_expr(query) else {
+        return Vec::new();
+    };
+
+    let conn = match open_index() {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("memory index open failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    let (sql, params): (&str, Vec<String>) = if let Some(sid) = session_id {
+        (
+            "SELECT m.session_id, m.turn, m.offset, bm25(turns)
+             FROM turns t JOIN turns_map m ON m.id = t.rowid
+             WHERE turns MATCH ?1 AND m.session_id = ?2
+             ORDER BY bm25(turns)
+             LIMIT ?3",
+            vec![expr, sid.to_string(), limit.to_string()],
+        )
+    } else {
+        (
+            "SELECT m.session_id, m.turn, m.offset, bm25(turns)
+             FROM turns t JOIN turns_map m ON m.id = t.rowid
+             WHERE turns MATCH ?1
+             ORDER BY bm25(turns)
+             LIMIT ?2",
+            vec![expr, limit.to_string()],
+        )
+    };
+
+    let mut stmt = match conn.prepare(sql) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("search_turns prepare failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    let rows = match stmt.query_map(
+        rusqlite::params_from_iter(params.iter().map(|b| &**b)),
+        |r| {
+            Ok(TurnHit {
+                session_id: r.get(0)?,
+                turn: r.get(1)?,
+                offset: r.get(2)?,
+                score: r.get(3)?,
+            })
+        },
+    ) {
+        Ok(rows) => rows,
+        Err(e) => {
+            log::warn!("search_turns query failed: {e:#}");
+            return Vec::new();
+        }
+    };
+
+    rows.filter_map(|r| r.ok()).collect()
+}
+
 /// Scan one archive file and insert its turn rows into the index.
 ///
 /// Takes a `&rusqlite::Connection` so it can be called with either a

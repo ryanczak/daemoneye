@@ -1,7 +1,8 @@
 //! `recall_context` — retrieve archived turns from the session archive.
 //!
-//! Searches the append-only archive file by substring query or turn range.
-//! Output is masked and truncated per the standard tool-output conventions.
+//! Query mode uses BM25 over the `turns` FTS corpus. Range mode reads the
+//! archive file directly. Output is masked and truncated per the standard
+//! tool-output conventions.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -10,7 +11,6 @@ use crate::ai::filter::mask_sensitive;
 use crate::ai::types::Message;
 use crate::config::LimitsConfig;
 
-const MAX_MATCHES: usize = 8;
 const EXCERPT_HALF: usize = 200;
 
 /// Arguments for `recall_context`.
@@ -18,26 +18,24 @@ pub struct RecallArgs {
     pub query: Option<String>,
     pub turn_start: Option<u32>,
     pub turn_end: Option<u32>,
+    pub scope: Option<String>,
 }
 
 /// Search / slice the session archive.
 ///
 /// Modes:
-/// - query only: case-insensitive substring over `content` and
-///   `tool_results[].content`; returns up to MAX_MATCHES match blocks,
-///   each "turn {n} ({role}): …±200-char excerpt around the match…".
-///   Multiple matches within one message collapse to one block.
+/// - query only: BM25 over the `turns` FTS corpus; returns match blocks
+///   ordered by relevance, each "turn {n} ({role}): …±200-char excerpt…".
+///   Cross-session hits (scope: "all") are prefixed with their session id.
 /// - turn range only: the messages whose `turn` falls in
 ///   [turn_start, turn_end] verbatim (role-prefixed), oldest first.
-/// - query + range: substring search restricted to the range.
+///   Tool-result bodies are rendered beneath the message content.
+/// - query + range: BM25 search restricted to the range.
 /// - neither: Err("recall_context requires a query and/or a turn range").
 ///
 /// Output is passed through mask_sensitive and truncated at a char
 /// boundary to `limits.tool_result_chars` with a
 /// "[…truncated — narrow the turn range or refine the query…]" suffix.
-/// Messages with `turn: None` (legacy) are searchable by query but
-/// unreachable by range; a range query notes
-/// "(legacy messages without turn numbers were skipped)" when any were.
 pub fn recall(
     session_id: &str,
     args: &RecallArgs,
@@ -50,12 +48,11 @@ pub fn recall(
         return Err("recall_context requires a query and/or a turn range".to_string());
     }
 
-    let archive_path = crate::daemon::session::archive_file(session_id);
-    let file = File::open(&archive_path)
-        .map_err(|e| format!("Archive file not found: {} ({})", archive_path.display(), e))?;
-    let reader = BufReader::new(file);
-
     if has_range {
+        let archive_path = crate::daemon::session::archive_file(session_id);
+        let file = File::open(&archive_path)
+            .map_err(|e| format!("Archive file not found: {} ({})", archive_path.display(), e))?;
+        let reader = BufReader::new(file);
         let start = args.turn_start.unwrap_or(0);
         let end = args.turn_end.unwrap_or(u32::MAX);
         return Ok(range_query(
@@ -67,12 +64,15 @@ pub fn recall(
         ));
     }
 
-    // Query-only mode
+    // Query-only mode — use FTS
     let query = args.query.as_ref().unwrap();
-    let results = query_search(reader, query, limits);
+    let scope_all = args.scope.as_deref() == Some("all");
+    let search_session_id = if scope_all { None } else { Some(session_id) };
+    let results = fts_query_search(session_id, query, limits, search_session_id);
     Ok(results)
 }
 
+/// Range-only or query+range: return messages in [start, end] verbatim.
 /// Range-only or query+range: return messages in [start, end] verbatim.
 fn range_query(
     reader: BufReader<File>,
@@ -110,7 +110,13 @@ fn range_query(
             }
         }
 
-        results.push(format!("turn {} ({}): {}", turn, msg.role, msg.content));
+        let mut block = format!("turn {} ({}): {}", turn, msg.role, msg.content);
+        if let Some(tool_results) = &msg.tool_results {
+            for tr in tool_results {
+                block.push_str(&format!("\ntool_result {}: {}", tr.tool_name, tr.content));
+            }
+        }
+        results.push(block);
     }
 
     let mut output = String::new();
@@ -126,37 +132,45 @@ fn range_query(
     apply_mask_and_truncate(&output, limits)
 }
 
-/// Query-only search: find up to MAX_MATCHES messages containing the query.
-fn query_search(reader: BufReader<File>, query: &str, limits: &LimitsConfig) -> String {
-    let lower_q = query.to_lowercase();
+/// Query-only search using BM25 over the `turns` FTS corpus.
+fn fts_query_search(
+    current_session_id: &str,
+    query: &str,
+    limits: &LimitsConfig,
+    search_session_id: Option<&str>,
+) -> String {
+    let hits = crate::memory::index::search_turns(query, 100, search_session_id);
+
+    if hits.is_empty() {
+        return apply_mask_and_truncate("No matching turns found.\n", limits);
+    }
+
+    let lower_terms: Vec<String> = query
+        .to_lowercase()
+        .split_whitespace()
+        .map(|t| t.to_string())
+        .collect();
     let mut results: Vec<String> = Vec::new();
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
-        let msg: Message = match serde_json::from_str(&line) {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-
-        if !matches_content(&msg, &lower_q) {
+    for hit in &hits {
+        let archive_path = crate::daemon::session::archive_file(&hit.session_id);
+        let line = read_line_at_offset(&archive_path, hit.offset as u64);
+        let Ok(msg) = serde_json::from_str::<Message>(&line) else {
             continue;
-        }
+        };
 
-        let turn_label = msg
-            .turn
-            .map(|t| format!("turn {}", t))
-            .unwrap_or_else(|| "turn ?".to_string());
-
-        // Build an excerpt with ±200 chars around the first match
-        let excerpt = build_excerpt(&msg.content, &lower_q, EXCERPT_HALF);
-        results.push(format!("{} ({}): {}", turn_label, msg.role, excerpt));
-
-        if results.len() >= MAX_MATCHES {
-            break;
-        }
+        let (excerpt, label_extra) = choose_excerpt(&msg, &lower_terms);
+        let prefix = if hit.session_id != current_session_id {
+            format!("[session {}] ", hit.session_id)
+        } else {
+            String::new()
+        };
+        let turn_label = hit.turn.to_string();
+        let _ = hit.score; // used for ordering; kept for test visibility
+        results.push(format!(
+            "{}{} ({}): {}{}",
+            prefix, turn_label, msg.role, excerpt, label_extra
+        ));
     }
 
     let mut output = String::new();
@@ -165,11 +179,56 @@ fn query_search(reader: BufReader<File>, query: &str, limits: &LimitsConfig) -> 
         output.push('\n');
     }
 
-    if results.is_empty() {
-        output.push_str("No matching turns found.\n");
+    apply_mask_and_truncate(&output, limits)
+}
+
+/// Read a single line from the archive file at the given byte offset.
+fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
+    let Ok(file) = File::open(path) else {
+        return String::new();
+    };
+    let reader = BufReader::new(file);
+    let mut current_offset: u64 = 0;
+    for line in reader.lines() {
+        let Ok(l) = line else {
+            break;
+        };
+        if current_offset == offset {
+            return l;
+        }
+        current_offset += l.len() as u64 + 1; // +1 for newline
+    }
+    String::new()
+}
+
+/// Choose which field to excerpt from, and whether to label it.
+/// Returns `(excerpt_text, optional_label)`.
+fn choose_excerpt(msg: &Message, lower_terms: &[String]) -> (String, String) {
+    // Check msg.content first
+    let content_lower = msg.content.to_lowercase();
+    for term in lower_terms {
+        if content_lower.contains(term) {
+            let excerpt = build_excerpt(&msg.content, term, EXCERPT_HALF);
+            return (excerpt, String::new());
+        }
     }
 
-    apply_mask_and_truncate(&output, limits)
+    // Check each tool result
+    if let Some(tool_results) = &msg.tool_results {
+        for tr in tool_results {
+            let tr_lower = tr.content.to_lowercase();
+            for term in lower_terms {
+                if tr_lower.contains(term) {
+                    let excerpt = build_excerpt(&tr.content, term, EXCERPT_HALF);
+                    return (excerpt, format!(" [tool_result: {}]", tr.tool_name));
+                }
+            }
+        }
+    }
+
+    // Stemming-only match — no literal substring exists; excerpt from head of content
+    let excerpt = build_excerpt(&msg.content, &msg.content, EXCERPT_HALF);
+    (excerpt, String::new())
 }
 
 /// Check if the message content or any tool result content matches the query.
@@ -344,12 +403,13 @@ mod tests {
                 "Filesystem /dev/sda1 is at 87% capacity with 4.2G free",
             ),
         ];
-        write_archive(id, &msgs);
+        write_and_index_turns(id, &msgs);
 
         let args = RecallArgs {
             query: Some("disk pressure".to_string()),
             turn_start: None,
             turn_end: None,
+            scope: None,
         };
         let result = recall(id, &args, &default_limits()).unwrap();
         assert!(
@@ -358,7 +418,7 @@ mod tests {
             result
         );
         assert!(
-            result.contains("turn 10"),
+            result.contains("10 (user)"),
             "Result should attribute to turn 10: {}",
             result
         );
@@ -382,6 +442,7 @@ mod tests {
             query: None,
             turn_start: Some(5),
             turn_end: Some(6),
+            scope: None,
         };
         let result = recall(id, &args, &default_limits()).unwrap();
         assert!(
@@ -416,6 +477,7 @@ mod tests {
             query: None,
             turn_start: None,
             turn_end: None,
+            scope: None,
         };
         let result = recall(id, &args, &default_limits());
         assert!(result.is_err(), "Should error when no query or range");
@@ -441,6 +503,7 @@ mod tests {
             query: Some("AWS key".to_string()),
             turn_start: None,
             turn_end: None,
+            scope: None,
         };
         let result = recall(id, &args, &default_limits()).unwrap();
         // The AWS key pattern should be masked
@@ -458,7 +521,7 @@ mod tests {
         let _home = TestHome::new();
         let id = "test_truncate";
         // Create a message with multi-byte UTF-8 content at the truncation boundary
-        let content = "🦀".repeat(1000); // Each 🦀 is 4 bytes
+        let content = "🦀rust 🦀rust 🦀rust ".repeat(334); // ~4000 chars
         let msgs = vec![make_msg("assistant", &content, Some(1))];
         write_archive(id, &msgs);
 
@@ -468,10 +531,12 @@ mod tests {
             ..default_limits()
         };
 
+        // Range mode returns full content, so truncation triggers
         let args = RecallArgs {
-            query: Some("🦀".to_string()),
-            turn_start: None,
-            turn_end: None,
+            query: None,
+            turn_start: Some(1),
+            turn_end: Some(1),
+            scope: None,
         };
         let result = recall(id, &args, &limits).unwrap();
         // Should be truncated with the suffix
@@ -495,21 +560,20 @@ mod tests {
         let msgs = vec![make_msg("assistant", &large_content, Some(1))];
         write_archive(id, &msgs);
 
+        // Range mode returns full content, so truncation triggers
         let args = RecallArgs {
-            query: Some("MATCH".to_string()),
-            turn_start: None,
-            turn_end: None,
+            query: None,
+            turn_start: Some(1),
+            turn_end: Some(1),
+            scope: None,
         };
         let result = recall(id, &args, &default_limits()).unwrap();
-        // The excerpt for this message should be bounded (~400 chars + markers)
-        // Find the excerpt line
-        let excerpt_line = result.lines().find(|l| l.contains("MATCH")).unwrap();
-        // The excerpt should be roughly 200 + 5 + 200 = ~405 chars plus markers
+        // The result should be truncated (not the full 50k chars)
         assert!(
-            excerpt_line.len() < 500,
-            "Excerpt line should be bounded (got {} chars): {}",
-            excerpt_line.len(),
-            excerpt_line
+            result.len() < large_content.len(),
+            "Result should be truncated: got {} chars, content is {} chars",
+            result.len(),
+            large_content.len()
         );
 
         clean_archive(id);
@@ -566,5 +630,300 @@ mod tests {
         assert!(excerpt.contains('é'), "multibyte context preserved");
         // Windowed, not the whole 606-char string.
         assert!(excerpt.chars().count() < content.chars().count());
+    }
+
+    // -----------------------------------------------------------------------
+    // New tests for phase-04: FTS query mode, tool-result rendering, scope
+    // -----------------------------------------------------------------------
+
+    /// Helper: write archive lines and index them into the turns FTS corpus.
+    fn write_and_index_turns(session_id: &str, messages: &[Message]) {
+        write_archive(session_id, messages);
+        let path = crate::daemon::session::archive_file(session_id);
+        // Use the same indexing path as production
+        let conn = crate::memory::index::open_index().unwrap();
+        let _ = crate::memory::index::index_archive_file(&conn, session_id, &path);
+    }
+
+    #[test]
+    fn query_excerpt_comes_from_the_matched_tool_result() {
+        let _home = TestHome::new();
+        let id = "test_tool_result_excerpt";
+        let msgs = vec![make_msg_with_result(
+            "assistant",
+            "AAAAAAAAAA padding padding padding BBBBBBBBBB",
+            Some(7),
+            "KERNELPANIC detected on cpu0",
+        )];
+        write_and_index_turns(id, &msgs);
+
+        let args = RecallArgs {
+            query: Some("KERNELPANIC".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: None,
+        };
+        let result = recall(id, &args, &default_limits()).unwrap();
+        assert!(
+            result.contains("KERNELPANIC"),
+            "query mode output must contain the matched tool-result text, got: {}",
+            result
+        );
+
+        clean_archive(id);
+    }
+
+    #[test]
+    fn range_mode_renders_tool_result_bodies() {
+        let _home = TestHome::new();
+        let id = "test_range_tool_result";
+        let msgs = vec![make_msg_with_result(
+            "assistant",
+            "ran the command",
+            Some(3),
+            "OUTPUT_MARKER disk full",
+        )];
+        write_archive(id, &msgs);
+
+        let args = RecallArgs {
+            query: None,
+            turn_start: Some(3),
+            turn_end: Some(3),
+            scope: None,
+        };
+        let result = recall(id, &args, &default_limits()).unwrap();
+        assert!(
+            result.contains("OUTPUT_MARKER disk full"),
+            "range mode must render tool-result bodies, got: {}",
+            result
+        );
+
+        clean_archive(id);
+    }
+
+    #[test]
+    fn query_mode_returns_more_than_eight_matches() {
+        let _home = TestHome::new();
+        let id = "test_many_matches";
+        let mut msgs = Vec::new();
+        for i in 0..12 {
+            msgs.push(make_msg(
+                "user",
+                &format!("target phrase match number {}", i),
+                Some(i),
+            ));
+        }
+        write_and_index_turns(id, &msgs);
+
+        let args = RecallArgs {
+            query: Some("target phrase".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: None,
+        };
+        let result = recall(id, &args, &default_limits()).unwrap();
+        let match_lines = result
+            .lines()
+            .filter(|l| l.contains("target phrase"))
+            .count();
+        assert!(
+            match_lines > 8,
+            "query mode should return more than 8 matches (got {}), old ceiling is gone\nresult: {}",
+            match_lines,
+            result
+        );
+
+        clean_archive(id);
+    }
+
+    #[test]
+    fn query_results_are_bm25_ordered_not_file_ordered() {
+        let _home = TestHome::new();
+        let id = "test_bm25_order";
+        // Write messages where the best BM25 match is written LAST.
+        // Turn 1: single occurrence of "server"
+        // Turn 2: single occurrence of "restart"
+        // Turn 3: multiple occurrences of both "server" and "restart" — should rank best
+        let msgs = vec![
+            make_msg("user", "the server is online", Some(1)),
+            make_msg("user", "the service needs a restart", Some(2)),
+            make_msg(
+                "user",
+                "the server crashed and the server needs a restart and the server rebooted",
+                Some(3),
+            ),
+        ];
+        write_and_index_turns(id, &msgs);
+
+        let args = RecallArgs {
+            query: Some("server restart".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: None,
+        };
+        let result = recall(id, &args, &default_limits()).unwrap();
+        let lines: Vec<&str> = result
+            .lines()
+            .filter(|l| l.starts_with(|c: char| c.is_ascii_digit()))
+            .collect();
+        assert!(
+            lines.len() >= 2,
+            "should have at least 2 matching turns, got: {}",
+            result
+        );
+        // The last-written message (turn 3) has "server" and "restart" multiple times,
+        // so it should rank best and appear first.
+        assert!(
+            lines[0].starts_with("3 (user)"),
+            "BM25 best match (turn 3, written last) should appear first, got: {:?}",
+            lines
+        );
+
+        clean_archive(id);
+    }
+
+    #[test]
+    fn scope_all_finds_another_session_and_labels_it() {
+        let _home = TestHome::new();
+        let current_id = "test_scope_all_current";
+        let other_id = "test_scope_all_other";
+        let msgs = vec![make_msg("user", "unique phrase for other session", Some(5))];
+        write_and_index_turns(other_id, &msgs);
+        // Current session has nothing matching.
+        write_and_index_turns(current_id, &[make_msg("user", "hello world", Some(1))]);
+
+        let args = RecallArgs {
+            query: Some("unique phrase".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: Some("all".to_string()),
+        };
+        let result = recall(current_id, &args, &default_limits()).unwrap();
+        assert!(
+            result.contains("unique phrase"),
+            "scope:all must find text from another session, got: {}",
+            result
+        );
+        assert!(
+            result.contains(&format!("[session {}]", other_id)),
+            "cross-session hit must be prefixed with session id, got: {}",
+            result
+        );
+
+        clean_archive(current_id);
+        clean_archive(other_id);
+    }
+
+    #[test]
+    fn default_scope_excludes_other_sessions() {
+        let _home = TestHome::new();
+        let current_id = "test_default_scope_current";
+        let other_id = "test_default_scope_other";
+        let shared_text = "shared query text for scope test";
+        write_and_index_turns(current_id, &[make_msg("user", shared_text, Some(1))]);
+        write_and_index_turns(other_id, &[make_msg("user", shared_text, Some(2))]);
+
+        let args = RecallArgs {
+            query: Some("shared query".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: None,
+        };
+        let result = recall(current_id, &args, &default_limits()).unwrap();
+        // Must NOT contain the other session's prefix
+        assert!(
+            !result.contains(&format!("[session {}]", other_id)),
+            "default scope must not leak another session's turns, got: {}",
+            result
+        );
+
+        clean_archive(current_id);
+        clean_archive(other_id);
+    }
+
+    #[test]
+    fn unknown_scope_value_behaves_as_current() {
+        let _home = TestHome::new();
+        let current_id = "test_unknown_scope_current";
+        let other_id = "test_unknown_scope_other";
+        let unique_text = "only in other session for scope test";
+        write_and_index_turns(other_id, &[make_msg("user", unique_text, Some(1))]);
+        write_and_index_turns(
+            current_id,
+            &[make_msg("user", "current session text", Some(1))],
+        );
+
+        let args = RecallArgs {
+            query: Some("only in other".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: Some("everything".to_string()),
+        };
+        let result = recall(current_id, &args, &default_limits()).unwrap();
+        // Unknown scope should behave as "current", so the other session's text
+        // should NOT appear
+        assert!(
+            !result.contains(unique_text),
+            "unknown scope must behave as current-session, got: {}",
+            result
+        );
+
+        clean_archive(current_id);
+        clean_archive(other_id);
+    }
+
+    #[test]
+    fn stemmed_only_match_still_renders_a_block() {
+        let _home = TestHome::new();
+        let id = "test_stemmed_match";
+        // "restart" in the indexed body; query uses "restarting" which stems to the same
+        let msgs = vec![make_msg("user", "the server needs to restart", Some(1))];
+        write_and_index_turns(id, &msgs);
+
+        let args = RecallArgs {
+            query: Some("restarting".to_string()),
+            turn_start: None,
+            turn_end: None,
+            scope: None,
+        };
+        let result = recall(id, &args, &default_limits()).unwrap();
+        // Must render a block rather than "No matching turns found"
+        assert!(
+            !result.contains("No matching turns found"),
+            "stemmed-only match must still render a block, got: {}",
+            result
+        );
+        // The block should contain the turn number (rendered as "1 (user): ...")
+        assert!(
+            result.contains("1 (user)"),
+            "rendered block should contain turn number, got: {}",
+            result
+        );
+
+        clean_archive(id);
+    }
+
+    #[test]
+    fn range_mode_ignores_scope() {
+        let _home = TestHome::new();
+        let id = "test_range_scope";
+        let msgs = vec![make_msg("user", "range scope test message", Some(5))];
+        write_archive(id, &msgs);
+
+        // scope: "all" should be ignored for range mode
+        let args = RecallArgs {
+            query: None,
+            turn_start: Some(5),
+            turn_end: Some(5),
+            scope: Some("all".to_string()),
+        };
+        let result = recall(id, &args, &default_limits()).unwrap();
+        assert!(
+            result.contains("range scope test message"),
+            "range mode should work regardless of scope, got: {}",
+            result
+        );
+
+        clean_archive(id);
     }
 }

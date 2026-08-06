@@ -534,6 +534,7 @@ pub(super) struct RecallContextArgs {
     pub query: Option<String>,
     pub turn_start: Option<u32>,
     pub turn_end: Option<u32>,
+    pub scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -541,6 +542,7 @@ struct RecallContextDeserialize {
     pub query: Option<String>,
     pub turn_start: Option<u32>,
     pub turn_end: Option<u32>,
+    pub scope: Option<String>,
 }
 
 impl ToolArgs for RecallContextArgs {
@@ -550,6 +552,7 @@ impl ToolArgs for RecallContextArgs {
             query: deserialized.query,
             turn_start: deserialized.turn_start,
             turn_end: deserialized.turn_end,
+            scope: deserialized.scope,
         })
     }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
@@ -558,6 +561,7 @@ impl ToolArgs for RecallContextArgs {
             query: self.query,
             turn_start: self.turn_start,
             turn_end: self.turn_end,
+            scope: self.scope,
             thought_signature: ts,
         }
     }

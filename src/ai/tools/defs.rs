@@ -594,6 +594,12 @@ pub static TOOLS: &[ToolDef] = &[
                 required: false,
                 description: "Optional: ending turn number (inclusive).",
             },
+            ParamDef {
+                name: "scope",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional: \"current\" (default) or \"all\" to search every session.",
+            },
         ],
         deferred_group: None,
     },

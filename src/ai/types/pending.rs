@@ -165,6 +165,7 @@ pub enum PendingCall {
         query: Option<String>,
         turn_start: Option<u32>,
         turn_end: Option<u32>,
+        scope: Option<String>,
     },
     GetTerminalContext {
         id: String,
@@ -402,11 +403,11 @@ impl PendingCall {
                 name: "search_repository".to_string(),
                 arguments: serde_json::json!({"query": query, "kind": kind}).to_string(),
             },
-            PendingCall::RecallContext { id, thought_signature, query, turn_start, turn_end } => ToolCall {
+            PendingCall::RecallContext { id, thought_signature, query, turn_start, turn_end, scope } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "recall_context".to_string(),
-                arguments: serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end}).to_string(),
+                arguments: serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end, "scope": scope}).to_string(),
             },
             PendingCall::GetTerminalContext { id, thought_signature } => ToolCall {
                 id: id.clone(),
@@ -748,6 +749,7 @@ mod tests {
                 query: None,
                 turn_start: None,
                 turn_end: None,
+                scope: None,
             },
             PendingCall::GetTerminalContext {
                 id: "x".to_string(),

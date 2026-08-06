@@ -618,6 +618,7 @@ async fn do_ghost_turn(
                         query,
                         turn_start,
                         turn_end,
+                        scope,
                     } => {
                         pending_calls.push(PendingCall::RecallContext {
                             id,
@@ -625,6 +626,7 @@ async fn do_ghost_turn(
                             query,
                             turn_start,
                             turn_end,
+                            scope,
                         });
                     }
                     AiEvent::ListMemories {

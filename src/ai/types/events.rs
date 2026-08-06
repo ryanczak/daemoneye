@@ -157,6 +157,7 @@ pub enum AiEvent {
         query: Option<String>,
         turn_start: Option<u32>,
         turn_end: Option<u32>,
+        scope: Option<String>,
         thought_signature: Option<String>,
     },
     GetTerminalContext {

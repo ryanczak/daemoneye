@@ -1,7 +1,7 @@
 # Phase 04: recall_context on FTS — ranked query mode, correct excerpts, cross-session scope
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03b (done — the `turns` corpus is populated incrementally
 and swept on retention)
 **Estimated diff:** ~400 lines
@@ -305,5 +305,113 @@ passes under file ordering is not testing ranking.
 - Epoch-corpus search and any new `recall_context` mode beyond `scope`.
 
 ## Update Log
+
+### Update — 2026-08-06 03:06 (started)
+
+**Executor:** Claude (sonnet)
+**Tasks:** Implement `search_turns` in `src/memory/index.rs`, rewrite query mode in `src/daemon/context/recall.rs`, render tool results in range mode, add `scope` parameter through tool def/args/executor, update `CLAUDE.md`.
+
+### Update — 2026-08-06 03:15 (end-to-end verification)
+
+**End-to-end verification transcript (recall tests):**
+
+```
+running 19 tests
+test daemon::context::recall::tests::build_excerpt_handles_empty_content ... ok
+test daemon::context::recall::tests::build_excerpt_handles_match_at_end ... ok
+test daemon::context::recall::tests::build_excerpt_handles_match_at_start ... ok
+test daemon::context::recall::tests::build_excerpt_is_multibyte_safe ... ok
+test daemon::context::recall::tests::default_scope_excludes_other_sessions ... ok
+test daemon::context::recall::tests::query_excerpt_comes_from_the_matched_tool_result ... ok
+test daemon::context::recall::tests::query_mode_returns_more_than_eight_matches ... ok
+test daemon::context::recall::tests::range_mode_ignores_scope ... ok
+test daemon::context::recall::tests::query_results_are_bm25_ordered_not_file_ordered ... ok
+test daemon::context::recall::tests::recall_excerpt_is_bounded ... ok
+test daemon::context::recall::tests::range_mode_renders_tool_result_bodies ... ok
+test daemon::context::recall::tests::recall_masks_sensitive_output ... ok
+test daemon::context::recall::tests::recall_range_returns_verbatim_and_skips_legacy ... ok
+test daemon::context::recall::tests::recall_query_finds_archived_content ... ok
+test daemon::context::recall::tests::recall_requires_query_or_range ... ok
+test daemon::context::recall::tests::recall_truncates_at_cap_utf8_safe ... ok
+test daemon::context::recall::tests::scope_all_finds_another_session_and_labels_it ... ok
+test daemon::context::recall::tests::stemmed_only_match_still_renders_a_block ... ok
+test daemon::context::recall::tests::unknown_scope_value_behaves_as_current ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1074 filtered out
+
+exit=0
+```
+
+**End-to-end verification transcript (memory::index tests):**
+
+```
+running 52 tests
+test memory::index::tests::fts5_is_available_and_matches ... ok
+test memory::index::tests::add_memory_indexes_the_row ... ok
+test memory::index::tests::append_archive_message_indexes_the_turn ... ok
+test memory::index::tests::appended_turn_offset_seeks_to_its_line ... ok
+test memory::index::tests::append_epoch_indexes_the_narrative ... ok
+test memory::index::tests::archive_seed_indexes_every_copied_line ... ok
+test memory::index::tests::contentless_bodies_are_masked ... ok
+test memory::index::tests::deleting_a_runbook_removes_its_artifact_row ... ok
+test memory::index::tests::delete_memory_removes_the_row ... ok
+test memory::index::tests::expired_memory_is_not_indexed ... ok
+test memory::index::tests::empty_query_returns_no_hits ... ok
+test memory::index::tests::fresh_index_is_reconciled_on_first_search ... ok
+test memory::index::tests::ftsearch_memories_preserves_rank_order ... ok
+test memory::index::tests::hyphenated_query_does_not_error ... ok
+test memory::index::tests::incremental_and_reconcile_agree ... ok
+test memory::index::tests::index_failure_does_not_break_append ... ok
+test memory::index::tests::index_failure_does_not_break_log_event ... ok
+test memory::index::tests::index_failure_does_not_fail_add_memory ... ok
+test memory::index::tests::invalid_utf8_file_does_not_abort_reconcile ... ok
+test memory::index::tests::legacy_event_file_is_indexed_as_legacy_segment ... ok
+test memory::index::tests::log_event_indexes_the_event ... ok
+test memory::index::tests::log_event_offset_seeks_to_its_line ... ok
+test memory::index::tests::malformed_line_is_skipped_and_later_offsets_stay_correct ... ok
+test memory::index::tests::message_without_turn_is_not_indexed ... ok
+test memory::index::tests::multi_word_query_matches_non_adjacent_terms ... ok
+test memory::index::tests::namespace_filter_excludes_other_namespaces ... ok
+test memory::index::tests::open_index_creates_database_and_schema ... ok
+test memory::index::tests::open_index_is_idempotent ... ok
+test memory::index::tests::open_index_sets_schema_version ... ok
+test memory::index::tests::operator_words_are_treated_as_text ... ok
+test memory::index::tests::reconcile_after_incremental_writes_is_a_no_op ... ok
+test memory::index::tests::reconcile_indexes_archive_turns ... ok
+test memory::index::tests::reconcile_indexes_epoch_narrative_and_failed_cmds ... ok
+test memory::index::tests::reconcile_indexes_event_segments ... ok
+test memory::index::tests::reconcile_indexes_runbook_and_script_bodies ... ok
+test memory::index::tests::reconcile_leaves_contentless_corpora_empty ... ok
+test memory::index::tests::reconcile_rebuilds_from_disk ... ok
+test memory::index::tests::reconcile_report_per_corpus_sums_to_total ... ok
+test memory::index::tests::rewriting_a_runbook_replaces_its_artifact_row ... ok
+test memory::index::tests::same_key_in_two_namespaces_is_two_rows ... ok
+test memory::index::tests::schema_v2_creates_every_table ... ok
+test memory::index::tests::search_finds_text_hit_when_tags_miss ... ok
+test memory::index::tests::search_ranks_better_match_first ... ok
+test memory::index::tests::second_reconcile_does_not_duplicate_contentless_rows ... ok
+test memory::index::tests::second_reconcile_reports_no_change ... ok
+test memory::index::tests::turns_body_includes_tool_result_text ... ok
+test memory::index::tests::turns_map_offsets_point_at_the_right_line ... ok
+test memory::index::tests::turns_skips_messages_without_turn_numbers ... ok
+test memory::index::tests::update_memory_replaces_the_row_not_duplicates_it ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 1041 filtered out
+
+exit=0
+```
+
+**Mutation check:** Changed `ORDER BY bm25(turns)` to `ORDER BY m.turn` (file order) — `query_results_are_bm25_ordered_not_file_ordered` **failed** as expected (results came back in chronological order: turn 1, 2, 3 instead of BM25-ranked). Restored `ORDER BY bm25(turns)` — test **passes** again (turn 3 ranks first).
+
+**Static checks:**
+```
+--- MAX_MATCHES ceiling is gone ---
+OK: no MAX_MATCHES
+--- bm25 ordering is ascending (best-first), no DESC ---
+268:             ORDER BY bm25(turns)
+277:             ORDER BY bm25(turns)
+--- search_turns is best-effort, returns Vec not Result ---
+250:pub fn search_turns(query: &str, limit: usize, session_id: Option<&str>) -> Vec<TurnHit> {
+```
 
 <!-- entries appended below this line -->
