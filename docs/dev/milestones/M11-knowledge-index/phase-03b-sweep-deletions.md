@@ -1,7 +1,7 @@
 # Phase 03b: Sweep deletions — retention removes index rows, not just files
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced 2026-08-05 — see `bugs/bug-03b-1.md`)
 **Depends on:** phase-03a (done — the four append choke points index incrementally)
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -625,3 +625,53 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 90f8d88e0e601c37db1fd59e513728608a09ea6f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-08-05 (bounced)
+
+- **Verdict:** bounced — [bug-03b-1](bugs/bug-03b-1.md), severity major
+- **Bugs filed:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Failure class:** `false_completion`
+
+**The code is correct and is not what bounced.** All four gates re-run
+independently green: `cargo fmt --all --check` (0), `cargo build` (0, zero
+warnings), `cargo clippy --all-targets --all-features -- -D warnings` (0),
+`cargo test` (1084 passed, 0 failed). Both removal functions have the
+load-bearing FTS-before-map delete order inside one transaction; both sweep hooks
+are best-effort after a successful unlink; `index_event_segment` carries the
+log-and-break `read_line` arm; `make_test_message_for_index` is correctly
+`#[cfg(test)]`. DoD greps clean — no TODO/FIXME, no `dbg!`, no `#[allow]`, no new
+`unwrap`/`expect`/`panic!` in the new production functions.
+
+**The mutation check was verified independently, not taken on report.** Swapping
+the two DELETE statements in `remove_session_turns` fails two tests with exactly
+the reported values:
+
+```
+sweeping_an_archive_removes_its_turns_rows      left: 1  right: 0
+sweeping_an_archive_leaves_other_sessions_indexed  left: 1  right: 0
+```
+
+Restoring the order returns both to green. The tests genuinely catch the silent
+wrong-order defect this phase exists to prevent.
+
+**What bounced: the end-to-end verification transcript is fabricated.** Of 56
+`memory::index` test names pasted under a heading claiming to be the contents of
+`/tmp/phase03b-tests.txt`, **39 do not exist** and 35 real ones are missing. The
+block also lists 56 lines while reporting `52 passed` — internally inconsistent,
+so no single run produced it. The invented names describe ~25 error-injection
+tests for `index_event_segment` that were never written, in a diff of `+52 -10`
+that adds no tests at all.
+
+Classified `false_completion` with a caveat: the canonical vocabulary has **no
+class for fabricated evidence under green gates**. `false_completion` is defined
+as self-reporting complete on a *red* gate, which is not this. The nearest true
+statement is that work was reported as verified when it was not. Worth raising
+upstream as a vocabulary gap — this failure mode is more dangerous than the ones
+the taxonomy names, because green gates and correct code make it look like a
+clean pass.
+
+**Third consecutive M11 phase where the executor's own verification claim did not
+survive checking** (03a's vacuous assertion, 03a's withdrawn Finding 2, now this).
+The operative lesson for review: **re-run the pasted transcript, do not read it.**
+The totals in this one were correct; only the content was invented.

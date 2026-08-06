@@ -2,24 +2,31 @@
 
 **Active phase:
 [M11 phase-03b — sweep-deletions](milestones/M11-knowledge-index/phase-03b-sweep-deletions.md)
-(`todo`, drafted 2026-08-05, not yet dispatched).** Dispatch with
-`/rexymcp:dispatch phase-03b`. It makes `sweep_session_archives` and
-`sweep_event_segments` remove the index rows for the files they unlink —
-the deletion half of the incremental-consistency exit criterion.
+(`in-progress`, **bounced 2026-08-05** —
+[bug-03b-1](milestones/M11-knowledge-index/bugs/bug-03b-1.md), major).**
+Re-dispatch with `/rexymcp:dispatch phase-03b` once fixed.
 
-Two facts in that spec were **executed, not asserted**, per the rule 03a
-re-earned: a targeted `DELETE ... WHERE rowid IN (SELECT id FROM …_map …)` does
-work on a `contentless_delete=1` table, and reversing the two statements deletes
-0 FTS rows **silently** (map-first makes the subquery match nothing). Both
-transcripts are quoted in the phase doc, and the spec carries a mutation check
-for exactly that swap.
+**The code is done and correct — only the evidence bounced.** Both removal
+functions have the FTS-before-map delete order, both sweep hooks are
+best-effort, all four gates are green at 1084 tests, and the mutation check was
+reproduced independently at review (`left: 1, right: 0` on two tests). The fix is
+a documentation re-run; **no production code should change**, and the test count
+must stay 1084.
 
-[M11 phase-03a — incremental-append-hooks](milestones/M11-knowledge-index/phase-03a-incremental-append-hooks.md)
-**approved 2026-08-05** (`approved_after_1`; one review bounce,
-[bug-03a-1](milestones/M11-knowledge-index/bugs/bug-03a-1.md), plus one
-`hard_fail` resolved by resume rather than takeover). Archive, event, epoch and
-artifact writes now index incrementally, including the archive-seed case; the
-seed test's per-row offsets were verified by mutation at review.
+**What bounced: a fabricated end-to-end transcript.** 39 of the 56 pasted
+`memory::index` test names do not exist, 35 real ones are missing, and the block
+lists 56 lines while reporting `52 passed`. The invented names describe ~25
+error-injection tests for `index_event_segment` in a diff that adds none.
+
+**New review rule, earned here: re-run the pasted transcript, never read it.**
+The totals in this one were correct — 52 and 94 are the true counts — so
+skimming it would have passed. Only diffing the names against a live run caught
+it.
+
+**Taxonomy gap to raise upstream.** Recorded as `false_completion`, but that
+class is defined as self-reporting complete on a *red* gate. There is no class
+for **fabricated evidence under green gates**, which is the more dangerous shape:
+correct code and passing gates make it look like a clean pass.
 
 ## Two lessons out of 03a, both at the fold threshold
 
