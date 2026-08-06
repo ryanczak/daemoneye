@@ -1,7 +1,7 @@
 # Phase 06: prompt scoring — real BM25, namespace-keyed merge, one listing
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05c (done)
 **Estimated diff:** ~330 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -292,9 +292,49 @@ takes `let _guard = crate::test_home_guard();` then sets `HOME` to a
 preamble, and seed memories with `crate::memory::add_memory(key, body, category,
 namespace)`. Test names and behaviors are pinned in § Test plan.
 
+**The guard must be held for the whole test body, and this is the trap.**
+`crate::test_home_guard()` returns a `TestHomeGuard` (`src/lib.rs:45`) that holds
+a process-global mutex *and* restores `HOME` when dropped. If you bind it inside
+a setup helper, it drops when that helper returns, the lock is released, and the
+tests race — each one clobbering the others' `HOME`, so memories seeded by one
+test appear in another's results.
+
+So a setup helper must **return the guard** and the test must bind it:
+
+```rust
+fn setup_test_env() -> (crate::TestHomeGuard, tempfile::TempDir) {
+    let guard = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+    (guard, tmp)
+}
+
+#[test]
+fn some_test() {
+    let (_guard, _tmp) = setup_test_env();   // both live to end of body
+    ...
+}
+```
+
+Binding it as `let _guard = crate::test_home_guard();` directly in each test body
+(as `src/memory/index.rs:1820` does) is equally correct. What is **not** correct
+is `let _guard = ...` inside a helper whose return value omits it. Note also that
+`let _ = crate::test_home_guard();` drops immediately — the binding needs a name.
+
 ## Acceptance criteria
 
-- [ ] `grep -c "list_memories_with_tags(" src/daemon/memory_prompt.rs` prints `1`.
+- [ ] **Production code** calls `list_memories_with_tags` exactly once. The test
+      module's own fixtures legitimately call it too, so the count is scoped to
+      the code above `#[cfg(test)]`:
+
+      ```sh
+      sed -n '1,/^#\[cfg(test)\]/p' src/daemon/memory_prompt.rs \
+        | grep -c "list_memories_with_tags("
+      ```
+
+      must print `1`. (Corrected 2026-08-06 — the original criterion counted the
+      whole file and no correct implementation could satisfy it. See § Notes for
+      executor.)
 - [ ] `grep -n "0\.2 \* crate::memory::review" src/daemon/memory_prompt.rs` finds
       nothing (exit 1).
 - [ ] `grep -n "FTS_WEIGHT" src/daemon/memory_prompt.rs` finds the const
@@ -438,3 +478,80 @@ None. No new dependencies, no architecture-doc changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-08-06
+
+**Your implementation is already correct. Do not rewrite it.** All five tasks
+landed: `FTS_WEIGHT` (`:36`), `merge_max` (`:39`), the three re-signatured
+helpers (`:50`, `:76`, `:90`), `score_candidates` (`:113`), `pack_within_budget`
+(`:199`), the rewritten `assemble_turn_relevant_memory` (`:220`), and the
+updated call site at `src/memory/index.rs:1842`. `cargo build` passes. The flat
+`0.2` constant is gone and production code makes exactly one
+`list_memories_with_tags` call. **Do not touch any of that.**
+
+**Why the run stalled, and it was my fault, not yours.** Acceptance criterion 1
+told you to make `grep -c "list_memories_with_tags(" src/daemon/memory_prompt.rs`
+print `1` over the *whole file* — but your own test fixtures legitimately call it
+five more times, so no correct implementation could ever satisfy it. The
+criterion has been corrected to count only the code above `#[cfg(test)]`, and
+under that command your tree **already passes**. Do not delete test fixtures to
+chase the old number.
+
+**There are exactly three things left.**
+
+1. **One clippy error.** `src/daemon/memory_prompt.rs:553`:
+
+   ```rust
+   summary: Some("x".repeat(5000)).into(), // renders to >5000 bytes
+   ```
+
+   `useless_conversion` — drop the `.into()`, leaving
+   `summary: Some("x".repeat(5000)),`. That is the only lint failure in the tree.
+
+2. **Three failing tests, all one root cause — the `HOME` guard is dropped too
+   early.** `setup_test_env` at `:294` binds `let _guard = crate::test_home_guard();`
+   *inside the helper*, so the guard drops when the helper returns. The lock is
+   released, the tests race, and each clobbers the others' `HOME`. That is why
+   `fts_hits_get_pairwise_distinct_scores` sees `dual-match` (a memory seeded by a
+   different test), why `same_key_in_two_namespaces_scores_separately` counts 6
+   entries instead of 2, and why `expired_memory_is_excluded_and_the_guard_is_not_vacuous`
+   fails writing to a directory under a `HOME` that changed underneath it.
+
+   The fix is in § Spec task 5 — return the guard from the helper and bind it in
+   each test:
+
+   ```rust
+   fn setup_test_env() -> (crate::TestHomeGuard, tempfile::TempDir) {
+       let guard = crate::test_home_guard();
+       let tmp = tempfile::tempdir().unwrap();
+       unsafe { std::env::set_var("HOME", tmp.path()) };
+       (guard, tmp)
+   }
+   ```
+
+   then `let (_guard, _tmp) = setup_test_env();` at the top of every test.
+   Nothing else about the tests needs to change — fix the harness, not the
+   assertions. If a test still fails after the guard fix, that is a real finding:
+   report it, do not weaken the assertion.
+
+   The expired-memory test additionally needs its category directory to exist
+   before writing the file (`std::fs::create_dir_all(&knowledge_dir)` — see
+   `src/memory/index.rs:1603-1611`).
+
+3. **The Update Log is empty.** Run § End-to-end verification's block and paste
+   the captured file into `### Update — 2026-08-06 (end-to-end verification)`,
+   including the mutation pair and the two restore-proof greps.
+
+**Finish condition, inverted: `cargo test --lib` must report `1128` passed, 0
+failed** — 1122 baseline plus your six tests, all of which already exist. A total
+above 1128 means you added tests that were not asked for; a total below means one
+was lost. Do not add or remove tests.
+
+### Update — 2026-08-06 (escalation)
+
+**Chosen lever:** resume (`continue_phase`)
+**Rationale:** the production implementation is complete and correct — the stall
+was an unsatisfiable acceptance criterion I wrote, and what remains is one lint,
+one test-harness idiom, and the Update Log; a fresh re-dispatch would rebuild
+correct work, and a takeover would forfeit the telemetry point for a fix the
+executor can plainly reach.
