@@ -1,7 +1,7 @@
 # Phase 07b: situational knowledge hooks — ghost cold-start, incident auto-linking
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced — see [bug-07b-1](bugs/bug-07b-1.md))
 **Depends on:** phase-07a (done)
 **Estimated diff:** ~360 lines
 **Tags:** language=rust, kind=feature, size=m
