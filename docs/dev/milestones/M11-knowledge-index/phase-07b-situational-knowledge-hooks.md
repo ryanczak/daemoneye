@@ -1,7 +1,7 @@
 # Phase 07b: situational knowledge hooks — ghost cold-start, incident auto-linking
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-07a (done)
 **Estimated diff:** ~360 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -440,3 +440,10 @@ No new dependencies. No `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-07 20:07 (started)
+
+**Executor:** Claude (opus)
+
+Implementing all 5 tasks: category-filtered FTS search, `inject_yaml_relates_to`,
+auto-linking new incidents, ghost cold-start seeding, and tests.

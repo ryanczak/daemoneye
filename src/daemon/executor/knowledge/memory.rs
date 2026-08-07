@@ -7,6 +7,30 @@ use crate::daemon::utils::log_event;
 // Memory
 // ---------------------------------------------------------------------------
 
+/// Number of prior incidents an auto-linked memory may reference.
+const MAX_AUTO_LINKS: usize = 3;
+
+/// Find prior `incident` memories similar to `value`, for `relates_to`.
+/// Best-effort: returns empty on any failure. Never links `key` to itself.
+fn similar_incidents(key: &str, value: &str, namespaces: &[&str]) -> Vec<String> {
+    crate::memory::index::fts5_search_in_category(
+        value,
+        MAX_AUTO_LINKS + 1,
+        namespaces,
+        Some("incident"),
+    )
+    .into_iter()
+    .filter_map(|(ns, k, _score)| {
+        if k == key {
+            None
+        } else {
+            Some(format!("{}:{}", ns, k))
+        }
+    })
+    .take(MAX_AUTO_LINKS)
+    .collect()
+}
+
 pub fn add_memory(
     key: &str,
     value: &str,
@@ -22,11 +46,17 @@ pub fn add_memory(
     if value.trim().is_empty() {
         return "Error: memory value cannot be empty.".to_string();
     }
-    let stamped = match artifact_ctx.saved_name {
+    let namespace = artifact_ctx.namespaces.first().copied().unwrap_or("global");
+    let mut stamped = match artifact_ctx.saved_name {
         Some(origin) => crate::header::inject_yaml_session_origin(value, origin),
         None => value.to_string(),
     };
-    let namespace = artifact_ctx.namespaces.first().copied().unwrap_or("global");
+    if cat.canonical_name() == "incident" {
+        let links = similar_incidents(key, &stamped, artifact_ctx.namespaces);
+        if !links.is_empty() {
+            stamped = crate::header::inject_yaml_relates_to(&stamped, &links);
+        }
+    }
     match crate::memory::add_memory(key, &stamped, cat, namespace) {
         Ok(()) => {
             log_event(
@@ -352,6 +382,113 @@ mod tests {
                     panic!("unexpected SpawnGhostSession outcome")
                 }
             }
+        });
+    }
+
+    // ── Auto-linking tests ──────────────────────────────────────────────
+
+    fn make_ctx_ns(namespaces: &'static [&'static str]) -> ArtifactCtx<'static> {
+        let store: &'static crate::daemon::session::SessionStore =
+            Box::leak(Box::new(SessionStore::new()));
+        ArtifactCtx {
+            session_id: None,
+            sessions: store,
+            saved_name: None,
+            turn_count: 0,
+            is_ghost: false,
+            namespaces,
+        }
+    }
+
+    #[test]
+    fn adding_an_incident_links_prior_incidents() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            use crate::memory::MemoryCategory;
+
+            // Seed two prior incident memories sharing distinctive text
+            crate::memory::add_memory(
+                "prior-alpha",
+                "The quantum cascade failure in sector 7 caused a meltdown",
+                MemoryCategory::Incident,
+                "global",
+            )
+            .expect("add prior-alpha");
+            crate::memory::add_memory(
+                "prior-beta",
+                "Another quantum cascade failure event in the same sector",
+                MemoryCategory::Incident,
+                "global",
+            )
+            .expect("add prior-beta");
+
+            // Add a third incident through the executor path
+            let ctx = make_ctx_ns(&["global"]);
+            add_memory(
+                "new-incident",
+                "Yet another quantum cascade failure detected",
+                "incident",
+                &ctx,
+            );
+
+            // Read the new file from disk and assert its frontmatter names both priors
+            let path = crate::memory::memory_dir_for_namespace("global", &MemoryCategory::Incident)
+                .join("new-incident.md");
+            let content = std::fs::read_to_string(path).expect("read new incident file");
+
+            assert!(
+                content.contains("relates_to:"),
+                "new incident must have relates_to frontmatter: {content}"
+            );
+            assert!(
+                content.contains("prior-alpha"),
+                "must link to prior-alpha: {content}"
+            );
+            assert!(
+                content.contains("prior-beta"),
+                "must link to prior-beta: {content}"
+            );
+            // Must not name itself
+            assert!(
+                !content.contains("\"new-incident\""),
+                "must not link to itself: {content}"
+            );
+        });
+    }
+
+    #[test]
+    fn adding_a_knowledge_memory_does_not_link() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            use crate::memory::MemoryCategory;
+
+            // Seed an incident memory
+            crate::memory::add_memory(
+                "seed-incident",
+                "The quantum cascade failure in sector 7 caused a meltdown",
+                MemoryCategory::Incident,
+                "global",
+            )
+            .expect("add seed incident");
+
+            // Add a knowledge memory with similar text
+            let ctx = make_ctx_ns(&["global"]);
+            add_memory(
+                "new-knowledge",
+                "The quantum cascade failure is a known pattern",
+                "knowledge",
+                &ctx,
+            );
+
+            // Read the new file — it must NOT carry relates_to
+            let path =
+                crate::memory::memory_dir_for_namespace("global", &MemoryCategory::Knowledge)
+                    .join("new-knowledge.md");
+            let content = std::fs::read_to_string(path).expect("read new knowledge file");
+            assert!(
+                !content.contains("relates_to:"),
+                "knowledge memory must not have relates_to: {content}"
+            );
         });
     }
 }

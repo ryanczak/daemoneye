@@ -196,11 +196,14 @@ impl GhostManager {
         // no human present) live in the system prompt assembled by `trigger_ghost_turn`,
         // not here.  Putting them in an assistant-role message causes the Anthropic API
         // to reject the request because conversations must begin with a user turn.
+        let prior = crate::daemon::situational::assemble_incident_context(alert_msg)
+            .map(|b| format!("\n\n{}", b))
+            .unwrap_or_default();
         let user_msg = Message {
             role: "user".to_string(),
             content: format!(
-                "Incoming alert:\n{}\n\nRunbook: {}\n\n{}",
-                alert_msg, runbook.name, runbook.content,
+                "Incoming alert:\n{}\n\nRunbook: {}\n\n{}{}",
+                alert_msg, runbook.name, runbook.content, prior,
             ),
             tool_calls: None,
             tool_results: None,

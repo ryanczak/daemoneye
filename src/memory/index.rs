@@ -209,12 +209,16 @@ fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
     Some(conn)
 }
 
-/// Search the FTS5 index. Returns up to `limit` hits as
-/// `(namespace, key, bm25_score)`, best match first.
-///
-/// Best-effort: any failure returns an empty `Vec` after logging. The index is
-/// a derived cache and search degrading to "no hits" must never be fatal.
-pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(String, String, f64)> {
+/// As [`fts5_search_in_category`], but restricted to one memory category when
+/// `category` is `Some`. The value must be the category's **canonical** name
+/// (`"incident"`, not the `"incidents"` directory name) — that is what
+/// `index_memory_file` stores.
+pub fn fts5_search_in_category(
+    query: &str,
+    limit: usize,
+    namespaces: &[&str],
+    category: Option<&str>,
+) -> Vec<(String, String, f64)> {
     if namespaces.is_empty() {
         return Vec::new();
     }
@@ -232,15 +236,23 @@ pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(Strin
         .map(|i| format!("?{}", i + 3))
         .collect::<Vec<_>>()
         .join(",");
+    let cat_clause = if category.is_some() {
+        format!(" AND category = ?{}", 3 + namespaces.len())
+    } else {
+        String::new()
+    };
     let sql = format!(
         "SELECT namespace, key, bm25(memories) FROM memories
-         WHERE memories MATCH ?1 AND namespace IN ({placeholders})
+         WHERE memories MATCH ?1 AND namespace IN ({placeholders}){cat_clause}
          ORDER BY bm25(memories) LIMIT ?2"
     );
 
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(expr), Box::new(limit as i64)];
     for ns in namespaces {
         params.push(Box::new(ns.to_string()));
+    }
+    if let Some(cat) = category {
+        params.push(Box::new(cat.to_string()));
     }
 
     let mut stmt = match conn.prepare(&sql) {
@@ -269,6 +281,15 @@ pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(Strin
     };
 
     rows.filter_map(|r| r.ok()).collect()
+}
+
+/// Search the FTS5 index. Returns up to `limit` hits as
+/// `(namespace, key, bm25_score)`, best match first.
+///
+/// Best-effort: any failure returns an empty `Vec` after logging. The index is
+/// a derived cache and search degrading to "no hits" must never be fatal.
+pub fn fts5_search(query: &str, limit: usize, namespaces: &[&str]) -> Vec<(String, String, f64)> {
+    fts5_search_in_category(query, limit, namespaces, None)
 }
 
 /// A hit from a turns FTS search.
@@ -3675,5 +3696,43 @@ mod tests {
             results.iter().any(|r| r.name == "self-heal"),
             "self-healing artifacts corpus should find disk runbook"
         );
+    }
+
+    #[test]
+    fn category_filter_excludes_other_categories() {
+        let _guard = crate::test_home_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+
+        // Seed a knowledge memory and an incident memory, both matching "zephyr"
+        crate::memory::add_memory(
+            "zephyr-knowledge",
+            "The zephyr blows softly",
+            crate::memory::MemoryCategory::Knowledge,
+            "global",
+        )
+        .expect("add knowledge memory");
+        crate::memory::add_memory(
+            "zephyr-incident",
+            "The zephyr incident occurred",
+            crate::memory::MemoryCategory::Incident,
+            "global",
+        )
+        .expect("add incident memory");
+
+        let unfiltered = fts5_search("zephyr", 10, &["global"]);
+        assert_eq!(
+            unfiltered.len(),
+            2,
+            "unfiltered search must return both knowledge and incident"
+        );
+
+        let filtered = fts5_search_in_category("zephyr", 10, &["global"], Some("incident"));
+        assert_eq!(
+            filtered.len(),
+            1,
+            "category filter must return only the incident"
+        );
+        assert_eq!(filtered[0].1, "zephyr-incident");
     }
 }

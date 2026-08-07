@@ -331,6 +331,43 @@ pub fn inject_yaml_session_origin(content: &str, name: &str) -> String {
     format!("---\nsession_origin: \"{}\"\n---\n{}", name, content)
 }
 
+/// Inject `relates_to: ["a", "b"]` into a YAML frontmatter block.
+///
+/// Returns `content` unchanged when `keys` is empty or the frontmatter already
+/// carries a `relates_to:` line — an author's explicit value always wins over an
+/// inferred one.
+pub fn inject_yaml_relates_to(content: &str, keys: &[String]) -> String {
+    if keys.is_empty() {
+        return content.to_string();
+    }
+    if let Some(after_open) = content.strip_prefix("---\n")
+        && let Some(rel) = after_open.find("\n---\n")
+    {
+        let fm_body = &after_open[..rel];
+        if fm_body.contains("relates_to:") {
+            return content.to_string();
+        }
+        let rest = &after_open[rel..]; // starts with "\n---\n"
+        let list = format!(
+            "[{}]",
+            keys.iter()
+                .map(|k| format!("\"{k}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return format!("---\n{}\nrelates_to: {}{}", fm_body, list, rest);
+    }
+    // No valid frontmatter — prepend a minimal block.
+    let list = format!(
+        "[{}]",
+        keys.iter()
+            .map(|k| format!("\"{k}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    format!("---\nrelates_to: {}\n---\n{}", list, content)
+}
+
 /// Inject `session_origin: "<name>"` into a comment-block (script) header.
 ///
 /// Uses `parse_comment_header` / `render_comment_header`.  Any shebang on the
@@ -642,5 +679,53 @@ mod tests {
             out, src,
             "should not modify content with existing session_origin"
         );
+    }
+
+    #[test]
+    fn relates_to_injected_into_existing_frontmatter() {
+        let src = "---\nfoo: bar\n---\nbody text";
+        let keys = vec!["a".to_string(), "b".to_string()];
+        let out = inject_yaml_relates_to(src, &keys);
+        assert!(
+            out.contains("relates_to: [\"a\", \"b\"]"),
+            "must inject relates_to line: {out}"
+        );
+        assert!(
+            out.contains("foo: bar"),
+            "original fields must survive: {out}"
+        );
+    }
+
+    #[test]
+    fn relates_to_does_not_overwrite_an_explicit_value() {
+        let src = "---\nrelates_to: [\"explicit\"]\n---\nbody";
+        let keys = vec!["a".to_string(), "b".to_string()];
+        let out = inject_yaml_relates_to(src, &keys);
+        assert_eq!(
+            out, src,
+            "must return byte-identical when relates_to already present"
+        );
+    }
+
+    #[test]
+    fn relates_to_with_no_frontmatter_prepends_a_block() {
+        let src = "just some body text";
+        let keys = vec!["x".to_string()];
+        let out = inject_yaml_relates_to(src, &keys);
+        assert!(
+            out.starts_with("---\nrelates_to: [\"x\"]\n---\n"),
+            "must prepend minimal frontmatter: {out}"
+        );
+        assert!(
+            out.contains("just some body text"),
+            "original body must be present"
+        );
+    }
+
+    #[test]
+    fn empty_keys_leaves_content_untouched() {
+        let src = "---\nfoo: bar\n---\nbody text";
+        let out = inject_yaml_relates_to(src, &[]);
+        assert_eq!(out, src, "empty keys must return byte-identical content");
     }
 }

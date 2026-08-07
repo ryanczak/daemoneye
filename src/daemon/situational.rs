@@ -11,6 +11,19 @@ const MIN_TERM_LEN: usize = 4;
 /// Per-line excerpt cap, in characters (not bytes — excerpts may be UTF-8).
 const EXCERPT_CHARS: usize = 200;
 
+/// Check whether `query` carries enough signal to justify a search.
+fn has_sufficient_signal(query: &str) -> bool {
+    let terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_lowercase())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    terms.iter().filter(|t| t.len() >= MIN_TERM_LEN).count() >= MIN_QUERY_TERMS
+}
+
 /// Assemble the `[SITUATIONAL]` block: at most one past turn and one past
 /// epoch from **other** sessions matching the current user turn.
 ///
@@ -20,17 +33,7 @@ pub fn assemble_situational_block(
     user_turn: &str,
     current_session: Option<&str>,
 ) -> Option<String> {
-    // Signal guard
-    let terms: Vec<String> = user_turn
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_lowercase())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-
-    let signal_terms: usize = terms.iter().filter(|t| t.len() >= MIN_TERM_LEN).count();
-    if signal_terms < MIN_QUERY_TERMS {
+    if !has_sufficient_signal(user_turn) {
         return None;
     }
 
@@ -133,6 +136,54 @@ fn render_excerpt(text: &str) -> String {
         let excerpt: String = chars[..EXCERPT_CHARS].iter().collect();
         format!("{}…", excerpt)
     }
+}
+
+/// Assemble the `[PRIOR INCIDENTS]` block for an incident-response ghost's
+/// first turn: past `incident` memories and past epochs matching the alert
+/// text. Returns `None` when nothing matches.
+pub fn assemble_incident_context(alert_msg: &str) -> Option<String> {
+    if !has_sufficient_signal(alert_msg) {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+
+    // Up to three prior incident memories
+    let hits =
+        crate::memory::index::fts5_search_in_category(alert_msg, 3, &["global"], Some("incident"));
+    for (namespace, key, _score) in hits {
+        let body = match crate::memory::read_memory(
+            &key,
+            crate::memory::MemoryCategory::Incident,
+            &namespace,
+        ) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let excerpt = render_excerpt(&body);
+        lines.push(format!("- incident memory {key}: {excerpt}"));
+    }
+
+    // Up to two matching epochs
+    for epoch in crate::memory::index::search_epochs(alert_msg, 2) {
+        if epoch.body.is_empty() {
+            continue;
+        }
+        let excerpt = render_excerpt(&epoch.body);
+        lines.push(format!(
+            "- past epoch — session {}, epoch {} ({}): {excerpt}",
+            epoch.session_id, epoch.seq, epoch.kind
+        ));
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "[PRIOR INCIDENTS] Related history for this alert\n{}",
+        lines.join("\n")
+    ))
 }
 
 #[cfg(test)]
@@ -446,6 +497,100 @@ mod tests {
         assert!(
             !block.contains("turn 100"),
             "block must not contain the unresolvable first turn"
+        );
+    }
+
+    // ── Incident context tests ──────────────────────────────────────────
+
+    #[test]
+    fn incident_context_includes_a_matching_prior_incident() {
+        let (_guard, _tmp) = setup();
+
+        crate::memory::add_memory(
+            "prior-outage",
+            "The database connection pool exhausted during peak load",
+            crate::memory::MemoryCategory::Incident,
+            "global",
+        )
+        .expect("add prior incident");
+
+        let result =
+            assemble_incident_context("database connection pool exhausted during peak load");
+        let block = result.expect("should return Some for matching incident");
+
+        assert!(
+            block.contains("prior-outage"),
+            "block must name the prior incident key: {block}"
+        );
+        assert!(
+            block.contains("connection pool"),
+            "block must carry body text from excerpt: {block}"
+        );
+    }
+
+    #[test]
+    fn incident_context_includes_a_matching_epoch() {
+        let (_guard, _tmp) = setup();
+
+        let _ = crate::memory::index::index_epoch(
+            "epoch-session",
+            42,
+            "turn",
+            "The quantum cascade failure was detected and resolved",
+        );
+
+        let result = assemble_incident_context("quantum cascade failure detected and resolved");
+        let block = result.expect("should return Some for matching epoch");
+
+        assert!(
+            block.contains("epoch-session"),
+            "block must name the session: {block}"
+        );
+        assert!(
+            block.contains("42"),
+            "block must carry the epoch seq: {block}"
+        );
+        assert!(block.contains("turn"), "block must carry the kind: {block}");
+    }
+
+    #[test]
+    fn incident_context_is_none_for_a_low_signal_alert() {
+        let (_guard, _tmp) = setup();
+
+        // Seed a non-empty matching corpus so the test is about the guard, not
+        // about an empty index.
+        crate::memory::add_memory(
+            "seeded-incident",
+            "The database connection pool exhausted during peak load",
+            crate::memory::MemoryCategory::Incident,
+            "global",
+        )
+        .expect("add seeded incident");
+
+        let result = assemble_incident_context("go no");
+        assert!(
+            result.is_none(),
+            "low-signal alert must return None even with a non-empty index"
+        );
+    }
+
+    #[test]
+    fn incident_context_is_none_when_nothing_matches() {
+        let (_guard, _tmp) = setup();
+
+        // Seed something that won't match
+        crate::memory::add_memory(
+            "unrelated-incident",
+            "The weather was fine today",
+            crate::memory::MemoryCategory::Incident,
+            "global",
+        )
+        .expect("add unrelated incident");
+
+        let result = assemble_incident_context("quantum cascade failure meltdown sector seven");
+        assert!(
+            result.is_none(),
+            "high-signal alert with no matches must return None"
         );
     }
 }
