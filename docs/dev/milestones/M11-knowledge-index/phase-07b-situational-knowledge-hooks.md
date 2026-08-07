@@ -1,7 +1,7 @@
 # Phase 07b: situational knowledge hooks — ghost cold-start, incident auto-linking
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** in-progress (bounced ×2 — see [bug-07b-1](bugs/bug-07b-1.md) and the ROUND 2 block in Acceptance criteria)
 **Depends on:** phase-07a (done)
 **Estimated diff:** ~360 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -280,7 +280,47 @@ and behaviors are in § Test plan.
 
 ## Acceptance criteria
 
-**These five fail against the current tree — they are the progress markers.**
+> ### ROUND 2 — read this block first; it is the only unfinished work
+>
+> **Everything below this block already passes and has since round 1.** All five
+> original progress markers and both no-regression guards were verified at
+> review on 2026-08-07. Four green gates and a clean tree are **expected here**
+> and are **not** evidence this phase is done. Round 2 reported `complete` with
+> an empty diff on exactly that reasoning; do not repeat it.
+>
+> The production code is correct and is **not** to be touched. See
+> [bug-07b-1](bugs/bug-07b-1.md) for the do-not-touch list.
+>
+> **These four fail against the current tree. Each was run at 2026-08-07 review
+> and confirmed to fail. They are the round-2 progress markers.**
+>
+> - [ ] `grep -n 'assemble_incident_context("go no")' src/daemon/situational.rs`
+>       finds **nothing** (exit 1). The `"go no"` fixture shares no term with the
+>       memory its own test seeds, so the search returns empty and the `None`
+>       comes from the no-hits path — the guard it exists to protect is never
+>       reached. (Today it matches at `:570`.)
+> - [ ] Deleting the `if !has_sufficient_signal(alert_msg) { return None; }`
+>       early return from `assemble_incident_context`
+>       (`src/daemon/situational.rs:145-147`) makes
+>       `incident_context_is_none_for_a_low_signal_alert` **FAIL**; restoring it
+>       makes it pass. Paste **both** runs. (Today the test passes with the guard
+>       deleted — verified at review — which is the entire defect.)
+> - [ ] `grep -c 'As \[`fts5_search`\]' src/memory/index.rs` prints **1**. The
+>       doc comment at `:212` currently links to the item it documents. (Today it
+>       prints `0`.)
+> - [ ] An Update Log entry titled `### Update — <date> (end-to-end
+>       verification)` exists, carrying the verbatim output of § End-to-end
+>       verification. Its mutation section names **only** the tests that actually
+>       failed — re-run at review, the prescribed mutation fails
+>       `category_filter_excludes_other_categories` **and nothing else**. Rounds
+>       1 and 2 both claimed three. (Today the entry count is `0`.)
+>
+> **Finish condition, inverted:** `cargo test --lib` must report **1147, not
+> 1148**. Both source edits change existing lines; neither adds a test. A rising
+> count means scope creep.
+
+**These five fail against the tree as it stood at drafting — they are the
+round-1 progress markers, and all five now pass.**
 Each was run at drafting and confirmed to fail.
 
 - [ ] `grep -n "fts5_search_in_category" src/memory/index.rs` finds the

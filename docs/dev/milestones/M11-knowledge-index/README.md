@@ -81,7 +81,7 @@ design-latitude phase (07) last, when every mechanical layer under it is proven.
 | 05c | [reconcile-scope-fix](phase-05c-reconcile-scope-fix.md) — a search over an empty corpus must not wipe every other corpus ([bug-05c-1](bugs/bug-05c-1.md)) | done |
 | 06 | [prompt-scoring-fix](phase-06-prompt-scoring-fix.md) — BM25 scores used, `(namespace, key)` merge keys, one directory listing instead of four | done |
 | 07a | [situational-turns-epochs](phase-07a-situational-turns-epochs.md) — a budget-capped `[SITUATIONAL]` block carrying one cross-session turn and one epoch; `read_line_at_offset` de-duplicated | done |
-| 07b | [situational-knowledge-hooks](phase-07b-situational-knowledge-hooks.md) — ghost cold-start seeding, incident `relates_to` auto-linking ([bug-07b-1](bugs/bug-07b-1.md)) | review      |
+| 07b | [situational-knowledge-hooks](phase-07b-situational-knowledge-hooks.md) — ghost cold-start seeding, incident `relates_to` auto-linking ([bug-07b-1](bugs/bug-07b-1.md)) | in-progress |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; all phases
 (01, 02a–07b) are now drafted; 07b is the last.
