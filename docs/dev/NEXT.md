@@ -27,8 +27,19 @@ that repo. This is the second batch carrying that caveat.
 
 **Active phase:
 [M11 phase-07b — situational-knowledge-hooks](milestones/M11-knowledge-index/phase-07b-situational-knowledge-hooks.md)
-(`todo`, drafted 2026-08-06, not yet dispatched). **This is the last phase of
-M11** — after it, the milestone hits its human gate.**
+(`in-progress` — **bounced 2026-08-07**, see
+[bug-07b-1](milestones/M11-knowledge-index/bugs/bug-07b-1.md)). **This is the
+last phase of M11** — after it, the milestone hits its human gate.**
+
+**This is a green bounce.** Round 1 shipped correct production code and all
+eight acceptance criteria pass; four green gates and a clean tree are *expected*
+and are not evidence the phase is done. Two edits remain — one test fixture
+(`incident_context_is_none_for_a_low_signal_alert`, whose query shares no term
+with its seed, so deleting the guard it exists to protect leaves all 12
+situational tests green) and one self-referential rustdoc link — plus the
+`(end-to-end verification)` Update Log entry the spec required and round 1 never
+wrote. `cargo test --lib` must report **1147, not 1148**. Full detail and a
+both-directions-executed fixture recipe are in the bug doc.
 
 The two remaining write/read choke points that ignore the index. An
 incident-response ghost starts cold on every alert with no memory of the last
