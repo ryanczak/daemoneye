@@ -5,7 +5,7 @@ runbooks, scripts, session archives, epoch narratives, event log — is searchab
 through one BM25-ranked FTS5 index, and the surfaces that matter (recall_context,
 search_repository, per-turn prompt assembly) actually use it.
 
-**Status:** planning
+**Status:** in-progress
 
 **Depends on:** M7 (FTS5 memory index — the v1 this extends), M9 (`daemoneye
 reindex` — the rebuild command that must cover the new corpora), M4 (context
