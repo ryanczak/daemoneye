@@ -558,16 +558,17 @@ mod tests {
         let (_guard, _tmp) = setup();
 
         // Seed a non-empty matching corpus so the test is about the guard, not
-        // about an empty index.
+        // about an empty index. The seeded memory contains terms that share
+        // characters with the query words but are not the same tokens.
         crate::memory::add_memory(
             "seeded-incident",
-            "The database connection pool exhausted during peak load",
+            "The highlight_by_service crashed during peak load",
             crate::memory::MemoryCategory::Incident,
             "global",
         )
         .expect("add seeded incident");
 
-        let result = assemble_incident_context("go no");
+        let result = assemble_incident_context("hi by");
         assert!(
             result.is_none(),
             "low-signal alert must return None even with a non-empty index"

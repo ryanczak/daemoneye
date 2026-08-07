@@ -209,7 +209,7 @@ fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
     Some(conn)
 }
 
-/// As [`fts5_search_in_category`], but restricted to one memory category when
+/// As [`fts5_search`], but restricted to one memory category when
 /// `category` is `Some`. The value must be the category's **canonical** name
 /// (`"incident"`, not the `"incidents"` directory name) — that is what
 /// `index_memory_file` stores.
