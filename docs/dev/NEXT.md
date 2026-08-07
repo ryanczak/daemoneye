@@ -27,13 +27,25 @@ that repo. This is the second batch carrying that caveat.
 
 **Active phase:
 [M11 phase-07b — situational-knowledge-hooks](milestones/M11-knowledge-index/phase-07b-situational-knowledge-hooks.md)
-(`in-progress` — **bounced 2026-08-07**, see
+(`in-progress` — **bounced ×2 on 2026-08-07**, see
 [bug-07b-1](milestones/M11-knowledge-index/bugs/bug-07b-1.md)). **This is the
 last phase of M11** — after it, the milestone hits its human gate.**
 
+**Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
+criteria.** That block holds the only unfinished work: four criteria, each run
+and confirmed to fail against the current tree.
+
+**Round 2 returned `complete` with an empty diff and changed nothing** — the
+documented green-bounce failure mode. The cause was architect-side: round 1's
+bounce filed the bug but left all eight original criteria passing, so the phase
+doc still certified itself as finished and the executor correctly concluded
+there was no work. The criteria are refreshed as of round 3; the bug doc alone
+was not enough.
+
 **This is a green bounce.** Round 1 shipped correct production code and all
-eight acceptance criteria pass; four green gates and a clean tree are *expected*
-and are not evidence the phase is done. Two edits remain — one test fixture
+eight original acceptance criteria pass; four green gates and a clean tree are
+*expected* and are not evidence the phase is done. Two edits remain — one test
+fixture
 (`incident_context_is_none_for_a_low_signal_alert`, whose query shares no term
 with its seed, so deleting the guard it exists to protect leaves all 12
 situational tests green) and one self-referential rustdoc link — plus the
