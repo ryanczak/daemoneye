@@ -247,14 +247,48 @@ is the only thing left to fill it with. Two ways the gap opens, both observed:
   and run end to end, so the executor has to narrate across the seam — which
   is the same failure in a smaller space.
 
-**Concretely, mutation pairs belong in the E2E block as commands, not in the
-Test plan as instructions.** A mutation is applied and reverted by a command
-like any other step — `sed -i` for a substitution, `perl -0pi -e` for a
-multi-line deletion, `git checkout <file>` for the restore — and each direction
-gets its own labelled marker (`echo "== M1 APPLIED ==" >> …`) so the failing
-and restored runs are distinguishable in the pasted output. Where the restore
-is a `git checkout`, confirm it targets only files the round is forbidden to
-edit, so it cannot discard the executor's work; say so in the block.
+**Concretely, mutation pairs belong in `## Spec` as tasks, not in the Test plan
+as instructions and not as shell edits inside the E2E block.** The executor
+contract **forbids in-place shell edits** — `sed -i`, `perl -i`, and `>`/`tee`
+redirects into a source file are banned outright, and `bash` refuses them, so
+the executor may edit only through `write_file`, `patch` and `patch_lines`
+(rexyMCP `executor/templates/executor_contract.md`, § the do-not list). A
+mutation pair written as `sed -i` is therefore **unrunnable as specified**: the
+executor either substitutes `patch` and the block's surrounding marker `echo`s
+go missing, or it narrates across the seam — the same gap this section exists
+to close.
+
+So write each pair as **three numbered tasks in `## Spec`**, around the block:
+
+1. **Apply** — a `patch` on the pinned line, given as a worked example with the
+   exact `old_str` and `new_str`, then
+   `echo "== M1 APPLIED ==" >> /tmp/e2e-NN.txt` and the mutated test run
+   appended to the same file.
+2. **Restore** — the inverse `patch`, then `== M1 RESTORED ==` and the restored
+   test run.
+3. A `grep -c` of the mutated text after each direction, appended to the
+   artifact. **This is not optional**: a `patch` whose `old_str` no longer
+   matches fails loudly, but one that matches the *wrong* line does not, and a
+   mutation that did not apply certifies a vacuous guard — the exact outcome
+   § "Coverage claims are inadmissible without mutation proof" exists to
+   prevent.
+
+The marker `echo`s and the test runs are ordinary shell and stay legal; only
+the *edit* moves to the `patch` tool. **Never spec `git checkout <file>` as the
+restore** when the file holds the round's own uncommitted work — it discards
+it.
+
+*(Folded 2026-08-08 after M12 phases 03–05, on PE sign-off. The prior wording
+prescribed `sed -i` / `perl -0pi -e` / `git checkout`, all three of which the
+executor contract bans. It was not caught for three phases because the
+substitution is silent and graded green: phase-03 r2, phase-05 r1 and r2 each
+swapped in `patch` and declared it, reviews graded the substance, and the specs
+kept prescribing the banned form because this document said to. The tell was
+phase-05 r2's transcript, where `== SURFACES ==`, `== GATES ==` and `== TREE ==`
+were all present and only the four `== M* APPLY/RESTORED ==` markers were
+missing — precisely the `echo`s that sat between the banned commands. Note the
+shape of the error: a fold written from the architect's side, never checked
+against what the executor is permitted to do.)*
 
 And per § "Derive every spec fact from its source", **run the mutation commands
 yourself before writing them into the spec.** A `perl` regex that silently
@@ -1407,6 +1441,41 @@ round trip. The splice was caught only because that review had been told
 out-of-band to re-run and compare; nothing in these docs required it, which is
 what this fold repairs.)*
 
+**Give the executor a paste-fidelity check it can run itself.** Telling it to
+paste verbatim is not enough, and neither is making the artifact small: add a
+final `## Spec` task that extracts the pasted block back out of the phase doc
+and diffs it against the artifact, printing `PASTE MATCH` / `PASTE MISMATCH`,
+and make `PASTE MATCH` an acceptance criterion. On a mismatch the `diff` names
+the retyped lines, so the executor can fix them from the file instead of
+guessing.
+
+```bash
+D=docs/dev/milestones/M<n>-<slug>/phase-NN-<slug>.md
+START=$(grep -n '^### Update .*(end-to-end verification)' $D | tail -1 | cut -d: -f1)
+tail -n +$START $D | awk '/^```/{n++; next} n==1' > /tmp/pasted-NN.txt
+diff /tmp/pasted-NN.txt /tmp/e2e-NN.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+**Anchor the search to the heading, not to a bare substring.** `grep 'end-to-end
+verification)'` also matches the phrase in the spec's own prose *and* in the
+server-authored `(complete)` entry, which is appended **after** the executor's
+check runs — so a reviewer re-running a bare-substring version later extracts
+the wrong block and reads a false `PASTE MISMATCH`. The `^### Update` anchor
+above is what makes the check re-runnable at review time.
+
+And **run the check against a known-bad entry before speccing it.** A detector
+that cannot fail is worth as little as a mutation that cannot fail.
+
+*(Folded 2026-08-08 after M12 phases 04 and 05, on PE sign-off. Two consecutive
+retyped-transcript bounces, and the second refutes the obvious diagnosis: the
+phase-04 remedy was to shrink the artifact from 2,555 lines to 38, on the theory
+that an unpasteable block forces a paraphrase — yet phase-05's round-1 artifact
+was already only 56 lines and was still reconstructed from memory. Size was a
+real defect and not the mechanism. What worked immediately, on its first
+outing, was the self-check above: phase-05 round 2 came back byte-identical.
+Same shape as the E2E-as-a-Spec-task fold — the thing that moves the executor is
+a condition it can evaluate, not an instruction it can agree with.)*
+
 ### Every acceptance criterion must be satisfiable, and its mechanics pinned
 
 Both `NoProgressStall` hard-fails in M5 were caused by a criterion the executor
@@ -1432,6 +1501,18 @@ command the shell guard blocks is not a refinement. That one cost a run even aft
 the diagnosis was correct.
 
 *(Folded 2026-07-27 after two hard-fails and one pre-dispatch catch.)*
+
+*(Reinforced 2026-08-08 after M12, on PE sign-off — the rule was already here
+and was broken twice more, so what it needed was a sharper trigger, not new
+content. Phase-05 shipped a criterion demanding `src/tmux/cache_tests.rs` show
+no changes while its own Test plan put that phase's new tests in that file;
+it was caught by the dispatcher, after dispatch. And the `sed -i` mutation
+form this document itself prescribed was blocked by the executor contract for
+three phases running — the "confirm the harness permits it" clause above,
+unapplied to a rule in these very docs. Both are the same omission: the
+criterion was checked against the tree and never against **the rest of its own
+spec, or against what the executor is permitted to do**. Make that re-read a
+literal pre-dispatch step, and include this document in what you re-read.)*
 
 **A bounce makes the acceptance criteria stale, and stale criteria certify the
 phase as finished.** After a review rejects a phase, the criteria in the phase

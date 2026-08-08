@@ -1,33 +1,55 @@
 # NEXT
 
-## Active phase: none — **STOPPED ON A BLOCKER** (2026-08-08)
+## Active phase: none — blocker resolved, phase-06 not yet drafted
 
-Phases 01–05 of M12 are `done`. Phase-06 was **not drafted**: a
-`/rexymcp:auto` run stopped here because resolving the blocker below requires a
-change to `docs/dev/WORKFLOW.md`, which is a human gate.
+Phases 01–05 of M12 are `done`. A `/rexymcp:auto` run stopped on a blocker on
+2026-08-08; **the PE resolved it the same day (option 1) and the fold has
+landed.** Nothing is outstanding — the next step is drafting phase-06.
 
-### The blocker: WORKFLOW.md prescribes an edit form the executor contract bans
+### Resolved 2026-08-08 (PE sign-off): mutation pairs are `patch` tasks, not `sed -i`
 
-`docs/dev/WORKFLOW.md:252` (§ "End-to-end verification", folded 2026-08-08)
-tells the architect to write mutation pairs as in-place shell edits:
+`docs/dev/WORKFLOW.md` § "End-to-end verification" prescribed `sed -i` /
+`perl -0pi -e` / `git checkout` for mutation pairs. The rexyMCP executor
+contract bans in-place shell edits outright and `bash` refuses them
+(`executor/templates/executor_contract.md`, the do-not list), so **every E2E
+block written to that fold was unrunnable as specified** — silently, because
+the executor substituted `patch` and the runs graded green. It went unnoticed
+for three phases (03 r2, 05 r1, 05 r2).
 
-> *"A mutation is applied and reverted by a command like any other step —
-> `sed -i` for a substitution, `perl -0pi -e` for a multi-line deletion,
-> `git checkout <file>` for the restore"*
+**Option 1 was chosen and folded:** each mutation pair is now **three numbered
+tasks in `## Spec`** — a `patch` apply with the exact `old_str`/`new_str`, the
+inverse `patch` restore, and a `grep -c` of the mutated text after each
+direction. The marker `echo`s and test runs stay in the block as ordinary
+shell; only the *edit* moves to the `patch` tool. `git checkout` is never the
+restore for a file holding the round's own work.
 
-The rexyMCP executor contract forbids exactly that, and the sandbox enforces
-it (`/home/matt/src/rexyMCP/executor/templates/executor_contract.md:160-164`):
+Two smaller items folded under the same sign-off:
 
-> *"**Do not edit files with in-place shell commands** (`sed -i`, `perl -i`, or
-> a `>`/`tee` redirect into a source file). Edit only through `write_file`,
-> `patch`, and `patch_lines` … (`bash` refuses `sed -i`/`perl -i` for this
-> reason)."*
+- **§ "A pasted transcript is a claim, not evidence"** now requires a
+  **self-checkable** paste-fidelity task — extract the pasted fence, diff it
+  against the artifact, print `PASTE MATCH` / `PASTE MISMATCH` — with the
+  extraction anchored to `^### Update .*(end-to-end verification)` rather than
+  a bare substring, because the server-authored `(complete)` entry contains
+  that phrase in its prose and wins a `tail -1`. Also: run the detector against
+  a known-bad entry before speccing it.
+- **§ "Every acceptance criterion must be satisfiable"** gains a reinforcement
+  note. The rule already said "confirm the harness permits it"; M12 broke it
+  twice anyway (phase-05's cache_tests contradiction, and the `sed -i` form
+  prescribed by these docs). The sharpened trigger: re-read every criterion
+  against **the rest of its own spec and against what the executor is permitted
+  to do** — and include `WORKFLOW.md` itself in what you re-read.
 
-So **every E2E block written to that fold is unrunnable as specified.** This is
-not theoretical — it has already distorted three phases:
+**Not applied upstream** — all three belong in the push backlog
+(`/home/matt/src/rexyMCP/plugin/templates/WORKFLOW.md` carries the superseded
+`sed -i` wording verbatim, so this one is a correctness fix upstream, not just
+a missing lesson).
 
-| Phase | What happened |
-|---|---|
+**Next action:** `/rexymcp:architect next` to draft phase-06 (tmux-control-tool,
+D5) — the milestone's highest-risk phase, approval-flow integration plus ghost
+policy semantics, and the one the README flags as a possible a/b split. Or
+`/rexymcp:auto` to resume the hands-off run from there.
+
+---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
 | 05 r1 | executor substituted `patch` for both `sed -i` pairs |
 | 05 r2 | same substitution; the block's `== M1 APPLY ==` / `== M*  RESTORED ==` markers are missing from the transcript because the marker `echo`s live between the banned commands |
