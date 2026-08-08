@@ -968,8 +968,8 @@ pub(super) async fn prompt_pane_select_ratatui(
             "  [{}]  {} — {} — {}\n",
             i + 1,
             pane.id,
-            pane.current_cmd,
-            pane.summary
+            pane.cmd,
+            pane.preview
         ));
     }
     let prompt_text = "  Select pane › ";

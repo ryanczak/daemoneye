@@ -3,7 +3,7 @@ use crate::config::Config;
 use crate::config::default_socket_path;
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
-use crate::ipc::Response;
+use crate::ipc::{PaneInfo, Response};
 use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
 use anyhow::Result;
@@ -174,9 +174,13 @@ where
     // Phase 1 (locked): snapshot the candidates. No blocking work under the
     // read guard — `pane_exists` spawns a tmux subprocess per pane and used to
     // run here, holding the cache lock for the whole sweep.
-    let candidates: Vec<(String, String, String, usize, bool)> = {
+    let panes_snapshot: Vec<PaneInfo> = {
         let panes = cache.panes.read().unwrap_or_log();
         let home = cache.session_name.read().unwrap_or_log().clone();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         panes
             .iter()
             .filter(|(_, s)| s.session_name == home)
@@ -190,30 +194,53 @@ where
             })
             .map(|(id, s)| {
                 let is_target = current_target.as_deref() == Some(id.as_str());
-                (
-                    id.clone(),
-                    s.current_cmd.clone(),
-                    s.window_name.clone(),
-                    s.pane_index,
+                let activity_age_secs = if s.last_activity > 0 {
+                    Some(now.saturating_sub(s.last_activity))
+                } else {
+                    None
+                };
+                let title = if !s.pane_title.is_empty() && s.pane_title != s.current_cmd {
+                    crate::ai::filter::mask_sensitive(&s.pane_title)
+                } else {
+                    String::new()
+                };
+                let preview = crate::ai::filter::mask_sensitive(&crate::tmux::status::summarize(
+                    s.status, &s.buffer,
+                ));
+                PaneInfo {
+                    id: id.clone(),
+                    idx: s.pane_index,
+                    window: s.window_name.clone(),
+                    session: s.session_name.clone(),
+                    cmd: s.current_cmd.clone(),
+                    cwd: s.current_path.clone(),
+                    title,
+                    status: s.status.to_string(),
+                    activity_age_secs,
                     is_target,
-                )
+                    preview,
+                }
             })
             .collect()
     };
 
     // Phase 2 (unlocked): the liveness probe, one bounded tmux call per
     // candidate, off the runtime.
-    let mut panes_snapshot = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        let id = candidate.0.clone();
-        let exists = crate::tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&id))
-            .await
-            .unwrap_or(false);
-        if exists {
-            panes_snapshot.push(candidate);
+    let mut panes_snapshot = {
+        let mut live = Vec::with_capacity(panes_snapshot.len());
+        for candidate in panes_snapshot {
+            let id = candidate.id.clone();
+            let exists =
+                crate::tmux::off_runtime("pane-exists", move || crate::tmux::pane_exists(&id))
+                    .await
+                    .unwrap_or(false);
+            if exists {
+                live.push(candidate);
+            }
         }
-    }
-    panes_snapshot.sort_by_key(|(_, _, win, idx, _)| (win.clone(), *idx));
+        live
+    };
+    panes_snapshot.sort_by_key(|p: &PaneInfo| (p.window.clone(), p.idx));
     send_response_split(
         tx,
         Response::PaneList {

@@ -76,7 +76,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/daemon/memory_prompt.rs` | G5 tiered memory prompt: stable ambient block + dynamic turn-relevant block |
 | `src/header.rs` | Inline header parser/renderer for all artifact types; `inject_yaml_session_origin()` / `inject_comment_session_origin()` |
 | `src/sys_context.rs` | One-shot host audit (OS, uptime, memory, processes, shell history); `OnceLock` |
-| `src/cli/` | Terminal rendering, readline input, session-level approval state, chat/ask/notify commands |
+| `src/cli/` | Terminal rendering, readline input, session-level approval state, chat/ask/notify commands; `/panes` inspector (`render_pane_inspector`) |
 | `src/agents/mod.rs` | Named agents: `AgentConfig`, CRUD, validation, `apply_agent_to_ghost_config()` |
 | `src/agents/policy.rs` | `ToolPolicy` — agent-level allow/deny tool lists, `permits()`, `format_tool_restriction_block()` |
 | `src/agents/mailbox.rs` | G5 mailbox: `MailboxResult`, `write_mailbox()`, `read_mailbox()` for agent-to-agent delegation |

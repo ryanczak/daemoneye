@@ -364,13 +364,29 @@ fn response_pane_select_prompt_roundtrip() {
         panes: vec![
             PaneInfo {
                 id: "%1".to_string(),
-                current_cmd: "bash".to_string(),
-                summary: "idle shell".to_string(),
+                idx: 0,
+                window: "main".to_string(),
+                session: "de".to_string(),
+                cmd: "bash".to_string(),
+                cwd: "/home/user".to_string(),
+                title: String::new(),
+                status: "idle".to_string(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: "idle shell".to_string(),
             },
             PaneInfo {
                 id: "%3".to_string(),
-                current_cmd: "vim".to_string(),
-                summary: "editing file".to_string(),
+                idx: 1,
+                window: "main".to_string(),
+                session: "de".to_string(),
+                cmd: "vim".to_string(),
+                cwd: "/home/user".to_string(),
+                title: String::new(),
+                status: "running".to_string(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: "editing file".to_string(),
             },
         ],
     };
@@ -379,9 +395,9 @@ fn response_pane_select_prompt_roundtrip() {
             assert_eq!(id, "ps_2");
             assert_eq!(panes.len(), 2);
             assert_eq!(panes[0].id, "%1");
-            assert_eq!(panes[0].current_cmd, "bash");
+            assert_eq!(panes[0].cmd, "bash");
             assert_eq!(panes[1].id, "%3");
-            assert_eq!(panes[1].current_cmd, "vim");
+            assert_eq!(panes[1].cmd, "vim");
         }
         _ => panic!("wrong variant"),
     }

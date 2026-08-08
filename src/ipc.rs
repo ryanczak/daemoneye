@@ -1,12 +1,28 @@
 use serde::{Deserialize, Serialize};
 
-/// A snapshot of a single tmux pane, sent in `PaneSelectPrompt` so the client
-/// can display a numbered list for the user to choose from.
+/// A snapshot of a single tmux pane (M12 D7). A named struct rather than a
+/// widening tuple — the tuple had already reached five positional fields.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PaneInfo {
     pub id: String,
-    pub current_cmd: String,
-    pub summary: String,
+    /// Window-relative pane index — the number `ctrl+a q` shows.
+    pub idx: usize,
+    pub window: String,
+    /// Owning tmux session. Equal to the user's own session for every row this
+    /// phase produces; carried because the cache is multi-session (D1) and the
+    /// renderer must not assume otherwise.
+    pub session: String,
+    pub cmd: String,
+    pub cwd: String,
+    pub title: String,
+    /// `PaneStatus` rendered through its `Display` impl.
+    pub status: String,
+    /// Seconds since the pane last produced output; `None` when unknown.
+    pub activity_age_secs: Option<u64>,
+    /// True when this pane is the session's pinned foreground target.
+    pub is_target: bool,
+    /// One-line preview of the pane's buffer, masked.
+    pub preview: String,
 }
 
 /// Summary of a scheduled job for the `ScheduleList` response.
@@ -501,10 +517,7 @@ pub enum Response {
         description: String,
     },
     /// List of targetable panes (response to `ListPanesForSession`).
-    /// Each entry is `(pane_id, current_cmd, window_name, pane_index, is_current_target)`.
-    PaneList {
-        panes: Vec<(String, String, String, usize, bool)>,
-    },
+    PaneList { panes: Vec<PaneInfo> },
     /// Daemon status snapshot returned in response to `Request::Status` (F1).
     DaemonStatus {
         uptime_secs: u64,

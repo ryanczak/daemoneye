@@ -1,7 +1,7 @@
 # Phase 07: `/panes` Inspector + Widened `PaneList` IPC
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02, phase-05
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -385,3 +385,88 @@ None. No new dependencies; no `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 17:00 (started)
+
+**Executor:** headless executor
+
+Implementing D7: replaced `Response::PaneList`'s opaque 5-tuple with named `PaneInfo` struct, populated it in `handle_list_panes`, extracted `render_pane_inspector` as a pure function with global numbering, updated all consumers (stream.rs, executor/mod.rs, ipc_tests.rs), and added 4 pure unit tests.
+
+### Update — 2026-08-08 17:00 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+M1 mutated-lines-present=1
+test cli::commands::slash::tests::render_pane_inspector_groups_by_window ... ok
+test cli::commands::slash::tests::render_pane_inspector_marks_the_pinned_target ... FAILED
+test cli::commands::slash::tests::render_pane_inspector_omits_empty_preview_and_unknown_age ... FAILED
+test cli::commands::slash::tests::render_pane_inspector_numbers_panes_globally_not_per_window ... FAILED
+thread 'cli::commands::slash::tests::render_pane_inspector_marks_the_pinned_target' (1807711) panicked at src/cli/commands/slash.rs:740:14:
+thread 'cli::commands::slash::tests::render_pane_inspector_omits_empty_preview_and_unknown_age' (1807713) panicked at src/cli/commands/slash.rs:865:14:
+thread 'cli::commands::slash::tests::render_pane_inspector_numbers_panes_globally_not_per_window' (1807712) panicked at src/cli/commands/slash.rs:688:9:
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 1191 filtered out; finished in 0.00s
+M1 exit=101
+== M1 RESTORED ==
+M1 restored-lines-present=0
+test cli::commands::slash::tests::render_pane_inspector_omits_empty_preview_and_unknown_age ... ok
+test cli::commands::slash::tests::render_pane_inspector_marks_the_pinned_target ... ok
+test cli::commands::slash::tests::render_pane_inspector_numbers_panes_globally_not_per_window ... ok
+test cli::commands::slash::tests::render_pane_inspector_groups_by_window ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1191 filtered out; finished in 0.00s
+M1 restored exit=0
+== M2 APPLIED ==
+M2 mutated-lines-present=1
+test cli::commands::slash::tests::render_pane_inspector_omits_empty_preview_and_unknown_age ... ok
+test cli::commands::slash::tests::render_pane_inspector_groups_by_window ... ok
+test cli::commands::slash::tests::render_pane_inspector_numbers_panes_globally_not_per_window ... ok
+test cli::commands::slash::tests::render_pane_inspector_marks_the_pinned_target ... FAILED
+thread 'cli::commands::slash::tests::render_pane_inspector_marks_the_pinned_target' (1809665) panicked at src/cli/commands/slash.rs:741:9:
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 1191 filtered out; finished in 0.00s
+M2 exit=101
+== M2 RESTORED ==
+M2 restored-lines-present=0
+test cli::commands::slash::tests::render_pane_inspector_marks_the_pinned_target ... ok
+test cli::commands::slash::tests::render_pane_inspector_omits_empty_preview_and_unknown_age ... ok
+test cli::commands::slash::tests::render_pane_inspector_numbers_panes_globally_not_per_window ... ok
+test cli::commands::slash::tests::render_pane_inspector_groups_by_window ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1191 filtered out; finished in 0.00s
+M2 restored exit=0
+== SURFACES ==
+tuple gone from ipc.rs (want 0)=0
+PaneInfo declared (want 1)=1
+tool counts UNCHANGED at 36 (want 1)=1
+/panes still aliased to /pane (want 1)=1
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.34s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.06s
+clippy exit=0
+test result: ok. 1195 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.20s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+doc_truth exit=0
+== TREE ==
+ M CLAUDE.md
+ M docs/dev/milestones/M12-tmux-integration/phase-07-pane-inspector-cli.md
+ M src/cli/commands/slash.rs
+ M src/cli/commands/stream.rs
+ M src/daemon/executor/mod.rs
+ M src/daemon/server/handlers.rs
+ M src/ipc.rs
+ M src/ipc_tests.rs
+porcelain exit=0
+transcript line count=69
+```
+
+### Update — 2026-08-08 17:00 (paste check)
+
+PASTE MATCH

@@ -143,6 +143,63 @@ async fn cmd_model(ctx: SlashCtx<'_>, rest: &str) {
 
 // ── /pane ────────────────────────────────────────────────────────────────────
 
+/// Render the `/panes` inspector body: one section per window, rows numbered
+/// globally so the number a user types into `/pane <n>` still indexes
+/// `panes[n - 1]`.
+///
+/// Pure so the numbering and marker rules can be tested without a daemon.
+fn render_pane_inspector(panes: &[crate::ipc::PaneInfo]) -> Vec<String> {
+    if panes.is_empty() {
+        return vec!["no targetable panes in this session".to_string()];
+    }
+    let mut body = Vec::new();
+    let first_session = &panes[0].session;
+    let mut prev_window: Option<&str> = None;
+    for (i, p) in panes.iter().enumerate() {
+        let number = i + 1; // global index — /pane <n> resolves panes[n - 1]
+        // Emit a window header whenever the window changes.
+        if prev_window.is_none_or(|prev| prev != p.window) {
+            prev_window = Some(&p.window);
+            // Count panes in this window.
+            let count = panes[i..]
+                .iter()
+                .take_while(|q| q.window == p.window)
+                .count();
+            body.push(format!(
+                "window '{}' ({} pane{})",
+                p.window,
+                count,
+                if count == 1 { "" } else { "s" }
+            ));
+        }
+        let marker = if p.is_target { "●" } else { " " }; // pinned target marker
+        let mut row = format!(
+            "{marker} [{}] {}  idx:{}  cmd:{}  status:{}",
+            number, p.id, p.idx, p.cmd, p.status
+        );
+        if let Some(age) = p.activity_age_secs {
+            if age < 30 {
+                row.push_str(&format!("  [active {}s]", age));
+            } else if age < 3600 {
+                row.push_str(&format!("  [idle {}m]", age / 60));
+            } else {
+                row.push_str(&format!("  [idle {}h{}m]", age / 3600, (age % 3600) / 60));
+            }
+        }
+        row.push_str(&format!("  cwd:{}", p.cwd));
+        if p.session != *first_session {
+            row.push_str(&format!("  session:{}", p.session));
+        }
+        body.push(row);
+        if !p.preview.is_empty() {
+            body.push(format!("    {}", p.preview));
+        }
+    }
+    body.push(String::new());
+    body.push("pin with: /pane <number|%id>".to_string());
+    body
+}
+
 async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
     if rest.is_empty() {
         match request_once(Request::ListPanesForSession {
@@ -151,17 +208,7 @@ async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
         .await
         {
             Ok(Response::PaneList { panes }) => {
-                if panes.is_empty() {
-                    note(ctx.renderer, "no targetable panes in this session");
-                    return;
-                }
-                let mut body = Vec::new();
-                for (i, (id, cmd, window, idx, is_target)) in panes.iter().enumerate() {
-                    let marker = if *is_target { "●" } else { " " };
-                    body.push(format!("{marker} [{}] {id}  {window}:{idx}  {cmd}", i + 1));
-                }
-                body.push(String::new());
-                body.push("pin with: /pane <number|%id>".to_string());
+                let body = render_pane_inspector(&panes);
                 let _ = ctx.renderer.commit_panel("panes", &body, false);
             }
             Ok(other) => render_error(ctx.renderer, other),
@@ -180,7 +227,7 @@ async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
         .await
         {
             Ok(Response::PaneList { panes }) => match panes.get(n.saturating_sub(1)) {
-                Some((id, ..)) => id.clone(),
+                Some(p) => p.id.clone(),
                 None => {
                     note(ctx.renderer, &format!("no pane #{n} (run /pane to list)"));
                     return;
@@ -589,6 +636,245 @@ mod tests {
         assert!(
             !line.contains('{'),
             "should not contain debug-struct braces"
+        );
+    }
+
+    #[test]
+    fn render_pane_inspector_numbers_panes_globally_not_per_window() {
+        let panes = vec![
+            crate::ipc::PaneInfo {
+                id: "%1".into(),
+                idx: 0,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "bash".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "idle".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+            crate::ipc::PaneInfo {
+                id: "%2".into(),
+                idx: 1,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "vim".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "running".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+            crate::ipc::PaneInfo {
+                id: "%3".into(),
+                idx: 0,
+                window: "edit".into(),
+                session: "de".into(),
+                cmd: "nano".into(),
+                cwd: "/tmp".into(),
+                title: String::new(),
+                status: "running".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+        ];
+        let body = render_pane_inspector(&panes);
+        // Each pane gets a globally-unique number.
+        assert!(body.iter().any(|l| l.contains("[1]")), "body: {body:?}");
+        assert!(body.iter().any(|l| l.contains("[2]")), "body: {body:?}");
+        assert!(body.iter().any(|l| l.contains("[3]")), "body: {body:?}");
+        // The third pane (first in its window) is [3], not [1].
+        let third_row = body
+            .iter()
+            .find(|l| l.contains("[3]") && l.contains("%3"))
+            .expect("third pane row with [3]: {body:?}");
+        assert!(
+            third_row.contains("nano"),
+            "row should be the edit-window pane: {third_row}"
+        );
+    }
+
+    #[test]
+    fn render_pane_inspector_marks_the_pinned_target() {
+        let panes = vec![
+            crate::ipc::PaneInfo {
+                id: "%1".into(),
+                idx: 0,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "bash".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "idle".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+            crate::ipc::PaneInfo {
+                id: "%2".into(),
+                idx: 1,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "vim".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "running".into(),
+                activity_age_secs: None,
+                is_target: true,
+                preview: String::new(),
+            },
+        ];
+        let body = render_pane_inspector(&panes);
+        // Find rows for each pane.
+        let row1 = body
+            .iter()
+            .find(|l| l.contains("[1]") && l.contains("%1"))
+            .expect("row for %1: {body:?}");
+        let row2 = body
+            .iter()
+            .find(|l| l.contains("[2]") && l.contains("%2"))
+            .expect("row for %2: {body:?}");
+        assert!(
+            !row1.starts_with("●"),
+            "non-target pane should not have bullet: {row1}"
+        );
+        assert!(
+            row2.starts_with("●"),
+            "target pane should have bullet: {row2}"
+        );
+    }
+
+    #[test]
+    fn render_pane_inspector_groups_by_window() {
+        let panes = vec![
+            crate::ipc::PaneInfo {
+                id: "%1".into(),
+                idx: 0,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "bash".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "idle".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+            crate::ipc::PaneInfo {
+                id: "%2".into(),
+                idx: 1,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "vim".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "running".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+            crate::ipc::PaneInfo {
+                id: "%3".into(),
+                idx: 0,
+                window: "edit".into(),
+                session: "de".into(),
+                cmd: "nano".into(),
+                cwd: "/tmp".into(),
+                title: String::new(),
+                status: "running".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+        ];
+        let body = render_pane_inspector(&panes);
+        // Exactly two window headers.
+        let headers: Vec<&String> = body.iter().filter(|l| l.starts_with("window '")).collect();
+        assert_eq!(headers.len(), 2, "expected 2 window headers: {body:?}");
+        assert!(headers[0].contains("main"), "first header: {}", headers[0]);
+        assert!(headers[1].contains("edit"), "second header: {}", headers[1]);
+        // main rows sit between the main header and the edit header.
+        let main_hdr_idx = body
+            .iter()
+            .position(|l| l.contains("window 'main'"))
+            .unwrap();
+        let edit_hdr_idx = body
+            .iter()
+            .position(|l| l.contains("window 'edit'"))
+            .unwrap();
+        assert!(
+            main_hdr_idx < edit_hdr_idx,
+            "main header must come before edit header"
+        );
+        // Two main rows between the headers.
+        let main_rows = body[main_hdr_idx + 1..edit_hdr_idx]
+            .iter()
+            .filter(|l| l.contains("[1]") || l.contains("[2]"))
+            .count();
+        assert_eq!(main_rows, 2, "two main rows between headers: {body:?}");
+    }
+
+    #[test]
+    fn render_pane_inspector_omits_empty_preview_and_unknown_age() {
+        let panes = vec![
+            crate::ipc::PaneInfo {
+                id: "%1".into(),
+                idx: 0,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "bash".into(),
+                cwd: "/home".into(),
+                title: String::new(),
+                status: "idle".into(),
+                activity_age_secs: None,
+                is_target: false,
+                preview: String::new(),
+            },
+            crate::ipc::PaneInfo {
+                id: "%2".into(),
+                idx: 1,
+                window: "main".into(),
+                session: "de".into(),
+                cmd: "cargo".into(),
+                cwd: "/project".into(),
+                title: String::new(),
+                status: "running".into(),
+                activity_age_secs: Some(12),
+                is_target: false,
+                preview: "running — Compiling daemoneye".into(),
+            },
+        ];
+        let body = render_pane_inspector(&panes);
+        // Pane %1: no age tag, no preview continuation.
+        let row1 = body
+            .iter()
+            .find(|l| l.contains("[1]") && l.contains("%1"))
+            .expect("row for %1: {body:?}");
+        assert!(
+            !row1.contains("[active") && !row1.contains("[idle"),
+            "pane with unknown age should not show age tag: {row1}"
+        );
+        // Pane %2: both age tag and preview continuation present.
+        let row2 = body
+            .iter()
+            .find(|l| l.contains("[2]") && l.contains("%2"))
+            .expect("row for %2: {body:?}");
+        assert!(
+            row2.contains("[active 12s]"),
+            "pane with known age should show age tag: {row2}"
+        );
+        // Preview is on a continuation line indented with spaces.
+        let preview_line = body
+            .iter()
+            .find(|l| l.contains("Compiling daemoneye"))
+            .expect("preview line should exist: {body:?}");
+        assert!(
+            preview_line.starts_with("    "),
+            "preview should be indented: {preview_line}"
         );
     }
 }
