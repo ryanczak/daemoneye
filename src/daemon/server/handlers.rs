@@ -175,8 +175,9 @@ where
     // read guard — `pane_exists` spawns a tmux subprocess per pane and used to
     // run here, holding the cache lock for the whole sweep.
     let panes_snapshot: Vec<PaneInfo> = {
-        let panes = cache.panes.read().unwrap_or_log();
+        // Read session_name before the panes guard (M12 lock ordering).
         let home = cache.session_name.read().unwrap_or_log().clone();
+        let panes = cache.panes.read().unwrap_or_log();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -184,13 +185,8 @@ where
         panes
             .iter()
             .filter(|(_, s)| s.session_name == home)
-            .filter(|(id, _)| chat_pane_id.as_deref() != Some(id.as_str()))
-            .filter(|(_, s)| {
-                !s.window_name.starts_with("de-bg-")
-                    && !s.window_name.starts_with("de-sj-")
-                    && !s.window_name.starts_with("de-gs-bg-")
-                    && !s.window_name.starts_with("de-gs-sj-")
-                    && !s.window_name.starts_with("de-gs-ir-")
+            .filter(|(id, s)| {
+                crate::daemon::is_targetable_pane(&s.window_name, id, chat_pane_id.as_deref())
             })
             .map(|(id, s)| {
                 let is_target = current_target.as_deref() == Some(id.as_str());

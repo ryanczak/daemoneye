@@ -467,15 +467,8 @@ pub async fn find_in_panes(
 // ---------------------------------------------------------------------------
 
 /// True when `window_name` belongs to a daemon-managed window.
-///
-/// D6 (phase-08) replaces this body with the shared targetable-panes
-/// predicate; it is deliberately local until then.
 pub(crate) fn is_daemon_window(window_name: &str) -> bool {
-    window_name.starts_with(crate::daemon::BG_WINDOW_PREFIX)
-        || window_name.starts_with(crate::daemon::SCHED_WINDOW_PREFIX)
-        || window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
-        || window_name.starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
-        || window_name.starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
+    crate::daemon::is_daemon_window(window_name)
 }
 
 /// Why `tmux_control(action="kill_window")` must refuse this window, or `None`
@@ -564,16 +557,7 @@ pub fn list_panes(cache: &crate::tmux::cache::SessionCache, chat_pane: Option<&s
         } else {
             String::new()
         };
-        let ghost_part = if state
-            .window_name
-            .starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
-            || state
-                .window_name
-                .starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
-            || state
-                .window_name
-                .starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
-        {
+        let ghost_part = if crate::daemon::is_ghost_window(&state.window_name) {
             "  [ghost]"
         } else {
             ""

@@ -65,6 +65,34 @@ pub const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
 /// Window-name prefix for ghost-shell incident-response (main session) windows (`de-gs-ir-<ts>-<id>`).
 pub const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
 
+/// True when `window_name` is a window this daemon created and manages.
+///
+/// The single source of truth for that question (M12 D6). Note it deliberately
+/// does **not** use `DAEMON_WINDOW_PREFIX` (`"de-"`): that would also match a
+/// user's own window called `de-icing`.
+pub fn is_daemon_window(window_name: &str) -> bool {
+    window_name.starts_with(BG_WINDOW_PREFIX)
+        || window_name.starts_with(SCHED_WINDOW_PREFIX)
+        || window_name.starts_with(GS_BG_WINDOW_PREFIX)
+        || window_name.starts_with(GS_SCHED_WINDOW_PREFIX)
+        || window_name.starts_with(INCIDENT_WINDOW_PREFIX) // all five daemon prefixes
+}
+
+/// True when `window_name` belongs to a Ghost Shell specifically — a strict
+/// subset of [`is_daemon_window`]. `de-bg-` and `de-sj-` are daemon windows but
+/// not ghost windows.
+pub fn is_ghost_window(window_name: &str) -> bool {
+    window_name.starts_with(GS_BG_WINDOW_PREFIX)
+        || window_name.starts_with(GS_SCHED_WINDOW_PREFIX)
+        || window_name.starts_with(INCIDENT_WINDOW_PREFIX)
+}
+
+/// True when a pane may be offered to the user or the agent as a target: not
+/// daemon-managed, and not the chat pane itself.
+pub fn is_targetable_pane(window_name: &str, pane_id: &str, chat_pane: Option<&str>) -> bool {
+    !is_daemon_window(window_name) && chat_pane != Some(pane_id) // never target the chat pane
+}
+
 pub use scheduled::run_scheduled_job;
 pub use server::*;
 
@@ -1017,6 +1045,75 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU32;
+
+    // ---------------------------------------------------------------------------
+    // D6 predicate tests — pure, no tmux or cache
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn is_daemon_window_matches_all_five_prefixes() {
+        assert!(is_daemon_window("de-bg-1-abc"), "de-bg- prefix");
+        assert!(is_daemon_window("de-sj-1-abc"), "de-sj- prefix");
+        assert!(is_daemon_window("de-gs-bg-1-abc"), "de-gs-bg- prefix");
+        assert!(is_daemon_window("de-gs-sj-1-abc"), "de-gs-sj- prefix");
+        assert!(is_daemon_window("de-gs-ir-1-abc"), "de-gs-ir- prefix");
+    }
+
+    #[test]
+    fn is_daemon_window_rejects_user_windows() {
+        assert!(!is_daemon_window("main"), "user window 'main'");
+        assert!(!is_daemon_window("editor"), "user window 'editor'");
+        assert!(
+            !is_daemon_window("de-icing"),
+            "user window 'de-icing' (starts with DAEMON_WINDOW_PREFIX)"
+        );
+    }
+
+    #[test]
+    fn is_ghost_window_matches_only_ghost_prefixes() {
+        assert!(is_ghost_window("de-gs-bg-1-abc"), "de-gs-bg- is ghost");
+        assert!(is_ghost_window("de-gs-sj-1-abc"), "de-gs-sj- is ghost");
+        assert!(is_ghost_window("de-gs-ir-1-abc"), "de-gs-ir- is ghost");
+        assert!(
+            !is_ghost_window("de-bg-1-abc"),
+            "de-bg- is daemon but not ghost"
+        );
+        assert!(
+            !is_ghost_window("de-sj-1-abc"),
+            "de-sj- is daemon but not ghost"
+        );
+    }
+
+    #[test]
+    fn is_targetable_pane_excludes_daemon_and_chat() {
+        // User window, non-chat pane → targetable
+        assert!(
+            is_targetable_pane("editor", "pane-1", Some("pane-2")),
+            "user window non-chat pane is targetable"
+        );
+        // User window, chat pane → not targetable
+        assert!(
+            !is_targetable_pane("editor", "pane-1", Some("pane-1")),
+            "chat pane is never targetable"
+        );
+        // Daemon window, not chat → not targetable
+        assert!(
+            !is_targetable_pane("de-bg-1-abc", "pane-3", Some("pane-1")),
+            "daemon window is never targetable"
+        );
+    }
+
+    #[test]
+    fn is_targetable_pane_with_no_chat_pane() {
+        assert!(
+            is_targetable_pane("editor", "pane-1", None),
+            "user window with no chat pane is targetable"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Existing supervisor / liveness tests
+    // ---------------------------------------------------------------------------
 
     /// Supervisor restarts the factory after a panic and exits cleanly once
     /// the factory signals shutdown.

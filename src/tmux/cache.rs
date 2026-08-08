@@ -387,13 +387,7 @@ impl SessionCache {
                 let prev = self.bell_windows.read().unwrap_or_log();
                 wins.iter()
                     .filter(|w| w.has_bell())
-                    .filter(|w| {
-                        !w.window_name.starts_with("de-bg-")
-                            && !w.window_name.starts_with("de-sj-")
-                            && !w.window_name.starts_with("de-gs-bg-")
-                            && !w.window_name.starts_with("de-gs-sj-")
-                            && !w.window_name.starts_with("de-gs-ir-")
-                    })
+                    .filter(|w| !crate::daemon::is_daemon_window(&w.window_name))
                     .filter(|w| !prev.contains(&w.window_id))
                     .map(|w| w.window_id.clone())
                     .collect()
@@ -453,18 +447,14 @@ impl SessionCache {
     /// background windows (`de-bg-*`, `de-sj-*`, `de-gs-*`) and the chat pane
     /// itself.  Returns an empty string when no targetable panes are known.
     pub fn pane_map_summary(&self, chat_pane: Option<&str>) -> String {
-        let panes = self.panes.read().unwrap_or_log();
+        // Read session_name before the panes guard (M12 lock ordering).
         let home = self.session_name.read().unwrap_or_log().clone();
+        let panes = self.panes.read().unwrap_or_log();
         let mut entries: Vec<_> = panes
             .iter()
             .filter(|(_, state)| state.session_name == home)
-            .filter(|(id, _)| chat_pane != Some(id.as_str()))
-            .filter(|(_, state)| {
-                !state.window_name.starts_with("de-bg-")
-                    && !state.window_name.starts_with("de-sj-")
-                    && !state.window_name.starts_with("de-gs-bg-")
-                    && !state.window_name.starts_with("de-gs-sj-")
-                    && !state.window_name.starts_with("de-gs-ir-")
+            .filter(|(id, state)| {
+                crate::daemon::is_targetable_pane(&state.window_name, id, chat_pane)
             })
             .collect();
         if entries.is_empty() {
@@ -671,6 +661,9 @@ impl SessionCache {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
+
+        // Read session_name before the panes guard (M12 lock ordering).
+        let home = self.session_name.read().unwrap_or_log().clone();
         let panes = self.panes.read().unwrap_or_log();
 
         // Determine which window contains the chat pane so we can identify visible peers.
@@ -679,7 +672,6 @@ impl SessionCache {
             .map(|p| p.window_name.as_str())
             .filter(|w| !w.is_empty());
 
-        let home = self.session_name.read().unwrap_or_log().clone();
         let mut others: Vec<_> = panes
             .iter()
             .filter(|(_, state)| state.session_name == home)
@@ -691,12 +683,7 @@ impl SessionCache {
         for (id, state) in others {
             let pane_label = if chat_window.is_some_and(|cw| cw == state.window_name) {
                 "VISIBLE PANE"
-            } else if state.window_name.starts_with("de-bg-")
-                || state.window_name.starts_with("de-sj-")
-                || state.window_name.starts_with("de-gs-bg-")
-                || state.window_name.starts_with("de-gs-sj-")
-                || state.window_name.starts_with("de-gs-ir-")
-            {
+            } else if crate::daemon::is_daemon_window(&state.window_name) {
                 "BACKGROUND PANE"
             } else {
                 "SESSION PANE"
@@ -712,10 +699,7 @@ impl SessionCache {
             } else {
                 format!(" ({})", mask_sensitive(&state.pane_title))
             };
-            let ghost_part = if state.window_name.starts_with("de-gs-bg-")
-                || state.window_name.starts_with("de-gs-sj-")
-                || state.window_name.starts_with("de-gs-ir-")
-            {
+            let ghost_part = if crate::daemon::is_ghost_window(&state.window_name) {
                 " [ghost]".to_string()
             } else {
                 String::new()

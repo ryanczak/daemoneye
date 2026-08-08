@@ -1,7 +1,7 @@
 # Phase 08: One Targetable-Panes Filter + Docs True at Close
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05, phase-06b, phase-07
 **Estimated diff:** ~340 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -430,3 +430,106 @@ None. No new dependencies; no `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 17:36 (started)
+
+**Executor:** rexyMCP executor
+
+Implemented D6 predicates (`is_daemon_window`, `is_ghost_window`, `is_targetable_pane`) in `src/daemon/mod.rs`, rewrote all seven prefix-literal sites to use them, fixed lock ordering at `pane_map_summary`, `get_labeled_context_scoped`, and `handle_list_panes`, added five pure tests, verified docs-true-at-close criterion, applied mutations M1 and M2 in both directions, and added `src/daemon/mod.rs` row to CLAUDE.md Key files table.
+
+### Update — 2026-08-08 17:36 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+M1 mutated-lines-present=1
+test daemon::tests::is_daemon_window_rejects_user_windows ... ok
+test daemon::tests::is_daemon_window_matches_all_five_prefixes ... FAILED
+thread 'daemon::tests::is_daemon_window_matches_all_five_prefixes' (1882820) panicked at src/daemon/mod.rs:1059:9:
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1198 filtered out; finished in 0.00s
+M1 exit=101
+== M1 RESTORED ==
+M1 restored count (want 0)=0
+test daemon::tests::is_daemon_window_matches_all_five_prefixes ... ok
+test daemon::tests::is_daemon_window_rejects_user_windows ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1198 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+M1 restored exit=0
+== M2 APPLIED ==
+M2 mutated-lines-present=1
+test daemon::tests::is_targetable_pane_with_no_chat_pane ... ok
+test daemon::tests::is_targetable_pane_excludes_daemon_and_chat ... FAILED
+thread 'daemon::tests::is_targetable_pane_excludes_daemon_and_chat' (1886633) panicked at src/daemon/mod.rs:1086:9:
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 1198 filtered out; finished in 0.00s
+M2 exit=101
+== M2 RESTORED ==
+M2 restored count (want 0)=0
+test daemon::tests::is_targetable_pane_excludes_daemon_and_chat ... ok
+test daemon::tests::is_targetable_pane_with_no_chat_pane ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1198 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+M2 restored exit=0
+== D6 EXIT CRITERION ==
+raw prefix literals outside daemon/mod.rs (want 0)=0
+predicates declared (want 3)=3
+-- call sites per file --
+src/tmux/cache.rs:4
+src/daemon/server/handlers.rs:1
+src/daemon/executor/knowledge/pane.rs:2
+== LOCK ORDERING ==
+219:        let session = self.session_name.read().unwrap_or_log().clone();
+246:        let home = self.session_name.read().unwrap_or_log().clone();
+260:        let session = self.session_name.read().unwrap_or_log().clone();
+453:        let home = self.session_name.read().unwrap_or_log().clone();
+454:        let panes = self.panes.read().unwrap_or_log();
+569:                let panes = self.panes.read().unwrap_or_log();
+668:        let home = self.session_name.read().unwrap_or_log().clone();
+669:        let panes = self.panes.read().unwrap_or_log();
+822:            let session_name = self.session_name.read().unwrap_or_log().clone();
+136:        let panes = cache.panes.read().unwrap_or_log();
+179:        let home = cache.session_name.read().unwrap_or_log().clone();
+180:        let panes = cache.panes.read().unwrap_or_log();
+== DOCS TRUE AT CLOSE ==
+tool counts (want 1)=1
+read_pane row (want 1)=1
+find_in_panes row (want 1)=1
+tmux_control row (want 1)=1
+sre.toml documents all three (want >=3)=4
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.10s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.76s
+clippy exit=0
+test result: ok. 1200 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.29s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+doc_truth exit=0
+== TREE ==
+ M CLAUDE.md
+ M src/daemon/executor/knowledge/pane.rs
+ M src/daemon/mod.rs
+ M src/daemon/server/handlers.rs
+ M src/tmux/cache.rs
+porcelain exit=0
+transcript line count=87
+```
+
+### Update — 2026-08-08 17:36 (paste check)
+
+PASTE MATCH
