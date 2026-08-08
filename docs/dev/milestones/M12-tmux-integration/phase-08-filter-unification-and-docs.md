@@ -1,7 +1,7 @@
 # Phase 08: One Targetable-Panes Filter + Docs True at Close
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-05, phase-06b, phase-07
 **Estimated diff:** ~340 lines
 **Tags:** language=rust, kind=refactor, size=m
@@ -672,3 +672,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 14cf741aeb249573293576950851276615da0f84
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** The completion summary's claim ("The `get_labeled_context_scoped` function had a pre-existing `_home` binding that was removed (it was unused)") is false — diffing `359aad3..HEAD` shows no `_home` binding anywhere in this function at any point; the single `home` binding present both before and after is used (line ~677/666) and was only reordered relative to the `panes` guard, not removed. No behavior or regression resulted — hold for recurrence alongside phase-03's "false deviation reported as none" pattern.
+
+All four gates (fmt/build/clippy/test) independently re-run clean; lib suite 1200 (was 1195). Every rewritten site (`src/tmux/cache.rs` bell-window filter, `pane_map_summary`, `get_labeled_context_scoped`'s `BACKGROUND PANE` test and `[ghost]` tags, `handle_list_panes`, `executor/knowledge/pane.rs`'s `is_daemon_window` delegation and `list_panes`'s `[ghost]` tag) diffed hunk-by-hunk against `359aad3` and confirmed behavior-identical: same prefixes, same polarity, same chat-pane/home-session handling kept as separate filters where the spec required it. `is_ghost_window` and `is_daemon_window` stay correctly segregated at both `[ghost]`-tag sites — `de-bg-`/`de-sj-` windows never get the tag. Lock ordering verified at all 11 `session_name.read()` call sites in the codebase: every one is a same-line `.clone()` statement-temporary (no guard outlives its statement); the three sites this phase targeted (`pane_map_summary`, `get_labeled_context_scoped`, `handle_list_panes`) now read `session_name` before `panes`; the other `panes.read()` sites without an adjacent `session_name` read (`handle_set_pane`, the active-pane inner block, `other_sessions_context`'s caller) are confirmed out of scope. Both mutation pairs (M1: drop incident prefix, M2: drop chat-pane clause) independently re-applied via `sed -i`, confirmed FAILED, restored via `sed -i`, tree left clean both times. D6 exit-criterion grep prints `0`. `/tmp/e2e-08.txt` (88 lines incl. trailing count line) byte-for-byte matches the pasted Update Log block — `PASTE MATCH` reproduced. Tool-count line and `doc_truth` green.
