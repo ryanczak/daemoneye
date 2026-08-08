@@ -1,6 +1,33 @@
 # NEXT
 
-## Active phase: **none** — M12 phase-02 done, phase-03 not yet drafted
+## Active phase: [M12 phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) (`todo` — drafted 2026-08-08, not yet dispatched)
+
+Phase-03 adds the `read_pane` core AI tool (D3) — the milestone's
+highest-leverage addition: any pane's buffer on demand, any session, at a
+requested scrollback depth, ANSI-annotated, optionally regex-filtered, masked,
+labelled with window / session / `PaneStatus`. Chat pane refused; daemon-owned
+windows allowed; not approval-gated. Full add-a-tool checklist, so the tool
+counts go to **34 tools: 25 core + 9 deferred** and `tests/doc_truth.rs` gates
+it.
+
+Drafted prototype-first, and the prototype earned its keep three times:
+
+1. **`annotate_ansi` is unreachable from `src/daemon/`** — it is `pub(super)`
+   inside a private `mod ansi`. Settled in the spec by putting a new
+   `capture_pane_annotated` on the `src/tmux/` side of the boundary rather
+   than widening visibility; compiled to confirm.
+2. **The compiler found a bug in my draft** — a five-placeholder format string
+   with four arguments. Fixed before it reached the spec.
+3. **A hermeticity defect in the obvious test fixture.** `read_pane`'s capture
+   path shells out to the *real* tmux server: with the chat-pane guard deleted,
+   the prototype test captured a live pane on this machine and returned 261
+   lines of an in-progress cargo build. Worse, it made the mutation's outcome
+   environment-dependent — on a box with no tmux the weak `starts_with("Error:")`
+   assertion passes vacuously. The spec now pins an unseeded `%999999` fixture
+   (never reaches tmux in either mutation direction) and requires asserting the
+   distinctive `"chat pane"` substring.
+
+**Next action:** `/rexymcp:dispatch phase-03` to run it.
 
 **[phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md)
 approved 2026-08-08** (`approved_after_1`; one bounce,
