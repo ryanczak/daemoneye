@@ -162,7 +162,17 @@ its number `N`, so the executor's `update_task(id="N", …)` calls match the see
 ids. The section ends at the next `## ` heading (two hashes + space). A decimal
 like `### 1.5x` is deliberately **not** seeded (it is not a task).
 
+**Only `## Spec` is seeded — so anything the phase must deliver has to be a task
+here.** The seeder matches a heading of *exactly* `## Spec` and parses that
+section alone. A requirement stated in `## Test plan`, `## End-to-end
+verification`, or `## Acceptance criteria` is never seeded, never appears in the
+executor's Tasks panel, and is therefore invisible to the "have I finished?"
+check the executor actually runs. **The last task of every phase is the
+end-to-end capture** — see § "End-to-end verification".
+
 1. **<Task name>** — in `<path>`, <change>. <Why if non-obvious.>
+N. **Capture the end-to-end evidence** — run the block in § End-to-end
+   verification verbatim and paste its output into a new Update Log entry.
 
 ## Acceptance criteria
 
@@ -252,6 +262,27 @@ matches nothing produces a green "mutation" run and certifies a vacuous guard �
 the exact outcome § "Coverage claims are inadmissible without mutation proof"
 exists to prevent.
 
+**The capture must be the phase's last numbered task, in `## Spec`.** A perfect
+block placed only in this section does not get run, because this section is not
+seeded into the executor's task list — the seeder matches a heading of exactly
+`## Spec` and parses that section alone (rexyMCP
+`executor/src/agent/tasks.rs`). The executor finishes every task it is
+tracking, finds none of them outstanding, and reports complete in good faith.
+So write it as a task:
+
+```markdown
+### Task N — Capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-NN.txt` into a new Update Log entry headed
+`### Update — <date> (end-to-end verification)`. The server-authored
+`(complete)` entry does not satisfy this.
+```
+
+Keep the block itself in § End-to-end verification — this task points at it.
+The point is that the *obligation* is tracked, not that the commands are
+duplicated.
+
 *(Folded 2026-07-31 after M6, on PE sign-off. Ten of that milestone's fourteen
 bounces and two of its four architect takeovers were this single requirement —
 more than every other cause combined. It was never a capability problem: in each
@@ -277,16 +308,30 @@ result — in the second and third cases the claims held up when checked
 independently — it is that the check moved from the executor to whoever reviews,
 silently.)*
 
-*(Folded 2026-08-08 after M12 phases 01 and 02, on PE sign-off. Both bounced on
-a missing E2E entry, and in both the missing evidence was **specifically the
-mutation-pair transcript** — the one artifact neither spec's block generated.
-This is what makes it a distinct fold rather than a repeat: phase-02's spec
-already carried both M6 countermeasures above — a literal copy-pasteable block
-and an explicit statement that the server-authored `(complete)` entry does not
-count — and bounced anyway. The two known remedies are necessary and not
-sufficient; what they did not cover is the part of the evidence the block never
-produced. Phase-02 round 2, with every mutation expressed as a command, landed
-in 45 turns with a complete captured transcript and zero unauthorized edits.)*
+*(Folded 2026-08-08 after M12 phases 01 and 02, on PE sign-off. **Superseded in
+part — see the fold below.** The rule stated here is sound as spec-writing
+craft: a block that does not generate the evidence cannot be run to produce it,
+and both gap shapes are real. But the causal claim it rests on — that this is
+why the entry went missing — was **wrong**, and phase-03 disproved it by
+carrying this fold in full and still producing no entry. What the three
+failures actually shared is that the requirement was never a seeded task. Read
+the fold below for the mechanism; keep this one for how to write the block.)*
+
+*(Folded 2026-08-08 after M12 phase-03, on PE sign-off — and it **corrects the
+diagnosis of the fold above**, which is why it is worth reading the two
+together. Phase-03's block carried that earlier fold in full: every mutation a
+command, no manual steps, labelled markers. The entry was still absent. Block
+runnability was never the mechanism, and three bounces were spent on that
+theory. The mechanism was found by reading the seeder rather than reasoning
+about the executor, and it explains all four data points without exception —
+phase-01 r1, phase-02 r1 and phase-03 r1 all stated the requirement outside
+`## Spec` and produced no entry; phase-02 **r2**, the only round where the
+capture was an enumerated task, produced it. The earlier fold's content stands
+on its own merits — a mechanical block is still the right thing to write, and
+its two gap shapes are real — but it is **not** what makes the entry appear.
+Note the shape of the error for next time: three rounds of increasingly
+specific advice aimed at the *quality* of an instruction the executor was never
+given.)*
 
 If the phase ships **no** runtime-loadable real artifact (a pure internal
 refactor, a new private type, a test-only helper), write:

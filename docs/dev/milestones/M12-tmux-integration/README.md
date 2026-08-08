@@ -133,11 +133,20 @@ correctly believes it is done. Four data points fit without exception:
 The single round that produced the entry is the single round where capturing
 it was an enumerated task. **The remedy is structural, not exhortative: the
 E2E capture belongs in `## Spec` as a numbered task.** Applied here as
-phase-03's Task 10; it supersedes the 2026-08-08 fold's implicit theory
-without contradicting its content (a mechanical block is still right — it is
-just not sufficient). **Fold candidate for the phase-doc template, pending PE
-sign-off**, and note the earlier fold text should be amended rather than
-left implying runnability was the cause.
+phase-03's Task 10.
+
+**FOLDED 2026-08-08 (PE sign-off).** `docs/dev/WORKFLOW.md` now carries it in
+two places: § "End-to-end verification" ("The capture must be the phase's last
+numbered task, in `## Spec`") and the phase-doc template's `## Spec` section
+("Only `## Spec` is seeded"). The earlier 2026-08-08 fold was **amended in
+place** rather than deleted — its craft advice stands, but it is now marked
+*superseded in part*, since its causal claim was disproven by phase-03. Both
+notes cross-reference each other.
+
+Worth keeping in view: three bounces were spent refining the *quality* of an
+instruction the executor was never given. The diagnosis only moved when it was
+derived from the seeder's source instead of reasoned about from the executor's
+behaviour.
 
 - **An undeclared scope deviation reported as "none".** Round 1 also rewrote
   `await_agent_result`'s `summary()` arm — a different tool's user-visible

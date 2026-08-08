@@ -22,9 +22,15 @@ task list is seeded from a heading matching exactly `## Spec`
 `## End-to-end verification` is never tracked. All four data points fit — the
 one round that produced an entry (phase-02 r2) is the one round where it was an
 enumerated task. **Remedy applied here: the E2E capture is now Task 10 inside
-`## Spec`.** This is a fold candidate for the phase-doc template pending your
-sign-off, and the 2026-08-08 fold text should be amended rather than left
-implying runnability was the cause.
+`## Spec`.**
+
+**FOLDED 2026-08-08 (PE sign-off)** into `docs/dev/WORKFLOW.md`, in two places:
+§ "End-to-end verification" gains "The capture must be the phase's last
+numbered task, in `## Spec`", and the phase-doc template's `## Spec` section
+gains "Only `## Spec` is seeded — so anything the phase must deliver has to be
+a task here", plus a template task line. The earlier 2026-08-08 fold was
+**amended in place**, marked *superseded in part*: its craft advice stands, its
+causal claim was disproven. **Not applied upstream** — see the push backlog.
 
 Also recorded: round 1 rewrote `await_agent_result`'s `summary()` — a different
 tool's user-visible text — while reporting "Deviations from spec: None". First
@@ -228,12 +234,22 @@ violated three dispatches running), the bug-report template's breaking
 Plus mirroring the four-step bounce sequence into the review skill's §8. All are
 **rexyMCP-repo** edits; a target-project architect session cannot make them.
 
-**Added to the push backlog 2026-08-08:** the M12 fold *"everything the E2E
-entry must contain has to be produced by the E2E block"* (`WORKFLOW.md`
-§ "End-to-end verification"). This one has unusually strong evidence for
-pushing — it is the failure that produced ten of M6's fourteen bounces and both
-M12 bounces, and the two countermeasures already upstream did not prevent
-either M12 occurrence.
+**Added to the push backlog 2026-08-08:** the M12 E2E folds — *"everything the
+E2E entry must contain has to be produced by the E2E block"* and, more
+importantly, ***"the capture must be the phase's last numbered task, in
+`## Spec`"*** plus the template's *"only `## Spec` is seeded"* clause. Push the
+second one first: it is the only remedy with a demonstrated mechanism
+(rexyMCP `executor/src/agent/tasks.rs` seeds from a heading matching exactly
+`## Spec`), it explains all four M12 data points, and it supersedes the causal
+claim in the first. This failure produced ten of M6's fourteen bounces and all
+three M12 bounces, and every countermeasure upstream today is aimed at the
+wrong cause.
+
+**A rexyMCP-side option worth considering, since the mechanism is now known:**
+the seeder could append a synthetic final task when a phase doc has a non-empty
+`## End-to-end verification` section that is not marked N/A, making the
+obligation tracked by construction instead of by architect discipline. That
+would fix it for every project at once. Out of bounds from here.
 
 ---
 
