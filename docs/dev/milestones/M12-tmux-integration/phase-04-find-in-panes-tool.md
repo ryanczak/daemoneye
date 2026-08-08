@@ -100,6 +100,110 @@ either is stale.
 
 ## Spec
 
+# ⚠ ROUND 2 — READ THIS BEFORE ANYTHING ELSE ⚠
+
+**All four gates are green and the working tree is clean. That is expected here
+and is NOT evidence this phase is done.** Round 1 shipped a correct, essentially
+complete `find_in_panes`: 1172 tests, `doc_truth` green, both mutation pairs
+re-run by the architect in both directions and holding, hermeticity confirmed,
+and the `bug-03-1` bookkeeping fix accepted. **Do not redo, re-derive, or
+re-verify any of it.** Everything in § "Round 1 spec" below is finished and
+approved.
+
+**There is exactly one defect, and it has exactly two one-line fixes plus one
+test.** `find_in_panes` collects `home_rows` and `foreign_rows` straight out of
+`HashMap` iteration order and never sorts them, though the Spec required it
+twice. See [bug-04-1](bugs/bug-04-1.md).
+
+**Finish condition, and it is falsifiable:** after this round `cargo test` must
+report **1173, not 1174** — exactly one new test. A higher count means scope
+creep; a count of 1172 means the test was never added.
+
+The four tasks below are the whole round.
+
+### Task 1 — Sort `home_rows` before searching it
+
+In `src/daemon/executor/knowledge/pane.rs`, inside `find_in_panes`. The home
+pass today reads (lines 281–303, `let home_rows` … `.collect()` … `};`),
+followed at line 314 by `for (pane_id, …) in &home_rows {`.
+
+Change the binding to `let mut home_rows` and insert the sort between the two:
+
+```rust
+    };
+
+    home_rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut results: Vec<(
+```
+
+`a.0` is the pane id — `home_rows` is a
+`Vec<(String, String, String, PaneStatus, String)>` whose first element is the
+id, exactly as it is cloned at line 295. Use `sort_by` on the borrowed field
+rather than `sort_by_key(|r| r.0.clone())`; the clone is needless and clippy
+runs with `-D warnings`.
+
+### Task 2 — Sort `foreign_rows` before the `take`
+
+Same function, the foreign pass. Today lines 357–360 are:
+
+```rust
+        let foreign_rows: Vec<_> = foreign_rows
+            .into_iter()
+            .take(FIND_FOREIGN_MAX_PANES)
+            .collect();
+```
+
+The sort must happen **strictly before** the `.take(...)`, or the cap still
+selects an arbitrary 20 of the foreign panes. Replace those four lines with:
+
+```rust
+        let mut foreign_rows = foreign_rows;
+        foreign_rows.sort_by(|a, b| a.0.cmp(&b.0));
+        let foreign_rows: Vec<_> = foreign_rows
+            .into_iter()
+            .take(FIND_FOREIGN_MAX_PANES)
+            .collect();
+```
+
+(Or make the original binding `let mut foreign_rows` in the block above and
+sort it there — either shape is fine as long as the sort precedes the `take`.)
+
+### Task 3 — One new test: `find_in_panes_results_sorted_by_pane_id`
+
+In the same file's `#[cfg(test)] mod tests`, alongside the other
+`find_in_panes_*` tests. `#[tokio::test]`.
+
+**Seed six home panes, inserted in reverse id order** (`%6`, `%5`, `%4`, `%3`,
+`%2`, `%1`), each with a `buffer` containing the search pattern. Six is
+deliberate, not decorative: `HashMap` iteration is randomised per instance, so
+a two-pane test would pass roughly half the time with the sort deleted and
+could not prove the guard. With six the unsorted order matches sorted order
+about once in 720 runs.
+
+Assert the six pane ids appear in the output in ascending order — e.g. collect
+`result.find("%1") … result.find("%6")` and assert the sequence is strictly
+increasing, with every one of them `Some`. Keep the seeded buffer text free of
+any `%<digit>` substring so the only occurrences of each id are the pane
+headers.
+
+Do not add any other test. Do not touch the existing tests.
+
+### Task 4 — Capture the end-to-end evidence for THIS round
+
+Run the **`ROUND 2`** block in § End-to-end verification verbatim and
+unmodified, then paste the resulting `/tmp/e2e-04-r2.txt` into a **new** Update
+Log entry headed `### Update — <date> (end-to-end verification)`.
+
+Round 1's end-to-end entry does **not** carry forward — it describes a tree
+without the sorts. The server-authored `(complete)` entry does not satisfy this
+either.
+
+## Round 1 spec — complete and approved, reference only
+
+Nothing in this section is outstanding. It is retained so the round-2 fixes
+have their context.
+
 Numbered tasks in execution order. **Do not touch any `summary()`,
 `to_tool_call()` or `tool_name()` arm belonging to another tool** — phase-03
 silently rewrote `await_agent_result`'s `summary()` arm and had to be bounced
@@ -411,6 +515,29 @@ paste the resulting `/tmp/e2e-04.txt` into a new Update Log entry headed
 
 ## Acceptance criteria
 
+### ROUND 2 — the only criteria that are open
+
+Each was run against the tree at bounce time and confirmed to fail.
+
+- [ ] `awk '/^pub async fn find_in_panes/,/^\/\/ -+$/' src/daemon/executor/knowledge/pane.rs | grep -c 'sort_by'`
+      prints `2` (it printed `0` at bounce time).
+- [ ] The `sort_by` on `foreign_rows` appears on an **earlier line** than
+      `.take(FIND_FOREIGN_MAX_PANES)`.
+- [ ] `cargo test find_in_panes_results_sorted_by_pane_id` passes.
+- [ ] `cargo test` reports **1173** passed in the lib suite — not 1172 (test
+      missing) and not 1174 (scope creep).
+- [ ] Mutation M3: with the `home_rows` sort commented out,
+      `cargo test find_in_panes_results_sorted_by_pane_id` reports `FAILED`;
+      restored, it passes. Both directions appear in the pasted transcript.
+- [ ] The Update Log contains a **new** entry headed
+      `### Update — <date> (end-to-end verification)` holding the pasted
+      `/tmp/e2e-04-r2.txt`. The round-1 entry does not satisfy this.
+- [ ] All four gates still exit 0.
+
+### Round 1 criteria — all met, independently verified at review
+
+Reference only; nothing here is outstanding.
+
 - [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
       --all-features -- -D warnings` and `cargo test` all exit 0.
 - [ ] `grep -c '\*\*35 tools: 26 core + 9 deferred\.\*\*' CLAUDE.md` prints `1`.
@@ -463,6 +590,69 @@ All in `src/daemon/executor/knowledge/pane.rs`'s test module. Async tests use
   captures, so no tmux call happens in either mutation direction.)
 
 ## End-to-end verification
+
+### ROUND 2 block — this is the one to run
+
+Run **verbatim** from the repo root, in `bash`, **without** `set -e`. Mutation
+M3 is applied and reverted with `sed -i` in both directions — never
+`git checkout`, because `src/daemon/executor/knowledge/pane.rs` holds this
+round's own uncommitted work. Note the `#` sed delimiter: the closure `|a, b|`
+contains pipes, and `&b.0` is escaped because `&` is the whole-match reference
+in a sed replacement.
+
+```bash
+OUT=/tmp/e2e-04-r2.txt
+F=src/daemon/executor/knowledge/pane.rs
+: > $OUT
+
+echo "== SORTS PRESENT ==" >> $OUT
+echo -n "sort_by count inside find_in_panes=" >> $OUT
+awk '/^pub async fn find_in_panes/,/^\/\/ -+$/' $F | grep -c 'sort_by' >> $OUT 2>&1
+echo "-- sort line vs take line --" >> $OUT
+grep -n 'foreign_rows.sort_by\|take(FIND_FOREIGN_MAX_PANES)' $F >> $OUT 2>&1
+
+echo "== GATES ==" >> $OUT
+cargo fmt --all >> $OUT 2>&1;                                    echo "fmt exit=$?" >> $OUT
+cargo build >> $OUT 2>&1;                                        echo "build exit=$?" >> $OUT
+cargo clippy --all-targets --all-features -- -D warnings >> $OUT 2>&1; echo "clippy exit=$?" >> $OUT
+cargo test >> $OUT 2>&1;                                         echo "test exit=$?" >> $OUT
+
+echo "== NEW TEST ==" >> $OUT
+cargo test find_in_panes_results_sorted_by_pane_id >> $OUT 2>&1; echo "new test exit=$?" >> $OUT
+
+echo "== M3 APPLY (comment out the home_rows sort) ==" >> $OUT
+sed -i 's@home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@// home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@' $F
+echo -n "M3 mutated-lines-present=" >> $OUT
+grep -c '// home_rows.sort_by' $F >> $OUT 2>&1
+echo "== M3 APPLIED ==" >> $OUT
+cargo test find_in_panes_results_sorted_by_pane_id >> $OUT 2>&1; echo "M3 exit=$?" >> $OUT
+sed -i 's@// home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@' $F
+echo "== M3 RESTORED ==" >> $OUT
+echo -n "M3 restored comment-gone=" >> $OUT
+grep -c '// home_rows.sort_by' $F >> $OUT 2>&1
+cargo test find_in_panes_results_sorted_by_pane_id >> $OUT 2>&1; echo "M3 restored exit=$?" >> $OUT
+
+echo "== FINAL GATE ==" >> $OUT
+cargo test >> $OUT 2>&1;                                         echo "final test exit=$?" >> $OUT
+```
+
+Reading the result: the `sort_by` count must be **2**; the `foreign_rows.sort_by`
+line number must be **lower** than the `take(FIND_FOREIGN_MAX_PANES)` line
+number; `M3 mutated-lines-present=1`; `M3 exit=` non-zero with a `FAILED` line
+for the named test; `M3 restored comment-gone=0` and `M3 restored exit=0`; the
+final `cargo test` reporting **1173** passed.
+
+`M3 mutated-lines-present=0` means the `sed` matched nothing — the sort line was
+not written with the exact text Task 1 pins. Fix the source line to match and
+re-run; do not report the pair as evidence.
+
+One caveat, stated so it is not mistaken for a defect: with the sort removed the
+six panes come out of the `HashMap` in a random order, which lands on sorted
+order about once in 720 runs. If `M3 exit=0`, run that one mutated test again
+and record **both** runs in the transcript rather than concluding the guard is
+vacuous.
+
+### Round 1 block — already run and verified, reference only
 
 Run this block **verbatim** from the repo root, in `bash`, **without**
 `set -e` — several steps are expected to exit non-zero and the exit markers are
@@ -748,3 +938,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 348d05f2886615b1467fee913c89dc439cd0a651
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-08 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** a green bounce — four gates green and a clean tree — so a plain
+re-dispatch would return `complete` with an empty diff; the spec now carries
+the loud round-2 header, the two fixes inlined as worked examples derived from
+the current source, and the inverted-count finish condition (1173, not 1174).
