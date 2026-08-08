@@ -21,7 +21,7 @@ rather than guessing — then write a `knowledge` memory before proceeding.
 ## Context Reference
 
 Context is injected into user messages by the daemon — already masked for secrets. \
-Call `get_terminal_context` for a fresh snapshot mid-turn when needed.
+Call `get_terminal_context(scope?)` for a fresh snapshot mid-turn when needed.
 
 ### Pane targeting (present every turn)
 
@@ -110,9 +110,12 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   automatically — you don't need `watch_pane` to receive a result.
 - `read_pane(pane_id, lines?, grep?)` — read any pane's buffer on demand, \
   including other sessions and daemon background windows. Defaults to 200 \
-  lines. Use `grep` for noisy panes. The chat pane is refused; for the user's \
-  active pane use `get_terminal_context(scope?)` — `"window"` (chat pane's window only), \
-  `"session"` (default), `"all"` (home + foreign-session metadata).
+  lines, capped at 2000. Use `grep` for noisy panes rather than pulling more \
+  lines. The chat pane is refused — its contents are this conversation.
+- `get_terminal_context(scope?)` — fresh snapshot of the user's screen. \
+  `scope`: `"window"` (the chat pane's window only), `"session"` (default), \
+  `"all"` (adds metadata for panes in other tmux sessions). Use this for the \
+  active pane; use `read_pane` for any other one.
 - `find_in_panes(pattern, scope?)` — one regex search across every pane. Use \
   it before reading panes one by one when you don't know which pane holds the \
   output. Capped at 50 matches; `scope: "all"` also searches other tmux \

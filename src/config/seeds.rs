@@ -44,6 +44,7 @@ impl Config {
         seed_knowledge_memory("scheduling-guide", SCHEDULING_GUIDE_MEMORY)?;
         seed_knowledge_memory("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY)?;
         seed_knowledge_memory("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY)?;
+        seed_knowledge_memory("tmux-pane-toolkit", TMUX_PANE_TOOLKIT_MEMORY)?;
 
         // Seed built-in session memories if they don't already exist.
         seed_session_memory(
@@ -128,6 +129,18 @@ pub fn overwrite_knowledge_memories() -> Result<()> {
         true,
     )?;
     seed_memory_inner(
+        "knowledge",
+        "agent-runtime-layout",
+        AGENT_RUNTIME_LAYOUT_MEMORY,
+        true,
+    )?;
+    seed_memory_inner(
+        "knowledge",
+        "tmux-pane-toolkit",
+        TMUX_PANE_TOOLKIT_MEMORY,
+        true,
+    )?;
+    seed_memory_inner(
         "session",
         "pane-referencing-convention",
         PANE_REFERENCING_CONVENTION_MEMORY,
@@ -174,6 +187,8 @@ pub(crate) const SCRIPTS_AND_SUDOERS_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/scripts-and-sudoers.md");
 pub(crate) const AGENT_RUNTIME_LAYOUT_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/agent-runtime-layout.md");
+pub(crate) const TMUX_PANE_TOOLKIT_MEMORY: &str =
+    include_str!("../../assets/memory/knowledge/tmux-pane-toolkit.md");
 
 // ---------------------------------------------------------------------------
 // Seeded session memories (written to ~/.daemoneye/memory/session/ on first run)

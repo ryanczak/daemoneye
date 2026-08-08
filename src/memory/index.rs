@@ -1850,14 +1850,14 @@ mod tests {
             "should find the webhook-setup memory"
         );
 
-        // Assert the index now holds 9 rows (7 knowledge + 2 session).
+        // Assert the index now holds 10 rows (8 knowledge + 2 session).
         let conn = open_index().expect("open_index should succeed");
         let count: i64 = conn
             .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
             .expect("count rows");
         assert_eq!(
-            count, 9,
-            "reconciled index should have 9 rows (7 knowledge + 2 session)"
+            count, 10,
+            "reconciled index should have 10 rows (8 knowledge + 2 session)"
         );
     }
 

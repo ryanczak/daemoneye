@@ -422,7 +422,7 @@ mod tests {
     use crate::config::seeds::{
         AGENT_RUNTIME_LAYOUT_MEMORY, GHOST_SHELL_GUIDE_MEMORY, RUNBOOK_FORMAT_MEMORY,
         RUNBOOK_GHOST_TEMPLATE_MEMORY, SCHEDULING_GUIDE_MEMORY, SCRIPTS_AND_SUDOERS_MEMORY,
-        SRE_PROMPT_TOML, WEBHOOK_SETUP_MEMORY,
+        SRE_PROMPT_TOML, TMUX_PANE_TOOLKIT_MEMORY, WEBHOOK_SETUP_MEMORY,
     };
     use std::path::PathBuf;
 
@@ -642,6 +642,7 @@ mod tests {
             ("scheduling-guide", SCHEDULING_GUIDE_MEMORY),
             ("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY),
             ("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY),
+            ("tmux-pane-toolkit", TMUX_PANE_TOOLKIT_MEMORY),
         ];
 
         for (name, text) in assets {
