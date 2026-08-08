@@ -1,0 +1,479 @@
+# Phase 05: `list_panes` Upgrade + `get_terminal_context` Scope
+
+**Milestone:** M12 — Full-View tmux Integration
+**Status:** todo
+**Depends on:** phase-01, phase-02, phase-04
+**Estimated diff:** ~430 lines
+**Tags:** language=rust, kind=feature, size=m
+
+## Goal
+
+The second half of D4 — the two *display* surfaces that still cannot see past
+the home session. `list_panes` gains window grouping, live `status:`, and a
+labeled foreign-session section; `get_terminal_context` gains an optional
+`scope` of `"window" | "session" | "all"`.
+
+Together with phase-01's cache these close the milestone's **"No cross-session
+blindness"** exit criterion: a pane in a different tmux session appears in
+`list_panes` output labeled with its session name.
+
+## Architecture references
+
+Read before starting:
+
+- `docs/design/tmux-integration.md` § "D4 — `find_in_panes` tool (core) +
+  `list_panes` upgrade" — specifically the second paragraph, which is this
+  phase in full. The `find_in_panes` half already shipped in phase-04.
+- `docs/design/tmux-integration.md` § "D6 — One targetable-panes filter" — read
+  it to know what this phase must **not** do. D6 is phase-08's job.
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+
+## Current state
+
+**`list_panes`** lives in `src/daemon/executor/knowledge/pane.rs` (currently
+lines 208–300). Today it emits one flat, id-sorted list, and it **actively
+excludes** foreign-session panes:
+
+```rust
+    let mut rows: Vec<_> = panes
+        .iter()
+        .filter(|(_, state)| state.session_name == session)
+        .filter(|(id, _)| chat_pane != Some(id.as_str()))
+        .collect();
+    rows.sort_by_key(|(id, _)| id.as_str());
+```
+
+It has no `status:` field, and its `ghost_part` tags only the three ghost
+prefixes (`INCIDENT_WINDOW_PREFIX`, `GS_BG_WINDOW_PREFIX`,
+`GS_SCHED_WINDOW_PREFIX`), not the plain `de-bg-` / `de-sj-` daemon windows.
+
+**`PaneStatus`** (phase-02, `src/tmux/status.rs`) implements `Display` and is
+stamped on every `PaneState` at each 2 s refresh — `read_pane` and
+`find_in_panes` already render it as `status:{}`. Reuse that.
+
+**`get_labeled_context`** is `src/tmux/cache.rs:468`:
+
+```rust
+    pub fn get_labeled_context(
+        &self,
+        source_pane: Option<&str>,
+        chat_pane: Option<&str>,
+    ) -> String {
+```
+
+It has **three** production call sites (`src/daemon/prompt.rs:108`,
+`src/daemon/prompt.rs:251`, `src/daemon/executor/mod.rs:557`) and **~15** test
+call sites in `src/tmux/cache_tests.rs`. Its non-active-pane loop already
+computes `chat_window` and filters to the home session:
+
+```rust
+        let chat_window: Option<&str> = chat_pane
+            .and_then(|cp| panes.get(cp))
+            .map(|p| p.window_name.as_str())
+            .filter(|w| !w.is_empty());
+
+        let home = self.session_name.read().unwrap_or_log().clone();
+        let mut others: Vec<_> = panes
+            .iter()
+            .filter(|(_, state)| state.session_name == home)
+            .filter(|(id, _)| source_pane != Some(id.as_str()))
+            .filter(|(id, _)| chat_pane != Some(id.as_str()))
+            .collect();
+        others.sort_by_key(|(id, _)| id.as_str());
+```
+
+**`PendingCall::GetTerminalContext`** (`src/ai/types/pending.rs:170`) carries
+only `id` + `thought_signature`; its `summary()` arm (line 630) returns
+`String::new()` and its `ToolDef` (`src/ai/tools/defs.rs:610`) has
+`params: &[]`. There is a test `summary_get_terminal_context_empty` at
+`pending.rs:993` that constructs the variant.
+
+## Spec
+
+Numbered tasks in execution order. **Do not touch any `summary()`,
+`to_tool_call()` or `tool_name()` arm belonging to a *different* tool** —
+`GetTerminalContext`'s own arms are in scope; every other tool's are not.
+
+### Task 1 — `ContextScope` in `src/tmux/cache.rs`
+
+Add next to the `PaneState` definition:
+
+```rust
+/// Breadth of a `get_labeled_context` snapshot (M12 D4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextScope {
+    /// Only panes sharing the chat pane's window.
+    Window,
+    /// The user's own tmux session — today's behavior, and the default.
+    Session,
+    /// The home session plus a metadata-only listing of foreign-session panes.
+    All,
+}
+```
+
+Also add the pure helper the window filter uses — it is a **mutation target**,
+so write it exactly as given, trailing comment included:
+
+```rust
+/// True when a pane's window is inside `scope`. Pure, so it is testable
+/// without a cache.
+pub(crate) fn window_in_scope(
+    scope: ContextScope,
+    pane_window: &str,
+    chat_window: Option<&str>,
+) -> bool {
+    match scope {
+        ContextScope::Window => chat_window.is_none_or(|w| w == pane_window), // window scope keeps only the chat window
+        _ => true,
+    }
+}
+```
+
+An unknown `chat_window` degrades to "everything in scope" rather than to an
+empty snapshot — an empty context block is worse than a wide one.
+
+### Task 2 — `get_labeled_context_scoped`, additively
+
+**Do not change `get_labeled_context`'s signature.** It has ~15 test call sites
+and 3 production ones; widening it is a wide-blast-radius breaking change for
+no benefit (`docs/dev/WORKFLOW.md` § "Prefer additive change shapes"). Instead:
+
+1. Rename the existing body to
+   ```rust
+   pub fn get_labeled_context_scoped(
+       &self,
+       source_pane: Option<&str>,
+       chat_pane: Option<&str>,
+       scope: ContextScope,
+   ) -> String
+   ```
+2. Keep `get_labeled_context` as a two-line delegator:
+   ```rust
+   pub fn get_labeled_context(
+       &self,
+       source_pane: Option<&str>,
+       chat_pane: Option<&str>,
+   ) -> String {
+       self.get_labeled_context_scoped(source_pane, chat_pane, ContextScope::Session)
+   }
+   ```
+
+**`ContextScope::Session` output must be byte-identical to today's.** Every
+existing test in `src/tmux/cache_tests.rs` must keep passing **unmodified** —
+if you find yourself editing one, the delegation is wrong. That is the whole
+point of doing this additively.
+
+3. In the non-active-pane loop, add exactly one filter to the `others` chain,
+   after the existing home-session filter:
+   ```rust
+           .filter(|(_, state)| window_in_scope(scope, &state.window_name, chat_window))
+   ```
+4. For `ContextScope::All` only, append a foreign-session section **after** the
+   existing loop — metadata only, because foreign panes carry no buffer (D1):
+   ```
+   [FOREIGN SESSION PANE %9 (idx:1 in 'editor' | session:other) — nvim — /srv/app status:Running]
+   ```
+   One line per foreign pane (`state.session_name != home`, chat pane and
+   source pane excluded), sorted by pane id, `mask_sensitive` applied to the
+   title/cwd as the surrounding code already does. Emit nothing at all when
+   there are no foreign panes — no empty header.
+
+### Task 3 — `list_panes`: group by window, add status, add the foreign section
+
+All in `src/daemon/executor/knowledge/pane.rs::list_panes`. Signature is
+unchanged.
+
+1. **Stop excluding foreign panes.** Replace the home-session `.filter(...)`
+   with a partition, written exactly as given — it is a mutation target:
+   ```rust
+       let (home_rows, foreign_rows): (Vec<_>, Vec<_>) = rows
+           .into_iter()
+           .partition(|(_, st)| st.session_name == session); // foreign panes go in their own section
+   ```
+2. **Group the home rows by window.** Sort by `(window_name, pane_index)` —
+   the same key `pane_map_summary` already uses (`src/tmux/cache.rs:451`) — and
+   emit one section per window:
+   ```
+   window 'main' (2 panes):
+     %1  idx:0  cmd:bash      status:Idle 4m  cwd:/home/user
+     %2  idx:1  cmd:vim       status:Running  cwd:/home/user/src
+   ```
+   Keep the existing per-row extras (`started:`, `title:`, `[synchronized]`,
+   `[dead: N]`, the activity tag) exactly as they render today; this task adds
+   `status:` and the grouping, and changes nothing else about a row.
+3. **Tag daemon-owned windows.** Add a private helper in this file:
+   ```rust
+   /// True when `window_name` belongs to a daemon-managed window.
+   ///
+   /// D6 (phase-08) replaces this body with the shared targetable-panes
+   /// predicate; it is deliberately local until then.
+   fn is_daemon_window(window_name: &str) -> bool {
+       window_name.starts_with(crate::daemon::BG_WINDOW_PREFIX)
+           || window_name.starts_with(crate::daemon::SCHED_WINDOW_PREFIX)
+           || window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
+           || window_name.starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
+           || window_name.starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
+   }
+   ```
+   All five constants exist with exactly those names and are `pub` — verified
+   at `src/daemon/mod.rs:53, 56, 60, 64, 66` (`"de-bg-"`, `"de-sj-"`,
+   `"de-gs-bg-"`, `"de-gs-sj-"`, `"de-gs-ir-"`). Do **not** use
+   `DAEMON_WINDOW_PREFIX` (`"de-"`, line 50): it would also match a user window
+   named `de-something`. A daemon window's rows get a `[daemon]` tag; the three
+   ghost prefixes keep their existing `[ghost]` tag as well.
+4. **Foreign section last.** When `foreign_rows` is non-empty, append:
+   ```
+   Panes in other tmux sessions:
+     %9  idx:1  session:other  window:editor  cmd:nvim  cwd:/srv/app  status:Running
+   ```
+   sorted by pane id. When it is empty, emit nothing — no header.
+5. The trailing `"Use the pane ID as target_pane…"` hint stays.
+
+### Task 4 — Replace the now-wrong test
+
+`list_panes_excludes_foreign_session_panes` (`pane.rs:893`) asserts the exact
+behavior D4 reverses. **Delete it** and put
+`list_panes_lists_foreign_session_panes_in_their_own_section` in its place —
+same fixture shape, opposite assertion (see § Test plan). This is the one
+existing test this phase is authorized to remove.
+
+### Task 5 — `get_terminal_context` gains `scope`
+
+- `src/ai/types/pending.rs`: add `scope: Option<String>` to the
+  `GetTerminalContext` variant; thread it through `to_tool_call()` (arguments
+  become `serde_json::json!({"scope": scope})`); update the existing
+  `summary()` arm (line 630) from `String::new()` to
+  ```rust
+  PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
+  ```
+  and fix the `summary_get_terminal_context_empty` test's constructor
+  (`pending.rs:993`) by adding `scope: None` — its assertion still holds.
+- `src/ai/types/events.rs`: add `scope: Option<String>` to
+  `AiEvent::GetTerminalContext`.
+- `src/ai/tools/args.rs`: give `get_terminal_context` an args struct with a
+  single `scope: Option<String>` and a `ToolArgs` impl, mirroring
+  `FindInPanesArgs`. Wire it in `src/ai/tools/dispatch.rs` in place of whatever
+  no-arg path it uses today.
+- `src/ai/tools/defs.rs:610`: replace `params: &[]` with one optional `scope`
+  `ParamDef` describing the three values and naming `"session"` as the default.
+- `src/daemon/stream.rs`: thread `scope` through the
+  `AiEvent::GetTerminalContext` arm.
+- `src/daemon/executor/mod.rs:551`: parse the string and call the scoped
+  method. Unknown values are **not** an error — fall back to `Session`, because
+  a snapshot is more useful than a refusal:
+  ```rust
+          let ctx_scope = match scope.as_deref() {
+              Some("window") => crate::tmux::cache::ContextScope::Window,
+              Some("all") => crate::tmux::cache::ContextScope::All,
+              _ => crate::tmux::cache::ContextScope::Session,
+          };
+          let ctx = cache.get_labeled_context_scoped(chat_pane, chat_pane, ctx_scope);
+  ```
+
+### Task 6 — Documentation
+
+- `CLAUDE.md` § "Current AI tools": update the `list_panes` row to say
+  window-grouped with `status:` and a foreign-session section, and the
+  `get_terminal_context` row to mention `scope`. **The counts line does not
+  change** — this phase adds no tool, so it stays
+  `**35 tools: 26 core + 9 deferred.**`.
+- `CLAUDE.md` § "Session context format": add the `[FOREIGN SESSION PANE …]`
+  line to the block.
+- `assets/prompts/sre.toml`: update the `list_panes` bullet (line ~104) and
+  document `get_terminal_context(scope?)` where that tool is described.
+
+### Task 7 — Capture the end-to-end evidence
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the entire contents of `/tmp/e2e-05.txt` into a new Update Log entry
+headed `### Update — <date> (end-to-end verification)`.
+
+**Paste it whole — every line, in order, unchanged.** The block is piped
+through `tail`/`grep` precisely so the artifact stays small enough to paste; a
+summarised, annotated or retyped transcript is not the artifact and does not
+satisfy this. Its last line is its own line count, and the number of transcript
+lines you paste must equal it. The server-authored `(complete)` entry does not
+satisfy this either.
+
+## Acceptance criteria
+
+- [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
+      --all-features -- -D warnings`, `cargo test` all exit 0.
+- [ ] `git diff --stat` shows **no changes** to `src/tmux/cache_tests.rs` — the
+      `Session`-scope delegation preserved today's output exactly.
+- [ ] `grep -c '\*\*35 tools: 26 core + 9 deferred\.\*\*' CLAUDE.md` prints `1`
+      (unchanged — this phase adds no tool) and `cargo test --test doc_truth`
+      passes.
+- [ ] `grep -c 'FOREIGN SESSION PANE' CLAUDE.md` prints `1` or more.
+- [ ] All tests named in § Test plan pass.
+- [ ] `grep -c 'list_panes_excludes_foreign_session_panes'
+      src/daemon/executor/knowledge/pane.rs` prints `0`.
+- [ ] Mutation M1: with `window_in_scope`'s `Window` arm forced to `true`,
+      `cargo test labeled_context_window_scope_excludes_other_windows` reports
+      `FAILED`; restored, it passes. Both directions in the transcript.
+- [ ] Mutation M2: with the `list_panes` partition predicate forced to `true`,
+      `cargo test list_panes_lists_foreign_session_panes_in_their_own_section`
+      reports `FAILED`; restored, it passes. Both directions in the transcript.
+- [ ] The Update Log holds a new `### Update — <date> (end-to-end
+      verification)` entry containing `/tmp/e2e-05.txt` in full, with as many
+      transcript lines as its own `transcript line count=` line reports.
+
+## Test plan
+
+**In `src/tmux/cache_tests.rs`** (new tests only — do not modify existing ones):
+
+- `window_in_scope_session_and_all_admit_everything` — pure. `Session` and
+  `All` return `true` for a window that is not the chat window.
+- `window_in_scope_window_rejects_other_windows` — pure. `Window` returns
+  `false` for a different window, `true` for the chat window, and `true` when
+  `chat_window` is `None`.
+- `labeled_context_window_scope_excludes_other_windows` — seed a chat pane in
+  window `main` and another pane in window `other`; with
+  `ContextScope::Window` the second pane's id is absent, and with
+  `ContextScope::Session` it is present. **Mutation M1's target.**
+- `labeled_context_all_scope_lists_foreign_panes` — seed one home pane and one
+  pane whose `session_name` differs; `All` output contains
+  `FOREIGN SESSION PANE` and the foreign pane's id, `Session` output contains
+  neither.
+- `labeled_context_session_scope_omits_foreign_header_when_none` — with no
+  foreign panes, `All` output contains no `FOREIGN SESSION PANE` text.
+
+**In `src/daemon/executor/knowledge/pane.rs`**:
+
+- `list_panes_groups_rows_by_window` — two panes in `main`, one in `edit`;
+  output contains a `window 'edit'` section header and a `window 'main'`
+  section header, and the two `main` panes appear between the `main` header and
+  the next header.
+- `list_panes_shows_status_field` — a seeded pane's row contains `status:`
+  followed by that pane's `PaneStatus` rendering.
+- `list_panes_lists_foreign_session_panes_in_their_own_section` — one home pane
+  and one foreign pane; output contains `Panes in other tmux sessions`, the
+  foreign pane's id, and `session:` with the foreign session's name.
+  **Mutation M2's target.** Replaces the deleted
+  `list_panes_excludes_foreign_session_panes`.
+- `list_panes_omits_foreign_section_when_none` — with only home panes, output
+  contains no `Panes in other tmux sessions` text.
+- `list_panes_tags_daemon_windows` — a pane in a `de-bg-…` window is tagged
+  `[daemon]`; a pane in a user window is not.
+
+Every one of these reads only the seeded cache. **No test may trigger a tmux
+subprocess** — nothing in this phase captures panes, so any test that does is a
+bug in the test.
+
+## End-to-end verification
+
+Run **verbatim** from the repo root, in `bash`, **without** `set -e`. Every
+line of the artifact is machine-produced; each command is piped through
+`tail`/`grep` so the whole transcript stays small enough to paste whole.
+`${PIPESTATUS[0]}` is read on the line immediately after each pipeline, which
+is what makes the recorded exit code the command's and not `grep`'s — do not
+move those lines apart.
+
+Both mutations are applied and reverted with `sed -i` in both directions —
+never `git checkout`, because both files hold this round's own uncommitted
+work. Each apply is followed by a `grep -c` of the mutated text; a `0` there
+means the `sed` matched nothing and that pair proves nothing.
+
+```bash
+OUT=/tmp/e2e-05.txt
+C=src/tmux/cache.rs
+P=src/daemon/executor/knowledge/pane.rs
+: > $OUT
+
+echo "== SURFACES ==" >> $OUT
+echo -n "cache_tests untouched (want 0)=" >> $OUT
+git diff --stat -- src/tmux/cache_tests.rs | wc -l >> $OUT
+echo -n "old foreign-exclusion test gone (want 0)=" >> $OUT
+grep -c 'list_panes_excludes_foreign_session_panes' $P >> $OUT 2>&1
+echo -n "tool counts line unchanged (want 1)=" >> $OUT
+grep -c '\*\*35 tools: 26 core + 9 deferred\.\*\*' CLAUDE.md >> $OUT 2>&1
+echo -n "CLAUDE.md documents the foreign line (want >=1)=" >> $OUT
+grep -c 'FOREIGN SESSION PANE' CLAUDE.md >> $OUT 2>&1
+
+echo "== GATES ==" >> $OUT
+cargo fmt --all 2>&1 | tail -3 >> $OUT
+echo "fmt exit=${PIPESTATUS[0]}" >> $OUT
+cargo build 2>&1 | tail -3 >> $OUT
+echo "build exit=${PIPESTATUS[0]}" >> $OUT
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -3 >> $OUT
+echo "clippy exit=${PIPESTATUS[0]}" >> $OUT
+cargo test 2>&1 | grep -E '^test result:|^failures:|panicked at' | head -20 >> $OUT
+echo "test exit=${PIPESTATUS[0]}" >> $OUT
+
+echo "== M1 APPLY (window scope admits everything) ==" >> $OUT
+sed -i 's@ContextScope::Window => chat_window.is_none_or(|w| w == pane_window), // window scope keeps only the chat window@ContextScope::Window => true, // window scope keeps only the chat window@' $C
+echo -n "M1 mutated-lines-present=" >> $OUT
+grep -c 'ContextScope::Window => true,' $C >> $OUT 2>&1
+cargo test labeled_context_window_scope_excludes_other_windows 2>&1 | grep -E '^test .*(ok|FAILED)$|^test result:|panicked at' | head -10 >> $OUT
+echo "M1 exit=${PIPESTATUS[0]}" >> $OUT
+sed -i 's@ContextScope::Window => true, // window scope keeps only the chat window@ContextScope::Window => chat_window.is_none_or(|w| w == pane_window), // window scope keeps only the chat window@' $C
+echo -n "M1 restored (want 0)=" >> $OUT
+grep -c 'ContextScope::Window => true,' $C >> $OUT 2>&1
+cargo test labeled_context_window_scope_excludes_other_windows 2>&1 | grep -E '^test .*(ok|FAILED)$|^test result:' | head -6 >> $OUT
+echo "M1 restored exit=${PIPESTATUS[0]}" >> $OUT
+
+echo "== M2 APPLY (nothing is foreign) ==" >> $OUT
+sed -i 's@.partition(|(_, st)| st.session_name == session); // foreign panes go in their own section@.partition(|(_, _st)| true); // foreign panes go in their own section@' $P
+echo -n "M2 mutated-lines-present=" >> $OUT
+grep -c 'partition(|(_, _st)| true);' $P >> $OUT 2>&1
+cargo test list_panes_lists_foreign_session_panes_in_their_own_section 2>&1 | grep -E '^test .*(ok|FAILED)$|^test result:|panicked at' | head -10 >> $OUT
+echo "M2 exit=${PIPESTATUS[0]}" >> $OUT
+sed -i 's@.partition(|(_, _st)| true); // foreign panes go in their own section@.partition(|(_, st)| st.session_name == session); // foreign panes go in their own section@' $P
+echo -n "M2 restored (want 0)=" >> $OUT
+grep -c 'partition(|(_, _st)| true);' $P >> $OUT 2>&1
+cargo test list_panes_lists_foreign_session_panes_in_their_own_section 2>&1 | grep -E '^test .*(ok|FAILED)$|^test result:' | head -6 >> $OUT
+echo "M2 restored exit=${PIPESTATUS[0]}" >> $OUT
+
+echo "== TREE ==" >> $OUT
+git status --porcelain >> $OUT 2>&1
+echo "porcelain exit=$?" >> $OUT
+echo -n "transcript line count=" >> $OUT
+wc -l < $OUT >> $OUT
+```
+
+Expected readings: `cache_tests untouched=0`; the old test count `0`; the tool
+counts line `1`; `FOREIGN SESSION PANE` in `CLAUDE.md` at least `1`; all four
+gate exits `0`; `M1 mutated-lines-present=1`, `M1 exit` non-zero with a
+`FAILED` line, `M1 restored=0` and `M1 restored exit=0`; the same shape for M2;
+nothing between `== TREE ==` and `porcelain exit=0`.
+
+A `mutated-lines-present=0` means the source line was not written with the
+exact text the Spec pins. Fix the source and re-run the whole block — do not
+report that pair as evidence.
+
+## Authorizations
+
+- [x] May delete exactly one existing test,
+      `list_panes_excludes_foreign_session_panes`, whose assertion D4 reverses
+      (Task 4). No other test may be modified or removed.
+
+No new dependencies. No `docs/architecture.md` changes.
+
+## Out of scope
+
+- **The shared targetable-panes predicate (D6)** — phase-08. This phase adds a
+  local `is_daemon_window` helper in `pane.rs` and leaves the duplicated prefix
+  literals in `pane_map_summary`, `get_labeled_context` and
+  `handle_list_panes` exactly where they are. Do **not** unify them, and do
+  **not** "fix" the lock-ordering inconsistency the milestone README records
+  under § "Carried to phase 08".
+- **`tmux_control`** (D5) — phase-06.
+- **The `/panes` CLI inspector and the `PaneList` IPC struct** (D7) —
+  phase-07. `handle_list_panes` in `src/daemon/server/handlers.rs` is that
+  phase's; leave it alone.
+- **Changing `get_labeled_context`'s signature**, or editing any existing test
+  in `src/tmux/cache_tests.rs`. Both are hard failures of Task 2's whole point.
+- **Per-cycle content capture of foreign panes** — a design non-goal. The
+  foreign section is metadata only.
+
+## Update Log
+
+(Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
+
+<!-- entries appended below this line -->

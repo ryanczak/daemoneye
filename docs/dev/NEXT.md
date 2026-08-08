@@ -1,51 +1,59 @@
 # NEXT
 
-## Active phase: [M12 phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) (`in-progress` — bounced round 2, [bug-04-2](milestones/M12-tmux-integration/bugs/bug-04-2.md))
+## Active phase: [M12 phase-05 — list-panes-upgrade](milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md) (`todo`)
 
-Adds the `find_in_panes` core AI tool (the `find_in_panes` half of D4 — the
-`list_panes` upgrade and the `get_terminal_context` `scope` param stay in
-phase-05). One regex search across every pane's buffer, returning pane id,
-window, session-when-foreign, `PaneStatus` and the matching lines with ±1 line
-of context; masked, capped at 50 matches, chat pane never searched.
-`scope: "all"` adds a bounded live capture pass over foreign-session panes.
-Full add-a-tool checklist, so counts go to **35 tools: 26 core + 9 deferred**
-and `tests/doc_truth.rs` gates it.
+The second half of D4 — the two display surfaces that still cannot see past the
+home session. `list_panes` gains window grouping, live `status:` and a labeled
+foreign-session section; `get_terminal_context` gains
+`scope: "window" | "session" | "all"` (default `"session"`). Together with
+phase-01's cache these close the milestone's **"No cross-session blindness"**
+exit criterion. No new tool, so the counts line stays at 35.
 
-Drafted as a deliberate clone of phase-03's shape: every one of the six
-mechanical wiring sites already has a `ReadPane` arm in the tree, cited by
-file:line for the executor to mirror. Three things the spec pins that the
-executor would otherwise have to invent:
+Three things the spec pins that the executor would otherwise get wrong:
 
-1. **A textually unique mutation target.** The chat-pane filter carries a
-   mandated trailing comment (`// never search the chat pane`), because the
-   same expression without it already exists in `list_panes` in the same file
-   and an unanchored `sed` would hit the wrong site.
-2. **Hermeticity, again.** Only the foreign pass shells out to tmux, so the
-   spec forbids any test that pairs `scope: "all"` with a foreign pane in the
-   cache — the exact defect phase-03's prototype caught in its own fixture.
-3. **A did-not-apply guard on each mutation.** Each `sed` is followed by a
-   `grep -c` of the mutated text; a `0` invalidates that pair instead of
-   silently certifying a vacuous guard. Both restores are `sed -i`, never
-   `git checkout` — the file holds the round's own uncommitted work.
+1. **Additive, not a widened signature.** `get_labeled_context` has ~15 test
+   call sites in `src/tmux/cache_tests.rs` and 3 production ones. The spec adds
+   `get_labeled_context_scoped(..., scope)` and leaves the old name as a
+   two-line delegator, so `Session` scope stays byte-identical and **not one
+   existing cache test changes** — which is itself an acceptance criterion
+   (`git diff --stat -- src/tmux/cache_tests.rs` must be empty).
+2. **One authorized deletion.** `list_panes_excludes_foreign_session_panes`
+   asserts exactly the behavior D4 reverses, so the phase replaces it. Declared
+   in § Authorizations; no other test may be touched.
+3. **The compact E2E block, carried forward from phase-04.** Every command
+   piped through `tail`/`grep`, the artifact ~40 lines, and its own line count
+   as the last line so a paraphrase is detectable. This is the round-3 shape
+   that finally worked — see the phase-04 record below.
 
-**Round 2 approved the code, bounced the evidence (2026-08-08).** All of
-bug-04-1's sort fixes hold — independently re-verified at review: `cargo test`
-reports exactly 1173, both `sort_by` calls are present with the foreign sort
-preceding `.take(FIND_FOREIGN_MAX_PANES)`, mutation M3 fails commented-out and
-passes restored, `git diff` between the round-2 commits touches only
-`pane.rs` (+45/-1) with no existing test modified. The bounce
-([bug-04-2](milestones/M12-tmux-integration/bugs/bug-04-2.md), major) is that
-the pasted round-2 end-to-end entry is a hand-paraphrased summary of
-`/tmp/e2e-04-r2.txt` (lines like `test exit=0 (1173 passed; 0 failed)` that
-do not appear verbatim in the 2,555-line raw file) rather than the file's
-actual contents — the "Paraphrase in place of a quote" shape named in
-`docs/dev/WORKFLOW.md` § "A pasted transcript is a claim, not evidence". No
-source change needed; the existing, already-verified `/tmp/e2e-04-r2.txt`
-just needs to be pasted verbatim in place of the summary.
-
-**Next action:** `/rexymcp:dispatch phase-04`.
+**Next action:** `/rexymcp:dispatch phase-05`.
 
 ---
+
+### [phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) approved 2026-08-08
+
+`approved_after_2`; two bounces, both verified fixed. Round 1 shipped the whole
+tool in 177 turns; round 2 fixed [bug-04-1](milestones/M12-tmux-integration/bugs/bug-04-1.md)
+(neither `home_rows` nor `foreign_rows` was sorted, though the spec required it
+twice — `HashMap` order, so both the output order and *which* 20 foreign panes
+the cap selected were nondeterministic); round 3 fixed
+[bug-04-2](milestones/M12-tmux-integration/bugs/bug-04-2.md), a paraphrased
+end-to-end transcript.
+
+**bug-04-2 was an architect-side defect, and it is the calibration item worth
+carrying.** The round-2 E2E block redirected full `cargo` output and produced a
+**2,555-line** artifact. Pasting that into a phase doc is impossible, so the
+paraphrase was the only way out — the spec had made compliance unavailable. The
+round-3 block pipes each command through `tail`/`grep`, lands at **38 lines**,
+and ends with its own `wc -l` so a paraphrase is mechanically detectable; the
+executor pasted it byte-for-byte on the first try (`diff` against
+`/tmp/e2e-04-r3.txt` was empty at review). **First occurrence — hold for
+recurrence**, but the phase-05 block is already written in the round-3 shape.
+
+Also unresolved and worth watching: the dispatch-time warning *"Phase doc has
+no parseable `## Acceptance criteria` section"* fired on all three rounds. The
+first theory — an H1 heading the architect had put inside § Spec — was
+falsified when the warning persisted in round 3 after that heading was demoted
+to H3. Cause still unidentified; it has had no observed effect on execution.
 
 ### [phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) approved 2026-08-08
 
