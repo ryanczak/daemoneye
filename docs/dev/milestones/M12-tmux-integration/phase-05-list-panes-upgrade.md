@@ -96,6 +96,81 @@ only `id` + `thought_signature`; its `summary()` arm (line 630) returns
 
 ## Spec
 
+### ⚠ ROUND 2 — READ THIS BEFORE ANYTHING ELSE ⚠
+
+**All four gates are green, the working tree is clean, and the code is
+finished and approved. That is expected here and is NOT evidence this phase is
+done.** Round 1 shipped the whole phase correctly and the architect re-verified
+every part of it independently: 1182 tests, `doc_truth` green, both mutation
+pairs re-run in both directions, `cache_tests.rs` additions-only (209/0),
+`get_labeled_context`'s signature unchanged, `ContextScope::Session` still
+byte-identical, phase-08's surfaces untouched, and `src/daemon/ghost.rs`'s two
+lines confirmed to be the required `scope` threading. **Do not change a single
+line of `src/`. Do not add or modify a test. Do not re-derive any of it.**
+
+**This round is doc-only, and it exists for one reason: the pasted transcript
+was retyped rather than copied.** [bug-05-1](bugs/bug-05-1.md): seven lines of
+the gate block diverge from `/tmp/e2e-05.txt` — the pasted text carries
+`1181 filtered out` on a full-suite run that actually printed `0 filtered out`,
+and drops the `filtered out; finished in` clause from six more lines. Every
+*claim* in it was true. It simply was not the artifact.
+
+**So this round gives you a way to check it yourself before reporting.** Task 3
+runs a command that extracts what you pasted and diffs it against the file. It
+prints `PASTE MATCH` or `PASTE MISMATCH`. The architect ran that command
+against round 1's entry while writing this, and it printed `PASTE MISMATCH`
+with exactly those seven lines — so it detects the real failure, it is not a
+formality.
+
+**Finish condition, and it is falsifiable:** `git diff --stat` for this round
+must show **exactly one file changed — this phase doc** — `cargo test` must
+still report **1182**, and Task 3 must print `PASTE MATCH`.
+
+The three tasks below are the whole round.
+
+### Task 1 — Regenerate the evidence
+
+Run the block in § End-to-end verification verbatim and unmodified. It rewrites
+`/tmp/e2e-05.txt` (the round-1 copy has been deleted, so it must be
+regenerated — a stale file is not this round's evidence). Nothing in it touches
+`src/` permanently: the two mutations are applied and reverted in the same
+block.
+
+### Task 2 — Paste it verbatim
+
+Paste the **entire contents of `/tmp/e2e-05.txt`** into a new Update Log entry
+headed `### Update — <date> (end-to-end verification)`, inside a single fenced
+block.
+
+**Read the file and copy its bytes. Do not reconstruct the transcript from
+what you remember your commands printing** — that is precisely how round 1
+failed, and why its `test result:` lines carry a `filtered out` count from a
+different command in the same block. If your tooling can append the file's
+contents to the doc directly, prefer that over retyping.
+
+### Task 3 — Prove the paste is verbatim
+
+Run this from the repo root and record the result:
+
+```bash
+D=docs/dev/milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md
+START=$(grep -n 'end-to-end verification)' $D | tail -1 | cut -d: -f1)
+tail -n +$START $D | awk '/^```/{n++; next} n==1' > /tmp/pasted-05.txt
+diff /tmp/pasted-05.txt /tmp/e2e-05.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+It must print **`PASTE MATCH`**. If it prints `PASTE MISMATCH`, the `diff`
+above it shows exactly which lines you retyped — fix those lines in the entry
+from the file and re-run this task until it matches. Do **not** report the
+phase complete on a `PASTE MISMATCH`.
+
+Then add a second, one-line Update Log entry headed
+`### Update — <date> (paste check)` containing that command's final line.
+
+## Round 1 spec — complete and approved, reference only
+
+Nothing in this section is outstanding. It is retained for context.
+
 Numbered tasks in execution order. **Do not touch any `summary()`,
 `to_tool_call()` or `tool_name()` arm belonging to a *different* tool** —
 `GetTerminalContext`'s own arms are in scope; every other tool's are not.
@@ -302,6 +377,22 @@ lines you paste must equal it. The server-authored `(complete)` entry does not
 satisfy this either.
 
 ## Acceptance criteria
+
+### ROUND 2 — the only criteria that are open
+
+- [ ] Task 3's command prints **`PASTE MATCH`**.
+- [ ] The Update Log holds a **new** `### Update — <date> (end-to-end
+      verification)` entry whose fenced block is `/tmp/e2e-05.txt` byte for
+      byte, plus a `### Update — <date> (paste check)` entry holding the
+      `PASTE MATCH` line. Round 1's entry does not satisfy either.
+- [ ] `git diff --stat` for this round lists **exactly one file** — this phase
+      doc. Nothing under `src/` changed.
+- [ ] `cargo test` still reports **1182** in the lib suite.
+
+### Round 1 criteria — all met, independently verified at review
+
+Reference only; nothing here is outstanding. The one exception is the
+transcript-fidelity criterion, which round 2 above supersedes.
 
 - [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
       --all-features -- -D warnings`, `cargo test` all exit 0.
@@ -716,3 +807,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - **Executor:** Qwen/Qwen3.6-27B-FP8
 - **What independently verified clean:** all four gates re-run separately (fmt/build/clippy/test, 1182 passed); all 10 named § Test plan tests re-run individually and pass; both mutation pairs (M1, M2) re-run with the phase doc's own `sed` commands in both directions, `mutated-lines-present=1` each apply, target test `FAILED` mutated / `ok` restored, tree clean after restore; `cache_tests.rs` amended criterion confirmed at 209 additions / 0 deletions, additions-only (no existing assertion touched); `src/daemon/ghost.rs` (+2/-0) confirmed as the necessary `scope` field threaded through the existing `AiEvent::GetTerminalContext` → `PendingCall::GetTerminalContext` match arm, not scope creep; doc_truth green; tool-count line still `1`; `FOREIGN SESSION PANE` documented; old exclusion test gone; phase-08's job (`pane_map_summary`, `get_labeled_context` literals, `handle_list_panes`, `get_labeled_context`'s two-arg signature) confirmed untouched.
 - **Scope deviations:** none beyond the justified `ghost.rs` call-site update noted above.
+
+### Update — 2026-08-08 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** bug-05-1 is doc-only and the code is fully verified, so a plain
+re-dispatch would return `complete` with an empty diff; round 2 adds a
+self-checkable finish condition — a command that diffs the pasted entry against
+the artifact and prints `PASTE MATCH` / `PASTE MISMATCH`, verified by the
+architect against round 1's entry, where it correctly printed `PASTE MISMATCH`
+with exactly the seven divergent lines.
