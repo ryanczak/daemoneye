@@ -1,15 +1,27 @@
 # NEXT
 
-## Active phase: **none** — M11 closed, awaiting human sign-off for M12
+## Active phase: [M12 phase-01 — multi-session-cache](milestones/M12-tmux-integration/phase-01-multi-session-cache.md) (`todo` — drafted 2026-08-07, not yet dispatched)
+
+**M12 — Full-View tmux Integration scoped 2026-08-07** (PE decision). Eight
+phases planned; settled design (D1–D7) in `docs/design/tmux-integration.md`;
+milestone README at `docs/dev/milestones/M12-tmux-integration/README.md`.
+Headline: multi-session pane cache, `PaneStatus` classification, `read_pane` /
+`find_in_panes` / `tmux_control` tools, `/panes` inspector, one shared
+targetable-panes filter.
+
+**Phase 01 is drafted and dispatchable**: `/rexymcp:dispatch phase-01` when
+ready. The phase is behavior-preserving (foreign panes enter the cache but
+every existing surface filters them out) and folds in a latent-defect fix:
+stale panes are now evicted from the cache via a guarded `evict_missing`
+(empty snapshot must NOT wipe the cache — pinned negative case).
+
+---
 
 **M11 — Unified Knowledge Index closed 2026-08-07.** Twelve phases, all `done`;
 all nine exit criteria verified at close against source. Verdicts: 1
 `approved_first_try`, 6 `approved_after_1`, 5 `escalated`. Nine bug docs, all
 resolved. Retrospective in
 `docs/dev/milestones/M11-knowledge-index/README.md`.
-
-**Nothing is dispatchable.** The next milestone is a human decision — scope,
-direction and any folds are yours to sign off before phase 01 of M12 is drafted.
 
 ### Two folds landed 2026-08-07 (PE sign-off)
 
