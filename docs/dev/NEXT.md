@@ -1,5 +1,49 @@
 # NEXT
 
+## Active phase: **none** — M11 closed, awaiting human sign-off for M12
+
+**M11 — Unified Knowledge Index closed 2026-08-07.** Twelve phases, all `done`;
+all nine exit criteria verified at close against source. Verdicts: 1
+`approved_first_try`, 6 `approved_after_1`, 5 `escalated`. Nine bug docs, all
+resolved. Retrospective in
+`docs/dev/milestones/M11-knowledge-index/README.md`.
+
+**Nothing is dispatchable.** The next milestone is a human decision — scope,
+direction and any folds are yours to sign off before phase 01 of M12 is drafted.
+
+### Two folds proposed at close, awaiting sign-off
+
+Neither has been applied. Both are `WORKFLOW.md` changes and the architect does
+not touch that file without approval.
+
+1. **Make the criteria-refresh rule a step, not prose.** The existing fold ("a
+   bounce must refresh the phase doc's acceptance criteria") failed its first
+   live test on 07b round 2 — the architect who had just written it did not
+   apply it, and the run returned `complete` with an empty diff. Proposal: move
+   the requirement into the review skill's §8 bounce sequence as an explicit
+   ordered step, so filing the bug and refreshing the criteria are one action
+   rather than a rule to remember. **Second occurrence of the underlying
+   failure; first occurrence of the fold itself failing.**
+2. **A guard's premise must be demonstrated, not described.** Third occurrence
+   of the vacuous-guard family (03a, 05b, 07b). What 07b added: the test's own
+   comment stated the correct intent while the fixture failed to deliver it, so
+   "name the risk in a comment" is demonstrably not sufficient. Proposal: an
+   exclusion or guard criterion must carry a both-directions mutation —
+   remove the guard, show the test fails, restore it — recorded in the phase
+   doc. **At the fold threshold.**
+
+### Still out of bounds from this repo
+
+The three folds landed locally on 2026-08-06, the two above, and the
+`false_completion` taxonomy gap all belong upstream in rexyMCP's
+`plugin/templates/WORKFLOW.md` / canonical failure-class vocabulary. A
+target-project architect session cannot make those edits; they need a separate
+change in the rexyMCP repo.
+
+---
+
+## Historical record below (M11 and earlier)
+
 ## Three calibration folds landed 2026-08-06 (PE sign-off)
 
 All three are in `docs/dev/WORKFLOW.md`. **None is applied upstream** — the same
