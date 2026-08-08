@@ -1,6 +1,23 @@
 # NEXT
 
-## Active phase: [M12 phase-01 — multi-session-cache](milestones/M12-tmux-integration/phase-01-multi-session-cache.md) (`todo` — drafted 2026-08-07, not yet dispatched)
+## Active phase: [M12 phase-01 — multi-session-cache](milestones/M12-tmux-integration/phase-01-multi-session-cache.md) (`in-progress` — **bounced 2026-08-08**, see [bug-01-1](milestones/M12-tmux-integration/bugs/bug-01-1.md))
+
+**Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
+criteria.** It holds the only unfinished work: four criteria, each run and
+confirmed to fail against the current tree at bounce time.
+
+**Round 1's code is correct and must not be touched.** All four gates are
+green, 1153 tests pass, and the architect independently re-ran both mutation
+pairs in both directions at review — all of it held. The single outstanding
+item is the **end-to-end verification Update Log entry**, which round 1 never
+wrote: the Update Log has only a `(started)` entry and the server-authored
+`(complete)` entry, and WORKFLOW.md is explicit that the latter never
+satisfies the requirement. The mutation-pair results exist only as prose
+inside that server-authored entry — a summarised form the standard rejects.
+
+**This is a green bounce.** Four green gates and a clean tree are *expected*
+here and are not evidence the phase is done. This round changes exactly one
+file — the phase doc — and `cargo test` must still report **1153, not 1154**.
 
 **M12 — Full-View tmux Integration scoped 2026-08-07** (PE decision). Eight
 phases planned; settled design (D1–D7) in `docs/design/tmux-integration.md`;
@@ -9,11 +26,20 @@ Headline: multi-session pane cache, `PaneStatus` classification, `read_pane` /
 `find_in_panes` / `tmux_control` tools, `/panes` inspector, one shared
 targetable-panes filter.
 
-**Phase 01 is drafted and dispatchable**: `/rexymcp:dispatch phase-01` when
-ready. The phase is behavior-preserving (foreign panes enter the cache but
-every existing surface filters them out) and folds in a latent-defect fix:
-stale panes are now evicted from the cache via a guarded `evict_missing`
-(empty snapshot must NOT wipe the cache — pinned negative case).
+Phase 01 is behavior-preserving (foreign panes enter the cache but every
+existing surface filters them out) and folds in a latent-defect fix: stale
+panes are evicted via a guarded `evict_missing` (empty snapshot must NOT wipe
+the cache — pinned negative case). Round 1 shipped all of that correctly.
+
+**One calibration item is carried to phase 08** (recorded in the milestone
+README): the five new filter sites are split on lock ordering — three clone
+`session_name` before taking `panes`, three hold `panes` while taking
+`session_name`. No deadlock is possible today (every `session_name` guard is a
+statement-temporary, so no cycle exists), and it was **not** bounced because
+it is an architect spec gap — Task 4 pinned the ordering for `is_home_pane`
+and the executor followed it exactly; Task 5 never pinned it. Phase 08
+rewrites all five sites onto the shared predicate and **its spec must pin
+session-before-panes ordering**.
 
 ---
 
