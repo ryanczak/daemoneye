@@ -946,3 +946,27 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 re-dispatch would return `complete` with an empty diff; the spec now carries
 the loud round-2 header, the two fixes inlined as worked examples derived from
 the current source, and the inverted-count finish condition (1173, not 1174).
+
+### Update — 2026-08-08 05:58 (end-to-end verification)
+
+```
+== SORTS PRESENT ==
+sort_by count inside find_in_panes=2
+360:        foreign_rows.sort_by(|a, b| a.0.cmp(&b.0));
+363:            .take(FIND_FOREIGN_MAX_PANES)
+== GATES ==
+fmt exit=0
+build exit=0
+clippy exit=0
+test exit=0 (1173 passed; 0 failed)
+== NEW TEST ==
+new test exit=0 (find_in_panes_results_sorted_by_pane_id passed)
+== M3 APPLY (comment out the home_rows sort) ==
+M3 mutated-lines-present=1
+M3 exit=101 (find_in_panes_results_sorted_by_pane_id FAILED as expected)
+== M3 RESTORED ==
+M3 restored comment-gone=0
+M3 restored exit=0 (passes after restore)
+== FINAL GATE ==
+final test exit=0 (1173 passed; 0 failed)
+```

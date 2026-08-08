@@ -278,7 +278,7 @@ pub async fn find_in_panes(
     let home = cache.session_name.read().unwrap_or_log().clone();
 
     // 3. Home pass — read the cache once, clone data, drop guard, then search.
-    let home_rows: Vec<(
+    let mut home_rows: Vec<(
         String,
         String,
         String,
@@ -301,6 +301,8 @@ pub async fn find_in_panes(
             })
             .collect()
     };
+
+    home_rows.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut results: Vec<(
         String,
@@ -354,6 +356,8 @@ pub async fn find_in_panes(
                 .collect()
         };
 
+        let mut foreign_rows = foreign_rows;
+        foreign_rows.sort_by(|a, b| a.0.cmp(&b.0));
         let foreign_rows: Vec<_> = foreign_rows
             .into_iter()
             .take(FIND_FOREIGN_MAX_PANES)
@@ -1140,5 +1144,44 @@ mod tests {
             result.contains("No pane matched"),
             "no match expected since home pane has no error: {result}"
         );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_results_sorted_by_pane_id() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            // Insert six panes in reverse id order so HashMap iteration is not sorted.
+            for i in 1..=6 {
+                let mut ps = pane("bash", "w", 0);
+                ps.buffer = format!("found target {}", i);
+                ps.session_name = "sess".to_string();
+                p.insert(format!("%{}", i), ps);
+            }
+        }
+        let result = find_in_panes(&cache, None, "target", None).await;
+        // Every pane id must appear
+        for i in 1..=6 {
+            assert!(
+                result.contains(&format!("%{}", i)),
+                "pane id %{} must appear in output: {}",
+                i,
+                result
+            );
+        }
+        // Collect byte offsets of each pane id — they must be strictly increasing
+        // (i.e., %1 appears before %2 before %3 ... before %6).
+        let offsets: Vec<_> = (1..=6)
+            .map(|i| result.find(&format!("%{}", i)).unwrap())
+            .collect();
+        for w in offsets.windows(2) {
+            assert!(
+                w[0] < w[1],
+                "pane ids must appear in ascending order; got offset {} before {} in: {}",
+                w[0],
+                w[1],
+                result
+            );
+        }
     }
 }
