@@ -1,7 +1,7 @@
 # Phase 07: `/panes` Inspector + Widened `PaneList` IPC
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-02, phase-05
 **Estimated diff:** ~380 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -480,6 +480,56 @@ PASTE MATCH
 **Executor:** Qwen/Qwen3.6-27B-FP8
 
 **Gates:** format=run, build=run, lint=run, test=run
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** The pre-existing `PaneInfo` struct at `src/ipc.rs:6`
+  (used by `Response::PaneSelectPrompt`) was not caught by the spec's Task 1,
+  which instructed adding a *new* `PaneInfo` struct — a name collision the
+  architect introduced by deriving the spec fact from only part of `ipc.rs`.
+  The executor resolved it by widening the existing struct to carry both the
+  old fields (`id`/`current_cmd`→`cmd`/`summary`→`preview`) and the new D7
+  fields, unifying the two use sites on one type. Verified correct at review:
+  `find_best_target_pane` (`src/daemon/executor/mod.rs:1148-1170`) populates
+  every field including `cmd` and `preview` with real values (not defaulted),
+  and `prompt_pane_select_ratatui` (`src/cli/commands/stream.rs:958-980`)
+  still renders `pane.id`/`pane.cmd`/`pane.preview` correctly — no
+  degradation to the pane-select prompt. The `executor/mod.rs` diff
+  (+103/−20) is entirely mechanical: one production call site's struct
+  literal widened to the new fields, plus three pre-existing test fixtures
+  updated identically (verbatim `git diff d0da431 c8e2ba9 -- src/daemon/executor/mod.rs`
+  re-read at review) — no unrelated logic touched. This is a defensible,
+  correctly-executed deviation forced by an architect-side spec defect, not a
+  design decision that should have been a blocker.
+- **Calibration:** File this alongside the M12 README's phase-08 lock-ordering
+  note as another instance where a spec fact ("add a named struct
+  `PaneInfo`") was derived from only part of its source file — the fix isn't
+  executor-side; future specs touching `ipc.rs` should grep the whole file
+  for the proposed type name before prescribing "add".
+
+**Independent re-run (review):** `cargo fmt --all -- --check`, `cargo build`,
+`cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` (1195
+passed), `cargo test --test doc_truth` (4 passed) all exit 0, matching the
+executor's transcript. Both mutation pairs (M1 global numbering, M2 target
+marker) re-run independently via `sed -i`/restore: M1 mutated → 3 of 4
+`render_pane_inspector_*` tests FAILED (the marker and preview/age tests also
+fail because they locate rows via `[N]`+pane-id lookups that the mutation
+breaks — a real consequence of the mutation, not test entanglement), M1
+restored → 4 passed; M2 mutated → 1 FAILED (`marks_the_pinned_target`), M2
+restored → 4 passed. Tree left clean after both (`git status --porcelain`
+empty). Transcript fidelity: `/tmp/e2e-07.txt` (70 lines, includes the
+self-referential final line count) diffed byte-for-byte against the pasted
+fenced block — `PASTE MATCH` re-confirmed. Surfaces: tool counts line
+unchanged (`36 tools: 27 core + 9 deferred`, grep=1), old 5-tuple gone from
+`ipc.rs` (grep=0), `PaneInfo` struct declared once, `/panes` still aliased to
+`/pane`. Global numbering confirmed by reading `render_pane_inspector`
+directly: a single `enumerate()` pass with `i + 1`, no per-section counter,
+matching the worked example verbatim; `/pane <n>` still resolves
+`panes.get(n.saturating_sub(1))`. Phase-08's surfaces (inline `de-*` prefix
+filters and home-session filter in `handle_list_panes`) confirmed untouched.
 
 **Command output tails:**
 
