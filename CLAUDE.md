@@ -60,6 +60,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 | `src/ai/backends/` | Per-provider SSE streaming implementations |
 | `src/ai/filter.rs` | Regex-based sensitive-data masking; `init_masking()` at daemon start |
 | `src/tmux/mod.rs` | All `tmux` subprocess calls (one function per operation) |
+| `src/tmux/status.rs` | `PaneStatus` classification (M12 D2): `classify()` pure function, `is_shell_prompt()`, `summarize()` — `<status> — <last line>` pane summaries |
 | `src/tmux/cache.rs` | Background 2 s poll; `SessionCache`, `PaneState`, `get_labeled_context()` |
 | `src/tmux/session.rs` | Session-level tmux helpers: `other_sessions_context()`, `format_other_sessions()`, `client_dimensions()`, `session_environment()`, `list_sessions()`, `session_exists()` |
 | `src/util.rs` | `UnpoisonExt` trait — `unwrap_or_log()` extension on `LockResult` that logs ERROR on poison recovery |

@@ -1,7 +1,7 @@
 # Phase 02: Pane Status Classification
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -524,3 +524,9 @@ edit in Task 6 is authorized by this phase doc.)
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 03:25 (started)
+
+**Executor:** rexyMCP executor
+
+Implemented all 6 tasks: created `src/tmux/status.rs` with `PaneStatus` enum, `classify()`, `is_shell_prompt()`, `summarize()`, and 13 tests; re-exported `is_shell_prompt` from `foreground.rs`; added `status` field to `PaneState`; wired `classify()` and `summarize()` into `refresh()`; deleted old `SessionCache::summarize()` method and its 8 tests; updated `CLAUDE.md`.

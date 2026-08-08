@@ -445,6 +445,7 @@ mod tests {
             start_cmd: String::new(),
             pane_index: idx,
             shell_pid: 0,
+            status: crate::tmux::status::PaneStatus::Idle(0),
         }
     }
 

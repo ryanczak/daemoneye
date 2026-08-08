@@ -2,6 +2,7 @@ mod ansi;
 pub mod cache;
 pub mod pane;
 pub mod session;
+pub mod status;
 pub mod window;
 
 pub use pane::*;

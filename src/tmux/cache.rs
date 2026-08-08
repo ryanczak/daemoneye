@@ -115,6 +115,8 @@ pub struct PaneState {
     /// foreground completion detection: command finished when `pane_pid`
     /// returns to this value.  Zero when unknown.
     pub shell_pid: u32,
+    /// Live status classification, re-derived on every 2 s refresh (D2).
+    pub status: crate::tmux::status::PaneStatus,
 }
 
 /// Shared, periodically-refreshed view of all panes in a tmux session.
@@ -261,6 +263,23 @@ impl SessionCache {
             captures.push((info, content));
         }
 
+        // Compute clock and belled-window set before taking the panes lock.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        // Windows are refreshed later in this same cycle, so bell state lags one
+        // 2 s poll — acceptable: every cache field is at most one poll stale.
+        // Home-session windows only, so foreign panes never classify as Bell.
+        let belled: std::collections::HashSet<String> = self
+            .windows
+            .read()
+            .unwrap_or_log()
+            .iter()
+            .filter(|w| w.has_bell())
+            .map(|w| w.window_name.clone())
+            .collect();
+
         {
             let mut panes = self.panes.write().unwrap_or_log();
             for (info, content) in captures {
@@ -285,6 +304,7 @@ impl SessionCache {
                         start_cmd: String::new(),
                         pane_index: 0,
                         shell_pid: 0,
+                        status: crate::tmux::status::PaneStatus::Idle(0),
                     });
 
                 entry.current_cmd = info.current_cmd;
@@ -303,13 +323,22 @@ impl SessionCache {
                 entry.pane_index = info.pane_index;
                 entry.shell_pid = info.pane_pid;
 
+                entry.status = crate::tmux::status::classify(
+                    entry.dead,
+                    entry.dead_status,
+                    belled.contains(&entry.window_name),
+                    &entry.current_cmd,
+                    entry.last_activity,
+                    now_secs,
+                );
+
                 if let Some(c) = content
                     && entry.buffer != c
                 {
                     entry.buffer = c;
-                    entry.summary = self.summarize(&entry.buffer);
                     entry.last_updated = std::time::Instant::now();
                 }
+                entry.summary = crate::tmux::status::summarize(entry.status, &entry.buffer);
             }
         }
 
@@ -379,28 +408,6 @@ impl SessionCache {
         }
 
         Ok(())
-    }
-
-    /// Produce a one-line heuristic summary of a pane's visible content.
-    ///
-    /// Matches well-known patterns (shell prompt, `top`, HTTP log lines) and
-    /// falls back to the first 50 characters of the last non-empty line.
-    /// These heuristics are best-effort: unusual prompts or tools may not match.
-    fn summarize(&self, buffer: &str) -> String {
-        let Some(last_line) = buffer.lines().rfind(|l| !l.trim().is_empty()) else {
-            return "Empty pane".to_string();
-        };
-        let last_line = last_line.trim();
-
-        if last_line.starts_with('$') || last_line.starts_with('#') {
-            format!("Idle shell at: {}", last_line)
-        } else if last_line.contains("top - ") || last_line.contains("htop") {
-            "Running system monitor".to_string()
-        } else if last_line.contains("GET /") || last_line.contains("POST /") {
-            "Tailing web logs".to_string()
-        } else {
-            format!("Active: {}", last_line.chars().take(50).collect::<String>())
-        }
     }
 
     /// Build a labeled terminal context block for the AI.

@@ -94,25 +94,9 @@ impl Drop for FgHookGuard {
 // Shell prompt detection helpers (also used by knowledge::watch_pane).
 // ---------------------------------------------------------------------------
 
-/// Return true when `cmd` is a shell name, meaning the pane is at a prompt.
-pub(super) fn is_shell_prompt(cmd: &str) -> bool {
-    matches!(
-        cmd.trim(),
-        "bash"
-            | "zsh"
-            | "fish"
-            | "sh"
-            | "ksh"
-            | "csh"
-            | "tcsh"
-            | "dash"
-            | "nu"
-            | "pwsh"
-            | "elvish"
-            | "xonsh"
-            | "yash"
-    )
-}
+/// Shell-name predicate — moved to `crate::tmux::status` (M12 D2), re-exported
+/// so the `knowledge::` call sites and the tests below keep their paths.
+pub(super) use crate::tmux::status::is_shell_prompt;
 
 /// Return true when the last non-empty line of a pane snapshot ends with a
 /// recognisable shell-prompt character.

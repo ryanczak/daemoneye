@@ -6,61 +6,7 @@ fn cache() -> SessionCache {
     SessionCache::new("test-session")
 }
 
-// ── summarize heuristics ──────────────────────────────────────────────────
-
-#[test]
-fn summarize_empty_buffer() {
-    assert_eq!(cache().summarize(""), "Empty pane");
-}
-
-#[test]
-fn summarize_only_blank_lines() {
-    assert_eq!(cache().summarize("   \n\n  "), "Empty pane");
-}
-
-#[test]
-fn summarize_dollar_prompt() {
-    let buf = "some output\n$ ";
-    let s = cache().summarize(buf);
-    assert!(s.starts_with("Idle shell at:"), "got: {s}");
-}
-
-#[test]
-fn summarize_hash_prompt() {
-    let buf = "root output\n# ";
-    let s = cache().summarize(buf);
-    assert!(s.starts_with("Idle shell at:"), "got: {s}");
-}
-
-#[test]
-fn summarize_top_output() {
-    let buf = "Tasks: 200\ntop - 12:34:56 up 1 day";
-    let s = cache().summarize(buf);
-    assert_eq!(s, "Running system monitor");
-}
-
-#[test]
-fn summarize_web_log_get() {
-    let buf = "127.0.0.1 - - [01/Jan/2024] GET /api/health HTTP/1.1 200";
-    let s = cache().summarize(buf);
-    assert_eq!(s, "Tailing web logs");
-}
-
-#[test]
-fn summarize_web_log_post() {
-    let buf = "POST /submit HTTP/1.1";
-    let s = cache().summarize(buf);
-    assert_eq!(s, "Tailing web logs");
-}
-
-#[test]
-fn summarize_generic_truncates_to_50_chars() {
-    let long_line = "x".repeat(100);
-    let s = cache().summarize(&long_line);
-    assert!(s.starts_with("Active:"));
-    let content_part = s.trim_start_matches("Active: ");
-    assert!(content_part.len() <= 50);
-}
+// ── get_labeled_context ───────────────────────────────────────────────────
 
 // ── get_labeled_context ───────────────────────────────────────────────────
 
@@ -99,6 +45,7 @@ fn get_labeled_context_client_viewport_shown_when_known() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -136,6 +83,7 @@ fn get_labeled_context_client_viewport_absent_when_zero() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -172,6 +120,7 @@ fn get_labeled_context_background_panes_sorted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
         panes.insert(
@@ -195,6 +144,7 @@ fn get_labeled_context_background_panes_sorted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -293,6 +243,7 @@ fn get_labeled_context_source_pane_excluded_from_background() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -329,6 +280,7 @@ fn get_labeled_context_copy_mode_annotated() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -370,6 +322,7 @@ fn get_labeled_context_synchronized_pane_noted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -407,6 +360,7 @@ fn get_labeled_context_dead_pane_noted() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -445,6 +399,7 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
         // Pane running daemoneye chat.
@@ -469,6 +424,7 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -512,6 +468,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
         // Visible peer — same window as chat.
@@ -536,6 +493,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
         // Daemon-launched background window.
@@ -560,6 +518,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
         // User's session pane in a different window.
@@ -584,6 +543,7 @@ fn get_labeled_context_pane_classification() {
                 start_cmd: String::new(),
                 pane_index: 0,
                 shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
             },
         );
     }
@@ -626,6 +586,7 @@ fn test_pane(session: &str) -> PaneState {
         start_cmd: String::new(),
         pane_index: 0,
         shell_pid: 0,
+        status: crate::tmux::status::PaneStatus::Idle(0),
     }
 }
 
