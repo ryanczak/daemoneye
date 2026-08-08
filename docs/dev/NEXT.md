@@ -11,26 +11,32 @@ resolved. Retrospective in
 **Nothing is dispatchable.** The next milestone is a human decision — scope,
 direction and any folds are yours to sign off before phase 01 of M12 is drafted.
 
-### Two folds proposed at close, awaiting sign-off
+### Two folds landed 2026-08-07 (PE sign-off)
 
-Neither has been applied. Both are `WORKFLOW.md` changes and the architect does
-not touch that file without approval.
+Both are in `docs/dev/WORKFLOW.md`. **Neither is applied upstream.**
 
-1. **Make the criteria-refresh rule a step, not prose.** The existing fold ("a
-   bounce must refresh the phase doc's acceptance criteria") failed its first
-   live test on 07b round 2 — the architect who had just written it did not
-   apply it, and the run returned `complete` with an empty diff. Proposal: move
-   the requirement into the review skill's §8 bounce sequence as an explicit
-   ordered step, so filing the bug and refreshing the criteria are one action
-   rather than a rule to remember. **Second occurrence of the underlying
-   failure; first occurrence of the fold itself failing.**
-2. **A guard's premise must be demonstrated, not described.** Third occurrence
-   of the vacuous-guard family (03a, 05b, 07b). What 07b added: the test's own
-   comment stated the correct intent while the fixture failed to deliver it, so
-   "name the risk in a comment" is demonstrably not sufficient. Proposal: an
-   exclusion or guard criterion must carry a both-directions mutation —
-   remove the guard, show the test fails, restore it — recorded in the phase
-   doc. **At the fold threshold.**
+1. **The bounce sequence is now four numbered steps**, in
+   § "Review and Bug-Report Cycle" — write the bug, flip the status, **refresh
+   the acceptance criteria and confirm each fails against the current tree**,
+   update the README and telemetry. The criteria-refresh requirement previously
+   existed as a parenthetical inside a compound "rejects" step and was skipped by
+   the architect who had folded it in the day before; a rule that must be
+   remembered when writing a bug report has a failure rate, a rule that is step 3
+   of 4 gets checked off. Second occurrence of the empty-diff failure (07a r2,
+   07b r2); first occurrence of the original fold failing to be applied.
+2. **A guard's premise must be demonstrated, not described** — appended to
+   § "Coverage claims are inadmissible without mutation proof". Distinct from the
+   three failures already there, which are about what the *assertion* can see;
+   this is about the *fixture* being inert rather than near-miss, so the guard is
+   never reached. Requires a both-directions mutation pair in the phase doc, and
+   explicitly rejects an intent-stating comment as a substitute. Third occurrence
+   of the vacuous-guard family (03a, 05b, 07b).
+
+**Note on fold 1's scope.** The proposal was to make it a step in the *review
+skill's* §8 sequence. That file lives in the rexyMCP repo and is out of bounds
+here, so what landed is the in-repo half: `WORKFLOW.md` now carries the ordered
+sequence. Mirroring it into the skill remains an upstream change, and until it
+lands the skill's §8 and this file disagree on structure.
 
 ### Still out of bounds from this repo
 

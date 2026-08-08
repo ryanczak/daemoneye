@@ -247,9 +247,13 @@ runtime-side in the rexyMCP governor and out of bounds from this repo.
 2. **`false_completion` fits the green-gate shape badly** — 4 occurrences now,
    every one under four green gates, while the class means completing on a *red*
    gate. Fixing the canonical vocabulary is a **rexyMCP-repo** change.
-3. **Three calibration folds landed locally on 2026-08-06 and remain unapplied
-   upstream**, plus the two proposed below. All belong in rexyMCP's
-   `plugin/templates/WORKFLOW.md` and need a separate change in that repo.
+3. **Five calibration folds now sit in the local `docs/dev/WORKFLOW.md` and none
+   is applied upstream** — three landed 2026-08-06, two more 2026-08-07 (the
+   four-step bounce sequence, and a guard's premise must be demonstrated). All
+   belong in rexyMCP's `plugin/templates/WORKFLOW.md` and need a separate change
+   in that repo. Fold 1's other half — mirroring the ordered sequence into the
+   review skill's §8 — is upstream too, so until it lands the skill and this
+   repo's WORKFLOW.md disagree on the bounce structure.
 4. **Adjacent defects noted at scoping, still open**: `pinned` is never written;
    working `<id>.jsonl` / `.meta.json` / `.epochs.jsonl` files have no retention
    path. Candidates for a hygiene milestone, not M11.

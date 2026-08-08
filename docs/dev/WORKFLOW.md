@@ -354,16 +354,50 @@ When the executor marks a phase **review**, the architect:
    output against the transcript pasted in the Update Log.** Reading it for
    plausibility does not count — see § "A pasted transcript is a claim, not
    evidence."
-5. Either **approves** (flips to `done`, updates the milestone README's phase
-   table) or **rejects** (writes bug reports in the milestone's `bugs/`
-   directory, **refreshes the phase doc's acceptance criteria so the outstanding
-   work is expressed there and each new criterion fails against the current
-   tree**, and flips the phase back to `in-progress`). Skipping the criteria
-   refresh is what produces a re-dispatch that returns `complete` with an empty
-   diff — see § "Every acceptance criterion must be satisfiable".
+5. Either **approves** — flips to `done`, updates the milestone README's phase
+   table — or **rejects**, which is the four-step sequence below.
 6. **Records a structured review verdict** (below) — at every approval, not just
    when something went wrong. This is the supervision label for model evaluation
    *and* the substrate for human project review. One write, two consumers.
+
+### The bounce sequence — four steps, in order, none optional
+
+A rejection is not "file a bug and flip the status." It is these four, and the
+third is the one that actually determines whether the re-dispatch does anything:
+
+1. **Write the bug report** in the milestone's `bugs/` directory.
+2. **Flip the phase doc's `Status:`** back to `in-progress`, naming the bug.
+3. **Refresh the phase doc's acceptance criteria** so the outstanding work is
+   expressed *there*, and **run each new criterion to confirm it fails against
+   the current tree**. Paste nothing you did not execute.
+4. **Update the milestone README row** and record the bounce in telemetry.
+
+**Step 3 is the load-bearing one, and it is the one that gets skipped.** The
+executor evaluates the *phase doc* to decide whether there is work to do; it
+does not evaluate the bug doc for that purpose. A phase doc whose every
+criterion still passes is a phase doc that certifies itself as finished, and the
+correct reading of it is "complete, nothing to do." The bug report is where the
+diagnosis lives; the acceptance criteria are where *doneness* lives. Filing the
+former without updating the latter leaves the two in contradiction and the
+executor obeys the one it was told to obey.
+
+This is why the rule is a numbered step rather than a clause: it previously
+existed as a parenthetical inside the compound "rejects" step above, and was
+skipped by the architect who had folded it in the day before. A rule that must
+be *remembered* at the moment of writing a bug report is a rule with a failure
+rate; a rule that is step 3 of 4 is checked off.
+
+The countermeasure applies to a green bounce with particular force — see
+§ "Green bounces need a refined re-dispatch, never a plain one" in the escalate
+guidance. A loud header, a do-not-touch list, enumerated edits and an inverted
+finish condition are all *inside the bug doc*, and M11 phase-07b demonstrated
+that all four together are insufficient when the criteria still pass. Round 2
+returned `complete` with an empty diff in 31 turns; round 3, with four criteria
+confirmed failing, did the work in 82.
+
+*(Folded 2026-08-07 on PE sign-off. Second occurrence of the underlying
+empty-diff failure — M11 phase-07a round 2 and phase-07b round 2 — and the first
+occurrence of the original prose fold itself failing to be applied.)*
 
 ### Review verdict
 
@@ -1034,6 +1068,42 @@ run by the reviewer.
 assertions tautological; a test named for a branch it could not reach; a spec
 pinning a key order the serializer discards. All three were architect-authored — the
 executor implemented what was specified in each case.)*
+
+**A guard's premise must be demonstrated, not described.** The failures above are
+all about what the *assertion* can see. This one is about the *fixture*: a test
+for an early-return guard passes trivially whenever the input would have produced
+the same result by some other path, so the guard is never reached and its removal
+changes nothing.
+
+The shape is always a negative assertion — "returns `None`", "the row is absent",
+"nothing is emitted" — paired with a fixture chosen to be *inert* rather than
+*near-miss*. A low-signal-query guard was tested with a query sharing no token
+with the seeded corpus: the search matched nothing, the function returned `None`
+through its no-hits path, and deleting the guard entirely left all twelve module
+tests green.
+
+**Seeding a non-empty fixture is not sufficient. The fixture must be one the
+input would otherwise match.** State it in the spec as a near-miss: name the
+input, name the seed, and say *why the seed is reachable* — "`\"hi by\"` is below
+the signal floor on every term, and the seeded body contains
+`highlight_by_service`, which FTS5's tokenizer splits on the underscore so the
+token `by` is indexed and matched." That sentence is what makes the guard
+observable.
+
+**And a comment stating the intent is not the demonstration.** The 07b fixture
+carried the comment *"seed a non-empty matching corpus so the test is about the
+guard, not about an empty index"* — correct intent, wrong fixture, and the
+comment made the defect harder to see rather than easier, because it read as
+evidence the concern had been handled. **Require the mutation pair, not the
+rationale.** Any guard or exclusion criterion must carry a both-directions
+mutation in the phase doc: remove the guard, show the named test fails, restore
+it, show it passes.
+
+*(Folded 2026-08-07 on PE sign-off, at the third occurrence of the vacuous-guard
+family: an identity criterion satisfied by `line.contains("turn")`, a JSON key
+every record carries; an exclusion test that passed *with its mutation applied*
+because an unrelated empty corpus had wiped its fixture; and this one. All three
+were caught only by a reviewer running the mutation.)*
 
 **When a test depends on the fixture being in a particular order, assert that
 order in the test.** The cases above are all "the property could not be
