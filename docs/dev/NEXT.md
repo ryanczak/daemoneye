@@ -1,27 +1,24 @@
 # NEXT
 
-## Active phase: [M12 phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md) (`in-progress` — **bounced 2026-08-08**, see [bug-02-1](milestones/M12-tmux-integration/bugs/bug-02-1.md))
+## Active phase: **none** — M12 phase-02 done, phase-03 not yet drafted
 
-**Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
-criteria.** It holds the only unfinished work: five criteria, each run and
-confirmed to fail against the current tree at bounce time.
+**[phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md)
+approved 2026-08-08** (`approved_after_1`; one bounce,
+[bug-02-1](milestones/M12-tmux-integration/bugs/bug-02-1.md), verified fixed).
+D2 landed in full: `src/tmux/status.rs` carries the `PaneStatus` enum, a pure
+`classify()` (Dead > Bell > shell/non-shell × activity age), `format_age`,
+`Display`, and the new `summarize()`; `PaneState.status` is stamped every 2 s
+refresh; the old heuristic `SessionCache::summarize()` and its 8 tests are
+gone; `is_shell_prompt` moved to the new module behind a `pub(super) use`
+re-export that left all seven call sites unchanged. 1158 tests pass.
 
-**This is a green bounce.** Round 1 shipped correct code: all four gates green,
-tree clean, 1158 tests passing, all nine round-1 progress markers passing, and
-both mutation pairs re-run by the architect in both directions — all of it
-held. The defect is the missing `(end-to-end verification)` Update Log entry
-the spec required, plus one duplicated section comment in
-`src/tmux/cache_tests.rs`. `cargo test` must still report **1158, not 1159**.
+Phases 03–07 render this status on their new surfaces — nothing displays
+`status:` yet, which is why the milestone's "Status classification is live"
+exit criterion is verified at 05/07, not here.
 
-Round 1 delivered D2 in full: `src/tmux/status.rs` with the `PaneStatus` enum,
-pure `classify()` (Dead > Bell > shell/non-shell × activity age), `format_age`,
-`Display`, and the new `summarize()`; a `PaneState.status` field stamped every
-refresh; the old heuristic `SessionCache::summarize()` and its 8 tests deleted;
-`is_shell_prompt` moved to the new module behind a `pub(super) use` re-export.
+**Next action:** `/rexymcp:architect next` to draft phase-03 (read-pane-tool).
 
-**Next action:** `/rexymcp:dispatch phase-02` for round 2.
-
-### Calibration carried out of phase-02
+### Three calibration items carried out of phase-02
 
 1. **The missing-E2E-entry bounce is at two consecutive occurrences** (phase-01,
    phase-02) — a trend worth folding. The sharp point: phase-02's spec

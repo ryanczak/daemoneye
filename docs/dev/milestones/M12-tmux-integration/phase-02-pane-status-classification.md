@@ -1,7 +1,7 @@
 # Phase 02: Pane Status Classification
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -939,3 +939,28 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 086dfd2619468c4324f5dc8719ff359d8260fe67
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug: [bug-02-1](bugs/bug-02-1.md) — major, verified fixed)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** two items, both recorded in the milestone README §
+  "Calibration — phase 02". (1) The missing-E2E-entry bounce is at two
+  consecutive occurrences and the phase-02 spec already carried both known
+  countermeasures, so they are necessary and not sufficient — a fold candidate
+  for the PE. (2) A runnable E2E block must contain no manual steps; round 1's
+  mutation pair 2 said "delete the 3 lines" in prose, and the `perl -0pi -e` /
+  `git checkout` replacement was executed at review before being specced.
+
+**Verified independently at review (round 2):** all four gates re-run green
+(1158 passed); all five round-2 criteria and all nine round-1 progress markers
+re-run passing; both mutation pairs re-executed by the architect in both
+directions, reproducing the pasted transcript byte-for-byte including the
+`1157 filtered out` counts. **The pasted transcript was checked by
+re-execution, not by reading** — all 13 claimed `tmux::status` test names were
+diffed against a live run with zero fabricated names, and the line-numbered
+grep fingerprint (`src/tmux/cache.rs:326` / `:341`, with their exact source
+text) reproduced exactly. The executor's commit changed exactly two files, and
+its only `src/` edit is the two deleted comment lines.
