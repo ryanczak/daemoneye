@@ -1,38 +1,52 @@
 # NEXT
 
-## Active phase: [M12 phase-08 — filter-unification-and-docs](milestones/M12-tmux-integration/phase-08-filter-unification-and-docs.md) (`todo`)
+## Active phase: none in progress — **M12 IS AT ITS MILESTONE BOUNDARY**
 
-**M12's last in-scope phase.** D6: collapse the seven-way duplication of `de-*`
-window-prefix literals into three shared predicates in `src/daemon/mod.rs`, fix
-the lock-ordering inconsistency phase-01 left at the same sites, and verify the
-docs-true-at-close criterion. Pure refactor plus verification — no behavior
-change, no new tool.
+**All eight in-scope M12 phases (01, 02, 03, 04, 05, 06a, 06b, 07, 08) are
+`done`.** A `/rexymcp:auto` run stopped here on 2026-08-08: the milestone
+boundary is an absolute human gate.
 
-What the spec pins that a find-and-replace would get wrong:
+**This is not the milestone close.** The close — the retrospective in the M12
+README's Notes, the calibration folds with PE sign-off, and setting this
+pointer to "none" — is deliberately *not* done, per
+`docs/dev/WORKFLOW.md` § "Milestone boundaries are always a human gate". This
+note is bookkeeping only, so the pointer does not read as though phase-08 were
+still outstanding.
 
-1. **Two predicates, not one.** `is_daemon_window` (five prefixes) and
-   `is_ghost_window` (three) are different questions: the `[ghost]` tag must
-   keep *not* appearing on `de-bg-` / `de-sj-` windows. Collapsing them is the
-   obvious mistake and the spec forbids it explicitly, with the asymmetry as a
-   test.
-2. **`de-icing` is a user window.** `DAEMON_WINDOW_PREFIX` is `"de-"`, so the
-   predicate deliberately does not use it — pinned as a negative test case.
-3. **Line numbers have drifted across phases 05–07**, so the spec locates every
-   site by `grep` rather than by a number it would get wrong.
-4. **The lock-ordering fix has a trap of its own:** the reason no deadlock
-   exists today is that every `session_name` guard is a statement-temporary.
-   The spec requires `.clone()` on the same line and forbids binding one to a
-   `let` that outlives the statement — the "fix" that would actually close the
-   cycle.
+**Where M12 landed:** 1200 tests, four gates green, 36 tools (27 core + 9
+deferred). `read_pane`, `find_in_panes` and `tmux_control` are live; the cache
+is multi-session; `PaneStatus` is stamped every 2 s and rendered on every new
+surface; `/panes` is a window-grouped inspector over a named `PaneInfo`; and
+D6's exit criterion is a hard zero — no raw `de-*` prefix literal survives
+outside `src/daemon/mod.rs`.
 
-The D6 exit criterion is a single greppable number: zero raw prefix literals
-anywhere outside `src/daemon/mod.rs`.
+### Carried into the close — five calibration items, none folded yet
 
-**After this phase is approved the loop stops at the milestone boundary** — the
-retrospective, the calibration folds and setting `NEXT.md` to "none" are a
-human gate, and the phase doc's § Out of scope says so too.
+1. **The `sed -i` contradiction is fixed but only locally.** WORKFLOW.md now
+   specifies mutation pairs as `patch` tasks; the plugin template at
+   `/home/matt/src/rexyMCP/plugin/templates/WORKFLOW.md` still carries the
+   banned wording. **Upstream push is a correctness fix, not a missing lesson.**
+2. **Self-checkable evidence works where exhortation does not.** Two folds this
+   milestone landed on the same shape — the E2E capture as a seeded `## Spec`
+   task, and the `PASTE MATCH` self-check — and both worked on their first
+   outing after several rounds of increasingly specific prose had failed. Worth
+   stating as a general principle at close.
+3. **Unsatisfiable / unchecked criteria, now at three occurrences** —
+   phase-01's self-satisfying grep, phase-05's cache_tests contradiction, and
+   the `sed -i` form these docs themselves prescribed. WORKFLOW.md has a
+   reinforcement note; three occurrences means the rule was wrong, not just
+   unlucky.
+4. **False self-reports, now at two** — phase-03 reported "Deviations: None"
+   while having rewritten another tool's `summary()`; phase-08 reported
+   removing an unused `_home` binding **that never existed** (verified at
+   review: no regression, but the claim was fabricated). Both were caught only
+   because review re-ran rather than read. Second occurrence — at the fold
+   threshold.
+5. **Worked examples move this executor; prose does not** — sharpest evidence
+   in 06a, where the same executor guessed five API signatures from prose and
+   then reproduced the whole arm exactly when shown it with file:line sources.
 
-**Next action:** `/rexymcp:dispatch phase-08`.
+**Next action:** `/rexymcp:architect` to close the milestone.
 
 ---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
