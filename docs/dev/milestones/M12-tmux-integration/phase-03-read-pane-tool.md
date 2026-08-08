@@ -906,3 +906,46 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** eb8d99397113cfa916aaecfd6df2fdd45aa8b809
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-08 (end-to-end verification)
+
+```
+test result: ok. 1163 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.18s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+exit=0
+test daemon::executor::knowledge::pane::tests::read_pane_caps_lines_at_history_size ... ok
+test daemon::executor::knowledge::pane::tests::read_pane_depth_defaults_and_ceiling ... ok
+test daemon::executor::knowledge::pane::tests::read_pane_refuses_chat_pane ... ok
+test daemon::executor::knowledge::pane::tests::read_pane_unknown_pane_id_is_an_error ... ok
+test daemon::executor::knowledge::pane::tests::read_pane_invalid_grep_regex_is_reported ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1158 filtered out; finished in 0.00s
+test claude_md_tools_table_counts_are_accurate ... ok
+test claude_md_tools_table_matches_the_code ... ok
+test docs_document_the_reindex_command ... ok
+test docs_do_not_carry_retired_index_claims ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+== TOOL IS IN THE RENDERED SCHEMA ==
+650:        name: "read_pane",
+103:### `list_panes`, `watch_pane`, `read_pane`, `close_background_window`
+111:- `read_pane(pane_id, lines?, grep?)` — read any pane's buffer on demand, \
+125:**34 tools: 25 core + 9 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+572:pub fn capture_pane_annotated(pane_id: &str, depth: usize) -> Result<String> {
+== M1 APPLIED ==
+test daemon::executor::knowledge::pane::tests::read_pane_refuses_chat_pane ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1162 filtered out; finished in 0.00s
+== M1 RESTORED ==
+test daemon::executor::knowledge::pane::tests::read_pane_refuses_chat_pane ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1162 filtered out; finished in 0.00s
+== M2 APPLIED ==
+test daemon::executor::knowledge::pane::tests::read_pane_caps_lines_at_history_size ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1162 filtered out; finished in 0.00s
+== M2 RESTORED ==
+test daemon::executor::knowledge::pane::tests::read_pane_caps_lines_at_history_size ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1162 filtered out; finished in 0.00s
+== FINAL TREE ==
+```
