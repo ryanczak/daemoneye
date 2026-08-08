@@ -107,6 +107,10 @@ pub(super) struct FindInPanesArgs {
 pub(super) struct TmuxControlArgs {
     action: String,
     pane_id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    direction: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -437,6 +441,8 @@ impl ToolArgs for TmuxControlArgs {
             id: id.to_string(),
             action: self.action,
             pane_id: self.pane_id,
+            name: self.name,
+            direction: self.direction,
             thought_signature: ts,
         }
     }

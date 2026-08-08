@@ -248,6 +248,8 @@ pub enum PendingCall {
         thought_signature: Option<String>,
         action: String,
         pane_id: String,
+        name: Option<String>,
+        direction: Option<String>,
     },
 }
 
@@ -500,11 +502,16 @@ impl PendingCall {
                 name: "find_in_panes".to_string(),
                 arguments: serde_json::json!({"pattern": pattern, "scope": scope}).to_string(),
             },
-            PendingCall::TmuxControl { id, thought_signature, action, pane_id } => ToolCall {
+            PendingCall::TmuxControl { id, thought_signature, action, pane_id, name, direction } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "tmux_control".to_string(),
-                arguments: serde_json::json!({"action": action, "pane_id": pane_id}).to_string(),
+                arguments: serde_json::json!({
+                    "action": action,
+                    "pane_id": pane_id,
+                    "name": name,
+                    "direction": direction,
+                }).to_string(),
             },
         }
     }

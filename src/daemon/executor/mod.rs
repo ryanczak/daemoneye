@@ -627,6 +627,8 @@ where
             id,
             action,
             pane_id,
+            name,
+            direction,
             ..
         } => {
             // 1. Ghost gate — before any approval prompt (D5).
@@ -639,17 +641,26 @@ where
             }
 
             // 2. Validate the action.
-            if !matches!(action.as_str(), "focus" | "zoom" | "unzoom") {
+            if !matches!(
+                action.as_str(),
+                "focus" | "zoom" | "unzoom" | "split" | "rename_window" | "kill_window"
+            ) {
                 return Ok(ToolCallOutcome::Result(format!(
-                    "Error: invalid tmux_control action '{}'. Valid actions: focus, zoom, unzoom.",
+                    "Error: invalid tmux_control action '{}'. Valid actions: focus, zoom, \
+                     unzoom, split, rename_window, kill_window.",
                     action
                 )));
             }
 
-            // 3. Validate the pane.
-            let known = {
+            // 3. Validate the pane and collect window info under one guard.
+            let (known, window_name, chat_window) = {
                 let panes = cache.panes.read().unwrap_or_log();
-                panes.contains_key(pane_id.as_str())
+                let known = panes.contains_key(pane_id.as_str());
+                let window_name = panes.get(pane_id.as_str()).map(|p| p.window_name.clone());
+                let chat_window = chat_pane
+                    .and_then(|cp| panes.get(cp))
+                    .map(|p| p.window_name.clone());
+                (known, window_name, chat_window)
             };
             if !known {
                 return Ok(ToolCallOutcome::Result(format!(
@@ -658,10 +669,40 @@ where
                 )));
             }
 
+            // Pre-approval refusals — before the prompt so the user is not
+            // trained to approve things that will not happen.
+            if action == "kill_window"
+                && let Some(refusal) = knowledge::kill_window_refusal(
+                    window_name.as_deref().unwrap_or(""),
+                    chat_window.as_deref(),
+                )
+            {
+                return Ok(ToolCallOutcome::Result(refusal));
+            }
+            if action == "rename_window" && name.is_none() {
+                return Ok(ToolCallOutcome::Result(
+                    "Error: rename_window action requires the `name` parameter.".to_string(),
+                ));
+            }
+
             // 4. Approval. `ghost_policy` is `None` on purpose: step 1 already
             //    made the ghost decision, and passing the real policy here
             //    re-enters the auto-approve branch described in § Current state.
-            let approval_cmd = format!("tmux {} pane {}", action, pane_id);
+            let approval_cmd = if action == "rename_window" {
+                format!(
+                    "tmux rename-window pane {} to '{}'",
+                    pane_id,
+                    name.as_deref().unwrap_or("")
+                )
+            } else if action == "split" {
+                format!(
+                    "tmux split-window pane {} ({})",
+                    pane_id,
+                    direction.as_deref().unwrap_or("vertical")
+                )
+            } else {
+                format!("tmux {} pane {}", action, pane_id)
+            };
             match prompt_and_await_approval(
                 ApprovalRequest {
                     id: id.as_str(),
@@ -683,6 +724,8 @@ where
             // 5. Execute off the runtime.
             let act = action.clone();
             let pid = pane_id.clone();
+            let dir = direction.clone();
+            let nm = name.clone();
             let msg = crate::tmux::off_runtime("tmux-control", move || match act.as_str() {
                 "focus" => crate::tmux::select_window(&pid)
                     .and_then(|()| crate::tmux::select_pane(&pid))
@@ -694,13 +737,35 @@ where
                         crate::tmux::toggle_zoom(&pid).map(|()| format!("Zoomed pane {}.", pid))
                     }
                 }),
-                _ => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
+                "unzoom" => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
                     if z {
                         crate::tmux::toggle_zoom(&pid).map(|()| format!("Unzoomed pane {}.", pid))
                     } else {
                         Ok(format!("Pane {} is not zoomed.", pid))
                     }
                 }),
+                "split" => {
+                    let horizontal = dir.as_deref() == Some("horizontal");
+                    crate::tmux::split_pane(&pid, horizontal)
+                        .map(|new_id| format!("Split pane {}; new pane is {}.", pid, new_id))
+                }
+                "rename_window" => {
+                    crate::tmux::rename_window_for_pane(&pid, nm.as_deref().unwrap_or("")).map(
+                        |()| {
+                            format!(
+                                "Renamed window for pane {} to '{}'.",
+                                pid,
+                                nm.as_deref().unwrap_or("")
+                            )
+                        },
+                    )
+                }
+                "kill_window" => crate::tmux::kill_window_for_pane(&pid)
+                    .map(|()| format!("Killed window for pane {}.", pid)),
+                _ => Err(anyhow::anyhow!(
+                    "unreachable: action '{}' validated above",
+                    act
+                )),
             })
             .await;
 

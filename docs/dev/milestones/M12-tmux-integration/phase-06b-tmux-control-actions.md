@@ -1,7 +1,7 @@
 # Phase 06b: `tmux_control` — the Mutating Actions
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06a
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -369,3 +369,84 @@ None. No new dependencies; no `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 16:35 (started)
+
+**Executor:** Claude Sonnet 4.5
+**Tasks:** Implementing all 9 tasks: widening `is_daemon_window`, `kill_window_refusal` predicate, three tmux helpers, extending tool params and executor arm, documentation, tests, mutations M1/M2, end-to-end verification.
+
+### Update — 2026-08-08 16:35 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+M1 mutated-lines-present=1
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_allows_a_plain_user_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_the_chat_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_daemon_windows ... FAILED
+thread 'daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_daemon_windows' (1732860) panicked at src/daemon/executor/knowledge/pane.rs:1394:9:
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 1188 filtered out; finished in 0.00s
+M1 exit=101
+== M1 RESTORED ==
+M1 restored-lines-absent=0
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_allows_a_plain_user_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_the_chat_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_daemon_windows ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1188 filtered out; finished in 0.00s
+M1 restored exit=0
+== M2 APPLIED ==
+M2 mutated-lines-present=1
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_allows_a_plain_user_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_daemon_windows ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_the_chat_window ... FAILED
+thread 'daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_the_chat_window' (1734651) panicked at src/daemon/executor/knowledge/pane.rs:1416:9:
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 1188 filtered out; finished in 0.00s
+M2 exit=101
+== M2 RESTORED ==
+M2 restored-lines-absent=0
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_allows_a_plain_user_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_the_chat_window ... ok
+test daemon::executor::knowledge::pane::tests::kill_window_refusal_refuses_daemon_windows ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1188 filtered out; finished in 0.00s
+M2 restored exit=0
+== SURFACES ==
+tool counts UNCHANGED at 36 (want 1)=1
+CLAUDE.md names kill_window (want >=1)=1
+sre.toml names kill_window (want >=1)=1
+no unreachable! in executor (want 0)=0
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.64s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.99s
+clippy exit=0
+test result: ok. 1191 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.81s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+doc_truth exit=0
+== TREE ==
+ M CLAUDE.md
+ M assets/prompts/sre.toml
+ M src/ai/tools/args.rs
+ M src/ai/tools/defs.rs
+ M src/ai/types/events.rs
+ M src/ai/types/pending.rs
+ M src/daemon/executor/knowledge/mod.rs
+ M src/daemon/executor/knowledge/pane.rs
+ M src/daemon/executor/mod.rs
+ M src/daemon/stream.rs
+ M src/tmux/pane.rs
+porcelain exit=0
+transcript line count=66
+```
+
+### Update — 2026-08-08 16:35 (paste check)
+
+PASTE MATCH

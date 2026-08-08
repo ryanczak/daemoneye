@@ -71,7 +71,7 @@ among the tools; filter unification + docs close the milestone.
 | 04 | [find-in-panes-tool](phase-04-find-in-panes-tool.md) — `find_in_panes` core tool (D4) ([bug-04-1](bugs/bug-04-1.md), [bug-04-2](bugs/bug-04-2.md)) | done      |
 | 05 | [list-panes-upgrade](phase-05-list-panes-upgrade.md) — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) ([bug-05-1](bugs/bug-05-1.md)) | done      |
 | 06a | [tmux-control-gate](phase-06a-tmux-control-gate.md) — the `tmux_control` tool, `APPROVAL_GATED` wiring, ghost-policy denial, and the `focus` / `zoom` / `unzoom` actions (D5) | done |
-| 06b | [tmux-control-actions](phase-06b-tmux-control-actions.md) — `split`, `rename_window`, `kill_window` with its daemon-window and chat-window refusals (D5) | todo |
+| 06b | [tmux-control-actions](phase-06b-tmux-control-actions.md) — `split`, `rename_window`, `kill_window` with its daemon-window and chat-window refusals (D5) | in-progress |
 | 07 | pane-inspector-cli — widened `PaneList` IPC struct + `/panes` renderer (D7) | todo |
 | 08 | filter-unification-and-docs — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
 

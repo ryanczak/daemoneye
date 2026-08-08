@@ -539,6 +539,8 @@ where
                     id,
                     action,
                     pane_id,
+                    name,
+                    direction,
                     thought_signature,
                 } => {
                     pending_calls.push(PendingCall::TmuxControl {
@@ -546,6 +548,8 @@ where
                         thought_signature,
                         action,
                         pane_id,
+                        name,
+                        direction,
                     });
                 }
                 AiEvent::CloseBackgroundWindow {

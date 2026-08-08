@@ -405,6 +405,57 @@ pub fn toggle_zoom(pane_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Split the given pane, returning the new pane's id.
+///
+/// Uses `-P -F '#{pane_id}'` so tmux prints the new pane's id on stdout.
+/// Without those flags tmux prints nothing and the caller cannot identify
+/// the split result.
+pub fn split_pane(pane_id: &str, horizontal: bool) -> Result<String> {
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "split-window",
+        if horizontal { "-h" } else { "-v" },
+        "-t",
+        pane_id,
+        "-P",
+        "-F",
+        "#{pane_id}",
+    ]))?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to split pane '{}'", pane_id);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Rename the window containing the given pane.
+///
+/// Named `_for_pane` to keep it distinct from `window::rename_window(session,
+/// old, new)`, which has its own callers and a different signature.
+pub fn rename_window_for_pane(pane_id: &str, new_name: &str) -> Result<()> {
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "rename-window",
+        "-t",
+        pane_id,
+        new_name,
+    ]))?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to rename window for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+/// Kill the window containing the given pane.
+///
+/// Named `_for_pane` to match `rename_window_for_pane`.  tmux resolves a pane
+/// id to its window, so no separate window lookup is needed.
+pub fn kill_window_for_pane(pane_id: &str) -> Result<()> {
+    let output =
+        crate::tmux::bounded_output(Command::new("tmux").args(["kill-window", "-t", pane_id]))?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to kill window for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
 /// Read the last exit status recorded by the shell hook in the given pane.
 ///
 /// The shell hook (`PROMPT_COMMAND` / `precmd`) writes the exit code to the

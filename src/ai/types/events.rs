@@ -186,6 +186,8 @@ pub enum AiEvent {
         id: String,
         action: String,
         pane_id: String,
+        name: Option<String>,
+        direction: Option<String>,
         thought_signature: Option<String>,
     },
     CloseBackgroundWindow {

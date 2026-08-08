@@ -118,9 +118,12 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   output. Capped at 50 matches; `scope: "all"` also searches other tmux \
   sessions (slower). The chat pane is never searched.
 - `tmux_control(action, pane_id)` — act on the user's tmux: `focus` moves them \
-  to a pane and its window, `zoom` / `unzoom` resize it. **Every action needs \
-  the user's approval** — each one changes what they are looking at. Use it when \
-  they ask to be taken somewhere, or when showing a pane beats quoting it.
+  to a pane and its window, `zoom` / `unzoom` resize it, `split` splits a pane, \
+  `rename_window` renames a window (requires `name`), `kill_window` closes a \
+  window (refused for daemon-managed windows and the chat pane's window). **Every \
+  action needs the user's approval** — each one changes what they are looking at. \
+  Use it when they ask to be taken somewhere, or when showing a pane beats quoting \
+  it.
 - `close_background_window(pane_id)` — no approval. Close after one-shot use; \
   keep open for retries or follow-ups.
 
