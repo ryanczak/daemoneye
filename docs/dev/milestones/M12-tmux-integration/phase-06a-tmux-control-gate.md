@@ -238,31 +238,124 @@ at `src/daemon/stream.rs:1193` with an assertion for `"tmux_control"`.
 
 ### Task 6 — the executor arm
 
-In `src/daemon/executor/mod.rs`, add the `PendingCall::TmuxControl` arm. Order
-matters — the ghost gate comes **first**, before any approval prompt:
+In `src/daemon/executor/mod.rs`, add the `PendingCall::TmuxControl` arm. **Use
+this worked example — it is not a sketch.** Every signature in it was read out
+of the current tree while writing this spec, and each one is a place a previous
+attempt guessed wrong and broke the build:
 
-1. If `!ghost_may_use_tmux_control(is_ghost, tool_policy.as_ref())`, return
-   `Ok(ToolCallOutcome::Result(...))` with a message naming the tool and
-   saying an explicit agent tool-policy allow is required. Do not prompt.
-2. Validate `action` against `"focus" | "zoom" | "unzoom"`. Anything else
-   returns an error string naming the three valid actions — not a panic, not a
-   silent default.
-3. Validate that `pane_id` exists in `cache.panes`; if not, return the same
-   shape of error `read_pane` uses (`"Error: pane %N not found. Call
-   list_panes to see available panes."`).
-4. Call `prompt_and_await_approval` with a human-readable `cmd` string —
-   `format!("tmux {action} pane {pane_id}")` — so the approval prompt shows the
-   user what will happen. Pass `background: false`. **Pass `ghost_policy:
-   None`**, because step 1 has already made the ghost decision and passing the
-   policy would re-enter the auto-approve branch. Propagate a denial or a
-   `UserMessage` outcome unchanged, exactly as the other gated tools do.
-5. On approval, run the action through `crate::tmux::off_runtime`, as
-   `read_pane` does:
-   - `focus` — `select_window(pane_id)` then `select_pane(pane_id)`.
-   - `zoom` — if `pane_window_zoomed(pane_id)?` is already `true`, do nothing
-     and say so; otherwise `toggle_zoom`.
-   - `unzoom` — the inverse: only toggle when it *is* zoomed.
-6. Return a one-line confirmation naming the action and the pane.
+```rust
+        PendingCall::TmuxControl {
+            id,
+            action,
+            pane_id,
+            ..
+        } => {
+            // 1. Ghost gate — before any approval prompt (D5).
+            if !ghost_may_use_tmux_control(is_ghost, tool_policy.as_ref()) {
+                return Ok(ToolCallOutcome::Result(
+                    "tmux_control is denied for ghost shells unless the agent's tool \
+                     policy explicitly allows it."
+                        .to_string(),
+                ));
+            }
+
+            // 2. Validate the action.
+            if !matches!(action.as_str(), "focus" | "zoom" | "unzoom") {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid tmux_control action '{}'. Valid actions: focus, zoom, unzoom.",
+                    action
+                )));
+            }
+
+            // 3. Validate the pane. `cache.panes` is a
+            //    `RwLock<HashMap<String, PaneState>>` — take the read guard,
+            //    answer the question, drop it before any await.
+            let known = {
+                let panes = cache.panes.read().unwrap_or_log();
+                panes.contains_key(pane_id.as_str())
+            };
+            if !known {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: pane {} not found. Call list_panes to see available panes.",
+                    pane_id
+                )));
+            }
+
+            // 4. Approval. `ghost_policy` is `None` on purpose: step 1 already
+            //    made the ghost decision, and passing the real policy here
+            //    re-enters the auto-approve branch described in § Current state.
+            let approval_cmd = format!("tmux {} pane {}", action, pane_id);
+            match prompt_and_await_approval(
+                ApprovalRequest {
+                    id: id.as_str(),
+                    cmd: &approval_cmd,
+                    background: false,
+                    target_pane_hint: Some(pane_id.as_str()),
+                },
+                session_id,
+                None,
+                tx,
+                rx,
+            )
+            .await?
+            {
+                Ok(_cmd_id) => {}
+                Err(outcome) => return Ok(outcome),
+            }
+
+            // 5. Execute off the runtime. The closure must be 'static, so clone
+            //    the two borrowed bindings first.
+            let act = action.clone();
+            let pid = pane_id.clone();
+            let msg = crate::tmux::off_runtime("tmux-control", move || match act.as_str() {
+                "focus" => crate::tmux::select_window(&pid)
+                    .and_then(|()| crate::tmux::select_pane(&pid))
+                    .map(|()| format!("Focused pane {}.", pid)),
+                "zoom" => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
+                    if z {
+                        Ok(format!("Pane {} is already zoomed.", pid))
+                    } else {
+                        crate::tmux::toggle_zoom(&pid).map(|()| format!("Zoomed pane {}.", pid))
+                    }
+                }),
+                // `unzoom` — the action was validated in step 2, so this arm is
+                // it. Do NOT write `_ => unreachable!()`: STANDARDS bans panics
+                // in production paths.
+                _ => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
+                    if z {
+                        crate::tmux::toggle_zoom(&pid).map(|()| format!("Unzoomed pane {}.", pid))
+                    } else {
+                        Ok(format!("Pane {} is not zoomed.", pid))
+                    }
+                }),
+            })
+            .await;
+
+            Ok(ToolCallOutcome::Result(match msg {
+                Some(Ok(m)) => m,
+                Some(Err(e)) => format!("Error running tmux {}: {}", action, e),
+                None => format!("Error: timed out running tmux {} on {}.", action, pane_id),
+            }))
+        }
+```
+
+**Five API facts the example encodes, each verified against the tree — do not
+re-derive them, and do not guess a different shape:**
+
+| Fact | Where it is defined |
+|---|---|
+| `prompt_and_await_approval` takes **5** arguments: an `ApprovalRequest` struct, then `session_id`, `ghost_policy`, `tx`, `rx` | `src/daemon/executor/mod.rs:736`; a live call site at `src/daemon/executor/foreground.rs:245` |
+| `ApprovalRequest { id, cmd, background, target_pane_hint }` — `id` and `cmd` are `&str`, so a `&String` binding needs `.as_str()` | `src/daemon/executor/mod.rs:33-38` |
+| It returns `anyhow::Result<Result<usize, ToolCallOutcome>>` — `?` the outer, then match `Ok(cmd_id)` / `Err(outcome)`. **`ToolCallOutcome` has exactly three variants** (`Result`, `UserMessage`, `SpawnGhostSession`) and takes no generic parameters | `src/daemon/executor/mod.rs:41-60` |
+| `off_runtime(what: &'static str, f)` takes **two** arguments and returns `Option<T>`, so a fallible closure yields `Option<Result<_>>` — three cases to handle, not two | `src/tmux/mod.rs:30` |
+| The tmux helpers are reached as `crate::tmux::<fn>`, not `crate::tmux::pane::<fn>` — `src/tmux/mod.rs:8` does `pub use pane::*` | `src/tmux/mod.rs:3,8`; e.g. `src/daemon/executor/foreground.rs:566` |
+
+`unwrap_or_log` is already imported in this file (`src/daemon/executor/mod.rs:13`).
+
+**If the build breaks, run `cargo build` and read the error.** Do not search the
+file repeatedly looking for the answer — the compiler names it, and the
+governor will stop the run for read-only stalling long before searching finds
+it.
 
 ### Task 7 — Documentation
 
@@ -466,3 +559,36 @@ None. No new dependencies; no `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-08-08
+
+The first dispatch hard-failed on a `NoProgressStall` (60 consecutive read-only
+calls) with a broken build. **The logic you wrote was right; three API
+signatures were guessed and wrong** — `prompt_and_await_approval` called with 8
+positional arguments against a 5-argument signature, `cache.panes.iter()` on a
+`RwLock`, `off_runtime` with one argument, and a match on a
+`ToolCallOutcome::PendingCall` variant that does not exist. That is a spec gap,
+not your error: Task 6 described the arm in prose instead of showing it.
+
+**Task 6 now carries the whole arm as a worked example**, plus a table of the
+five API facts with the file and line each was read from. Use it literally.
+
+**The tree was reverted to `HEAD` before this re-dispatch**, so Tasks 1–3 need
+doing again — they were correct, and they are small (about 44 lines across
+`src/agents/policy.rs` and `src/tmux/pane.rs`). Starting from a clean,
+compiling tree is worth the redo.
+
+One habit to change: after any `patch` that adds a call to an unfamiliar
+function, **run `cargo build` before writing the next one.** The previous run
+landed the broken arm and then searched the same file about sixty times without
+editing it. The compiler answers that question in one call, and the governor
+stops a run that keeps asking it a different way.
+
+### Update — 2026-08-08 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** a textbook spec gap — the executor could not reach the approval
+helper's signature from prose, and the briefing's diagnostics are all
+signature mismatches rather than logic errors; resume would have carried the
+same gap forward into the same wall.
+
