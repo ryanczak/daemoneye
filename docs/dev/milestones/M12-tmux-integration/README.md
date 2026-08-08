@@ -65,7 +65,7 @@ among the tools; filter unification + docs close the milestone.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) | review      |
+| 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) ([bug-01-1](bugs/bug-01-1.md)) | in-progress |
 | 02 | pane-status-classification — `PaneStatus` enum + `summarize()` replacement (D2) | todo |
 | 03 | read-pane-tool — `read_pane` core tool, full add-a-tool checklist (D3) | todo |
 | 04 | find-in-panes-tool — `find_in_panes` core tool (D4) | todo |
@@ -81,5 +81,45 @@ at drafting time (gate machinery vs. actions) per the M11 a/b convention.
 
 ## Notes
 
-(Design decisions made during the milestone, dead ends, and calibration land
-here as the milestone progresses.)
+### Carried to phase 08 — lock-ordering inconsistency across the filter sites
+
+Phase 01 added the home-session filter at five sites. Three of them
+(`list_panes` in `executor/knowledge/pane.rs`, `find_best_target_pane` in
+`executor/mod.rs`, and `is_home_pane` itself) clone `session_name` **before**
+acquiring `panes`. The other three (`pane_map_summary` and
+`get_labeled_context` in `tmux/cache.rs`, `handle_list_panes` in
+`server/handlers.rs`) hold the `panes` read guard and acquire `session_name`
+inside it.
+
+**No deadlock is possible today** — verified at review: every `session_name`
+guard in the codebase is a statement-temporary dropped at its `;` (including
+`set_session`'s write guard), so nothing ever holds `session_name` while
+waiting on `panes`, and there is no cycle. It is a latent hazard, not a
+defect: binding one of those guards to a `let` in a future edit would close
+the cycle.
+
+**Not bounced, because it is an architect-side spec gap, not an executor
+error.** Phase 01's Task 4 pinned the ordering for `is_home_pane` ("never hold
+both locks across a call") and the executor followed it exactly there; Task 5's
+worked example did not pin position relative to the `panes` lock, so the three
+inconsistent sites are compliant with what they were told. Phase 08 rewrites
+all five call sites onto the shared targetable-panes predicate and is the
+natural place to fix it — **its spec must pin session-before-panes ordering at
+every site it touches.**
+
+### Calibration — phase 01
+
+- **A bounce criterion that quotes its own search string is vacuous.** Drafting
+  the round-2 criteria, the first version told the executor to
+  `grep -c '<test> ... FAILED' <phase doc>` — which matched the criterion text
+  itself and returned 1 before any work was done. Caught by running each
+  criterion at bounce time (the four-step bounce sequence's step 3) rather than
+  reasoning about it. The fix was to scope every check to the Update Log
+  section with `sed -n '/^## Update Log/,$p'`. Same family as the
+  already-folded vacuous-guard rules, but a new instance: the *criterion* is
+  self-satisfying, not the fixture. First occurrence — hold for recurrence.
+- **The executor's self-report was accurate this time.** All six claims in its
+  completion summary — gate results, test counts, both mutation pairs, spec
+  coverage — held up when independently re-run at review. Recorded because the
+  standing rule ("re-run, never read") was earned from four M11 failures; this
+  is the first data point on the other side, and it does not change the rule.

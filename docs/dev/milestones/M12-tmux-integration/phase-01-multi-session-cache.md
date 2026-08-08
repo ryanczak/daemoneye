@@ -1,7 +1,9 @@
 # Phase 01: Multi-Session Cache
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** in-progress — bounced 2026-08-08, see [bug-01-1](bugs/bug-01-1.md).
+Round 1's code is correct and reviewed; only the end-to-end verification entry
+is outstanding. Start at the `ROUND 2` block in § Acceptance criteria.
 **Depends on:** none
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -268,6 +270,55 @@ it is the session filter. A foreign pane that would also be excluded as a
 daemon window or chat pane makes every exclusion assertion vacuous.
 
 ## Acceptance criteria
+
+> ## ROUND 2 — START HERE. This is the only unfinished work.
+>
+> **Round 1 shipped correct code. All four gates are green, the tree is clean,
+> every criterion in the two groups below already passes, and 1153 tests pass.
+> None of that is evidence this phase is done.** The architect independently
+> re-ran all of it at review, including both mutation pairs in both directions,
+> and it all held. See [bug-01-1](bugs/bug-01-1.md) § "Verified at review".
+>
+> **Do NOT touch any file under `src/`.** The production code and tests are
+> correct and reviewed. This round edits exactly one file: this phase doc's
+> Update Log.
+>
+> One task: run the block in § End-to-end verification, capture its output to
+> files, and paste those files into a new Update Log entry.
+>
+> **Every check below is scoped to the Update Log section**, via the prefix
+> `SCOPE='sed -n "/^## Update Log/,\$p" <this doc>"'`. That scoping is
+> load-bearing, not decoration: the criterion text you are reading right now
+> contains the very strings being searched for, so an unscoped whole-doc grep
+> matches *this block* and passes without a transcript existing. Each of the
+> four was run in the scoped form against the current tree at bounce time and
+> **each returns 0 right now**:
+>
+> ```sh
+> DOC=docs/dev/milestones/M12-tmux-integration/phase-01-multi-session-cache.md
+> SCOPE() { sed -n '/^## Update Log/,$p' "$DOC"; }
+> SCOPE | grep -c '^### Update — .*(end-to-end verification)'      # want 1
+> SCOPE | grep -cE '^src/daemon/executor/mod\.rs:[0-9]+:'          # want >=1
+> SCOPE | grep -c 'pane_map_excludes_foreign_session_panes ... FAILED'  # want >=1
+> SCOPE | grep -c 'evict_missing_ignores_empty_snapshot ... FAILED'     # want >=1
+> ```
+>
+> - [ ] Check 1 — the entry exists (bounce time: `0`).
+> - [ ] Check 2 — the entry carries the verbatim `/tmp/e2e-01.txt`, evidenced by
+>       the `is_home_pane` grep-output lines the block appends (bounce time:
+>       `0`). Do **not** substitute `1153 passed` or `exit=` as the marker:
+>       both already appear elsewhere in this doc and pass vacuously.
+> - [ ] Check 3 — mutation pair 1 captured with the mutation applied, **and**
+>       the restored passing run shown (bounce time: `0`).
+> - [ ] Check 4 — mutation pair 2 captured with the mutation applied, **and**
+>       the restored passing run shown (bounce time: `0`).
+>
+> Finish condition, inverted so an empty diff cannot masquerade as done:
+> `git diff --stat` for this round must list **exactly one** file (this doc),
+> and `cargo test` must still report **1153** passed — **not 1154**. This round
+> adds no tests and changes no source.
+
+### Round 1 criteria (all passing — retained as the regression record)
 
 Split per WORKFLOW.md: the first group are progress markers, each **confirmed
 to fail against the current tree at drafting**; the second group are
