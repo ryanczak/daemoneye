@@ -1,7 +1,7 @@
 # Phase 06b: `tmux_control` — the Mutating Actions
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-06a
 **Estimated diff:** ~320 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -599,3 +599,59 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 75d466768b1b66d1a19df59cbff3ab5426eedca7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none blocking. Two things noted and weighed, neither
+  changes the verdict:
+  1. The pasted E2E transcript's restore lines read `M1 restored-lines-absent=0`
+     / `M2 restored-lines-absent=0` where the phase doc's block labels them
+     `M1 restored (want 0)=` / `M2 restored (want 0)=` — a relabelling, not a
+     missing step. Independently re-running both mutation pairs at review
+     (M1 and M2, both directions, via `sed -i` + restore) confirmed
+     `mutated-lines-present=1`, the targeted test `FAILED` under mutation, and
+     a clean restore with all three `kill_window_refusal` tests passing and the
+     tree left clean — the evidence the criterion cares about is present and
+     correct.
+  2. The "started" Update Log entry names `Claude Sonnet 4.5` as the executor;
+     every other entry (including the `Executor:` field on the completion
+     entry) and `rexymcp.toml` agree on `Qwen/Qwen3.6-27B-FP8`. Cosmetic —
+     does not affect any gate or artifact.
+- **Calibration:** none — a clean first-try approval with no new failure
+  pattern to fold.
+
+**Independent verification at review (2026-08-08):**
+- All four gates re-run separately: `cargo fmt --all`, `cargo build`,
+  `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test` —
+  all exit 0. Lib suite: 1191 passed (was 1188 pre-phase, +3 new
+  `kill_window_refusal` tests).
+- Both mutation pairs (M1 daemon-window refusal, M2 chat-window refusal)
+  independently re-applied via `sed -i` (per this review's explicit
+  authorization to deviate from the `patch`-tool executor contract) and
+  restored via `sed -i`: each showed `mutated-lines-present=1`, the
+  respectively-targeted test `FAILED` under mutation, and `0`/all-passing
+  after restore. `git status --porcelain` clean after both restores.
+- Transcript fidelity: `/tmp/e2e-06b.txt` exists (67 physical lines,
+  consistent with its own `transcript line count=66` — the count line is
+  written before its own newline is counted). The phase doc's own
+  paste-fidelity command reproduces `PASTE MATCH`.
+- `grep -c '**36 tools: 27 core + 9 deferred.**' CLAUDE.md` = 1 (unchanged).
+- `grep -c 'unreachable!' src/daemon/executor/mod.rs` = 0; the `unzoom` arm is
+  an explicit `"unzoom" =>` match arm and the new catch-all
+  (`_ => Err(anyhow::anyhow!("unreachable: action '{}' validated above", act))`)
+  returns an error rather than panicking.
+- Scope: `ghost_may_use_tmux_control`, `ToolPolicy::explicitly_allows`, and the
+  `APPROVAL_GATED` entries are byte-identical to phase-06a
+  (`git diff dda543d..HEAD` shows no changes to `src/agents/policy.rs` and no
+  diff to those symbols in `executor/mod.rs`). `is_daemon_window`'s body is
+  unchanged — only its visibility widened to `pub(crate)`. `src/tmux/window.rs`
+  is untouched (`git diff dda543d..HEAD` empty for that file).
+- Both `kill_window`'s refusal and `rename_window`'s missing-`name` error
+  (`src/daemon/executor/mod.rs` lines 674–686) return before
+  `prompt_and_await_approval` is called (line 706).
+- DoD walk: no new `unwrap`/`expect`/`panic!` outside test code, no
+  `TODO`/`FIXME`/`XXX`, no `dbg!`/`println!`, no new `#[allow]`/`#[ignore]`, no
+  `unsafe` introduced in the phase's diff (`dda543d..HEAD`).
