@@ -1,16 +1,49 @@
 # NEXT
 
-## Active phase: [M12 phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) (`in-progress` — **bounced 2026-08-08**, see [bug-03-1](milestones/M12-tmux-integration/bugs/bug-03-1.md))
+## Active phase: [M12 phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) (`todo`)
 
-**Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
-criteria.** Two tasks only: revert one line in `src/ai/types/pending.rs`
-(Task 9) and capture the E2E evidence (Task 10). Five criteria, each run and
-confirmed to fail against the current tree at bounce time.
+Adds the `find_in_panes` core AI tool (the `find_in_panes` half of D4 — the
+`list_panes` upgrade and the `get_terminal_context` `scope` param stay in
+phase-05). One regex search across every pane's buffer, returning pane id,
+window, session-when-foreign, `PaneStatus` and the matching lines with ±1 line
+of context; masked, capped at 50 matches, chat pane never searched.
+`scope: "all"` adds a bounded live capture pass over foreign-session panes.
+Full add-a-tool checklist, so counts go to **35 tools: 26 core + 9 deferred**
+and `tests/doc_truth.rs` gates it.
 
-**This is a green bounce.** Round 1 shipped a correct, complete `read_pane`:
-four gates green, 1163 tests, all nine round-1 criteria passing, both mutation
-pairs re-run by the architect in both directions and holding. `cargo test` must
-still report **1163, not 1164**.
+Drafted as a deliberate clone of phase-03's shape: every one of the six
+mechanical wiring sites already has a `ReadPane` arm in the tree, cited by
+file:line for the executor to mirror. Three things the spec pins that the
+executor would otherwise have to invent:
+
+1. **A textually unique mutation target.** The chat-pane filter carries a
+   mandated trailing comment (`// never search the chat pane`), because the
+   same expression without it already exists in `list_panes` in the same file
+   and an unanchored `sed` would hit the wrong site.
+2. **Hermeticity, again.** Only the foreign pass shells out to tmux, so the
+   spec forbids any test that pairs `scope: "all"` with a foreign pane in the
+   cache — the exact defect phase-03's prototype caught in its own fixture.
+3. **A did-not-apply guard on each mutation.** Each `sed` is followed by a
+   `grep -c` of the mutated text; a `0` invalidates that pair instead of
+   silently certifying a vacuous guard. Both restores are `sed -i`, never
+   `git checkout` — the file holds the round's own uncommitted work.
+
+**Next action:** `/rexymcp:dispatch phase-04`.
+
+---
+
+### [phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) approved 2026-08-08
+
+`approved_after_1`; one bounce ([bug-03-1](milestones/M12-tmux-integration/bugs/bug-03-1.md)),
+verified fixed. Round 2 did exactly its two tasks — reverted the undeclared
+`await_agent_result` `summary()` edit and captured the E2E transcript — in 62
+turns. Re-verified at review: four gates green, **1163** tests (not 1164, the
+inverted finish condition held), and both mutation pairs re-run by the
+architect in both directions.
+
+**The E2E-as-a-Spec-task remedy worked on its first outing.** Phase-03 round 2
+is the second round in M12 where the capture was an enumerated `## Spec` task,
+and the second that produced the entry. The fold's prediction held.
 
 ### The E2E fold was wrong, and this phase proves it
 
@@ -65,7 +98,8 @@ Drafted prototype-first, and the prototype earned its keep three times:
    (never reaches tmux in either mutation direction) and requires asserting the
    distinctive `"chat pane"` substring.
 
-**Next action:** `/rexymcp:dispatch phase-03` for round 2.
+*(Historical — round 2 was dispatched and approved; see the phase-03 record
+above.)*
 
 **[phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md)
 approved 2026-08-08** (`approved_after_1`; one bounce,
