@@ -66,7 +66,7 @@ among the tools; filter unification + docs close the milestone.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) ([bug-01-1](bugs/bug-01-1.md)) | done |
-| 02 | pane-status-classification — `PaneStatus` enum + `summarize()` replacement (D2) | todo |
+| 02 | [pane-status-classification](phase-02-pane-status-classification.md) — `PaneStatus` enum + `summarize()` replacement (D2) | todo |
 | 03 | read-pane-tool — `read_pane` core tool, full add-a-tool checklist (D3) | todo |
 | 04 | find-in-panes-tool — `find_in_panes` core tool (D4) | todo |
 | 05 | list-panes-upgrade — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) | todo |
@@ -75,7 +75,7 @@ among the tools; filter unification + docs close the milestone.
 | 08 | filter-unification-and-docs — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; 01 is
-`done`, 02–08 are not yet drafted. Sizing: each phase targets < 500 lines of
+`done`, 02 is drafted (`todo`), 03–08 are not yet drafted. Sizing: each phase targets < 500 lines of
 diff. Phase 06 is the highest-risk (approval-flow integration + policy
 semantics) and may split a/b at drafting time (gate machinery vs. actions) per
 the M11 a/b convention.

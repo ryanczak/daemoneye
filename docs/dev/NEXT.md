@@ -1,6 +1,18 @@
 # NEXT
 
-## Active phase: **none** — M12 phase-01 done, phase-02 not yet drafted
+## Active phase: [M12 phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md) (`todo` — drafted 2026-08-07, not yet dispatched)
+
+Phase-02 implements design D2: a new `src/tmux/status.rs` module with the
+`PaneStatus` enum and a pure `classify()` (Dead > Bell > shell/non-shell ×
+activity age), a `PaneState.status` field stamped every 2 s refresh, and
+`summarize()` replaced by `<status> — <last meaningful line>`.
+`is_shell_prompt` moves from `executor/foreground.rs` to the new module with a
+`pub(super) use` re-export keeping all call sites unchanged. Drafting was
+prototype-first: the entire Task 1 module was compiled and test-run against
+the tree (baseline 1153), both mutation pairs executed in both directions,
+then reverted — the spec's code blocks are captured, not sketched.
+
+**Next action:** `/rexymcp:dispatch phase-02` to run it.
 
 **M12 — Full-View tmux Integration scoped 2026-08-07** (PE decision). Eight
 phases planned; settled design (D1–D7) in `docs/design/tmux-integration.md`;
