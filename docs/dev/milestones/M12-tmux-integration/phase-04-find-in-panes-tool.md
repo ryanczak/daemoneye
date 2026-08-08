@@ -100,26 +100,62 @@ either is stale.
 
 ## Spec
 
-# ⚠ ROUND 2 — READ THIS BEFORE ANYTHING ELSE ⚠
+### ⚠ ROUND 3 — READ THIS BEFORE ANYTHING ELSE ⚠
 
-**All four gates are green and the working tree is clean. That is expected here
-and is NOT evidence this phase is done.** Round 1 shipped a correct, essentially
-complete `find_in_panes`: 1172 tests, `doc_truth` green, both mutation pairs
-re-run by the architect in both directions and holding, hermeticity confirmed,
-and the `bug-03-1` bookkeeping fix accepted. **Do not redo, re-derive, or
-re-verify any of it.** Everything in § "Round 1 spec" below is finished and
-approved.
+**All four gates are green, the working tree is clean, and the code is
+finished and approved. That is expected here and is NOT evidence this phase is
+done.** Rounds 1 and 2 shipped a complete, correct `find_in_panes`, and every
+part of it has been independently re-verified by the architect: 1173 tests,
+`doc_truth` green, both `sort_by` calls present with the foreign sort preceding
+`.take(FIND_FOREIGN_MAX_PANES)`, mutation pairs M1, M2 and M3 all re-run in both
+directions and holding, hermeticity confirmed. **Do not change a single line of
+`src/`. Do not add a test. Do not re-derive any of it.**
 
-**There is exactly one defect, and it has exactly two one-line fixes plus one
-test.** `find_in_panes` collects `home_rows` and `foreign_rows` straight out of
-`HashMap` iteration order and never sorts them, though the Spec required it
-twice. See [bug-04-1](bugs/bug-04-1.md).
+**This round is doc-only, and it exists because the evidence artifact was
+paraphrased rather than pasted.** [bug-04-2](bugs/bug-04-2.md): the round-2
+Update Log entry contains hand-written lines like
+`test exit=0 (1173 passed; 0 failed)` that appear nowhere in the 2,555-line
+`/tmp/e2e-04-r2.txt` the block actually produced. The claims were all true; the
+artifact was not the artifact.
 
-**Finish condition, and it is falsifiable:** after this round `cargo test` must
-report **1173, not 1174** — exactly one new test. A higher count means scope
-creep; a count of 1172 means the test was never added.
+**That was the architect's fault, and the block is fixed.** A block that emits
+2,555 lines cannot be pasted into a phase doc, so paraphrasing it was the only
+way out. The `ROUND 3` block in § End-to-end verification pipes each command
+through `tail`/`grep` so the output is still produced entirely by machine but
+lands at **~38 lines** — small enough to paste whole. It was run by the
+architect before being written here; that is where the 38 comes from.
 
-The four tasks below are the whole round.
+**Finish condition, and it is falsifiable:** `git diff --stat` for this round
+must show **exactly one file changed — this phase doc** — and `cargo test` must
+still report **1173**. Any change under `src/` this round is scope creep.
+
+The two tasks below are the whole round.
+
+### Task 1 — Regenerate the evidence
+
+Run the **`ROUND 3`** block in § End-to-end verification verbatim and
+unmodified. It writes `/tmp/e2e-04-r3.txt`. Confirm its readings match what
+that section says to expect; if any reading is off, fix the cause and re-run
+the whole block rather than editing the file.
+
+### Task 2 — Paste it verbatim
+
+Paste the **entire contents of `/tmp/e2e-04-r3.txt`** into a new Update Log
+entry headed `### Update — <date> (end-to-end verification)`, inside a fenced
+block.
+
+**Verbatim means `cat` the file and copy every line of it, in order, unchanged.
+Do not summarise, condense, annotate, re-order, or retype any line** — that is
+precisely what bounced round 2. The file's last line is its own line count; the
+number of transcript lines you paste must equal it.
+
+Round 2's entry does not carry forward, and the server-authored `(complete)`
+entry does not satisfy this.
+
+## Round 2 spec — complete and approved, reference only
+
+Nothing here is outstanding. The two sorts and the ordering test all landed and
+were independently verified at review.
 
 ### Task 1 — Sort `home_rows` before searching it
 
@@ -515,9 +551,28 @@ paste the resulting `/tmp/e2e-04.txt` into a new Update Log entry headed
 
 ## Acceptance criteria
 
-### ROUND 2 — the only criteria that are open
+### ROUND 3 — the only criteria that are open
 
-Each was run against the tree at bounce time and confirmed to fail.
+- [ ] The Update Log contains a **new** entry headed
+      `### Update — <date> (end-to-end verification)` whose fenced block is the
+      byte-for-byte contents of `/tmp/e2e-04-r3.txt`, including its final
+      `transcript line count=` line. Round 2's entry does not satisfy this.
+- [ ] The number of transcript lines pasted equals the `transcript line count=`
+      value the file reports about itself.
+- [ ] `git diff --stat` for this round lists **exactly one file** — this phase
+      doc. Nothing under `src/` changed.
+- [ ] `cargo test` still reports **1173** in the lib suite.
+- [ ] The pasted transcript's own readings are all green: `sort_by count … =2`,
+      the `foreign_rows.sort_by` line number below the
+      `take(FIND_FOREIGN_MAX_PANES)` line number, all four gate exits `0`,
+      `M3 mutated-lines-present=1`, `M3 exit=101` with a `FAILED` line for
+      `find_in_panes_results_sorted_by_pane_id`, `M3 restored comment-gone=0`,
+      `M3 restored exit=0`, and nothing between `== TREE ==` and
+      `porcelain exit=0`.
+
+### Round 2 criteria — all met, independently verified at review
+
+Reference only; nothing here is outstanding.
 
 - [ ] `awk '/^pub async fn find_in_panes/,/^\/\/ -+$/' src/daemon/executor/knowledge/pane.rs | grep -c 'sort_by'`
       prints `2` (it printed `0` at bounce time).
@@ -591,7 +646,81 @@ All in `src/daemon/executor/knowledge/pane.rs`'s test module. Async tests use
 
 ## End-to-end verification
 
-### ROUND 2 block — this is the one to run
+### ROUND 3 block — this is the one to run
+
+Run **verbatim** from the repo root, in `bash`, **without** `set -e`. Every
+line of the artifact is machine-produced; each command is piped through
+`tail`/`grep` so the whole transcript lands at about **38 lines** and can be
+pasted whole. `${PIPESTATUS[0]}` is read on the line immediately after each
+pipeline, which is what makes the recorded exit code the *command's*, not
+`grep`'s — do not move those lines apart.
+
+Mutation M3 is applied and reverted with `sed -i` in both directions — never
+`git checkout`, because `src/daemon/executor/knowledge/pane.rs` holds the
+approved code. Note the `@` sed delimiter: the closure `|a, b|` contains pipes,
+and `&b.0` is escaped because `&` is the whole-match reference in a sed
+replacement.
+
+```bash
+OUT=/tmp/e2e-04-r3.txt
+F=src/daemon/executor/knowledge/pane.rs
+: > $OUT
+
+echo "== SORTS PRESENT ==" >> $OUT
+echo -n "sort_by count inside find_in_panes=" >> $OUT
+awk '/^pub async fn find_in_panes/,/^\/\/ -+$/' $F | grep -c 'sort_by' >> $OUT 2>&1
+grep -n 'foreign_rows.sort_by\|take(FIND_FOREIGN_MAX_PANES)' $F >> $OUT 2>&1
+
+echo "== GATES ==" >> $OUT
+cargo fmt --all 2>&1 | tail -3 >> $OUT
+echo "fmt exit=${PIPESTATUS[0]}" >> $OUT
+cargo build 2>&1 | tail -3 >> $OUT
+echo "build exit=${PIPESTATUS[0]}" >> $OUT
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -3 >> $OUT
+echo "clippy exit=${PIPESTATUS[0]}" >> $OUT
+cargo test 2>&1 | grep -E '^test result:|^failures:|panicked at' | head -20 >> $OUT
+echo "test exit=${PIPESTATUS[0]}" >> $OUT
+
+echo "== M3 APPLY (comment out the home_rows sort) ==" >> $OUT
+sed -i 's@home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@// home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@' $F
+echo -n "M3 mutated-lines-present=" >> $OUT
+grep -c '// home_rows.sort_by' $F >> $OUT 2>&1
+cargo test find_in_panes_results_sorted_by_pane_id 2>&1 | grep -E '^test .*(ok|FAILED)$|^test result:|panicked at' | head -10 >> $OUT
+echo "M3 exit=${PIPESTATUS[0]}" >> $OUT
+sed -i 's@// home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@home_rows.sort_by(|a, b| a.0.cmp(\&b.0));@' $F
+echo "== M3 RESTORED ==" >> $OUT
+echo -n "M3 restored comment-gone=" >> $OUT
+grep -c '// home_rows.sort_by' $F >> $OUT 2>&1
+cargo test find_in_panes_results_sorted_by_pane_id 2>&1 | grep -E '^test .*(ok|FAILED)$|^test result:' | head -10 >> $OUT
+echo "M3 restored exit=${PIPESTATUS[0]}" >> $OUT
+
+echo "== TREE ==" >> $OUT
+git status --porcelain >> $OUT 2>&1
+echo "porcelain exit=$?" >> $OUT
+echo -n "transcript line count=" >> $OUT
+wc -l < $OUT >> $OUT
+```
+
+Expected readings, all of which the architect observed when running this block
+before writing it here: `sort_by count inside find_in_panes=2`;
+`foreign_rows.sort_by` at a lower line number than
+`take(FIND_FOREIGN_MAX_PANES)`; all four gate exits `0` with a
+`test result: ok. 1173 passed` line; `M3 mutated-lines-present=1`;
+`M3 exit=101` with `find_in_panes_results_sorted_by_pane_id ... FAILED`;
+`M3 restored comment-gone=0`; `M3 restored exit=0`; nothing printed between
+`== TREE ==` and `porcelain exit=0`; and a final `transcript line count=` of
+roughly 38.
+
+`M3 mutated-lines-present=0` means the `sed` matched nothing and that pair
+proves nothing — do not report it as evidence.
+
+One caveat, stated so it is not mistaken for a defect: with the sort removed the
+six panes come out of the `HashMap` in a random order, which lands on sorted
+order about once in 720 runs. If `M3 exit=0`, run that one mutated test again
+and keep **both** runs in the transcript rather than concluding the guard is
+vacuous.
+
+### Round 2 block — already run and verified, reference only
 
 Run **verbatim** from the repo root, in `bash`, **without** `set -e`. Mutation
 M3 is applied and reverted with `sed -i` in both directions — never
@@ -1154,3 +1283,12 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   the real `## Acceptance criteria` heading further down. Future round-2
   headers should use a bold line or an `###`-level heading instead of `#` to
   avoid tripping section parsers that key off heading level alone.
+
+### Update — 2026-08-08 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** bug-04-2 is doc-only and the cause was architect-side — the
+round-2 E2E block emitted 2,555 lines, which made pasting it whole impossible
+and a paraphrase inevitable; the round-3 block pipes each command through
+`tail`/`grep` so the artifact stays entirely machine-produced but lands at ~38
+lines, and it was run by the architect before being specced.
