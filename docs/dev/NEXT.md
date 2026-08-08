@@ -1,34 +1,26 @@
 # NEXT
 
-## Active phase: [M12 phase-06b — tmux-control-actions](milestones/M12-tmux-integration/phase-06b-tmux-control-actions.md) (`todo`)
+## Active phase: [M12 phase-07 — pane-inspector-cli](milestones/M12-tmux-integration/phase-07-pane-inspector-cli.md) (`todo`)
 
-D5's remaining three actions — `split`, `rename_window`, `kill_window` — behind
-the gate 06a proved, plus `kill_window`'s two refusals (daemon-managed windows,
-and the window holding the chat pane). **No new tool**, so the counts line must
-stay at 36; a changed count is scope creep, and that is an acceptance criterion.
+D7. Replaces `Response::PaneList`'s opaque 5-tuple with a named `PaneInfo`
+struct and turns the bare `/pane` listing into a window-grouped inspector with
+cwd, `PaneStatus`, activity age and a preview line. No new tool, so the counts
+line must stay at 36.
 
-Mechanical by design — the risk was all in 06a. What this spec pins:
+**The trap, and it is why this phase has a pure extracted renderer:** `/pane
+<n>` resolves with `panes.get(n - 1)` — a *flat index into the vector*. Group
+the rows into window sections with a per-section counter and the displayed
+number silently stops matching the resolver, pinning the wrong pane. The spec
+pins global numbering as a one-line mutation target and builds a test around
+the exact case that catches it (three panes, two windows, the third pane must
+render as `[3]` and not `[1]`).
 
-1. **`is_daemon_window` is widened, not rewritten.** Phase-05 left it private
-   in `executor/knowledge/pane.rs`; 06b makes it `pub(crate)` and keeps the body
-   untouched so phase-08's D6 swap stays a one-line change.
-2. **Refuse before prompting.** `kill_window`'s refusals and
-   `rename_window`'s missing-`name` error return without sending a
-   `ToolCallPrompt` — a prompt for something the tool will refuse anyway trains
-   the user to approve things that do not happen.
-3. **The `unzoom` catch-all has to become explicit.** With six actions the
-   trailing `_ =>` can no longer stand in for one of them, and the new
-   catch-all returns an error rather than `unreachable!()` — a criterion greps
-   for zero `unreachable!` in the executor.
-4. **tmux facts verified against the installed 3.7b**: `split-window` needs
-   `-P -F '#{pane_id}'` to print the new pane id at all, defaults to `-v`, and
-   both `rename-window` and `kill-window` accept a *pane* id as `-t`.
+Also decided and written down rather than left implicit: `/panes` **must not**
+show foreign-session panes, even though `PaneInfo` carries `session` and
+phase-05's `list_panes` does show them. The same response backs `/pane <n>`
+pinning, and a foreign-session pane is not a valid foreground target.
 
-Both mutation pairs were run by the architect before being specced — the
-`.filter(|_| false)` form compiles, and `rustfmt` leaves the trailing
-mutation-target comments in place (checked, then reverted).
-
-**Next action:** `/rexymcp:dispatch phase-06b`.
+**Next action:** `/rexymcp:dispatch phase-07`.
 
 ---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
@@ -70,6 +62,24 @@ milestone's highest-risk phase, and the one the README flags as a possible
 a/b split).
 
 ---
+
+### [phase-06b — tmux-control-actions](milestones/M12-tmux-integration/phase-06b-tmux-control-actions.md) approved 2026-08-08
+
+`approved_first_try` — the first of M12, and the first phase since 01 to clear
+review without a bounce. `tmux_control` now carries all six D5 actions;
+`kill_window` refuses daemon-managed windows and the chat pane's window, both
+**before** prompting, via a pure `kill_window_refusal` predicate. 1191 tests.
+
+Worth noting against 06a's two hard-fails on the same tool: 06b was the *same
+executor* on the *same file*, and the difference was that the risky design work
+had already been done. The a/b split is what turned an unrunnable phase into a
+mechanical one.
+
+One declared deviation, not bounced: the executor relabelled the E2E block's
+restore lines (`M1 restored-lines-absent=0` for the spec's
+`M1 restored (want 0)=`), so the block was not run byte-for-byte verbatim. The
+substance — applied-check, `FAILED` run, restore, restored-passing run — was
+all present and independently re-run at review.
 
 ### [phase-06a — tmux-control-gate](milestones/M12-tmux-integration/phase-06a-tmux-control-gate.md) done 2026-08-08 — **architect takeover**
 
