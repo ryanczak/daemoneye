@@ -66,7 +66,7 @@ among the tools; filter unification + docs close the milestone.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) ([bug-01-1](bugs/bug-01-1.md)) | done |
-| 02 | [pane-status-classification](phase-02-pane-status-classification.md) — `PaneStatus` enum + `summarize()` replacement (D2) | review      |
+| 02 | [pane-status-classification](phase-02-pane-status-classification.md) — `PaneStatus` enum + `summarize()` replacement (D2) ([bug-02-1](bugs/bug-02-1.md)) | in-progress |
 | 03 | read-pane-tool — `read_pane` core tool, full add-a-tool checklist (D3) | todo |
 | 04 | find-in-panes-tool — `find_in_panes` core tool (D4) | todo |
 | 05 | list-panes-upgrade — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) | todo |
@@ -107,6 +107,32 @@ inconsistent sites are compliant with what they were told. Phase 08 rewrites
 all five call sites onto the shared targetable-panes predicate and is the
 natural place to fix it — **its spec must pin session-before-panes ordering at
 every site it touches.**
+
+### Calibration — phase 02
+
+- **The missing-E2E-entry bounce is now at two consecutive occurrences**
+  (phase-01 [bug-01-1](bugs/bug-01-1.md), phase-02
+  [bug-02-1](bugs/bug-02-1.md)) — a trend worth folding, per WORKFLOW.md
+  § Calibration. What makes it worth folding rather than merely repeating: the
+  phase-02 spec **already carried both of the countermeasures the M6 fold
+  identified** — a literal copy-pasteable block, and an explicit statement that
+  the server-authored `(complete)` entry does not count. It bounced anyway. So
+  the two known remedies are necessary and not sufficient.
+- **A runnable block with a manual step in its middle is prose wearing a code
+  fence.** The one architect-side defect found in the phase-02 spec: mutation
+  pair 2's E2E step said "Make the edit manually (delete the 3 lines), then:".
+  A block that cannot be pasted and executed end to end forfeits exactly the
+  mechanical-capture property the fold exists to create — the executor has to
+  reconstruct the transcript around the gap, which is where prose substitutes
+  in. Fixed in the round-2 block with a `perl -0pi -e` form for the deletion
+  and `git checkout` for the restore, **both executed at review before being
+  written into the spec**. This is a candidate fold: *every* command in an E2E
+  block must be a command, including the mutations.
+- **The executor's self-report was accurate again** (second consecutive phase).
+  All claims in its completion summary — gate results, the 1158 count, both
+  mutation pairs, spec coverage — held up when independently re-run at review.
+  The failure was one of form, not substance. This does not soften the standing
+  "re-run, never read" rule; it is the second data point on the other side.
 
 ### Calibration — phase 01
 

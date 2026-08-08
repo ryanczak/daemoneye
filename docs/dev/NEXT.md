@@ -1,18 +1,46 @@
 # NEXT
 
-## Active phase: [M12 phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md) (`todo` — drafted 2026-08-07, not yet dispatched)
+## Active phase: [M12 phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md) (`in-progress` — **bounced 2026-08-08**, see [bug-02-1](milestones/M12-tmux-integration/bugs/bug-02-1.md))
 
-Phase-02 implements design D2: a new `src/tmux/status.rs` module with the
-`PaneStatus` enum and a pure `classify()` (Dead > Bell > shell/non-shell ×
-activity age), a `PaneState.status` field stamped every 2 s refresh, and
-`summarize()` replaced by `<status> — <last meaningful line>`.
-`is_shell_prompt` moves from `executor/foreground.rs` to the new module with a
-`pub(super) use` re-export keeping all call sites unchanged. Drafting was
-prototype-first: the entire Task 1 module was compiled and test-run against
-the tree (baseline 1153), both mutation pairs executed in both directions,
-then reverted — the spec's code blocks are captured, not sketched.
+**Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
+criteria.** It holds the only unfinished work: five criteria, each run and
+confirmed to fail against the current tree at bounce time.
 
-**Next action:** `/rexymcp:dispatch phase-02` to run it.
+**This is a green bounce.** Round 1 shipped correct code: all four gates green,
+tree clean, 1158 tests passing, all nine round-1 progress markers passing, and
+both mutation pairs re-run by the architect in both directions — all of it
+held. The defect is the missing `(end-to-end verification)` Update Log entry
+the spec required, plus one duplicated section comment in
+`src/tmux/cache_tests.rs`. `cargo test` must still report **1158, not 1159**.
+
+Round 1 delivered D2 in full: `src/tmux/status.rs` with the `PaneStatus` enum,
+pure `classify()` (Dead > Bell > shell/non-shell × activity age), `format_age`,
+`Display`, and the new `summarize()`; a `PaneState.status` field stamped every
+refresh; the old heuristic `SessionCache::summarize()` and its 8 tests deleted;
+`is_shell_prompt` moved to the new module behind a `pub(super) use` re-export.
+
+**Next action:** `/rexymcp:dispatch phase-02` for round 2.
+
+### Calibration carried out of phase-02
+
+1. **The missing-E2E-entry bounce is at two consecutive occurrences** (phase-01,
+   phase-02) — a trend worth folding. The sharp point: phase-02's spec
+   **already carried both M6 countermeasures** (a literal copy-pasteable block,
+   and an explicit "the server-authored `(complete)` entry does not count") and
+   bounced anyway. Both remedies are necessary, neither is sufficient.
+2. **A runnable block with a manual step in its middle is prose wearing a code
+   fence.** Phase-02's E2E block said "Make the edit manually (delete the 3
+   lines), then:" for mutation pair 2 — so it could not be pasted and run end
+   to end, and the executor had to reconstruct a transcript around the gap.
+   Fixed in round 2 with a `perl -0pi -e` deletion and a scoped `git checkout`
+   restore, **both executed at review before being written into the spec**.
+   Candidate fold: every command in an E2E block must be a command, mutations
+   included.
+3. **The taxonomy gap is unchanged and now hit twice.** `rexymcp review`
+   again warned that `missing_e2e_verification` is not a known failure class;
+   the nearest, `false_completion`, is defined as self-reporting complete on a
+   *red* gate, and this is green gates plus correct code with the evidence
+   artifact missing. A **rexyMCP-repo** change, out of bounds here.
 
 **M12 — Full-View tmux Integration scoped 2026-08-07** (PE decision). Eight
 phases planned; settled design (D1–D7) in `docs/design/tmux-integration.md`;

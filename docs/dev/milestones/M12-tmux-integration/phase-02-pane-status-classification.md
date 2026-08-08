@@ -1,7 +1,7 @@
 # Phase 02: Pane Status Classification
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** in-progress — bounced 2026-08-08, see [bug-02-1](bugs/bug-02-1.md)
 **Depends on:** phase-01
 **Estimated diff:** ~400 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -368,6 +368,69 @@ line, or `sre.toml`.
 
 ## Acceptance criteria
 
+> ## ROUND 2 — START HERE. This is the only unfinished work.
+>
+> **Round 1 shipped correct code. All four gates are green, the tree is clean,
+> every criterion in the two groups below already passes, and 1158 tests pass.
+> None of that is evidence this phase is done.** The architect independently
+> re-ran all of it at review — all nine progress markers, both mutation pairs
+> in both directions — and it all held. See
+> [bug-02-1](bugs/bug-02-1.md) § "Verified at review".
+>
+> **Do NOT touch `src/tmux/status.rs`, `src/tmux/cache.rs`, `src/tmux/mod.rs`,
+> `src/daemon/executor/foreground.rs`, or
+> `src/daemon/executor/knowledge/pane.rs`.** The production code and tests are
+> correct and reviewed.
+>
+> Two tasks, and only two:
+>
+> 1. Run the block in § End-to-end verification **unmodified** — it is fully
+>    mechanical this round, with no manual steps — and paste the resulting
+>    files into a new Update Log entry.
+> 2. Delete the duplicated section comment in `src/tmux/cache_tests.rs`
+>    (currently line 9 plus the blank line 10), leaving one
+>    `── get_labeled_context ──` header. See bug-02-1 § Finding 2.
+>
+> **Checks 1–4 are scoped to the Update Log section**, via
+> `SCOPE() { sed -n '/^## Update Log/,$p' "$DOC"; }`. That scoping is
+> load-bearing, not decoration: the criterion text you are reading right now
+> contains the very strings being searched for, so an unscoped whole-doc grep
+> matches *this block* and passes without a transcript existing — verified at
+> bounce time, where unscoped check 1 returned `1` and scoped returned `0`.
+> Each check below was run in the scoped form against the current tree at
+> bounce time, with the result shown:
+>
+> ```sh
+> DOC=docs/dev/milestones/M12-tmux-integration/phase-02-pane-status-classification.md
+> SCOPE() { sed -n '/^## Update Log/,$p' "$DOC"; }
+> SCOPE | grep -c '^### Update — .*(end-to-end verification)'            # want 1
+> SCOPE | grep -cE '^src/tmux/cache\.rs:[0-9]+:'                         # want >=1
+> SCOPE | grep -c 'classify_idle_shell_never_awaiting_input ... FAILED'  # want >=1
+> SCOPE | grep -c 'classify_dead_wins_over_bell_and_command ... FAILED'  # want >=1
+> grep -c '── get_labeled_context ─' src/tmux/cache_tests.rs             # want 1
+> ```
+>
+> - [ ] Check 1 — the entry exists (bounce time: `0`).
+> - [ ] Check 2 — the entry carries the verbatim `/tmp/e2e-02.txt`, evidenced
+>       by the `cache.rs` grep-output lines the block appends (bounce time:
+>       `0`). Do **not** substitute `1158 passed` or `exit=` as the marker:
+>       both already appear elsewhere in this doc and pass vacuously.
+> - [ ] Check 3 — mutation pair 1 captured with the mutation applied, **and**
+>       the restored passing run shown (bounce time: `0`).
+> - [ ] Check 4 — mutation pair 2 captured with the mutation applied, **and**
+>       the restored passing run shown (bounce time: `0`).
+> - [ ] Check 5 — the duplicated header is gone (bounce time: `2`, want `1`).
+>       This is a source-file grep, so no scoping is needed.
+>
+> Finish condition, inverted so an empty diff cannot masquerade as done:
+> `git diff --stat` for this round must list **exactly two** files (this doc
+> and `src/tmux/cache_tests.rs`), `git status --porcelain` must be empty at the
+> end (every capture-time mutation reverted), and `cargo test` must still
+> report **1158** passed — **not** 1159. This round adds no tests and changes
+> no behavior.
+
+### Round 1 criteria (all passing — retained as the regression record)
+
 Split per WORKFLOW.md: the first group are progress markers, each **run and
 confirmed to fail against the current tree at drafting** (values shown); the
 second group are no-regression guards that already pass and are NOT evidence
@@ -476,24 +539,44 @@ drivable by the executor. The real-artifact check for this phase is therefore
 the full gate run, the mutation pairs, and the wiring greps — captured
 mechanically:
 
+**Run this block verbatim. Every step is a command — there is no manual edit
+anywhere in it.** Both mutation forms below (the `sed` and the `perl`) were
+**executed against this tree at review** and confirmed to apply, fail the named
+test, and revert cleanly. Run it from the repo root with a clean tree.
+
 ```sh
 cargo test --lib 2>&1 | tail -5 > /tmp/e2e-02.txt; echo "exit=$?" >> /tmp/e2e-02.txt
 cargo test --lib tmux::status 2>&1 | grep '^test ' >> /tmp/e2e-02.txt
 grep -n 'status::classify\|status::summarize' src/tmux/cache.rs >> /tmp/e2e-02.txt
 grep -c 'fn summarize' src/tmux/cache.rs >> /tmp/e2e-02.txt
-# Mutation pair 1 — apply, run, restore, run:
+grep -c '── get_labeled_context ─' src/tmux/cache_tests.rs >> /tmp/e2e-02.txt
+
+# ---- Mutation pair 1: apply, run (expect FAILED), restore, run (expect ok)
 sed -i 's/if is_shell_prompt(current_cmd) {/if false {/' src/tmux/status.rs
+echo "== M1 APPLIED ==" >> /tmp/e2e-02.txt
 cargo test --lib classify_idle_shell_never_awaiting_input 2>&1 | grep -E '^test |^test result' >> /tmp/e2e-02.txt
 sed -i 's/if false {/if is_shell_prompt(current_cmd) {/' src/tmux/status.rs
+echo "== M1 RESTORED ==" >> /tmp/e2e-02.txt
 cargo test --lib classify_idle_shell_never_awaiting_input 2>&1 | grep -E '^test |^test result' >> /tmp/e2e-02.txt
-# Mutation pair 2 — apply (delete the dead early-return), run, restore, run.
-# Make the edit manually (delete the 3 lines), then:
+
+# ---- Mutation pair 2: apply, run (expect FAILED), restore, run (expect ok)
+perl -0pi -e 's/    if dead \{\n        return PaneStatus::Dead\(dead_status\);\n    \}\n//' src/tmux/status.rs
+echo "== M2 APPLIED ==" >> /tmp/e2e-02.txt
 cargo test --lib classify_dead_wins_over_bell_and_command 2>&1 | grep -E '^test |^test result' >> /tmp/e2e-02.txt
-# restore the 3 lines, then:
+git checkout src/tmux/status.rs
+echo "== M2 RESTORED ==" >> /tmp/e2e-02.txt
 cargo test --lib classify_dead_wins_over_bell_and_command 2>&1 | grep -E '^test |^test result' >> /tmp/e2e-02.txt
-git diff --stat >> /tmp/e2e-02.txt   # must show NO src/ changes remaining from the mutations
+
+# ---- Both mutations must be gone; only the two authorized files may differ.
+echo "== FINAL TREE ==" >> /tmp/e2e-02.txt
+git status --porcelain >> /tmp/e2e-02.txt
 cat /tmp/e2e-02.txt
 ```
+
+Note on the `git checkout` in mutation pair 2: it reverts **only**
+`src/tmux/status.rs`, which this round is forbidden to edit, so it cannot
+discard your work. Do the `cache_tests.rs` comment deletion **before or after**
+this block, not in the middle of it.
 
 Paste `/tmp/e2e-02.txt`'s contents verbatim into an Update Log entry titled
 `### Update — <date> (end-to-end verification)`. The server-authored
