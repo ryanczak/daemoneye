@@ -214,6 +214,18 @@ When a class flag is `true`, approval is pre-granted for the entire class at ses
 
 ---
 
+### 🔍 Full-View tmux Awareness
+
+The agent sees your whole tmux world, not just the pane you are typing in.
+
+- **Every session, not just yours.** The pane cache tracks windows and panes across *all* tmux sessions. Panes outside your own session appear labelled with their session name; their content is fetched on demand rather than polled, so watching a second session costs nothing until you ask.
+- **Live status per pane.** Each pane is classified every 2 s — `Running`, `Idle 4m`, `AwaitingInput`, `Bell`, `Dead(1)` — and that status shows up everywhere panes are listed. An idle shell is never mistaken for a prompt waiting on input.
+- **Any pane's contents, one call away.** `read_pane` returns a chosen depth of any pane's scrollback, ANSI-annotated and masked. `find_in_panes` regex-searches every pane at once, so "which pane has the error?" is one call instead of a hunt. The chat pane is always refused — its contents are this conversation.
+- **The agent can drive tmux, with the gate on.** `tmux_control` focuses, zooms, splits, renames and kills windows — every action behind the same approval prompt as a shell command, because navigation moves your attention too. It refuses to kill a daemon-managed window or the window holding your chat pane, and autonomous Ghost Shells are denied the tool outright unless an agent's `ToolPolicy` names it explicitly.
+- **`/panes` is worth reading.** A window-grouped inspector: cwd, status, activity age and a preview line per pane, with the pinned foreground target marked.
+
+---
+
 ### 🖥️ Terminal-Native Chat Interface
 
 The chat client is built on a `ratatui` inline viewport that treats your terminal the way a good CLI tool should.
@@ -347,7 +359,7 @@ Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to ru
 | `/refresh` | Resync host context |
 | `/model` | List or switch the active model (alias: `/models`) |
 | `/prompt` | List or switch the system prompt |
-| `/pane` | List panes, or `/pane %N` to pin the foreground target (alias: `/panes`) |
+| `/pane` | Window-grouped pane inspector — cwd, status, activity age and a preview line per pane; `/pane %N` or `/pane <n>` pins the foreground target (alias: `/panes`) |
 | `/approvals` | Inspect approval state; `on`/`off`/`revoke [class]` (alias: `/approval`) |
 | `/limits` | Show active limits and live session counters; `/limits reset` |
 | `/session` | `save`/`load`/`list`/`delete`/`rename`/`diff`/`tag` (alias: `/sessions`) |
@@ -358,7 +370,7 @@ At a tool-approval prompt, typing a message instead of `Y`/`A`/`N` redirects the
 
 ## AI tools
 
-The model has **33 tools**. The 24 **core** tools are sent with every request; the 9 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
+The model has **36 tools**. The 27 **core** tools are sent with every request; the 9 **deferred** tools are omitted by default and pulled in on demand with a single `load_tools` call — a context-budget optimisation independent of the policy gates that restrict tools at execution time.
 
 Tools marked **⚠** require explicit user approval before they execute.
 
@@ -372,10 +384,13 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `delete_script` **⚠** | Delete a script |
 | `write_runbook` **⚠** | Create or update a runbook in `~/.daemoneye/runbooks/` |
 | `delete_runbook` **⚠** | Delete a runbook |
+| `tmux_control` **⚠** | Act on your tmux: `focus` a pane, `zoom`/`unzoom`, `split`, `rename_window`, `kill_window`. Refuses to kill daemon-managed windows or the chat pane's window |
 | `read_file` | Paginated file read with optional grep filter; masks sensitive data |
 | `search_repository` | Search runbooks, scripts, memory, or the event log |
-| `get_terminal_context` | Capture a fresh tmux snapshot on demand |
-| `list_panes` | Enumerate panes with ID, window-relative index, window, command, cwd, title |
+| `get_terminal_context` | Capture a fresh tmux snapshot on demand; `scope` selects the window, the session (default), or all sessions |
+| `list_panes` | Enumerate panes grouped by window, with ID, index, command, cwd, title and live status — plus a labelled section for panes in other tmux sessions |
+| `read_pane` | Read any pane's buffer on demand at a requested scrollback depth, including other sessions and daemon background windows; ANSI-annotated, optionally regex-filtered, masked |
+| `find_in_panes` | One regex search across every pane's buffer — answers "which pane has the error?" in a single call |
 | `watch_pane` | Block until a pane matches a regex, the command exits, or a timeout elapses |
 | `close_background_window` | Close a background tmux window that is no longer needed |
 | `add_memory` | Store a persistent memory entry |
