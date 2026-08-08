@@ -118,16 +118,23 @@ every site it touches.**
   identified** — a literal copy-pasteable block, and an explicit statement that
   the server-authored `(complete)` entry does not count. It bounced anyway. So
   the two known remedies are necessary and not sufficient.
-- **A runnable block with a manual step in its middle is prose wearing a code
-  fence.** The one architect-side defect found in the phase-02 spec: mutation
-  pair 2's E2E step said "Make the edit manually (delete the 3 lines), then:".
-  A block that cannot be pasted and executed end to end forfeits exactly the
-  mechanical-capture property the fold exists to create — the executor has to
-  reconstruct the transcript around the gap, which is where prose substitutes
-  in. Fixed in the round-2 block with a `perl -0pi -e` form for the deletion
-  and `git checkout` for the restore, **both executed at review before being
-  written into the spec**. This is a candidate fold: *every* command in an E2E
-  block must be a command, including the mutations.
+- **FOLDED 2026-08-08 (PE sign-off): everything the E2E entry must contain has
+  to be produced by the E2E block.** Now in `docs/dev/WORKFLOW.md`
+  § "End-to-end verification". The finding was sharpened at fold time by
+  re-deriving both specs instead of trusting the review summary, and the first
+  reading turned out to be wrong: phase-01's block **was** fully runnable, so
+  "a manual step broke it" cannot explain both bounces. What does: in *both*
+  phases the missing evidence was **specifically the mutation-pair
+  transcript**, and in both it was the one artifact the block did not
+  generate. Phase-01 promised "the gate run *plus the mutation pairs*" in its
+  preamble and then ran only the gates, with the mutations requested in a
+  sentence below the fence and defined in the Test plan; phase-02 put them in
+  the block but broke one with `# Make the edit manually (delete the 3 lines),
+  then:`. Anything a spec asks for that its block does not emit is a gap the
+  executor fills with prose, because prose is all that is left to fill it
+  with. Operative rule: mutation pairs are commands *in the block*
+  (`sed -i`, `perl -0pi -e`, `git checkout`) with labelled `== M1 APPLIED ==`
+  markers, and the architect runs them before speccing them.
 - **The executor's self-report was accurate again** (second consecutive phase).
   All claims in its completion summary — gate results, the 1158 count, both
   mutation pairs, spec coverage — held up when independently re-run at review.

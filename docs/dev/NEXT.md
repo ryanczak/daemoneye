@@ -25,14 +25,19 @@ exit criterion is verified at 05/07, not here.
    **already carried both M6 countermeasures** (a literal copy-pasteable block,
    and an explicit "the server-authored `(complete)` entry does not count") and
    bounced anyway. Both remedies are necessary, neither is sufficient.
-2. **A runnable block with a manual step in its middle is prose wearing a code
-   fence.** Phase-02's E2E block said "Make the edit manually (delete the 3
-   lines), then:" for mutation pair 2 — so it could not be pasted and run end
-   to end, and the executor had to reconstruct a transcript around the gap.
-   Fixed in round 2 with a `perl -0pi -e` deletion and a scoped `git checkout`
-   restore, **both executed at review before being written into the spec**.
-   Candidate fold: every command in an E2E block must be a command, mutations
-   included.
+2. **FOLDED 2026-08-08 (PE sign-off) — everything the E2E entry must contain
+   has to be produced by the E2E block.** Landed in `docs/dev/WORKFLOW.md`
+   § "End-to-end verification". **Not applied upstream** — add it to the push
+   backlog below. Sharpened at fold time by re-deriving both specs rather than
+   trusting the review summary, which corrected the first reading: phase-01's
+   block *was* fully runnable, so "a manual step broke it" does not explain
+   both bounces. The unified cause is that in both phases the missing evidence
+   was **specifically the mutation-pair transcript**, and in both it was the
+   one artifact the block did not generate — phase-01 promised "the gate run
+   plus the mutation pairs" and then ran only the gates; phase-02 included them
+   but broke one with a manual step. Mutation pairs are now required to be
+   commands in the block, with labelled markers, run by the architect before
+   being specced.
 3. **The taxonomy gap is unchanged and now hit twice.** `rexymcp review`
    again warned that `missing_e2e_verification` is not a known failure class;
    the nearest, `false_completion`, is defined as self-reporting complete on a
@@ -163,6 +168,13 @@ violated three dispatches running), the bug-report template's breaking
 `false_completion` taxonomy gap in `executor/src/store/telemetry.rs:341-346`.
 Plus mirroring the four-step bounce sequence into the review skill's §8. All are
 **rexyMCP-repo** edits; a target-project architect session cannot make them.
+
+**Added to the push backlog 2026-08-08:** the M12 fold *"everything the E2E
+entry must contain has to be produced by the E2E block"* (`WORKFLOW.md`
+§ "End-to-end verification"). This one has unusually strong evidence for
+pushing — it is the failure that produced ten of M6's fourteen bounces and both
+M12 bounces, and the two countermeasures already upstream did not prevent
+either M12 occurrence.
 
 ---
 

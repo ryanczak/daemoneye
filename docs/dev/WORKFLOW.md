@@ -221,6 +221,37 @@ case produces *no output* (a grep that finds nothing, a diff over identical
 inputs), the exit marker is the whole proof; an empty block on its own
 demonstrates nothing.
 
+**Everything the entry must contain has to be produced *by the block*.** The
+block is not "the commands that are convenient to automate" — it is the
+complete generator of the evidence artifact. Anything the spec asks for that
+the block does not emit is a gap the executor fills with prose, because prose
+is the only thing left to fill it with. Two ways the gap opens, both observed:
+
+- **Evidence named in the preamble but absent from the block.** A block
+  introduced as capturing "the gate run *plus the mutation pairs*" that then
+  runs only the gates. The mutation transcripts were requested in a sentence
+  *below* the fence and defined in the Test plan; neither location is
+  executable, and neither produced an artifact.
+- **A manual step inside the block.** A fenced sequence broken by
+  `# Make the edit manually (delete the 3 lines), then:`. It cannot be pasted
+  and run end to end, so the executor has to narrate across the seam — which
+  is the same failure in a smaller space.
+
+**Concretely, mutation pairs belong in the E2E block as commands, not in the
+Test plan as instructions.** A mutation is applied and reverted by a command
+like any other step — `sed -i` for a substitution, `perl -0pi -e` for a
+multi-line deletion, `git checkout <file>` for the restore — and each direction
+gets its own labelled marker (`echo "== M1 APPLIED ==" >> …`) so the failing
+and restored runs are distinguishable in the pasted output. Where the restore
+is a `git checkout`, confirm it targets only files the round is forbidden to
+edit, so it cannot discard the executor's work; say so in the block.
+
+And per § "Derive every spec fact from its source", **run the mutation commands
+yourself before writing them into the spec.** A `perl` regex that silently
+matches nothing produces a green "mutation" run and certifies a vacuous guard —
+the exact outcome § "Coverage claims are inadmissible without mutation proof"
+exists to prevent.
+
 *(Folded 2026-07-31 after M6, on PE sign-off. Ten of that milestone's fourteen
 bounces and two of its four architect takeovers were this single requirement —
 more than every other cause combined. It was never a capability problem: in each
@@ -245,6 +276,17 @@ distinguish the two cases. Note the failure mode this closes is not a wrong
 result — in the second and third cases the claims held up when checked
 independently — it is that the check moved from the executor to whoever reviews,
 silently.)*
+
+*(Folded 2026-08-08 after M12 phases 01 and 02, on PE sign-off. Both bounced on
+a missing E2E entry, and in both the missing evidence was **specifically the
+mutation-pair transcript** — the one artifact neither spec's block generated.
+This is what makes it a distinct fold rather than a repeat: phase-02's spec
+already carried both M6 countermeasures above — a literal copy-pasteable block
+and an explicit statement that the server-authored `(complete)` entry does not
+count — and bounced anyway. The two known remedies are necessary and not
+sufficient; what they did not cover is the part of the evidence the block never
+produced. Phase-02 round 2, with every mutation expressed as a command, landed
+in 45 turns with a complete captured transcript and zero unauthorized edits.)*
 
 If the phase ships **no** runtime-loadable real artifact (a pure internal
 refactor, a new private type, a test-only helper), write:
