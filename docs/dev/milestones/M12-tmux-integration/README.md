@@ -69,7 +69,7 @@ among the tools; filter unification + docs close the milestone.
 | 02 | [pane-status-classification](phase-02-pane-status-classification.md) — `PaneStatus` enum + `summarize()` replacement (D2) ([bug-02-1](bugs/bug-02-1.md)) | done |
 | 03 | [read-pane-tool](phase-03-read-pane-tool.md) — `read_pane` core tool, full add-a-tool checklist (D3) ([bug-03-1](bugs/bug-03-1.md)) | done        |
 | 04 | [find-in-panes-tool](phase-04-find-in-panes-tool.md) — `find_in_panes` core tool (D4) ([bug-04-1](bugs/bug-04-1.md), [bug-04-2](bugs/bug-04-2.md)) | done      |
-| 05 | [list-panes-upgrade](phase-05-list-panes-upgrade.md) — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) ([bug-05-1](bugs/bug-05-1.md)) | in-progress |
+| 05 | [list-panes-upgrade](phase-05-list-panes-upgrade.md) — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) ([bug-05-1](bugs/bug-05-1.md)) | review      |
 | 06 | tmux-control-tool — approval-gated action tool, `APPROVAL_GATED` wiring, ghost-policy denial (D5) | todo |
 | 07 | pane-inspector-cli — widened `PaneList` IPC struct + `/panes` renderer (D7) | todo |
 | 08 | filter-unification-and-docs — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
