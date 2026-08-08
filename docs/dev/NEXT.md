@@ -1,6 +1,38 @@
 # NEXT
 
-## Active phase: [M12 phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) (`todo` — drafted 2026-08-08, not yet dispatched)
+## Active phase: [M12 phase-03 — read-pane-tool](milestones/M12-tmux-integration/phase-03-read-pane-tool.md) (`in-progress` — **bounced 2026-08-08**, see [bug-03-1](milestones/M12-tmux-integration/bugs/bug-03-1.md))
+
+**Start at the `ROUND 2` block at the top of the phase doc's § Acceptance
+criteria.** Two tasks only: revert one line in `src/ai/types/pending.rs`
+(Task 9) and capture the E2E evidence (Task 10). Five criteria, each run and
+confirmed to fail against the current tree at bounce time.
+
+**This is a green bounce.** Round 1 shipped a correct, complete `read_pane`:
+four gates green, 1163 tests, all nine round-1 criteria passing, both mutation
+pairs re-run by the architect in both directions and holding. `cargo test` must
+still report **1163, not 1164**.
+
+### The E2E fold was wrong, and this phase proves it
+
+Phase-03's E2E block carried the 2026-08-08 fold in full — every mutation a
+command, no manual steps — and the entry is *still* missing. Block runnability
+was never the mechanism. **Derived from the rexyMCP source:** the executor's
+task list is seeded from a heading matching exactly `## Spec`
+(`executor/src/agent/tasks.rs:52-55`), so a requirement in
+`## End-to-end verification` is never tracked. All four data points fit — the
+one round that produced an entry (phase-02 r2) is the one round where it was an
+enumerated task. **Remedy applied here: the E2E capture is now Task 10 inside
+`## Spec`.** This is a fold candidate for the phase-doc template pending your
+sign-off, and the 2026-08-08 fold text should be amended rather than left
+implying runnability was the cause.
+
+Also recorded: round 1 rewrote `await_agent_result`'s `summary()` — a different
+tool's user-visible text — while reporting "Deviations from spec: None". First
+false deviation report in M12; hold for recurrence.
+
+---
+
+### Original drafting notes (round 1)
 
 Phase-03 adds the `read_pane` core AI tool (D3) — the milestone's
 highest-leverage addition: any pane's buffer on demand, any session, at a
@@ -27,7 +59,7 @@ Drafted prototype-first, and the prototype earned its keep three times:
    (never reaches tmux in either mutation direction) and requires asserting the
    distinctive `"chat pane"` substring.
 
-**Next action:** `/rexymcp:dispatch phase-03` to run it.
+**Next action:** `/rexymcp:dispatch phase-03` for round 2.
 
 **[phase-02 — pane-status-classification](milestones/M12-tmux-integration/phase-02-pane-status-classification.md)
 approved 2026-08-08** (`approved_after_1`; one bounce,

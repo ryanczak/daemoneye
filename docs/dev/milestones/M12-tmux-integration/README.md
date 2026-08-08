@@ -67,7 +67,7 @@ among the tools; filter unification + docs close the milestone.
 |----|-------|--------|
 | 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) ([bug-01-1](bugs/bug-01-1.md)) | done |
 | 02 | [pane-status-classification](phase-02-pane-status-classification.md) — `PaneStatus` enum + `summarize()` replacement (D2) ([bug-02-1](bugs/bug-02-1.md)) | done |
-| 03 | [read-pane-tool](phase-03-read-pane-tool.md) — `read_pane` core tool, full add-a-tool checklist (D3) | review      |
+| 03 | [read-pane-tool](phase-03-read-pane-tool.md) — `read_pane` core tool, full add-a-tool checklist (D3) ([bug-03-1](bugs/bug-03-1.md)) | in-progress |
 | 04 | find-in-panes-tool — `find_in_panes` core tool (D4) | todo |
 | 05 | list-panes-upgrade — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) | todo |
 | 06 | tmux-control-tool — approval-gated action tool, `APPROVAL_GATED` wiring, ghost-policy denial (D5) | todo |
@@ -107,6 +107,45 @@ inconsistent sites are compliant with what they were told. Phase 08 rewrites
 all five call sites onto the shared targetable-panes predicate and is the
 natural place to fix it — **its spec must pin session-before-panes ordering at
 every site it touches.**
+
+### Calibration — phase 03: the E2E fold was wrong, and the source says why
+
+**Third consecutive missing-E2E-entry bounce, and this one refutes the
+2026-08-08 fold's diagnosis.** Phase-03's E2E block carried that fold in
+full — every mutation a command, no manual steps, labelled `== M1 APPLIED ==`
+markers — and the entry is still absent. Block runnability is not the
+mechanism.
+
+**Derived from the rexyMCP source rather than inferred:** the executor's
+tracked task list is seeded from a heading matching *exactly* `## Spec`
+(`executor/src/agent/tasks.rs:52-55`, `if line.trim() == "## Spec"`, parsing
+only that section). A requirement stated in `## End-to-end verification` is
+**never seeded as a task**, so the executor completes every tracked task and
+correctly believes it is done. Four data points fit without exception:
+
+| Phase | E2E requested in | Seeded as a task? | Entry written? |
+|---|---|---|---|
+| 01 r1 | `## End-to-end verification` | no | no |
+| 02 r1 | `## End-to-end verification` | no | no |
+| 02 **r2** | the bug doc's "two tasks, and only two" | **yes** | **yes** |
+| 03 r1 | `## End-to-end verification` | no | no |
+
+The single round that produced the entry is the single round where capturing
+it was an enumerated task. **The remedy is structural, not exhortative: the
+E2E capture belongs in `## Spec` as a numbered task.** Applied here as
+phase-03's Task 10; it supersedes the 2026-08-08 fold's implicit theory
+without contradicting its content (a mechanical block is still right — it is
+just not sufficient). **Fold candidate for the phase-doc template, pending PE
+sign-off**, and note the earlier fold text should be amended rather than
+left implying runnability was the cause.
+
+- **An undeclared scope deviation reported as "none".** Round 1 also rewrote
+  `await_agent_result`'s `summary()` arm — a different tool's user-visible
+  `ToolStarted` text — while its completion summary stated "Deviations from
+  spec: None". No test covers that arm, so every gate stayed green. Recorded
+  because it is the first instance in M12 of a *false* deviation report, as
+  distinct from the two accurate self-reports in phases 01–02; hold for
+  recurrence.
 
 ### Calibration — phase 02
 

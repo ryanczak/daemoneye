@@ -1,7 +1,7 @@
 # Phase 03: `read_pane` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** in-progress — bounced 2026-08-08, see [bug-03-1](bugs/bug-03-1.md)
 **Depends on:** phase-01, phase-02
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -479,7 +479,92 @@ follow, and the spec pins both:
    Verified at drafting: with the weakened assertion the mutation's outcome
    became environment-dependent.
 
+### Task 9 — Revert the undeclared `await_agent_result` edit (ROUND 2)
+
+In `src/ai/types/pending.rs`, restore the `summary()` arm for
+`AwaitAgentResult` to exactly what it was before this phase:
+
+```rust
+PendingCall::AwaitAgentResult { job_id, .. } => job_id.clone(),
+```
+
+Round 1 changed it to `format!("job {}", job_id)`. That is a different tool's
+user-visible `ToolStarted` text and nothing in this phase asked for it. See
+[bug-03-1](bugs/bug-03-1.md) § Finding 2. **This is the only `src/` edit
+authorized in round 2.**
+
+### Task 10 — Capture the end-to-end evidence (ROUND 2)
+
+Run the block in § End-to-end verification **verbatim and unmodified**, then
+paste the resulting `/tmp/e2e-03.txt` into a new Update Log entry headed
+`### Update — 2026-08-08 (end-to-end verification)`.
+
+**This is a task, not a footnote, and it is deliberately here rather than only
+in § End-to-end verification.** Round 1 completed all eight tasks and never
+wrote the entry; so did phase-01 and phase-02 round 1. The executor's tracked
+task list is seeded only from the `## Spec` section, so a requirement stated
+anywhere else is never tracked and is reported complete without being done.
+The entry is the deliverable — the phase is not finished when the code
+compiles, it is finished when the evidence exists.
+
+Do **not** substitute the server-authored `(complete)` entry: it is generated
+for every phase and proves the gates ran, not that this phase's criteria were
+exercised.
+
 ## Acceptance criteria
+
+> ## ROUND 2 — START HERE. This is the only unfinished work.
+>
+> **Round 1 shipped correct code. All four gates are green, the tree is clean,
+> all nine round-1 criteria pass, and 1163 tests pass. None of that is evidence
+> this phase is done.** The architect independently re-ran every criterion and
+> both mutation pairs in both directions at review, and all of it held. See
+> [bug-03-1](bugs/bug-03-1.md) § "Verified at review".
+>
+> **The `read_pane` implementation is correct. Do NOT touch
+> `src/tmux/pane.rs`, `src/daemon/executor/knowledge/pane.rs`,
+> `src/ai/tools/`, `src/ai/types/events.rs`, `src/daemon/stream.rs`, or
+> `src/daemon/executor/mod.rs`.**
+>
+> Exactly two tasks: **Task 9** (revert one line in `src/ai/types/pending.rs`)
+> and **Task 10** (run the E2E block, paste the output into a new entry).
+>
+> **Checks 1–4 are scoped to the Update Log section**, via
+> `SCOPE() { sed -n '/^## Update Log/,$p' "$DOC"; }`. That scoping is
+> load-bearing: the criterion text you are reading contains the very strings
+> being searched for, so an unscoped grep matches *this block* and passes
+> without a transcript existing. Each check was run in the scoped form against
+> the current tree at bounce time, with the result shown:
+>
+> ```sh
+> DOC=docs/dev/milestones/M12-tmux-integration/phase-03-read-pane-tool.md
+> SCOPE() { sed -n '/^## Update Log/,$p' "$DOC"; }
+> SCOPE | grep -c '^### Update — .*(end-to-end verification)'            # want 1
+> SCOPE | grep -c '== M1 APPLIED =='                                     # want >=1
+> SCOPE | grep -c 'read_pane_refuses_chat_pane ... FAILED'               # want >=1
+> SCOPE | grep -c 'read_pane_caps_lines_at_history_size ... FAILED'      # want >=1
+> grep -c 'format!("job {}", job_id)' src/ai/types/pending.rs            # want 0
+> ```
+>
+> - [ ] Check 1 — the entry exists (bounce time: `0`).
+> - [ ] Check 2 — the entry carries the block's own labelled markers, proving
+>       it came from running the block rather than being retyped (bounce time:
+>       `0`). Do **not** substitute `1163 passed` or `exit=` as the marker:
+>       both already appear elsewhere in this doc and pass vacuously.
+> - [ ] Check 3 — mutation pair 1 captured applied **and** restored (bounce
+>       time: `0`).
+> - [ ] Check 4 — mutation pair 2 captured applied **and** restored (bounce
+>       time: `0`).
+> - [ ] Check 5 — the `await_agent_result` summary is reverted (bounce time:
+>       `1`, want `0`). Source-file grep; no scoping needed.
+>
+> Finish condition, inverted so an empty diff cannot masquerade as done:
+> `git diff --stat` for this round must list **exactly two** files (this doc
+> and `src/ai/types/pending.rs`), `git status --porcelain` must be empty at the
+> end, and `cargo test` must still report **1163** passed — **not** 1164. This
+> round adds no tests.
+
+### Round 1 criteria (all passing — retained as the regression record)
 
 Split per WORKFLOW.md: the first group are progress markers, each **run and
 confirmed to fail against the current tree at drafting** (values shown); the
