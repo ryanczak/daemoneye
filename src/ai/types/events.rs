@@ -168,6 +168,13 @@ pub enum AiEvent {
         id: String,
         thought_signature: Option<String>,
     },
+    ReadPane {
+        id: String,
+        pane_id: String,
+        lines: Option<u64>,
+        grep: Option<String>,
+        thought_signature: Option<String>,
+    },
     CloseBackgroundWindow {
         id: String,
         pane_id: String,

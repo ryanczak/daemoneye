@@ -591,6 +591,15 @@ where
             cache, chat_pane,
         ))),
 
+        PendingCall::ReadPane {
+            pane_id,
+            lines,
+            grep,
+            ..
+        } => Ok(ToolCallOutcome::Result(
+            knowledge::read_pane(cache, chat_pane, pane_id, *lines, grep.as_deref()).await,
+        )),
+
         PendingCall::SpawnGhost {
             runbook,
             message,

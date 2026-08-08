@@ -647,6 +647,40 @@ pub static TOOLS: &[ToolDef] = &[
         deferred_group: None,
     },
     ToolDef {
+        name: "read_pane",
+        description: "Read the visible content and scrollback of ANY tmux pane on \
+             demand — including panes in other tmux sessions, and daemon-owned \
+             background windows. This is how you inspect a pane the context block \
+             only summarises in one line. Output is ANSI-annotated ([ERROR:], \
+             [WARN:], [OK:]) and masked. The chat pane cannot be read: its content \
+             is this conversation. For the user's active pane, get_terminal_context \
+             already returns full content.",
+        params: &[
+            ParamDef {
+                name: "pane_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "tmux pane ID (e.g. \"%3\"). Resolve from [PANE MAP] \
+                              (format: idx:N=<id>) or from list_panes.",
+            },
+            ParamDef {
+                name: "lines",
+                ty: ParamTy::Int,
+                required: false,
+                description: "How many lines of scrollback to capture. Defaults to \
+                              200, capped at 2000 and at the pane's own history size.",
+            },
+            ParamDef {
+                name: "grep",
+                ty: ParamTy::Str,
+                required: false,
+                description: "Optional regex; only matching lines are returned. Use \
+                              when the pane holds far more output than you need.",
+            },
+        ],
+        deferred_group: None,
+    },
+    ToolDef {
         name: "close_background_window",
         description: "Close a background tmux window that is no longer needed. \
                       Call this after you have finished with a background window — \

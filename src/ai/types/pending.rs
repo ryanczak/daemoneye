@@ -229,6 +229,13 @@ pub enum PendingCall {
         agent_name: String,
         timeout_secs: u64,
     },
+    ReadPane {
+        id: String,
+        thought_signature: Option<String>,
+        pane_id: String,
+        lines: Option<u64>,
+        grep: Option<String>,
+    },
 }
 
 impl PendingCall {
@@ -468,6 +475,12 @@ impl PendingCall {
                 name: "await_agent_result".to_string(),
                 arguments: serde_json::json!({"job_id": job_id, "agent_name": agent_name, "timeout_secs": timeout_secs}).to_string(),
             },
+            PendingCall::ReadPane { id, thought_signature, pane_id, lines, grep } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "read_pane".to_string(),
+                arguments: serde_json::json!({"pane_id": pane_id, "lines": lines, "grep": grep}).to_string(),
+            },
         }
     }
 
@@ -507,6 +520,7 @@ impl PendingCall {
             PendingCall::ListAgents { id, .. } => id,
             PendingCall::DeleteAgent { id, .. } => id,
             PendingCall::AwaitAgentResult { id, .. } => id,
+            PendingCall::ReadPane { id, .. } => id,
         }
     }
 
@@ -535,6 +549,7 @@ impl PendingCall {
                 | PendingCall::ReadAgent { .. }
                 | PendingCall::ListAgents { .. }
                 | PendingCall::AwaitAgentResult { .. }
+                | PendingCall::ReadPane { .. }
                 | PendingCall::LoadTools { .. }
         )
     }
@@ -606,7 +621,24 @@ impl PendingCall {
             PendingCall::ReadAgent { name, .. } => name.clone(),
             PendingCall::ListAgents { .. } => String::new(),
             PendingCall::DeleteAgent { name, .. } => name.clone(),
-            PendingCall::AwaitAgentResult { job_id, .. } => job_id.clone(),
+            PendingCall::AwaitAgentResult { job_id, .. } => {
+                format!("job {}", job_id)
+            }
+            PendingCall::ReadPane {
+                pane_id,
+                lines,
+                grep,
+                ..
+            } => {
+                let mut s = pane_id.clone();
+                if let Some(n) = lines {
+                    s.push_str(&format!(" lines={n}"));
+                }
+                if let Some(g) = grep {
+                    s.push_str(&format!(" grep=\"{g}\""));
+                }
+                s
+            }
             PendingCall::LoadTools { groups, .. } => {
                 format!("load_tools: {}", groups.join(", "))
             }
@@ -652,6 +684,7 @@ impl PendingCall {
             PendingCall::ListAgents { .. } => "list_agents",
             PendingCall::DeleteAgent { .. } => "delete_agent",
             PendingCall::AwaitAgentResult { .. } => "await_agent_result",
+            PendingCall::ReadPane { .. } => "read_pane",
         }
     }
 }

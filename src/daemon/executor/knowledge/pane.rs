@@ -69,6 +69,145 @@ pub fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions: &Sessi
 }
 
 // ---------------------------------------------------------------------------
+// Read pane (M12 D3)
+// ---------------------------------------------------------------------------
+
+/// Default scrollback depth when `lines` is omitted.
+const READ_PANE_DEFAULT_LINES: usize = 200;
+/// Hard ceiling on a single `read_pane` capture.
+const READ_PANE_MAX_LINES: usize = 2000;
+
+/// Pure helper: compute the actual capture depth from the user request and the
+/// pane's known history size. Extracted so it can be tested without tmux.
+fn read_pane_depth(requested: Option<u64>, history_size: usize) -> usize {
+    let requested = match requested {
+        Some(n) if n > 0 => (n as usize).min(READ_PANE_MAX_LINES),
+        _ => READ_PANE_DEFAULT_LINES,
+    };
+    if history_size > 0 {
+        requested.min(history_size)
+    } else {
+        requested
+    }
+}
+
+pub async fn read_pane(
+    cache: &crate::tmux::cache::SessionCache,
+    chat_pane: Option<&str>,
+    pane_id: &str,
+    lines: Option<u64>,
+    grep: Option<&str>,
+) -> String {
+    if chat_pane == Some(pane_id) {
+        return format!(
+            "Error: {} is the chat pane — its content is this conversation. \
+             Use get_terminal_context for the user's active pane.",
+            pane_id
+        );
+    }
+
+    let (known, history_size, window_name, session_name, status) = {
+        let panes = cache.panes.read().unwrap_or_log();
+        match panes.get(pane_id) {
+            Some(p) => (
+                true,
+                p.history_size,
+                p.window_name.clone(),
+                p.session_name.clone(),
+                p.status,
+            ),
+            None => (
+                false,
+                0usize,
+                String::new(),
+                String::new(),
+                crate::tmux::status::PaneStatus::Idle(0),
+            ),
+        }
+    };
+    if !known {
+        return format!(
+            "Error: pane {} not found. Call list_panes to see available panes.",
+            pane_id
+        );
+    }
+
+    // Validate grep regex before the capture call so the error is deterministic
+    // and hermetic (no tmux call needed).
+    let grep_re = if let Some(pat) = grep {
+        match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
+            Ok(re) => Some(re),
+            Err(e) => return format!("Error: invalid grep regex: {}", e),
+        }
+    } else {
+        None
+    };
+
+    let depth = read_pane_depth(lines, history_size);
+
+    let pid = pane_id.to_string();
+    let raw = match crate::tmux::off_runtime("capture-pane-annotated", move || {
+        crate::tmux::capture_pane_annotated(&pid, depth)
+    })
+    .await
+    {
+        Some(Ok(s)) => s,
+        Some(Err(e)) => return format!("Error capturing pane {}: {}", pane_id, e),
+        None => return format!("Error: timed out capturing pane {}.", pane_id),
+    };
+
+    let all: Vec<&str> = raw.lines().collect();
+    let filtered: Vec<&str> = if let Some(re) = &grep_re {
+        all.iter().filter(|l| re.is_match(l)).copied().collect()
+    } else {
+        all
+    };
+
+    let home = cache.session_name.read().unwrap_or_log().clone();
+    let sess_part = if session_name != home {
+        format!(" session:{}", session_name)
+    } else {
+        String::new()
+    };
+
+    if filtered.is_empty() {
+        return match grep {
+            Some(p) => format!(
+                "{} (window '{}'{} status:{}): no lines matched /{}/ in the last {} lines.",
+                pane_id, window_name, sess_part, status, p, depth
+            ),
+            None => format!(
+                "{} (window '{}'{} status:{}): pane is empty.",
+                pane_id, window_name, sess_part, status
+            ),
+        };
+    }
+
+    let body = mask_sensitive(filtered.join("\n").trim_end());
+    let head = match grep {
+        Some(p) => format!(
+            "{} (window '{}'{} status:{}) — {} lines matching /{}/ in the last {}:",
+            pane_id,
+            window_name,
+            sess_part,
+            status,
+            filtered.len(),
+            p,
+            depth
+        ),
+        None => format!(
+            "{} (window '{}'{} status:{}) — last {} lines:",
+            pane_id,
+            window_name,
+            sess_part,
+            status,
+            filtered.len()
+        ),
+    };
+    format!("{}\n{}", head, body)
+}
+
+// ---------------------------------------------------------------------------
 // List panes
 // ---------------------------------------------------------------------------
 
@@ -517,6 +656,63 @@ mod tests {
         assert!(
             !output.contains("%9"),
             "foreign pane must not appear in list_panes output, got: {output}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // read_pane tests (M12 D3)
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn read_pane_refuses_chat_pane() {
+        let cache = SessionCache::new("sess");
+        // Do NOT seed %999999 into the cache — the chat-pane guard runs before
+        // the cache lookup, so the test is hermetic (no tmux call).
+        let result = read_pane(&cache, Some("%999999"), "%999999", None, None).await;
+        assert!(
+            result.contains("chat pane"),
+            "chat pane refusal message expected, got: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_pane_unknown_pane_id_is_an_error() {
+        let cache = SessionCache::new("sess");
+        let result = read_pane(&cache, None, "%999999", None, None).await;
+        assert!(
+            result.contains("not found"),
+            "unknown pane error expected, got: {result}"
+        );
+    }
+
+    #[test]
+    fn read_pane_caps_lines_at_history_size() {
+        assert_eq!(read_pane_depth(Some(500), 50), 50);
+    }
+
+    #[test]
+    fn read_pane_depth_defaults_and_ceiling() {
+        // Default when None
+        assert_eq!(read_pane_depth(None, 1000), 200);
+        // Some(0) falls through to default
+        assert_eq!(read_pane_depth(Some(0), 1000), 200);
+        // Capped at READ_PANE_MAX_LINES
+        assert_eq!(read_pane_depth(Some(5000), 10000), 2000);
+        // Unknown history (0) must not clamp to zero
+        assert_eq!(read_pane_depth(Some(10), 0), 10);
+    }
+
+    #[tokio::test]
+    async fn read_pane_invalid_grep_regex_is_reported() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            p.insert("%999999".to_string(), pane("bash", "main", 0));
+        }
+        let result = read_pane(&cache, None, "%999999", None, Some("[")).await;
+        assert!(
+            result.contains("invalid grep regex"),
+            "invalid regex error expected, got: {result}"
         );
     }
 }

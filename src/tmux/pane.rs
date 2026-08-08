@@ -563,3 +563,13 @@ pub async fn wait_for(channel: &str, timeout: std::time::Duration) -> bool {
         }
     }
 }
+
+/// Capture `depth` lines of a pane's scrollback with ANSI escapes converted to
+/// semantic markers (`[ERROR:]`/`[WARN:]`/`[OK:]`).
+///
+/// `read_pane` (M12 D3) uses this: `annotate_ansi` is private to `crate::tmux`,
+/// so the conversion has to happen on this side of the module boundary.
+pub fn capture_pane_annotated(pane_id: &str, depth: usize) -> Result<String> {
+    let raw = capture_pane_with_escapes(pane_id, depth)?;
+    Ok(super::ansi::annotate_ansi(&raw))
+}

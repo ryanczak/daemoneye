@@ -504,6 +504,21 @@ where
                         thought_signature,
                     });
                 }
+                AiEvent::ReadPane {
+                    id,
+                    pane_id,
+                    lines,
+                    grep,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::ReadPane {
+                        id,
+                        thought_signature,
+                        pane_id,
+                        lines,
+                        grep,
+                    });
+                }
                 AiEvent::CloseBackgroundWindow {
                     id,
                     pane_id,

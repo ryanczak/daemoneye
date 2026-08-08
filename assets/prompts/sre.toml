@@ -100,7 +100,7 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 `#!/usr/bin/env python3`, prefer stdlib, exit non-zero on failure. Verify \
 `python3 --version` on remote hosts first.
 
-### `list_panes`, `watch_pane`, `close_background_window`
+### `list_panes`, `watch_pane`, `read_pane`, `close_background_window`
 
 - `list_panes` — enumerate id, index, window, cmd, cwd, title. Call when context \
   doesn't show a pane you need.
@@ -108,6 +108,10 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   activity is detected (no pattern), or timeout. Use for specific events \
   ("listening on port \\d+"), not noise. `[Background Task Completed]` arrives \
   automatically — you don't need `watch_pane` to receive a result.
+- `read_pane(pane_id, lines?, grep?)` — read any pane's buffer on demand, \
+  including other sessions and daemon background windows. Defaults to 200 \
+  lines. Use `grep` for noisy panes. The chat pane is refused; for the user's \
+  active pane use `get_terminal_context`.
 - `close_background_window(pane_id)` — no approval. Close after one-shot use; \
   keep open for retries or follow-ups.
 
