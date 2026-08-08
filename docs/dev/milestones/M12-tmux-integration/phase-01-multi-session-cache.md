@@ -443,6 +443,73 @@ Starting Phase 01: Multi-Session Cache. Implementing `PaneState.session_name`, f
 
 *(entries appended by the executor and architect as the phase progresses)*
 
+### Update — 2026-08-08 (end-to-end verification)
+
+**Executor:** claude
+
+**E2E gate run** (`/tmp/e2e-01.txt`):
+
+```
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+
+test result: ok. 1153 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.07s
+
+exit=0
+test tmux::cache::tests::is_home_pane_rejects_foreign_session_pane ... ok
+test tmux::cache::tests::pane_map_excludes_foreign_session_panes ... ok
+test daemon::executor::knowledge::pane::tests::list_panes_excludes_foreign_session_panes ... ok
+test tmux::cache::tests::labeled_context_excludes_foreign_session_panes ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1149 filtered out; finished in 0.03s
+1
+src/daemon/executor/mod.rs:940:        if cache.is_home_pane(tp) {
+src/daemon/executor/mod.rs:959:        && cache.is_home_pane(&dtp)
+src/daemon/executor/foreground.rs:248:            && cache.is_home_pane(tp)
+src/daemon/executor/foreground.rs:254:            && cache.is_home_pane(dtp)
+```
+
+**Mutation pair 1** — remove `state.session_name == home` filter from `pane_map_summary`:
+
+With mutation applied (filter removed):
+```
+test tmux::cache::tests::pane_map_excludes_foreign_session_panes ... FAILED
+
+failures:
+
+---- tmux::cache::tests::pane_map_excludes_foreign_session_panes stdout ----
+
+thread 'tmux::cache::tests::pane_map_excludes_foreign_session_panes' panicked at src/tmux/cache_tests.rs:649:5:
+foreign pane must not appear in map, got: [PANE MAP] idx:0=%1  (, '') | idx:0=%9  (, 'editor')
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1152 filtered out; finished in 0.00s
+```
+
+Restored (filter present):
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1152 filtered out; finished in 0.00s
+```
+
+**Mutation pair 2** — remove `if live.is_empty() { return; }` guard from `evict_missing`:
+
+With mutation applied (guard removed):
+```
+test tmux::cache::tests::evict_missing_ignores_empty_snapshot ... FAILED
+
+failures:
+
+---- tmux::cache::tests::evict_missing_ignores_empty_snapshot stdout ----
+
+thread 'tmux::cache::tests::evict_missing_ignores_empty_snapshot' panicked at src/tmux/cache_tests.rs:718:5:
+%1 should remain after empty snapshot
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1152 filtered out; finished in 0.00s
+```
+
+Restored (guard present):
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1152 filtered out; finished in 0.00s
+```
+
 ### Update — ts=1786156899902 (complete, server-authored)
 
 **Summary:** **Summary + Notes for review:**
