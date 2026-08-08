@@ -1,7 +1,7 @@
 # Phase 03: `read_pane` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01, phase-02
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -659,3 +659,15 @@ No new dependencies (`regex` is already a dependency — see
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 04:20 (started)
+
+**Executor:** Claude (sonnet-4-5-20250929)
+
+Implemented all 8 tasks: `capture_pane_annotated` in `src/tmux/pane.rs`, `read_pane`
+in `src/daemon/executor/knowledge/pane.rs` with `read_pane_depth` pure helper,
+`PendingCall::ReadPane` variant with all arms, `AiEvent::ReadPane` + `ReadPaneArgs`
++ dispatch, `ToolDef` entry, stream/executor wiring, docs updates (`CLAUDE.md`,
+`sre.toml`), and 5 tests. Moved grep regex validation above the `off_runtime`
+capture call (preferred route from test plan) so invalid regex errors are
+deterministic and hermetic.
