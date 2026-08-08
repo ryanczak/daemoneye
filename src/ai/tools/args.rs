@@ -104,6 +104,12 @@ pub(super) struct FindInPanesArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct GetTerminalContextArgs {
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
     #[serde(default = "default_edit")]
@@ -412,6 +418,19 @@ impl ToolArgs for FindInPanesArgs {
             pattern: self.pattern,
             scope: self.scope,
             thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for GetTerminalContextArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::GetTerminalContext {
+            id: id.to_string(),
+            thought_signature: ts,
+            scope: self.scope,
         }
     }
 }

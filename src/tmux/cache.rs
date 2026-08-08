@@ -119,6 +119,30 @@ pub struct PaneState {
     pub status: crate::tmux::status::PaneStatus,
 }
 
+/// Breadth of a `get_labeled_context` snapshot (M12 D4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextScope {
+    /// Only panes sharing the chat pane's window.
+    Window,
+    /// The user's own tmux session — today's behavior, and the default.
+    Session,
+    /// The home session plus a metadata-only listing of foreign-session panes.
+    All,
+}
+
+/// True when a pane's window is inside `scope`. Pure, so it is testable
+/// without a cache.
+pub(crate) fn window_in_scope(
+    scope: ContextScope,
+    pane_window: &str,
+    chat_window: Option<&str>,
+) -> bool {
+    match scope {
+        ContextScope::Window => chat_window.is_none_or(|w| w == pane_window), // window scope keeps only the chat window
+        _ => true,
+    }
+}
+
 /// Shared, periodically-refreshed view of all panes in a tmux session.
 ///
 /// The daemon spawns a background task that calls [`SessionCache::refresh`]
@@ -470,6 +494,15 @@ impl SessionCache {
         source_pane: Option<&str>,
         chat_pane: Option<&str>,
     ) -> String {
+        self.get_labeled_context_scoped(source_pane, chat_pane, ContextScope::Session)
+    }
+
+    pub fn get_labeled_context_scoped(
+        &self,
+        source_pane: Option<&str>,
+        chat_pane: Option<&str>,
+        scope: ContextScope,
+    ) -> String {
         let mut out = String::new();
 
         // Window topology (P4) — prepend if session has ≥2 windows.
@@ -652,6 +685,7 @@ impl SessionCache {
             .filter(|(_, state)| state.session_name == home)
             .filter(|(id, _)| source_pane != Some(id.as_str()))
             .filter(|(id, _)| chat_pane != Some(id.as_str()))
+            .filter(|(_, state)| window_in_scope(scope, &state.window_name, chat_window))
             .collect();
         others.sort_by_key(|(id, _)| id.as_str());
         for (id, state) in others {
@@ -746,6 +780,37 @@ impl SessionCache {
                 activity_part,
                 mask_sensitive(&state.summary),
             ));
+        }
+
+        // Foreign-session panes (ContextScope::All) — metadata only, no buffer.
+        if scope == ContextScope::All {
+            let foreign: Vec<_> = panes
+                .iter()
+                .filter(|(_, state)| state.session_name != home)
+                .filter(|(id, _)| source_pane != Some(id.as_str()))
+                .filter(|(id, _)| chat_pane != Some(id.as_str()))
+                .collect();
+            if !foreign.is_empty() {
+                let mut foreign = foreign;
+                foreign.sort_by_key(|(id, _)| id.as_str());
+                for (id, state) in foreign {
+                    let cwd_part = if !state.current_path.is_empty() {
+                        format!(" — {}", mask_sensitive(&state.current_path))
+                    } else {
+                        String::new()
+                    };
+                    out.push_str(&format!(
+                        "[FOREIGN SESSION PANE {} (idx:{} in '{}' | session:{}) — {}{} status:{}]\n",
+                        id,
+                        state.pane_index,
+                        state.window_name,
+                        state.session_name,
+                        state.current_cmd,
+                        cwd_part,
+                        state.status,
+                    ));
+                }
+            }
         }
 
         if out.is_empty() {

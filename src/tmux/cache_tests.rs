@@ -685,3 +685,212 @@ fn evict_missing_ignores_empty_snapshot() {
 }
 
 // ── list_panes foreign session exclusion is in pane.rs tests ──────────────
+
+// ── ContextScope + window_in_scope ────────────────────────────────────────
+
+#[test]
+fn window_in_scope_session_and_all_admit_everything() {
+    assert!(
+        window_in_scope(ContextScope::Session, "other", Some("main")),
+        "Session should admit any window"
+    );
+    assert!(
+        window_in_scope(ContextScope::All, "other", Some("main")),
+        "All should admit any window"
+    );
+}
+
+#[test]
+fn window_in_scope_window_rejects_other_windows() {
+    assert!(
+        window_in_scope(ContextScope::Window, "main", Some("main")),
+        "Window scope should keep the chat window"
+    );
+    assert!(
+        !window_in_scope(ContextScope::Window, "other", Some("main")),
+        "Window scope should reject a different window"
+    );
+    assert!(
+        window_in_scope(ContextScope::Window, "any", None),
+        "Window scope with None chat_window admits everything"
+    );
+}
+
+// ── get_labeled_context_scoped ────────────────────────────────────────────
+
+#[test]
+fn labeled_context_window_scope_excludes_other_windows() {
+    let c = cache();
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "chat content".to_string(),
+                summary: "shell".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: "main".to_string(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
+            },
+        );
+        panes.insert(
+            "%2".to_string(),
+            PaneState {
+                buffer: "other content".to_string(),
+                summary: "editor".to_string(),
+                current_cmd: "nvim".to_string(),
+                current_path: "/srv/app".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: "other".to_string(),
+                session_name: "test-session".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Running,
+            },
+        );
+    }
+    let ctx_window = c.get_labeled_context_scoped(Some("%1"), Some("%1"), ContextScope::Window);
+    assert!(
+        !ctx_window.contains("%2"),
+        "Window scope should exclude panes in other windows, got: {ctx_window}"
+    );
+    let ctx_session = c.get_labeled_context_scoped(Some("%1"), Some("%1"), ContextScope::Session);
+    assert!(
+        ctx_session.contains("%2"),
+        "Session scope should include panes in other windows, got: {ctx_session}"
+    );
+}
+
+#[test]
+fn labeled_context_all_scope_lists_foreign_panes() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "home content".to_string(),
+                summary: "shell".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: "main".to_string(),
+                session_name: "home".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
+            },
+        );
+        panes.insert(
+            "%9".to_string(),
+            PaneState {
+                buffer: String::new(),
+                summary: "editor".to_string(),
+                current_cmd: "nvim".to_string(),
+                current_path: "/srv/app".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: "editor".to_string(),
+                session_name: "other".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 1,
+                shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Running,
+            },
+        );
+    }
+    let ctx_all = c.get_labeled_context_scoped(None, None, ContextScope::All);
+    assert!(
+        ctx_all.contains("FOREIGN SESSION PANE"),
+        "All scope should list foreign panes, got: {ctx_all}"
+    );
+    assert!(
+        ctx_all.contains("%9"),
+        "All scope should include foreign pane id, got: {ctx_all}"
+    );
+    let ctx_session = c.get_labeled_context_scoped(None, None, ContextScope::Session);
+    assert!(
+        !ctx_session.contains("FOREIGN SESSION PANE"),
+        "Session scope should not list foreign panes, got: {ctx_session}"
+    );
+    assert!(
+        !ctx_session.contains("%9"),
+        "Session scope should not include foreign pane id, got: {ctx_session}"
+    );
+}
+
+#[test]
+fn labeled_context_session_scope_omits_foreign_header_when_none() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap();
+        panes.insert(
+            "%1".to_string(),
+            PaneState {
+                buffer: "home content".to_string(),
+                summary: "shell".to_string(),
+                current_cmd: "bash".to_string(),
+                current_path: "/home/user".to_string(),
+                pane_title: String::new(),
+                last_updated: std::time::Instant::now(),
+                scroll_position: 0,
+                history_size: 0,
+                in_copy_mode: false,
+                synchronized: false,
+                window_name: "main".to_string(),
+                session_name: "home".to_string(),
+                dead: false,
+                dead_status: None,
+                last_activity: 0,
+                start_cmd: String::new(),
+                pane_index: 0,
+                shell_pid: 0,
+                status: crate::tmux::status::PaneStatus::Idle(0),
+            },
+        );
+    }
+    let ctx_all = c.get_labeled_context_scoped(None, None, ContextScope::All);
+    assert!(
+        !ctx_all.contains("FOREIGN SESSION PANE"),
+        "All scope with no foreign panes should not emit foreign header, got: {ctx_all}"
+    );
+}

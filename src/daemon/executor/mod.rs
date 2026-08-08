@@ -548,13 +548,18 @@ where
             Ok(ToolCallOutcome::Result(result))
         }
 
-        PendingCall::GetTerminalContext { .. } => {
+        PendingCall::GetTerminalContext { scope, .. } => {
             let target_pane: Option<String> = session_id.and_then(|sid| {
                 with_sessions(sessions, |store| {
                     store.get(sid)?.default_target_pane.clone()
                 })
             });
-            let ctx = cache.get_labeled_context(chat_pane, chat_pane);
+            let ctx_scope = match scope.as_deref() {
+                Some("window") => crate::tmux::cache::ContextScope::Window,
+                Some("all") => crate::tmux::cache::ContextScope::All,
+                _ => crate::tmux::cache::ContextScope::Session,
+            };
+            let ctx = cache.get_labeled_context_scoped(chat_pane, chat_pane, ctx_scope);
             let pane_map = cache.pane_map_summary(chat_pane);
             let fg_line = target_pane
                 .as_deref()

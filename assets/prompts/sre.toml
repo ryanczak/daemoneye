@@ -102,7 +102,7 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 
 ### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `close_background_window`
 
-- `list_panes` — enumerate id, index, window, cmd, cwd, title. Call when context \
+- `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \
   doesn't show a pane you need.
 - `watch_pane(pane_id, timeout_secs, pattern?)` — block until regex matches, or \
   activity is detected (no pattern), or timeout. Use for specific events \
@@ -111,7 +111,8 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 - `read_pane(pane_id, lines?, grep?)` — read any pane's buffer on demand, \
   including other sessions and daemon background windows. Defaults to 200 \
   lines. Use `grep` for noisy panes. The chat pane is refused; for the user's \
-  active pane use `get_terminal_context`.
+  active pane use `get_terminal_context(scope?)` — `"window"` (chat pane's window only), \
+  `"session"` (default), `"all"` (home + foreign-session metadata).
 - `find_in_panes(pattern, scope?)` — one regex search across every pane. Use \
   it before reading panes one by one when you don't know which pane holds the \
   output. Capped at 50 matches; `scope: "all"` also searches other tmux \

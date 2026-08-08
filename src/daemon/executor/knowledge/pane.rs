@@ -466,25 +466,40 @@ pub async fn find_in_panes(
 // List panes
 // ---------------------------------------------------------------------------
 
+/// True when `window_name` belongs to a daemon-managed window.
+///
+/// D6 (phase-08) replaces this body with the shared targetable-panes
+/// predicate; it is deliberately local until then.
+fn is_daemon_window(window_name: &str) -> bool {
+    window_name.starts_with(crate::daemon::BG_WINDOW_PREFIX)
+        || window_name.starts_with(crate::daemon::SCHED_WINDOW_PREFIX)
+        || window_name.starts_with(crate::daemon::INCIDENT_WINDOW_PREFIX)
+        || window_name.starts_with(crate::daemon::GS_BG_WINDOW_PREFIX)
+        || window_name.starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
+}
+
 pub fn list_panes(cache: &crate::tmux::cache::SessionCache, chat_pane: Option<&str>) -> String {
     let session = cache.session_name.read().unwrap_or_log().clone();
     let panes = cache.panes.read().unwrap_or_log();
 
     let mut rows: Vec<_> = panes
         .iter()
-        .filter(|(_, state)| state.session_name == session)
         .filter(|(id, _)| chat_pane != Some(id.as_str()))
         .collect();
     rows.sort_by_key(|(id, _)| id.as_str());
 
-    if rows.is_empty() {
+    let (home_rows, foreign_rows): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|(_, st)| st.session_name == session); // foreign panes go in their own section
+
+    if home_rows.is_empty() && foreign_rows.is_empty() {
         return format!("No targetable panes found in session '{}'.", session);
     }
 
     let mut out = format!(
         "{} pane{} in session '{}' (chat pane excluded):\n",
-        rows.len(),
-        if rows.len() == 1 { "" } else { "s" },
+        home_rows.len(),
+        if home_rows.len() == 1 { "" } else { "s" },
         session
     );
     let now_secs = std::time::SystemTime::now()
@@ -492,7 +507,31 @@ pub fn list_panes(cache: &crate::tmux::cache::SessionCache, chat_pane: Option<&s
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    for (id, state) in &rows {
+    // Group home rows by window, sorted by (window_name, pane_index).
+    let mut home_rows = home_rows;
+    home_rows.sort_by(|a, b| {
+        a.1.window_name
+            .cmp(&b.1.window_name)
+            .then(a.1.pane_index.cmp(&b.1.pane_index))
+    });
+
+    let mut current_window: Option<&str> = None;
+    for (id, state) in &home_rows {
+        if current_window != Some(&state.window_name[..]) {
+            current_window = Some(&state.window_name[..]);
+            // Count panes in this window.
+            let count = home_rows
+                .iter()
+                .filter(|(_, s)| s.window_name == state.window_name)
+                .count();
+            out.push_str(&format!(
+                "window '{}' ({} pane{}):\n",
+                state.window_name,
+                count,
+                if count == 1 { "" } else { "s" }
+            ));
+        }
+
         let title_part = if !state.pane_title.is_empty() && state.pane_title != state.current_cmd {
             format!("  title:{}", mask_sensitive(&state.pane_title))
         } else {
@@ -514,6 +553,11 @@ pub fn list_panes(cache: &crate::tmux::cache::SessionCache, chat_pane: Option<&s
                 .starts_with(crate::daemon::GS_SCHED_WINDOW_PREFIX)
         {
             "  [ghost]"
+        } else {
+            ""
+        };
+        let daemon_part = if is_daemon_window(&state.window_name) {
+            "  [daemon]"
         } else {
             ""
         };
@@ -540,20 +584,41 @@ pub fn list_panes(cache: &crate::tmux::cache::SessionCache, chat_pane: Option<&s
             String::new()
         };
         out.push_str(&format!(
-            "  {}  idx:{:<3}  window:{:<12}  cmd:{:<8}  cwd:{}{}{}{}{}{}{}\n",
+            "  {}  idx:{:<3}  cmd:{:<8}  status:{}  cwd:{}{}{}{}{}{}{}{}\n",
             id,
             state.pane_index,
-            state.window_name,
             state.current_cmd,
+            state.status,
             state.current_path,
             start_part,
             title_part,
             ghost_part,
+            daemon_part,
             sync_part,
             dead_part,
             activity_part,
         ));
     }
+
+    // Foreign section last.
+    if !foreign_rows.is_empty() {
+        let mut foreign_rows = foreign_rows;
+        foreign_rows.sort_by_key(|(id, _)| id.as_str());
+        out.push_str("Panes in other tmux sessions:\n");
+        for (id, state) in &foreign_rows {
+            out.push_str(&format!(
+                "  {}  idx:{:<3}  session:{}  window:{}  cmd:{:<8}  cwd:{}  status:{}\n",
+                id,
+                state.pane_index,
+                state.session_name,
+                state.window_name,
+                state.current_cmd,
+                state.current_path,
+                state.status,
+            ));
+        }
+    }
+
     out.push_str(
         "\nUse the pane ID as target_pane in run_terminal_command to execute a command there.",
     );
@@ -890,17 +955,15 @@ mod tests {
     }
 
     #[test]
-    fn list_panes_excludes_foreign_session_panes() {
+    fn list_panes_lists_foreign_session_panes_in_their_own_section() {
         let c = SessionCache::new("home");
         {
             let mut panes = c.panes.write().unwrap_or_log();
-            panes.insert("%1".to_string(), pane("bash", "main", 0));
-            // "pane" fixture uses session_name "sess", so for a cache created with "home"
-            // the fixture pane is foreign — but we need a home pane too. Override session.
-            let p1 = panes.get_mut("%1").unwrap();
-            p1.session_name = "home".to_string();
-            // Foreign pane: session_name stays "sess" (from fixture), window is non-daemon
-            let foreign = pane("nvim", "editor", 1);
+            let mut home_pane = pane("bash", "main", 0);
+            home_pane.session_name = "home".to_string();
+            panes.insert("%1".to_string(), home_pane);
+            let mut foreign = pane("nvim", "editor", 1);
+            foreign.session_name = "other".to_string();
             panes.insert("%9".to_string(), foreign);
         }
         let output = list_panes(&c, None);
@@ -909,8 +972,125 @@ mod tests {
             "home pane should appear in list_panes output, got: {output}"
         );
         assert!(
-            !output.contains("%9"),
-            "foreign pane must not appear in list_panes output, got: {output}"
+            output.contains("Panes in other tmux sessions"),
+            "foreign section header expected, got: {output}"
+        );
+        assert!(
+            output.contains("%9"),
+            "foreign pane must appear in foreign section, got: {output}"
+        );
+        assert!(
+            output.contains("session:other"),
+            "foreign session name must be labeled, got: {output}"
+        );
+    }
+
+    #[test]
+    fn list_panes_groups_rows_by_window() {
+        let c = SessionCache::new("home");
+        {
+            let mut panes = c.panes.write().unwrap_or_log();
+            let mut p1 = pane("bash", "main", 0);
+            p1.session_name = "home".to_string();
+            panes.insert("%1".to_string(), p1);
+            let mut p2 = pane("vim", "main", 1);
+            p2.session_name = "home".to_string();
+            panes.insert("%2".to_string(), p2);
+            let mut p3 = pane("nvim", "edit", 0);
+            p3.session_name = "home".to_string();
+            panes.insert("%3".to_string(), p3);
+        }
+        let output = list_panes(&c, None);
+        assert!(
+            output.contains("window 'edit'"),
+            "edit window section expected, got: {output}"
+        );
+        assert!(
+            output.contains("window 'main'"),
+            "main window section expected, got: {output}"
+        );
+        // Windows are sorted alphabetically; 'edit' comes before 'main'.
+        let edit_start = output.find("window 'edit'").unwrap();
+        let main_start = output.find("window 'main'").unwrap();
+        assert!(
+            edit_start < main_start,
+            "edit window should come before main (alpha sort): {output}"
+        );
+        assert!(
+            output[main_start..].contains("%1"),
+            "%1 should be in main section"
+        );
+        assert!(
+            output[main_start..].contains("%2"),
+            "%2 should be in main section"
+        );
+    }
+
+    #[test]
+    fn list_panes_shows_status_field() {
+        let c = SessionCache::new("home");
+        {
+            let mut panes = c.panes.write().unwrap_or_log();
+            let mut p = pane("bash", "main", 0);
+            p.session_name = "home".to_string();
+            p.status = crate::tmux::status::PaneStatus::Running;
+            panes.insert("%1".to_string(), p);
+        }
+        let output = list_panes(&c, None);
+        assert!(
+            output.contains("status:"),
+            "status field expected, got: {output}"
+        );
+        assert!(
+            output.contains("running"),
+            "running status expected, got: {output}"
+        );
+    }
+
+    #[test]
+    fn list_panes_omits_foreign_section_when_none() {
+        let c = SessionCache::new("home");
+        {
+            let mut panes = c.panes.write().unwrap_or_log();
+            let mut p = pane("bash", "main", 0);
+            p.session_name = "home".to_string();
+            panes.insert("%1".to_string(), p);
+        }
+        let output = list_panes(&c, None);
+        assert!(
+            !output.contains("Panes in other tmux sessions"),
+            "foreign section should be absent when no foreign panes, got: {output}"
+        );
+    }
+
+    #[test]
+    fn list_panes_tags_daemon_windows() {
+        let c = SessionCache::new("home");
+        {
+            let mut panes = c.panes.write().unwrap_or_log();
+            let mut daemon_p = pane("sleep", "de-bg-42-123-cmd", 0);
+            daemon_p.session_name = "home".to_string();
+            panes.insert("%1".to_string(), daemon_p);
+            let mut user_p = pane("bash", "main", 0);
+            user_p.session_name = "home".to_string();
+            panes.insert("%2".to_string(), user_p);
+        }
+        let output = list_panes(&c, None);
+        // The daemon pane's window section should contain [daemon].
+        let daemon_window_start = output.find("window 'de-bg-42-123-cmd'").unwrap();
+        let daemon_section = &output[daemon_window_start..];
+        assert!(
+            daemon_section.contains("[daemon]"),
+            "daemon window should be tagged [daemon], got: {output}"
+        );
+        // The user pane's window section should not contain [daemon].
+        let user_window_start = output.find("window 'main'").unwrap();
+        let user_section_end = output.len();
+        let user_section = &output[user_window_start..user_section_end];
+        // [daemon] should not appear in the user window section.
+        assert!(
+            !user_section.contains("[daemon]"),
+            "user window should not be tagged [daemon], got: {output}"
         );
     }
 

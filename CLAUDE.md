@@ -98,6 +98,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 [BACKGROUND PANE %N (idx:K in 'window') — cmd — /cwd (title) [synchronized] [dead: N] [active Xs ago]]: summary
 [VISIBLE PANE %N (idx:K in 'window') — cmd — /cwd (title)]: summary
 [SESSION PANE %N (idx:K in 'window') — cmd — /cwd (title)]: summary
+[FOREIGN SESSION PANE %N (idx:K in 'window' | session:name) — cmd — /cwd status:Status]
 [OTHER SESSIONS] name (N windows, active Xm ago, attached/detached), …
 ```
 
@@ -134,8 +135,8 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `edit_file` | core | File operations on daemon host (or remote via `target_pane`): `operation="edit"` (atomic string replacement, requires `old_string`/`new_string`), `operation="create"` (new file from `content`), `operation="delete"` (remove file), `operation="copy"` (duplicate `path` to `dest_path`). All require user approval with colored unified diff. Atomic writes via `.de_tmp` → rename. **Blocked from `~/.daemoneye/`**. IPC: `EditFilePrompt` / `EditFileResponse`. |
 | `read_file` | core | Paginated daemon-host file read with optional grep filter; masks sensitive data; path `canonicalize()`d to resolve symlinks; **blocked only from `etc/config.toml` and `etc/prompts/sre.toml`** (API credential files) |
 | `search_repository` | core | Grep across runbooks / scripts / memory / events |
-| `get_terminal_context` | core | Fresh tmux snapshot on demand |
-| `list_panes` | core | Enumerate all panes in session (pane ID, window-relative index, window, cmd, cwd, title) |
+| `get_terminal_context` | core | Fresh tmux snapshot on demand; optional `scope` param: `"window"` (chat pane's window only), `"session"` (default, user's session), `"all"` (home + foreign-session metadata) |
+| `list_panes` | core | Enumerate all panes in session, grouped by window (pane ID, window-relative index, cmd, cwd, title, status); includes a foreign-session section for panes in other tmux sessions |
 | `read_pane` | core | Read any pane's buffer on demand at a requested scrollback depth (any session, incl. daemon windows); ANSI-annotated, optional regex filter, masked; chat pane refused |
 | `find_in_panes` | core | Regex search across every pane's buffer in one call; returns pane id, window, session (when foreign), status and matching lines with ±1 line of context; masked, capped at 50 matches; chat pane never searched. `scope: "all"` also captures other sessions live |
 | `watch_pane` | core | Block until regex `pattern` matches pane output, or command exits, or timeout |

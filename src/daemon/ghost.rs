@@ -684,10 +684,12 @@ async fn do_ghost_turn(
                     AiEvent::GetTerminalContext {
                         id,
                         thought_signature,
+                        scope,
                     } => {
                         pending_calls.push(PendingCall::GetTerminalContext {
                             id,
                             thought_signature,
+                            scope,
                         });
                     }
                     AiEvent::ListPanes {

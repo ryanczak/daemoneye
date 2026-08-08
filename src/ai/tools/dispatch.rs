@@ -36,10 +36,7 @@ pub fn dispatch_tool_event(
             id: id.to_string(),
             thought_signature: ts,
         }),
-        "get_terminal_context" => Some(AiEvent::GetTerminalContext {
-            id: id.to_string(),
-            thought_signature: ts,
-        }),
+        "get_terminal_context" => dispatch::<GetTerminalContextArgs>(id, args, ts),
         "list_panes" => Some(AiEvent::ListPanes {
             id: id.to_string(),
             thought_signature: ts,
@@ -231,7 +228,7 @@ mod tests {
                 "read_memory" => json!({"key": "k", "category": "knowledge"}),
                 "list_memories" => json!({}),
                 "search_repository" => json!({"query": "x", "kind": "all"}),
-                "get_terminal_context" => json!({}),
+                "get_terminal_context" => json!({"scope": "session"}),
                 "list_panes" => json!({}),
                 "close_background_window" => json!({"pane_id": "%1"}),
                 "spawn_ghost_shell" => json!({"runbook": "rb", "message": "investigate"}),

@@ -1,7 +1,7 @@
 # Phase 05: `list_panes` Upgrade + `get_terminal_context` Scope
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01, phase-02, phase-04
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -477,3 +477,72 @@ No new dependencies. No `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 06:28 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Status:** in-progress
+
+Implementing phase-05 tasks: ContextScope enum, get_labeled_context_scoped, list_panes grouping/status/foreign, get_terminal_context scope param, documentation, tests, and e2e verification.
+
+### Update — 2026-08-08 06:38 (end-to-end verification)
+
+```
+== SURFACES ==
+cache_tests untouched (want 0)=2
+old foreign-exclusion test gone (want 0)=0
+tool counts line unchanged (want 1)=1
+CLAUDE.md documents the foreign line (want >=1)=1
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.81s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.95s
+clippy exit=0
+test result: ok. 1182 passed; 0 failed; 0 ignored; 0 measured; 1181 filtered out; finished in 4.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0.00s
+test exit=0
+== M1 APPLY (window scope admits everything) ==
+M1 mutated-lines-present=1
+test tmux::cache::tests::labeled_context_window_scope_excludes_other_windows ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1181 filtered out; finished in 0.06s
+M1 exit=101
+M1 restored (want 0)=0
+test tmux::cache::tests::labeled_context_window_scope_excludes_other_windows ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1181 filtered out; finished in 0.06s
+M1 restored exit=0
+== M2 APPLY (nothing is foreign) ==
+M2 mutated-lines-present=1
+test daemon::executor::knowledge::pane::tests::list_panes_lists_foreign_session_panes_in_their_own_section ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1181 filtered out; finished in 0.00s
+M2 exit=101
+M2 restored (want 0)=0
+test daemon::executor::knowledge::pane::tests::list_panes_lists_foreign_session_panes_in_their_own_section ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1181 filtered out; finished in 0.00s
+M2 restored exit=0
+== TREE ==
+ M CLAUDE.md
+ M assets/prompts/sre.toml
+ M docs/dev/milestones/M12-tmux-integration/README.md
+ M docs/dev/milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md
+ M src/ai/tools/args.rs
+ M src/ai/tools/defs.rs
+ M src/ai/tools/dispatch.rs
+ M src/ai/types/events.rs
+ M src/ai/types/pending.rs
+ M src/daemon/executor/knowledge/pane.rs
+ M src/daemon/executor/mod.rs
+ M src/daemon/ghost.rs
+ M src/daemon/stream.rs
+ M src/tmux/cache.rs
+ M src/tmux/cache_tests.rs
+porcelain exit=0
+transcript line count=56
+```

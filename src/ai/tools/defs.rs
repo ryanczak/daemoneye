@@ -615,7 +615,14 @@ pub static TOOLS: &[ToolDef] = &[
                       command output, or understand the current terminal state. \
                       The terminal snapshot is NOT automatically included in every message — \
                       call this tool to get it on demand.",
-        params: &[],
+        params: &[ParamDef {
+            name: "scope",
+            ty: ParamTy::Str,
+            required: false,
+            description: "Optional breadth: \"window\" (only the chat pane's window), \
+                          \"session\" (default, the user's tmux session), or \"all\" \
+                          (home session plus foreign-session pane metadata).",
+        }],
         deferred_group: None,
     },
     ToolDef {

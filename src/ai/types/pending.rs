@@ -170,6 +170,7 @@ pub enum PendingCall {
     GetTerminalContext {
         id: String,
         thought_signature: Option<String>,
+        scope: Option<String>,
     },
     ListPanes {
         id: String,
@@ -422,11 +423,11 @@ impl PendingCall {
                 name: "recall_context".to_string(),
                 arguments: serde_json::json!({"query": query, "turn_start": turn_start, "turn_end": turn_end, "scope": scope}).to_string(),
             },
-            PendingCall::GetTerminalContext { id, thought_signature } => ToolCall {
+            PendingCall::GetTerminalContext { id, thought_signature, scope } => ToolCall {
                 id: id.clone(),
                 thought_signature: thought_signature.clone(),
                 name: "get_terminal_context".to_string(),
-                arguments: "{}".to_string(),
+                arguments: serde_json::json!({"scope": scope}).to_string(),
             },
             PendingCall::ListPanes { id, thought_signature } => ToolCall {
                 id: id.clone(),
@@ -627,7 +628,7 @@ impl PendingCall {
                 };
                 format!("\"{q}\"")
             }
-            PendingCall::GetTerminalContext { .. } => String::new(),
+            PendingCall::GetTerminalContext { scope, .. } => scope.clone().unwrap_or_default(),
             PendingCall::ListPanes { .. } => String::new(),
             PendingCall::CloseBackgroundWindow { pane_id, .. } => pane_id.clone(),
             PendingCall::SpawnGhost { runbook, .. } => runbook.clone(),
@@ -804,6 +805,7 @@ mod tests {
             PendingCall::GetTerminalContext {
                 id: "x".to_string(),
                 thought_signature: None,
+                scope: None,
             },
             PendingCall::ListPanes {
                 id: "x".to_string(),
@@ -994,6 +996,7 @@ mod tests {
         let call = PendingCall::GetTerminalContext {
             id: "x".to_string(),
             thought_signature: None,
+            scope: None,
         };
         assert!(call.summary().is_empty());
     }
