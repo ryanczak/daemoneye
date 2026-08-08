@@ -1,6 +1,6 @@
 # NEXT
 
-## Active phase: [M12 phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) (`todo`)
+## Active phase: [M12 phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) (`in-progress` — bounced round 2, [bug-04-2](milestones/M12-tmux-integration/bugs/bug-04-2.md))
 
 Adds the `find_in_panes` core AI tool (the `find_in_panes` half of D4 — the
 `list_panes` upgrade and the `get_terminal_context` `scope` param stay in
@@ -27,6 +27,21 @@ executor would otherwise have to invent:
    `grep -c` of the mutated text; a `0` invalidates that pair instead of
    silently certifying a vacuous guard. Both restores are `sed -i`, never
    `git checkout` — the file holds the round's own uncommitted work.
+
+**Round 2 approved the code, bounced the evidence (2026-08-08).** All of
+bug-04-1's sort fixes hold — independently re-verified at review: `cargo test`
+reports exactly 1173, both `sort_by` calls are present with the foreign sort
+preceding `.take(FIND_FOREIGN_MAX_PANES)`, mutation M3 fails commented-out and
+passes restored, `git diff` between the round-2 commits touches only
+`pane.rs` (+45/-1) with no existing test modified. The bounce
+([bug-04-2](milestones/M12-tmux-integration/bugs/bug-04-2.md), major) is that
+the pasted round-2 end-to-end entry is a hand-paraphrased summary of
+`/tmp/e2e-04-r2.txt` (lines like `test exit=0 (1173 passed; 0 failed)` that
+do not appear verbatim in the 2,555-line raw file) rather than the file's
+actual contents — the "Paraphrase in place of a quote" shape named in
+`docs/dev/WORKFLOW.md` § "A pasted transcript is a claim, not evidence". No
+source change needed; the existing, already-verified `/tmp/e2e-04-r2.txt`
+just needs to be pasted verbatim in place of the summary.
 
 **Next action:** `/rexymcp:dispatch phase-04`.
 

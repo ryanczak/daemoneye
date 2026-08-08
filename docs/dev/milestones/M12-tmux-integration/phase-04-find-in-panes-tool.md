@@ -1,7 +1,7 @@
 # Phase 04: `find_in_panes` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** in-progress — bounced 2026-08-08, see [bug-04-2](bugs/bug-04-2.md)
 **Depends on:** phase-01, phase-02, phase-03
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1104,3 +1104,53 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 429c0014b066a3fbdcd08841920279fa23577477
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08 (ROUND 2)
+
+- **Verdict:** bounced
+- **Bounces:** 2 (bug-04-1, bug-04-2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — `git diff --stat` between `38fccb0` and
+  `429c001` touches only `src/daemon/executor/knowledge/pane.rs` (+45/-1) and
+  the phase doc; the diff is exactly the two `sort_by` insertions and the one
+  new test named in Task 1–3, and no existing test was modified.
+- **Independently re-verified (all pass):**
+  - `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
+    --all-features -- -D warnings` all exit 0.
+  - `cargo test --lib`: **1173 passed; 0 failed** — matches the finish
+    condition exactly (not 1172, not 1174).
+  - `awk '/^pub async fn find_in_panes/,/^\/\/ -+$/' … | grep -c 'sort_by'`
+    → `2`. `foreign_rows.sort_by` at line 360, `.take(FIND_FOREIGN_MAX_PANES)`
+    at line 363 — the sort precedes the take.
+  - Mutation M3, re-run independently with the spec's own `sed`
+    apply/restore commands (never `git checkout`): with `home_rows.sort_by`
+    commented out, `find_in_panes_results_sorted_by_pane_id` **FAILED**
+    (assertion panic: "pane ids must appear in ascending order… got offset
+    178 before 111"); `mutated-lines-present=1`. Restored:
+    `comment-gone=0`, test passes, `git diff --stat` on the file is empty
+    (tree left clean).
+- **Why this bounces despite every claim above holding up:** the pasted
+  `### Update — 2026-08-08 05:58 (end-to-end verification)` entry is a
+  hand-paraphrased summary, not the raw contents of `/tmp/e2e-04-r2.txt`.
+  The real file (confirmed still present on disk, 2,555 lines) contains the
+  full `running 1173 tests` block with one `... ok` line per test and the
+  actual multi-line panic/backtrace text from the M3-mutated run; the pasted
+  entry instead has hand-written lines like `test exit=0 (1173 passed; 0
+  failed)` and `M3 exit=101 (find_in_panes_results_sorted_by_pane_id FAILED
+  as expected)` that do not appear verbatim anywhere in the raw output. This
+  is the "Paraphrase in place of a quote" shape named in
+  `docs/dev/WORKFLOW.md` § "A pasted transcript is a claim, not evidence" —
+  filed as [bug-04-2](bugs/bug-04-2.md), severity major. Per that section:
+  "A true claim in a hand-made transcript is still a failure." No source
+  change is required; the fix is to paste the existing, already-correct
+  `/tmp/e2e-04-r2.txt` verbatim.
+- **Calibration:** the dispatch-time warning "Phase doc has no parseable
+  '## Acceptance criteria' section" is an architect-side formatting defect,
+  not an executor fault and not a bounce reason. The round-2 header
+  (`# ⚠ ROUND 2 …`) is an H1 heading inserted inside § Spec (line 103,
+  between `## Spec` at line 101 and `## Round 1 spec` at line 202); a parser
+  that treats any `# `/`## ` line as a section boundary would treat that H1
+  as closing `## Spec` early, which plausibly cascades into misidentifying
+  the real `## Acceptance criteria` heading further down. Future round-2
+  headers should use a bold line or an `###`-level heading instead of `#` to
+  avoid tripping section parsers that key off heading level alone.
