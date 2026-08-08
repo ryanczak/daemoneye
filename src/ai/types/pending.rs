@@ -236,6 +236,12 @@ pub enum PendingCall {
         lines: Option<u64>,
         grep: Option<String>,
     },
+    FindInPanes {
+        id: String,
+        thought_signature: Option<String>,
+        pattern: String,
+        scope: Option<String>,
+    },
 }
 
 impl PendingCall {
@@ -481,6 +487,12 @@ impl PendingCall {
                 name: "read_pane".to_string(),
                 arguments: serde_json::json!({"pane_id": pane_id, "lines": lines, "grep": grep}).to_string(),
             },
+            PendingCall::FindInPanes { id, thought_signature, pattern, scope } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "find_in_panes".to_string(),
+                arguments: serde_json::json!({"pattern": pattern, "scope": scope}).to_string(),
+            },
         }
     }
 
@@ -521,6 +533,7 @@ impl PendingCall {
             PendingCall::DeleteAgent { id, .. } => id,
             PendingCall::AwaitAgentResult { id, .. } => id,
             PendingCall::ReadPane { id, .. } => id,
+            PendingCall::FindInPanes { id, .. } => id,
         }
     }
 
@@ -550,6 +563,7 @@ impl PendingCall {
                 | PendingCall::ListAgents { .. }
                 | PendingCall::AwaitAgentResult { .. }
                 | PendingCall::ReadPane { .. }
+                | PendingCall::FindInPanes { .. }
                 | PendingCall::LoadTools { .. }
         )
     }
@@ -637,6 +651,10 @@ impl PendingCall {
                 }
                 s
             }
+            PendingCall::FindInPanes { pattern, scope, .. } => match scope {
+                Some(s) => format!("/{pattern}/ scope={s}"),
+                None => format!("/{pattern}/"),
+            },
             PendingCall::LoadTools { groups, .. } => {
                 format!("load_tools: {}", groups.join(", "))
             }
@@ -683,6 +701,7 @@ impl PendingCall {
             PendingCall::DeleteAgent { .. } => "delete_agent",
             PendingCall::AwaitAgentResult { .. } => "await_agent_result",
             PendingCall::ReadPane { .. } => "read_pane",
+            PendingCall::FindInPanes { .. } => "find_in_panes",
         }
     }
 }

@@ -208,6 +208,257 @@ pub async fn read_pane(
 }
 
 // ---------------------------------------------------------------------------
+// Find in panes (M12 D4)
+// ---------------------------------------------------------------------------
+
+/// Hard ceiling on matches returned by a single `find_in_panes` call.
+const FIND_MAX_MATCHES: usize = 50;
+/// Maximum foreign-session panes captured live in one `scope: "all"` pass.
+const FIND_FOREIGN_MAX_PANES: usize = 20;
+/// Scrollback depth of each live foreign-pane capture.
+const FIND_FOREIGN_CAPTURE_LINES: usize = 200;
+
+/// One matching line plus its ±1 line of context. 1-indexed `line_no`.
+struct BufferMatch {
+    line_no: usize,
+    before: Option<String>,
+    line: String,
+    after: Option<String>,
+}
+
+/// Pure helper: find up to `limit` matches in `buffer`. Extracted so the match
+/// and context arithmetic can be tested without tmux or a cache.
+fn search_buffer(buffer: &str, re: &regex::Regex, limit: usize) -> Vec<BufferMatch> {
+    let lines: Vec<&str> = buffer.lines().collect();
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if out.len() >= limit {
+            break;
+        }
+        if re.is_match(line) {
+            out.push(BufferMatch {
+                line_no: i + 1,
+                before: i.checked_sub(1).map(|j| lines[j].to_string()),
+                after: lines.get(i + 1).map(|s| s.to_string()),
+                line: (*line).to_string(),
+            });
+        }
+    }
+    out
+}
+
+pub async fn find_in_panes(
+    cache: &crate::tmux::cache::SessionCache,
+    chat_pane: Option<&str>,
+    pattern: &str,
+    scope: Option<&str>,
+) -> String {
+    // 1. Build the regex first, before any lock or tmux call.
+    let re = match regex::RegexBuilder::new(pattern)
+        .size_limit(1 << 20)
+        .build()
+    {
+        Ok(re) => re,
+        Err(e) => return format!("Error: invalid search regex: {}", e),
+    };
+
+    // 2. Resolve the scope.
+    let search_all = match scope {
+        None | Some("session") => false,
+        Some("all") => true,
+        Some(s) => {
+            return format!(
+                "Error: invalid scope '{}' — expected \"session\" or \"all\".",
+                s
+            );
+        }
+    };
+
+    // Read home session name before acquiring panes lock (M12 lock-ordering).
+    let home = cache.session_name.read().unwrap_or_log().clone();
+
+    // 3. Home pass — read the cache once, clone data, drop guard, then search.
+    let home_rows: Vec<(
+        String,
+        String,
+        String,
+        crate::tmux::status::PaneStatus,
+        String,
+    )> = {
+        let panes = cache.panes.read().unwrap_or_log();
+        panes
+            .iter()
+            .filter(|(_, st)| st.session_name == home)
+            .filter(|(id, _)| chat_pane != Some(id.as_str())) // never search the chat pane
+            .map(|(id, st)| {
+                (
+                    id.clone(),
+                    st.window_name.clone(),
+                    st.session_name.clone(),
+                    st.status,
+                    st.buffer.clone(),
+                )
+            })
+            .collect()
+    };
+
+    let mut results: Vec<(
+        String,
+        String,
+        String,
+        crate::tmux::status::PaneStatus,
+        Vec<BufferMatch>,
+    )> = Vec::new();
+    let mut total_matches = 0usize;
+
+    for (pane_id, window_name, session_name, status, buffer) in &home_rows {
+        if total_matches >= FIND_MAX_MATCHES {
+            break;
+        }
+        let limit = FIND_MAX_MATCHES - total_matches;
+        let matches = search_buffer(buffer, &re, limit);
+        if !matches.is_empty() {
+            let n = matches.len();
+            results.push((
+                pane_id.clone(),
+                window_name.clone(),
+                session_name.clone(),
+                *status,
+                matches,
+            ));
+            total_matches += n;
+        }
+    }
+
+    let home_count = home_rows.len();
+
+    // 4. Foreign pass — only when scope is "all".
+    let mut skipped = 0usize;
+    let mut foreign_visited = 0usize;
+
+    if search_all {
+        let foreign_rows: Vec<(String, String, String, crate::tmux::status::PaneStatus)> = {
+            let panes = cache.panes.read().unwrap_or_log();
+            panes
+                .iter()
+                .filter(|(_, st)| st.session_name != home)
+                .filter(|(id, _)| chat_pane != Some(id.as_str()))
+                .map(|(id, st)| {
+                    (
+                        id.clone(),
+                        st.window_name.clone(),
+                        st.session_name.clone(),
+                        st.status,
+                    )
+                })
+                .collect()
+        };
+
+        let foreign_rows: Vec<_> = foreign_rows
+            .into_iter()
+            .take(FIND_FOREIGN_MAX_PANES)
+            .collect();
+
+        for (pane_id, window_name, session_name, status) in foreign_rows {
+            if total_matches >= FIND_MAX_MATCHES {
+                break;
+            }
+            foreign_visited += 1;
+
+            let pid = pane_id.clone();
+            let raw = match crate::tmux::off_runtime("capture-pane-annotated", move || {
+                crate::tmux::capture_pane_annotated(&pid, FIND_FOREIGN_CAPTURE_LINES)
+            })
+            .await
+            {
+                Some(Ok(s)) => s,
+                Some(Err(_)) => {
+                    skipped += 1;
+                    continue;
+                }
+                None => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            let limit = FIND_MAX_MATCHES - total_matches;
+            let matches = search_buffer(&raw, &re, limit);
+            if !matches.is_empty() {
+                let n = matches.len();
+                results.push((pane_id, window_name, session_name, status, matches));
+                total_matches += n;
+            }
+        }
+    }
+
+    // 5. Render the result.
+    if results.is_empty() {
+        let foreign_part = if search_all && foreign_visited > 0 {
+            format!(" plus {} foreign pane(s)", foreign_visited)
+        } else {
+            String::new()
+        };
+        return format!(
+            "No pane matched /{}/ (searched {} pane(s) in session '{}'{}).",
+            pattern, home_count, home, foreign_part
+        );
+    }
+
+    let mut out = format!(
+        "{} match(es) for /{}/ across {} pane(s):\n",
+        total_matches,
+        pattern,
+        results.len()
+    );
+
+    for (pane_id, window_name, session_name, status, matches) in &results {
+        let sess_part = if *session_name != home {
+            format!(" session:{}", session_name)
+        } else {
+            String::new()
+        };
+
+        let mut body_parts = Vec::new();
+        for m in matches {
+            if let Some(ref before) = m.before {
+                body_parts.push(format!("{:>5}- {}", m.line_no - 1, before));
+            }
+            body_parts.push(format!("{:>5}: {}", m.line_no, m.line));
+            if let Some(ref after) = m.after {
+                body_parts.push(format!("{:>5}- {}", m.line_no + 1, after));
+            }
+        }
+
+        let body = mask_sensitive(&body_parts.join("\n"));
+        out.push_str(&format!(
+            "\n{} (window '{}'{} status:{}) — {} match(es):\n{}",
+            pane_id,
+            window_name,
+            sess_part,
+            status,
+            matches.len(),
+            body
+        ));
+    }
+
+    if total_matches >= FIND_MAX_MATCHES {
+        out.push_str(&format!(
+            "\n[capped at {} matches — narrow the pattern]",
+            FIND_MAX_MATCHES
+        ));
+    }
+    if skipped > 0 {
+        out.push_str(&format!(
+            "\n[{} foreign pane(s) could not be captured]",
+            skipped
+        ));
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
 // List panes
 // ---------------------------------------------------------------------------
 
@@ -713,6 +964,181 @@ mod tests {
         assert!(
             result.contains("invalid grep regex"),
             "invalid regex error expected, got: {result}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // find_in_panes tests (M12 D4)
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn search_buffer_includes_one_line_of_context() {
+        let buffer = "line one\nline two MATCH\nline three";
+        let re = regex::Regex::new("MATCH").unwrap();
+        let matches = search_buffer(buffer, &re, 10);
+        assert_eq!(matches.len(), 1);
+        let m = &matches[0];
+        assert_eq!(m.line_no, 2);
+        assert_eq!(m.before.as_deref(), Some("line one"));
+        assert_eq!(m.after.as_deref(), Some("line three"));
+
+        // Match on first line — before is None
+        let buffer2 = "MATCH here\nsecond line";
+        let matches2 = search_buffer(buffer2, &re, 10);
+        assert_eq!(matches2.len(), 1);
+        assert_eq!(matches2[0].line_no, 1);
+        assert!(matches2[0].before.is_none());
+        assert_eq!(matches2[0].after.as_deref(), Some("second line"));
+    }
+
+    #[test]
+    fn search_buffer_respects_limit() {
+        let buffer: String = (0..10)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let re = regex::Regex::new("line").unwrap();
+        let matches = search_buffer(&buffer, &re, 3);
+        assert_eq!(matches.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_finds_match_in_cached_buffer() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            let mut p1 = pane("bash", "build", 0);
+            p1.buffer = "compiling...\nerror[E0433]: failed to resolve\ndone".to_string();
+            p1.session_name = "sess".to_string();
+            p.insert("%1".to_string(), p1);
+            let mut p2 = pane("vim", "edit", 1);
+            p2.buffer = "all clear, nothing wrong".to_string();
+            p2.session_name = "sess".to_string();
+            p.insert("%2".to_string(), p2);
+        }
+        let result = find_in_panes(&cache, None, "error", None).await;
+        assert!(result.contains("%1"), "matching pane id expected: {result}");
+        assert!(result.contains("build"), "window name expected: {result}");
+        assert!(
+            result.contains("error[E0433]"),
+            "matching line expected: {result}"
+        );
+        assert!(
+            !result.contains("%2"),
+            "non-matching pane id must not appear: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_excludes_chat_pane() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            let mut p1 = pane("bash", "main", 0);
+            p1.buffer = "error found here".to_string();
+            p1.session_name = "sess".to_string();
+            p.insert("%1".to_string(), p1);
+        }
+        let result = find_in_panes(&cache, Some("%1"), "error", None).await;
+        assert!(
+            result.contains("No pane matched"),
+            "chat pane must be excluded: {result}"
+        );
+        assert!(
+            !result.contains("%1"),
+            "chat pane id must not appear in output: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_no_match_is_not_an_error() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            let mut p1 = pane("bash", "main", 0);
+            p1.buffer = "all is well".to_string();
+            p1.session_name = "sess".to_string();
+            p.insert("%1".to_string(), p1);
+        }
+        let result = find_in_panes(&cache, None, "error", None).await;
+        assert!(
+            result.contains("No pane matched"),
+            "no-match message expected: {result}"
+        );
+        assert!(
+            !result.starts_with("Error:"),
+            "no-match must not be an error: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_invalid_regex_is_reported() {
+        let cache = SessionCache::new("sess");
+        let result = find_in_panes(&cache, None, "[", None).await;
+        assert!(
+            result.contains("invalid search regex"),
+            "invalid regex error expected: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_invalid_scope_is_reported() {
+        let cache = SessionCache::new("sess");
+        let result = find_in_panes(&cache, None, "error", Some("everything")).await;
+        assert!(
+            result.contains("invalid scope"),
+            "invalid scope error expected: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_caps_total_matches() {
+        let cache = SessionCache::new("sess");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            let mut p1 = pane("bash", "build", 0);
+            p1.buffer = (0..120)
+                .map(|i| format!("error line {}", i))
+                .collect::<Vec<_>>()
+                .join("\n");
+            p1.session_name = "sess".to_string();
+            p.insert("%1".to_string(), p1);
+        }
+        let result = find_in_panes(&cache, None, "error", None).await;
+        assert!(
+            result.contains("capped at 50 matches"),
+            "cap message expected: {result}"
+        );
+        assert!(
+            result.contains("50 match(es)"),
+            "head line must report 50 matches: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn find_in_panes_default_scope_skips_foreign_panes() {
+        let cache = SessionCache::new("home");
+        {
+            let mut p = cache.panes.write().unwrap_or_log();
+            // Home pane without the pattern
+            let mut p1 = pane("bash", "main", 0);
+            p1.buffer = "all clear".to_string();
+            p1.session_name = "home".to_string();
+            p.insert("%1".to_string(), p1);
+            // Foreign pane WITH the pattern (but default scope won't capture it)
+            let mut p2 = pane("vim", "editor", 1);
+            p2.buffer = "error in foreign session".to_string();
+            p2.session_name = "other".to_string();
+            p.insert("%2".to_string(), p2);
+        }
+        let result = find_in_panes(&cache, None, "error", None).await;
+        assert!(
+            !result.contains("%2"),
+            "foreign pane id must not appear with default scope: {result}"
+        );
+        assert!(
+            result.contains("No pane matched"),
+            "no match expected since home pane has no error: {result}"
         );
     }
 }

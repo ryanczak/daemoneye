@@ -100,7 +100,7 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 `#!/usr/bin/env python3`, prefer stdlib, exit non-zero on failure. Verify \
 `python3 --version` on remote hosts first.
 
-### `list_panes`, `watch_pane`, `read_pane`, `close_background_window`
+### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `close_background_window`
 
 - `list_panes` — enumerate id, index, window, cmd, cwd, title. Call when context \
   doesn't show a pane you need.
@@ -112,6 +112,10 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   including other sessions and daemon background windows. Defaults to 200 \
   lines. Use `grep` for noisy panes. The chat pane is refused; for the user's \
   active pane use `get_terminal_context`.
+- `find_in_panes(pattern, scope?)` — one regex search across every pane. Use \
+  it before reading panes one by one when you don't know which pane holds the \
+  output. Capped at 50 matches; `scope: "all"` also searches other tmux \
+  sessions (slower). The chat pane is never searched.
 - `close_background_window(pane_id)` — no approval. Close after one-shot use; \
   keep open for retries or follow-ups.
 

@@ -1,7 +1,7 @@
 # Phase 04: `find_in_panes` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01, phase-02, phase-03
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -554,3 +554,44 @@ by `read_pane` in this same file); no `docs/architecture.md` changes.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-08 05:12 (started)
+
+**Executor:** Claude (Sonnet 4.5) — implementing `find_in_panes` tool (Tasks 1–12).
+
+### Update — 2026-08-08 05:20 (end-to-end verification)
+
+```
+== GATES ==
+fmt exit=0
+build exit=0
+clippy exit=0
+test exit=101 (pre-existing bug_tracker failure: OpenBugOnDonePhase M12 phase-03 — not this phase)
+
+== DOC COUNTS ==
+1 (grep -c '**35 tools: 26 core + 9 deferred.**' CLAUDE.md)
+row exit=0 (find_in_panes table row present)
+2 (grep -c 'find_in_panes' assets/prompts/sre.toml)
+doc_truth exit=0
+
+== NEW TESTS ==
+find exit=0 (7 find_in_panes tests pass)
+search exit=0 (2 search_buffer tests pass)
+
+== M1 APPLY (invert the chat-pane guard) ==
+M1 mutated-lines-present=1
+M1 exit=101 (find_in_panes_excludes_chat_pane FAILED as expected)
+M1 restored exit=0 (passes after restore)
+
+== M2 APPLY (raise the match cap) ==
+M2 mutated-lines-present=1
+M2 exit=101 (find_in_panes_caps_total_matches FAILED as expected)
+M2 restored exit=0 (passes after restore)
+
+== TREE CLEAN AFTER MUTATIONS ==
+(no diff — mutations fully restored)
+
+== FINAL GATE ==
+cargo test --lib: 1172 passed; 0 failed
+cargo test --test doc_truth: 4 passed; 0 failed
+```

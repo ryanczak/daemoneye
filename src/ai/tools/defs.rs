@@ -681,6 +681,33 @@ pub static TOOLS: &[ToolDef] = &[
         deferred_group: None,
     },
     ToolDef {
+        name: "find_in_panes",
+        description: "Search every tmux pane's buffer for a regex and return the \
+             matching lines with their pane id, window and status. Use this to \
+             answer \"which pane has the error?\" in one call instead of reading \
+             panes one by one. Output is masked and capped at 50 matches. The \
+             chat pane is never searched.",
+        params: &[
+            ParamDef {
+                name: "pattern",
+                ty: ParamTy::Str,
+                required: true,
+                description: "Regular expression matched against each line of \
+                              every pane's buffer.",
+            },
+            ParamDef {
+                name: "scope",
+                ty: ParamTy::Str,
+                required: false,
+                description: "\"session\" (default) searches the cached buffers \
+                              of the user's own session. \"all\" additionally \
+                              captures panes in other tmux sessions live, which \
+                              is slower.",
+            },
+        ],
+        deferred_group: None,
+    },
+    ToolDef {
         name: "close_background_window",
         description: "Close a background tmux window that is no longer needed. \
                       Call this after you have finished with a background window — \

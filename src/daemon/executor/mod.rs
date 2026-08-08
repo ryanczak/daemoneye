@@ -600,6 +600,10 @@ where
             knowledge::read_pane(cache, chat_pane, pane_id, *lines, grep.as_deref()).await,
         )),
 
+        PendingCall::FindInPanes { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
+        )),
+
         PendingCall::SpawnGhost {
             runbook,
             message,

@@ -519,6 +519,19 @@ where
                         grep,
                     });
                 }
+                AiEvent::FindInPanes {
+                    id,
+                    pattern,
+                    scope,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::FindInPanes {
+                        id,
+                        thought_signature,
+                        pattern,
+                        scope,
+                    });
+                }
                 AiEvent::CloseBackgroundWindow {
                     id,
                     pane_id,

@@ -98,6 +98,12 @@ pub(super) struct ReadPaneArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct FindInPanesArgs {
+    pattern: String,
+    scope: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub(super) struct EditFileArgs {
     path: String,
     #[serde(default = "default_edit")]
@@ -391,6 +397,20 @@ impl ToolArgs for ReadPaneArgs {
             pane_id: self.pane_id,
             lines: self.lines,
             grep: self.grep,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for FindInPanesArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::FindInPanes {
+            id: id.to_string(),
+            pattern: self.pattern,
+            scope: self.scope,
             thought_signature: ts,
         }
     }

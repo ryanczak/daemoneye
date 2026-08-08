@@ -175,6 +175,12 @@ pub enum AiEvent {
         grep: Option<String>,
         thought_signature: Option<String>,
     },
+    FindInPanes {
+        id: String,
+        pattern: String,
+        scope: Option<String>,
+        thought_signature: Option<String>,
+    },
     CloseBackgroundWindow {
         id: String,
         pane_id: String,
