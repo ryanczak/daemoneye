@@ -621,9 +621,7 @@ impl PendingCall {
             PendingCall::ReadAgent { name, .. } => name.clone(),
             PendingCall::ListAgents { .. } => String::new(),
             PendingCall::DeleteAgent { name, .. } => name.clone(),
-            PendingCall::AwaitAgentResult { job_id, .. } => {
-                format!("job {}", job_id)
-            }
+            PendingCall::AwaitAgentResult { job_id, .. } => job_id.clone(),
             PendingCall::ReadPane {
                 pane_id,
                 lines,
