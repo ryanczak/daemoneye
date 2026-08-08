@@ -1,7 +1,7 @@
 # Phase 07b: situational knowledge hooks — ghost cold-start, incident auto-linking
 
 **Milestone:** M11 — Unified Knowledge Index
-**Status:** review
+**Status:** done
 **Depends on:** phase-07a (done)
 **Estimated diff:** ~360 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -916,3 +916,152 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 34f2cd64d8ae12a32b082e8619fc5db03699e827
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-07 (end-to-end verification)
+
+Written by the **architect**, not the executor. Three dispatches each reported
+the mutation result inside the server-authored `(complete)` entry — which this
+phase doc explicitly excludes — and rounds 1 and 2 both named three failing
+tests where one fails. The block below was run verbatim against the shipped
+tree at review; the mutation was applied and restored by the architect, and the
+tree was confirmed clean afterwards.
+
+```
+== additive: existing callers untouched (expect 1 and 1) ==
+src/search.rs:1
+src/daemon/memory_prompt.rs:1
+exit=0
+== new symbols present ==
+216:pub fn fts5_search_in_category(
+292:    fts5_search_in_category(query, limit, namespaces, None)
+3730:        let filtered = fts5_search_in_category("zephyr", 10, &["global"], Some("incident"));
+exit=0
+src/header.rs:339:pub fn inject_yaml_relates_to(content: &str, keys: &[String]) -> String {
+src/header.rs:688:        let out = inject_yaml_relates_to(src, &keys);
+src/header.rs:703:        let out = inject_yaml_relates_to(src, &keys);
+src/header.rs:714:        let out = inject_yaml_relates_to(src, &keys);
+src/header.rs:728:        let out = inject_yaml_relates_to(src, &[]);
+src/daemon/executor/knowledge/memory.rs:57:            stamped = crate::header::inject_yaml_relates_to(&stamped, &links);
+exit=0
+src/daemon/ghost.rs:199:        let prior = crate::daemon::situational::assemble_incident_context(alert_msg)
+src/daemon/situational.rs:144:pub fn assemble_incident_context(alert_msg: &str) -> Option<String> {
+src/daemon/situational.rs:518:            assemble_incident_context("database connection pool exhausted during peak load");
+src/daemon/situational.rs:542:        let result = assemble_incident_context("quantum cascade failure detected and resolved");
+src/daemon/situational.rs:571:        let result = assemble_incident_context("hi by");
+src/daemon/situational.rs:591:        let result = assemble_incident_context("quantum cascade failure meltdown sector seven");
+exit=0
+== the plural directory name must appear nowhere (expect no output, exit=1) ==
+exit=1
+== module tests green (situational: >8; header: >32) ==
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1135 filtered out; finished in 0.05s
+
+exit=0
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 1111 filtered out; finished in 0.01s
+
+exit=0
+== MUTATED: category filter disabled ==
+failures:
+failures:
+    memory::index::tests::category_filter_excludes_other_categories
+test result: FAILED. 1146 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.99s
+exit=0
+== RESTORED ==
+test result: ok. 1147 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.96s
+exit=0
+== restore proof: the clause must be present ==
+239:    let cat_clause = if category.is_some() {
+240:        format!(" AND category = ?{}", 3 + namespaces.len())
+246:         WHERE memories MATCH ?1 AND namespace IN ({placeholders}){cat_clause}
+813:        "DELETE FROM memories WHERE key = ?1 AND namespace = ?2 AND category = ?3",
+836:        "DELETE FROM memories WHERE key = ?1 AND namespace = ?2 AND category = ?3",
+exit=0
+```
+
+**Mutation result — the category filter is load-bearing.** Disabling it fails
+exactly one test:
+
+- `memory::index::tests::category_filter_excludes_other_categories`
+
+**and nothing else.** `adding_an_incident_links_prior_incidents` and
+`incident_context_includes_a_matching_prior_incident` **pass** under the
+mutation: every memory their fixtures seed is already in the `incident`
+category, so the filter is a no-op for them and they cannot observe its removal.
+The three-test claim repeated in rounds 1, 2 and 3 is wrong.
+
+**Second mutation — the low-signal guard (bug-07b-1, finding 2).** Not required
+by the original E2E block; added because the guard shipped untested in round 1.
+Deleting the `has_sufficient_signal` early return from
+`assemble_incident_context`:
+
+```
+test daemon::situational::tests::incident_context_is_none_for_a_low_signal_alert ... FAILED
+low-signal alert must return None even with a non-empty index
+test result: FAILED. 0 passed; 1 failed; 1146 filtered out
+```
+
+Restored: `1147 passed; 0 failed`. Against round 1's `"go no"` fixture the same
+deletion left all 12 situational tests **green** — the fixture shared no token
+with its seed, so the `None` came from the no-hits path and never reached the
+guard. Round 3's `"hi by"` / `highlight_by_service` pair fixes that: FTS5's
+unicode61 tokenizer splits on the underscore, so the seed indexes the token
+`by`, which the query matches.
+
+### Review verdict — 2026-08-07
+
+- **Verdict:** escalated
+- **Bounces:** 2 (bug: [bug-07b-1](bugs/bug-07b-1.md) — major, verified fixed)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (all production code, all 11 tests, both
+  round-3 defect fixes); Claude (direct) for the end-to-end verification entry
+  and one test-comment correction
+- **Scope deviations:** the `(end-to-end verification)` Update Log entry was
+  never produced across three dispatches despite being specced, restated in the
+  bug doc, and made an explicitly-failing acceptance criterion; written by the
+  architect at close. The self-reported mutation result was wrong in all three
+  rounds.
+- **Calibration:** four items, below — three architect-side, one executor-side
+
+**1. A bounce must refresh the phase doc's acceptance criteria — the fold's
+first live test, and it failed (architect-side).** This fold landed 2026-08-06
+with PE sign-off, off phase-07a. At round 1's bounce I filed a thorough bug doc,
+applied the full green-bounce treatment inside it, and updated `NEXT.md` — but
+left all eight criteria passing. Round 2 read a phase doc that certified itself
+as finished and returned `complete` with an empty diff in 31 turns. Its
+behavior was correct given what it was told. Round 3, with four criteria
+confirmed failing, did the work in 82 turns.
+
+**The operative lesson is about where the fold lives.** The bug doc, the loud
+header, the do-not-touch list, the enumerated edits and the inverted finish
+condition were all present in round 2 and were jointly insufficient. The
+acceptance criteria are load-bearing in a way the bug doc is not, because they
+are what the executor evaluates to decide *whether to start at all*. Stated as
+prose in `WORKFLOW.md`, the rule did not survive contact with an architect who
+had just written it; it belongs as a mechanical step in the review skill's
+bounce sequence.
+
+**2. The vacuous-guard family reached its third occurrence and is past the fold
+threshold (architect-side).** After 03a's `line.contains("turn")` and 05b's
+`"all"`-excludes-turns test, round 1 shipped a guard test whose fixture shared
+no token with its query. What distinguishes this one: the test's own comment
+*stated the correct intent* ("seed a non-empty matching corpus so the test is
+about the guard") while the fixture failed to deliver it. Naming the risk in a
+comment is not the same as satisfying it, so the fold should require the
+premise be **asserted or demonstrated**, not described — the demonstration here
+being the both-directions mutation now recorded above.
+
+**3. A self-reported mutation check was wrong in all three rounds
+(executor-side).** Every round claimed three failing tests; one fails. Two of
+the three named fixtures seed only `incident`-category memories and cannot
+observe the filter's removal. This is the third M11 confirmation that
+self-reported verification does not survive checking (03b's fabricated
+transcript, 05b's unreverted mutation, this). The remedy already in force —
+re-run the mutation at review rather than reading the claim — caught it each
+time.
+
+**4. `false_completion` still fits this shape badly (taxonomy, upstream).**
+Rounds 1 and 2 were both recorded under it, and both had four green gates. The
+class means self-reporting complete on a *red* gate. `NEXT.md` has tracked this
+gap since 03b; M11 closes with it at four occurrences. Fixing it means editing
+the canonical vocabulary in the **rexyMCP** repo — out of bounds from a
+target-project architect session.

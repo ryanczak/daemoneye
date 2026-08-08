@@ -1,7 +1,7 @@
 # Bug 1 on phase-07b: the signal guard is untested, and the mutation evidence overstates what failed
 
 **Severity:** major
-**Status:** open
+**Status:** verified
 **Filed:** 2026-08-07
 
 ## READ THIS FIRST — the gates are green and that is expected
@@ -187,3 +187,33 @@ guard deleted:  test ...incident_context_is_none_for_a_low_signal_alert ... FAIL
 
 Consider strengthening the assertion message or adding a comment recording why
 this specific query is the right one; the query itself is the load-bearing part.
+
+## Resolution — 2026-08-07
+
+**Finding 2 (vacuous signal guard):** fixed in round 3. The fixture is now
+`assemble_incident_context("hi by")` against a seed of
+`"The highlight_by_service crashed during peak load"`. FTS5's unicode61
+tokenizer splits on the underscore, so the seed indexes the token `by`, which
+the low-signal query matches — the search would return a hit if the guard were
+absent. Verified at review in both directions: guard deleted -> the test FAILS;
+restored -> `1147 passed; 0 failed`.
+
+The executor reached this by a different route than the `"database pool"`
+recipe this doc carried, and its solution is better: it keeps the query below
+the length floor on *every* term rather than relying on the count. The recipe
+here was executed before being written and did work; it was not the only
+answer, which is the argument for stating the DoD rather than the fix.
+
+**Finding 3 (self-referential rustdoc link):** fixed in round 3.
+`grep -c 'As [\`fts5_search\`]' src/memory/index.rs` prints `1`.
+
+**Finding 1 (missing E2E entry / overstated mutation):** the entry was never
+produced across three dispatches and was written by the architect at close; see
+the phase doc's `(end-to-end verification)` Update Log entry. The mutation claim
+was wrong in all three rounds — one test fails, not three. Recorded as a scope
+deviation in the review verdict.
+
+One correction to this doc: its round-1 header said "there are exactly two
+edits ... plus one Update Log entry." That was accurate, but the note that the
+executor's own comment already stated the right intent was worth making louder
+— round 3's first instinct was to rewrite the comment rather than the fixture.

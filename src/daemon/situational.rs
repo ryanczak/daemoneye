@@ -557,9 +557,14 @@ mod tests {
     fn incident_context_is_none_for_a_low_signal_alert() {
         let (_guard, _tmp) = setup();
 
-        // Seed a non-empty matching corpus so the test is about the guard, not
-        // about an empty index. The seeded memory contains terms that share
-        // characters with the query words but are not the same tokens.
+        // Seed a corpus the query would actually MATCH, so the test is about
+        // the guard rather than about a search that finds nothing anyway.
+        // FTS5's unicode61 tokenizer splits on the underscore, so
+        // "highlight_by_service" indexes the token `by` — which `"hi by"`
+        // matches. Remove the signal guard and this test fails, as it should.
+        // Do not "simplify" the seed to prose without that token: a query that
+        // matches nothing makes the assertion pass vacuously, which is the
+        // defect this fixture was rewritten to fix (bug-07b-1, finding 2).
         crate::memory::add_memory(
             "seeded-incident",
             "The highlight_by_service crashed during peak load",
