@@ -1,7 +1,7 @@
 # Phase 04: `find_in_panes` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-01, phase-02, phase-03
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1475,3 +1475,66 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** e0da8f859ba020fcdd5036516735b104f1a450d1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08 (ROUND 3)
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 (bug-04-1, bug-04-2)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — `git diff --stat af0205b e0da8f8` (dispatch to
+  completion) touches exactly one file, this phase doc, +48/-0, matching
+  `files_changed`. `git diff 429c001 HEAD -- src/daemon/executor/knowledge/pane.rs`
+  is empty — the tool source is byte-identical to the round-2-approved code.
+  The completion summary's claim that a `let home_rows` → `let mut home_rows`
+  "fix was needed" during mutation apply/restore is a misstatement about
+  transient patch-tool state, not an actual source edit; the empty diff
+  against 429c001 confirms nothing under `src/` changed this round.
+- **Independently re-verified (all pass):**
+  - `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets
+    --all-features -- -D warnings` each run as separate invocations: all exit
+    0.
+  - `cargo test`: lib suite **1173 passed; 0 failed** — matches the round-3
+    finish condition exactly.
+  - **Transcript fidelity (the whole point of this round):** `/tmp/e2e-04-r3.txt`
+    still exists on disk (39 lines: 38 transcript lines + its own trailing
+    `transcript line count=38` line). Extracted the fenced block from the
+    `### Update — 2026-08-08 06:12 (end-to-end verification)` entry and ran
+    `diff` against the file — **zero differences**, byte for byte, including
+    the final `transcript line count=38` line. The pasted block has exactly
+    38 transcript lines as the file reports about itself. No annotation,
+    condensation, reordering or retyping — this round's fix holds.
+  - M3 mutation transcript spot-checked for internal consistency rather than
+    re-run: `M3 mutated-lines-present=1`, `FAILED` for
+    `find_in_panes_results_sorted_by_pane_id` with a panic at
+    `pane.rs:1178:13`, `M3 exit=101`, `M3 restored comment-gone=0`,
+    `M3 restored exit=0` — consistent with the unchanged source and with the
+    same mutation independently re-run and observed FAILED-then-restored at
+    the round-2 review.
+  - `git status --porcelain` clean; nothing printed between `== TREE ==` and
+    `porcelain exit=0` in the transcript, matching the live tree.
+- **Bug docs:** bug-04-1 and bug-04-2 both marked verified/resolved
+  (`docs/dev/milestones/M12-tmux-integration/bugs/`), each with its
+  Verification checklist re-checked against this round's independent
+  re-run. bug-04-2's remedy differs from its own "How to fix" text (which
+  named pasting the 2,555-line round-2 file) — the round-3 spec instead
+  replaced the E2E block itself so the artifact is inherently pasteable;
+  recorded in the bug doc as an authorized deviation, not a shortfall.
+- **Calibration:**
+  - The round-2 E2E block emitted 2,555 lines, which made a verbatim paste
+    impossible and a paraphrase inevitable (bug-04-2). The round-3 block's
+    `tail`/`grep` piping fixed the root cause at the block level — 38 lines,
+    small enough to paste whole — rather than asking the executor to be more
+    careful pasting a 2,555-line file. Architect-side fix, not an executor
+    fault.
+  - The dispatch-time "no parseable '## Acceptance criteria' section"
+    warning, first attributed at the round-2 review to an H1 heading
+    (`# ⚠ ROUND 2 …`) inserted inside `## Spec`, **persisted in round 3**
+    after that heading was demoted to `### ⚠ ROUND 3 …` (H3). The H1 was
+    therefore **not** the cause — the real cause is still unidentified and
+    should not be re-diagnosed from the same guess. Hold for recurrence;
+    worth root-causing from the parser source (as phase-03's E2E-seeding
+    calibration note did) rather than reasoned about from symptoms.
+
+This is M12 phase 4 of 8 — phases 05–08 remain `todo`. Per the review skill's
+handling of a non-final phase, `docs/dev/NEXT.md`'s active-phase pointer is
+left as-is for the architect to advance via `/rexymcp:architect next`.
