@@ -756,3 +756,50 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 369f10be9180db229016fba89b2017ba0daf3b35
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-08 (end-to-end verification)
+
+**Executor:** rexyMCP executor
+
+Verbatim contents of `/tmp/e2e-02.txt`:
+
+```
+test tmux::cache::tests::get_labeled_context_chat_pane_excluded_from_background ... ok
+test tmux::bounded_output_tests::bounded_output_times_out_and_kills_the_child ... ok
+
+test result: ok. 1158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.97s
+
+exit=0
+test tmux::status::tests::classify_active_shell_with_recent_output ... ok
+test tmux::status::tests::classify_boundary_ages ... ok
+test tmux::status::tests::classify_idle_shell_never_awaiting_input ... ok
+test tmux::status::tests::classify_running_for_nonshell_with_recent_output ... ok
+test tmux::status::tests::classify_unknown_activity_nonshell_is_running ... ok
+test tmux::status::tests::classify_awaiting_input_for_nonshell_stale_output ... ok
+test tmux::status::tests::classify_bell_beats_running_command ... ok
+test tmux::status::tests::classify_unknown_activity_shell_is_idle_zero ... ok
+test tmux::status::tests::classify_dead_wins_over_bell_and_command ... ok
+test tmux::status::tests::status_display_exact_forms ... ok
+test tmux::status::tests::summarize_appends_last_meaningful_line ... ok
+test tmux::status::tests::summarize_empty_buffer_is_status_alone ... ok
+test tmux::status::tests::summarize_truncates_line_to_50_chars ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1145 filtered out; finished in 0.00s
+src/tmux/cache.rs:326:                entry.status = crate::tmux::status::classify(
+src/tmux/cache.rs:341:                entry.summary = crate::tmux::status::summarize(entry.status, &entry.buffer);
+0
+1
+== M1 APPLIED ==
+test tmux::status::tests::classify_idle_shell_never_awaiting_input ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1157 filtered out; finished in 0.00s
+== M1 RESTORED ==
+test tmux::status::tests::classify_idle_shell_never_awaiting_input ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1157 filtered out; finished in 0.00s
+== M2 APPLIED ==
+test tmux::status::tests::classify_dead_wins_over_bell_and_command ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1157 filtered out; finished in 0.00s
+== M2 RESTORED ==
+test tmux::status::tests::classify_dead_wins_over_bell_and_command ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1157 filtered out; finished in 0.00s
+== FINAL TREE ==
+ M src/tmux/cache_tests.rs
+```

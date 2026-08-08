@@ -8,8 +8,6 @@ fn cache() -> SessionCache {
 
 // ── get_labeled_context ───────────────────────────────────────────────────
 
-// ── get_labeled_context ───────────────────────────────────────────────────
-
 #[test]
 fn get_labeled_context_no_panes_no_source_returns_fallback() {
     let c = cache();
