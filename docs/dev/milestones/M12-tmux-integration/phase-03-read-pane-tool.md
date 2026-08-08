@@ -1,7 +1,7 @@
 # Phase 03: `read_pane` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-01, phase-02
 **Estimated diff:** ~450 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1091,3 +1091,39 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3d77c06270984d95b9c6f36fd77c633ed3a23f7b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-07
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-03-1 — no E2E entry; undeclared `await_agent_result` summary edit)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — round 2 touched exactly the two authorized files
+  (this doc, `src/ai/types/pending.rs`), confirmed via
+  `git diff --stat d714590 HEAD -- src/ai/types/pending.rs` (1 line) and the
+  server-authored bookkeeping commits carrying the rest.
+- **Calibration:** none new — this bounce's lessons were already folded into
+  `WORKFLOW.md` (E2E-as-a-Spec-task rule, PE sign-off) before this round
+  started; see the milestone README's phase-03 calibration notes.
+
+Independently re-verified at review (not read-and-trusted):
+
+- `cargo fmt --all -- --check`, `cargo build`, `cargo clippy --all-targets
+  --all-features -- -D warnings`, `cargo test` all re-run clean; `cargo test`
+  reports **1163 passed** (matches the round-2 inverted finish condition — not
+  1164, no scope creep).
+- Checks 1–5 from the ROUND 2 acceptance block re-run against the current
+  tree: entry exists (1), `== M1 APPLIED ==` marker present (1),
+  `read_pane_refuses_chat_pane ... FAILED` present (1),
+  `read_pane_caps_lines_at_history_size ... FAILED` present (1),
+  `format!("job {}", job_id)` absent from `src/ai/types/pending.rs` (0).
+- **Both mutation pairs re-run independently in both directions** (not taken
+  from the executor's transcript): mutation 1 (`if chat_pane == Some(pane_id)`
+  → `if false`) — `read_pane_refuses_chat_pane` FAILED when applied, passed
+  when restored by `sed`. Mutation 2 (`requested.min(history_size)` →
+  `requested`) — `read_pane_caps_lines_at_history_size` FAILED when applied,
+  passed when restored by `git checkout`. `git status --porcelain` empty after
+  each. Both match the executor's self-reported transcript exactly.
+- `git diff --stat` for the round-2 executor commits (`cae379c`, `3d77c06`)
+  confirmed as exactly the phase doc and `src/ai/types/pending.rs`, with the
+  `pending.rs` diff being precisely the one-line `AwaitAgentResult` revert
+  (Task 9) — no other production code touched.
