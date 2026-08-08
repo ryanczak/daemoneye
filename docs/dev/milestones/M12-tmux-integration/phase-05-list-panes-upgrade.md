@@ -1,7 +1,7 @@
 # Phase 05: `list_panes` Upgrade + `get_terminal_context` Scope
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** done
 **Depends on:** phase-01, phase-02, phase-04
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -1022,3 +1022,52 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0d59558b4fee39bdf06460a591923ee75dd53efa
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** approved_after_1
+- **Bounces:** one ([bug-05-1](bugs/bug-05-1.md) — retyped, not pasted, E2E transcript; verified fixed this round)
+- **Executor:** Claude (Sonnet 4.5) / Qwen/Qwen3.6-27B-FP8 (server-authored tail)
+- **Scope deviations:** one, architect-side, not bounced. The pasted transcript
+  is missing the `== M1 APPLY ==` / `== M1 RESTORED ==` / `== M2 APPLY ==` /
+  `== M2 RESTORED ==` marker lines the § End-to-end verification block echoes,
+  because the executor contract (`executor/templates/executor_contract.md:160-164`)
+  hard-bans in-place shell edits (`sed -i`/`perl -i`) and the executor
+  substituted `patch` for the two mutation pairs, declaring the substitution in
+  its completion summary. This makes Task 3's literal block unsatisfiable by
+  the executor as written — an architect-side spec/tooling contradiction, not
+  an executor error. Graded on substance: both mutation pairs were
+  independently re-run by the reviewer with the phase doc's own `sed -i`
+  commands (not bound by the executor contract) — `M1 mutated-lines-present=1`,
+  target test `FAILED` mutated / `ok` restored; same for `M2`; tree clean after
+  both. The guards are real.
+- **Paste fidelity — the round's whole point:** independently confirmed.
+  `/tmp/e2e-05.txt` exists (regenerated this round — round 1's copy was
+  deleted before re-dispatch) and the round-2
+  `### Update — 2026-08-08 07:14 (end-to-end verification)` entry is
+  byte-identical to it (50/50 lines, `diff` empty). Re-running Task 3's own
+  command verbatim at review time now prints `PASTE MISMATCH` — not because
+  the paste is wrong, but because the automated `(complete, server-authored)`
+  entry appended *after* the executor's paste-check run also contains the
+  substring `end-to-end verification)` in its prose (line 891), and being
+  later in the file it wins the command's `tail -1` selection instead of the
+  real heading (line 828). Extracting from the correct heading confirms the
+  match. Recorded as a reviewer note on bug-05-1, not a new bug — the
+  executor's own `PASTE MATCH` result was truthful when it ran, before the
+  server tail existed.
+- **Independently re-verified:** all four gates re-run separately
+  (fmt/build/clippy/test, lib suite 1182); `git diff --stat` for this round
+  (`c6e0e7e..0d59558`) lists exactly one file, the phase doc, +66/-0, nothing
+  under `src/`; working tree clean before and after review.
+- **Calibration:** the executor contract's hard ban on `sed -i`/`perl -i`
+  in-place edits directly contradicts every M12 phase doc from phase-03
+  onward, all of which specify their mutation-pair evidence as `sed -i`
+  commands inside the § End-to-end verification block. The executor cannot
+  satisfy that block verbatim without violating its own contract, and has now
+  substituted `patch` twice (phase-05 round 1, round 2) while declaring it
+  both times. Round 2 also surfaced a second, narrower tooling gap: any future
+  phase doc that extracts a fenced Update Log block by a bare substring match
+  (rather than the specific heading) is vulnerable to a later-appended
+  server-authored entry's prose reintroducing that substring — scope such
+  extractions to the heading pattern, or to the Update Log region above the
+  server tail.
