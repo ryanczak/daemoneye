@@ -1,9 +1,7 @@
 # Phase 01: Multi-Session Cache
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
-Round 1's code is correct and reviewed; only the end-to-end verification entry
-is outstanding. Start at the `ROUND 2` block in § Acceptance criteria.
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -789,3 +787,28 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f1003ee3e40ae95c647dec2fa0a16c585c77f10b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-01-1](bugs/bug-01-1.md) — no end-to-end verification
+  entry for the round-1 dispatch; code was correct throughout)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none. Round 2 touched exactly one file; zero `src/`
+  files changed (`git diff --name-only c7fff73..HEAD -- src/` → empty), and
+  `cargo test` still reports 1153, not 1154 — the inverted finish condition.
+- **Calibration:** two items, both recorded in the milestone README §
+  Notes — a lock-ordering inconsistency carried to phase 08 (architect spec
+  gap, not an executor error), and a self-satisfying bounce criterion caught
+  by running it rather than reasoning about it.
+
+**Round-2 evidence verified independently, not read.** The pasted mutation-1
+transcript was checked by re-running the mutation at review: the panic
+location (`cache_tests.rs:649:5`) and the full rendered assertion message
+(``foreign pane must not appear in map, got: [PANE MAP] idx:0=%1  (, '') |
+idx:0=%9  (, 'editor')``) match byte for byte. Mutation 2's pasted output
+matches the run captured during round 1's review. The M11 fabrication check
+was applied to the entry's test names — every name diffed against a live
+`cargo test --lib foreign_session` run, zero claimed-but-nonexistent. All
+four gates re-run independently at review: fmt/build/clippy exit 0,
+`cargo test` 1153 passed.
