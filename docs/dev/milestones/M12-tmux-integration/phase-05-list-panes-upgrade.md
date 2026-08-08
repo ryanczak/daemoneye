@@ -1,7 +1,7 @@
 # Phase 05: `list_panes` Upgrade + `get_terminal_context` Scope
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-01, phase-02, phase-04
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -708,3 +708,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** eb8f007747b684bd3f4e0d75d75ef9ed93f5895c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** bounced
+- **Bug filed:** [bug-05-1](bugs/bug-05-1.md) — E2E transcript pasted into the Update Log is not verbatim `/tmp/e2e-05.txt` (7 of 57 lines diverge in the gate-summary block; the pasted `1181 filtered out` / truncated `test result:` lines are not producible by the unfiltered `cargo test` the block actually ran — retyped, not pasted).
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **What independently verified clean:** all four gates re-run separately (fmt/build/clippy/test, 1182 passed); all 10 named § Test plan tests re-run individually and pass; both mutation pairs (M1, M2) re-run with the phase doc's own `sed` commands in both directions, `mutated-lines-present=1` each apply, target test `FAILED` mutated / `ok` restored, tree clean after restore; `cache_tests.rs` amended criterion confirmed at 209 additions / 0 deletions, additions-only (no existing assertion touched); `src/daemon/ghost.rs` (+2/-0) confirmed as the necessary `scope` field threaded through the existing `AiEvent::GetTerminalContext` → `PendingCall::GetTerminalContext` match arm, not scope creep; doc_truth green; tool-count line still `1`; `FOREIGN SESSION PANE` documented; old exclusion test gone; phase-08's job (`pane_map_summary`, `get_labeled_context` literals, `handle_list_panes`, `get_labeled_context`'s two-arg signature) confirmed untouched.
+- **Scope deviations:** none beyond the justified `ghost.rs` call-site update noted above.
