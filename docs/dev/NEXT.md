@@ -38,13 +38,44 @@ here, so what landed is the in-repo half: `WORKFLOW.md` now carries the ordered
 sequence. Mirroring it into the skill remains an upstream change, and until it
 lands the skill's §8 and this file disagree on structure.
 
+### Four upstream folds pulled in 2026-08-07
+
+The sync gap was **bidirectional** — this repo was behind upstream on four
+sections, discovered while inventorying what to push. All four are now in
+`docs/dev/WORKFLOW.md`:
+
+- **`Derive every spec fact from its source`** — folded upstream 2026-07-24
+  after **ten** occurrences. This is the one that stings: M11's single largest
+  failure class was architect-authored spec facts asserted rather than executed,
+  and we re-derived that lesson across four bug docs and several dispatches
+  while the fold sat in the template, unsynced.
+- **`Governing a running phase`** — the `stop_phase` discipline and the
+  don't-babysit-with-a-poll-loop rule.
+- **`Pin the fixture that makes the row appear`**.
+- **`Pre-inject compiler-error-driven recovery on oscillation-prone files`**.
+
+**Reconciled rather than concatenated:** `Pin the fixture` and this milestone's
+own `A guard's premise must be demonstrated` are two halves of one failure — a
+fixture that does not exercise the path the test names. Inert fixture -> vacuous
+pass; empty fixture -> spurious failure and a phantom bug hunt. Both now carry a
+cross-reference and a shared draft-time question ("what in this fixture makes
+the code take the branch I am asserting on?"). That synthesis is itself a
+candidate to push upstream.
+
+The only remaining divergence is `## How to fix` / `## Verification`, which the
+2026-08-06 bug-report fold deliberately replaced with `## Root cause` +
+`## Definition of done`. Do **not** pull those back.
+
 ### Still out of bounds from this repo
 
-The three folds landed locally on 2026-08-06, the two above, and the
-`false_completion` taxonomy gap all belong upstream in rexyMCP's
-`plugin/templates/WORKFLOW.md` / canonical failure-class vocabulary. A
-target-project architect session cannot make those edits; they need a separate
-change in the rexyMCP repo.
+**Push direction, still outstanding.** ~503 lines across 12 local-only
+`WORKFLOW.md` sections, ~13 lines of local-only `STANDARDS.md` DoD boxes (the
+mechanical-capture and own-entry E2E requirements — exactly what phase-07b
+violated three dispatches running), the bug-report template's breaking
+`How to fix` -> `Root cause` + `Definition of done` change, and the
+`false_completion` taxonomy gap in `executor/src/store/telemetry.rs:341-346`.
+Plus mirroring the four-step bounce sequence into the review skill's §8. All are
+**rexyMCP-repo** edits; a target-project architect session cannot make them.
 
 ---
 

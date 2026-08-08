@@ -586,6 +586,46 @@ shape, not model size.)*
 
 ---
 
+## Governing a running phase — the governor terminates, not the architect
+
+Once a phase is dispatched, **the executor's governor is the authority that ends
+the run.** Its terminators — the no-progress stall, the oscillation and
+identical-repetition detectors, `max_turns`, and `wall_clock_secs` — are the
+load-bearing boundary of the executor loop. A run that looks slow, stuck, or is
+grinding through many turns is the governor's call, not the architect's. Letting it
+run is *how* a real stall becomes a `hard_fail` + briefing (the input to
+`/rexymcp:escalate`) and *how* the stall detectors accumulate the data that
+calibrates them; pre-empting the governor destroys both.
+
+**When the architect may cancel a run (`stop_phase`)** — only for one of these
+three enumerated reasons, **never** because a run "looks slow" or "looks stuck":
+
+1. **Explicit human instruction** to stop.
+2. **A clearly mis-dispatched run** — wrong phase, wrong repo, or wrong config.
+3. **A confirmed infrastructure fault the governor cannot see** (e.g. the endpoint
+   died) — not a slow or long-running generation.
+
+A long generation, a repeated tool-call fumble, a frozen diff — all are handled by
+*waiting for the governor*. If the run exposes a spec-shape problem (a too-large
+edit, a missing worked example), the fix is the **next** dispatch's spec — a refined
+re-dispatch via `/rexymcp:escalate` — not killing the current run. The human's
+`rexymcp stop` is always available as a deliberate signal; the architect's
+`stop_phase` is bound by the list above.
+
+**Monitoring an in-flight run — hand off, don't hover.** Claude Code sends no MCP
+progressToken, so the human's `rexymcp status` / `rexymcp dashboard` is the live
+view. In an **interactive** dispatch, the architect confirms the run started, then
+**stops active polling** and hands off — the human watches and signals when to reap,
+or the architect reaps the terminal result on its next turn. A continuous
+`get_run_status` poll loop, with turn-by-turn narration or repeated session-log
+`grep`/`tail`, is a large and avoidable Claude-token cost (each poll re-reads the
+whole context) that buys nothing the dashboard doesn't already show. The
+**autonomous** `/rexymcp:auto` loop has no human to hand off to, so it reaps by
+polling — but minimally, without narration, and it never cancels for slow/stuck
+either.
+
+---
+
 ## What Executors Never Decide
 
 - Whether something belongs in core vs. a plugin.
@@ -646,6 +686,98 @@ root *was* the temp directory, so "outside the root" wrote outside the sandbox;
 and a classifier that matched a shutdown keyword as a bare substring and so
 blocked an unrelated command containing that substring. Both would have been
 caught by a single pinned negative example.)
+
+### Pin the fixture that makes the row appear
+
+When a test's assertion depends on **rendered output being present**, pin the
+exact fixture that produces it. Renderers routinely hide rows that are empty in
+every scope; under a fixture that leaves the row empty, the row never renders,
+the test fails with "row missing" — and the executor reads that as a *production*
+bug it must diagnose. It then re-reads the renderer in a loop looking for a
+defect that isn't there, until a governor terminator ends the run.
+
+The spec's job is to remove the ambiguity up front: name the fixture values that
+make the row appear, and say why (e.g. "use a **priced** rates fixture — the
+`$0.00` debit row is hidden by the all-empty rule, so an unpriced fixture makes
+the assertion unsatisfiable").
+
+*(M35 07e: the executor's own new test used an unpriced fixture, so the Executor
+debit row was hidden; the run hard-failed on a read/test oscillation while
+diagnosing it. A resume carrying the one-line priced-fixture hint landed clean in
+19 turns — the production code had been correct the whole time.)*
+
+**This rule and § "A guard's premise must be demonstrated, not described" are the
+two halves of one failure.** Both are a fixture that does not exercise the path
+the test names; they differ only in which way the result breaks:
+
+|  | Fixture too *inert* | Fixture too *empty* |
+|---|---|---|
+| **Symptom** | test passes vacuously | test fails spuriously |
+| **Costs** | a defect ships behind a green suite | the executor hunts a phantom production bug until a governor terminator fires |
+| **Tell** | mutating the code does **not** fail the test | the failure names a renderer or path the diff never touched |
+
+The green half is the more dangerous one — nothing in the gate set can see it —
+but the red half is the more *expensive* one, because it burns a whole dispatch.
+The single question that catches both at draft time is: **"what, specifically,
+in this fixture makes the code under test take the branch I am asserting on?"**
+If the spec cannot answer that in one sentence naming concrete fixture values,
+the criterion is not yet pinned.
+
+### Pre-inject compiler-error-driven recovery on oscillation-prone files
+
+When a phase touches a file with a **history of oscillation hard-fails**, state
+the recovery discipline explicitly in the spec: *use the compiler error to locate
+a syntax problem; never hunt for it by re-reading the file in a loop.* Pair it
+with an exact code block for any structural edit, rather than a prose description
+the executor must reconstruct by reading.
+
+*(M35: proven on 07f — a `render.rs` restructure landed with no oscillation on a
+file that had oscillated 3× earlier in the same milestone. The runtime-level fix
+for the underlying terminator behavior is M37's read-only exemption; this
+discipline is what the architect controls in the meantime.)*
+
+### Derive every spec fact from its source
+
+A phase doc is full of assertions of fact: a `file:line`, a CLI flag, a list of
+call sites, a corpus measurement, a condition the executor must satisfy. Every
+one of them is a claim the executor **cannot check and will implement
+literally**.
+
+**Before dispatch, derive each such fact by running the tool that defines it** —
+`grep` the sites, `--help` the flag, re-read the line numbers, recompute the
+figure through the same code path the product uses. Never restate one from
+memory, and never carry one forward from an earlier draft: both drift, and a
+draft that was correct when written is not correct after the phase before it
+lands.
+
+The failure is silent by construction — nothing in the toolchain checks a phase
+doc's prose against the code. Severity scales badly:
+
+- A wrong line number costs the executor a search.
+- A wrong flag costs a round trip (or a declared deviation, if the executor is
+  disciplined enough to catch it).
+- **An acceptance criterion that contradicts its own Spec, or a verification
+  that is arithmetically unsatisfiable, cannot be met at all.** The executor
+  either bounces on the architect's error or adapts and gets recorded as
+  deviating.
+
+The same discipline applies to bug docs and re-dispatch notes, which are specs
+too: a worked "here is the exact replacement code" block that calls a function
+the last phase inlined is worse than no worked example, because it is trusted.
+
+*(Folded 2026-07-24 after **ten** occurrences across M36–M38, only two caught
+before dispatch: a corpus figure quoted pre-dedup (59.6M asserted vs 36.1M
+actual); a file list written from memory that missed `main.rs`; a design
+requirement dropped between conversation and spec; an acceptance criterion
+demanding zero matches while its own task required a fixture keeping them; an
+E2E block using `init --config` when the flag is `--dir`; drifted line numbers;
+a rename list naming three sites when the phase invalidated six; a bug doc's
+worked fix citing `align_value` after a restructure had inlined it; a
+verification demanding a cross-field column equality that the layout makes
+unsatisfiable; and a status edit replacing strings the executor's bookkeeping
+had already rewritten. The executor caught three of the ten and adapted
+correctly, declaring each — which is the declare-deviations discipline working,
+not a substitute for the architect deriving the fact.)*
 
 ### Derive intentionally
 
@@ -1070,7 +1202,9 @@ pinning a key order the serializer discards. All three were architect-authored �
 executor implemented what was specified in each case.)*
 
 **A guard's premise must be demonstrated, not described.** The failures above are
-all about what the *assertion* can see. This one is about the *fixture*: a test
+all about what the *assertion* can see. This one is about the *fixture* — see
+§ "Pin the fixture that makes the row appear" for its mirror image, where the
+same defect surfaces as a spurious failure instead of a vacuous pass. A test
 for an early-return guard passes trivially whenever the input would have produced
 the same result by some other path, so the guard is never reached and its removal
 changes nothing.
