@@ -1,7 +1,7 @@
 # Phase 04: `find_in_panes` Tool
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** review
+**Status:** in-progress — bounced 2026-08-08, see [bug-04-1](bugs/bug-04-1.md)
 **Depends on:** phase-01, phase-02, phase-03
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
