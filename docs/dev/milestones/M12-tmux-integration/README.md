@@ -73,7 +73,7 @@ among the tools; filter unification + docs close the milestone.
 | 06a | [tmux-control-gate](phase-06a-tmux-control-gate.md) — the `tmux_control` tool, `APPROVAL_GATED` wiring, ghost-policy denial, and the `focus` / `zoom` / `unzoom` actions (D5) | done |
 | 06b | [tmux-control-actions](phase-06b-tmux-control-actions.md) — `split`, `rename_window`, `kill_window` with its daemon-window and chat-window refusals (D5) | done      |
 | 07 | [pane-inspector-cli](phase-07-pane-inspector-cli.md) — widened `PaneList` IPC struct + `/panes` renderer (D7) | done      |
-| 08 | filter-unification-and-docs — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
+| 08 | [filter-unification-and-docs](phase-08-filter-unification-and-docs.md) — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; 01–05 are
 `done`, 06a is `done` (architect takeover), 06b is `done` (approved_first_try),

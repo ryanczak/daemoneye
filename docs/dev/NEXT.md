@@ -1,26 +1,38 @@
 # NEXT
 
-## Active phase: [M12 phase-07 — pane-inspector-cli](milestones/M12-tmux-integration/phase-07-pane-inspector-cli.md) (`todo`)
+## Active phase: [M12 phase-08 — filter-unification-and-docs](milestones/M12-tmux-integration/phase-08-filter-unification-and-docs.md) (`todo`)
 
-D7. Replaces `Response::PaneList`'s opaque 5-tuple with a named `PaneInfo`
-struct and turns the bare `/pane` listing into a window-grouped inspector with
-cwd, `PaneStatus`, activity age and a preview line. No new tool, so the counts
-line must stay at 36.
+**M12's last in-scope phase.** D6: collapse the seven-way duplication of `de-*`
+window-prefix literals into three shared predicates in `src/daemon/mod.rs`, fix
+the lock-ordering inconsistency phase-01 left at the same sites, and verify the
+docs-true-at-close criterion. Pure refactor plus verification — no behavior
+change, no new tool.
 
-**The trap, and it is why this phase has a pure extracted renderer:** `/pane
-<n>` resolves with `panes.get(n - 1)` — a *flat index into the vector*. Group
-the rows into window sections with a per-section counter and the displayed
-number silently stops matching the resolver, pinning the wrong pane. The spec
-pins global numbering as a one-line mutation target and builds a test around
-the exact case that catches it (three panes, two windows, the third pane must
-render as `[3]` and not `[1]`).
+What the spec pins that a find-and-replace would get wrong:
 
-Also decided and written down rather than left implicit: `/panes` **must not**
-show foreign-session panes, even though `PaneInfo` carries `session` and
-phase-05's `list_panes` does show them. The same response backs `/pane <n>`
-pinning, and a foreign-session pane is not a valid foreground target.
+1. **Two predicates, not one.** `is_daemon_window` (five prefixes) and
+   `is_ghost_window` (three) are different questions: the `[ghost]` tag must
+   keep *not* appearing on `de-bg-` / `de-sj-` windows. Collapsing them is the
+   obvious mistake and the spec forbids it explicitly, with the asymmetry as a
+   test.
+2. **`de-icing` is a user window.** `DAEMON_WINDOW_PREFIX` is `"de-"`, so the
+   predicate deliberately does not use it — pinned as a negative test case.
+3. **Line numbers have drifted across phases 05–07**, so the spec locates every
+   site by `grep` rather than by a number it would get wrong.
+4. **The lock-ordering fix has a trap of its own:** the reason no deadlock
+   exists today is that every `session_name` guard is a statement-temporary.
+   The spec requires `.clone()` on the same line and forbids binding one to a
+   `let` that outlives the statement — the "fix" that would actually close the
+   cycle.
 
-**Next action:** `/rexymcp:dispatch phase-07`.
+The D6 exit criterion is a single greppable number: zero raw prefix literals
+anywhere outside `src/daemon/mod.rs`.
+
+**After this phase is approved the loop stops at the milestone boundary** — the
+retrospective, the calibration folds and setting `NEXT.md` to "none" are a
+human gate, and the phase doc's § Out of scope says so too.
+
+**Next action:** `/rexymcp:dispatch phase-08`.
 
 ---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
@@ -62,6 +74,30 @@ milestone's highest-risk phase, and the one the README flags as a possible
 a/b split).
 
 ---
+
+### [phase-07 — pane-inspector-cli](milestones/M12-tmux-integration/phase-07-pane-inspector-cli.md) approved 2026-08-08
+
+`approved_first_try`. `Response::PaneList` now carries a named `PaneInfo`
+instead of a 5-tuple, and `/panes` renders a window-grouped inspector with cwd,
+status, activity age and a preview line. 1195 tests. The phase's trap held:
+`/pane <n>` still resolves `panes[n - 1]`, and the inspector numbers rows
+globally across window sections rather than per-section.
+
+**An architect-side spec defect the executor absorbed.** Task 1 said "add a
+named struct `PaneInfo`" — but one **already existed** at `src/ipc.rs:6`,
+backing `Response::PaneSelectPrompt`. The spec was derived from lines 500–512
+of that file and never from the top of it, which is § "Derive every spec fact
+from its source" failing in a new way: the fact I checked was true, and the
+fact I did not check made it a name collision.
+
+The executor unified the two types rather than filing a blocker, which pulled
+`src/daemon/executor/mod.rs` (+103/−20) into a phase whose § Out of scope named
+that directory explicitly. Verified at review: the diff is entirely mechanical
+(one production call site plus three test fixtures filling the widened struct),
+`PaneSelectPrompt` still populates and renders every field it needs, and the
+unified type is the better design. Approved as a justified deviation forced by
+the spec defect. **The lesson is mine, not the executor's:** when a spec says
+"add a type", grep the target file for that name first.
 
 ### [phase-06b — tmux-control-actions](milestones/M12-tmux-integration/phase-06b-tmux-control-actions.md) approved 2026-08-08
 
