@@ -176,8 +176,10 @@ where
     // run here, holding the cache lock for the whole sweep.
     let candidates: Vec<(String, String, String, usize, bool)> = {
         let panes = cache.panes.read().unwrap_or_log();
+        let home = cache.session_name.read().unwrap_or_log().clone();
         panes
             .iter()
+            .filter(|(_, s)| s.session_name == home)
             .filter(|(id, _)| chat_pane_id.as_deref() != Some(id.as_str()))
             .filter(|(_, s)| {
                 !s.window_name.starts_with("de-bg-")

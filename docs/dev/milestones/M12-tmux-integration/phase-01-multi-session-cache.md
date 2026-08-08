@@ -1,7 +1,7 @@
 # Phase 01: Multi-Session Cache
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~420 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -383,5 +383,11 @@ each). The server-authored `(complete)` entry does not satisfy this.
 - Any change to `[OTHER SESSIONS]` / `other_sessions_context()`.
 
 ## Update Log
+
+### Update — 2026-08-08 02:14 (started)
+
+**Executor:** claude
+
+Starting Phase 01: Multi-Session Cache. Implementing `PaneState.session_name`, foreign-pane retention in `refresh()`, `evict_missing()`, `is_home_pane()` helper, session filters on iteration surfaces, and tests.
 
 *(entries appended by the executor and architect as the phase progresses)*

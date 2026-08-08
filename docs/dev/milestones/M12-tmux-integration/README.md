@@ -65,7 +65,7 @@ among the tools; filter unification + docs close the milestone.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) | todo |
+| 01 | [multi-session-cache](phase-01-multi-session-cache.md) — retain foreign-session panes, `PaneState.session_name`, metadata-only refresh for foreign panes, stale-pane eviction (D1) | in-progress |
 | 02 | pane-status-classification — `PaneStatus` enum + `summarize()` replacement (D2) | todo |
 | 03 | read-pane-tool — `read_pane` core tool, full add-a-tool checklist (D3) | todo |
 | 04 | find-in-panes-tool — `find_in_panes` core tool (D4) | todo |

@@ -937,8 +937,7 @@ where
         if chat_pane == Some(tp) {
             return None;
         }
-        let panes = cache.panes.read().unwrap_or_log();
-        if panes.contains_key(tp) {
+        if cache.is_home_pane(tp) {
             Some(tp.to_string())
         } else {
             None
@@ -957,17 +956,17 @@ where
     });
     if let Some(dtp) = default_target
         && chat_pane != Some(dtp.as_str())
+        && cache.is_home_pane(&dtp)
     {
-        let panes = cache.panes.read().unwrap_or_log();
-        if panes.contains_key(&dtp) {
-            return Ok(dtp);
-        }
+        return Ok(dtp);
     }
 
+    let home = cache.session_name.read().unwrap_or_log().clone();
     let pane_list: Vec<PaneInfo> = {
         let panes = cache.panes.read().unwrap_or_log();
         let raw: Vec<PaneInfo> = panes
             .iter()
+            .filter(|(_, state)| state.session_name == home)
             .map(|(pid, state)| PaneInfo {
                 id: pid.clone(),
                 current_cmd: state.current_cmd.clone(),

@@ -92,6 +92,7 @@ fn get_labeled_context_client_viewport_shown_when_known() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "main".to_string(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -128,6 +129,7 @@ fn get_labeled_context_client_viewport_absent_when_zero() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "main".to_string(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -163,6 +165,7 @@ fn get_labeled_context_background_panes_sorted() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -185,6 +188,7 @@ fn get_labeled_context_background_panes_sorted() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -282,6 +286,7 @@ fn get_labeled_context_source_pane_excluded_from_background() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -317,6 +322,7 @@ fn get_labeled_context_copy_mode_annotated() {
                 in_copy_mode: true,
                 synchronized: false,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -357,6 +363,7 @@ fn get_labeled_context_synchronized_pane_noted() {
                 in_copy_mode: false,
                 synchronized: true,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -393,6 +400,7 @@ fn get_labeled_context_dead_pane_noted() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "de-bg-myjob".to_string(),
+                session_name: "test-session".to_string(),
                 dead: true,
                 dead_status: Some(1),
                 last_activity: 0,
@@ -430,6 +438,7 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -453,6 +462,7 @@ fn get_labeled_context_chat_pane_excluded_from_background() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: String::new(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -495,6 +505,7 @@ fn get_labeled_context_pane_classification() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "work".to_string(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -518,6 +529,7 @@ fn get_labeled_context_pane_classification() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "work".to_string(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -541,6 +553,7 @@ fn get_labeled_context_pane_classification() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "de-bg-myjob".to_string(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -564,6 +577,7 @@ fn get_labeled_context_pane_classification() {
                 in_copy_mode: false,
                 synchronized: false,
                 window_name: "servers".to_string(),
+                session_name: "test-session".to_string(),
                 dead: false,
                 dead_status: None,
                 last_activity: 0,
@@ -589,3 +603,126 @@ fn get_labeled_context_pane_classification() {
         "other user window should be SESSION PANE"
     );
 }
+
+// ── multi-session cache (foreign pane exclusion) ──────────────────────────
+
+fn test_pane(session: &str) -> PaneState {
+    PaneState {
+        buffer: String::new(),
+        summary: String::new(),
+        current_cmd: String::new(),
+        current_path: String::new(),
+        pane_title: String::new(),
+        last_updated: std::time::Instant::now(),
+        scroll_position: 0,
+        history_size: 0,
+        in_copy_mode: false,
+        synchronized: false,
+        window_name: String::new(),
+        session_name: session.to_string(),
+        dead: false,
+        dead_status: None,
+        last_activity: 0,
+        start_cmd: String::new(),
+        pane_index: 0,
+        shell_pid: 0,
+    }
+}
+
+#[test]
+fn pane_map_excludes_foreign_session_panes() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap_or_log();
+        panes.insert("%1".to_string(), test_pane("home"));
+        panes.insert("%9".to_string(), {
+            let mut p = test_pane("other");
+            p.window_name = "editor".to_string();
+            p
+        });
+    }
+    let summary = c.pane_map_summary(None);
+    assert!(
+        summary.contains("%1"),
+        "home pane should appear in map, got: {summary}"
+    );
+    assert!(
+        !summary.contains("%9"),
+        "foreign pane must not appear in map, got: {summary}"
+    );
+}
+
+#[test]
+fn labeled_context_excludes_foreign_session_panes() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap_or_log();
+        panes.insert("%1".to_string(), test_pane("home"));
+        panes.insert("%9".to_string(), {
+            let mut p = test_pane("other");
+            p.window_name = "editor".to_string();
+            p
+        });
+    }
+    let ctx = c.get_labeled_context(None, None);
+    assert!(
+        ctx.contains("%1"),
+        "home pane should appear in context, got: {ctx}"
+    );
+    assert!(
+        !ctx.contains("%9"),
+        "foreign pane must not appear in context, got: {ctx}"
+    );
+}
+
+#[test]
+fn is_home_pane_rejects_foreign_session_pane() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap_or_log();
+        panes.insert("%1".to_string(), test_pane("home"));
+        panes.insert("%9".to_string(), test_pane("other"));
+    }
+    assert!(c.is_home_pane("%1"), "home pane should be accepted");
+    assert!(!c.is_home_pane("%9"), "foreign pane should be rejected");
+    assert!(!c.is_home_pane("%99"), "unknown pane should be rejected");
+}
+
+#[test]
+fn evict_missing_removes_closed_panes() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap_or_log();
+        panes.insert("%1".to_string(), test_pane("home"));
+        panes.insert("%2".to_string(), test_pane("home"));
+    }
+    let mut live = std::collections::HashSet::new();
+    live.insert("%1".to_string());
+    c.evict_missing(&live);
+    let panes = c.panes.read().unwrap_or_log();
+    assert!(panes.contains_key("%1"), "%1 should remain");
+    assert!(!panes.contains_key("%2"), "%2 should be evicted");
+}
+
+#[test]
+fn evict_missing_ignores_empty_snapshot() {
+    let c = SessionCache::new("home");
+    {
+        let mut panes = c.panes.write().unwrap_or_log();
+        panes.insert("%1".to_string(), test_pane("home"));
+        panes.insert("%2".to_string(), test_pane("home"));
+    }
+    let empty: std::collections::HashSet<String> = std::collections::HashSet::new();
+    c.evict_missing(&empty);
+    let panes = c.panes.read().unwrap_or_log();
+    assert!(
+        panes.contains_key("%1"),
+        "%1 should remain after empty snapshot"
+    );
+    assert!(
+        panes.contains_key("%2"),
+        "%2 should remain after empty snapshot"
+    );
+}
+
+// ── list_panes foreign session exclusion is in pane.rs tests ──────────────

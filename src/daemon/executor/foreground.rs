@@ -245,19 +245,15 @@ where
     let target_hint: Option<String> = (|| {
         if let Some(tp) = target
             && chat_pane != Some(tp)
+            && cache.is_home_pane(tp)
         {
-            let panes = cache.panes.read().unwrap_or_log();
-            if panes.contains_key(tp) {
-                return Some(tp.to_string());
-            }
+            return Some(tp.to_string());
         }
         if let Some(ref dtp) = default_target
             && chat_pane != Some(dtp.as_str())
+            && cache.is_home_pane(dtp)
         {
-            let panes = cache.panes.read().unwrap_or_log();
-            if panes.contains_key(dtp) {
-                return Some(dtp.clone());
-            }
+            return Some(dtp.clone());
         }
         None
     })();

@@ -94,6 +94,10 @@ pub struct PaneState {
     pub synchronized: bool,
     /// Name of the tmux window containing this pane (`#{window_name}`).
     pub window_name: String,
+    /// Name of the tmux session that owns this pane (`#{session_name}`).
+    /// Equal to the cache's adopted session for "home" panes; other values
+    /// mark foreign-session panes, which carry metadata but no captured buffer.
+    pub session_name: String,
     /// True when the pane's foreground process has exited (remain-on-exit mode).
     pub dead: bool,
     /// Exit code of the foreground process if `dead` is true.
@@ -195,6 +199,32 @@ impl SessionCache {
         }
     }
 
+    /// Remove cached panes not present in the latest `list-panes -a` snapshot.
+    ///
+    /// `live` is the full set of pane IDs on the server. An EMPTY set is
+    /// treated as "snapshot unavailable" and evicts nothing — a transient
+    /// `list-panes` failure must not wipe the cache.
+    pub fn evict_missing(&self, live: &std::collections::HashSet<String>) {
+        if live.is_empty() {
+            return;
+        }
+        self.panes
+            .write()
+            .unwrap_or_log()
+            .retain(|id, _| live.contains(id));
+    }
+
+    /// True when `pane_id` is cached AND belongs to the adopted session.
+    /// Foreground execution and target hints must only accept home panes.
+    pub fn is_home_pane(&self, pane_id: &str) -> bool {
+        let home = self.session_name.read().unwrap_or_log().clone();
+        self.panes
+            .read()
+            .unwrap_or_log()
+            .get(pane_id)
+            .is_some_and(|p| p.session_name == home)
+    }
+
     /// Refresh the cache.
     ///
     /// Uses a single `list-panes` call to fetch all pane metadata (P3), then
@@ -216,15 +246,19 @@ impl SessionCache {
         // All pane metadata in one tmux call (P1 + P2 + P3).
         let rich_panes = tmux::list_panes_detailed().unwrap_or_default();
 
+        // Collect live pane IDs for eviction (before consuming rich_panes).
+        let live_ids: std::collections::HashSet<String> =
+            rich_panes.iter().map(|p| p.pane_id.clone()).collect();
+
         // Collect captures outside the lock, then write all results in one acquisition.
-        let mut captures: Vec<(crate::tmux::RichPaneInfo, String)> = Vec::new();
+        let mut captures: Vec<(crate::tmux::RichPaneInfo, Option<String>)> = Vec::new();
         for info in rich_panes {
-            if info.session_name != session {
-                continue;
-            }
-            if let Ok(content) = tmux::capture_pane(&info.pane_id, 100) {
-                captures.push((info, content));
-            }
+            let content = if info.session_name == session {
+                tmux::capture_pane(&info.pane_id, 100).ok()
+            } else {
+                None // foreign pane: metadata only, no capture (D1)
+            };
+            captures.push((info, content));
         }
 
         {
@@ -244,6 +278,7 @@ impl SessionCache {
                         in_copy_mode: false,
                         synchronized: false,
                         window_name: String::new(),
+                        session_name: String::new(),
                         dead: false,
                         dead_status: None,
                         last_activity: 0,
@@ -260,6 +295,7 @@ impl SessionCache {
                 entry.in_copy_mode = info.in_copy_mode;
                 entry.synchronized = info.synchronized;
                 entry.window_name = info.window_name.clone();
+                entry.session_name = info.session_name.clone();
                 entry.dead = info.dead;
                 entry.dead_status = info.dead_status;
                 entry.last_activity = info.last_activity;
@@ -267,13 +303,18 @@ impl SessionCache {
                 entry.pane_index = info.pane_index;
                 entry.shell_pid = info.pane_pid;
 
-                if entry.buffer != content {
-                    entry.buffer = content;
+                if let Some(c) = content
+                    && entry.buffer != c
+                {
+                    entry.buffer = c;
                     entry.summary = self.summarize(&entry.buffer);
                     entry.last_updated = std::time::Instant::now();
                 }
             }
         }
+
+        // Evict panes that no longer exist on the server.
+        self.evict_missing(&live_ids);
 
         // Session environment (P5) — best-effort; ignore errors.
         if let Ok(env) = tmux::session_environment(&session)
@@ -382,8 +423,10 @@ impl SessionCache {
     /// itself.  Returns an empty string when no targetable panes are known.
     pub fn pane_map_summary(&self, chat_pane: Option<&str>) -> String {
         let panes = self.panes.read().unwrap_or_log();
+        let home = self.session_name.read().unwrap_or_log().clone();
         let mut entries: Vec<_> = panes
             .iter()
+            .filter(|(_, state)| state.session_name == home)
             .filter(|(id, _)| chat_pane != Some(id.as_str()))
             .filter(|(_, state)| {
                 !state.window_name.starts_with("de-bg-")
@@ -596,8 +639,10 @@ impl SessionCache {
             .map(|p| p.window_name.as_str())
             .filter(|w| !w.is_empty());
 
+        let home = self.session_name.read().unwrap_or_log().clone();
         let mut others: Vec<_> = panes
             .iter()
+            .filter(|(_, state)| state.session_name == home)
             .filter(|(id, _)| source_pane != Some(id.as_str()))
             .filter(|(id, _)| chat_pane != Some(id.as_str()))
             .collect();

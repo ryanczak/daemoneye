@@ -73,11 +73,12 @@ pub fn close_bg_window(pane_id: &str, session_id: Option<&str>, sessions: &Sessi
 // ---------------------------------------------------------------------------
 
 pub fn list_panes(cache: &crate::tmux::cache::SessionCache, chat_pane: Option<&str>) -> String {
-    let panes = cache.panes.read().unwrap_or_log();
     let session = cache.session_name.read().unwrap_or_log().clone();
+    let panes = cache.panes.read().unwrap_or_log();
 
     let mut rows: Vec<_> = panes
         .iter()
+        .filter(|(_, state)| state.session_name == session)
         .filter(|(id, _)| chat_pane != Some(id.as_str()))
         .collect();
     rows.sort_by_key(|(id, _)| id.as_str());
@@ -437,6 +438,7 @@ mod tests {
             in_copy_mode: false,
             synchronized: false,
             window_name: window.to_string(),
+            session_name: "sess".to_string(),
             dead: false,
             dead_status: None,
             last_activity: 0,
@@ -489,6 +491,31 @@ mod tests {
         assert!(
             out.contains("No targetable panes found in session 'sess'"),
             "got: {out}"
+        );
+    }
+
+    #[test]
+    fn list_panes_excludes_foreign_session_panes() {
+        let c = SessionCache::new("home");
+        {
+            let mut panes = c.panes.write().unwrap_or_log();
+            panes.insert("%1".to_string(), pane("bash", "main", 0));
+            // "pane" fixture uses session_name "sess", so for a cache created with "home"
+            // the fixture pane is foreign — but we need a home pane too. Override session.
+            let p1 = panes.get_mut("%1").unwrap();
+            p1.session_name = "home".to_string();
+            // Foreign pane: session_name stays "sess" (from fixture), window is non-daemon
+            let foreign = pane("nvim", "editor", 1);
+            panes.insert("%9".to_string(), foreign);
+        }
+        let output = list_panes(&c, None);
+        assert!(
+            output.contains("%1"),
+            "home pane should appear in list_panes output, got: {output}"
+        );
+        assert!(
+            !output.contains("%9"),
+            "foreign pane must not appear in list_panes output, got: {output}"
         );
     }
 }
