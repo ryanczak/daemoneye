@@ -1,33 +1,108 @@
 # NEXT
 
-## Active phase: [M12 phase-05 — list-panes-upgrade](milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md) (`todo`)
+## Active phase: none — **STOPPED ON A BLOCKER** (2026-08-08)
 
-The second half of D4 — the two display surfaces that still cannot see past the
-home session. `list_panes` gains window grouping, live `status:` and a labeled
-foreign-session section; `get_terminal_context` gains
-`scope: "window" | "session" | "all"` (default `"session"`). Together with
-phase-01's cache these close the milestone's **"No cross-session blindness"**
-exit criterion. No new tool, so the counts line stays at 35.
+Phases 01–05 of M12 are `done`. Phase-06 was **not drafted**: a
+`/rexymcp:auto` run stopped here because resolving the blocker below requires a
+change to `docs/dev/WORKFLOW.md`, which is a human gate.
 
-Three things the spec pins that the executor would otherwise get wrong:
+### The blocker: WORKFLOW.md prescribes an edit form the executor contract bans
 
-1. **Additive, not a widened signature.** `get_labeled_context` has ~15 test
-   call sites in `src/tmux/cache_tests.rs` and 3 production ones. The spec adds
-   `get_labeled_context_scoped(..., scope)` and leaves the old name as a
-   two-line delegator, so `Session` scope stays byte-identical and **not one
-   existing cache test changes** — which is itself an acceptance criterion
-   (`git diff --stat -- src/tmux/cache_tests.rs` must be empty).
-2. **One authorized deletion.** `list_panes_excludes_foreign_session_panes`
-   asserts exactly the behavior D4 reverses, so the phase replaces it. Declared
-   in § Authorizations; no other test may be touched.
-3. **The compact E2E block, carried forward from phase-04.** Every command
-   piped through `tail`/`grep`, the artifact ~40 lines, and its own line count
-   as the last line so a paraphrase is detectable. This is the round-3 shape
-   that finally worked — see the phase-04 record below.
+`docs/dev/WORKFLOW.md:252` (§ "End-to-end verification", folded 2026-08-08)
+tells the architect to write mutation pairs as in-place shell edits:
 
-**Next action:** `/rexymcp:dispatch phase-05`.
+> *"A mutation is applied and reverted by a command like any other step —
+> `sed -i` for a substitution, `perl -0pi -e` for a multi-line deletion,
+> `git checkout <file>` for the restore"*
+
+The rexyMCP executor contract forbids exactly that, and the sandbox enforces
+it (`/home/matt/src/rexyMCP/executor/templates/executor_contract.md:160-164`):
+
+> *"**Do not edit files with in-place shell commands** (`sed -i`, `perl -i`, or
+> a `>`/`tee` redirect into a source file). Edit only through `write_file`,
+> `patch`, and `patch_lines` … (`bash` refuses `sed -i`/`perl -i` for this
+> reason)."*
+
+So **every E2E block written to that fold is unrunnable as specified.** This is
+not theoretical — it has already distorted three phases:
+
+| Phase | What happened |
+|---|---|
+| 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
+| 05 r1 | executor substituted `patch` for both `sed -i` pairs |
+| 05 r2 | same substitution; the block's `== M1 APPLY ==` / `== M*  RESTORED ==` markers are missing from the transcript because the marker `echo`s live between the banned commands |
+
+Each was graded on substance and not bounced, but the specs were asking for
+something forbidden, and the architect kept writing it because WORKFLOW.md says
+to. Reviews have had to re-run the mutations themselves every time — which is
+the standing rule anyway, but it means the *executor's* mutation evidence has
+been procedurally non-compliant by construction since phase-03.
+
+**What needs the human:** decide how mutation pairs should be expressed, then
+fold it into `docs/dev/WORKFLOW.md` § "End-to-end verification" (and push it
+upstream — the same wording is in the plugin template). Three options, in the
+architect's order of preference:
+
+1. **Express mutations as `patch`-tool tasks in `## Spec`**, with the marker
+   `echo`s as separate shell steps around them. Keeps executor-side mutation
+   evidence; costs two extra tracked tasks per pair.
+2. **Move mutation pairs out of the executor's block entirely** and make them
+   the *reviewer's* job, which is where they are independently re-run today
+   regardless. Simplest, and honest about who actually produces that evidence —
+   but it drops the executor's own mutation self-check, which the
+   green-bounce treatment leans on.
+3. **Keep `sed -i` in the block but scope it to files outside `src/`** — does
+   not work here; every mutation target is a source file.
+
+A second, smaller architect-side item to fold at the same time: the phase-05
+Task-3 paste-fidelity check (`grep -n '…verification)' | tail -1`) is fragile —
+the server-authored `(complete)` entry contains that substring in its prose and
+wins the `tail -1`, so re-running the check after the run reports a false
+`PASTE MISMATCH`. Scope the extraction to the heading pattern (`^### Update`)
+rather than a bare substring.
+
+**Next action:** resolve the blocker with PE sign-off, then
+`/rexymcp:architect next` to draft phase-06 (tmux-control-tool, D5 — the
+milestone's highest-risk phase, and the one the README flags as a possible
+a/b split).
 
 ---
+
+### [phase-05 — list-panes-upgrade](milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md) approved 2026-08-08
+
+`approved_after_1`; one bounce ([bug-05-1](milestones/M12-tmux-integration/bugs/bug-05-1.md)),
+verified fixed. D4's display half landed in full: `list_panes` groups by window
+with `status:` and a `[daemon]` tag and appends a foreign-session section;
+`get_terminal_context` takes `scope: "window" | "session" | "all"`. 1182 tests.
+
+The additive design held exactly as specced — `get_labeled_context` kept its
+two-arg signature and became a delegator to `get_labeled_context_scoped`, so
+`src/tmux/cache_tests.rs` came out **209 additions / 0 deletions**: not one of
+its ~15 existing call sites needed touching.
+
+**Two architect-side defects this phase, both worth carrying:**
+
+1. **An unsatisfiable acceptance criterion.** It demanded
+   `src/tmux/cache_tests.rs` show *no changes* while § Test plan required this
+   phase's new cache tests to live in that file. Caught by the dispatcher and
+   amended before review to "0 deletions", which was always the intent. Same
+   family as the vacuous-guard folds; the discriminator is that a criterion
+   must be checked against the *rest of its own spec*, not just against the
+   tree. **Second occurrence in M12** (phase-01's self-satisfying grep was the
+   first) — at the trend threshold.
+2. **The `sed -i` contradiction** — see the blocker above.
+
+**The retyped-transcript failure recurred**, so it is now at two consecutive
+occurrences (phase-04 r2, phase-05 r1) and compactness alone is not the fix:
+phase-05's round-1 artifact was already only 56 lines and was still
+reconstructed from memory rather than read from the file. What worked was
+giving the executor a **self-checkable** finish condition — a command that
+extracts its own pasted block and diffs it against the artifact, printing
+`PASTE MATCH` / `PASTE MISMATCH`. Verified against round 1's entry before being
+specced, where it correctly printed `PASTE MISMATCH` with exactly the seven
+divergent lines. Round 2 came back byte-identical on the first try. **Fold
+candidate at the next milestone boundary**, with the fragility fix noted in the
+blocker.
 
 ### [phase-04 — find-in-panes-tool](milestones/M12-tmux-integration/phase-04-find-in-panes-tool.md) approved 2026-08-08
 
