@@ -70,15 +70,24 @@ among the tools; filter unification + docs close the milestone.
 | 03 | [read-pane-tool](phase-03-read-pane-tool.md) — `read_pane` core tool, full add-a-tool checklist (D3) ([bug-03-1](bugs/bug-03-1.md)) | done        |
 | 04 | [find-in-panes-tool](phase-04-find-in-panes-tool.md) — `find_in_panes` core tool (D4) ([bug-04-1](bugs/bug-04-1.md), [bug-04-2](bugs/bug-04-2.md)) | done      |
 | 05 | [list-panes-upgrade](phase-05-list-panes-upgrade.md) — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) ([bug-05-1](bugs/bug-05-1.md)) | done      |
-| 06 | tmux-control-tool — approval-gated action tool, `APPROVAL_GATED` wiring, ghost-policy denial (D5) | todo |
+| 06a | [tmux-control-gate](phase-06a-tmux-control-gate.md) — the `tmux_control` tool, `APPROVAL_GATED` wiring, ghost-policy denial, and the `focus` / `zoom` / `unzoom` actions (D5) | todo |
+| 06b | tmux-control-actions — `split`, `rename_window`, `kill_window` with its daemon-window and chat-window refusals (D5) | todo |
 | 07 | pane-inspector-cli — widened `PaneList` IPC struct + `/panes` renderer (D7) | todo |
 | 08 | filter-unification-and-docs — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
 
-Phase docs are drafted one at a time via `/rexymcp:architect next`; 01–04 are
-`done`, 05 is drafted (`todo`), 06–08 are not yet drafted.
-Sizing: each phase targets < 500 lines of diff. Phase 06 is the highest-risk (approval-flow integration + policy
-semantics) and may split a/b at drafting time (gate machinery vs. actions) per
-the M11 a/b convention.
+Phase docs are drafted one at a time via `/rexymcp:architect next`; 01–05 are
+`done`, 06a is drafted (`todo`), 06b–08 are not yet drafted.
+Sizing: each phase targets < 500 lines of diff.
+
+**Phase 06 was split a/b at drafting time**, as anticipated. The seam is the
+one the risk actually sits on: 06a ships the tool, the `APPROVAL_GATED` wiring
+and the ghost-denial semantics with three non-destructive actions; 06b adds the
+destructive ones behind a gate that is already tested. The load-bearing
+discovery that forced the split is recorded in 06a's § Current state — the
+shared `prompt_and_await_approval` helper **auto-approves ghosts** for any
+non-sudo string via `GhostPolicy::is_safe`, so routing `tmux_control` through
+it unchanged would invert D5's default-deny. 06a gates before that helper and
+passes it `ghost_policy: None`.
 
 ## Notes
 

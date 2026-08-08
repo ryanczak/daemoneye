@@ -1,53 +1,35 @@
 # NEXT
 
-## Active phase: none — blocker resolved, phase-06 not yet drafted
+## Active phase: [M12 phase-06a — tmux-control-gate](milestones/M12-tmux-integration/phase-06a-tmux-control-gate.md) (`todo`)
 
-Phases 01–05 of M12 are `done`. A `/rexymcp:auto` run stopped on a blocker on
-2026-08-08; **the PE resolved it the same day (option 1) and the fold has
-landed.** Nothing is outstanding — the next step is drafting phase-06.
+D5's gate half. Ships the `tmux_control` tool with `focus` / `zoom` / `unzoom`,
+the `APPROVAL_GATED` wiring in both lists, and the ghost-shell denial. Counts go
+to **36 tools: 27 core + 9 deferred**. **Phase 06 was split a/b at drafting
+time**, as the README anticipated — 06b adds `split`, `rename_window` and
+`kill_window` behind the gate 06a proves.
 
-### Resolved 2026-08-08 (PE sign-off): mutation pairs are `patch` tasks, not `sed -i`
+Three things the spec front-loads that the executor could not discover:
 
-`docs/dev/WORKFLOW.md` § "End-to-end verification" prescribed `sed -i` /
-`perl -0pi -e` / `git checkout` for mutation pairs. The rexyMCP executor
-contract bans in-place shell edits outright and `bash` refuses them
-(`executor/templates/executor_contract.md`, the do-not list), so **every E2E
-block written to that fold was unrunnable as specified** — silently, because
-the executor substituted `patch` and the runs graded green. It went unnoticed
-for three phases (03 r2, 05 r1, 05 r2).
+1. **The shared approval gate auto-approves ghosts.**
+   `prompt_and_await_approval` short-circuits on `GhostPolicy::is_safe`, which
+   returns `true` for *any non-sudo string*. Routing `tmux_control` through it
+   unchanged would invert D5's default-deny for every ghost shell. 06a gates
+   before the helper and passes it `ghost_policy: None`. This is the reason for
+   the a/b split, and it is quoted from source in § Current state.
+2. **`ToolPolicy::permits` cannot express what D5 needs.** It returns `true` for
+   an allow-list hit, a deny-list miss, *and* no policy at all; D5 needs only
+   the first. The phase adds a narrower `explicitly_allows` beside it and
+   changes `permits` not at all.
+3. **`resize-pane -Z` is a toggle** — there is no `-Z off`, so `zoom` and
+   `unzoom` must read `#{window_zoomed_flag}` first or they invert on half the
+   calls. Verified against the installed tmux 3.7b at drafting time, along with
+   the flag actually printing `0`.
 
-**Option 1 was chosen and folded:** each mutation pair is now **three numbered
-tasks in `## Spec`** — a `patch` apply with the exact `old_str`/`new_str`, the
-inverse `patch` restore, and a `grep -c` of the mutated text after each
-direction. The marker `echo`s and test runs stay in the block as ordinary
-shell; only the *edit* moves to the `patch` tool. `git checkout` is never the
-restore for a file holding the round's own work.
+**First phase written to the new mutation-pair fold** — M1 and M2 are `patch`
+tasks in `## Spec` with a `grep -c` applied-check in each direction, not
+`sed -i` in the E2E block.
 
-Two smaller items folded under the same sign-off:
-
-- **§ "A pasted transcript is a claim, not evidence"** now requires a
-  **self-checkable** paste-fidelity task — extract the pasted fence, diff it
-  against the artifact, print `PASTE MATCH` / `PASTE MISMATCH` — with the
-  extraction anchored to `^### Update .*(end-to-end verification)` rather than
-  a bare substring, because the server-authored `(complete)` entry contains
-  that phrase in its prose and wins a `tail -1`. Also: run the detector against
-  a known-bad entry before speccing it.
-- **§ "Every acceptance criterion must be satisfiable"** gains a reinforcement
-  note. The rule already said "confirm the harness permits it"; M12 broke it
-  twice anyway (phase-05's cache_tests contradiction, and the `sed -i` form
-  prescribed by these docs). The sharpened trigger: re-read every criterion
-  against **the rest of its own spec and against what the executor is permitted
-  to do** — and include `WORKFLOW.md` itself in what you re-read.
-
-**Not applied upstream** — all three belong in the push backlog
-(`/home/matt/src/rexyMCP/plugin/templates/WORKFLOW.md` carries the superseded
-`sed -i` wording verbatim, so this one is a correctness fix upstream, not just
-a missing lesson).
-
-**Next action:** `/rexymcp:architect next` to draft phase-06 (tmux-control-tool,
-D5) — the milestone's highest-risk phase, approval-flow integration plus ghost
-policy semantics, and the one the README flags as a possible a/b split. Or
-`/rexymcp:auto` to resume the hands-off run from there.
+**Next action:** `/rexymcp:dispatch phase-06a`.
 
 ---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
