@@ -1,35 +1,34 @@
 # NEXT
 
-## Active phase: [M12 phase-06a — tmux-control-gate](milestones/M12-tmux-integration/phase-06a-tmux-control-gate.md) (`todo`)
+## Active phase: [M12 phase-06b — tmux-control-actions](milestones/M12-tmux-integration/phase-06b-tmux-control-actions.md) (`todo`)
 
-D5's gate half. Ships the `tmux_control` tool with `focus` / `zoom` / `unzoom`,
-the `APPROVAL_GATED` wiring in both lists, and the ghost-shell denial. Counts go
-to **36 tools: 27 core + 9 deferred**. **Phase 06 was split a/b at drafting
-time**, as the README anticipated — 06b adds `split`, `rename_window` and
-`kill_window` behind the gate 06a proves.
+D5's remaining three actions — `split`, `rename_window`, `kill_window` — behind
+the gate 06a proved, plus `kill_window`'s two refusals (daemon-managed windows,
+and the window holding the chat pane). **No new tool**, so the counts line must
+stay at 36; a changed count is scope creep, and that is an acceptance criterion.
 
-Three things the spec front-loads that the executor could not discover:
+Mechanical by design — the risk was all in 06a. What this spec pins:
 
-1. **The shared approval gate auto-approves ghosts.**
-   `prompt_and_await_approval` short-circuits on `GhostPolicy::is_safe`, which
-   returns `true` for *any non-sudo string*. Routing `tmux_control` through it
-   unchanged would invert D5's default-deny for every ghost shell. 06a gates
-   before the helper and passes it `ghost_policy: None`. This is the reason for
-   the a/b split, and it is quoted from source in § Current state.
-2. **`ToolPolicy::permits` cannot express what D5 needs.** It returns `true` for
-   an allow-list hit, a deny-list miss, *and* no policy at all; D5 needs only
-   the first. The phase adds a narrower `explicitly_allows` beside it and
-   changes `permits` not at all.
-3. **`resize-pane -Z` is a toggle** — there is no `-Z off`, so `zoom` and
-   `unzoom` must read `#{window_zoomed_flag}` first or they invert on half the
-   calls. Verified against the installed tmux 3.7b at drafting time, along with
-   the flag actually printing `0`.
+1. **`is_daemon_window` is widened, not rewritten.** Phase-05 left it private
+   in `executor/knowledge/pane.rs`; 06b makes it `pub(crate)` and keeps the body
+   untouched so phase-08's D6 swap stays a one-line change.
+2. **Refuse before prompting.** `kill_window`'s refusals and
+   `rename_window`'s missing-`name` error return without sending a
+   `ToolCallPrompt` — a prompt for something the tool will refuse anyway trains
+   the user to approve things that do not happen.
+3. **The `unzoom` catch-all has to become explicit.** With six actions the
+   trailing `_ =>` can no longer stand in for one of them, and the new
+   catch-all returns an error rather than `unreachable!()` — a criterion greps
+   for zero `unreachable!` in the executor.
+4. **tmux facts verified against the installed 3.7b**: `split-window` needs
+   `-P -F '#{pane_id}'` to print the new pane id at all, defaults to `-v`, and
+   both `rename-window` and `kill-window` accept a *pane* id as `-t`.
 
-**First phase written to the new mutation-pair fold** — M1 and M2 are `patch`
-tasks in `## Spec` with a `grep -c` applied-check in each direction, not
-`sed -i` in the E2E block.
+Both mutation pairs were run by the architect before being specced — the
+`.filter(|_| false)` form compiles, and `rustfmt` leaves the trailing
+mutation-target comments in place (checked, then reverted).
 
-**Next action:** `/rexymcp:dispatch phase-06a`.
+**Next action:** `/rexymcp:dispatch phase-06b`.
 
 ---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |
@@ -71,6 +70,33 @@ milestone's highest-risk phase, and the one the README flags as a possible
 a/b split).
 
 ---
+
+### [phase-06a — tmux-control-gate](milestones/M12-tmux-integration/phase-06a-tmux-control-gate.md) done 2026-08-08 — **architect takeover**
+
+`escalated`. Two `NoProgressStall` hard-fails, then a takeover. `tmux_control`
+ships with `focus` / `zoom` / `unzoom`, `APPROVAL_GATED` in both lists, and the
+D5 ghost denial. 36 tools: 27 core + 9 deferred. 1188 tests, four gates green,
+both mutation pairs verified in each direction.
+
+**The finding that justified splitting 06 a/b, and it was found by reading the
+helper rather than reasoning about it:** `prompt_and_await_approval`
+short-circuits for ghosts on `GhostPolicy::is_safe`, which returns `true` for
+*any non-sudo string*. Routing `tmux_control` through it unchanged would have
+inverted D5's default-deny for every ghost shell — silently, with every gate
+green. The arm now gates before the helper and passes it `ghost_policy: None`.
+
+**Worked examples move this executor; prose does not.** Round 1 guessed five API
+signatures and broke the build (`prompt_and_await_approval` with 8 args against
+5, `.iter()` on a `RwLock`, `off_runtime` with one arg, a nonexistent
+`ToolCallOutcome` variant, `crate::tmux::pane::*` instead of the re-export).
+Round 2, given the whole arm as a worked example plus a table of the five facts
+with file:line sources, reproduced it exactly — that code shipped unmodified.
+
+**The read-only stall is this executor's signature failure and recurs within a
+phase.** Both rounds ended identically: a patch lands, then ~60 consecutive
+searches of the same file with no edit. Round 2's spec carried an explicit
+Notes-for-executor warning naming that exact pathology and it did not help.
+Third data point behind "a recurring stall is a takeover signal".
 
 ### [phase-05 — list-panes-upgrade](milestones/M12-tmux-integration/phase-05-list-panes-upgrade.md) approved 2026-08-08
 
