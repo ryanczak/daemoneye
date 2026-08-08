@@ -305,8 +305,19 @@ satisfy this either.
 
 - [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
       --all-features -- -D warnings`, `cargo test` all exit 0.
-- [ ] `git diff --stat` shows **no changes** to `src/tmux/cache_tests.rs` — the
-      `Session`-scope delegation preserved today's output exactly.
+- [ ] `git diff --numstat -- src/tmux/cache_tests.rs` reports **0 deletions** —
+      the `Session`-scope delegation preserved today's output exactly, so no
+      existing test needed touching. Additions are expected and required: this
+      phase's new cache tests live in that file (§ Test plan).
+
+      *(Amended by the architect 2026-08-08, after dispatch and before review.
+      As originally written this criterion said the file must show no changes
+      at all, which § Test plan made impossible to satisfy — an unsatisfiable
+      criterion, the failure `docs/dev/WORKFLOW.md` § "Every acceptance
+      criterion must be satisfiable" names. The intent was always
+      "no existing test modified"; only that intent is graded. The round's
+      transcript therefore reads `cache_tests untouched (want 0)=2`, which is
+      the amended-away wording, not a defect.)*
 - [ ] `grep -c '\*\*35 tools: 26 core + 9 deferred\.\*\*' CLAUDE.md` prints `1`
       (unchanged — this phase adds no tool) and `cargo test --test doc_truth`
       passes.
