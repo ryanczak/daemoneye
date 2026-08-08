@@ -501,6 +501,7 @@ impl LimitsConfig {
             "delete_script",
             "delete_runbook",
             "delete_schedule",
+            "tmux_control",
         ];
         for tool in APPROVAL_GATED {
             if self.per_tool.contains_key(*tool) {

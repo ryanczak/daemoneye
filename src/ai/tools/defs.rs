@@ -715,6 +715,32 @@ pub static TOOLS: &[ToolDef] = &[
         deferred_group: None,
     },
     ToolDef {
+        name: "tmux_control",
+        description: "Act on the user's tmux session: move their focus to a pane, \
+             or zoom/unzoom the window a pane lives in. Every action requires the \
+             user's approval before it runs, because each one changes what they are \
+             looking at. Use it when the user asks to be taken somewhere, or when \
+             showing them a pane is more useful than quoting it back.",
+        params: &[
+            ParamDef {
+                name: "action",
+                ty: ParamTy::Str,
+                required: true,
+                description: "One of: \"focus\" (switch the user to this pane and \
+                              its window), \"zoom\" (make this pane fill its \
+                              window), \"unzoom\" (undo a zoom).",
+            },
+            ParamDef {
+                name: "pane_id",
+                ty: ParamTy::Str,
+                required: true,
+                description: "tmux pane ID (e.g. \"%3\") to act on. Resolve from \
+                              [PANE MAP] (format: idx:N=<id>) or from list_panes.",
+            },
+        ],
+        deferred_group: None,
+    },
+    ToolDef {
         name: "close_background_window",
         description: "Close a background tmux window that is no longer needed. \
                       Call this after you have finished with a background window — \

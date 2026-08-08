@@ -30,6 +30,16 @@ impl ToolPolicy {
         }
     }
 
+    /// True only when this policy names `tool_name` in an explicit `allow`
+    /// list. A `deny` policy that merely fails to deny the tool, and an
+    /// unrestricted policy, both return `false` — "not forbidden" is not
+    /// "explicitly allowed" (M12 D5, the ghost `tmux_control` gate).
+    pub fn explicitly_allows(&self, tool_name: &str) -> bool {
+        self.allow
+            .as_ref()
+            .is_some_and(|allow| allow.iter().any(|t| t == tool_name)) // explicit allow only
+    }
+
     /// Validate that `allow` and `deny` are not both set.
     pub fn validate(&self) -> Result<()> {
         if self.allow.is_some() && self.deny.is_some() {
@@ -98,6 +108,39 @@ pub fn format_tool_restriction_block(policy: &ToolPolicy) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicitly_allows_matches_only_the_allow_list() {
+        let allowed = ToolPolicy {
+            allow: Some(vec!["tmux_control".to_string()]),
+            deny: None,
+        };
+        assert!(allowed.explicitly_allows("tmux_control"));
+
+        let other_allow = ToolPolicy {
+            allow: Some(vec!["read_pane".to_string()]),
+            deny: None,
+        };
+        assert!(!other_allow.explicitly_allows("tmux_control"));
+
+        // The negative case that matters: a deny list that merely fails to
+        // deny the tool is NOT an explicit allow.
+        let deny_other = ToolPolicy {
+            allow: None,
+            deny: Some(vec!["read_pane".to_string()]),
+        };
+        assert!(deny_other.permits("tmux_control"));
+        assert!(!deny_other.explicitly_allows("tmux_control"));
+
+        let unrestricted = ToolPolicy::default();
+        assert!(unrestricted.permits("tmux_control"));
+        assert!(!unrestricted.explicitly_allows("tmux_control"));
+    }
+
+    #[test]
+    fn permits_still_allows_unrestricted() {
+        assert!(ToolPolicy::default().permits("any_tool_at_all"));
+    }
 
     #[test]
     fn allows_unlisted_when_deny_mode() {

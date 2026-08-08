@@ -120,6 +120,20 @@ struct DispatchSnapshot {
     turn_count: usize,
 }
 
+/// Whether a ghost shell may use `tmux_control`.
+///
+/// D5: navigation displaces the user's attention and no `GhostPolicy`
+/// auto-approve category covers it, so the default is deny — a ghost needs an
+/// explicit agent `ToolPolicy` allow. Deliberately **not** routed through
+/// `prompt_and_await_approval`, whose ghost branch auto-approves any non-sudo
+/// string via `GhostPolicy::is_safe`.
+pub(crate) fn ghost_may_use_tmux_control(
+    is_ghost: bool,
+    policy: Option<&crate::agents::policy::ToolPolicy>,
+) -> bool {
+    !is_ghost || policy.is_some_and(|p| p.explicitly_allows("tmux_control")) // ghost needs an explicit allow
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -609,6 +623,94 @@ where
             knowledge::find_in_panes(cache, chat_pane, pattern, scope.as_deref()).await,
         )),
 
+        PendingCall::TmuxControl {
+            id,
+            action,
+            pane_id,
+            ..
+        } => {
+            // 1. Ghost gate — before any approval prompt (D5).
+            if !ghost_may_use_tmux_control(is_ghost, tool_policy.as_ref()) {
+                return Ok(ToolCallOutcome::Result(
+                    "tmux_control is denied for ghost shells unless the agent's tool \
+                     policy explicitly allows it."
+                        .to_string(),
+                ));
+            }
+
+            // 2. Validate the action.
+            if !matches!(action.as_str(), "focus" | "zoom" | "unzoom") {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: invalid tmux_control action '{}'. Valid actions: focus, zoom, unzoom.",
+                    action
+                )));
+            }
+
+            // 3. Validate the pane.
+            let known = {
+                let panes = cache.panes.read().unwrap_or_log();
+                panes.contains_key(pane_id.as_str())
+            };
+            if !known {
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error: pane {} not found. Call list_panes to see available panes.",
+                    pane_id
+                )));
+            }
+
+            // 4. Approval. `ghost_policy` is `None` on purpose: step 1 already
+            //    made the ghost decision, and passing the real policy here
+            //    re-enters the auto-approve branch described in § Current state.
+            let approval_cmd = format!("tmux {} pane {}", action, pane_id);
+            match prompt_and_await_approval(
+                ApprovalRequest {
+                    id: id.as_str(),
+                    cmd: &approval_cmd,
+                    background: false,
+                    target_pane_hint: Some(pane_id.as_str()),
+                },
+                session_id,
+                None,
+                tx,
+                rx,
+            )
+            .await?
+            {
+                Ok(_cmd_id) => {}
+                Err(outcome) => return Ok(outcome),
+            }
+
+            // 5. Execute off the runtime.
+            let act = action.clone();
+            let pid = pane_id.clone();
+            let msg = crate::tmux::off_runtime("tmux-control", move || match act.as_str() {
+                "focus" => crate::tmux::select_window(&pid)
+                    .and_then(|()| crate::tmux::select_pane(&pid))
+                    .map(|()| format!("Focused pane {}.", pid)),
+                "zoom" => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
+                    if z {
+                        Ok(format!("Pane {} is already zoomed.", pid))
+                    } else {
+                        crate::tmux::toggle_zoom(&pid).map(|()| format!("Zoomed pane {}.", pid))
+                    }
+                }),
+                _ => crate::tmux::pane_window_zoomed(&pid).and_then(|z| {
+                    if z {
+                        crate::tmux::toggle_zoom(&pid).map(|()| format!("Unzoomed pane {}.", pid))
+                    } else {
+                        Ok(format!("Pane {} is not zoomed.", pid))
+                    }
+                }),
+            })
+            .await;
+
+            Ok(ToolCallOutcome::Result(match msg {
+                Some(Ok(m)) => m,
+                Some(Err(e)) => format!("Error running tmux {}: {}", action, e),
+                None => format!("Error: timed out running tmux {} on {}.", action, pane_id),
+            }))
+        }
+
         PendingCall::SpawnGhost {
             runbook,
             message,
@@ -1030,6 +1132,42 @@ where
             .await?;
             Err(anyhow::anyhow!("User aborted or invalid response"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tmux_control_gate_tests {
+    use super::ghost_may_use_tmux_control;
+    use crate::agents::policy::ToolPolicy;
+
+    #[test]
+    fn ghost_may_use_tmux_control_allows_non_ghosts() {
+        assert!(ghost_may_use_tmux_control(false, None));
+    }
+
+    #[test]
+    fn ghost_may_use_tmux_control_denies_ghost_without_policy() {
+        assert!(!ghost_may_use_tmux_control(true, None));
+    }
+
+    #[test]
+    fn ghost_may_use_tmux_control_denies_ghost_with_deny_list() {
+        let policy = ToolPolicy {
+            allow: None,
+            deny: Some(vec!["read_pane".to_string()]),
+        };
+        // The tool is permitted by the policy, but not *explicitly allowed*.
+        assert!(policy.permits("tmux_control"));
+        assert!(!ghost_may_use_tmux_control(true, Some(&policy)));
+    }
+
+    #[test]
+    fn ghost_may_use_tmux_control_allows_explicit_allow() {
+        let policy = ToolPolicy {
+            allow: Some(vec!["tmux_control".to_string()]),
+            deny: None,
+        };
+        assert!(ghost_may_use_tmux_control(true, Some(&policy)));
     }
 }
 

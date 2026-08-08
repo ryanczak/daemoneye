@@ -182,6 +182,12 @@ pub enum AiEvent {
         scope: Option<String>,
         thought_signature: Option<String>,
     },
+    TmuxControl {
+        id: String,
+        action: String,
+        pane_id: String,
+        thought_signature: Option<String>,
+    },
     CloseBackgroundWindow {
         id: String,
         pane_id: String,

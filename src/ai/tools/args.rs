@@ -104,6 +104,12 @@ pub(super) struct FindInPanesArgs {
 }
 
 #[derive(Deserialize)]
+pub(super) struct TmuxControlArgs {
+    action: String,
+    pane_id: String,
+}
+
+#[derive(Deserialize)]
 pub(super) struct GetTerminalContextArgs {
     #[serde(default)]
     scope: Option<String>,
@@ -417,6 +423,20 @@ impl ToolArgs for FindInPanesArgs {
             id: id.to_string(),
             pattern: self.pattern,
             scope: self.scope,
+            thought_signature: ts,
+        }
+    }
+}
+
+impl ToolArgs for TmuxControlArgs {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
+    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+        AiEvent::TmuxControl {
+            id: id.to_string(),
+            action: self.action,
+            pane_id: self.pane_id,
             thought_signature: ts,
         }
     }

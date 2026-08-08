@@ -100,7 +100,7 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
 `#!/usr/bin/env python3`, prefer stdlib, exit non-zero on failure. Verify \
 `python3 --version` on remote hosts first.
 
-### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `close_background_window`
+### `list_panes`, `watch_pane`, `read_pane`, `find_in_panes`, `tmux_control`, `close_background_window`
 
 - `list_panes` — enumerate panes grouped by window with id, index, cmd, cwd, title, status; includes a foreign-session section for panes in other tmux sessions. Call when context \
   doesn't show a pane you need.
@@ -117,6 +117,10 @@ process orchestration, and CLI wrappers. Scripts: `.py` extension, \
   it before reading panes one by one when you don't know which pane holds the \
   output. Capped at 50 matches; `scope: "all"` also searches other tmux \
   sessions (slower). The chat pane is never searched.
+- `tmux_control(action, pane_id)` — act on the user's tmux: `focus` moves them \
+  to a pane and its window, `zoom` / `unzoom` resize it. **Every action needs \
+  the user's approval** — each one changes what they are looking at. Use it when \
+  they ask to be taken somewhere, or when showing a pane beats quoting it.
 - `close_background_window(pane_id)` — no approval. Close after one-shot use; \
   keep open for retries or follow-ups.
 

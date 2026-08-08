@@ -243,6 +243,12 @@ pub enum PendingCall {
         pattern: String,
         scope: Option<String>,
     },
+    TmuxControl {
+        id: String,
+        thought_signature: Option<String>,
+        action: String,
+        pane_id: String,
+    },
 }
 
 impl PendingCall {
@@ -494,6 +500,12 @@ impl PendingCall {
                 name: "find_in_panes".to_string(),
                 arguments: serde_json::json!({"pattern": pattern, "scope": scope}).to_string(),
             },
+            PendingCall::TmuxControl { id, thought_signature, action, pane_id } => ToolCall {
+                id: id.clone(),
+                thought_signature: thought_signature.clone(),
+                name: "tmux_control".to_string(),
+                arguments: serde_json::json!({"action": action, "pane_id": pane_id}).to_string(),
+            },
         }
     }
 
@@ -535,6 +547,7 @@ impl PendingCall {
             PendingCall::AwaitAgentResult { id, .. } => id,
             PendingCall::ReadPane { id, .. } => id,
             PendingCall::FindInPanes { id, .. } => id,
+            PendingCall::TmuxControl { id, .. } => id,
         }
     }
 
@@ -656,6 +669,11 @@ impl PendingCall {
                 Some(s) => format!("/{pattern}/ scope={s}"),
                 None => format!("/{pattern}/"),
             },
+            PendingCall::TmuxControl {
+                action, pane_id, ..
+            } => {
+                format!("{action} {pane_id}")
+            }
             PendingCall::LoadTools { groups, .. } => {
                 format!("load_tools: {}", groups.join(", "))
             }
@@ -703,6 +721,7 @@ impl PendingCall {
             PendingCall::AwaitAgentResult { .. } => "await_agent_result",
             PendingCall::ReadPane { .. } => "read_pane",
             PendingCall::FindInPanes { .. } => "find_in_panes",
+            PendingCall::TmuxControl { .. } => "tmux_control",
         }
     }
 }

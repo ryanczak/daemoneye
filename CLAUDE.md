@@ -123,7 +123,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 
 ### Current AI tools
 
-**35 tools: 26 core + 9 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
+**36 tools: 27 core + 9 deferred.** `Loaded` mirrors `ToolDef.deferred_group` in
 `src/ai/tools/defs.rs` — `core` means `None` (rendered on every request); a group
 name means the tool is omitted until `load_tools` pulls the group in. **Note the
 asymmetry**: for scripts, runbooks and memory the *write* side is core while the
@@ -140,6 +140,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 | `read_pane` | core | Read any pane's buffer on demand at a requested scrollback depth (any session, incl. daemon windows); ANSI-annotated, optional regex filter, masked; chat pane refused |
 | `find_in_panes` | core | Regex search across every pane's buffer in one call; returns pane id, window, session (when foreign), status and matching lines with ±1 line of context; masked, capped at 50 matches; chat pane never searched. `scope: "all"` also captures other sessions live |
 | `watch_pane` | core | Block until regex `pattern` matches pane output, or command exits, or timeout |
+| `tmux_control` | core | Approval-gated tmux actions on a pane: `focus` (switch the user to it), `zoom`, `unzoom`. Every action round-trips the `ToolCallPrompt` approval flow. Ghost shells are denied unless the agent `ToolPolicy` **explicitly** allows the tool — a deny-list that merely omits it does not count |
 | `close_background_window` | core | Close a finished background window, freeing its slot rather than waiting for cap eviction (up to 5 exist per session) |
 | `recall_context` | core | Retrieve archived turns compacted out of live context — by BM25 query (ranked), by turn range, or both. Optional `scope: "all"` searches every session; cross-session hits are labeled. The answer to an `[elided: …]` placeholder or a too-coarse epoch summary. |
 | `load_tools` | core | Pull one or more deferred groups into the active tool set for the rest of the session. `groups` is an array of group names. |

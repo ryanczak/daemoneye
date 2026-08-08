@@ -60,6 +60,7 @@ pub fn dispatch_tool_event(
         "read_file" => dispatch::<ReadFileArgs>(id, args, ts),
         "read_pane" => dispatch::<ReadPaneArgs>(id, args, ts),
         "find_in_panes" => dispatch::<FindInPanesArgs>(id, args, ts),
+        "tmux_control" => dispatch::<TmuxControlArgs>(id, args, ts),
         "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
         "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
         "delete_runbook" => runbook_name_event(args, ts, |nm, t| AiEvent::DeleteRunbook {
@@ -217,6 +218,7 @@ mod tests {
                 "read_file" => json!({"path": "/tmp/f"}),
                 "read_pane" => json!({"pane_id": "%3"}),
                 "find_in_panes" => json!({"pattern": "error"}),
+                "tmux_control" => json!({"action": "focus", "pane_id": "%3"}),
                 "edit_file" => json!({"path": "/tmp/f"}),
                 "write_runbook" => json!({"name": "rb", "content": "# RB"}),
                 "delete_runbook" => json!({"name": "rb"}),

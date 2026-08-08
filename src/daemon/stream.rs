@@ -30,6 +30,7 @@ const APPROVAL_GATED: &[&str] = &[
     "delete_script",
     "delete_runbook",
     "delete_schedule",
+    "tmux_control",
 ];
 
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
@@ -532,6 +533,19 @@ where
                         thought_signature,
                         pattern,
                         scope,
+                    });
+                }
+                AiEvent::TmuxControl {
+                    id,
+                    action,
+                    pane_id,
+                    thought_signature,
+                } => {
+                    pending_calls.push(PendingCall::TmuxControl {
+                        id,
+                        thought_signature,
+                        action,
+                        pane_id,
                     });
                 }
                 AiEvent::CloseBackgroundWindow {
@@ -1194,6 +1208,7 @@ mod tests {
         assert!(APPROVAL_GATED.contains(&"edit_file"));
         assert!(APPROVAL_GATED.contains(&"write_script"));
         assert!(APPROVAL_GATED.contains(&"spawn_ghost_shell"));
+        assert!(APPROVAL_GATED.contains(&"tmux_control"));
         assert!(!APPROVAL_GATED.contains(&"read_file"));
         assert!(!APPROVAL_GATED.contains(&"get_terminal_context"));
     }

@@ -70,13 +70,13 @@ among the tools; filter unification + docs close the milestone.
 | 03 | [read-pane-tool](phase-03-read-pane-tool.md) — `read_pane` core tool, full add-a-tool checklist (D3) ([bug-03-1](bugs/bug-03-1.md)) | done        |
 | 04 | [find-in-panes-tool](phase-04-find-in-panes-tool.md) — `find_in_panes` core tool (D4) ([bug-04-1](bugs/bug-04-1.md), [bug-04-2](bugs/bug-04-2.md)) | done      |
 | 05 | [list-panes-upgrade](phase-05-list-panes-upgrade.md) — window grouping, status, foreign-session section, `get_terminal_context` `scope` param (D4) ([bug-05-1](bugs/bug-05-1.md)) | done      |
-| 06a | [tmux-control-gate](phase-06a-tmux-control-gate.md) — the `tmux_control` tool, `APPROVAL_GATED` wiring, ghost-policy denial, and the `focus` / `zoom` / `unzoom` actions (D5) | todo |
+| 06a | [tmux-control-gate](phase-06a-tmux-control-gate.md) — the `tmux_control` tool, `APPROVAL_GATED` wiring, ghost-policy denial, and the `focus` / `zoom` / `unzoom` actions (D5) | done |
 | 06b | tmux-control-actions — `split`, `rename_window`, `kill_window` with its daemon-window and chat-window refusals (D5) | todo |
 | 07 | pane-inspector-cli — widened `PaneList` IPC struct + `/panes` renderer (D7) | todo |
 | 08 | filter-unification-and-docs — shared targetable-panes predicate, prefix-literal cleanup, docs true at close (D6) | todo |
 
 Phase docs are drafted one at a time via `/rexymcp:architect next`; 01–05 are
-`done`, 06a is drafted (`todo`), 06b–08 are not yet drafted.
+`done`, 06a is `done` (architect takeover), 06b–08 are not yet drafted.
 Sizing: each phase targets < 500 lines of diff.
 
 **Phase 06 was split a/b at drafting time**, as anticipated. The seam is the
@@ -116,6 +116,42 @@ inconsistent sites are compliant with what they were told. Phase 08 rewrites
 all five call sites onto the shared targetable-panes predicate and is the
 natural place to fix it — **its spec must pin session-before-panes ordering at
 every site it touches.**
+
+### Calibration — phase 06a: two stalls, one takeover, and a spec that improved between them
+
+**Verdict `escalated`.** Two `NoProgressStall` hard-fails, then an architect
+takeover. Three things worth keeping:
+
+1. **The read-only stall is this executor's signature failure, and it recurs
+   within a single phase.** Both rounds ended the same way: a mutating `patch`
+   lands, then ~60 consecutive `search`/`read_file` calls on the *same file*
+   with no edit, until the governor fires. Round 1 was hunting the API it had
+   just guessed wrong; round 2 was hunting the `APPROVAL_GATED` test to extend.
+   The round-2 spec carried an explicit Notes-for-executor warning naming this
+   exact pathology — **it did not prevent it**. Exhortation does not reach this
+   behaviour; this is the third data point behind the standing note that a
+   recurring stall is a takeover signal, not a re-dispatch one.
+2. **The worked example worked, and the prose did not.** Round 1 guessed five
+   API signatures and broke the build:
+   `prompt_and_await_approval` with 8 positional args against a 5-arg
+   signature, `.iter()` on a `RwLock`, `off_runtime` with one arg, a
+   nonexistent `ToolCallOutcome::PendingCall` variant, and
+   `crate::tmux::pane::*` instead of the `pub use pane::*` re-export. Round 2,
+   given the whole arm as a worked example plus a table of the five facts with
+   file:line sources, reproduced it **exactly** — that code was kept unmodified
+   through the takeover and is what shipped. The discriminator was not spec
+   length; it was whether the signature was shown or described.
+3. **The a/b split earned itself before a line was written.** Prototyping the
+   spec surfaced that `prompt_and_await_approval` auto-approves ghosts for any
+   non-sudo string via `GhostPolicy::is_safe` — so routing `tmux_control`
+   through it unchanged would have inverted D5's default-deny silently, with
+   every gate green. That is the whole reason 06a exists separately from 06b,
+   and it was found by reading the helper rather than by reasoning about it.
+
+Not folded — item 1 is already covered by the standing takeover guidance, and
+items 2 and 3 are instances of existing rules ("worked examples are the
+highest-leverage pre-injection", "derive every spec fact from its source")
+rather than new ones.
 
 ### Calibration — phase 03: the E2E fold was wrong, and the source says why
 

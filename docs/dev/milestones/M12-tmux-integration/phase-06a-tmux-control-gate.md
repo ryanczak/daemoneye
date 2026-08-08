@@ -1,7 +1,7 @@
 # Phase 06a: `tmux_control` — the Gate and the Navigation Actions
 
 **Milestone:** M12 — Full-View tmux Integration
-**Status:** todo
+**Status:** done
 **Depends on:** phase-01, phase-02, phase-05
 **Estimated diff:** ~430 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -592,3 +592,124 @@ helper's signature from prose, and the briefing's diagnostics are all
 signature mismatches rather than logic errors; resume would have carried the
 same gap forward into the same wall.
 
+
+### Update — 2026-08-08 (end-to-end verification)
+
+```
+== NOTE: architect takeover — mutations applied with sed, not the patch tool ==
+== M1 APPLY (ghost gate inverted) ==
+M1 mutated-lines-present=1
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_allows_explicit_allow ... ok
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_allows_non_ghosts ... FAILED
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_denies_ghost_without_policy ... FAILED
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_denies_ghost_with_deny_list ... FAILED
+thread 'daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_allows_non_ghosts' (1698565) panicked at src/daemon/executor/mod.rs:1145:9:
+thread 'daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_denies_ghost_without_policy' (1698567) panicked at src/daemon/executor/mod.rs:1150:9:
+thread 'daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_denies_ghost_with_deny_list' (1698566) panicked at src/daemon/executor/mod.rs:1161:9:
+test result: FAILED. 1 passed; 3 failed; 0 ignored; 0 measured; 1184 filtered out; finished in 0.00s
+M1 exit=101
+== M1 RESTORED ==
+M1 restored (want 0)=0
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_allows_non_ghosts ... ok
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_denies_ghost_without_policy ... ok
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_denies_ghost_with_deny_list ... ok
+test daemon::executor::tmux_control_gate_tests::ghost_may_use_tmux_control_allows_explicit_allow ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1184 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+M1 restored exit=0
+== M2 APPLY (explicit-allow widened to permits semantics) ==
+M2 mutated-lines-present=1
+test agents::policy::tests::explicitly_allows_matches_only_the_allow_list ... FAILED
+thread 'agents::policy::tests::explicitly_allows_matches_only_the_allow_list' (1701177) panicked at src/agents/policy.rs:133:9:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1187 filtered out; finished in 0.00s
+M2 exit=101
+== M2 RESTORED ==
+M2 restored (want 0)=0
+test agents::policy::tests::explicitly_allows_matches_only_the_allow_list ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1187 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+M2 restored exit=0
+== SURFACES ==
+tool counts line (want 1)=1
+approval-gated in stream.rs (want 1)=2
+approval-gated in config/types.rs (want 1)=1
+sre.toml documents it (want >=1)=2
+06b actions NOT advertised (want 0)=0
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.12s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.93s
+clippy exit=0
+test result: ok. 1188 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+doc_truth exit=0
+== TREE ==
+ M CLAUDE.md
+ M assets/prompts/sre.toml
+ M src/agents/policy.rs
+ M src/ai/tools/args.rs
+ M src/ai/tools/defs.rs
+ M src/ai/tools/dispatch.rs
+ M src/ai/types/events.rs
+ M src/ai/types/pending.rs
+ M src/config/types.rs
+ M src/daemon/executor/mod.rs
+ M src/daemon/stream.rs
+ M src/tmux/pane.rs
+porcelain exit=0
+transcript line count=74
+```
+
+### Update — 2026-08-08 (paste check)
+
+PASTE MATCH
+
+### Review verdict — 2026-08-08
+
+- **Verdict:** escalated
+- **Bounces:** none (two `NoProgressStall` hard-fails, then a session takeover)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 for Tasks 1–4 and 6; Claude (direct) for
+  Tasks 5, 7–11
+- **Scope deviations:** none. The tool ships `focus` / `zoom` / `unzoom` only;
+  06b's actions are neither implemented nor advertised
+  (`06b actions NOT advertised=0` in the transcript).
+- **Calibration:** three items, all recorded in the milestone README's
+  § "Calibration — phase 06a".
+
+**What the takeover actually finished.** The second dispatch landed Tasks 1–4
+and 6 correctly and they were kept unmodified — the worked example added after
+round 1 was followed exactly, including the five API signatures round 1 had
+guessed wrong. The takeover added Task 5's second half (the `APPROVAL_GATED`
+entries and the membership assertion), the `args.rs` / `dispatch.rs` /
+`defs.rs` wiring, the six tests, the docs, and the mutation and evidence
+capture.
+
+**Gate results, independently run:** `cargo fmt --all`, `cargo build`,
+`cargo clippy --all-targets --all-features -- -D warnings` and `cargo test` all
+exit 0; **1188** lib tests; `doc_truth` 4/4.
+
+**Both mutation pairs hold.** M1 (ghost gate inverted) failed three of the four
+`ghost_may_use_tmux_control` tests and passed all four restored. M2
+(`explicitly_allows` widened to `permits` semantics) failed
+`explicitly_allows_matches_only_the_allow_list` and passed restored. Both
+`mutated-lines-present=1`, both restored counts `0`.
+
+**One transcript reading differs from the phase doc's stated expectation, and
+the code is right.** `approval-gated in stream.rs (want 1)=2` — the second hit
+is the membership assertion Task 5 required be added to
+`approval_gated_contains_expected_tools`. The acceptance criterion is "shows a
+hit in **both** files", which holds; the `want 1` annotation in the E2E block
+was the imprecise thing.

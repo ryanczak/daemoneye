@@ -357,6 +357,54 @@ pub fn select_pane(pane_id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Switch tmux focus to the window containing the specified pane.
+///
+/// tmux resolves a pane id to its window, so no lookup is needed.
+pub fn select_window(pane_id: &str) -> Result<()> {
+    let output =
+        crate::tmux::bounded_output(Command::new("tmux").args(["select-window", "-t", pane_id]))?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to select window for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
+/// Return `true` if the pane's window is currently zoomed.
+///
+/// Reads `#{window_zoomed_flag}` via `display-message -p`, which prints `0`
+/// or `1`.  Verified against tmux 3.7b.
+pub fn pane_window_zoomed(pane_id: &str) -> Result<bool> {
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-p",
+        "-t",
+        pane_id,
+        "#{window_zoomed_flag}",
+    ]))?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to read zoom state for pane '{}'", pane_id);
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(text.trim() == "1")
+}
+
+/// Toggle the zoom state of the pane's window (`tmux resize-pane -Z`).
+///
+/// Named `toggle_` on purpose: `-Z` is a toggle, and naming it `zoom_pane` is
+/// how the caller ends up unzooming a zoomed pane.
+pub fn toggle_zoom(pane_id: &str) -> Result<()> {
+    let output = crate::tmux::bounded_output(Command::new("tmux").args([
+        "resize-pane",
+        "-Z",
+        "-t",
+        pane_id,
+    ]))?;
+    if !output.status.success() {
+        anyhow::bail!("Failed to toggle zoom for pane '{}'", pane_id);
+    }
+    Ok(())
+}
+
 /// Read the last exit status recorded by the shell hook in the given pane.
 ///
 /// The shell hook (`PROMPT_COMMAND` / `precmd`) writes the exit code to the
