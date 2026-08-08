@@ -1292,3 +1292,51 @@ round-2 E2E block emitted 2,555 lines, which made pasting it whole impossible
 and a paraphrase inevitable; the round-3 block pipes each command through
 `tail`/`grep` so the artifact stays entirely machine-produced but lands at ~38
 lines, and it was run by the architect before being specced.
+
+### Update — 2026-08-08 06:12 (started)
+
+**Executor:** Claude (Sonnet 4.5) — implementing ROUND 3 doc-only fix (Tasks 1–2).
+
+### Update — 2026-08-08 06:12 (end-to-end verification)
+
+```
+== SORTS PRESENT ==
+sort_by count inside find_in_panes=2
+360:        foreign_rows.sort_by(|a, b| a.0.cmp(&b.0));
+363:            .take(FIND_FOREIGN_MAX_PANES)
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.80s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.94s
+clippy exit=0
+test result: ok. 1173 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== M3 APPLY (comment out the home_rows sort) ==
+M3 mutated-lines-present=1
+test daemon::executor::knowledge::pane::tests::find_in_panes_results_sorted_by_pane_id ... FAILED
+thread 'daemon::executor::knowledge::pane::tests::find_in_panes_results_sorted_by_pane_id' (889857) panicked at src/daemon/executor/knowledge/pane.rs:1178:13:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1172 filtered out; finished in 0.01s
+M3 exit=101
+== M3 RESTORED ==
+M3 restored comment-gone=0
+test daemon::executor::knowledge::pane::tests::find_in_panes_results_sorted_by_pane_id ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1172 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+M3 restored exit=0
+== TREE ==
+porcelain exit=0
+transcript line count=38
+```
