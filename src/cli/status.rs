@@ -2,6 +2,7 @@ use anyhow::Result;
 use tokio::io::BufReader;
 
 use crate::cli::commands::{connect, liveness_line, recv, send_request};
+use crate::cli::palette::{self, ColorDepth};
 use crate::cli::render::terminal_width;
 use crate::config::default_pid_path;
 use crate::daemon::daemon_liveness;
@@ -10,29 +11,58 @@ use crate::ipc::{Request, Response};
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
+fn depth() -> ColorDepth {
+    static DEPTH: std::sync::OnceLock<ColorDepth> = std::sync::OnceLock::new();
+    *DEPTH.get_or_init(palette::detect_from_env)
+}
+
 fn c_accent(s: &str) -> String {
-    format!("\x1b[1m\x1b[38;2;100;210;255m{s}\x1b[0m")
+    format!(
+        "\x1b[1m{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (100, 210, 255), 117, 96)
+    )
 }
 fn c_key(s: &str) -> String {
-    format!("\x1b[38;2;140;140;165m{s}\x1b[0m")
+    format!(
+        "{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (140, 140, 165), 103, 90)
+    )
 }
 fn c_val(s: &str) -> String {
-    format!("\x1b[1m\x1b[38;2;220;220;240m{s}\x1b[0m")
+    format!(
+        "\x1b[1m{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (220, 220, 240), 254, 97)
+    )
 }
 fn c_ok(s: &str) -> String {
-    format!("\x1b[38;2;80;210;130m{s}\x1b[0m")
+    format!(
+        "{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (80, 210, 130), 78, 92)
+    )
 }
 fn c_err(s: &str) -> String {
-    format!("\x1b[38;2;230;80;80m{s}\x1b[0m")
+    format!(
+        "{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (230, 80, 80), 167, 91)
+    )
 }
 fn c_warn(s: &str) -> String {
-    format!("\x1b[38;2;250;190;50m{s}\x1b[0m")
+    format!(
+        "{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (250, 190, 50), 214, 93)
+    )
 }
 fn c_num(s: &str) -> String {
-    format!("\x1b[38;2;130;195;255m{s}\x1b[0m")
+    format!(
+        "{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (130, 195, 255), 111, 94)
+    )
 }
 fn c_dim(s: &str) -> String {
-    format!("\x1b[38;2;80;80;105m{s}\x1b[0m")
+    format!(
+        "{}{s}\x1b[0m",
+        palette::sgr_fg(depth(), (80, 80, 105), 60, 90)
+    )
 }
 
 fn dsep() -> String {

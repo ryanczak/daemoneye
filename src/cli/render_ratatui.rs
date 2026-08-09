@@ -85,6 +85,16 @@ fn apply_sgr(mut style: Style, seq: &str) -> Style {
                     i += 2;
                 }
             }
+            "38" if i + 4 < parts.len() && parts[i + 1] == "2" => {
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    parts[i + 2].parse::<u8>(),
+                    parts[i + 3].parse::<u8>(),
+                    parts[i + 4].parse::<u8>(),
+                ) {
+                    style = style.fg(Color::Rgb(r, g, b));
+                    i += 4;
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -152,6 +162,7 @@ fn split_spinner_row(area: Rect) -> (Rect, Rect) {
 pub struct RatatuiRenderer<B: Backend> {
     terminal: Terminal<B>,
     start_time: std::time::Instant,
+    palette: crate::cli::palette::Palette,
 }
 
 // Type alias for the production backend.
@@ -186,6 +197,7 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
         Ok(Self {
             terminal,
             start_time,
+            palette: crate::cli::palette::Palette::from_env(),
         })
     }
 }
@@ -267,9 +279,9 @@ impl<B: Backend> RatatuiRenderer<B> {
         let start_time = self.start_time;
 
         let blood_red = Style::default()
-            .fg(Color::Rgb(180, 0, 0))
+            .fg(self.palette.red())
             .add_modifier(Modifier::BOLD);
-        let bright_yellow = Style::default().fg(Color::Rgb(220, 160, 0));
+        let bright_yellow = Style::default().fg(self.palette.yellow());
         let (open, center, close) =
             if spinner_frame.starts_with('(') && spinner_frame.ends_with(')') {
                 let inner = &spinner_frame[1..spinner_frame.len() - 1];
@@ -351,8 +363,8 @@ impl<B: Backend> RatatuiRenderer<B> {
         let title_len = title.chars().count();
         let fill = inner.saturating_sub(title_len + 4);
 
-        let border_color = Color::Rgb(180, 0, 0);
-        let title_color = Color::Rgb(220, 160, 0);
+        let border_color = self.palette.red();
+        let title_color = self.palette.yellow();
 
         let border_style = Style::default()
             .fg(border_color)
@@ -668,6 +680,9 @@ mod tests {
         RatatuiRenderer {
             terminal,
             start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
         }
     }
 
@@ -871,6 +886,14 @@ mod tests {
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].content.as_ref(), "yellow");
         assert_eq!(spans[0].style.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn apply_sgr_parses_truecolor_foreground() {
+        let spans = parse_ansi_to_spans("\x1b[38;2;220;160;0mX");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content.as_ref(), "X");
+        assert_eq!(spans[0].style.fg, Some(Color::Rgb(220, 160, 0)));
     }
 
     /// Test that the full streaming path — `MarkdownRenderer::feed_to_lines`
@@ -1209,6 +1232,81 @@ mod tests {
     }
 
     #[test]
+    fn commit_panel_borders_follow_palette_depth() {
+        use crate::cli::palette::{ColorDepth, Palette};
+
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: Palette::for_depth(ColorDepth::Xterm256),
+        };
+
+        let input = InputLine::new();
+        let status = StatusBarState {
+            session_id: "test-session",
+            approval_hint: "",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: false,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+        renderer.draw(&input, &status).unwrap();
+
+        renderer
+            .commit_panel("Output", &["some output line".to_string()], false)
+            .unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+
+        let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
+
+        // Verify border cells use Indexed(124) for Xterm256 depth.
+        let border_color = Color::Indexed(124);
+        let panel_corner_glyphs = ["╭", "╮", "╰", "╯"];
+        let panel_border_cells: Vec<_> = all_cells
+            .iter()
+            .filter(|c| panel_corner_glyphs.iter().any(|g| c.symbol() == *g))
+            .collect();
+        assert!(
+            !panel_border_cells.is_empty(),
+            "expected panel corner border cells, found none"
+        );
+        for cell in &panel_border_cells {
+            assert_eq!(
+                cell.style().fg,
+                Some(border_color),
+                "panel border cell '{}' should have Indexed(124) fg, got {:?}",
+                cell.symbol(),
+                cell.style().fg
+            );
+        }
+
+        // Verify title cells use Indexed(178) for Xterm256 depth.
+        let title_color = Color::Indexed(178);
+        let yellow_title_cells: Vec<_> = all_cells
+            .iter()
+            .filter(|c| c.style().fg == Some(title_color))
+            .collect();
+        assert!(
+            !yellow_title_cells.is_empty(),
+            "expected title cells with Indexed(178), found none"
+        );
+    }
+
+    #[test]
     fn truncate_with_ellipsis_leaves_short_string_unchanged() {
         assert_eq!(truncate_with_ellipsis("hello", 10), "hello");
         assert_eq!(truncate_with_ellipsis("hello", 5), "hello");
@@ -1420,6 +1518,9 @@ mod tests {
         let mut renderer = RatatuiRenderer {
             terminal,
             start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
         };
 
         let status = StatusBarState {
@@ -1471,6 +1572,9 @@ mod tests {
         let mut renderer = RatatuiRenderer {
             terminal,
             start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
         };
 
         let status = StatusBarState {

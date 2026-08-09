@@ -1,13 +1,30 @@
 # NEXT
 
-## Active phase: none
+## Active phase: [M13 phase-01 — color-depth-palette](milestones/M13-chat-ux/phase-01-color-depth-palette.md)
+
+Drafted 2026-08-09, status `todo` — dispatch with `/rexymcp:dispatch phase-01`.
+Adds `src/cli/palette.rs` (pure `detect_color_depth` + depth-aware `Palette` +
+`sgr_fg`), threads it through `RatatuiRenderer`/banner/`status.rs`, and teaches
+`apply_sgr` the `38;2` form. Mutation pair on the `Indexed(124)` mapping as
+`patch` tasks; E2E capture is Task 10 in `## Spec`.
+
+**M13 — Chat UX Polish scoped 2026-08-09.** Five phases planned; README at
+`docs/dev/milestones/M13-chat-ux/README.md`, which carries the full derived
+code-fact inventory (file:line, investigated 2026-08-09). Headline: chat colors
+survive non-truecolor terminals (the pinky monotone-red symptom — every color
+site is an unconditional `Color::Rgb` with zero capability detection), cursor
+alignment (two disagreeing wrappers), flush-left throbber, `user@host` history
+attribution, runtime embedded in the output panel's bottom border, and
+mid-stream resize/window-switch re-anchoring.
+
+**Next action:** `/rexymcp:architect next` to draft phase-01
+(color-depth-palette).
+
+---
 
 **M12 — Full-View tmux Integration is closed** (2026-08-08). Retrospective in
 `docs/dev/milestones/M12-tmux-integration/README.md` § "M12 retrospective".
 Nine phases, six bugs, all resolved; 1200 tests, four gates green, 36 tools.
-
-**No milestone is scoped.** The next one is a PE decision — scope it, write its
-README from the WORKFLOW template, then `/rexymcp:architect next` for phase 01.
 
 ### Folded at close (PE sign-off, 2026-08-08)
 

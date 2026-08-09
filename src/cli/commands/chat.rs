@@ -326,7 +326,10 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         false,
     );
 
-    let _ = renderer.commit_styled(&banner_lines(chat_width));
+    let _ = renderer.commit_styled(&banner_lines(
+        chat_width,
+        &crate::cli::palette::Palette::from_env(),
+    ));
 
     // Send the greeting query — minimal rendering via ratatui commit path.
     {
@@ -722,7 +725,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
     }
 }
 
-fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
+fn banner_lines(chat_width: usize, palette: &crate::cli::palette::Palette) -> Vec<Line<'static>> {
     let logo: &[&str] = &[
         "                        ▄      ▄",
         "                       ██▄    ▄██",
@@ -752,9 +755,9 @@ fn banner_lines(chat_width: usize) -> Vec<Line<'static>> {
     let pad = " ".repeat((chat_width.saturating_sub(logo_w)) / 2);
 
     let blood_red = Style::default()
-        .fg(Color::Rgb(180, 0, 0))
+        .fg(palette.red())
         .add_modifier(Modifier::BOLD);
-    let deep_yellow = Style::default().fg(Color::Rgb(220, 160, 0));
+    let deep_yellow = Style::default().fg(palette.yellow());
     let title_style = Style::default()
         .fg(Color::White)
         .add_modifier(Modifier::BOLD);

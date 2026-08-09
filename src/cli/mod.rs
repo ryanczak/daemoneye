@@ -6,6 +6,7 @@ pub mod input;
 pub mod local_cmds;
 pub mod markdown;
 pub mod notify;
+pub mod palette;
 pub mod render;
 pub mod render_ratatui;
 pub mod status;
