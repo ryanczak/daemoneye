@@ -158,7 +158,10 @@ one of these was a spec I wrote:
   `sed -i` / `perl -i` / `git checkout`; the executor contract bans in-place
   shell edits and `bash` refuses them. Three phases silently substituted
   `patch` and graded green before anyone noticed. Fixed 2026-08-08 with PE
-  sign-off; **the plugin template upstream still carries the banned wording.**
+  sign-off. *(Checked at close: the plugin template upstream does **not**
+  carry the banned wording — its E2E section is the bare original and never
+  had mutation-pair guidance at all. An in-flight claim that it did was
+  wrong.)*
 - **Two unsatisfiable acceptance criteria.** Phase-05 demanded
   `cache_tests.rs` show no changes while its own Test plan put new tests in
   that file. Phase-01's round-2 criterion grepped for a string that matched the

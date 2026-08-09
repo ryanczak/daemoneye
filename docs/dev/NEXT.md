@@ -29,12 +29,23 @@ as a `## Spec` task, mutation pairs as `patch` tasks rather than the banned
 
 ### Carried out of M12 — open items for whoever scopes next
 
-1. **Upstream push, and this one is a correctness fix.**
-   `/home/matt/src/rexyMCP/plugin/templates/WORKFLOW.md` still tells architects
-   to write mutation pairs as `sed -i` / `perl -i` / `git checkout` — a form
-   the executor contract bans and `bash` refuses. Every phase doc written to
-   that template in any repo is affected. The three folds above and the two
-   from mid-milestone are also unpushed.
+1. **Upstream push — a large accumulated backlog, not the correctness fix it
+   was first called.** Checked at close: the plugin template does **not**
+   contain `sed -i` anywhere. Its § "End-to-end verification" is the bare
+   11-line original and never received the mutation-pair guidance at all, so
+   the template misinstructs nobody. The earlier "correctness fix affecting
+   every repo" framing was wrong and is corrected here.
+
+   What is true is that the template is ~760 lines behind (848 vs 1611) with
+   **14 local-only sections**, of which M12's seven folds are a part. The real
+   risk is absence rather than error: an architect given no mutation-pair
+   guidance invents some, and `sed -i` is the natural reflex — which is exactly
+   how this repo acquired it. Proposal written up for the rexyMCP side at
+   `~/src/rexyMCP/docs/daemoneye-proposed-upstream-folds.md`.
+
+   Drift is bidirectional and was checked both ways: upstream-only headings are
+   `## How to fix` and `## Verification`, both **deliberately superseded** —
+   do not pull them back.
 2. **M12's live-verification gap.** Three exit criteria ask for verification
    against live tmux / the dispatch path / the full approval round trip, and
    all three are covered at unit level only — see the retrospective's § "Exit
