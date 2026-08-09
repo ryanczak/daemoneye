@@ -1,12 +1,18 @@
 # NEXT
 
-## Active phase: [M13 phase-01 — color-depth-palette](milestones/M13-chat-ux/phase-01-color-depth-palette.md)
+## Active phase: [M13 phase-02 — throbber-and-identity](milestones/M13-chat-ux/phase-02-throbber-and-identity.md)
 
-Drafted 2026-08-09, status `todo` — dispatch with `/rexymcp:dispatch phase-01`.
-Adds `src/cli/palette.rs` (pure `detect_color_depth` + depth-aware `Palette` +
-`sgr_fg`), threads it through `RatatuiRenderer`/banner/`status.rs`, and teaches
-`apply_sgr` the `38;2` form. Mutation pair on the `Indexed(124)` mapping as
-`patch` tasks; E2E capture is Task 10 in `## Spec`.
+Drafted 2026-08-09 (autonomous /rexymcp:auto run), status `todo`. Removes the
+throbber's two-space indent (`render_ratatui.rs:293`) and replaces the `you`
+history label with `user@shorthost` via a pure `user_host_label` +
+`daemon_hostname()` reuse. Two mutation pairs as `patch` tasks; E2E capture is
+Task 8 in `## Spec`.
+
+**phase-01 — color-depth-palette approved 2026-08-09** (`approved_first_try`,
+141 executor turns, commit `0eae4c7`). `src/cli/palette.rs` landed with pure
+depth detection, the depth-aware `Palette`, `sgr_fg`, the `apply_sgr` `38;2`
+arm, and all truecolor sites swapped; 1211 lib tests; mutation pair re-run
+independently at review.
 
 **M13 — Chat UX Polish scoped 2026-08-09.** Five phases planned; README at
 `docs/dev/milestones/M13-chat-ux/README.md`, which carries the full derived
