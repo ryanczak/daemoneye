@@ -1,12 +1,18 @@
 # NEXT
 
-## Active phase: [M13 phase-02 — throbber-and-identity](milestones/M13-chat-ux/phase-02-throbber-and-identity.md)
+## Active phase: [M13 phase-03 — runtime-in-border](milestones/M13-chat-ux/phase-03-runtime-in-border.md)
 
-Drafted 2026-08-09 (autonomous /rexymcp:auto run), status `todo`. Removes the
-throbber's two-space indent (`render_ratatui.rs:293`) and replaces the `you`
-history label with `user@shorthost` via a pure `user_host_label` +
-`daemon_hostname()` reuse. Two mutation pairs as `patch` tasks; E2E capture is
-Task 8 in `## Spec`.
+Drafted 2026-08-09 (autonomous /rexymcp:auto run), status `todo`. Additive
+`commit_panel_labeled` (word-wrap via `wrap_line_hard`, optional right-justified
+bottom label); the silent-tool `ToolStarted`/`ToolFinished` pair merges into one
+panel with `✓ 1.2s` in its border (CLI-only — gated commands carry no elapsed on
+the wire, verified); user echo regains the `turn N · tokens` label via a new
+turn counter. Two mutation pairs; E2E capture is Task 7.
+
+**phase-02 — throbber-and-identity approved 2026-08-09** (`approved_first_try`,
+commit `7bd1af2`). Throbber flush at column 0; history panels titled
+`user@shorthost` via pure `user_host_label` + `daemon_hostname()`; both
+mutation pairs re-run independently at review; 1215 lib tests.
 
 **phase-01 — color-depth-palette approved 2026-08-09** (`approved_first_try`,
 141 executor turns, commit `0eae4c7`). `src/cli/palette.rs` landed with pure
