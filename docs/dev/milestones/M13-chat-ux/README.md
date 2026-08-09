@@ -47,7 +47,7 @@ to the bottom through resizes and tmux window switches.
 
 | #  | Phase                                                              | Status |
 |----|--------------------------------------------------------------------|--------|
-| 01 | color-depth-palette (phase-01-color-depth-palette.md)              | review        |
+| 01 | color-depth-palette (phase-01-color-depth-palette.md)              | done          |
 | 02 | throbber-and-identity (phase-02-throbber-and-identity.md)          | todo   |
 | 03 | runtime-in-border (phase-03-runtime-in-border.md)                  | todo   |
 | 04 | cursor-alignment (phase-04-cursor-alignment.md)                    | todo   |

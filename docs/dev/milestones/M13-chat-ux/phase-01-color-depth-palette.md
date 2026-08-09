@@ -1,7 +1,7 @@
 # Phase 01: Color-depth detection and a central palette
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~350 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -611,3 +611,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 775965b6abebdbee2625d2f2c4b2f252ae5f4924
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** none
