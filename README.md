@@ -398,7 +398,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `update_memory` | Update individual fields of a memory entry in place |
 | `list_memories` | List memory keys, optionally filtered by category |
 | `recall_context` | Retrieve archived turns from this session by query, turn range, or both |
-| `schedule_command` | Schedule a one-shot, interval, or cron job — command, script, or ghost shell |
+| `schedule_command` **⚠** | Schedule a one-shot, interval, or cron job — command, script, or ghost shell |
 | `list_schedules` | List scheduled jobs with status and next fire time |
 | `cancel_schedule` | Cancel a scheduled job |
 | `delete_schedule` | Permanently delete a scheduled job |

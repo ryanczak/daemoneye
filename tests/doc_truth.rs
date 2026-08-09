@@ -393,3 +393,100 @@ fn readme_tools_counts_are_accurate() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// README.md's `⚠` markers must match the tools that actually prompt
+// ---------------------------------------------------------------------------
+//
+// The marker means "requires explicit user approval before it executes", and
+// nothing checked it. Building this gate found two defects: `schedule_command`
+// prompts and was unmarked, and `daemon::stream`'s `APPROVAL_GATED` — the
+// obvious oracle — turned out to be a *budget-exemption* list that disagrees
+// with the prompting set in both directions. The oracle is therefore
+// `APPROVAL_GATED_TOOLS`, derived by reading the executor arms.
+
+/// Tool names carrying a `⚠` marker in README.md's AI-tools tables.
+fn readme_approval_marked(section: &str) -> std::collections::BTreeSet<String> {
+    let deferred_at = section.find("### Deferred").unwrap_or(section.len());
+    let mut marked = std::collections::BTreeSet::new();
+
+    for (offset, line) in section
+        .match_indices('\n')
+        .map(|(i, _)| i + 1)
+        .filter_map(|i| section[i..].lines().next().map(|l| (i, l)))
+    {
+        if !line.starts_with("| `") {
+            continue;
+        }
+        if offset < deferred_at {
+            // Core row: `| `name` **⚠** | description |` — the marker, when
+            // present, sits in the first cell beside the name.
+            let Some(first_cell) = line.split('|').nth(1) else {
+                continue;
+            };
+            if first_cell.contains('⚠')
+                && let Some(name) = backticked(first_cell).first()
+            {
+                marked.insert(name.clone());
+            }
+        } else {
+            // Deferred row: `| `group` | `a` **⚠**, `b` |` — each tool carries
+            // its own marker, so split the cell on commas.
+            let Some(tools_cell) = line.split('|').nth(2) else {
+                continue;
+            };
+            for entry in tools_cell.split(',') {
+                if entry.contains('⚠')
+                    && let Some(name) = backticked(entry).first()
+                {
+                    marked.insert(name.clone());
+                }
+            }
+        }
+    }
+    marked
+}
+
+#[test]
+fn readme_approval_markers_match_the_gated_tools() {
+    use daemoneye::ai::tools::APPROVAL_GATED_TOOLS;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(root.join("README.md")).expect("reading README.md");
+    let marked = readme_approval_marked(readme_tools_section(&text));
+    let expected: std::collections::BTreeSet<String> = APPROVAL_GATED_TOOLS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+    let missing: Vec<&String> = expected.difference(&marked).collect();
+    let extra: Vec<&String> = marked.difference(&expected).collect();
+
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "README.md's ⚠ markers no longer match `APPROVAL_GATED_TOOLS`.\n\
+         gated but unmarked in the README: {missing:?}\n\
+         marked in the README but not gated: {extra:?}\n\n\
+         The marker means the tool prompts the user before it executes. If a \
+         tool's gating really changed, update APPROVAL_GATED_TOOLS in \
+         src/ai/tools/defs.rs — after checking its executor arm actually sends \
+         a Response::*Prompt and waits."
+    );
+}
+
+#[test]
+fn approval_gated_tools_all_exist() {
+    use daemoneye::ai::tools::{APPROVAL_GATED_TOOLS, TOOLS};
+
+    let known: std::collections::BTreeSet<&str> = TOOLS.iter().map(|t| t.name).collect();
+    let unknown: Vec<&&str> = APPROVAL_GATED_TOOLS
+        .iter()
+        .filter(|n| !known.contains(*n))
+        .collect();
+
+    assert!(
+        unknown.is_empty(),
+        "APPROVAL_GATED_TOOLS names tools that are not in TOOLS: {unknown:?} — \
+         renamed or removed?"
+    );
+}

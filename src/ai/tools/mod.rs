@@ -6,7 +6,7 @@ mod defs;
 mod dispatch;
 pub(crate) mod schema;
 
-pub use defs::TOOLS;
+pub use defs::{APPROVAL_GATED_TOOLS, TOOLS};
 pub use dispatch::dispatch_tool_event;
 pub use schema::{
     ParamDef, ParamTy, ToolDef, deferred_catalog_text, get_gemini_tool_definition,

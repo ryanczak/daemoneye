@@ -4,6 +4,33 @@
 
 use super::schema::{ParamDef, ParamTy, ToolDef};
 
+/// Tools that send the user an approval prompt and wait for a decision before
+/// they do anything. Derived by reading every executor arm, not by copying a
+/// list: each of these reaches a `Response::*Prompt` send followed by a
+/// blocking read.
+///
+/// **This is not `daemon::stream`'s `APPROVAL_GATED`.** That list is a
+/// *per-turn budget exemption* — tools whose user prompt substitutes for a
+/// call cap — and the two sets are not equal today. `spawn_ghost_shell` and
+/// `delete_schedule` are budget-exempt but have no approval gate;
+/// `create_agent` and `delete_agent` prompt but are still capped. Reconciling
+/// them changes runtime behaviour and is deliberately not done here.
+///
+/// `README.md` marks these tools with a `⚠`, and `tests/doc_truth.rs` holds
+/// the two in sync.
+pub static APPROVAL_GATED_TOOLS: &[&str] = &[
+    "create_agent",
+    "delete_agent",
+    "delete_runbook",
+    "delete_script",
+    "edit_file",
+    "run_terminal_command",
+    "schedule_command",
+    "tmux_control",
+    "write_runbook",
+    "write_script",
+];
+
 pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         name: "run_terminal_command",
