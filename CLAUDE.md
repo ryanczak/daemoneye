@@ -121,6 +121,7 @@ DaemonEye is a Rust daemon that embeds an AI assistant into `tmux`. It forks int
 8. `src/daemon/executor/mod.rs`: add `PendingCall::ToolName` arm in `execute_tool_call()`. Agent tools (create/read/list/delete agent) dispatch to `executor/knowledge.rs` alongside runbook/memory tools.
 9. `src/config/seeds.rs` (`SRE_PROMPT_TOML` / `assets/prompts/sre.toml`): document the new tool.
 10. `CLAUDE.md`: add a row to the Current AI tools table below with the right `Loaded` value, **and bump the `N tools: C core + D deferred` line above it**. Both are enforced — `tests/doc_truth.rs` cross-references the table against `TOOLS` and will name the missing tool and the expected counts.
+11. `README.md` § "AI tools": add the tool to the **Core** table (mark it **⚠** if approval-gated) or to its group's row in the **Deferred** table, and update the three numbers in the prose above them. Enforced by the same test file — the README's tables went three tools stale before this gate existed, which is why it does.
 
 ### Current AI tools
 

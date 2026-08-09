@@ -250,3 +250,146 @@ fn claude_md_tools_table_counts_are_accurate() {
          TOOLS currently holds {total} tools ({core} core, {deferred} deferred)."
     );
 }
+
+// ---------------------------------------------------------------------------
+// README.md § "AI tools" must mirror the real `TOOLS` table too
+// ---------------------------------------------------------------------------
+//
+// `CLAUDE.md`'s table has been gated since M11; the README's has not, and it
+// drifted three tools and a whole milestone behind (33/24 while the code held
+// 36/27) before anyone noticed. Same comparison, different table shape: the
+// README splits Core and Deferred into two tables, puts the deferred tools
+// inside a group row, and marks approval-gated tools with a `⚠`.
+
+/// The heading that opens the AI-tools tables in `README.md`.
+const README_TOOLS_HEADING: &str = "## AI tools";
+
+/// The section of `README.md` between the AI-tools heading and the next `## `.
+fn readme_tools_section(text: &str) -> &str {
+    let start = text
+        .find(README_TOOLS_HEADING)
+        .unwrap_or_else(|| panic!("README.md no longer contains {README_TOOLS_HEADING:?}"));
+    let rest = &text[start + README_TOOLS_HEADING.len()..];
+    match rest.find("\n## ") {
+        Some(i) => &rest[..i],
+        None => rest,
+    }
+}
+
+/// Every `` `backticked` `` identifier in a string, in order.
+fn backticked(s: &str) -> Vec<String> {
+    s.split('`')
+        .skip(1)
+        .step_by(2)
+        .map(|t| t.trim().to_string())
+        .collect()
+}
+
+/// `(tool name, group)` for every tool the README documents. `group` is `core`
+/// for rows in the Core table, else the deferred group's name — the same shape
+/// `documented_tools` returns for `CLAUDE.md`, so the two can be compared to
+/// `TOOLS` the same way.
+fn readme_documented_tools(section: &str) -> Vec<(String, String)> {
+    let (core_part, deferred_part) = match section.find("### Deferred") {
+        Some(i) => (&section[..i], &section[i..]),
+        None => panic!("README.md § \"AI tools\" no longer has a \"### Deferred\" table"),
+    };
+
+    let mut out: Vec<(String, String)> = core_part
+        .lines()
+        .filter(|l| l.starts_with("| `"))
+        .filter_map(|l| Some((backticked(l).first()?.clone(), "core".to_string())))
+        .collect();
+
+    // Deferred rows are `| `group` | `tool` ⚠, `tool`, … |` — the first
+    // backticked token is the group, the rest are its tools.
+    for line in deferred_part.lines().filter(|l| l.starts_with("| `")) {
+        let names = backticked(line);
+        let Some((group, tools)) = names.split_first() else {
+            continue;
+        };
+        for tool in tools {
+            out.push((tool.clone(), group.clone()));
+        }
+    }
+    out
+}
+
+#[test]
+fn readme_tools_tables_match_the_code() {
+    use daemoneye::ai::tools::TOOLS;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(root.join("README.md")).expect("reading README.md");
+    let documented: std::collections::BTreeMap<String, String> =
+        readme_documented_tools(readme_tools_section(&text))
+            .into_iter()
+            .collect();
+
+    let actual: std::collections::BTreeMap<String, String> = TOOLS
+        .iter()
+        .map(|t| {
+            (
+                t.name.to_string(),
+                t.deferred_group.unwrap_or("core").to_string(),
+            )
+        })
+        .collect();
+
+    let mut problems = Vec::new();
+    for (name, group) in &actual {
+        match documented.get(name) {
+            None => problems.push(format!(
+                "{name}: in TOOLS but missing from the README tables (belongs in {group})"
+            )),
+            Some(doc_group) if doc_group != group => problems.push(format!(
+                "{name}: README lists it under {doc_group}, TOOLS says {group}"
+            )),
+            Some(_) => {}
+        }
+    }
+    for name in documented.keys() {
+        if !actual.contains_key(name) {
+            problems.push(format!(
+                "{name}: in the README tables but not in TOOLS — renamed or removed?"
+            ));
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "README.md § \"AI tools\" no longer mirrors `TOOLS`:\n{}\n\n\
+         Core-table rows are core; a tool listed in a Deferred group row must \
+         match that tool's ToolDef.deferred_group.",
+        problems.join("\n")
+    );
+}
+
+#[test]
+fn readme_tools_counts_are_accurate() {
+    use daemoneye::ai::tools::TOOLS;
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(root.join("README.md")).expect("reading README.md");
+    let section = readme_tools_section(&text);
+
+    let total = TOOLS.len();
+    let core = TOOLS.iter().filter(|t| t.deferred_group.is_none()).count();
+    let deferred = total - core;
+
+    // The README states the three numbers in prose rather than in one bolded
+    // run, so each is checked separately — a partially-updated sentence is the
+    // realistic drift, not a wholly-rewritten one.
+    for expected in [
+        format!("**{total} tools**"),
+        format!("The {core} **core** tools"),
+        format!("the {deferred} **deferred** tools"),
+    ] {
+        assert!(
+            section.contains(&expected),
+            "README.md § \"AI tools\" must state the real counts.\n\
+             expected to find: {expected}\n\
+             TOOLS currently holds {total} tools ({core} core, {deferred} deferred)."
+        );
+    }
+}
