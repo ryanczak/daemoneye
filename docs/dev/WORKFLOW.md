@@ -1272,6 +1272,40 @@ spanning a slice boundary. Distinct from the blind-instrument corollary above:
 there the instrument was wrong, here it was right and the site still was not in
 scope.)*
 
+### Give the executor a condition it can check, not an instruction it can agree with
+
+When a requirement keeps going unmet, the reflex is to state it more clearly.
+That reflex is wrong often enough to be worth naming: if the executor can
+satisfy a phase's tracked work and still miss the requirement, no amount of
+rewording closes the gap, because nothing in its own loop ever evaluates the
+requirement. **Change what it can check, not how you said it.**
+
+Two shapes that work, both proven:
+
+- **Make it a tracked task.** Only `## Spec` is seeded into the executor's task
+  list. A requirement stated in any other section is invisible to the "have I
+  finished?" check it actually runs, so it finishes every task it is tracking
+  and reports complete in good faith. Move the requirement into `## Spec` as a
+  numbered task.
+- **Give it a self-check with a falsifiable output.** A command the executor
+  runs against its own work that prints `PASS`/`FAIL` — extract the pasted
+  transcript and diff it against the artefact; grep the mutated line to prove
+  the mutation applied; state the exact test count the run must report. Then
+  make that output an acceptance criterion.
+
+And **run the check against a known-bad input before you spec it.** A detector
+that cannot fail is worth exactly as much as a mutation that cannot fail.
+
+*(Folded 2026-08-08 after M12, on PE sign-off — two occurrences, and what makes
+them worth generalising is the contrast with what failed first. The missing
+end-to-end entry drew three rounds of increasingly specific prose about how to
+write the block, and stayed missing; making the capture a `## Spec` task fixed
+it immediately, both times. The retyped transcript then drew a remedy aimed at
+artefact *size* — 2,555 lines down to 56, on the theory that an unpasteable
+block forces a paraphrase — and phase-05 retyped the 56-line one anyway; a
+`PASTE MATCH` self-check fixed it on the first try. In both cases the wording
+was already good and the effort spent on it bought nothing.)*
+
 ### Coverage claims are inadmissible without mutation proof
 
 **Never write "test X guards line Y" in a spec, a review, or an Update Log unless
@@ -1422,6 +1456,21 @@ case the underlying behavior was correct and the numbers were accurate — the
 command worked. What was missing was the evidence chain, which is the only part
 that survives to the next reader. Approving on "the claims check out" trains the
 next transcript to be written rather than captured.
+
+**A completion summary is a claim too, including its "deviations" line.** The
+same discipline applies to the executor's own account of what it did, and that
+account has been wrong in both directions: reporting "Deviations from spec:
+None" while having rewritten an unrelated tool's user-visible text, and
+reporting the removal of an unused binding **that never existed in the file**.
+Neither caused a regression, and neither would have been caught by reading the
+summary carefully — only by diffing what actually changed. So read the diff,
+not the narrative, and treat an undeclared change and a fabricated one as the
+same class of finding.
+
+*(Folded 2026-08-08 after M12 phases 03 and 08, on PE sign-off — two
+occurrences. Recorded against three accurate self-reports in the same
+milestone: the point is not that the executor is unreliable, it is that
+accuracy is unknowable from the text and cheap to establish from the diff.)*
 
 **Two rules follow:**
 

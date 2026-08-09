@@ -1,52 +1,52 @@
 # NEXT
 
-## Active phase: none in progress — **M12 IS AT ITS MILESTONE BOUNDARY**
+## Active phase: none
 
-**All eight in-scope M12 phases (01, 02, 03, 04, 05, 06a, 06b, 07, 08) are
-`done`.** A `/rexymcp:auto` run stopped here on 2026-08-08: the milestone
-boundary is an absolute human gate.
+**M12 — Full-View tmux Integration is closed** (2026-08-08). Retrospective in
+`docs/dev/milestones/M12-tmux-integration/README.md` § "M12 retrospective".
+Nine phases, six bugs, all resolved; 1200 tests, four gates green, 36 tools.
 
-**This is not the milestone close.** The close — the retrospective in the M12
-README's Notes, the calibration folds with PE sign-off, and setting this
-pointer to "none" — is deliberately *not* done, per
-`docs/dev/WORKFLOW.md` § "Milestone boundaries are always a human gate". This
-note is bookkeeping only, so the pointer does not read as though phase-08 were
-still outstanding.
+**No milestone is scoped.** The next one is a PE decision — scope it, write its
+README from the WORKFLOW template, then `/rexymcp:architect next` for phase 01.
 
-**Where M12 landed:** 1200 tests, four gates green, 36 tools (27 core + 9
-deferred). `read_pane`, `find_in_panes` and `tmux_control` are live; the cache
-is multi-session; `PaneStatus` is stamped every 2 s and rendered on every new
-surface; `/panes` is a window-grouped inspector over a named `PaneInfo`; and
-D6's exit criterion is a hard zero — no raw `de-*` prefix literal survives
-outside `src/daemon/mod.rs`.
+### Folded at close (PE sign-off, 2026-08-08)
 
-### Carried into the close — five calibration items, none folded yet
+Both into `docs/dev/WORKFLOW.md`, both at two occurrences:
 
-1. **The `sed -i` contradiction is fixed but only locally.** WORKFLOW.md now
-   specifies mutation pairs as `patch` tasks; the plugin template at
-   `/home/matt/src/rexyMCP/plugin/templates/WORKFLOW.md` still carries the
-   banned wording. **Upstream push is a correctness fix, not a missing lesson.**
-2. **Self-checkable evidence works where exhortation does not.** Two folds this
-   milestone landed on the same shape — the E2E capture as a seeded `## Spec`
-   task, and the `PASTE MATCH` self-check — and both worked on their first
-   outing after several rounds of increasingly specific prose had failed. Worth
-   stating as a general principle at close.
-3. **Unsatisfiable / unchecked criteria, now at three occurrences** —
-   phase-01's self-satisfying grep, phase-05's cache_tests contradiction, and
-   the `sed -i` form these docs themselves prescribed. WORKFLOW.md has a
-   reinforcement note; three occurrences means the rule was wrong, not just
-   unlucky.
-4. **False self-reports, now at two** — phase-03 reported "Deviations: None"
-   while having rewritten another tool's `summary()`; phase-08 reported
-   removing an unused `_home` binding **that never existed** (verified at
-   review: no regression, but the claim was fabricated). Both were caught only
-   because review re-ran rather than read. Second occurrence — at the fold
-   threshold.
-5. **Worked examples move this executor; prose does not** — sharpest evidence
-   in 06a, where the same executor guessed five API signatures from prose and
-   then reproduced the whole arm exactly when shown it with file:line sources.
+1. **§ "Give the executor a condition it can check, not an instruction it can
+   agree with"** — new section. When a requirement keeps going unmet, change
+   what the executor can evaluate, not how you phrased it: make it a seeded
+   `## Spec` task, or give it a self-check with a falsifiable output, and run
+   that check against a known-bad input before speccing it.
+2. **§ "A pasted transcript is a claim, not evidence"** gains a paragraph on
+   completion summaries — the "deviations" line has been wrong in both
+   directions (an undeclared change reported as none; a removal reported that
+   never happened). Read the diff, not the narrative.
 
-**Next action:** `/rexymcp:architect` to close the milestone.
+Three earlier folds landed mid-milestone, also with sign-off: the E2E capture
+as a `## Spec` task, mutation pairs as `patch` tasks rather than the banned
+`sed -i`, and a reinforcement of the satisfiable-criterion rule.
+
+### Carried out of M12 — open items for whoever scopes next
+
+1. **Upstream push, and this one is a correctness fix.**
+   `/home/matt/src/rexyMCP/plugin/templates/WORKFLOW.md` still tells architects
+   to write mutation pairs as `sed -i` / `perl -i` / `git checkout` — a form
+   the executor contract bans and `bash` refuses. Every phase doc written to
+   that template in any repo is affected. The three folds above and the two
+   from mid-milestone are also unpushed.
+2. **M12's live-verification gap.** Three exit criteria ask for verification
+   against live tmux / the dispatch path / the full approval round trip, and
+   all three are covered at unit level only — see the retrospective's § "Exit
+   criteria" for exactly which. The check needs the daemon restarted onto the
+   M12 binary. Small, and worth doing before anything builds on these surfaces.
+3. **`APPROVAL_GATED_TOOLS` reconciliation shipped a behaviour change** —
+   `spawn_ghost_shell` and `delete_schedule` became cappable, `create_agent`
+   and `delete_agent` became exempt. Correct per the exemption's own rationale
+   and pinned by tests, but it has not run against a live daemon either.
+4. **`tests/doc_truth.rs` now gates the README** (tool tables, counts, and the
+   `⚠` markers) as well as `CLAUDE.md`. The add-a-tool checklist grew steps 11
+   and 12 to match.
 
 ---|---|
 | 03 r2 | executor restored a mutation with `patch`, reported it as a deviation |

@@ -5,7 +5,7 @@ window and pane in every session, with contents readable on demand, live
 idle/active/dead status, a `/panes` inspector worth reading, and approval-gated
 native tmux actions (focus, zoom, split, kill, rename).
 
-**Status:** in-progress
+**Status:** done — closed 2026-08-08
 
 **Depends on:** M5 (pane map, foreground targeting, activity tags — the
 surfaces this extends). No dependency on M11.
@@ -91,6 +91,144 @@ it unchanged would invert D5's default-deny. 06a gates before that helper and
 passes it `ghost_policy: None`.
 
 ## Notes
+
+## M12 retrospective — closed 2026-08-08
+
+**Nine phases, all `done`.** Three `approved_first_try`, five
+`approved_after_1`/`_after_2`, one `escalated`. Six bugs filed, all resolved.
+Phase 06 was split a/b at drafting time, as the plan anticipated. Final state:
+1200 lib tests, four gates green, 36 tools (27 core + 9 deferred).
+
+| Phase | Verdict | Bounces |
+|---|---|---|
+| 01 multi-session-cache | approved_after_1 | 1 (bug-01-1) |
+| 02 pane-status-classification | approved_after_1 | 1 (bug-02-1) |
+| 03 read-pane-tool | approved_after_1 | 1 (bug-03-1) |
+| 04 find-in-panes-tool | approved_after_2 | 2 (bug-04-1, bug-04-2) |
+| 05 list-panes-upgrade | approved_after_1 | 1 (bug-05-1) |
+| 06a tmux-control-gate | **escalated** | 0 bounces; 2 `NoProgressStall` hard-fails → takeover |
+| 06b tmux-control-actions | approved_first_try | 0 |
+| 07 pane-inspector-cli | approved_first_try | 0 |
+| 08 filter-unification-and-docs | approved_first_try | 0 |
+
+### The headline: five of six bugs were about the evidence, not the code
+
+Only **bug-04-1** (`find_in_panes` never sorted its rows) was a defect in
+shipped behaviour. The other five were all the same family — the end-to-end
+artefact was missing, paraphrased, or retyped:
+
+| Bug | Shape |
+|---|---|
+| 01-1, 02-1, 03-1 | no end-to-end entry written at all |
+| 04-2 | entry present, but a hand-written summary of a 2,555-line artefact |
+| 05-1 | entry present and compact, but seven lines retyped from memory |
+
+Each cost a full dispatch-and-review round trip. In every case the executor had
+actually run the commands and its claims held up when re-run independently —
+the failure was never capability, it was that the *check moved from the
+executor to whoever reviewed*, silently.
+
+Three remedies were tried in sequence and only the last two worked:
+
+1. **Better prose about the block** (M12's first fold). Failed — phase-03
+   carried that fold in full and still produced no entry.
+2. **Make the capture a seeded `## Spec` task.** Worked immediately, both
+   times it was used. The mechanism was found by reading the rexyMCP task
+   seeder (`executor/src/agent/tasks.rs`), which parses a heading of exactly
+   `## Spec` and nothing else — so a requirement stated anywhere else is never
+   tracked, and the executor finishes every task it *is* tracking and reports
+   complete in good faith.
+3. **Give the executor a check it can run on itself** — extract the pasted
+   fence, diff it against the artefact, print `PASTE MATCH` / `PASTE MISMATCH`.
+   Worked on its first outing, byte-identical.
+
+The through-line: **the executor responds to conditions it can evaluate, not to
+instructions it can agree with.** Three rounds were spent improving the
+*wording* of a requirement in phase-03's case, and in phase-05's case shrinking
+the artefact from 2,555 lines to 56 — neither moved it. Both structural
+remedies worked first try.
+
+### Architect-side defects outnumbered executor-side ones
+
+Consistent with M11's headline, and worth being specific about, because every
+one of these was a spec I wrote:
+
+- **A fold in these very docs prescribed an edit form the executor is
+  forbidden to use.** `WORKFLOW.md` told architects to write mutation pairs as
+  `sed -i` / `perl -i` / `git checkout`; the executor contract bans in-place
+  shell edits and `bash` refuses them. Three phases silently substituted
+  `patch` and graded green before anyone noticed. Fixed 2026-08-08 with PE
+  sign-off; **the plugin template upstream still carries the banned wording.**
+- **Two unsatisfiable acceptance criteria.** Phase-05 demanded
+  `cache_tests.rs` show no changes while its own Test plan put new tests in
+  that file. Phase-01's round-2 criterion grepped for a string that matched the
+  criterion's own text. Both were caught *after* dispatch.
+- **A name collision from a half-read source.** Phase-07's spec said "add a
+  named struct `PaneInfo`" — one already existed at `src/ipc.rs:6`. The fact I
+  checked was true; the fact I did not check made it a collision. The executor
+  absorbed it by unifying the two types, which pulled a directory the spec had
+  put out of scope into the diff. The result was correct and was approved as a
+  justified deviation, but the decision should never have been the executor's.
+- **A worked example is worth more than any amount of prose.** Sharpest
+  evidence anywhere in the milestone: phase-06a round 1 guessed *five* API
+  signatures from a prose description and broke the build; round 2, given the
+  same arm as a worked example plus a table of the five facts with file:line
+  sources, reproduced it exactly — and that code shipped unmodified through the
+  takeover.
+
+### The executor's signature failure is the read-only stall
+
+Both 06a hard-fails were identical in shape: a mutating `patch` lands, then
+~60 consecutive `search`/`read_file` calls against the *same file* with no
+edit, until the governor fires. Round 1 was hunting an API it had just guessed
+wrong; round 2 was hunting a test to extend. **Round 2's spec carried an
+explicit Notes-for-executor warning naming that exact pathology, and it did not
+help** — the third data point behind treating a recurring stall as a takeover
+signal rather than a re-dispatch one.
+
+### Two accurate self-reports, two false ones
+
+Phases 01, 02 and 05 self-reported accurately, and their claims held when
+re-run. Against that: phase-03 rewrote another tool's `summary()` while
+reporting "Deviations from spec: None", and phase-08 reported removing an
+unused `_home` binding **that never existed** (verified at review: no
+regression, but the claim was fabricated). Both were caught only because review
+re-runs rather than reads. The standing rule holds.
+
+### Exit criteria — what is verified, and what is not
+
+Verified by command at close:
+
+- **One targetable-panes filter (D6).** Raw `de-*` prefix literals outside
+  `src/daemon/mod.rs`: **0**.
+- **Docs true at close.** `CLAUDE.md` counts line matches `TOOLS` (36/27/9),
+  rows present for all three new tools, `sre.toml` documents all three,
+  `tests/doc_truth.rs` green — and the README is now gated the same way, which
+  it was not during the milestone.
+- **Gates.** `cargo clippy --all-targets --all-features -- -D warnings` clean;
+  1200 lib tests green.
+
+**Verified at unit level only — no live-tmux or running-daemon run was made
+for any of these**, and the milestone's own wording asks for more than a unit
+test on three of them:
+
+- "No cross-session blindness … **Verified with two live tmux sessions**" —
+  covered by cache and `list_panes` tests with seeded foreign panes.
+- "Any pane's content is one tool call away … **Verified through the tool
+  dispatch path**, not by calling the capture helper directly" — the dispatch
+  fixture test covers registration; `read_pane`'s own tests call the knowledge
+  function directly.
+- "`tmux_control` actions are approval-gated **end-to-end** … Every action
+  round-trips the `ToolCallPrompt`/`ToolCallResponse` approval flow" — the
+  ghost-denial predicate is unit-tested; the prompt round trip is not.
+- Status classification, `find_in_panes`, and `/panes` are likewise unit-level.
+
+This is stated plainly rather than ticked, because it is the same failure the
+milestone spent five bugs on in miniature: a claim nobody executed. The live
+check needs the daemon restarted onto the M12 binary (the one running at close
+was 21 h old and predates every commit here), so it is a deliberate follow-up,
+not an oversight.
+
 
 ### Carried to phase 08 — lock-ordering inconsistency across the filter sites
 
