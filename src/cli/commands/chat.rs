@@ -387,6 +387,8 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     // Help text for /help command.
     let help_text = HELP_TEXT;
 
+    let user_host = local_user_host();
+
     loop {
         // Read input using the existing key handler but render via ratatui.
         let line_opt = read_input_line_inner_ratatui(RatatuiInputCtx {
@@ -521,7 +523,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         // everything committed above the live region.
         if should_echo(&query) {
             let echo_body: Vec<String> = echo_body(&query);
-            let _ = renderer.commit_panel("you", &echo_body, false);
+            let _ = renderer.commit_panel(&user_host, &echo_body, false);
         }
 
         // ── Send the user query ─────────────────────────────────────────
@@ -834,7 +836,32 @@ fn banner_lines(chat_width: usize, palette: &crate::cli::palette::Palette) -> Ve
     lines
 }
 
-/// Build the body lines for the user-query echo panel.
+/// Build the chat-history attribution label from identity parts.
+/// `host` is domain-stripped (`pinky.home.planetfoo.org` → `pinky`).
+/// A missing/`"unknown"` host degrades to the bare user; a missing user
+/// degrades to the literal `you`.
+fn user_host_label(user: Option<&str>, host: Option<&str>) -> String {
+    let Some(user) = user.filter(|u| !u.is_empty()) else {
+        return "you".to_string();
+    };
+    let short = host
+        .map(|h| h.split('.').next().unwrap_or("").to_string())
+        .unwrap_or_default();
+    if short.is_empty() || short == "unknown" {
+        user.to_string()
+    } else {
+        format!("{user}@{short}")
+    }
+}
+
+/// The label for this CLI process's host — the machine `daemoneye chat`
+/// runs on, which can differ from the daemon host.
+fn local_user_host() -> String {
+    let user = std::env::var("USER").ok();
+    let host = crate::daemon::utils::daemon_hostname();
+    user_host_label(user.as_deref(), Some(&host))
+}
+
 fn echo_body(query: &str) -> Vec<String> {
     query.lines().map(str::to_string).collect()
 }
@@ -916,5 +943,28 @@ mod tests {
         ] {
             assert!(should_echo(q), "must echo: {q}");
         }
+    }
+
+    #[test]
+    fn user_host_label_joins_user_and_shorthost() {
+        use super::user_host_label;
+        assert_eq!(
+            user_host_label(Some("matt"), Some("pinky.home.planetfoo.org")),
+            "matt@pinky"
+        );
+    }
+
+    #[test]
+    fn user_host_label_missing_user_falls_back_to_you() {
+        use super::user_host_label;
+        assert_eq!(user_host_label(None, Some("pinky")), "you");
+        assert_eq!(user_host_label(Some(""), Some("pinky")), "you");
+    }
+
+    #[test]
+    fn user_host_label_unknown_host_degrades_to_bare_user() {
+        use super::user_host_label;
+        assert_eq!(user_host_label(Some("matt"), Some("unknown")), "matt");
+        assert_eq!(user_host_label(Some("matt"), Some("")), "matt");
     }
 }

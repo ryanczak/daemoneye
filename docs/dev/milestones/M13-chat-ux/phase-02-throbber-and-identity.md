@@ -1,7 +1,7 @@
 # Phase 02: Flush-left throbber and user@host history attribution
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -302,3 +302,68 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-09 23:25 (started)
+
+**Executor:** rexyMCP executor
+
+Removed the two-space indent from the spinner line in `draw_spinner` so the
+throbber glyph renders flush at column 0. Added `user_host_label()` and
+`local_user_host()` helpers to `chat.rs` replacing the hardcoded `"you"` label
+in chat-history echo panels with `user@shorthost` attribution. Computed the
+label once before the REPL loop. Added 4 new tests (3 for `user_host_label`, 1
+for spinner column). Ran mutation tests M1 and M2 confirming both regressions
+catch correctly.
+
+### Update — 2026-08-09 23:25 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+    cli::render_ratatui::tests::spinner_glyph_renders_at_column_zero
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1214 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+0
+== M1 RESTORED ==
+0
+running 1 test
+test cli::render_ratatui::tests::spinner_glyph_renders_at_column_zero ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1214 filtered out; finished in 0.00s
+
+== M2 APPLIED ==
+    cli::commands::chat::tests::user_host_label_joins_user_and_shorthost
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 1212 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M2 RESTORED ==
+1
+test cli::commands::chat::tests::user_host_label_unknown_host_degrades_to_bare_user ... ok
+test cli::commands::chat::tests::user_host_label_joins_user_and_shorthost ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1212 filtered out; finished in 0.00s
+
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.02s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.25s
+clippy exit=0
+test result: ok. 1215 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.98s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+indent spans: 0
+you literals: 0
+47 /tmp/e2e-m13-02.txt
+```

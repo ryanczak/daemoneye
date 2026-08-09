@@ -290,7 +290,6 @@ impl<B: Backend> RatatuiRenderer<B> {
                 ("", spinner_frame.to_string(), "")
             };
         let spinner_line = Line::from(vec![
-            Span::raw("  "),
             Span::styled(open, blood_red),
             Span::styled(center, bright_yellow),
             Span::styled(close, blood_red),
@@ -1420,6 +1419,38 @@ mod tests {
                 r
             );
         }
+    }
+
+    #[test]
+    fn spinner_glyph_renders_at_column_zero() {
+        let mut renderer = make_test_renderer();
+
+        let status = StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        };
+
+        renderer.draw_spinner("(◉)", "scrying", 3, &status).unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let corner = corner_row(buf);
+        let spinner_row = corner - 1;
+
+        // The spinner glyph must start at column 0, not indented.
+        let first_cell = &buf[(0, spinner_row)];
+        assert_eq!(
+            first_cell.symbol(),
+            "(",
+            "spinner glyph '(' must be at column 0, got: {:?}",
+            first_cell.symbol()
+        );
     }
 
     #[test]
