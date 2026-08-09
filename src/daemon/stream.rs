@@ -16,22 +16,15 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 
-/// Approval-gated tool names. Tools in this list bypass per-turn budget caps
-/// because the user's per-call approval prompt serves as the gate.
+/// Approval-gated tool names. Tools in this list bypass the per-turn,
+/// per-session and per-tool budget caps because the user's per-call approval
+/// prompt is the gate instead.
 ///
-/// Keep in sync with `LimitsConfig::APPROVAL_GATED` in `config.rs`.
-const APPROVAL_GATED: &[&str] = &[
-    "run_terminal_command",
-    "edit_file",
-    "write_script",
-    "write_runbook",
-    "schedule_command",
-    "spawn_ghost_shell",
-    "delete_script",
-    "delete_runbook",
-    "delete_schedule",
-    "tmux_control",
-];
+/// Re-exported from `crate::ai::tools::APPROVAL_GATED_TOOLS`, which is the
+/// single source of truth for "this tool prompts the user". It used to be a
+/// hand-maintained copy that had drifted in both directions — see that
+/// constant's doc comment.
+use crate::ai::tools::APPROVAL_GATED_TOOLS as APPROVAL_GATED;
 
 /// Run the AI conversation loop: stream tokens, collect tool calls, execute,
 /// and repeat until the AI produces a final answer with no pending tool calls.
@@ -1211,10 +1204,32 @@ mod tests {
         assert!(APPROVAL_GATED.contains(&"run_terminal_command"));
         assert!(APPROVAL_GATED.contains(&"edit_file"));
         assert!(APPROVAL_GATED.contains(&"write_script"));
-        assert!(APPROVAL_GATED.contains(&"spawn_ghost_shell"));
         assert!(APPROVAL_GATED.contains(&"tmux_control"));
         assert!(!APPROVAL_GATED.contains(&"read_file"));
         assert!(!APPROVAL_GATED.contains(&"get_terminal_context"));
+
+        // The 2026-08-08 reconciliation, pinned in both directions. These four
+        // are the tools whose budget treatment changed when the exemption
+        // stopped being a hand-maintained copy and became the prompting set.
+        // `spawn_ghost_shell` and `delete_schedule` prompt for nothing, so a
+        // cap can now reach them; `create_agent` and `delete_agent` do prompt,
+        // so a cap no longer can.
+        assert!(
+            !APPROVAL_GATED.contains(&"spawn_ghost_shell"),
+            "spawn_ghost_shell sends no approval prompt — it must be cappable"
+        );
+        assert!(
+            !APPROVAL_GATED.contains(&"delete_schedule"),
+            "delete_schedule sends no approval prompt — it must be cappable"
+        );
+        assert!(
+            APPROVAL_GATED.contains(&"create_agent"),
+            "create_agent prompts the user, so the caps must not also apply"
+        );
+        assert!(
+            APPROVAL_GATED.contains(&"delete_agent"),
+            "delete_agent prompts the user, so the caps must not also apply"
+        );
     }
 
     #[test]

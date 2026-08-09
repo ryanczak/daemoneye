@@ -489,21 +489,10 @@ impl LimitsConfig {
     /// Call once at daemon startup after the config is loaded.
     pub fn validate(&self) {
         // These tools are approval-gated: per_tool entries for them are silently
-        // ignored at runtime, so surface the misconfiguration early.
-        // Keep in sync with per_tool_limit() in src/daemon/server.rs.
-        const APPROVAL_GATED: &[&str] = &[
-            "run_terminal_command",
-            "edit_file",
-            "write_script",
-            "write_runbook",
-            "schedule_command",
-            "spawn_ghost_shell",
-            "delete_script",
-            "delete_runbook",
-            "delete_schedule",
-            "tmux_control",
-        ];
-        for tool in APPROVAL_GATED {
+        // ignored at runtime, so surface the misconfiguration early. Shared with
+        // the runtime guard in `daemon::stream` — one list, so the warning can
+        // no longer disagree with the behaviour it describes.
+        for tool in crate::ai::tools::APPROVAL_GATED_TOOLS {
             if self.per_tool.contains_key(*tool) {
                 log::warn!(
                     "[limits] per_tool.{tool} is set but {tool} is approval-gated and \

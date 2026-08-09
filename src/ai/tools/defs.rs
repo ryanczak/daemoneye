@@ -9,15 +9,22 @@ use super::schema::{ParamDef, ParamTy, ToolDef};
 /// list: each of these reaches a `Response::*Prompt` send followed by a
 /// blocking read.
 ///
-/// **This is not `daemon::stream`'s `APPROVAL_GATED`.** That list is a
-/// *per-turn budget exemption* — tools whose user prompt substitutes for a
-/// call cap — and the two sets are not equal today. `spawn_ghost_shell` and
-/// `delete_schedule` are budget-exempt but have no approval gate;
-/// `create_agent` and `delete_agent` prompt but are still capped. Reconciling
-/// them changes runtime behaviour and is deliberately not done here.
+/// **Single source of truth, used for two things.** `README.md` marks these
+/// tools with a `⚠` (held in sync by `tests/doc_truth.rs`), and
+/// `daemon::stream` exempts them from the per-turn, per-session and per-tool
+/// budget caps — the user's prompt is the gate instead, so a call cap would be
+/// redundant. `LimitsConfig::validate` reads the same list to warn about
+/// `per_tool` entries that can have no effect.
 ///
-/// `README.md` marks these tools with a `⚠`, and `tests/doc_truth.rs` holds
-/// the two in sync.
+/// Until 2026-08-08 the budget exemption was a hand-maintained copy that had
+/// drifted from the prompting set in **both** directions: `spawn_ghost_shell`
+/// and `delete_schedule` were exempt from every cap while prompting for
+/// nothing, and `create_agent` / `delete_agent` prompted the user and were
+/// capped anyway. Reconciling them is what made one list possible.
+///
+/// **Adding a tool here changes runtime behaviour**, not just documentation.
+/// Add it only after confirming its executor arm really does send a
+/// `Response::*Prompt` and block on the reply.
 pub static APPROVAL_GATED_TOOLS: &[&str] = &[
     "create_agent",
     "delete_agent",
