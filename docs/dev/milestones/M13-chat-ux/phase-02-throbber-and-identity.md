@@ -1,7 +1,7 @@
 # Phase 02: Flush-left throbber and user@host history attribution
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~120 lines
 **Tags:** language=rust, kind=feature, size=s
@@ -505,3 +505,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 3fcf1746d4ded575d323a076f28b4a8b58f31474
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — the `buf[(x, y)]` indexing vs. a `.cell()` method is a legitimate `ratatui` `TestBackend` API adaptation, not a scope change.
+- **Calibration:** none
