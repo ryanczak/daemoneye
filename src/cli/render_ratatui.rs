@@ -153,14 +153,6 @@ fn split_spinner_row(area: Rect) -> (Rect, Rect) {
 
 /// Rows for a bottom repin: (clear_from, cursor_park).
 ///
-/// `cursor_park` is the row the real cursor must sit on when the Terminal
-/// is rebuilt — the future viewport TOP (`height − VIEWPORT_ROWS`), never
-/// the bottom row: ratatui's inline init appends `VIEWPORT_ROWS − 1` lines
-/// below the cursor, which scrolls the screen when parked lower (see the
-/// phase-06 doc's scroll-trap note). `clear_from` wipes from the old
-/// viewport top or the new one, whichever is higher on screen.
-/// Rows for a bottom repin: (clear_from, cursor_park).
-///
 /// `cursor_park` is the future viewport TOP (`height − VIEWPORT_ROWS`) —
 /// see the phase-06 scroll-trap note for why never the bottom row.
 /// `clear_from` starts the wipe at the highest of the safe rows: the old

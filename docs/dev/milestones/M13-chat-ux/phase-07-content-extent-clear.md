@@ -528,3 +528,19 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** f11dbcaaaa0c20fe1e65a6862cdaa7525ceebbe2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-10 03:37 (round 2 fix)
+
+**Executor:** claude-code
+**Fix:** Deleted the stale phase-06 doc block (lines 154–161) that was stacked above the phase-07 doc comment on `repin_rows`. Only the phase-07 comment mentioning `content_end` remains.
+
+```
+grep -c '/// Rows for a bottom repin' src/cli/render_ratatui.rs
+1
+```
+
+```
+test result: ok. 1234 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.06s
+```
+
+All four gates green. No code or test changes — only the stale doc comment removed.
