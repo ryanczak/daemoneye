@@ -236,10 +236,6 @@ impl<B: Backend> RatatuiRenderer<B> {
 
     /// Draw the live region: input box and status bar.
     pub fn draw(&mut self, input: &InputLine, status: &StatusBarState<'_>) -> Result<(), B::Error> {
-        // Split on '\n' so each logical line is a separate ratatui Line.
-        let s = input.as_str();
-        let input_text: ratatui::text::Text<'_> =
-            s.split('\n').map(|l| Line::from(Span::raw(l))).collect();
         let session_id = status.session_id.to_string();
         let model = status.model.to_string();
         let start_time = self.start_time;
@@ -247,6 +243,16 @@ impl<B: Backend> RatatuiRenderer<B> {
         let _completed = self.terminal.draw(|frame| {
             let area = frame.area();
             let content_width = area.width.saturating_sub(2) as usize;
+            // One wrapper for glyphs and cursor: visual_lines is the authority.
+            let visual: Vec<String> = input
+                .visual_lines(content_width)
+                .into_iter()
+                .map(|l| l.into_iter().collect())
+                .collect();
+            let input_text: ratatui::text::Text<'static> = visual
+                .into_iter()
+                .map(|l| Line::from(Span::raw(l)))
+                .collect();
             let (vis_row, vis_col) = input.cursor_visual_pos(content_width);
             let cursor_pos = Some((vis_col as u16, vis_row as u16));
 
@@ -452,6 +458,15 @@ impl<B: Backend> RatatuiRenderer<B> {
         }
     }
 
+    /// The input box's inner content width — the same value `draw` wraps
+    /// with. Key handling must use this, not the tmux/ioctl-derived width.
+    pub fn input_content_width(&self) -> usize {
+        self.terminal
+            .size()
+            .map(|s| s.width.saturating_sub(2) as usize)
+            .unwrap_or(78)
+    }
+
     /// Restore the terminal to its original state (exit raw mode, show
     /// cursor, clear inline viewport rows).
     pub fn restore(&mut self) {
@@ -500,16 +515,15 @@ fn render_live_region(
         .border_style(Style::default().fg(Color::Gray));
     let input_para = Paragraph::new(input_text.clone())
         .block(input_block)
-        .wrap(Wrap { trim: false })
         .scroll((scroll_offset, 0));
     frame.render_widget(input_para, content_area);
 
     // ── Set cursor position (clamped to visible content area) ──
     if let Some((col, row)) = cursor_pos {
         let visible_row = (row as usize).saturating_sub(scroll_offset as usize);
-        let x = content_area.x + 1 + col.min(content_area.width.saturating_sub(2));
+        let x = content_area.x + 1 + col.min(content_area.width.saturating_sub(3));
         let y =
-            content_area.y + 1 + (visible_row as u16).min(content_area.height.saturating_sub(2));
+            content_area.y + 1 + (visible_row as u16).min(content_area.height.saturating_sub(3));
         frame.set_cursor_position((x, y));
     }
 
@@ -1834,6 +1848,182 @@ mod tests {
             all_text.contains("password:"),
             "prompt region at height 4 must render the prompt text, got: {}",
             all_text
+        );
+    }
+
+    /// Helper: make a default StatusBarState for tests.
+    fn default_status() -> StatusBarState<'static> {
+        StatusBarState {
+            session_id: "abcdef12-3456",
+            approval_hint: "cmds: auto",
+            model: "test-model",
+            prompt_tokens: 0,
+            context_window: 200_000,
+            daemon_up: true,
+            tools_total: 0,
+            cost_usd: 0.0,
+            has_untracked: false,
+        }
+    }
+
+    /// Cursor sits one cell right of the last glyph on a short (non-wrapped)
+    /// input, on the first visual row inside the input box.
+    #[test]
+    fn cursor_sits_on_next_free_cell_of_short_input() {
+        let mut renderer = make_test_renderer();
+
+        let mut input = InputLine::new();
+        input.insert_str("hello"); // cursor at index 5
+
+        renderer.draw(&input, &default_status()).unwrap();
+
+        // Read cursor before borrowing buffer immutably
+        let cursor = renderer
+            .terminal
+            .backend_mut()
+            .get_cursor_position()
+            .unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let box_top = corner_row(buf);
+
+        // Cursor should be at (x: 1+5, y: box_top+1) — one cell right of 'o'
+        assert_eq!(
+            cursor.x,
+            1 + 5,
+            "cursor x should be at col 6 (after 'hello')"
+        );
+        assert_eq!(
+            cursor.y,
+            box_top + 1,
+            "cursor y should be one row below box top"
+        );
+
+        // The cell at (1+4, box_top+1) should hold 'o' — the last glyph
+        assert_eq!(
+            buf[(1 + 4, box_top + 1)].symbol(),
+            "o",
+            "cell at col 5 should hold 'o'"
+        );
+    }
+
+    /// When input wraps via visual_lines, the cursor and glyphs agree on the
+    /// wrap point. If visual_lines were called with a different width than
+    /// cursor_visual_pos, the cursor would land on a different row than the
+    /// glyphs display. 57 'a's + " b" (59 chars): at width 58 the " b" wraps
+    /// to row 1; at width 59 everything fits on row 0.
+    #[test]
+    fn cursor_matches_glyph_on_word_wrapped_input() {
+        let mut renderer = make_test_renderer();
+
+        // 57 'a's, a space, then 'b' = 59 chars total.
+        // With inner width 58, visual_lines wraps:
+        //   row 0 = 57 'a's
+        //   row 1 = " b" (2 chars)
+        // cursor_visual_pos(58) places cursor at (row 1, col 2).
+        // If visual_lines were called with 59 instead, everything fits on row 0
+        // but cursor_visual_pos(58) still says row 1 — cursor and glyphs disagree.
+        let mut input = InputLine::new();
+        input.insert_str(&"a".repeat(57));
+        input.insert(' ');
+        input.insert('b');
+
+        renderer.draw(&input, &default_status()).unwrap();
+
+        // Read cursor before borrowing buffer immutably
+        let cursor = renderer
+            .terminal
+            .backend_mut()
+            .get_cursor_position()
+            .unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+        let box_top = corner_row(buf);
+
+        // Cursor should be on visual row 1 (box_top + 2), col 2
+        assert_eq!(
+            cursor.y,
+            box_top + 2,
+            "cursor y should be on visual row 1 (box_top + 2), got {}",
+            cursor.y
+        );
+        assert_eq!(
+            cursor.x,
+            1 + 2,
+            "cursor x should be at col 3 (after ' b'), got {}",
+            cursor.x
+        );
+
+        // The cell at (2, box_top+2) should hold 'b' — the 'b' on row 1
+        // This is the key assertion: if visual_lines were called with a
+        // different width, the 'b' would be on a different row.
+        assert_eq!(
+            buf[(2, box_top + 2)].symbol(),
+            "b",
+            "cell at col 2 on visual row 1 should hold 'b'"
+        );
+    }
+
+    /// The cursor clamp must never place the cursor on the border column.
+    /// With a 58-char unbroken word and cursor at end, the clamped x must be
+    /// <= 1 + 56 (max content column), strictly less than 59 (border).
+    #[test]
+    fn cursor_clamp_never_reaches_border() {
+        let mut renderer = make_test_renderer();
+
+        // One unbroken 58-char word; cursor at end (col 58).
+        // The clamp `min(width - 3)` = min(57) limits col to 57.
+        // So x = 1 + 57 = 58, which is < 59 (the right border column).
+        let mut input = InputLine::new();
+        input.insert_str(&"x".repeat(58));
+
+        renderer.draw(&input, &default_status()).unwrap();
+
+        // Read cursor before borrowing buffer immutably
+        let cursor = renderer
+            .terminal
+            .backend_mut()
+            .get_cursor_position()
+            .unwrap();
+
+        let buf = renderer.terminal.backend().buffer();
+
+        // cursor.x must be <= 1 + 57 (max content column is width-2 = 58,
+        // so offset within box is 0..57, absolute x is 1..58)
+        assert!(
+            cursor.x <= 1 + 57,
+            "cursor x={} must not exceed max content column (1+57=58)",
+            cursor.x
+        );
+
+        // The border column (x=59) at the cursor's row must be '│' or similar,
+        // not the cursor
+        assert!(
+            cursor.x < 59,
+            "cursor x={} must be strictly less than border column 59",
+            cursor.x
+        );
+
+        // Verify the border column is actually a border character
+        let border_cell = buf[(59, cursor.y)].symbol();
+        assert!(
+            border_cell == "│" || border_cell == " ",
+            "border column at (59, {}) should be a border char or space, got '{}'",
+            cursor.y,
+            border_cell
+        );
+    }
+
+    /// `input_content_width()` returns the same value that `draw` uses for
+    /// wrapping — inner content width = terminal width - 2.
+    #[test]
+    fn input_content_width_matches_draw_width() {
+        let renderer = make_test_renderer();
+        // TestBackend is 60 cols wide; inner content = 60 - 2 = 58
+        assert_eq!(
+            renderer.input_content_width(),
+            58,
+            "input_content_width should be 58 on a 60-wide backend"
         );
     }
 }

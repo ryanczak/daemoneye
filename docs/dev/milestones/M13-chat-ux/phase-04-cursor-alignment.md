@@ -1,7 +1,7 @@
 # Phase 04: Cursor alignment — one wrapper, correct clamp, one width
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -362,3 +362,58 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-10 00:31 (started)
+
+**Executor:** Claude Sonnet 4.5
+
+Implementing phase 04: cursor alignment — one wrapper, correct clamp, one width.
+
+### Update — 2026-08-10 00:31 (end-to-end verification)
+
+```
+== GATES ==
+fmt exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+build exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy exit=0
+test result: ok. 1225 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.53s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+wrap calls: 1
+stale widths: 0
+clamps: 2
+18 /tmp/e2e-m13-04.txt
+== M1 APPLIED ==
+    cli::render_ratatui::tests::cursor_clamp_never_reaches_border
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+1
+running 1 test
+test cli::render_ratatui::tests::cursor_clamp_never_reaches_border ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1224 filtered out; finished in 0.00s
+
+== M2 APPLIED ==
+    cli::render_ratatui::tests::cursor_matches_glyph_on_word_wrapped_input
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M2 RESTORED ==
+0
+running 1 test
+test cli::render_ratatui::tests::cursor_matches_glyph_on_word_wrapped_input ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1224 filtered out; finished in 0.00s
+```

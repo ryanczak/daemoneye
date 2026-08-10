@@ -675,7 +675,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                     Key::Up => {
                         // Move the cursor up within the buffer; only recall the
                         // previous history entry when already on the first row.
-                        let content_width = chat_width.saturating_sub(2);
+                        let content_width = renderer.input_content_width();
                         if state.current_line().cursor_on_first_visual_row(content_width) {
                             if state.has_history() {
                                 state.history_up();
@@ -687,7 +687,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                     Key::Down => {
                         // Move the cursor down within the buffer; only recall the
                         // next history entry when already on the last row.
-                        let content_width = chat_width.saturating_sub(2);
+                        let content_width = renderer.input_content_width();
                         if state.current_line().cursor_on_last_visual_row(content_width) {
                             if state.has_history() {
                                 state.history_down();
