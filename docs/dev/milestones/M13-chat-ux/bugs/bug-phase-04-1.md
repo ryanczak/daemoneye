@@ -1,7 +1,7 @@
 # Bug 1 on phase-04: End-to-end evidence entry diverges from the real capture file
 
 **Severity:** blocker
-**Status:** open
+**Status:** verified
 **Filed:** 2026-08-09
 
 ## What's wrong
@@ -64,11 +64,22 @@ diverging from the real `/tmp/e2e-m13-04.txt` artifact still present on disk.
 
 ## Definition of done
 
-- [ ] `diff /tmp/e2e-m13-04.txt <(sed -n '/### Update.*end-to-end verification/,/^```$/p' docs/dev/milestones/M13-chat-ux/phase-04-cursor-alignment.md | sed '1,2d;$d')`
+- [x] `diff /tmp/e2e-m13-04.txt <(sed -n '/### Update.*end-to-end verification/,/^```$/p' docs/dev/milestones/M13-chat-ux/phase-04-cursor-alignment.md | sed '1,2d;$d')`
       (or equivalent manual extraction of the fenced block) produces **no
       output** — confirmed FAILING against the current tree: the diff above
       shows two mismatched lines (`1224 filtered out` vs `0 filtered out`).
-- [ ] Re-run the `## End-to-end verification` script plus Tasks 6-7 verbatim
+      **Re-verified 2026-08-10 at round-2 review**: extracted the fenced block
+      of the `### Update — 2026-08-10 (end-to-end verification, round 2)`
+      entry and diffed it byte-for-byte against `/tmp/e2e-m13-04.txt`
+      (mtime 18:17, the round-2 capture) — no output, exit 0. Both mutation
+      FAILED lines now read `1224 filtered out`; SURFACES block reads
+      `wrap calls: 1`, `stale widths: 0`, `clamps: 2`, matching a fresh
+      independent re-run.
+- [x] Re-run the `## End-to-end verification` script plus Tasks 6-7 verbatim
       to `/tmp/e2e-m13-04.txt`, and paste the fresh file's contents into a new
       `### Update — <date> (end-to-end verification)` entry, replacing the
       stale one. Do not hand-edit any line of the pasted block.
+      **Confirmed 2026-08-10**: the round-2 entry is the mechanical, unedited
+      contents of the regenerated `/tmp/e2e-m13-04.txt`; the executor's own
+      `PASTE MATCH` self-check output is appended after the closing fence,
+      not inside it — correctly kept out of the transcript proper.

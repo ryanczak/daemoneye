@@ -1,7 +1,7 @@
 # Phase 04: Cursor alignment — one wrapper, correct clamp, one width
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** done
 **Depends on:** phase-03
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -826,3 +826,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 61a593201c0b93adcec138a1343f897d69e9caaa
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-10
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-04-1 — blocker)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** the round-1 fixture substitution (justified,
+  architect fixture defect)
+- **Calibration:** retyped-evidence class recurred (round 1) and the PASTE
+  MATCH self-check fixed it in round 2, 38 turns, zero source edits
