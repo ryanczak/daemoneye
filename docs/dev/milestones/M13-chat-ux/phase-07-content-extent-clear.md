@@ -1,7 +1,7 @@
 # Phase 07: Content-extent clear — wipe live-region debris the repin misses
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-06
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -314,3 +314,50 @@ history end and `park`. That check happens at the milestone gate.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-10 03:15 (started)
+
+**Executor:** claude-code
+**Status:** in-progress
+
+Implementing content-extent clear: tracking `origin_row` and `inserted_rows` on the renderer, converting `repin_rows` to three-arg form, updating `reanchor` with the trace hook, and adding tests.
+
+### Update — 2026-08-10 03:15 (end-to-end verification)
+
+```
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.06s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.34s
+clippy exit=0
+test result: ok. 1234 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.97s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+counter sites: 3
+trace hooks: 1
+two-arg repin_rows left: 0
+20 /tmp/e2e-m13-07.txt
+== M1 APPLIED ==
+    cli::render_ratatui::tests::repin_rows_clears_debris_between_content_and_park
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 1229 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+0
+test cli::render_ratatui::tests::repin_rows_short_terminal_saturates ... ok
+test cli::render_ratatui::tests::repin_rows_parks_at_viewport_top ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1229 filtered out; finished in 0.00s
+```
+
+PASTE MATCH

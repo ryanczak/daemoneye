@@ -159,9 +159,19 @@ fn split_spinner_row(area: Rect) -> (Rect, Rect) {
 /// below the cursor, which scrolls the screen when parked lower (see the
 /// phase-06 doc's scroll-trap note). `clear_from` wipes from the old
 /// viewport top or the new one, whichever is higher on screen.
-fn repin_rows(old_top: u16, height: u16) -> (u16, u16) {
+/// Rows for a bottom repin: (clear_from, cursor_park).
+///
+/// `cursor_park` is the future viewport TOP (`height − VIEWPORT_ROWS`) —
+/// see the phase-06 scroll-trap note for why never the bottom row.
+/// `clear_from` starts the wipe at the highest of the safe rows: the old
+/// viewport top, the end of real committed content (`content_end`), or the
+/// park row — whichever is highest on screen. Clearing from `content_end`
+/// is what removes stale live-region debris parked between history and the
+/// bottom; the `park` clamp makes a full-scrolled session degrade to the
+/// bottom-rows-only clear, which is correct there.
+fn repin_rows(old_top: u16, content_end: u16, height: u16) -> (u16, u16) {
     let park = height.saturating_sub(VIEWPORT_ROWS);
-    (old_top.min(park), park)
+    (old_top.min(content_end).min(park), park)
 }
 
 /// Ratatui-based inline-viewport renderer.
@@ -176,6 +186,12 @@ pub struct RatatuiRenderer<B: Backend> {
     terminal: Terminal<B>,
     start_time: std::time::Instant,
     palette: crate::cli::palette::Palette,
+    /// Viewport top row at construction — where committed content starts.
+    origin_row: u16,
+    /// Total rows ever passed to `insert_before` (saturating). origin_row +
+    /// inserted_rows = the row just past real content, until the screen
+    /// fills and the clamp in `repin_rows` takes over.
+    inserted_rows: u16,
 }
 
 // Type alias for the production backend.
@@ -201,16 +217,19 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
         use crossterm::execute;
         let _ = execute!(std::io::stdout(), EnableBracketedPaste, EnableFocusChange);
         let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
-        let terminal = Terminal::with_options(
+        let mut terminal = Terminal::with_options(
             backend,
             ratatui::TerminalOptions {
                 viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
             },
         )?;
+        let origin_row = terminal.get_frame().area().y;
         Ok(Self {
             terminal,
             start_time,
             palette: crate::cli::palette::Palette::from_env(),
+            origin_row,
+            inserted_rows: 0,
         })
     }
 
@@ -230,7 +249,21 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             return;
         };
         let old_top = self.terminal.get_frame().area().y;
-        let (clear_from, park) = repin_rows(old_top, size.height);
+        let content_end = self.origin_row.saturating_add(self.inserted_rows);
+        let (clear_from, park) = repin_rows(old_top, content_end, size.height);
+        if std::env::var("DAEMONEYE_REANCHOR_TRACE").is_ok()
+            && let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/daemoneye-reanchor.log")
+        {
+            use std::io::Write as _;
+            let _ = writeln!(
+                f,
+                "reanchor old_top={old_top} content_end={content_end} park={park} w={} h={}",
+                size.width, size.height
+            );
+        }
         let mut out = std::io::stdout();
         if execute!(
             out,
@@ -259,6 +292,7 @@ impl<B: Backend> RatatuiRenderer<B> {
     /// the inline viewport.  Plain text, no styling.
     pub fn commit(&mut self, lines: &str) -> Result<(), B::Error> {
         let row_count = lines.matches('\n').count() + 1;
+        self.inserted_rows = self.inserted_rows.saturating_add(row_count as u16);
         self.terminal.insert_before(row_count as u16, |buf| {
             let area = buf.area;
             for (i, line) in lines.split('\n').enumerate() {
@@ -279,6 +313,7 @@ impl<B: Backend> RatatuiRenderer<B> {
     /// real cell attributes, not literal ANSI escape bytes.
     pub fn commit_styled(&mut self, lines: &[Line<'static>]) -> Result<(), B::Error> {
         let row_count = lines.len().max(1);
+        self.inserted_rows = self.inserted_rows.saturating_add(row_count as u16);
         self.terminal.insert_before(row_count as u16, |buf| {
             let text: ratatui::text::Text<'static> = lines.to_vec().into();
             let para = Paragraph::new(text);
@@ -486,6 +521,7 @@ impl<B: Backend> RatatuiRenderer<B> {
         lines.push(Line::from(vec![]));
 
         let row_count = lines.len();
+        self.inserted_rows = self.inserted_rows.saturating_add(row_count as u16);
         self.terminal.insert_before(row_count as u16, |buf| {
             Clear.render(buf.area, buf);
             let text: ratatui::text::Text<'static> = lines.into();
@@ -757,6 +793,8 @@ mod tests {
             palette: crate::cli::palette::Palette::for_depth(
                 crate::cli::palette::ColorDepth::Truecolor,
             ),
+            origin_row: 0,
+            inserted_rows: 0,
         }
     }
 
@@ -1321,6 +1359,8 @@ mod tests {
             terminal,
             start_time: std::time::Instant::now(),
             palette: Palette::for_depth(ColorDepth::Xterm256),
+            origin_row: 0,
+            inserted_rows: 0,
         };
 
         let input = InputLine::new();
@@ -1396,6 +1436,8 @@ mod tests {
             palette: crate::cli::palette::Palette::for_depth(
                 crate::cli::palette::ColorDepth::Truecolor,
             ),
+            origin_row: 0,
+            inserted_rows: 0,
         };
 
         let long_line = "x".repeat(100);
@@ -1456,6 +1498,8 @@ mod tests {
             palette: crate::cli::palette::Palette::for_depth(
                 crate::cli::palette::ColorDepth::Truecolor,
             ),
+            origin_row: 0,
+            inserted_rows: 0,
         };
 
         let body = vec!["short line".to_string()];
@@ -1526,6 +1570,8 @@ mod tests {
             palette: crate::cli::palette::Palette::for_depth(
                 crate::cli::palette::ColorDepth::Truecolor,
             ),
+            origin_row: 0,
+            inserted_rows: 0,
         };
 
         let body = vec!["short".to_string()];
@@ -1803,6 +1849,8 @@ mod tests {
             palette: crate::cli::palette::Palette::for_depth(
                 crate::cli::palette::ColorDepth::Truecolor,
             ),
+            origin_row: 0,
+            inserted_rows: 0,
         };
 
         let status = StatusBarState {
@@ -1857,6 +1905,8 @@ mod tests {
             palette: crate::cli::palette::Palette::for_depth(
                 crate::cli::palette::ColorDepth::Truecolor,
             ),
+            origin_row: 0,
+            inserted_rows: 0,
         };
 
         let status = StatusBarState {
@@ -2068,20 +2118,74 @@ mod tests {
     #[test]
     fn repin_rows_parks_at_viewport_top() {
         // Park is `height − VIEWPORT_ROWS`, never `height − 1`.
-        assert_eq!(repin_rows(10, 24), (10, 18));
+        // content_end = 18 (park), so the new min-term is not binding.
+        assert_eq!(repin_rows(10, 18, 24), (10, 18));
     }
 
     #[test]
     fn repin_rows_clears_from_old_top_when_higher() {
-        // Old viewport higher → clear from it.
-        assert_eq!(repin_rows(3, 24), (3, 18));
+        // Old viewport higher → clear from it. content_end >= park so not binding.
+        assert_eq!(repin_rows(3, 18, 24), (3, 18));
         // Old viewport below the new top → clear from the new top.
-        assert_eq!(repin_rows(20, 24), (18, 18));
+        assert_eq!(repin_rows(20, 18, 24), (18, 18));
     }
 
     #[test]
     fn repin_rows_short_terminal_saturates() {
         // Terminal shorter than the viewport: park saturates to row 0.
-        assert_eq!(repin_rows(0, 4), (0, 0));
+        assert_eq!(repin_rows(0, 0, 4), (0, 0));
+    }
+
+    #[test]
+    fn repin_rows_clears_debris_between_content_and_park() {
+        // Old viewport at the bottom (18), real content ends at row 10.
+        // The wipe starts at 10, removing everything in the debris gap.
+        assert_eq!(repin_rows(18, 10, 24), (10, 18));
+    }
+
+    #[test]
+    fn repin_rows_content_past_park_clamps() {
+        // Full-scrolled session: content_end past park, old_top < park.
+        assert_eq!(repin_rows(10, 30, 24), (10, 18));
+        // Both old_top and content_end past park → clamped to park.
+        assert_eq!(repin_rows(20, 30, 24), (18, 18));
+    }
+
+    #[test]
+    fn commit_methods_count_inserted_rows() {
+        let backend = TestBackend::new(80, 24);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(6),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+            origin_row: 0,
+            inserted_rows: 0,
+        };
+
+        // commit("a\nb\nc") → 3 lines
+        renderer.commit("a\nb\nc").unwrap();
+        assert_eq!(renderer.inserted_rows, 3);
+
+        // commit_panel("t", &[one body line], false) → top border + body +
+        // bottom border + spacer = 4
+        renderer
+            .commit_panel("t", &["body".to_string()], false)
+            .unwrap();
+        assert_eq!(renderer.inserted_rows, 7);
+
+        // commit_styled(&[two lines]) → 2
+        renderer
+            .commit_styled(&[Line::from("line1"), Line::from("line2")])
+            .unwrap();
+        assert_eq!(renderer.inserted_rows, 9);
     }
 }
