@@ -60,6 +60,29 @@ unproven (suspect: earlier-generation live regions vacated by
 viewport-bottom migration or by pre-phase-06 resize-based reanchors); the
 content-extent clear removes them regardless of origin.
 
+## RESOLVED (2026-08-10, live-verified): window-switch artifacts — closed by PE
+
+Live check after phases 06+07 (fresh session, `DAEMONEYE_REANCHOR_TRACE=1`):
+repeated window switches produce **no visible artifacts** — PE confirmed and
+closed the issue. Closure evidence:
+
+- Trace: 5 reanchors fired, e.g. `old_top=55 content_end=129 park=55 w=127
+  h=61` — the repin + content-extent clear engaging as designed.
+- **The width-flip ghost generator is real and was caught on tape**: one
+  trace line reads `w=255` — the 127-col pane transiently became full-width
+  during window rearrangement (no user zoom involved), and exactly one
+  wrapped ghost border was planted into *scrollback* at that moment (final
+  capture, one `┌…` row wider than the pane, no closing corner). The visible
+  screen stayed clean throughout. This matches the reproduction harness
+  result (scratchpad `repro/`): transient pane-width changes make tmux
+  rewrap live-region rows into history as permanent ghosts; nothing
+  app-side can clean scrollback after the fact.
+- Residual (cosmetic, backlog candidate only): scrollback ghosts on width
+  flips. If ever worth fixing: a width-change-aware clear band in
+  `reanchor` (track last-drawn size; the old live region's rewrapped rows
+  occupy `VIEWPORT_ROWS × old_w / new_w` rows above the bottom and are
+  guaranteed non-history). Not scoped into M13.
+
 ## Active phase: [M13 phase-07 — content-extent-clear](milestones/M13-chat-ux/phase-07-content-extent-clear.md)
 
 Drafted 2026-08-10 on PE direction, status `todo` — dispatch with
