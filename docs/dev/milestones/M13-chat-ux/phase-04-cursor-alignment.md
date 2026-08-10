@@ -372,6 +372,44 @@ None.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-08-10 (round 2, read this first)
+
+**GREEN GATES AND A CLEAN TREE ARE EXPECTED HERE AND ARE NOT EVIDENCE THE
+PHASE IS DONE.** Round 1's production code is approved and correct: all four
+cursor tests, both mutations, every grep criterion, and all four gates were
+independently verified at review. **Do not edit any `src/` file. Do not
+re-derive, re-read, or re-verify the shipped code.**
+
+Exactly **one** defect remains (bug-phase-04-1): the pasted end-to-end entry
+was altered from the real capture — its two FAILED lines say `0 filtered out`
+where the real file says `1224 filtered out`. The fix is to regenerate the
+evidence and paste it **without retyping anything**:
+
+1. Re-run Task 6 (mutation M1 apply + restore), Task 7 (mutation M2 apply +
+   restore) and the § End-to-end verification block, in that spirit but with
+   the E2E block's `: > /tmp/e2e-m13-04.txt` run FIRST so the file starts
+   fresh, then the two mutation tasks appending, then the rest of the E2E
+   block. All commands verbatim from the phase doc.
+2. Append a new Update Log entry headed
+   `### Update — 2026-08-10 (end-to-end verification, round 2)` whose fenced
+   block is the file's contents, inserted by command, not typed. For example:
+   append the heading and an opening ``` fence to this phase doc with two
+   `bash` echo commands, then `cat /tmp/e2e-m13-04.txt >> <this phase doc>`,
+   then echo the closing fence.
+3. **Self-check (run it, paste its output as the last line of the entry):**
+
+   ```sh
+   awk '/^### Update — 2026-08-10 \(end-to-end verification, round 2\)/{f=1} f' docs/dev/milestones/M13-chat-ux/phase-04-cursor-alignment.md | sed -n '/^```$/,/^```$/p' | sed '1d;$d' > /tmp/pasted-04-r2.txt
+   diff /tmp/pasted-04-r2.txt /tmp/e2e-m13-04.txt > /dev/null && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+   ```
+
+   The run is finished only when this prints `PASTE MATCH`.
+
+**Inverted finish condition:** `cargo test` must still report **1225** lib
+tests, not 1226 — a rising count means you added something; nothing may be
+added. The working tree outside this phase doc and `/tmp` must show **no
+changes** (`git status --short` lists only this phase doc).
+
 ### Update — 2026-08-10 00:31 (started)
 
 **Executor:** Claude Sonnet 4.5
