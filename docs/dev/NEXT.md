@@ -1,15 +1,24 @@
 # NEXT
 
-## Active phase: [M13 phase-04 — cursor-alignment](milestones/M13-chat-ux/phase-04-cursor-alignment.md)
+## Active phase: [M13 phase-05 — resize-and-reanchor](milestones/M13-chat-ux/phase-05-resize-and-reanchor.md)
 
-Drafted 2026-08-10 (autonomous /rexymcp:auto run), status `todo`. Makes
-`InputLine::visual_lines` the single wrapping authority (pre-wrapped input
-text, `Paragraph::wrap` dropped from the input box), fixes the border clamp
-(`sub(2)` → `sub(3)`), and routes Up/Down key wrapping through a new
-`renderer.input_content_width()`. Exact-coordinate cursor tests via
-`TestBackend::get_cursor_position` (API verified in ratatui-core-0.1.2). E2E
-exit markers now use `${PIPESTATUS[0]}` — the phase-03 `exit=$?`-after-pipe
-defect is fixed in this and future blocks.
+Drafted 2026-08-10 (autonomous /rexymcp:auto run), status `todo`. **Last phase
+of M13.** `select_stream` gains a SIGWINCH arm and a pure `focus_outcome`
+filter returning a new `StreamOutcome::Reanchor`; the idle-loop resize arm
+re-anchors too; the six dead legacy printers in `render.rs` are deleted
+(`wrap_line_hard`/`visual_len`/`terminal_width`/`StatusBarState` stay — live).
+PASTE MATCH self-check built into the E2E task from the start.
+
+**phase-04 — cursor-alignment approved 2026-08-10** (`approved_after_1`;
+bug-phase-04-1 blocker — the pasted E2E entry's `filtered out` counts were
+retyped `1224`→`0`; round 2 regenerated the evidence with a PASTE MATCH
+self-check in 38 turns, zero source edits; commits `987d999`/`b4e4808`).
+`visual_lines` is now the single wrapping authority, the border clamp is
+fixed, Up/Down wrap against `renderer.input_content_width()`; exact-coordinate
+cursor tests via `TestBackend::get_cursor_position`; 1225 lib tests. One
+justified executor deviation: the spec's wrap fixture didn't discriminate
+mutation M2 (wrapped identically at 58 and 59); the executor substituted one
+that does — architect fixture defect, executor caught it.
 
 **phase-03 — runtime-in-border done 2026-08-10** (`escalated` — 2
 NoProgressStall hard-fails, 1 resume assist, architect takeover close-out;
