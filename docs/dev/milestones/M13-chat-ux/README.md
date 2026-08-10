@@ -51,7 +51,7 @@ to the bottom through resizes and tmux window switches.
 | 02 | throbber-and-identity (phase-02-throbber-and-identity.md)          | done         |
 | 03 | runtime-in-border (phase-03-runtime-in-border.md)                  | done   |
 | 04 | cursor-alignment (phase-04-cursor-alignment.md)                    | done         |
-| 05 | resize-and-reanchor (phase-05-resize-and-reanchor.md)              | in-progress |
+| 05 | resize-and-reanchor (phase-05-resize-and-reanchor.md)              | review      |
 
 Phases 01–03 are independent of each other. 04 and 05 both touch
 `render_ratatui.rs`'s live-region path and run last, in that order, so 05's
