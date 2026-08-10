@@ -281,23 +281,45 @@ pub fn client_dimensions(session_name: &str) -> (u16, u16) {
 /// tmux only passes `38;2;R;G;B` SGR sequences through to the outer terminal
 /// when it believes that terminal supports them; otherwise it drops or
 /// approximates them, which renders as monotone text. That belief comes from
-/// two places: the client's detected/declared feature list (tmux ≥ 3.2
-/// `client_termfeatures`, containing `RGB`), or an explicit user grant via the
-/// `terminal-features` / `terminal-overrides` server options (e.g. the classic
-/// `set -ga terminal-overrides ',*:Tc'`). Check both; on any failure or on an
-/// older tmux report `false` so callers fall back to 256-color output, which
-/// tmux always handles.
+/// three places, checked in order:
+///
+/// 1. the client's declared feature list (tmux ≥ 3.2 `client_termfeatures`,
+///    containing `RGB` — set by the `terminal-features` option matching);
+/// 2. the client terminal's terminfo entry (`Tc` / `RGB` flags or the
+///    `setrgbf`/`setrgbb` strings) — this is how e.g. `xterm-ghostty` or
+///    `xterm-direct` get truecolor, and it is **not** reflected in
+///    `client_termfeatures`, so it must be probed separately via `infocmp -x`;
+/// 3. an explicit user grant in the `terminal-features` /
+///    `terminal-overrides` server options (e.g. the classic
+///    `set -ga terminal-overrides ',*:Tc'`).
+///
+/// On any failure or on an older tmux report `false` so callers fall back to
+/// 256-color output, which tmux always handles (reducing further for the
+/// client if needed).
 pub fn client_supports_rgb() -> bool {
     let features = crate::tmux::bounded_output(Command::new("tmux").args([
         "display-message",
         "-p",
-        "#{client_termfeatures}",
+        "#{client_termfeatures}\t#{client_termname}",
     ]));
+    let mut termname = String::new();
     if let Ok(out) = features
         && out.status.success()
-        && String::from_utf8_lossy(&out.stdout)
-            .split(',')
-            .any(|f| f.trim().eq_ignore_ascii_case("RGB"))
+    {
+        let s = String::from_utf8_lossy(&out.stdout);
+        let s = s.trim();
+        let (feats, name) = s.split_once('\t').unwrap_or((s, ""));
+        if termfeatures_have_rgb(feats) {
+            return true;
+        }
+        termname = name.trim().to_string();
+    }
+
+    if !termname.is_empty()
+        && let Ok(out) =
+            crate::tmux::bounded_output(Command::new("infocmp").args(["-x", &termname]))
+        && out.status.success()
+        && terminfo_advertises_rgb(&String::from_utf8_lossy(&out.stdout))
     {
         return true;
     }
@@ -315,6 +337,22 @@ pub fn client_supports_rgb() -> bool {
         }
     }
     false
+}
+
+/// Does a tmux `client_termfeatures` list (comma-separated) include `RGB`?
+fn termfeatures_have_rgb(features: &str) -> bool {
+    features
+        .split(',')
+        .any(|f| f.trim().eq_ignore_ascii_case("RGB"))
+}
+
+/// Does an `infocmp -x` dump advertise truecolor? Matches the `Tc` / `RGB`
+/// boolean flags and the `setrgbf` / `setrgbb` capability strings as whole
+/// comma-separated capability tokens, not substrings.
+fn terminfo_advertises_rgb(infocmp_output: &str) -> bool {
+    infocmp_output.split([',', '\n']).map(str::trim).any(|cap| {
+        cap == "Tc" || cap == "RGB" || cap.starts_with("setrgbf") || cap.starts_with("setrgbb")
+    })
 }
 
 /// Default name for the headless tmux session used to host ghost incidents.
@@ -529,5 +567,30 @@ mod tests {
         let out = format_other_sessions("prod", &sessions, 1000);
         assert!(!out.contains("bell!"), "unexpected bell: {out}");
         assert!(!out.contains("activity"), "unexpected activity: {out}");
+    }
+
+    #[test]
+    fn termfeatures_rgb_token_matches() {
+        assert!(termfeatures_have_rgb("256,RGB,clipboard"));
+        assert!(termfeatures_have_rgb("bpaste, rgb ,title"));
+        // ghostty's real feature list has no RGB token
+        assert!(!termfeatures_have_rgb(
+            "bpaste,ccolour,clipboard,cstyle,focus,title"
+        ));
+        assert!(!termfeatures_have_rgb(""));
+    }
+
+    #[test]
+    fn terminfo_rgb_caps_match_as_tokens() {
+        // xterm-ghostty style: extended Tc flag + setrgbf/setrgbb strings
+        assert!(terminfo_advertises_rgb(
+            "\tcolors#256, cols#80,\n\tTc, fullkbd,\n\tsetrgbf=\\E[38:2:%p1%d:%p2%d:%p3%dm,"
+        ));
+        assert!(terminfo_advertises_rgb("\tRGB, colors#0x1000000,"));
+        // plain xterm advertises nothing truecolor; "smcup" must not
+        // substring-match anything
+        assert!(!terminfo_advertises_rgb(
+            "\tcolors#8, cols#80,\n\tsmcup=\\E[?1049h, rmcup=\\E[?1049l,"
+        ));
     }
 }
