@@ -26,6 +26,39 @@ is tmux's and stays out of reach (existing non-goal). Drafted as
 [phase-06 — repin-rebuild](milestones/M13-chat-ux/phase-06-repin-rebuild.md)
 on PE direction 2026-08-10.
 
+## OPEN FINDING 2 (2026-08-10, post-phase-06 live check): stale live-region debris survives the repin
+
+Screenshot evidence (same-size window switch): the input box now pins to the
+bottom correctly — phase-06's mechanism works — but the region between the
+end of committed history and the repinned viewport shows fragments of at
+least two *previous* live-region generations (top-border rules, orphaned `│`
+border cells, a partial box).
+
+Why phase-06 misses them: `reanchor()` clears from
+`min(old_viewport_top, park)` downward. When the viewport is already at (or
+near) the bottom, that wipes only the bottom rows — any debris the session
+accumulated *above* the old viewport top is out of range, and it is real
+grid content to tmux, faithfully restored on every switch. The clear range
+is too narrow; the repin itself is sound.
+
+Proposed phase-07 (content-extent clear): the renderer can know exactly
+where real content ends — every committed row goes through
+`insert_before` (banner, panels, streamed lines all use the `commit*`
+methods). Track `origin_row` (initial viewport top, captured at `new()`)
+plus a saturating count of inserted rows; `content_end = min(origin_row +
+inserted_rows, park)`. Reanchor then clears from
+`min(content_end, old_top, park)` — wiping all debris between true
+history-end and the bottom while never touching a real history row. Once a
+session has scrolled a full screen, `content_end` saturates at `park` and
+behavior degrades to today's (correct there — everything above is genuinely
+scrolled history). Include an env-gated trace
+(`DAEMONEYE_REANCHOR_TRACE` → append `(old_top, park, content_end, size)`
+to a /tmp log) so the next live check produces numbers, not screenshots.
+Root cause of *how* the debris rows were originally painted is still
+unproven (suspect: earlier-generation live regions vacated by
+viewport-bottom migration or by pre-phase-06 resize-based reanchors); the
+content-extent clear removes them regardless of origin.
+
 ## Active phase: [M13 phase-06 — repin-rebuild](milestones/M13-chat-ux/phase-06-repin-rebuild.md)
 
 Drafted 2026-08-10 on PE direction, status `todo` — dispatch with
