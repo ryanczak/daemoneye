@@ -1,7 +1,7 @@
 # Phase 05: Mid-stream resize/focus re-anchoring; legacy dead-code deletion
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** done
 **Depends on:** phase-04
 **Estimated diff:** ~270 lines (net ≈ +150 −120)
 **Tags:** language=rust, kind=bugfix, size=m
@@ -501,3 +501,11 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** ae8e4c108322c8e60c8308fc59d7e932a1b1049d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-09
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none
+- **Calibration:** none
