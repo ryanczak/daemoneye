@@ -636,3 +636,56 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
   and all acceptance-criteria greps were otherwise verified and are correct;
   this bounce is solely for the corrupted E2E transcript per STANDARDS.md §1
   ("captured mechanically ... not retyped").
+
+### Update — 2026-08-10 (end-to-end verification, round 2)
+```
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.88s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.04s
+clippy exit=0
+test result: ok. 1225 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.33s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+wrap calls: 1
+stale widths: 0
+clamps: 2
+20 /tmp/e2e-m13-04.txt
+== M1 APPLIED ==
+    cli::render_ratatui::tests::cursor_clamp_never_reaches_border
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1224 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+1
+running 1 test
+test cli::render_ratatui::tests::cursor_clamp_never_reaches_border ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1224 filtered out; finished in 0.00s
+
+== M2 APPLIED ==
+    cli::render_ratatui::tests::cursor_matches_glyph_on_word_wrapped_input
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1224 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M2 RESTORED ==
+0
+running 1 test
+test cli::render_ratatui::tests::cursor_matches_glyph_on_word_wrapped_input ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1224 filtered out; finished in 0.00s
+
+```
+
+PASTE MATCH
