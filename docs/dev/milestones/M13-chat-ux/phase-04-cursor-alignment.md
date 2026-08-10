@@ -1,7 +1,7 @@
 # Phase 04: Cursor alignment — one wrapper, correct clamp, one width
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-04-1)
 **Depends on:** phase-03
 **Estimated diff:** ~220 lines
 **Tags:** language=rust, kind=bugfix, size=m
@@ -281,6 +281,15 @@ drafting):
       `cursor_matches_glyph_on_word_wrapped_input`,
       `cursor_clamp_never_reaches_border`,
       `input_content_width_matches_draw_width` pass. (Currently: none exist.)
+- [ ] Re-run the `## End-to-end verification` script plus Tasks 6-7's mutation
+      runs to a fresh `/tmp/e2e-m13-04.txt`, and the phase doc's
+      `### Update — <date> (end-to-end verification)` entry is the byte-exact
+      contents of that file — diffing the fenced block against
+      `/tmp/e2e-m13-04.txt` produces no output. **Fails against the current
+      tree, confirmed 2026-08-09**: the existing entry's `filtered out` counts
+      on both `== M1 APPLIED ==` and `== M2 APPLIED ==` FAILED lines read `0`;
+      the real `/tmp/e2e-m13-04.txt` (still on disk) and an independent re-run
+      of the same mutation both read `1224`. See bug-phase-04-1.
 
 No-regression guards — these **already pass** and must still pass (they are
 not evidence of new work):
@@ -563,3 +572,29 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 1a1c3afdbf604fd6be2557d7dc7c02100f0b1f53
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-09
+
+- **Verdict:** bounced
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** the `cursor_matches_glyph_on_word_wrapped_input`
+  fixture was substituted (57 'a's + " b", 59 chars, wraps at 58 but not 59)
+  for the spec's 50 'a's + " " + 10 'b's, 61 chars — independently reproduced:
+  the spec fixture's `visual_lines(58)` and `visual_lines(59)` outputs are
+  byte-identical (`[50 a's]` / `[' ', 10 b's]` both times), so mutation M2
+  (`content_width + 1`) is undetectable with it; the substituted fixture does
+  detect it (confirmed: mutated run fails with a wrong glyph at the expected
+  cursor cell, restored run passes). **Approved** — architect-side fixture
+  defect, not an executor shortcut.
+- **Calibration:** none folded (single-phase fixture defect, not a recurring
+  pattern).
+- **Bug filed:** bug-phase-04-1 (blocker) — the
+  `(end-to-end verification)` Update Log entry diverges from the real
+  `/tmp/e2e-m13-04.txt` capture at two lines (`filtered out` count `0` in the
+  pasted entry vs `1224` in the real file and in an independent re-run of the
+  same mutation against the current tree). All four gates, all four new
+  cursor tests, both mutation pairs (independently re-applied and restored),
+  and all acceptance-criteria greps were otherwise verified and are correct;
+  this bounce is solely for the corrupted E2E transcript per STANDARDS.md §1
+  ("captured mechanically ... not retyped").
