@@ -22,17 +22,24 @@ a deterministic bottom repin — clear the viewport rows, move the real cursor
 to row `height − VIEWPORT_ROWS`, rebuild the `Terminal` (fresh
 `Viewport::Inline`; init anchors at the cursor with offset 0, verified at
 `terminal/init.rs:130`), redraw. Scrollback rewrap damage above the viewport
-is tmux's and stays out of reach (existing non-goal). NOT drafted — awaiting
-PE go-ahead at the milestone gate.
+is tmux's and stays out of reach (existing non-goal). Drafted as
+[phase-06 — repin-rebuild](milestones/M13-chat-ux/phase-06-repin-rebuild.md)
+on PE direction 2026-08-10.
 
-## Active phase: [M13 phase-05 — resize-and-reanchor](milestones/M13-chat-ux/phase-05-resize-and-reanchor.md)
+## Active phase: [M13 phase-06 — repin-rebuild](milestones/M13-chat-ux/phase-06-repin-rebuild.md)
 
-Drafted 2026-08-10 (autonomous /rexymcp:auto run), status `todo`. **Last phase
-of M13.** `select_stream` gains a SIGWINCH arm and a pure `focus_outcome`
-filter returning a new `StreamOutcome::Reanchor`; the idle-loop resize arm
-re-anchors too; the six dead legacy printers in `render.rs` are deleted
-(`wrap_line_hard`/`visual_len`/`terminal_width`/`StatusBarState` stay — live).
-PASTE MATCH self-check built into the E2E task from the start.
+Drafted 2026-08-10 on PE direction, status `todo` — dispatch with
+`/rexymcp:dispatch phase-06`. Replaces `reanchor()`'s resize-based repin with
+a deterministic bottom repin: clear from the old viewport top, park the
+cursor at `height − VIEWPORT_ROWS` (the scroll-trap row — parking at the
+bottom scrolls history 5 rows per repin), rebuild the Terminal. Decisive
+verification is the live tmux window-switch check at the milestone gate.
+
+**phase-05 — resize-and-reanchor approved 2026-08-10** (`approved_first_try`,
+commit `f4b0e4b`). SIGWINCH + focus events now reach the streaming loop
+(`StreamOutcome::Reanchor`), idle resize re-anchors, 147 lines of dead legacy
+renderer deleted; 1228 lib tests. Live check then showed the artifacts
+persist — see the OPEN FINDING above; phase-06 is the fix.
 
 **phase-04 — cursor-alignment approved 2026-08-10** (`approved_after_1`;
 bug-phase-04-1 blocker — the pasted E2E entry's `filtered out` counts were
