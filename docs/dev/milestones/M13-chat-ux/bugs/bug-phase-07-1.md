@@ -1,7 +1,7 @@
 # Bug 1 on phase-07: Stale duplicate doc comment contradicts `repin_rows`
 
 **Severity:** minor
-**Status:** open
+**Status:** verified
 **Filed:** 2026-08-10
 
 ## What's wrong
@@ -31,10 +31,10 @@ orphaned above the insertion point.
 
 ## Definition of done
 
-- [ ] `grep -c '/// Rows for a bottom repin' src/cli/render_ratatui.rs`
-      prints `1`. (Run 2026-08-10 against the current tree: prints `2` —
+- [x] `grep -c '/// Rows for a bottom repin' src/cli/render_ratatui.rs`
+      prints `1`. (Verified at round-2 review.) (Run 2026-08-10 against the current tree: prints `2` —
       confirmed failing.)
-- [ ] The surviving comment mentions `content_end` (grep
-      `'the end of real committed content'` still returns 1).
-- [ ] Four gates green; `cargo test` still reports **1234** lib tests, not
-      1235 — nothing added, only 8 comment lines deleted.
+- [x] The surviving comment mentions `content_end` (grep
+      `'the end of real committed content'` still returns 1). (Verified.)
+- [x] Four gates green; `cargo test` still reports **1234** lib tests, not
+      1235 — nothing added, only 8 comment lines deleted. (Verified.)

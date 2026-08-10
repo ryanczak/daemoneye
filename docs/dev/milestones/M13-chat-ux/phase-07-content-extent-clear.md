@@ -1,7 +1,7 @@
 # Phase 07: Content-extent clear — wipe live-region debris the repin misses
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** done
 **Depends on:** phase-06
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -680,3 +680,17 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 55ba03f39a8257ce07ab010a88d1b00f02f868c8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-10
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-phase-07-1 — minor)
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — round 1 shipped Tasks 1-6 to spec; round 2 was
+  exactly the enumerated 8-line doc deletion (21 turns, zero code drift)
+- **Calibration:** the bounce's root cause was part architect-side ("Replace
+  the two-arg form" left the patch anchor ambiguous — a replace instruction
+  must state what the old block *includes*, doc comment and all). Positive
+  data point: round 1's E2E artifact was the milestone's first fully clean
+  one (byte-exact PASTE MATCH with the literal self-check line in the entry)
+  — the phase-07 spec's scoped-first-fence extraction worked as designed.
