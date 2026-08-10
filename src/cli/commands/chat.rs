@@ -701,6 +701,18 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         // Returning to this tmux pane: re-pin the input box to the
                         // bottom in case the terminal was repainted while away.
                         renderer.reanchor();
+                        let sb = StatusBarState {
+                            session_id,
+                            approval_hint: &approval.hint(),
+                            model,
+                            prompt_tokens,
+                            context_window,
+                            daemon_up,
+                            tools_total: 0,
+                            cost_usd,
+                            has_untracked,
+                        };
+                        let _ = renderer.draw(state.current_line(), &sb);
                     }
                     Key::FocusLost => {}
                     Key::Home => { state.current_line_mut().move_home(); }

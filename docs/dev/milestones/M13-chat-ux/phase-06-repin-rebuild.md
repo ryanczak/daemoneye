@@ -1,7 +1,7 @@
 # Phase 06: Deterministic bottom repin — rebuild the viewport, don't resize it
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-05
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -311,3 +311,47 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-10 02:44 (started)
+
+**Executor:** Claude (Sonnet 4.5)
+**Working on:** Tasks 1–6 — repin_rows, rebuild reanchor, FocusGained redraw, tests, mutation M1, e2e
+
+### Update — 2026-08-10 02:47 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+    cli::render_ratatui::tests::repin_rows_short_terminal_saturates
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 1228 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+0
+test cli::render_ratatui::tests::repin_rows_short_terminal_saturates ... ok
+test cli::render_ratatui::tests::repin_rows_parks_at_viewport_top ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1228 filtered out; finished in 0.00s
+
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.01s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.23s
+clippy exit=0
+test result: ok. 1231 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+repin_rows fns: 4
+clear-down calls: 1
+resize repins left: 0
+33 /tmp/e2e-m13-06.txt
+```

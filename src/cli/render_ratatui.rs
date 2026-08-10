@@ -151,6 +151,19 @@ fn split_spinner_row(area: Rect) -> (Rect, Rect) {
     (chunks[0], chunks[1])
 }
 
+/// Rows for a bottom repin: (clear_from, cursor_park).
+///
+/// `cursor_park` is the row the real cursor must sit on when the Terminal
+/// is rebuilt — the future viewport TOP (`height − VIEWPORT_ROWS`), never
+/// the bottom row: ratatui's inline init appends `VIEWPORT_ROWS − 1` lines
+/// below the cursor, which scrolls the screen when parked lower (see the
+/// phase-06 doc's scroll-trap note). `clear_from` wipes from the old
+/// viewport top or the new one, whichever is higher on screen.
+fn repin_rows(old_top: u16, height: u16) -> (u16, u16) {
+    let park = height.saturating_sub(VIEWPORT_ROWS);
+    (old_top.min(park), park)
+}
+
 /// Ratatui-based inline-viewport renderer.
 ///
 /// Owns a `Terminal<B>` with an inline viewport.  The viewport holds only the
@@ -199,6 +212,45 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             start_time,
             palette: crate::cli::palette::Palette::from_env(),
         })
+    }
+
+    /// Deterministically re-pin the inline viewport to the bottom of the
+    /// terminal after tmux moved or rewrapped the screen (window switch,
+    /// resize). `Terminal::resize` cannot do this — it anchors relative to
+    /// the live cursor and only clears on horizontal shrink — so instead:
+    /// wipe from the old viewport top downward, park the cursor exactly at
+    /// the new viewport top, and rebuild the Terminal (inline init anchors
+    /// at the cursor row with offset 0).
+    pub fn reanchor(&mut self) {
+        use crossterm::cursor::MoveTo;
+        use crossterm::execute;
+        use crossterm::terminal::{Clear, ClearType};
+
+        let Ok(size) = self.terminal.size() else {
+            return;
+        };
+        let old_top = self.terminal.get_frame().area().y;
+        let (clear_from, park) = repin_rows(old_top, size.height);
+        let mut out = std::io::stdout();
+        if execute!(
+            out,
+            MoveTo(0, clear_from),
+            Clear(ClearType::FromCursorDown),
+            MoveTo(0, park)
+        )
+        .is_err()
+        {
+            return;
+        }
+        let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
+        if let Ok(terminal) = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        ) {
+            self.terminal = terminal;
+        }
     }
 }
 
@@ -444,20 +496,6 @@ impl<B: Backend> RatatuiRenderer<B> {
 
     /// Re-pin the inline viewport to the bottom of the terminal.
     ///
-    /// When a tmux pane is switched away from and back (or detached and
-    /// re-attached), tmux repaints the pane and ratatui's cached viewport
-    /// origin can go stale — the input box ends up drawn at the *top* of the
-    /// pane with the history below it. `Terminal::resize` recomputes the inline
-    /// viewport origin from the live cursor position, re-anchoring it to the
-    /// bottom rows. It is safe to call when the size is unchanged (the normal
-    /// `autoresize` path would otherwise skip the recompute).
-    pub fn reanchor(&mut self) {
-        if let Ok(size) = self.terminal.size() {
-            let area = Rect::new(0, 0, size.width, size.height);
-            let _ = self.terminal.resize(area);
-        }
-    }
-
     /// The input box's inner content width — the same value `draw` wraps
     /// with. Key handling must use this, not the tmux/ioctl-derived width.
     pub fn input_content_width(&self) -> usize {
@@ -2025,5 +2063,25 @@ mod tests {
             58,
             "input_content_width should be 58 on a 60-wide backend"
         );
+    }
+
+    #[test]
+    fn repin_rows_parks_at_viewport_top() {
+        // Park is `height − VIEWPORT_ROWS`, never `height − 1`.
+        assert_eq!(repin_rows(10, 24), (10, 18));
+    }
+
+    #[test]
+    fn repin_rows_clears_from_old_top_when_higher() {
+        // Old viewport higher → clear from it.
+        assert_eq!(repin_rows(3, 24), (3, 18));
+        // Old viewport below the new top → clear from the new top.
+        assert_eq!(repin_rows(20, 24), (18, 18));
+    }
+
+    #[test]
+    fn repin_rows_short_terminal_saturates() {
+        // Terminal shorter than the viewport: park saturates to row 0.
+        assert_eq!(repin_rows(0, 4), (0, 0));
     }
 }
