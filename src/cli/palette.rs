@@ -8,10 +8,20 @@ pub enum ColorDepth {
 }
 
 /// Decide the color depth from environment values, in precedence order.
+///
+/// `tmux_rgb` is whether tmux can pass 24-bit color through to the attached
+/// client's terminal (`None` = not running inside tmux). Inside tmux the
+/// environment lies: `$COLORTERM` is inherited from whatever terminal the tmux
+/// *server* was started under, but every escape we emit is filtered by tmux,
+/// which drops `38;2` SGR unless the outer terminal advertises RGB/Tc. So a
+/// truecolor verdict earned from the environment is capped at `Xterm256` when
+/// tmux reports no RGB passthrough. An explicit `$DAEMONEYE_COLOR` override is
+/// exempt — it is the user's escape hatch and always wins.
 pub fn detect_color_depth(
     override_var: Option<&str>, // $DAEMONEYE_COLOR
     colorterm: Option<&str>,    // $COLORTERM
     term: Option<&str>,         // $TERM
+    tmux_rgb: Option<bool>,     // inside tmux: can it pass RGB through?
 ) -> ColorDepth {
     // 1. Explicit override wins
     if let Some(v) = override_var {
@@ -23,11 +33,19 @@ pub fn detect_color_depth(
         }
     }
 
+    let cap_for_tmux = |depth: ColorDepth| {
+        if depth == ColorDepth::Truecolor && tmux_rgb == Some(false) {
+            ColorDepth::Xterm256
+        } else {
+            depth
+        }
+    };
+
     // 2. COLORTERM containing "truecolor" or "24bit" (case-insensitive) → Truecolor
     if let Some(ct) = colorterm {
         let ct_low = ct.to_lowercase();
         if ct_low.contains("truecolor") || ct_low.contains("24bit") {
-            return ColorDepth::Truecolor;
+            return cap_for_tmux(ColorDepth::Truecolor);
         }
     }
 
@@ -35,7 +53,7 @@ pub fn detect_color_depth(
     if let Some(t) = term {
         let t_low = t.to_lowercase();
         if t_low.contains("direct") {
-            return ColorDepth::Truecolor;
+            return cap_for_tmux(ColorDepth::Truecolor);
         }
     }
 
@@ -51,11 +69,20 @@ pub fn detect_color_depth(
 }
 
 /// Read the real environment. The only place the env is consulted.
+///
+/// The tmux RGB probe shells out to the tmux server, so its result is cached
+/// for the life of the process.
 pub fn detect_from_env() -> ColorDepth {
     let ov = std::env::var("DAEMONEYE_COLOR").ok();
     let ct = std::env::var("COLORTERM").ok();
     let t = std::env::var("TERM").ok();
-    detect_color_depth(ov.as_deref(), ct.as_deref(), t.as_deref())
+    let tmux_rgb = std::env::var_os("TMUX").is_some().then(tmux_rgb_cached);
+    detect_color_depth(ov.as_deref(), ct.as_deref(), t.as_deref(), tmux_rgb)
+}
+
+fn tmux_rgb_cached() -> bool {
+    static TMUX_RGB: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TMUX_RGB.get_or_init(crate::tmux::client_supports_rgb)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -108,7 +135,7 @@ mod tests {
     #[test]
     fn detect_override_wins() {
         assert_eq!(
-            detect_color_depth(Some("256"), Some("truecolor"), Some("xterm-direct")),
+            detect_color_depth(Some("256"), Some("truecolor"), Some("xterm-direct"), None),
             ColorDepth::Xterm256
         );
     }
@@ -116,7 +143,7 @@ mod tests {
     #[test]
     fn detect_colorterm_truecolor() {
         assert_eq!(
-            detect_color_depth(None, Some("truecolor"), Some("xterm-256color")),
+            detect_color_depth(None, Some("truecolor"), Some("xterm-256color"), None),
             ColorDepth::Truecolor
         );
     }
@@ -124,7 +151,7 @@ mod tests {
     #[test]
     fn detect_tmux_256color_is_not_truecolor() {
         assert_eq!(
-            detect_color_depth(None, None, Some("tmux-256color")),
+            detect_color_depth(None, None, Some("tmux-256color"), None),
             ColorDepth::Xterm256
         );
     }
@@ -132,7 +159,7 @@ mod tests {
     #[test]
     fn detect_term_direct_is_truecolor() {
         assert_eq!(
-            detect_color_depth(None, None, Some("xterm-direct")),
+            detect_color_depth(None, None, Some("xterm-direct"), None),
             ColorDepth::Truecolor
         );
     }
@@ -140,14 +167,59 @@ mod tests {
     #[test]
     fn detect_colorterm_yes_is_not_truecolor() {
         assert_eq!(
-            detect_color_depth(None, Some("yes"), Some("xterm")),
+            detect_color_depth(None, Some("yes"), Some("xterm"), None),
             ColorDepth::Ansi16
         );
     }
 
     #[test]
     fn detect_all_unset_is_ansi16() {
-        assert_eq!(detect_color_depth(None, None, None), ColorDepth::Ansi16);
+        assert_eq!(
+            detect_color_depth(None, None, None, None),
+            ColorDepth::Ansi16
+        );
+    }
+
+    #[test]
+    fn detect_tmux_without_rgb_caps_colorterm_truecolor_at_256() {
+        // The pinky-over-ssh case: COLORTERM=truecolor leaks into the tmux
+        // session but tmux cannot pass 38;2 SGR through — emit 256-color.
+        assert_eq!(
+            detect_color_depth(None, Some("truecolor"), Some("tmux-256color"), Some(false)),
+            ColorDepth::Xterm256
+        );
+    }
+
+    #[test]
+    fn detect_tmux_without_rgb_caps_term_direct_at_256() {
+        assert_eq!(
+            detect_color_depth(None, None, Some("tmux-direct"), Some(false)),
+            ColorDepth::Xterm256
+        );
+    }
+
+    #[test]
+    fn detect_tmux_with_rgb_keeps_truecolor() {
+        assert_eq!(
+            detect_color_depth(None, Some("truecolor"), Some("tmux-256color"), Some(true)),
+            ColorDepth::Truecolor
+        );
+    }
+
+    #[test]
+    fn detect_override_beats_tmux_downgrade() {
+        assert_eq!(
+            detect_color_depth(Some("truecolor"), None, Some("tmux-256color"), Some(false)),
+            ColorDepth::Truecolor
+        );
+    }
+
+    #[test]
+    fn detect_tmux_without_rgb_leaves_lower_depths_alone() {
+        assert_eq!(
+            detect_color_depth(None, None, Some("screen"), Some(false)),
+            ColorDepth::Ansi16
+        );
     }
 
     #[test]

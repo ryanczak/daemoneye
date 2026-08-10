@@ -276,6 +276,47 @@ pub fn client_dimensions(session_name: &str) -> (u16, u16) {
     (w, h)
 }
 
+/// Whether the attached tmux client can receive 24-bit color escapes.
+///
+/// tmux only passes `38;2;R;G;B` SGR sequences through to the outer terminal
+/// when it believes that terminal supports them; otherwise it drops or
+/// approximates them, which renders as monotone text. That belief comes from
+/// two places: the client's detected/declared feature list (tmux ≥ 3.2
+/// `client_termfeatures`, containing `RGB`), or an explicit user grant via the
+/// `terminal-features` / `terminal-overrides` server options (e.g. the classic
+/// `set -ga terminal-overrides ',*:Tc'`). Check both; on any failure or on an
+/// older tmux report `false` so callers fall back to 256-color output, which
+/// tmux always handles.
+pub fn client_supports_rgb() -> bool {
+    let features = crate::tmux::bounded_output(Command::new("tmux").args([
+        "display-message",
+        "-p",
+        "#{client_termfeatures}",
+    ]));
+    if let Ok(out) = features
+        && out.status.success()
+        && String::from_utf8_lossy(&out.stdout)
+            .split(',')
+            .any(|f| f.trim().eq_ignore_ascii_case("RGB"))
+    {
+        return true;
+    }
+
+    for opt in ["terminal-features", "terminal-overrides"] {
+        let out =
+            crate::tmux::bounded_output(Command::new("tmux").args(["show-options", "-gv", opt]));
+        if let Ok(o) = out
+            && o.status.success()
+        {
+            let v = String::from_utf8_lossy(&o.stdout);
+            if v.contains("Tc") || v.contains("RGB") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Default name for the headless tmux session used to host ghost incidents.
 pub const INCIDENT_SESSION_NAME: &str = "daemoneye-incidents";
 
