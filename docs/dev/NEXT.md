@@ -1,13 +1,30 @@
 # NEXT
 
-## Active phase: [M13 phase-03 — runtime-in-border](milestones/M13-chat-ux/phase-03-runtime-in-border.md)
+## Active phase: [M13 phase-04 — cursor-alignment](milestones/M13-chat-ux/phase-04-cursor-alignment.md)
 
-Drafted 2026-08-09 (autonomous /rexymcp:auto run), status `todo`. Additive
-`commit_panel_labeled` (word-wrap via `wrap_line_hard`, optional right-justified
-bottom label); the silent-tool `ToolStarted`/`ToolFinished` pair merges into one
-panel with `✓ 1.2s` in its border (CLI-only — gated commands carry no elapsed on
-the wire, verified); user echo regains the `turn N · tokens` label via a new
-turn counter. Two mutation pairs; E2E capture is Task 7.
+Drafted 2026-08-10 (autonomous /rexymcp:auto run), status `todo`. Makes
+`InputLine::visual_lines` the single wrapping authority (pre-wrapped input
+text, `Paragraph::wrap` dropped from the input box), fixes the border clamp
+(`sub(2)` → `sub(3)`), and routes Up/Down key wrapping through a new
+`renderer.input_content_width()`. Exact-coordinate cursor tests via
+`TestBackend::get_cursor_position` (API verified in ratatui-core-0.1.2). E2E
+exit markers now use `${PIPESTATUS[0]}` — the phase-03 `exit=$?`-after-pipe
+defect is fixed in this and future blocks.
+
+**phase-03 — runtime-in-border done 2026-08-10** (`escalated` — 2
+NoProgressStall hard-fails, 1 resume assist, architect takeover close-out;
+commit `74b33f3`). Silent-tool pair merged into one panel with `✓ 1.2s` in the
+bottom border; panel bodies word-wrap via `wrap_line_hard`; user echo carries
+`turn N · tokens` again; 1221 lib tests. **Four calibration items for
+milestone close:** (1) an unsatisfiable acceptance criterion — the
+`commit_panel("result"` grep demanded 0 but the out-of-scope interrupt-path
+panel at `stream.rs:192` always matches (M12's criterion-vs-own-spec family,
+now recurring — fold candidate); (2) the spec's own worked example failed the
+lint gate (`&[label.clone()]` → `cloned_ref_to_slice_refs`) — prescribed code
+must be lint-checked, not just compiled; (3) every M13 E2E block's
+`cmd | tail; echo exit=$?` recorded the pipe's exit, not the command's —
+template defect, fixed from phase-04 on; (4) retyped-transcript whitespace
+divergence recurred (3 cosmetic lines, repaired at takeover).
 
 **phase-02 — throbber-and-identity approved 2026-08-09** (`approved_first_try`,
 commit `7bd1af2`). Throbber flush at column 0; history panels titled
