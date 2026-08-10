@@ -1,7 +1,7 @@
 # Phase 05: Mid-stream resize/focus re-anchoring; legacy dead-code deletion
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-04
 **Estimated diff:** ~270 lines (net ≈ +150 −120)
 **Tags:** language=rust, kind=bugfix, size=m
@@ -310,3 +310,51 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-10 01:25 (started)
+
+**Executor:** rexyMCP executor
+
+Implementing Tasks 1–8: Reanchor outcome, focus filter, SIGWINCH in select_stream, reanchor handling, idle-loop resize re-anchor, dead legacy printer deletion, tests, mutation M1, and end-to-end evidence capture.
+
+
+### Update — 2026-08-10 01:25 (end-to-end verification)
+
+```
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.34s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.05s
+clippy exit=0
+test result: ok. 1228 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.98s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+reanchor outcomes: 7
+chat reanchors: 2
+dead printers: 0
+render.rs lines: 87
+21 /tmp/e2e-m13-05.txt
+== M1 APPLIED ==
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.39s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-b60224cb24515ede)
+
+running 2 tests
+test cli::commands::stream::stream_seam_tests::focus_outcome_maps_focus_gained_to_reanchor ... FAILED
+== M1 RESTORED ==
+0
+test cli::commands::stream::stream_seam_tests::focus_outcome_maps_focus_gained_to_reanchor ... ok
+test cli::commands::stream::stream_seam_tests::select_stream_focus_gained_returns_reanchor ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1226 filtered out; finished in 0.00s
+
+35 /tmp/e2e-m13-05.txt
+```

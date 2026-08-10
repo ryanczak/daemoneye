@@ -625,6 +625,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
         tokio::select! {
             _ = sigwinch.recv() => {
                 *chat_width = terminal_width();
+                renderer.reanchor();
                 let sb = StatusBarState {
                     session_id,
                     approval_hint: &approval.hint(),

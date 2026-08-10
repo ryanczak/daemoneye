@@ -28,6 +28,8 @@ enum StreamOutcome {
     Warn,
     /// User aborted the turn.
     Interrupted,
+    /// A resize or focus-gain arrived mid-stream — caller must re-anchor.
+    Reanchor,
     /// Daemon error (EOF, parse failure, timeout).
     Error(String),
 }
@@ -165,6 +167,9 @@ pub(super) async fn ask_with_session_ratatui(
     // between tokens without defeating the timeout.
     let mut last_msg_at = std::time::Instant::now();
 
+    let mut sigwinch =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?;
+
     loop {
         // Both phases animate a spinner on an 80 ms tick so a mid-stream pause
         // (e.g. a tool round-trip or a slow model) never looks frozen. Phase 1
@@ -184,6 +189,7 @@ pub(super) async fn ask_with_session_ratatui(
             &mut interrupt_state,
             tick_interval,
             overall_timeout,
+            &mut sigwinch,
         )
         .await;
 
@@ -219,6 +225,10 @@ pub(super) async fn ask_with_session_ratatui(
                 };
                 let _ = renderer.draw_spinner(SPINNER[spin % SPINNER.len()], verb, dot_count, &sb);
                 spin = spin.wrapping_add(1);
+                continue;
+            }
+            StreamOutcome::Reanchor => {
+                renderer.reanchor();
                 continue;
             }
             StreamOutcome::Warn => {
@@ -696,6 +706,7 @@ async fn select_stream(
     interrupt_state: &mut InterruptState,
     tick_interval: std::time::Duration,
     overall_timeout: Option<std::time::Duration>,
+    sigwinch: &mut tokio::signal::unix::Signal,
 ) -> StreamOutcome {
     let mut timeout_fut = overall_timeout.map(|d| Box::pin(tokio::time::sleep(d)));
 
@@ -704,6 +715,9 @@ async fn select_stream(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
+                        if let Some(outcome) = focus_outcome(&key) {
+                            return outcome;
+                        }
                         match interrupt_state.feed(&key) {
                             InterruptAction::Ignore => continue,
                             InterruptAction::Warn => return StreamOutcome::Warn,
@@ -724,11 +738,17 @@ async fn select_stream(
                 _ = tokio::time::sleep(tick_interval), if tick_interval != std::time::Duration::MAX => {
                     return StreamOutcome::Tick;
                 }
+                _ = sigwinch.recv() => {
+                    return StreamOutcome::Reanchor;
+                }
             }
         } else {
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
+                        if let Some(outcome) = focus_outcome(&key) {
+                            return outcome;
+                        }
                         match interrupt_state.feed(&key) {
                             InterruptAction::Ignore => continue,
                             InterruptAction::Warn => return StreamOutcome::Warn,
@@ -746,12 +766,25 @@ async fn select_stream(
                 _ = tokio::time::sleep(tick_interval), if tick_interval != std::time::Duration::MAX => {
                     return StreamOutcome::Tick;
                 }
+                _ = sigwinch.recv() => {
+                    return StreamOutcome::Reanchor;
+                }
             }
         }
     }
 }
 
 // ── Ratatui interactive approval primitives ──────────────────────────────────
+
+/// Map a key event to a stream outcome the interrupt filter must not
+/// swallow. FocusGained (ESC [ I) means the user switched back to this
+/// pane and the viewport may need re-pinning.
+fn focus_outcome(key: &Key) -> Option<StreamOutcome> {
+    match key {
+        Key::FocusGained => Some(StreamOutcome::Reanchor),
+        _ => None,
+    }
+}
 
 /// Bottom-border label for a finished tool: "✓ 1.2s" / "✗ 0.5s".
 fn tool_runtime_label(ok: bool, elapsed_ms: u64) -> String {
@@ -1363,6 +1396,9 @@ mod stream_seam_tests {
         let (stdin, wf) = make_pipe_stdin();
         write_bytes(&wf, &[0x03]).await; // Ctrl+C
 
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+
         let outcome = select_stream(
             &stdin,
             &mut rx,
@@ -1370,6 +1406,7 @@ mod stream_seam_tests {
             &mut state,
             std::time::Duration::MAX, // no spinner tick
             Some(std::time::Duration::from_secs(120)),
+            &mut sigwinch,
         )
         .await;
 
@@ -1398,6 +1435,9 @@ mod stream_seam_tests {
         // only the daemon-read branch can fire.
         let (stdin, _wf) = make_pipe_stdin();
 
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+
         let outcome = select_stream(
             &stdin,
             &mut rx,
@@ -1405,6 +1445,7 @@ mod stream_seam_tests {
             &mut state,
             std::time::Duration::MAX,
             Some(std::time::Duration::from_secs(120)),
+            &mut sigwinch,
         )
         .await;
 
@@ -1423,5 +1464,89 @@ mod stream_seam_tests {
     fn tool_runtime_label_formats_ok_and_err() {
         assert_eq!(tool_runtime_label(true, 1234), "✓ 1.2s");
         assert_eq!(tool_runtime_label(false, 450), "✗ 0.5s");
+    }
+
+    // ── focus_outcome ───────────────────────────────────────────────────
+
+    #[test]
+    fn focus_outcome_maps_focus_gained_to_reanchor() {
+        let result = focus_outcome(&Key::FocusGained);
+        assert!(matches!(result, Some(StreamOutcome::Reanchor)));
+        assert!(focus_outcome(&Key::Char('x')).is_none());
+    }
+
+    // ── select_stream focus / sigwinch ──────────────────────────────────
+
+    #[tokio::test]
+    async fn select_stream_focus_gained_returns_reanchor() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let (read_half, _w) = client.into_split();
+        let mut rx = BufReader::new(read_half);
+        let mut buf: Vec<u8> = Vec::new();
+        let mut state = InterruptState::new();
+
+        let (stdin, wf) = make_pipe_stdin();
+        // ESC [ I = focus gained
+        write_bytes(&wf, b"\x1b[I").await;
+
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+
+        let outcome = select_stream(
+            &stdin,
+            &mut rx,
+            &mut buf,
+            &mut state,
+            std::time::Duration::MAX,
+            Some(std::time::Duration::from_secs(120)),
+            &mut sigwinch,
+        )
+        .await;
+
+        match outcome {
+            StreamOutcome::Reanchor => {} // expected
+            other => panic!("expected Reanchor, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn select_stream_sigwinch_returns_reanchor() {
+        let (client, _server) = UnixStream::pair().unwrap();
+        let (read_half, _w) = client.into_split();
+        let mut rx = BufReader::new(read_half);
+        let mut buf: Vec<u8> = Vec::new();
+        let mut state = InterruptState::new();
+
+        // stdin write end stays open with no bytes → read_key parks forever
+        let (stdin, _wf) = make_pipe_stdin();
+
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+
+        // Spawn the select so it can receive the signal
+        let select_handle = tokio::spawn(async move {
+            select_stream(
+                &stdin,
+                &mut rx,
+                &mut buf,
+                &mut state,
+                std::time::Duration::MAX,
+                Some(std::time::Duration::from_secs(120)),
+                &mut sigwinch,
+            )
+            .await
+        });
+
+        // Small delay to let the select settle
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Raise SIGWINCH to the current process
+        unsafe { libc::raise(libc::SIGWINCH) };
+
+        let outcome = select_handle.await.unwrap();
+        match outcome {
+            StreamOutcome::Reanchor => {} // expected
+            other => panic!("expected Reanchor, got {other:?}"),
+        }
     }
 }
