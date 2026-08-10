@@ -1,7 +1,7 @@
 # Phase 06: Deterministic bottom repin — rebuild the viewport, don't resize it
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** done
 **Depends on:** phase-05
 **Estimated diff:** ~130 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -235,13 +235,16 @@ The run is finished only when this prints `PASTE MATCH`. The server-authored
 Progress markers — each **fails against the current tree** (verified at
 drafting):
 
-- [ ] `grep -c 'fn repin_rows' src/cli/render_ratatui.rs` prints `1`.
+- [x] `grep -c 'fn repin_rows(' src/cli/render_ratatui.rs` prints `1`.
+      *(Amended at review 2026-08-10: the original pattern lacked the `(` and
+      also matched the three `fn repin_rows_*` test names, printing 4 — an
+      architect criterion defect; the executor flagged it rather than gaming
+      it. Verified: the precise pattern prints 1.)*
+- [x] `grep -c 'FromCursorDown' src/cli/render_ratatui.rs` prints `1`.
       (Currently: 0.)
-- [ ] `grep -c 'FromCursorDown' src/cli/render_ratatui.rs` prints `1`.
-      (Currently: 0.)
-- [ ] `grep -c 'self.terminal.resize' src/cli/render_ratatui.rs` prints `0`
+- [x] `grep -c 'self.terminal.resize' src/cli/render_ratatui.rs` prints `0`
       — the resize-based repin is gone. (Currently: 1.)
-- [ ] Tests `repin_rows_parks_at_viewport_top`,
+- [x] Tests `repin_rows_parks_at_viewport_top`,
       `repin_rows_clears_from_old_top_when_higher`,
       `repin_rows_short_terminal_saturates` pass. (Currently: none exist.)
 
@@ -493,3 +496,22 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 184e10bbec85d5c7d780549eb93245187bd3e419
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-10
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — Tasks 1-3 shipped verbatim to spec; the
+  executor flagged (not gamed) the `fn repin_rows` grep-count discrepancy
+- **Calibration:** two items for milestone close: (1) another architect
+  criterion defect — `grep -c 'fn repin_rows'` matched the three test-name
+  prefixes (printed 4, criterion said 1); amended to `fn repin_rows(` at
+  review. Third M13 occurrence of a criterion not validated against the tree
+  the phase produces (phase-03 result-grep, phase-04 fixture, phase-06
+  prefix) — at fold threshold combined with M12's two. (2) The Task-6 literal
+  `PASTE MATCH` line is absent from the E2E entry (second occurrence, after
+  phase-05); the artifact itself verified byte-exact at review via a scoped
+  first-fence diff — note the review's own extraction one-liner must scope to
+  the entry's first fence or it sweeps in the server-authored completion
+  tails (the documented M12 false-positive).
