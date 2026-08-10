@@ -1,7 +1,7 @@
 # Phase 07: Content-extent clear — wipe live-region debris the repin misses
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** review
+**Status:** in-progress (bounced — see bug-phase-07-1)
 **Depends on:** phase-06
 **Estimated diff:** ~180 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -229,9 +229,14 @@ drafting):
       (Currently: 0 and 1.)
 - [ ] `grep -c 'DAEMONEYE_REANCHOR_TRACE' src/cli/render_ratatui.rs` prints
       `1`. (Currently: 0.)
-- [ ] Tests `repin_rows_clears_debris_between_content_and_park`,
+- [x] Tests `repin_rows_clears_debris_between_content_and_park`,
       `repin_rows_content_past_park_clamps`, and
-      `commit_methods_count_inserted_rows` pass. (Currently: none exist.)
+      `commit_methods_count_inserted_rows` pass. (Verified at round-1 review.)
+- [ ] **ROUND 2 (bug-phase-07-1):**
+      `grep -c '/// Rows for a bottom repin' src/cli/render_ratatui.rs`
+      prints `1` — the stale phase-06 doc block at `:154-161` is deleted and
+      only the phase-07 comment (the one mentioning `content_end`) remains.
+      (Run at bounce 2026-08-10: prints `2` — confirmed failing.)
 
 No-regression guards — these **already pass** and must still pass (they are
 not evidence of new work):
@@ -314,6 +319,31 @@ history end and `park`. That check happens at the milestone gate.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-08-10 (round 2, read this first)
+
+**GREEN GATES AND A CLEAN TREE ARE EXPECTED AND ARE NOT EVIDENCE OF
+DONENESS.** Round 1's code is approved and verified: all criteria, the
+mutation pair, and the E2E artifact passed independent review. **Do not
+touch any code, any test, or any other file.**
+
+Exactly **one** edit remains (bug-phase-07-1): `src/cli/render_ratatui.rs`
+carries TWO stacked doc comments on `repin_rows`. Delete the STALE one —
+the 8 lines from the FIRST `/// Rows for a bottom repin: (clear_from,
+cursor_park).` (line 154) through `/// viewport top or the new one,
+whichever is higher on screen.` (line 161) inclusive. The second block
+(mentioning `content_end`) stays. Use the `patch` tool.
+
+Then run the four gates once each, and finish with the self-check:
+
+```sh
+grep -c '/// Rows for a bottom repin' src/cli/render_ratatui.rs
+```
+
+must print `1`. **Inverted finish condition:** `cargo test` must still
+report **1234** lib tests, not 1235, and `git status --short` must list only
+this phase doc. Paste the grep output and the `test result:` line into a new
+Update Log entry headed `### Update — 2026-08-10 (round 2 fix)`.
 
 ### Update — 2026-08-10 03:15 (started)
 
