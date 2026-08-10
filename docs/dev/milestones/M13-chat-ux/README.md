@@ -53,7 +53,7 @@ to the bottom through resizes and tmux window switches.
 | 04 | cursor-alignment (phase-04-cursor-alignment.md)                    | done         |
 | 05 | resize-and-reanchor (phase-05-resize-and-reanchor.md)              | done   |
 | 06 | repin-rebuild (phase-06-repin-rebuild.md)                          | done   |
-| 07 | content-extent-clear (phase-07-content-extent-clear.md)            | in-progress   |
+| 07 | content-extent-clear (phase-07-content-extent-clear.md)            | review        |
 
 Phases 01–03 are independent of each other. 04 and 05 both touch
 `render_ratatui.rs`'s live-region path and run last, in that order, so 05's
