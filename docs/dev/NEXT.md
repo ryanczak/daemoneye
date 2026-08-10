@@ -1,5 +1,30 @@
 # NEXT
 
+## OPEN FINDING (2026-08-10, post-boundary): window-switch artifacts persist
+
+Live check after M13 phase-05 (binary 19:13, includes the fix): rendering
+artifacts on tmux window switch remain. Diagnosis (derived from
+ratatui-core-0.1.2 source, `terminal/resize.rs` + `terminal/inline.rs`):
+
+`reanchor()` = same-size `Terminal::resize`, which (a) full-clears the screen
+**only on horizontal shrink** — on same-size/grow, stale rows outside the
+recomputed viewport are never cleared; (b) anchors the viewport via a **DSR
+cursor query** (`ESC[6n`) relative to wherever tmux's rewrap left the cursor,
+minus a stale internal offset — nothing pins it to the bottom, so a high
+cursor re-anchors the viewport high (the "input dialog at top" symptom); and
+(c) the DSR reply is read from the same tty our `AsyncStdin` reader polls —
+a lost/garbled reply makes `resize` error out and `let _ =` swallows it.
+Phase-05's real contribution stands (the signals now *arrive* mid-stream);
+the repin they trigger is pre-M13 code that was never live-validated.
+
+Proposed phase-06 (resize-repin-rebuild): replace the resize-based repin with
+a deterministic bottom repin — clear the viewport rows, move the real cursor
+to row `height − VIEWPORT_ROWS`, rebuild the `Terminal` (fresh
+`Viewport::Inline`; init anchors at the cursor with offset 0, verified at
+`terminal/init.rs:130`), redraw. Scrollback rewrap damage above the viewport
+is tmux's and stays out of reach (existing non-goal). NOT drafted — awaiting
+PE go-ahead at the milestone gate.
+
 ## Active phase: [M13 phase-05 — resize-and-reanchor](milestones/M13-chat-ux/phase-05-resize-and-reanchor.md)
 
 Drafted 2026-08-10 (autonomous /rexymcp:auto run), status `todo`. **Last phase
