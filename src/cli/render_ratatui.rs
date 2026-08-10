@@ -355,6 +355,16 @@ impl<B: Backend> RatatuiRenderer<B> {
         body: &[String],
         dim_body: bool,
     ) -> Result<(), B::Error> {
+        self.commit_panel_labeled(title, body, dim_body, None)
+    }
+
+    pub fn commit_panel_labeled(
+        &mut self,
+        title: &str,
+        body: &[String],
+        dim_body: bool,
+        bottom_label: Option<&str>,
+    ) -> Result<(), B::Error> {
         use ratatui::widgets::Clear;
 
         let w = self.terminal.size().map(|s| s.width as usize).unwrap_or(80);
@@ -377,7 +387,6 @@ impl<B: Backend> RatatuiRenderer<B> {
             Span::styled(title.to_string(), title_style),
             Span::styled(format!(" {}─╮", "─".repeat(fill)), border_style),
         ];
-        let bottom_border = format!("╰{}╯", "─".repeat(inner));
 
         let mut lines: Vec<Line<'static>> = Vec::new();
 
@@ -391,15 +400,29 @@ impl<B: Backend> RatatuiRenderer<B> {
             Style::default()
         };
         for line in body {
-            let truncated = truncate_with_ellipsis(line, inner.saturating_sub(2));
-            lines.push(Line::from(Span::styled(
-                format!("  {}", truncated),
-                body_style,
-            )));
+            for seg in crate::cli::render::wrap_line_hard(line, inner.saturating_sub(2)) {
+                lines.push(Line::from(Span::styled(format!("  {}", seg), body_style)));
+            }
         }
 
         // Bottom border
-        lines.push(Line::from(Span::styled(bottom_border, border_style)));
+        let bottom_line: Line<'static> = match bottom_label {
+            Some(label) => {
+                let padded = format!(" {label} ");
+                let label_vis = padded.chars().count();
+                let dashes = inner.saturating_sub(label_vis + 1);
+                Line::from(vec![
+                    Span::styled(format!("╰{}", "─".repeat(dashes)), border_style),
+                    Span::styled(padded, title_style),
+                    Span::styled("─╯".to_string(), border_style),
+                ])
+            }
+            None => Line::from(Span::styled(
+                format!("╰{}╯", "─".repeat(inner)),
+                border_style,
+            )),
+        };
+        lines.push(bottom_line);
 
         // Blank line after panel
         lines.push(Line::from(vec![]));
@@ -1302,6 +1325,182 @@ mod tests {
         assert!(
             !yellow_title_cells.is_empty(),
             "expected title cells with Indexed(178), found none"
+        );
+    }
+
+    #[test]
+    fn commit_panel_wraps_long_body_lines() {
+        let backend = TestBackend::new(60, 10);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+        };
+
+        let long_line = "x".repeat(100);
+        renderer
+            .commit_panel("Output", &[long_line], false)
+            .unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+        let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
+
+        // No cell should contain the ellipsis character.
+        for cell in &all_cells {
+            assert!(
+                cell.symbol() != "…",
+                "body line should be wrapped, not truncated with ellipsis"
+            );
+        }
+
+        // Group into rows of 60 chars.
+        let symbols: Vec<String> = all_cells.iter().map(|c| c.symbol().to_string()).collect();
+        let rows: Vec<String> = (0..symbols.len())
+            .step_by(60)
+            .map(|i| symbols[i..std::cmp::min(i + 60, symbols.len())].join(""))
+            .collect();
+
+        let body_rows: Vec<_> = rows.iter().filter(|r| r.contains('x')).collect();
+        assert!(
+            body_rows.len() >= 2,
+            "expected at least 2 body rows for a 100-char line at width 56, got {}",
+            body_rows.len()
+        );
+
+        // Both body rows should start with 'x' at x = 2 (after "  " padding).
+        for row in &body_rows {
+            assert!(
+                row.chars().nth(2) == Some('x'),
+                "body row should start with 'x' at column 2, got: {:?}",
+                row
+            );
+        }
+    }
+
+    #[test]
+    fn commit_panel_bottom_label_right_justified() {
+        let backend = TestBackend::new(60, 10);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+        };
+
+        let body = vec!["short line".to_string()];
+        renderer
+            .commit_panel_labeled("output", &body, true, Some("✓ 1.2s"))
+            .unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+        let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
+
+        // Group into rows of 60 cells.
+        let rows: Vec<Vec<_>> = (0..all_cells.len())
+            .step_by(60)
+            .map(|i| all_cells[i..std::cmp::min(i + 60, all_cells.len())].to_vec())
+            .collect();
+
+        let bottom_row = rows
+            .iter()
+            .find(|row| row.iter().any(|c| c.symbol() == "╯"))
+            .expect("expected a bottom border row with '╯'");
+
+        let row_text: String = bottom_row.iter().map(|c| c.symbol()).collect();
+        assert!(
+            row_text.contains("✓ 1.2s"),
+            "bottom border should contain label '✓ 1.2s', got: {}",
+            row_text
+        );
+        assert!(
+            row_text.ends_with("─╯"),
+            "bottom border should end with '─╯', got: {}",
+            row_text
+        );
+
+        // Label cells should carry the title color (Truecolor → Rgb(220, 160, 0)).
+        let title_color = Color::Rgb(220, 160, 0);
+        let label_cells: Vec<_> = bottom_row
+            .iter()
+            .filter(|c| {
+                c.symbol() == "✓" || c.symbol() == "1" || c.symbol() == "2" || c.symbol() == "s"
+            })
+            .collect();
+        for cell in &label_cells {
+            assert_eq!(
+                cell.style().fg,
+                Some(title_color),
+                "label cell '{}' should have title color Rgb(220, 160, 0), got {:?}",
+                cell.symbol(),
+                cell.style().fg
+            );
+        }
+    }
+
+    #[test]
+    fn commit_panel_without_label_keeps_plain_rule() {
+        let backend = TestBackend::new(60, 10);
+        let terminal = Terminal::with_options(
+            backend,
+            ratatui::TerminalOptions {
+                viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            },
+        )
+        .unwrap();
+        let mut renderer = RatatuiRenderer {
+            terminal,
+            start_time: std::time::Instant::now(),
+            palette: crate::cli::palette::Palette::for_depth(
+                crate::cli::palette::ColorDepth::Truecolor,
+            ),
+        };
+
+        let body = vec!["short".to_string()];
+        renderer.commit_panel("Output", &body, false).unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer();
+        let scroll = backend.scrollback();
+        let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
+
+        // Group into rows of 60 cells.
+        let rows: Vec<Vec<_>> = (0..all_cells.len())
+            .step_by(60)
+            .map(|i| all_cells[i..std::cmp::min(i + 60, all_cells.len())].to_vec())
+            .collect();
+
+        let bottom_row = rows
+            .iter()
+            .find(|row| row.iter().any(|c| c.symbol() == "╯"))
+            .expect("expected a bottom border row with '╯'");
+
+        let row_text: String = bottom_row.iter().map(|c| c.symbol()).collect();
+        let expected = format!("╰{}╯", "─".repeat(58));
+        assert_eq!(
+            row_text, expected,
+            "bottom border without label should be plain rule, got: {}",
+            row_text
         );
     }
 

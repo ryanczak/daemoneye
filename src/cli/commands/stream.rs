@@ -142,6 +142,9 @@ pub(super) async fn ask_with_session_ratatui(
     let mut spin = verb_offset * TICKS_PER_VERB;
     let mut response_started = false;
 
+    // Buffer for deferred tool panel (silent tools).
+    let mut pending_tool: Option<(String, Vec<String>)> = None;
+
     // Interrupt state machine for this turn.
     let mut interrupt_state = InterruptState::new();
 
@@ -576,17 +579,28 @@ pub(super) async fn ask_with_session_ratatui(
             }
             // Silent tool calls and results — accumulate for minimal display.
             Response::ToolStarted { tool, summary, .. } => {
-                if !summary.is_empty() {
-                    let _ = renderer.commit_panel(&tool, &[format!("▸ {}", summary)], false);
+                let body = if !summary.is_empty() {
+                    vec![format!("▸ {}", summary)]
                 } else {
-                    let _ = renderer.commit_panel(&tool, &["▸ running".to_string()], false);
-                }
+                    vec!["▸ running".to_string()]
+                };
+                pending_tool = Some((tool, body));
             }
             Response::ToolFinished { ok, elapsed_ms, .. } => {
-                let status = if ok { "✓" } else { "✗" };
-                let secs = elapsed_ms as f64 / 1000.0;
-                let _ =
-                    renderer.commit_panel("result", &[format!("{} ({:.1}s)", status, secs)], true);
+                let label = tool_runtime_label(ok, elapsed_ms);
+                match pending_tool.take() {
+                    Some((title, body)) => {
+                        let _ = renderer.commit_panel_labeled(&title, &body, false, Some(&label));
+                    }
+                    None => {
+                        let _ = renderer.commit_panel_labeled(
+                            "result",
+                            std::slice::from_ref(&label),
+                            true,
+                            None,
+                        );
+                    }
+                }
             }
             Response::ToolResult(output) => {
                 let lines: Vec<String> = output.lines().map(|l| l.to_string()).collect();
@@ -619,6 +633,11 @@ pub(super) async fn ask_with_session_ratatui(
             | Response::SessionLoaded { .. }
             | Response::SavedSessionList { .. } => {}
         }
+    }
+
+    // Flush a started-but-never-finished tool so its panel is not lost.
+    if let Some((title, body)) = pending_tool.take() {
+        let _ = renderer.commit_panel(&title, &body, false);
     }
 
     // Update approval from config in case it changed during the turn.
@@ -733,6 +752,12 @@ async fn select_stream(
 }
 
 // ── Ratatui interactive approval primitives ──────────────────────────────────
+
+/// Bottom-border label for a finished tool: "✓ 1.2s" / "✗ 0.5s".
+fn tool_runtime_label(ok: bool, elapsed_ms: u64) -> String {
+    let status = if ok { "✓" } else { "✗" };
+    format!("{status} {:.1}s", elapsed_ms as f64 / 1000.0)
+}
 
 /// Build the canonical approval-prompt string shared by every approval flow.
 /// Option order is fixed: [Y]es, [A]pprove for <label>, [N]o, then the
@@ -1390,5 +1415,13 @@ mod stream_seam_tests {
             },
             other => panic!("expected Msg, got {other:?}"),
         }
+    }
+
+    // ── tool_runtime_label ──────────────────────────────────────────────
+
+    #[test]
+    fn tool_runtime_label_formats_ok_and_err() {
+        assert_eq!(tool_runtime_label(true, 1234), "✓ 1.2s");
+        assert_eq!(tool_runtime_label(false, 450), "✗ 0.5s");
     }
 }

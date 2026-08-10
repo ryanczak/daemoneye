@@ -1,7 +1,7 @@
 # Phase 03: Runtime in the panel border; body word-wrap; turn/budget label
 
 **Milestone:** M13 — Chat UX Polish
-**Status:** todo
+**Status:** done
 **Depends on:** phase-02
 **Estimated diff:** ~300 lines
 **Tags:** language=rust, kind=feature, size=m
@@ -340,8 +340,13 @@ paste the resulting `/tmp/e2e-m13-03.txt` into a new Update Log entry headed
 Progress markers — each **fails against the current tree** (verified at
 drafting):
 
-- [ ] `grep -c 'commit_panel("result"' src/cli/commands/stream.rs` prints `0`.
-      (Currently: 1.)
+- [ ] `grep -c 'commit_panel("result"' src/cli/commands/stream.rs` prints `1`
+      — only the pre-existing interrupt-path panel (`"⊘ interrupted"`,
+      `stream.rs:192`), which is out of this phase's scope. *(Corrected at
+      takeover 2026-08-10: the original criterion demanded `0`, which was
+      unsatisfiable — it was calibrated against the `ToolFinished` site alone
+      and never counted the interrupt site. The executor's verify-loop stalled
+      on exactly this check.)*
 - [ ] `grep -c 'wrap_line_hard' src/cli/render_ratatui.rs` prints `1` — the
       call in `commit_panel_labeled`. (Currently: 0.)
 - [ ] `grep -c 'turn_budget_label' src/cli/commands/chat.rs` prints at least
@@ -435,3 +440,154 @@ None.
 (Filled in by the executor. See WORKFLOW.md § "Update Log entries".)
 
 <!-- entries appended below this line -->
+
+### Update — 2026-08-09 (escalation)
+
+**Chosen lever:** resume (continue_phase)
+**Rationale:** NoProgressStall verify-loop after Tasks 1-4 were already
+complete and correct (gates run by the architect against the partial tree:
+build green, 1221 tests passing incl. all six new ones). The one real defect
+is a single clippy error in the *spec's own* worked example
+(`&[label.clone()]` → `cloned_ref_to_slice_refs` at `stream.rs:597`) — an
+architect-side prescribed-code defect, not an executor failure. Remaining work
+is that one-line fix plus Tasks 5-7; resume with pointed guidance preserves
+the telemetry point.
+
+### Update — 2026-08-10 00:10 (executor resume)
+
+Continuing Tasks 5–7 from the prior run. Fixed clippy error
+(`&[label.clone()]` → `std::slice::from_ref(&label)` at `stream.rs:597`).
+Ran mutation M1 (separator `·` → `-`) and M2 (wrap width `usize::MAX`), both
+failed as expected and restored. All gates green: fmt, build, clippy, 1221
+tests.
+
+### Update — 2026-08-10 (end-to-end verification)
+
+```
+== M1 APPLIED ==
+    cli::commands::chat::tests::turn_budget_label_reports_usage
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1219 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+1
+test cli::commands::chat::tests::turn_budget_label_new_session ... ok
+test cli::commands::chat::tests::turn_budget_label_reports_usage ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1219 filtered out; finished in 0.00s
+
+== M2 APPLIED ==
+    cli::render_ratatui::tests::commit_panel_wraps_long_body_lines
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1220 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M2 RESTORED ==
+0
+== M2 RESTORED ==
+0
+test cli::render_ratatui::tests::commit_panel_uses_blood_red_border_and_yellow_title ... ok
+test cli::render_ratatui::tests::commit_panel_borders_follow_palette_depth ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1216 filtered out; finished in 0.00s
+
+== GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.14s
+build exit=0
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `daemoneye` (lib test) due to 1 previous error
+clippy exit=0
+test result: ok. 1221 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.18s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+result panels: 1
+wrap calls: 1
+label fn uses: 9
+48 /tmp/e2e-m13-03.txt
+== M1 APPLIED ==
+    cli::commands::chat::tests::turn_budget_label_reports_usage
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1219 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M1 RESTORED ==
+1
+test cli::commands::chat::tests::turn_budget_label_new_session ... ok
+test cli::commands::chat::tests::turn_budget_label_reports_usage ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1219 filtered out; finished in 0.00s
+
+== M2 APPLIED ==
+    cli::render_ratatui::tests::commit_panel_wraps_long_body_lines
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1220 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+== M2 RESTORED ==
+0
+test cli::render_ratatui::tests::commit_panel_uses_blood_red_border_and_yellow_title ... ok
+test cli::render_ratatui::tests::commit_panel_borders_follow_palette_depth ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1216 filtered out; finished in 0.00s
+
+== E2E GATES ==
+fmt exit=0
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.44s
+build exit=0
+    Checking daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.13s
+clippy exit=0
+test result: ok. 1221 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== SURFACES ==
+result panels: 1
+wrap calls: 1
+label fn uses: 9
+95 /tmp/e2e-m13-03.txt
+```
+
+### Update — 2026-08-10 (architect takeover close-out)
+
+Second consecutive `NoProgressStall` on the identical verify-loop pathology
+(the resume run completed every task, then re-ran
+`grep -c 'commit_panel("result"' ...` 30+ times). Root cause of the loop was
+**an unsatisfiable acceptance criterion of the architect's**: the criterion
+demanded the grep reach `0`, but the pre-existing interrupt-path panel at
+`stream.rs:192` (out of scope) always matches once. Criterion corrected in
+place above.
+
+Close-out verification, all run by the architect against the shipped tree:
+`cargo fmt --all` exit 0; `cargo build` green; `cargo clippy --all-targets
+--all-features -- -D warnings` green (the spec's own `&[label.clone()]`
+worked example was the sole failure, fixed by the resume run via
+`std::slice::from_ref`); `cargo test` 1221 passed / 0 failed. Both mutation
+pairs verified from the mechanically-captured artifact and the restored
+source re-grepped (`· {budget}` count 1, `usize::MAX` count 0). The pasted
+E2E entry diverged from `/tmp/e2e-m13-03.txt` on exactly three build lines
+(whitespace stripped from `[unoptimized + debuginfo]` — the retyped-line
+signature); repaired in place to match the artifact byte-for-byte, all
+substantive lines already matched.
+
+### Review verdict — 2026-08-10
+
+- **Verdict:** escalated
+- **Bounces:** none (2 hard_fails: NoProgressStall ×2; 1 resume assist, then takeover close-out)
+- **Executor:** Qwen/Qwen3.6-27B-FP8 (Tasks 1-6 + clippy fix) / Claude Fable 5 (close-out only)
+- **Scope deviations:** none — all production edits match the spec; the interrupt-path panel was correctly left untouched
+- **Calibration:** four items, recorded in NEXT.md for milestone close: (1) unsatisfiable criterion — grep never checked against the whole file (M12 family, now recurring); (2) a prescribed worked example failed the project's own lint gate — "derive every spec fact" applies to prescribed code, run the lint on it; (3) every M13 E2E block's `cmd | tail; echo exit=$?` records tail's exit, not the command's — template defect; (4) retyped-transcript whitespace divergence recurred (cosmetic, 3 lines)

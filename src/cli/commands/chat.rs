@@ -265,6 +265,7 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
     let mut prompt_tokens: u32 = 0;
+    let mut turn: usize = 0;
     let mut cost_usd: f64 = 0.0;
     let mut has_untracked: bool = false;
     let config = Config::load().unwrap_or_default();
@@ -521,9 +522,11 @@ async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         // Echo the user's words into scrollback so the transcript reads as a
         // conversation. Same element as tool output — one visual grammar for
         // everything committed above the live region.
+        turn += 1;
         if should_echo(&query) {
             let echo_body: Vec<String> = echo_body(&query);
-            let _ = renderer.commit_panel(&user_host, &echo_body, false);
+            let label = turn_budget_label(turn, prompt_tokens, context_window);
+            let _ = renderer.commit_panel_labeled(&user_host, &echo_body, false, Some(&label));
         }
 
         // ── Send the user query ─────────────────────────────────────────
@@ -879,6 +882,17 @@ fn should_echo(query: &str) -> bool {
     )
 }
 
+/// Bottom-border context label for the user-echo panel.
+fn turn_budget_label(turn: usize, prompt_tokens: u32, context_window: u32) -> String {
+    let budget = if prompt_tokens == 0 {
+        "new session".to_string()
+    } else {
+        let pct = (prompt_tokens as f64 / f64::from(context_window.max(1)) * 100.0) as u32;
+        format!("{prompt_tokens} / {context_window} ({pct}%)")
+    };
+    format!("turn {turn} · {budget}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::HELP_TEXT;
@@ -966,5 +980,22 @@ mod tests {
         use super::user_host_label;
         assert_eq!(user_host_label(Some("matt"), Some("unknown")), "matt");
         assert_eq!(user_host_label(Some("matt"), Some("")), "matt");
+    }
+
+    // ── turn_budget_label ──────────────────────────────────────────────
+
+    #[test]
+    fn turn_budget_label_new_session() {
+        use super::turn_budget_label;
+        assert_eq!(turn_budget_label(1, 0, 200_000), "turn 1 · new session");
+    }
+
+    #[test]
+    fn turn_budget_label_reports_usage() {
+        use super::turn_budget_label;
+        assert_eq!(
+            turn_budget_label(3, 50_000, 200_000),
+            "turn 3 · 50000 / 200000 (25%)"
+        );
     }
 }
