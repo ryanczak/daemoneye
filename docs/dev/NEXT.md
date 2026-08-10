@@ -51,22 +51,33 @@ inserted_rows, park)`. Reanchor then clears from
 history-end and the bottom while never touching a real history row. Once a
 session has scrolled a full screen, `content_end` saturates at `park` and
 behavior degrades to today's (correct there — everything above is genuinely
-scrolled history). Include an env-gated trace
-(`DAEMONEYE_REANCHOR_TRACE` → append `(old_top, park, content_end, size)`
-to a /tmp log) so the next live check produces numbers, not screenshots.
+scrolled history). Drafted as
+[phase-07 — content-extent-clear](milestones/M13-chat-ux/phase-07-content-extent-clear.md)
+on PE direction 2026-08-10, including the env-gated `DAEMONEYE_REANCHOR_TRACE`
+diagnostic.
 Root cause of *how* the debris rows were originally painted is still
 unproven (suspect: earlier-generation live regions vacated by
 viewport-bottom migration or by pre-phase-06 resize-based reanchors); the
 content-extent clear removes them regardless of origin.
 
-## Active phase: [M13 phase-06 — repin-rebuild](milestones/M13-chat-ux/phase-06-repin-rebuild.md)
+## Active phase: [M13 phase-07 — content-extent-clear](milestones/M13-chat-ux/phase-07-content-extent-clear.md)
 
 Drafted 2026-08-10 on PE direction, status `todo` — dispatch with
-`/rexymcp:dispatch phase-06`. Replaces `reanchor()`'s resize-based repin with
-a deterministic bottom repin: clear from the old viewport top, park the
-cursor at `height − VIEWPORT_ROWS` (the scroll-trap row — parking at the
-bottom scrolls history 5 rows per repin), rebuild the Terminal. Decisive
-verification is the live tmux window-switch check at the milestone gate.
+`/rexymcp:dispatch phase-07`. The renderer tracks `origin_row` + a saturating
+`inserted_rows` counter at the three `insert_before` sites; `repin_rows`
+becomes three-arg (`min(old_top, content_end, park)`) so the repin wipes the
+debris gap between real history and the bottom; env-gated
+`DAEMONEYE_REANCHOR_TRACE` logs `(old_top, content_end, park, size)` per
+repin. Decisive verification: live same-size window-switch check with the
+trace on.
+
+**phase-06 — repin-rebuild approved 2026-08-10** (`approved_first_try`,
+commits `184e10b`/`5a78bcd`, 72 executor turns). Deterministic bottom repin
+landed; live check confirmed the input dialog pins to the bottom, then
+surfaced OPEN FINDING 2 (stale live-region debris above the clear range) —
+phase-07 is the fix. Review calibration: another architect criterion defect
+(`fn repin_rows` grep matched the test-name prefixes; executor flagged it) —
+third M13 occurrence, at fold threshold.
 
 **phase-05 — resize-and-reanchor approved 2026-08-10** (`approved_first_try`,
 commit `f4b0e4b`). SIGWINCH + focus events now reach the streaming loop
