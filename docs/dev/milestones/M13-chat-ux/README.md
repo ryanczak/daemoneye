@@ -6,7 +6,7 @@ throbber is flush-left, history entries are attributed to `user@host`, command
 runtimes live in the output panel's border, and the input dialog stays pinned
 to the bottom through resizes and tmux window switches.
 
-**Status:** planning
+**Status:** done — closed 2026-08-10
 
 **Depends on:** M12 — Full-View tmux Integration
 
@@ -216,3 +216,106 @@ redraws). Nothing already committed to scrollback can be re-wrapped —
 - Several exit criteria need live tmux verification (remote colors, mid-turn
   window switch). Like M12, these get unit coverage plus an explicit live
   check at milestone close — do not let them go unit-only silently.
+
+## M13 retrospective — closed 2026-08-10
+
+**Seven phases, all `done`.** Four `approved_first_try`, two `approved_after_1`,
+one `escalated`. Two bugs filed, both resolved. Scoped at five phases; 06 and 07
+were added mid-milestone on PE direction after live checks surfaced the
+window-switch findings. Final state: 1241 lib tests, four gates re-run green at
+close, and — unlike M12 — **every live-verification criterion was actually
+live-verified before close**, none went unit-only.
+
+| Phase | Verdict | Bounces |
+|---|---|---|
+| 01 color-depth-palette | approved_first_try | 0 |
+| 02 throbber-and-identity | approved_first_try | 0 |
+| 03 runtime-in-border | **escalated** | 0 bounces; 2 `NoProgressStall` hard-fails → resume assist → takeover close-out |
+| 04 cursor-alignment | approved_after_1 | 1 (bug-phase-04-1 — retyped E2E evidence, blocker) |
+| 05 resize-and-reanchor | approved_first_try | 0 |
+| 06 repin-rebuild | approved_first_try | 0 |
+| 07 content-extent-clear | approved_after_1 | 1 (bug-phase-07-1 — stale duplicate doc comment, minor) |
+
+### The headline: live verification drove the milestone's second half
+
+Phase-05 landed exactly to spec (`approved_first_try`) and the live check
+*still* showed the window-switch artifacts — the signals now arrived mid-stream,
+but the repin they triggered was pre-M13 code that had never been
+live-validated. That finding produced phase-06 (deterministic bottom repin,
+diagnosed from the ratatui-core source). Phase-06's live check then showed the
+input box pinned correctly but stale live-region debris surviving above the
+clear range — that produced phase-07 (content-extent clear). The
+`DAEMONEYE_REANCHOR_TRACE` diagnostic specced into phase-07 is what closed the
+loop: it live-verified the fix (5 clean reanchors, no artifacts, PE closed the
+issue) *and* caught the width-flip ghost generator on tape (`w=255` — a
+127-col pane transiently full-width during window rearrangement, planting one
+wrapped ghost border into scrollback, matching the reproduction harness).
+
+The pattern to carry: **a spec-correct phase closes its tasks, not the
+symptom.** The three-phase chain 05→06→07 was invisible from the code and the
+unit suites — each successive defect was only observable through the user's
+door, in live tmux. The milestone's Risks section predicted exactly this and
+the per-phase live checks honored it; the cost was two unplanned phases, which
+is cheaper than shipping a "done" milestone with the symptom intact.
+
+Residual, deliberately not scoped: scrollback ghosts on transient width flips
+(cosmetic; tmux rewraps live-region rows into history — nothing app-side can
+clean scrollback after the fact). Backlog note with the fix shape is in
+NEXT.md's RESOLVED block dated 2026-08-10.
+
+### Post-phase live fixes on the color path
+
+Phase-01's live criterion (distinct red/yellow on non-truecolor terminals)
+held at review, but continued live use exposed two detection gaps, fixed as
+direct commits and live-verified: `ca4b8e9` caps chat colors at 256 when tmux
+cannot pass truecolor through to the outer terminal, and `c373997` probes the
+tmux client's terminfo (`infocmp -x`, `Tc`/`RGB`/`setrgbf`/`setrgbb` tokens)
+because `client_termfeatures` alone under-detects clients like xterm-ghostty
+whose truecolor support is terminfo-declared. Test count 1234 → 1241 comes
+from these.
+
+### Exit criteria — verified at close
+
+1. **Non-RGB colors distinct** — phase-01 depth-detection suite + live check
+   on pinky; hardened by the two post-phase fixes above. ✓
+2. **Cursor column exact on wrapped input** — phase-04: `visual_lines` is the
+   single wrapping authority; exact-coordinate tests via
+   `TestBackend::get_cursor_position`. ✓
+3. **Throbber at column 0** — phase-02. ✓
+4. **History titled `user@shorthost`** — phase-02, fallback chain pinned. ✓
+5. **No standalone `result` panel; `✓ 1.2s` in the output panel's bottom
+   border** — phase-03 (interrupt-path panel deliberately retained). ✓
+6. **Panel word-wrap + ` turn N · tokens ` label** — phase-03
+   (`wrap_line_hard` ported). ✓
+7. **Dead legacy printers deleted** — phase-05 (147 lines removed from
+   `render.rs`). ✓
+8. **Mid-turn resize/window-switch re-anchors** — phases 05+06+07;
+   live-verified 2026-08-10 with the trace on, issue closed by PE. ✓
+9. **Four gates green** — re-run at close 2026-08-10: fmt, build, clippy
+   `-D warnings`, 1241 lib tests + integration suites, zero failures. ✓
+
+### Calibration inventory at close (fold decisions for the PE — see NEXT.md)
+
+1. **At fold threshold: a mechanical criterion must be validated against the
+   tree the phase will produce.** M13 ×3 — phase-03's `commit_panel("result"`
+   grep demanded 0 while the out-of-scope interrupt-path panel always matches;
+   phase-04's wrap fixture didn't discriminate its own mutation; phase-06's
+   `grep -c 'fn repin_rows'` matched three test-name prefixes. Plus M12 ×2
+   (phase-01 self-satisfying grep, phase-05 unsatisfiable no-changes
+   criterion). Five occurrences, one family: the criterion was reasoned about,
+   not executed against a simulated end-state.
+2. **The PASTE MATCH self-check is the proven evidence mechanism** — byte-exact
+   on every use (phase-04 r2, phase-07 r1 — the milestone's first fully clean
+   E2E artifact). Two sharp edges to pin with it: the extraction must scope to
+   the entry's **first fence** or it sweeps in server-authored completion
+   tails (bit phase-05/06 reviews), and the literal `PASTE MATCH` line was
+   absent from two entries whose artifacts were nonetheless byte-exact.
+3. **The E2E template's `cmd | tail; echo exit=$?` recorded the pipe's exit,
+   not the command's** — template defect, silently green-washing every M13
+   block until phase-04 fixed it (`${PIPESTATUS[0]}` form). Fold the corrected
+   form; add to the upstream push backlog.
+4. **Prescribed code must pass the lint gate, not just compile** — phase-03's
+   spec's own worked example failed `-D warnings`
+   (`cloned_ref_to_slice_refs`). First occurrence; extends "derive every spec
+   fact from its source" to prescribed code. Hold for recurrence or fold as a
+   clarifying sentence.

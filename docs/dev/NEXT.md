@@ -1,5 +1,52 @@
 # NEXT
 
+## Active phase: none — M13 milestone boundary (closed 2026-08-10, awaiting PE sign-off)
+
+**M13 — Chat UX Polish is closed.** Seven phases, all `done`: four
+`approved_first_try` (01, 02, 05, 06), two `approved_after_1` (04, 07), one
+`escalated` (03). Two bugs, both resolved. Four gates re-run green at close:
+1241 lib tests, zero failures. Every live-verification exit criterion was
+actually live-verified — the window-switch artifact issue is closed by PE with
+trace evidence (see the RESOLVED block below). Retrospective in
+`docs/dev/milestones/M13-chat-ux/README.md` § "M13 retrospective".
+
+**What needs the human before anything advances:**
+
+1. **Fold decision — at threshold: "a mechanical criterion must be validated
+   against the tree the phase will produce."** Five occurrences across two
+   milestones (M13 phase-03 result-grep / phase-04 fixture / phase-06
+   prefix-grep; M12 phase-01 self-satisfying grep / phase-05 unsatisfiable
+   no-changes criterion). Proposed clause for `docs/dev/WORKFLOW.md`: every
+   grep/count acceptance criterion must be *executed* at drafting against the
+   end-state tree (prototype it, or run it against the current tree and apply
+   the phase's intended delta by hand), and checked against the rest of its
+   own spec — reasoning about it has a measured 5-for-5 failure rate.
+2. **Fold decision — pin the PASTE MATCH evidence recipe.** Byte-exact on
+   every use; two sharp edges to pin: extraction scoped to the entry's
+   **first fence** (else server-authored completion tails false-positive),
+   and the literal `PASTE MATCH` line required *in* the entry (absent twice
+   while the artifact was clean).
+3. **Fold decision — E2E blocks must record `${PIPESTATUS[0]}`, not the
+   pipe's exit.** Template defect that green-washed every M13 block until
+   phase-04; fold the corrected form and add it to the upstream push backlog.
+4. **Hold or fold: prescribed code must pass the lint gate** (phase-03's
+   worked example failed `-D warnings`). First occurrence.
+5. **Sign-off to scope the next milestone.** Candidates carried in this file:
+   the M12 live-verification gap (three criteria still unit-only, needs the
+   daemon restarted onto the current binary), the `APPROVAL_GATED_TOOLS`
+   live check, M6 — Verification & Hygiene (scoped 2026-07-30, 12 phases,
+   phase-01 drafted but never dispatched), and the upstream push backlog
+   (~14 local-only WORKFLOW.md sections plus the M13 items above). Backlog
+   candidate only, not milestone-shaped: width-flip scrollback ghosts
+   (cosmetic; fix shape recorded in the RESOLVED block below).
+
+**Next action:** PE decides the folds and names the next milestone; then
+`/rexymcp:architect` to scope it.
+
+---
+
+## M13 history (most recent first)
+
 ## OPEN FINDING (2026-08-10, post-boundary): window-switch artifacts persist
 
 Live check after M13 phase-05 (binary 19:13, includes the fix): rendering
@@ -83,16 +130,22 @@ closed the issue. Closure evidence:
   occupy `VIEWPORT_ROWS × old_w / new_w` rows above the bottom and are
   guaranteed non-history). Not scoped into M13.
 
-## Active phase: [M13 phase-07 — content-extent-clear](milestones/M13-chat-ux/phase-07-content-extent-clear.md)
+**phase-07 — content-extent-clear approved 2026-08-10** (`approved_after_1`;
+bug-phase-07-1 minor — a stale duplicate `repin_rows` doc comment left in
+place, root cause part architect-side: "Replace the two-arg form" left the
+patch anchor ambiguous. Round 2 was exactly the enumerated 8-line deletion, 21
+turns, zero code drift; commit `55ba03f`). The renderer tracks `origin_row` +
+a saturating `inserted_rows` counter; `repin_rows` is three-arg
+(`min(old_top, content_end, park)`); env-gated `DAEMONEYE_REANCHOR_TRACE`
+logs per-repin. Round 1 produced the milestone's first fully clean E2E
+artifact (byte-exact PASTE MATCH, literal self-check line present). Live
+verification closed the window-switch issue — see the RESOLVED block above.
 
-Drafted 2026-08-10 on PE direction, status `todo` — dispatch with
-`/rexymcp:dispatch phase-07`. The renderer tracks `origin_row` + a saturating
-`inserted_rows` counter at the three `insert_before` sites; `repin_rows`
-becomes three-arg (`min(old_top, content_end, park)`) so the repin wipes the
-debris gap between real history and the bottom; env-gated
-`DAEMONEYE_REANCHOR_TRACE` logs `(old_top, content_end, park, size)` per
-repin. Decisive verification: live same-size window-switch check with the
-trace on.
+**Post-close color-path fixes (2026-08-10, direct commits, live-verified):**
+`ca4b8e9` caps chat colors at 256 when tmux cannot pass truecolor through;
+`c373997` probes the tmux client's terminfo (`infocmp -x`) for
+`Tc`/`RGB`/`setrgbf`/`setrgbb` because `client_termfeatures` under-detects
+terminfo-declared truecolor (xterm-ghostty). Tests 1234 → 1241.
 
 **phase-06 — repin-rebuild approved 2026-08-10** (`approved_first_try`,
 commits `184e10b`/`5a78bcd`, 72 executor turns). Deterministic bottom repin
