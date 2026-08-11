@@ -1,7 +1,7 @@
 # Phase 02: Approval round trip live
 
 **Milestone:** M14 — Live Verification
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-01
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -395,3 +395,23 @@ S5) — matches the acceptance criterion. The highlight probe is informational
 only (its exact `pane_style` rendering was not pre-verified; capturing it is
 evidence either way, and pinning it as a verdict would risk a false FAIL on
 an architect guess).
+
+### Update — 2026-08-11 04:49 (started)
+
+Executor running phase-02 E2E sections S1–S6 verbatim. All output appended to `/tmp/e2e-m14-02.txt`.
+
+### Update — 2026-08-11 04:55 (blocker)
+
+**Blocked on:** `CHECK-G deny-path: FAIL` — `/approvals revoke` does not persist across turns
+
+**What I tried:** Ran S3 verbatim. R1 (zoom + `y`) passed: prompt appeared, `y` approved, pane zoomed (`CHECK-F: OK`, `CHECK-H: OK`). R2 (unzoom + `n`) failed: no prompt appeared (`prompt-count before=0 after=0`), the tool call was auto-approved with `✓ auto-approved (session)`, and the `n` keypress was consumed as chat text (prepended to R3's prompt as `nNow use...`). R3 timed out waiting for a prompt that never appeared.
+
+**Root cause:** `src/cli/commands/stream.rs:656` resets `*approval = SessionApproval::from_config(&cfg.approvals)` at the end of every turn. The config has `[approvals] commands = true`, so `/approvals revoke` (which sets `regular = false`) is overwritten to `regular = true` after the first turn completes. This means `/approvals revoke` only gates one turn — the second `tmux_control` call auto-approves.
+
+**What I need:** Architect decision on how to proceed:
+1. **Fix the config reset** (remove or gate the line 656 reset so `/approvals revoke` persists) — but this is a source change, which is out of scope for this evidence phase.
+2. **Amend the script** to use `/approvals off` instead of `/approvals revoke` (same effect, same problem — both get reset).
+3. **Amend the script** to change the config's `commands` to `false` before the test (but the config is already capped with extra entries, and editing it further is outside the authorized changes).
+4. **Accept the finding** as a genuine behavioral discrepancy the milestone was designed to surface, and record it as a known issue for a follow-up phase.
+
+S5 (config restore + teardown) ran unconditionally per spec: `CHECK-S5 config-restored: OK`, fixture window killed, all four gates green (fmt, build, clippy, test). S4 (cap-enforced + gated-exempt) was not reached due to the R3 timeout.
