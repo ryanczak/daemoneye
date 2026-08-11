@@ -1,47 +1,53 @@
 # NEXT
 
-## Active phase: none — M13 milestone boundary (closed 2026-08-10, awaiting PE sign-off)
+## Active milestone: [M14 — Live Verification](milestones/M14-live-verification/README.md) — no phase drafted yet
 
-**M13 — Chat UX Polish is closed.** Seven phases, all `done`: four
-`approved_first_try` (01, 02, 05, 06), two `approved_after_1` (04, 07), one
-`escalated` (03). Two bugs, both resolved. Four gates re-run green at close:
-1241 lib tests, zero failures. Every live-verification exit criterion was
-actually live-verified — the window-switch artifact issue is closed by PE with
-trace evidence (see the RESOLVED block below). Retrospective in
+**Scoped 2026-08-10 on PE direction** at the M13 boundary. Goal: actually
+live-verify the M12 exit criteria that shipped unit-only (cross-session
+visibility with two real tmux sessions, `read_pane` through the dispatch
+path, the `tmux_control` approval round trip, status/`find_in_panes`/`/panes`
+live, the `APPROVAL_GATED_TOOLS` budget reconciliation), against a daemon
+restarted onto the current binary. Two phases planned: 01
+scripted-live-sweep (no human at the prompt), 02 approval-roundtrip-live
+(human-in-the-loop; executor-drivability to be prototyped at drafting, per
+the README's open question). Deliberately small: it verifies, it does not
+build.
+
+**Next action:** `/rexymcp:architect next` to draft phase-01
+(scripted-live-sweep).
+
+**M13 — Chat UX Polish closed 2026-08-10** (PE sign-off same day). Seven
+phases, all `done`: four `approved_first_try` (01, 02, 05, 06), two
+`approved_after_1` (04, 07), one `escalated` (03). Two bugs, both resolved.
+Four gates re-run green at close: 1241 lib tests. Retrospective in
 `docs/dev/milestones/M13-chat-ux/README.md` § "M13 retrospective".
 
-**What needs the human before anything advances:**
+### Four folds landed at M13 close (PE sign-off, 2026-08-10)
 
-1. **Fold decision — at threshold: "a mechanical criterion must be validated
-   against the tree the phase will produce."** Five occurrences across two
-   milestones (M13 phase-03 result-grep / phase-04 fixture / phase-06
-   prefix-grep; M12 phase-01 self-satisfying grep / phase-05 unsatisfiable
-   no-changes criterion). Proposed clause for `docs/dev/WORKFLOW.md`: every
-   grep/count acceptance criterion must be *executed* at drafting against the
-   end-state tree (prototype it, or run it against the current tree and apply
-   the phase's intended delta by hand), and checked against the rest of its
-   own spec — reasoning about it has a measured 5-for-5 failure rate.
-2. **Fold decision — pin the PASTE MATCH evidence recipe.** Byte-exact on
-   every use; two sharp edges to pin: extraction scoped to the entry's
-   **first fence** (else server-authored completion tails false-positive),
-   and the literal `PASTE MATCH` line required *in* the entry (absent twice
-   while the artifact was clean).
-3. **Fold decision — E2E blocks must record `${PIPESTATUS[0]}`, not the
-   pipe's exit.** Template defect that green-washed every M13 block until
-   phase-04; fold the corrected form and add it to the upstream push backlog.
-4. **Hold or fold: prescribed code must pass the lint gate** (phase-03's
-   worked example failed `-D warnings`). First occurrence.
-5. **Sign-off to scope the next milestone.** Candidates carried in this file:
-   the M12 live-verification gap (three criteria still unit-only, needs the
-   daemon restarted onto the current binary), the `APPROVAL_GATED_TOOLS`
-   live check, M6 — Verification & Hygiene (scoped 2026-07-30, 12 phases,
-   phase-01 drafted but never dispatched), and the upstream push backlog
-   (~14 local-only WORKFLOW.md sections plus the M13 items above). Backlog
-   candidate only, not milestone-shaped: width-flip scrollback ghosts
-   (cosmetic; fix shape recorded in the RESOLVED block below).
+All four in `docs/dev/WORKFLOW.md`; **none applied upstream** — added to the
+push backlog:
 
-**Next action:** PE decides the folds and names the next milestone; then
-`/rexymcp:architect` to scope it.
+1. **§ "Every acceptance criterion must be satisfiable"** gains *"validate
+   every mechanical criterion against the tree the phase will produce — by
+   executing it, not reasoning about it"*, folded at five occurrences
+   (M12 ×2, M13 ×3; reasoning went 0-for-5).
+2. **§ "End-to-end verification"** gains the pinned **PASTE MATCH recipe**:
+   extraction anchored to the entry heading and scoped to its first fence,
+   the literal verdict line required in the entry, and the check validated
+   against a known-bad input before speccing.
+3. **§ "End-to-end verification"** now requires **`${PIPESTATUS[0]}` exit
+   markers** on piped commands — the `$?` form recorded tail's exit and
+   green-washed every pre-phase-04 M13 block.
+4. **§ "Derive every spec fact from its source"** gains *"prescribed code
+   must pass the project's lint gate, not just the compiler"* (folded on PE
+   direction at first occurrence — phase-03's worked example failed
+   `-D warnings`).
+
+Backlog candidate only, not milestone-shaped: width-flip scrollback ghosts
+(cosmetic; fix shape recorded in the RESOLVED block below). Also still
+carried: M6 — Verification & Hygiene (scoped 2026-07-30, 12 phases, phase-01
+drafted but never dispatched) and the upstream push backlog (~14 local-only
+WORKFLOW.md sections plus the four folds above).
 
 ---
 

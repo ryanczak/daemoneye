@@ -225,11 +225,26 @@ Concretely: if the Update Log's newest content for the current dispatch is a
 is unmet, exactly as it would be on a first dispatch.
 
 **For the architect: give the commands as a runnable block, never as prose.**
-Write the exact shell the executor should run — redirect included, `exit=$?`
-marker included — rather than describing what to verify. Where a result's success
+Write the exact shell the executor should run — redirect included, exit marker
+included — rather than describing what to verify. Where a result's success
 case produces *no output* (a grep that finds nothing, a diff over identical
 inputs), the exit marker is the whole proof; an empty block on its own
 demonstrates nothing.
+
+**When the command is piped, the exit marker must record `${PIPESTATUS[0]}`,
+never `$?`.** `$?` after `cmd | tail -20` is *tail's* exit, which is 0 no
+matter what `cmd` did — so `cmd 2>&1 | tail -20; echo "exit=$?"` green-washes
+every failure the pipe truncates. The correct form:
+
+```sh
+cmd 2>&1 | tail -20; echo "exit=${PIPESTATUS[0]}"
+```
+
+*(Folded 2026-08-10 at M13 close, on PE sign-off. Every M13 E2E block before
+phase-04 carried the `$?` form — a template defect, not an executor error: the
+blocks did exactly what they were told and would have reported `exit=0` over a
+failing gate. Discovered at phase-03's takeover; corrected from phase-04 on.
+Push upstream — the plugin template's E2E section has the same shape.)*
 
 **Everything the entry must contain has to be produced *by the block*.** The
 block is not "the commands that are convenient to automate" — it is the
@@ -316,6 +331,41 @@ paste the resulting `/tmp/e2e-NN.txt` into a new Update Log entry headed
 Keep the block itself in § End-to-end verification — this task points at it.
 The point is that the *obligation* is tracked, not that the commands are
 duplicated.
+
+**Close the entry with a PASTE MATCH self-check, scoped to the entry's first
+fence.** The proven finish condition for paste fidelity (per § "Give the
+executor a condition it can check") is a final task that re-extracts the
+pasted fence from the phase doc, diffs it against the artifact file, and
+prints a verdict the executor and the review can both read. Three mechanics,
+each earned:
+
+1. **The extraction anchors on the entry heading and takes only the first
+   fenced block after it.** A bare substring grep over the whole phase doc
+   sweeps in the server-authored `(complete)` entry's gate-output tails and
+   reports a false `PASTE MISMATCH` — this bit two reviews before the scoping
+   was pinned. Shape:
+
+   ```sh
+   awk '/^### Update.*end-to-end verification/{f=1} f&&/^```/{c++; next} f&&c==1{print} f&&c==2{exit}' \
+     docs/dev/milestones/<M>/<phase>.md > /tmp/pasted-NN.txt
+   diff /tmp/pasted-NN.txt /tmp/e2e-NN.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+   ```
+
+2. **The literal `PASTE MATCH` line goes *into* the entry.** Twice an artifact
+   verified byte-exact at review while the verdict line was absent from the
+   entry — which moves the check back to the reviewer, silently, the exact
+   drift the per-dispatch clause above exists to stop.
+3. **Validate the check against a known-bad input before speccing it.** The
+   one time this was done first (a deliberately retyped line), the check
+   printed `PASTE MISMATCH` with exactly the divergent lines; that is what
+   makes a green verdict mean something.
+
+*(Folded 2026-08-10 at M13 close, on PE sign-off. Byte-exact on every use —
+M12 phase-05 r2, M13 phase-04 r2 (38 turns, zero source edits, after the
+retyped-evidence class had recurred), M13 phase-07 r1 (the first fully clean
+first-round artifact). The two absent-verdict-line entries were M13 phases 05
+and 06; the two false-positive review extractions were the M12 documented case
+and M13 phase-06's.)*
 
 *(Folded 2026-07-31 after M6, on PE sign-off. Ten of that milestone's fourteen
 bounces and two of its four architect takeovers were this single requirement —
@@ -885,6 +935,16 @@ doc's prose against the code. Severity scales badly:
 The same discipline applies to bug docs and re-dispatch notes, which are specs
 too: a worked "here is the exact replacement code" block that calls a function
 the last phase inlined is worse than no worked example, because it is trusted.
+
+**Prescribed code must pass the project's lint gate, not just the compiler.**
+A worked example is a spec fact the executor copies verbatim, so it inherits
+every gate the project runs — and "it compiles" is not the gate; `cargo clippy
+--all-targets --all-features -- -D warnings` is. Before speccing a worked
+example or replacement block, put it in a scratch tree and run the lint
+command on it. *(Folded 2026-08-10 at M13 close, on PE direction — first
+occurrence, folded on request: phase-03's spec-prescribed `&[label.clone()]`
+failed `-D warnings` with `cloned_ref_to_slice_refs`, so an executor
+faithfully reproducing the spec was guaranteed a red gate it did not cause.)*
 
 *(Folded 2026-07-24 after **ten** occurrences across M36–M38, only two caught
 before dispatch: a corpus figure quoted pre-dedup (59.6M asserted vs 36.1M
@@ -1562,6 +1622,27 @@ unapplied to a rule in these very docs. Both are the same omission: the
 criterion was checked against the tree and never against **the rest of its own
 spec, or against what the executor is permitted to do**. Make that re-read a
 literal pre-dispatch step, and include this document in what you re-read.)*
+
+**Validate every mechanical criterion against the tree the phase will
+*produce* — by executing it, not reasoning about it.** § "Run every count
+criterion" covers the current tree; it does not cover the end-state tree the
+criterion actually describes, and reasoning that gap out has a measured
+5-for-5 failure rate. The procedure: prototype the phase's intended delta (or
+apply it by hand to a scratch copy), run the criterion command against that
+tree, and paste what it printed. For greps specifically, check the token
+against the **whole target file** — test names, doc comments and the spec's
+own prose all count as matches (`grep -c 'fn repin_rows'` returned 4 because
+three test-name *prefixes* matched; the criterion needed `fn repin_rows(`).
+
+*(Folded 2026-08-10 at M13 close, on PE sign-off, at five occurrences across
+two milestones: M12 phase-01's self-satisfying grep and phase-05's
+unsatisfiable no-changes criterion; M13 phase-03's `commit_panel("result"`
+grep demanding 0 while an out-of-scope interrupt-path panel always matches,
+phase-04's wrap fixture that produced identical output at both widths so its
+own mutation was indiscriminable, and phase-06's prefix-matching grep. In
+every case the criterion was *reasoned* against an imagined end-state; in no
+case did the reasoning survive execution. The executor's behavior was correct
+all five times — twice it flagged the discrepancy itself.)*
 
 **A bounce makes the acceptance criteria stale, and stale criteria certify the
 phase as finished.** After a review rejects a phase, the criteria in the phase
