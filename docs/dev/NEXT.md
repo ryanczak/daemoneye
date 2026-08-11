@@ -1,6 +1,34 @@
 # NEXT
 
-## Active phase: [M14 phase-01 — scripted-live-sweep](milestones/M14-live-verification/phase-01-scripted-live-sweep.md)
+## Active phase: [M14 phase-02 — approval-roundtrip-live](milestones/M14-live-verification/phase-02-approval-roundtrip-live.md)
+
+Drafted 2026-08-11 (inside the /rexymcp:auto run), status `todo`. Scripted
+approval round trips (`/approvals revoke` → prompt → single-keypress `y`/`n`)
+plus the per-tool cap and gated exemption against a temporarily capped
+config (backed up, restored unconditionally in S5). Core mechanism
+prototyped live by the architect before drafting — including two hazards now
+pinned in the doc: chat hangs in a clientless tmux session, and prompt polls
+must count `Approve?` occurrences (stale-scrollback greps false-positive).
+7 verdict lines; the executor may not read `src/` at all.
+
+**phase-01 — scripted-live-sweep approved 2026-08-11** (`approved_after_1`;
+1 hard_fail + 1 bounce, 3 assists total — see below). All 9 live checks OK:
+binary identity, four dispatch-path probes with status classification,
+`/panes`, gates. Evidence anchored on chat-session JSONL `tool_results`.
+Round 1 hard-failed on two architect spec defects (tmux numeric `-t`
+ambiguity; `ask` never persists sessions). Round 2 completed but bounced on
+bug-01-1 — retyped ANSI in the pasted S1 block; root cause shared (the spec
+demanded byte-exact pasting of raw ANSI an LLM cannot round-trip). Round 3
+stripped ANSI at generation and pasted byte-exact. **Executor flagged, not
+gamed, a stale S6 anchor** (first-entry extraction diffing the superseded
+round-2 entry) — second flag-don't-game data point after M13 phase-06.
+**Calibration for milestone close:** the PASTE MATCH fold's first-fence
+extraction does not survive multi-round phases; the last-entry anchor is the
+correction (already applied to both M14 phase docs and validated both ways).
+
+### Historical: phase-01 drafting notes
+
+[M14 phase-01 — scripted-live-sweep](milestones/M14-live-verification/phase-01-scripted-live-sweep.md)
 
 Drafted 2026-08-10, status `todo` — dispatch with `/rexymcp:dispatch
 phase-01`. A shell-only evidence phase: rebuild + reinstall + restart the
