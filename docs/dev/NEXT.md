@@ -2,7 +2,28 @@
 
 ## Active phase: [M14 phase-02 — approval-roundtrip-live](milestones/M14-live-verification/phase-02-approval-roundtrip-live.md)
 
-Drafted 2026-08-11 (inside the /rexymcp:auto run), status `todo`. Scripted
+**BLOCKED 2026-08-11 — live finding, PE decision needed.** The sweep ran
+S1–S5; CHECK-G (deny-path) FAILed for a real reason: **runtime approval state
+does not survive a turn.** `src/cli/commands/stream.rs:653-657` wholesale
+resets `*approval = SessionApproval::from_config(...)` at the end of every
+turn — verified verbatim by the architect. Consequences: `/approvals revoke`
+(and `on`/`off`) lasts one turn; the `[A]pprove for session` answer is wiped
+at turn end for any class whose config default is `false`. This also
+explains the architect's prototype anomaly (post-revoke auto-approve). All
+other verdicts passed (S1 cap-warning OK, F approve-path OK, H target-hint
+OK, S5 config-restored OK — config byte-identical, daemon up, fixture gone);
+S4 was unreached. Executor end state verified clean by the architect.
+**Decision needed:** (a) phase-03 fixes the reset (merge config changes
+without clobbering runtime revocations/session-approvals) and phase-02
+re-runs after; or (b) accept-and-carry with phase-02 re-specced around it.
+The architect recommends (a) — the reset also defeats the documented
+`revoke always fully gates` contract. Calibration note for close: the
+executor's diagnosis cited `stream.rs:656`, violating the phase's
+no-reading-`src/` rule — the ban conflicted with writing a useful blocker;
+reconcile the two at fold time rather than grading the deviation harshly.
+
+Original drafting note: status was `todo`, drafted inside the /rexymcp:auto
+run. Scripted
 approval round trips (`/approvals revoke` → prompt → single-keypress `y`/`n`)
 plus the per-tool cap and gated exemption against a temporarily capped
 config (backed up, restored unconditionally in S5). Core mechanism

@@ -1,7 +1,7 @@
 # Phase 02: Approval round trip live
 
 **Milestone:** M14 — Live Verification
-**Status:** review
+**Status:** blocked (CHECK-G finding — see the 04:55 blocker entry; architect decision needed)
 **Depends on:** phase-01
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
