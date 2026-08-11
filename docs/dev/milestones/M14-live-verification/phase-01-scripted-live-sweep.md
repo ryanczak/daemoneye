@@ -201,12 +201,12 @@ A=/tmp/e2e-m14-01.txt
 {
 echo "== S1 REBUILD-RESTART =="
 cargo build --release 2>&1 | tail -3; echo "build exit=${PIPESTATUS[0]}"
-daemoneye stop 2>&1 | tail -1
+daemoneye stop 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g'
 install -m755 target/release/daemoneye ~/.cargo/bin/daemoneye && echo "install: done"
-daemoneye daemon 2>&1 | tail -2; echo "daemon-start exit=${PIPESTATUS[0]}"
+daemoneye daemon 2>&1 | tail -2 | sed 's/\x1b\[[0-9;]*m//g'; echo "daemon-start exit=${PIPESTATUS[0]}"
 sleep 2
-daemoneye ping 2>&1 | tail -1
-daemoneye status 2>&1 | head -8
+daemoneye ping 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g'
+daemoneye status 2>&1 | head -8 | sed 's/\x1b\[[0-9;]*m//g'
 PID=$(tr -dc 0-9 < ~/.daemoneye/var/run/daemoneye.pid)
 H1=$(sha256sum target/release/daemoneye | cut -d' ' -f1)
 H2=$(sha256sum ~/.cargo/bin/daemoneye | cut -d' ' -f1)
@@ -749,3 +749,139 @@ phase whose entire deliverable is transcript fidelity. Acceptance criteria
 refreshed to require actually re-running S6 rather than trusting the string
 already in the doc, and confirmed the refreshed criterion fails against the
 current tree before re-dispatch.
+
+### Update — 2026-08-11 (round 3 refinement, architect)
+
+bug-01-1's root cause is shared. The executor retyped the S1 status block —
+the documented failure mode, and the bounce stands. But the spec set a
+condition the executor **cannot** satisfy: `daemoneye status` emits raw ANSI
+escape bytes, and no LLM can round-trip raw escape bytes through its own
+context to produce a byte-exact paste — which is precisely why S2–S6 (plain
+text) came back byte-identical and only the ANSI block diverged.
+
+Fix, verified against the live binary before speccing: every `daemoneye` CLI
+output in Section S1 now pipes through `sed 's/\x1b\[[0-9;]*m//g'` (a plain
+pipe, not an in-place edit), so the artifact is ANSI-free at generation and
+byte-exact pasting is achievable. The strip is part of the mechanical
+generator — the artifact is still untouched after capture.
+
+**Round 3 is a full re-run**: execute Sections S1–S5 verbatim to regenerate
+`/tmp/e2e-m14-01.txt` (S1 truncates it), evaluate the verdicts (Task 6), then
+paste and self-check per Task 7. The previous end-to-end entry above is
+superseded — do not edit it; add a new one. Expect all 9 verdicts OK again;
+any FAIL is a blocker entry, not a retry-until-green.
+
+### Update — 2026-08-11 04:15 (end-to-end verification)
+
+```
+== S1 REBUILD-RESTART ==
+    Finished `release` profile [optimized] target(s) in 0.06s
+build exit=0
+Daemon is not running.
+install: done
+daemoneye daemon started (PID 176423)
+daemon-start exit=0
+Daemon is running.
+
+  DAEMONEYE  pid 176423  ·    uptime 2s  ·    ~/.daemoneye/var/run/daemoneye.sock
+
+── RUNTIME ────────────────────────────────────────────────────────────────────
+  model           ollama / Qwen/Qwen3.6-27B-FP8
+
+── SESSION ────────────────────────────────────────────────────────────────────
+  active          0
+sha256 target=c4e9cca3bde385f433e5ff4a469cb6ee52153bcd5e2602040ce804ac54b2ec18 installed=c4e9cca3bde385f433e5ff4a469cb6ee52153bcd5e2602040ce804ac54b2ec18 running=c4e9cca3bde385f433e5ff4a469cb6ee52153bcd5e2602040ce804ac54b2ec18
+CHECK-S1 binary-identity: OK
+== S2 FIXTURE ==
+home-session=0
+%22 bash dead=0
+%24 sleep dead=0
+%23 bash dead=1
+%21 bash
+== S3 PROBES (chat-driven) ==
+-- probe A: list_panes --
+-- probe A retry --
+session-log=/home/matt/.daemoneye/var/log/sessions/e64e26c3ea087f4c.jsonl
+CHECK-A1 list_panes-dispatch: OK
+CHECK-A2 status-running: OK
+CHECK-A3 status-dead: OK
+CHECK-A4 status-shell: OK
+-- probe B: find_in_panes --
+CHECK-B find_in_panes-foreign: OK
+-- probe C: read_pane --
+foreign-pane=%21
+CHECK-C read_pane-dispatch: OK
+-- probe D: get_terminal_context scope all --
+CHECK-D context-foreign: OK
+== S4 PANES-INSPECTOR ==
+[OK: matt@scrappy]:~/src/daemoneye$ echo M14FOREIGNMARK
+M14FOREIGNMARK
+[OK: matt@scrappy]:~/src/daemoneye$
+────────────────────────────────────────────────────────────────────────
+
+🔹 The pane is relatively clean — just the two echo M14FOREIGNMARK commands and their output, with the shell sitting idle at the prompt in ~/src/daemoneye. The scrollback appears to have been cleared or the session was started fresh after those commands,
+since only 4 lines are visible.
+╭─ matt@scrappy ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  Use the get_terminal_context tool with scope all and tell me which sessions it reports
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── turn 4 · 18044 / 131071 (13%) ─╯
+
+╭─ get_terminal_context ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ▸ all
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ✓ 0.0s ─╯
+
+get_terminal_context with scope: all reports 3 tmux sessions total:
+
+
+📊 Session Breakdown
+
+1. daemoneye (your own session)
+• %6 — window bash, idle, ~/src/daemoneye
+
+2. 0 (attached, active 56m ago, 3 windows)
+• %0 idx:0 — window claude, claude running, ~/src/daemoneye
+• %1 idx:1 — window claude, rexymcp running, ~/src/daemoneye
+• %2 idx:0 — window bash, idle, ~
+• %3 idx:1 — window bash, idle, ~
+• %23 idx:2 — window m14fix, bash dead(7)
+• %24 idx:1 — window m14fix, sleep running, ~/src/daemoneye
+
+3. m14 (detached, active 4m ago, 1 window)
+• %21 idx:0 — window bash, idle, ~/src/daemoneye
+
+🔸 Key difference from list_panes: get_terminal_context with scope: all also includes the full content of the active chat pane (showing our entire conversation history so far), plus the session pane metadata and foreign session pane summaries. list_panes
+is lighter — just the pane topology table without any pane content.
+╭─ panes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  window 'bash' (1 pane)
+    [1] %6  idx:0  cmd:bash  status:idle  cwd:/home/matt/src/daemoneye
+      idle — matt@scrappy:~/src/daemoneye$
+
+  pin with: /pane <number|%id>
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                                                                                                                             │
+│                                                                                                                                                                                                                                                             │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session:e64e26c3… · Qwen/Qwen3.6-27B-FP8 · up 3m 43s
+CHECK-E panes-inspector: OK
+== S5 TEARDOWN-AND-GATES ==
+can't find session: m14
+m14fix windows left: 0
+fmt exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+build exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy exit=0
+test result: ok. 1241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.09s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== END ==
+```
+
+PASTE MATCH
