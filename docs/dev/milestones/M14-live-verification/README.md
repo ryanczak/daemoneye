@@ -52,7 +52,7 @@ plainly instead of ticking.
 
 | #  | Phase                                                        | Status |
 |----|--------------------------------------------------------------|--------|
-| 01 | scripted-live-sweep (phase-01-scripted-live-sweep.md)        | todo   |
+| 01 | scripted-live-sweep (phase-01-scripted-live-sweep.md)        | in-progress   |
 | 02 | approval-roundtrip-live (phase-02-approval-roundtrip-live.md) | todo  |
 
 Phase 01 covers everything drivable without a human at the approval prompt:

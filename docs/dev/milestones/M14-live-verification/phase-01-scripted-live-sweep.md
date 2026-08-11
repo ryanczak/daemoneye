@@ -1,7 +1,7 @@
 # Phase 01: Scripted live sweep
 
 **Milestone:** M14 — Live Verification
-**Status:** todo
+**Status:** in-progress
 **Depends on:** none
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -47,18 +47,29 @@ any that look stale before starting.
 - **The installed binary is `~/.cargo/bin/daemoneye`** (`which daemoneye`),
   v0.9.9, built 2026-08-10 07:26 — it predates today's commits, which is the
   exact gap this phase closes.
-- **`daemoneye ask --raw` auto-denies *prompts only*** — read
-  `src/cli/commands/ask.rs:115-221`: `ToolCallPrompt`, `EditFilePrompt` etc.
-  get an automatic deny, but silent (non-approval-gated) tools never send a
-  prompt — they execute daemon-side and stream `ToolStarted`/`ToolResult`,
-  which raw mode consumes silently. So `list_panes`, `find_in_panes`,
-  `read_pane` and `get_terminal_context` all run for real under `--raw`.
-  **Consequence: every probe prompt must name a silent tool. If the AI tries
-  `run_terminal_command` instead, it gets auto-denied — that is a wasted
-  probe, not a defect.**
+- **ROUND 2 CORRECTION — `daemoneye ask` never persists a session, in either
+  mode.** Both `run_ask` and `run_ask_raw` send `session_id: None`
+  (`src/cli/commands/ask.rs:42`, `src/cli/commands/stream.rs:113`), and
+  `handle_ask` creates a `SessionEntry` — and therefore a session JSONL — only
+  when `session_id` is `Some` (`src/daemon/server/ask.rs:94-133`). Round 1
+  burned its run discovering this: repeated `ask --raw` calls produced no new
+  session files, and there is no other daemon-side record of a silent tool
+  call. **The probes therefore run through `daemoneye chat`** — chat generates
+  its `session_id` client-side (`new_session_id()`,
+  `src/cli/commands/chat.rs:89`) and persists every turn, tool calls and tool
+  results included. Chat is driven from inside a fixture tmux pane via
+  `send-keys` (never in your own terminal), which also gives the daemon a real
+  `TMUX_PANE` — the genuine user's door.
+- **tmux numeric-target hazard (round 1's fixture failure).** The home
+  session is named `0`, and `tmux new-window -t 0` parses `0` as a *window
+  index of the current session* — that is the "create window failed: index 0
+  in use" error. Verified live both ways at refinement: bare `-t 77` planted
+  a window in the *attached* session; `-t "77:"` (trailing colon) correctly
+  targeted session 77. **Every session-level `-t` in the block uses the
+  trailing-colon form `"$HS:"` — do not remove the colon.**
 - **The dispatch-path evidence lives in the per-session JSONL**
-  (`~/.daemoneye/var/log/sessions/<id>.jsonl`; each `ask` creates a new one).
-  Real lines from an existing log, verbatim shapes to grep for:
+  (`~/.daemoneye/var/log/sessions/<id>.jsonl`; the scripted chat session
+  creates one). Real lines from an existing log, verbatim shapes to grep for:
 
   ```json
   {"role":"assistant","content":"…","tool_calls":[{"id":"chatcmpl-tool-b32a13a2cb784ca9","name":"get_terminal_context","arguments":"{\"scope\":\"all\"}"}],"turn":2}
@@ -106,21 +117,23 @@ sections). Do not improvise replacements for any command.
    (stays `running`), and a dead pane (`remain-on-exit on`, exited with
    code 7).
 
-3. **Run the four dispatch-path probes** — run § E2E **Section S3**. Four
-   `daemoneye ask --raw` calls, each prompt naming the tool it must exercise;
-   after each, the newest session JSONL is grepped for the `tool_results`
-   record. Each probe retries **once** on a missing record (the AI declining
-   to call the tool is nondeterminism, not evidence); a second miss writes a
-   `FAIL` verdict. Verdict lines: `CHECK-A1 list_panes-dispatch`,
-   `CHECK-A2 status-running`, `CHECK-A3 status-dead`, `CHECK-A4 status-shell`,
+3. **Run the four dispatch-path probes through a scripted chat session** —
+   run § E2E **Section S3**. It starts `daemoneye chat` inside fixture pane
+   `m14fix.0` via `tmux send-keys` (never in your own terminal — chat is
+   interactive and would swallow your session), types one prompt per probe,
+   and polls the chat session's JSONL for the `tool_results` record (up to
+   120 s per probe). Each probe retries **once** with a second typed prompt
+   on a missing record (the AI declining to call the tool is nondeterminism,
+   not evidence); a second miss writes a `FAIL` verdict. Verdict lines:
+   `CHECK-A1 list_panes-dispatch`, `CHECK-A2 status-running`,
+   `CHECK-A3 status-dead`, `CHECK-A4 status-shell`,
    `CHECK-B find_in_panes-foreign`, `CHECK-C read_pane-dispatch`,
    `CHECK-D context-foreign`.
 
-4. **Drive the `/panes` inspector** — run § E2E **Section S4**. Starts
-   `daemoneye chat` inside fixture pane `m14fix.0` **via `tmux send-keys`**
-   (never in your own terminal — chat is interactive and would swallow your
-   session), sends `/panes`, captures the pane, and checks the inspector
-   rendered the fixture window. Verdict line: `CHECK-E panes-inspector`.
+4. **Drive the `/panes` inspector** — run § E2E **Section S4**. Sends
+   `/panes` into the same chat session, captures the pane, and checks the
+   inspector rendered the fixture window. Verdict line:
+   `CHECK-E panes-inspector`.
 
 5. **Teardown and gates** — run § E2E **Section S5**. Kills the `m14` session
    and the `m14fix` window (nothing else), then runs the four gates. The
@@ -201,11 +214,12 @@ if [ "$H1" = "$H2" ] && [ "$H2" = "$H3" ]; then echo "CHECK-S1 binary-identity: 
 A=/tmp/e2e-m14-01.txt
 {
 echo "== S2 FIXTURE =="
-HS=$(tmux list-sessions -F '#S' | grep -vx m14 | head -1)
+HS=$(tmux list-sessions -F '#S' | grep -vxe m14 -e daemoneye | head -1)
 echo "home-session=$HS"
+tmux kill-session -t m14 2>/dev/null; tmux kill-window -t "$HS:m14fix" 2>/dev/null
 tmux new-session -d -s m14 -x 120 -y 30
-tmux send-keys -t m14 "echo M14FOREIGNMARK" Enter
-tmux new-window -d -t "$HS" -n m14fix
+tmux send-keys -t "m14:" "echo M14FOREIGNMARK" Enter
+tmux new-window -d -t "$HS:" -n m14fix
 tmux split-window -d -t "$HS:m14fix"
 tmux split-window -d -t "$HS:m14fix"
 tmux send-keys -t "$HS:m14fix.1" 'while true; do date; sleep 10; done' Enter
@@ -213,85 +227,132 @@ tmux set-option -p -t "$HS:m14fix.2" remain-on-exit on
 tmux send-keys -t "$HS:m14fix.2" 'exit 7' Enter
 sleep 6
 tmux list-panes -t "$HS:m14fix" -F '#{pane_id} #{pane_current_command} dead=#{pane_dead}'
-tmux list-panes -t m14 -F '#{pane_id} #{pane_current_command}'
+tmux list-panes -t "m14:" -F '#{pane_id} #{pane_current_command}'
 } >> "$A" 2>&1
 ```
 
-(The `sleep 6` lets the daemon's 2 s cache poll pick the new panes up before
-any probe runs.)
+(The cleanup pair makes the section idempotent over a prior partial run; the
+`sleep 6` lets the daemon's 2 s cache poll pick the new panes up. The
+`grep -vxe m14 -e daemoneye` skips both the fixture session and the daemon's
+own background-host session when resolving the home session.)
 
-**Section S3 — dispatch-path probes:**
+**Section S3 — dispatch-path probes through a scripted chat session:**
+
+Each probe: type the prompt into the chat pane, poll the chat's session JSONL
+for the tool record (up to 120 s), retry once with a second prompt, then write
+the verdict. The polling loop is the same six lines every time — only the
+prompt, the grep pattern, and the verdict label change.
 
 ```sh
 A=/tmp/e2e-m14-01.txt
 SDIR=~/.daemoneye/var/log/sessions
 {
-echo "== S3 PROBES =="
+echo "== S3 PROBES (chat-driven) =="
+HS=$(tmux list-sessions -F '#S' | grep -vxe m14 -e daemoneye | head -1)
+CP="$HS:m14fix.0"
+touch /tmp/m14-chatmark
+sleep 1
+tmux send-keys -t "$CP" 'daemoneye chat' Enter
+sleep 6
 
 echo "-- probe A: list_panes --"
-daemoneye ask --raw 'Use the list_panes tool now and then reproduce its output for the m14fix window and the foreign-session section verbatim.' 2>&1 | tail -20; echo "ask exit=${PIPESTATUS[0]}"
-SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
-if ! grep -q '"tool_name":"list_panes"' "$SL"; then
+tmux send-keys -t "$CP" 'Use the list_panes tool now and show me its full output including the foreign session section' Enter
+SL=""; t=0
+until [ $t -ge 120 ]; do
+  SL=$(find "$SDIR" -name '*.jsonl' ! -name '*archive*' -newer /tmp/m14-chatmark | head -1)
+  [ -n "$SL" ] && grep -q '"tool_name":"list_panes"' "$SL" && break
+  sleep 5; t=$((t+5))
+done
+if [ -z "$SL" ] || ! grep -q '"tool_name":"list_panes"' "$SL"; then
   echo "-- probe A retry --"
-  daemoneye ask --raw 'Call the list_panes tool. Report its output verbatim.' 2>&1 | tail -20; echo "ask exit=${PIPESTATUS[0]}"
-  SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
+  tmux send-keys -t "$CP" 'Please call the list_panes tool and show its output' Enter
+  t=0
+  until [ $t -ge 120 ]; do
+    SL=$(find "$SDIR" -name '*.jsonl' ! -name '*archive*' -newer /tmp/m14-chatmark | head -1)
+    [ -n "$SL" ] && grep -q '"tool_name":"list_panes"' "$SL" && break
+    sleep 5; t=$((t+5))
+  done
 fi
 echo "session-log=$SL"
-if grep -q '"tool_name":"list_panes"' "$SL"; then echo "CHECK-A1 list_panes-dispatch: OK"; else echo "CHECK-A1 list_panes-dispatch: FAIL"; fi
-if grep '"tool_name":"list_panes"' "$SL" | grep -q 'status:running'; then echo "CHECK-A2 status-running: OK"; else echo "CHECK-A2 status-running: FAIL"; fi
-if grep '"tool_name":"list_panes"' "$SL" | grep -q 'status:dead('; then echo "CHECK-A3 status-dead: OK"; else echo "CHECK-A3 status-dead: FAIL"; fi
-if grep '"tool_name":"list_panes"' "$SL" | grep -Eq 'status:(active|idle)'; then echo "CHECK-A4 status-shell: OK"; else echo "CHECK-A4 status-shell: FAIL"; fi
+if [ -n "$SL" ] && grep -q '"tool_name":"list_panes"' "$SL"; then echo "CHECK-A1 list_panes-dispatch: OK"; else echo "CHECK-A1 list_panes-dispatch: FAIL"; fi
+if [ -n "$SL" ] && grep '"tool_name":"list_panes"' "$SL" | grep -q 'status:running'; then echo "CHECK-A2 status-running: OK"; else echo "CHECK-A2 status-running: FAIL"; fi
+if [ -n "$SL" ] && grep '"tool_name":"list_panes"' "$SL" | grep -q 'status:dead('; then echo "CHECK-A3 status-dead: OK"; else echo "CHECK-A3 status-dead: FAIL"; fi
+if [ -n "$SL" ] && grep '"tool_name":"list_panes"' "$SL" | grep -Eq 'status:(active|idle)'; then echo "CHECK-A4 status-shell: OK"; else echo "CHECK-A4 status-shell: FAIL"; fi
 
 echo "-- probe B: find_in_panes --"
-daemoneye ask --raw 'Use the find_in_panes tool with pattern M14FOREIGNMARK and scope "all". Report every match with its session and pane.' 2>&1 | tail -15; echo "ask exit=${PIPESTATUS[0]}"
-SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
-if ! grep -q '"tool_name":"find_in_panes"' "$SL"; then
+tmux send-keys -t "$CP" 'Use the find_in_panes tool with pattern M14FOREIGNMARK and scope all and report every match with its session and pane' Enter
+t=0
+until [ $t -ge 120 ]; do
+  grep -q '"tool_name":"find_in_panes"' "$SL" 2>/dev/null && break
+  sleep 5; t=$((t+5))
+done
+if ! grep -q '"tool_name":"find_in_panes"' "$SL" 2>/dev/null; then
   echo "-- probe B retry --"
-  daemoneye ask --raw 'Call the find_in_panes tool with pattern M14FOREIGNMARK and scope set to "all".' 2>&1 | tail -15; echo "ask exit=${PIPESTATUS[0]}"
-  SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
+  tmux send-keys -t "$CP" 'Please call the find_in_panes tool with pattern M14FOREIGNMARK and scope set to all' Enter
+  t=0
+  until [ $t -ge 120 ]; do
+    grep -q '"tool_name":"find_in_panes"' "$SL" 2>/dev/null && break
+    sleep 5; t=$((t+5))
+  done
 fi
-echo "session-log=$SL"
-if grep '"tool_name":"find_in_panes"' "$SL" | grep -q 'session:m14'; then echo "CHECK-B find_in_panes-foreign: OK"; else echo "CHECK-B find_in_panes-foreign: FAIL"; fi
+if grep '"tool_name":"find_in_panes"' "$SL" 2>/dev/null | grep -q 'session:m14'; then echo "CHECK-B find_in_panes-foreign: OK"; else echo "CHECK-B find_in_panes-foreign: FAIL"; fi
 
 echo "-- probe C: read_pane --"
-FP=$(tmux list-panes -t m14 -F '#{pane_id}' | head -1)
+FP=$(tmux list-panes -t "m14:" -F '#{pane_id}' | head -1)
 echo "foreign-pane=$FP"
-daemoneye ask --raw "Use the read_pane tool on pane $FP and reproduce what it returns." 2>&1 | tail -15; echo "ask exit=${PIPESTATUS[0]}"
-SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
-if ! grep -q '"tool_name":"read_pane"' "$SL"; then
+tmux send-keys -t "$CP" "Use the read_pane tool on pane $FP and show what it returns" Enter
+t=0
+until [ $t -ge 120 ]; do
+  grep -q '"tool_name":"read_pane"' "$SL" 2>/dev/null && break
+  sleep 5; t=$((t+5))
+done
+if ! grep -q '"tool_name":"read_pane"' "$SL" 2>/dev/null; then
   echo "-- probe C retry --"
-  daemoneye ask --raw "Call the read_pane tool with pane_id $FP." 2>&1 | tail -15; echo "ask exit=${PIPESTATUS[0]}"
-  SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
+  tmux send-keys -t "$CP" "Please call the read_pane tool with pane_id $FP" Enter
+  t=0
+  until [ $t -ge 120 ]; do
+    grep -q '"tool_name":"read_pane"' "$SL" 2>/dev/null && break
+    sleep 5; t=$((t+5))
+  done
 fi
-echo "session-log=$SL"
-if grep '"tool_name":"read_pane"' "$SL" | grep -q 'M14FOREIGNMARK'; then echo "CHECK-C read_pane-dispatch: OK"; else echo "CHECK-C read_pane-dispatch: FAIL"; fi
+if grep '"tool_name":"read_pane"' "$SL" 2>/dev/null | grep -q 'M14FOREIGNMARK'; then echo "CHECK-C read_pane-dispatch: OK"; else echo "CHECK-C read_pane-dispatch: FAIL"; fi
 
 echo "-- probe D: get_terminal_context scope all --"
-daemoneye ask --raw 'Use the get_terminal_context tool with scope "all" and summarize which sessions it reports.' 2>&1 | tail -15; echo "ask exit=${PIPESTATUS[0]}"
-SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
-if ! grep -q '"tool_name":"get_terminal_context"' "$SL"; then
+tmux send-keys -t "$CP" 'Use the get_terminal_context tool with scope all and tell me which sessions it reports' Enter
+t=0
+until [ $t -ge 120 ]; do
+  grep -q '"tool_name":"get_terminal_context"' "$SL" 2>/dev/null && break
+  sleep 5; t=$((t+5))
+done
+if ! grep -q '"tool_name":"get_terminal_context"' "$SL" 2>/dev/null; then
   echo "-- probe D retry --"
-  daemoneye ask --raw 'Call the get_terminal_context tool with scope set to "all".' 2>&1 | tail -15; echo "ask exit=${PIPESTATUS[0]}"
-  SL=$(ls -t "$SDIR"/*.jsonl | grep -v archive | head -1)
+  tmux send-keys -t "$CP" 'Please call the get_terminal_context tool with scope set to all' Enter
+  t=0
+  until [ $t -ge 120 ]; do
+    grep -q '"tool_name":"get_terminal_context"' "$SL" 2>/dev/null && break
+    sleep 5; t=$((t+5))
+  done
 fi
-echo "session-log=$SL"
-if grep '"tool_name":"get_terminal_context"' "$SL" | grep -q 'FOREIGN SESSION PANE'; then echo "CHECK-D context-foreign: OK"; else echo "CHECK-D context-foreign: FAIL"; fi
+if grep '"tool_name":"get_terminal_context"' "$SL" 2>/dev/null | grep -q 'FOREIGN SESSION PANE'; then echo "CHECK-D context-foreign: OK"; else echo "CHECK-D context-foreign: FAIL"; fi
 } >> "$A" 2>&1
 ```
 
-**Section S4 — `/panes` inspector via send-keys:**
+(Probe A resolves `$SL` — the chat session's JSONL, the first file newer than
+the `/tmp/m14-chatmark` marker — and probes B–D reuse it: the whole section is
+one chat session. If probe A's `SL` never resolves, B–D fail with it; that is
+the correct cascade, not a reason to improvise.)
+
+**Section S4 — `/panes` inspector in the same chat session:**
 
 ```sh
 A=/tmp/e2e-m14-01.txt
 {
 echo "== S4 PANES-INSPECTOR =="
-HS=$(tmux list-sessions -F '#S' | grep -vx m14 | head -1)
-tmux send-keys -t "$HS:m14fix.0" 'daemoneye chat' Enter
-sleep 5
+HS=$(tmux list-sessions -F '#S' | grep -vxe m14 -e daemoneye | head -1)
 tmux send-keys -t "$HS:m14fix.0" '/panes' Enter
-sleep 4
-tmux capture-pane -p -t "$HS:m14fix.0" -S -60 | tail -40
-if tmux capture-pane -p -t "$HS:m14fix.0" -S -60 | grep -q 'm14fix'; then echo "CHECK-E panes-inspector: OK"; else echo "CHECK-E panes-inspector: FAIL"; fi
+sleep 5
+tmux capture-pane -p -t "$HS:m14fix.0" -S -80 | tail -50
+if tmux capture-pane -p -t "$HS:m14fix.0" -S -80 | grep -q 'm14fix'; then echo "CHECK-E panes-inspector: OK"; else echo "CHECK-E panes-inspector: FAIL"; fi
 } >> "$A" 2>&1
 ```
 
@@ -301,7 +362,7 @@ if tmux capture-pane -p -t "$HS:m14fix.0" -S -60 | grep -q 'm14fix'; then echo "
 A=/tmp/e2e-m14-01.txt
 {
 echo "== S5 TEARDOWN-AND-GATES =="
-HS=$(tmux list-sessions -F '#S' | grep -vx m14 | head -1)
+HS=$(tmux list-sessions -F '#S' | grep -vxe m14 -e daemoneye | head -1)
 tmux kill-session -t m14
 tmux kill-window -t "$HS:m14fix"
 tmux has-session -t m14 2>&1
@@ -338,6 +399,13 @@ This phase is authorized to:
 
 ## Out of scope
 
+- **Reading files under `src/` — at all.** This phase runs commands and
+  records their outputs; it has zero reasons to open a source file. Round 1
+  hard-failed on a `NoProgressStall` after 60 consecutive read-only calls
+  spent diagnosing why the session JSONL was empty — the answer was a spec
+  defect (now fixed above), and no amount of source reading was going to
+  produce a verdict line. **The impulse to diagnose IS the signal: write the
+  FAIL verdict or the blocker Update Log entry and stop.**
 - **Any change under `src/`, `tests/`, or `Cargo.*`** — if a probe surfaces a
   defect, that is a *successful* outcome of this phase: record the FAIL
   verdict, write the blocker entry, stop. The fix is a later phase.
@@ -361,3 +429,147 @@ criterion. The session-JSONL evidence shapes are quoted from a real log, not
 composed. The ask-dependent criteria cannot be pre-run without spending the
 sweep itself; their mechanics (newest-log recipe, grep patterns) were each
 executed against existing session logs at drafting.
+
+### Update — 2026-08-11 03:15 (started)
+
+**Executor:** headless executor (Claude)
+**Action:** Starting Phase 01 scripted live sweep — running Sections S1–S6 verbatim.
+
+### Update — 2026-08-11 (round 2 refinement, architect)
+
+Round 1 hard-failed (`NoProgressStall`, 60 read-only calls, 68 turns) on two
+**architect spec defects**, both now fixed; no code defect was found:
+
+1. `tmux new-window -t "$HS"` with the home session named `0` parsed the
+   target as a window index ("index 0 in use"). All session-level targets now
+   use the trailing-colon form; the hazard is documented in § Current state
+   and was reproduced live both ways before this refinement.
+2. The evidence anchor assumed each `ask` writes a session JSONL. It does not
+   — both ask modes send `session_id: None` and `handle_ask` persists only
+   `Some` sessions (verified at `ask.rs:42`, `stream.rs:113`,
+   `server/ask.rs:94-133`). S3 is rewritten to drive the probes through a
+   scripted `daemoneye chat` pane (chat generates its session id,
+   `chat.rs:89`), which is also the truer user's door.
+
+S2 gained an idempotent cleanup preamble (round 1 left `m14` and `m14fix`
+behind), the home-session resolution now skips the daemon's own `daemoneye`
+background session, and § Out of scope now bans reading `src/` outright —
+round 1's stall was 60 turns of diagnosis that no verdict line needed.
+Sections re-validated with `bash -n` after the rewrite. S1's work (daemon
+running on the rebuilt binary) stands but S1 re-runs regardless — it is
+idempotent and the artifact must be regenerated whole.
+
+### Update — 2026-08-11 (end-to-end verification)
+
+```
+== S1 REBUILD-RESTART ==
+    Finished `release` profile [optimized] target(s) in 0.06s
+build exit=0
+Daemon stopped.
+install: done
+daemoneye daemon started (PID 146954)
+daemon-start exit=0
+Daemon is running.
+
+  DAEMONEYE  pid 146954  ·    uptime 2s  ·    ~/.daemoneye/var/run/daemoneye.sock
+
+── RUNTIME ────────────────────────────────────────────────────────────────────
+  model           ollama / Qwen/Qwen3.6-27B-FP8
+
+── SESSION ────────────────────────────────────────────────────────────────────
+  active          0
+sha256 target=c4e9cca3bde385f433e5ff4a469cb6ee52153bcd5e2602040ce804ac54b2ec18 installed=c4e9cca3bde385f433e5ff4a469cb6ee52153bcd5e2602040ce804ac54b2ec18 running=c4e9cca3bde385f433e5ff4a469cb6ee52153bcd5e2602040ce804ac54b2ec18
+CHECK-S1 binary-identity: OK
+== S2 FIXTURE ==
+home-session=0
+%18 bash dead=0
+%20 sleep dead=0
+%19 bash dead=1
+%17 bash
+== S3 PROBES (chat-driven) ==
+-- probe A: list_panes --
+-- probe A retry --
+session-log=/home/matt/.daemoneye/var/log/sessions/eebd1711896a8c10.jsonl
+CHECK-A1 list_panes-dispatch: OK
+CHECK-A2 status-running: OK
+CHECK-A3 status-dead: OK
+CHECK-A4 status-shell: OK
+-- probe B: find_in_panes --
+CHECK-B find_in_panes-foreign: OK
+-- probe C: read_pane --
+foreign-pane=%17
+CHECK-C read_pane-dispatch: OK
+-- probe D: get_terminal_context scope all --
+CHECK-D context-foreign: OK
+== S4 PANES-INSPECTOR ==
+────────────────────────────────────────────────────────────────────────
+
+The pane is idle at the prompt in ~/src/daemoneye. The only meaningful content is that echo M14FOREIGNMARK command and its output — everything before that was either cleared or scrolled out of the 30-line buffer. The pane is sitting ready for input.
+╭─ matt@scrappy ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  Use the get_terminal_context tool with scope all and tell me which sessions it reports
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── turn 4 · 18025 / 131071 (13%) ─╯
+
+╭─ get_terminal_context ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ▸ all
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ✓ 0.0s ─╯
+
+get_terminal_context with scope: all reports two tmux sessions:
+
+
+📊 Session daemoneye (your own session)
+• %6 — bash in window bash — idle at ~/src/daemoneye (this is the session pane)
+
+
+📊 Session 0 (attached, active 19m ago — 3 windows)
+| Pane | Window | Cmd | Status |
+|---|---|---|---|
+| %0 | claude | claude | 🟢 running |
+| %1 | claude | rexymcp | 🟢 running |
+| %2 | bash | bash | ⚪ idle |
+| %3 | bash | bash | ⚪ idle |
+| %19 | m14fix | bash | 🔴 dead(7) |
+| %20 | m14fix | sleep | 🟢 running |
+
+
+📊 Session m14 (detached, active 4m ago — 1 window)
+| Pane | Window | Cmd | Status |
+|---|---|---|---|
+| %17 | bash | bash | ⚪ idle |
+
+Key differences from scope: session (the default): scope: all adds the foreign-session panes — everything outside your own daemoneye chat session. With the default scope, you'd only see %6. With all, you get the full picture across all 3 sessions and
+their 8 panes total.
+╭─ panes ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  window 'bash' (1 pane)
+    [1] %6  idx:0  cmd:bash  status:idle  cwd:/home/matt/src/daemoneye
+      idle — matt@scrappy:~/src/daemoneye$
+
+  pin with: /pane <number|%id>
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                                                                                                                             │
+│                                                                                                                                                                                                                                                             │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session:eebd1711… · Qwen/Qwen3.6-27B-FP8 · up 3m 54s
+CHECK-E panes-inspector: OK
+== S5 TEARDOWN-AND-GATES ==
+can't find session: m14
+m14fix windows left: 0
+fmt exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+build exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy exit=0
+test result: ok. 1241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== END ==
+```
+
+PASTE MATCH
