@@ -1,20 +1,24 @@
 # NEXT
 
-## Active milestone: [M14 — Live Verification](milestones/M14-live-verification/README.md) — no phase drafted yet
+## Active phase: [M14 phase-01 — scripted-live-sweep](milestones/M14-live-verification/phase-01-scripted-live-sweep.md)
 
-**Scoped 2026-08-10 on PE direction** at the M13 boundary. Goal: actually
-live-verify the M12 exit criteria that shipped unit-only (cross-session
-visibility with two real tmux sessions, `read_pane` through the dispatch
-path, the `tmux_control` approval round trip, status/`find_in_panes`/`/panes`
-live, the `APPROVAL_GATED_TOOLS` budget reconciliation), against a daemon
-restarted onto the current binary. Two phases planned: 01
-scripted-live-sweep (no human at the prompt), 02 approval-roundtrip-live
-(human-in-the-loop; executor-drivability to be prototyped at drafting, per
-the README's open question). Deliberately small: it verifies, it does not
-build.
+Drafted 2026-08-10, status `todo` — dispatch with `/rexymcp:dispatch
+phase-01`. A shell-only evidence phase: rebuild + reinstall + restart the
+daemon with a sha256 triple-identity proof (`target/release` = installed =
+`/proc/<pid>/exe`), a two-session pane fixture (foreign marker, `date`-loop
+`running` pane, `dead(7)` pane), four `ask --raw` dispatch-path probes
+anchored on the session-JSONL `tool_results` records (one scripted retry
+each), a send-keys-driven `/panes` check, teardown, gates. 9 verdict lines;
+any `FAIL` is a blocker entry, never a re-run-until-green. Key derived fact
+that shaped it: `ask --raw` auto-denies *prompts only* — silent tools
+execute for real, so the sweep needs no human. The send-keys chat technique
+in S4 doubles as the prototype for phase-02's open question.
 
-**Next action:** `/rexymcp:architect next` to draft phase-01
-(scripted-live-sweep).
+**M14 — Live Verification scoped 2026-08-10 on PE direction** at the M13
+boundary: live-verify the M12 exit criteria that shipped unit-only, against
+a daemon restarted onto the current binary. Two phases planned: 01
+scripted-live-sweep, 02 approval-roundtrip-live (human-in-the-loop).
+Deliberately small: it verifies, it does not build.
 
 **M13 — Chat UX Polish closed 2026-08-10** (PE sign-off same day). Seven
 phases, all `done`: four `approved_first_try` (01, 02, 05, 06), two
