@@ -1,7 +1,7 @@
 # Phase 01: Scripted live sweep
 
 **Milestone:** M14 — Live Verification
-**Status:** review
+**Status:** done
 **Depends on:** none
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -387,10 +387,18 @@ echo "== END =="
 Update Log entry):**
 
 ```sh
-awk '/^### Update.*end-to-end verification/{f=1} f&&/^```/{c++; next} f&&c==1{print} f&&c==2{exit}' \
-  docs/dev/milestones/M14-live-verification/phase-01-scripted-live-sweep.md > /tmp/pasted-m14-01.txt
+D=docs/dev/milestones/M14-live-verification/phase-01-scripted-live-sweep.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m14-01.txt
 if diff -q /tmp/pasted-m14-01.txt /tmp/e2e-m14-01.txt >/dev/null; then echo "PASTE MATCH"; else echo "PASTE MISMATCH"; diff /tmp/pasted-m14-01.txt /tmp/e2e-m14-01.txt | head -20; fi
 ```
+
+(The extraction anchors on the **last** end-to-end entry — a bounced round's
+superseded entry stays in the doc per the round-3 note, so a first-match
+anchor would diff the wrong round's paste. Round 3's executor caught exactly
+that and flagged it rather than gaming it; amended by the architect at
+review time, validated against both entries: last-entry → `PASTE MATCH`,
+first-entry → `PASTE MISMATCH` on the superseded round-2 content.)
 
 Append the verdict line inside the Update Log entry, after the fence.
 
@@ -1022,3 +1030,58 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 18f6a597c846f4b20011f75f6e08bdd466570307
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-11
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — `git status` shows only this phase doc modified
+  (the architect's S6 last-entry-anchor amendment, made ahead of this review);
+  the bug doc and milestone README changes are this review's own bookkeeping.
+- **Calibration:** Round 1 hard-failed (`NoProgressStall`, 68 turns) on two
+  architect spec defects (a tmux numeric-target hazard, and an incorrect
+  assumption that `daemoneye ask` persists a session) — no code defect, folded
+  into the phase doc's § Current state at round 2. Round 2 then bounced on
+  bug-01-1: the executor hand-stripped ANSI escapes from three lines of a
+  colorized `daemoneye status` block while pasting the transcript, defeating
+  the paste-fidelity self-check the phase doc itself ships — the "retyped
+  transcript" failure mode by name, on a phase whose entire deliverable is
+  transcript fidelity. Round 3's executor correctly diagnosed the underlying
+  cause (no LLM can round-trip raw ANSI escape bytes through its own context
+  losslessly) and, separately, honestly flagged that S6's own self-check
+  anchored on the *first* matching Update Log heading rather than the last —
+  a bounced round's superseded entry legitimately stays in the doc, so a
+  first-match anchor diffs the wrong round's paste. Rather than silently
+  gaming the check, it reported the discrepancy in its completion notes. The
+  architect fixed both: S1 now pipes every `daemoneye` CLI output through
+  `sed 's/\x1b\[[0-9;]*m//g'` so the artifact is ANSI-free at generation
+  (byte-exact pasting becomes achievable rather than demanded-but-impossible),
+  and S6's extraction now anchors on the last matching heading. Both fixes
+  validated live before landing.
+
+Re-ran everything re-runnable at review, independent of the executor's own
+run: `grep -c ': FAIL' /tmp/e2e-m14-01.txt` → `0`; `grep -c ': OK'
+/tmp/e2e-m14-01.txt` → `9`; binary identity
+(`sha256sum /proc/<pid>/exe` vs. `~/.cargo/bin/daemoneye`) → `SAME`; fixture
+absence (`tmux has-session -t m14` → `can't find session: m14`,
+`tmux list-windows -a -F '#W' | grep -c m14fix` → `0`); the amended § E2E
+Section S6 self-check verbatim → `PASTE MATCH`, with 0 ANSI escape bytes in
+the extracted block and its 9 verdict lines matching the required set
+(CHECK-S1, A1–A4, B, C, D, E, all `OK`); the first-match anchor variant, run
+for contrast, correctly diffs against the superseded round-2 entry and prints
+`MISMATCH` as documented. Independently re-ran all four gates
+(`cargo fmt --all --check`, `cargo build`, `cargo clippy --all-targets
+--all-features -- -D warnings`, `cargo test`) — all green, matching the
+artifact's captured exit codes. Spot-checked the round-3 transcript's named
+session log (`~/.daemoneye/var/log/sessions/e64e26c3ea087f4c.jsonl`): exists,
+4 `tool_results` records, one each for `list_panes`, `find_in_panes`,
+`read_pane`, `get_terminal_context` — independently confirming the dispatch-
+path claims. `bugs/bug-01-1.md`'s Definition of done both boxes now hold and
+are checked off; its `Status:` is updated to resolved.
+
+All Definition of Done boxes from `STANDARDS.md` §1 are met: the acceptance
+criteria are verifiably met against real artifacts (not unit fakes), the
+end-to-end transcript is mechanically captured with a passing paste-fidelity
+self-check, the four gates are green with zero new warnings, and no code
+changed (this phase ships evidence, not code, as scoped). Approved.
