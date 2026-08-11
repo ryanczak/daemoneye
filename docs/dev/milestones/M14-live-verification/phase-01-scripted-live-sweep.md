@@ -1,7 +1,7 @@
 # Phase 01: Scripted live sweep
 
 **Milestone:** M14 — Live Verification
-**Status:** review
+**Status:** in-progress (bounced — see bugs/bug-01-1.md)
 **Depends on:** none
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -169,7 +169,15 @@ sections). Do not improvise replacements for any command.
       and `tmux list-windows -a -F '#W' | grep -c m14fix` prints `0`.
 - [ ] The Update Log contains a `### Update — <date> (end-to-end
       verification)` entry whose fenced block ends with a line reading
-      `PASTE MATCH`.
+      `PASTE MATCH`, and re-running § E2E Section S6 verbatim right now —
+      extracting the entry's first fenced block and diffing it against the
+      real `/tmp/e2e-m14-01.txt` (regenerate the artifact via S1–S5 if it is
+      gone) — **actually prints** `PASTE MATCH`, confirmed by executing the
+      diff, not by the presence of the string already in the doc. As of the
+      round-2 artifact this criterion **fails**: the pasted block's Section S1
+      `daemoneye status` lines have their ANSI color escapes stripped and
+      hand-normalized relative to the real artifact, while every other line in
+      the 108-line block is byte-identical. See `bugs/bug-01-1.md`.
 - [ ] The four gates ran green inside the artifact (Section S5's tails show
       `exit=0` for build, clippy and test).
 
@@ -708,3 +716,36 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 9e0ae96e5fccf2d3436257d9146be524d851a1c6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-10
+
+- **Verdict:** bounced
+- **Bounces:** 1
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — `git status`/`git diff` show no changes outside
+  this phase doc and the milestone README's phase-table row.
+- **Calibration:** none folded yet; see bug-01-1 for the finding.
+
+Re-ran everything re-runnable: `grep -c ': FAIL' /tmp/e2e-m14-01.txt` → `0`,
+`grep -c ': OK' /tmp/e2e-m14-01.txt` → `9`; the binary-identity check against
+the live daemon (`sha256sum /proc/<pid>/exe` vs. `~/.cargo/bin/daemoneye`) →
+`SAME`; fixture-absence (`tmux has-session -t m14` → `can't find session: m14`,
+`tmux list-windows -a -F '#W' | grep -c m14fix` → `0`). Spot-checked the
+session JSONL named in the transcript
+(`~/.daemoneye/var/log/sessions/eebd1711896a8c10.jsonl`): it exists and its
+`tool_results` records independently confirm every dispatch-path claim —
+`list_panes` with `status:running` / `status:dead(7)` / `status:idle`,
+`find_in_panes` with `session:m14`, `read_pane` with `M14FOREIGNMARK`,
+`get_terminal_context` with a `FOREIGN SESSION PANE` line. All of that holds.
+
+Then ran the paste-fidelity check the phase doc itself ships (§ E2E Section
+S6) against the real `/tmp/e2e-m14-01.txt` (mtime unchanged since the sweep) —
+it printed `PASTE MISMATCH`, contradicting the `PASTE MATCH` line recorded in
+the entry above. The mismatch is confined to Section S1's `daemoneye status`
+block: the real artifact carries 256-color ANSI escapes, the pasted block has
+them stripped and hand-normalized. Filed as `bugs/bug-01-1.md` (blocker) — the
+retyped-transcript failure mode `docs/dev/WORKFLOW.md` names by name, on a
+phase whose entire deliverable is transcript fidelity. Acceptance criteria
+refreshed to require actually re-running S6 rather than trusting the string
+already in the doc, and confirmed the refreshed criterion fails against the
+current tree before re-dispatch.
