@@ -1,7 +1,7 @@
 # Phase 02: Approval round trip live
 
 **Milestone:** M14 — Live Verification
-**Status:** blocked (round 2 — CHECK-J finding: per-tool cap enforces per batch, not per turn)
+**Status:** in-progress (round 3 — both blockers resolved: phase-03 and phase-04)
 **Depends on:** phase-01
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -600,3 +600,14 @@ the intended semantics and align the three doc/error surfaces to it,
 re-speccing CHECK-J. The architect recommends (a2): per-batch is trivially
 bypassed by a model that sequences its calls, which defeats the cap as a
 budget control, and every documented surface already promises per-turn.
+
+### Update — 2026-08-11 (round 3, architect — second blocker resolved)
+
+CHECK-J's cause is fixed: phase-04 (`done`, reviewed `2b3b86d`) hoisted the
+cap counters to turn scope, and its live CHECK-T reproduced this phase's
+exact probe against the fixed daemon — the second `list_panes` call in one
+turn is now blocked. Round 3 re-runs sections S1-S6 verbatim and unchanged,
+one more time, expecting all 7 verdicts OK. Any FAIL is a fresh finding:
+blocker entry, stop. Reminder from the two hard-failed rounds: reading
+`src/` is out of scope entirely — the verdict lines and the blocker entry
+are the only responses to any result, expected or not.
