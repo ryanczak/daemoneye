@@ -1,0 +1,267 @@
+# Phase 04: Per-turn cap scope
+
+**Milestone:** M14 — Live Verification
+**Status:** todo
+**Depends on:** phase-03
+**Estimated diff:** ~15 lines
+**Tags:** language=rust, kind=bugfix, size=s
+
+## Goal
+
+Fix live defect #2 (phase-02 round 2, CHECK-J): the per-tool and per-turn
+tool-call caps are enforced per **batch** (one assistant message's tool_calls)
+instead of per **turn**, because their counters are declared inside the batch
+handler and reborn on every batch cycle. A model that sequences its calls —
+which is what models naturally do — never trips them. The fix hoists both
+counters to turn scope, where the comment, the config doc, and the cap's own
+error text already claim they live.
+
+## Architecture references
+
+Read before starting:
+
+- `docs/dev/NEXT.md` § the 2026-08-11 "second live finding" note — the
+  evidence and the PE's (a2) decision.
+- The phase-02 doc's "round 2 blocker" Update Log entry — the session-JSONL
+  evidence (two `list_panes` calls in one turn, cap 1, no block).
+
+## Pre-flight
+
+1. Read `docs/dev/STANDARDS.md` top to bottom.
+2. Read the architecture references above.
+3. Read this entire phase doc before touching any code.
+4. Confirm the repo is on a clean branch with no uncommitted changes.
+
+## Current state
+
+All facts verified by the architect on 2026-08-11, including an in-tree
+prototype of the exact change (`cargo check` clean, then reverted).
+
+- `run_conversation_loop` (`src/daemon/stream.rs:57`) runs once per user
+  turn. Its outer `loop {` (`:84`) is the **batch cycle**: each iteration
+  makes one AI request; a tool_calls batch is handled inside it, then the
+  loop continues for the model's next request *within the same turn*.
+- The counters are declared **inside the batch handler** (`:928-932`), so
+  each batch starts from zero. Live evidence: cap `list_panes = 1`, two
+  sequential single-call batches in one turn, no block
+  (`~/.daemoneye/var/log/sessions/cec150e371e340df.jsonl`, turns 5 and 6).
+- `PendingCall::tool_name()` returns `&'static str`
+  (`src/ai/types/pending.rs:692`), so the `HashMap<&str, u32>` hoists with
+  no borrow/lifetime issues — confirmed by the prototype compile.
+- `use std::collections::HashMap;` is already imported (`stream.rs:14`).
+- The insertion anchor `} = ctx;` immediately followed by `loop {` is unique
+  in the file (count 1); the deletion block below is unique verbatim.
+- This is **daemon-side** code: the live check needs a rebuild, reinstall,
+  and daemon restart before the new behavior is observable.
+- The cap's block message (`Error: `<tool>` has been called <limit> times
+  this turn. This call was not executed.`) and the config doc ("per turn")
+  are already correct for the new semantics — no text changes needed.
+- Enforcement has no unit-test harness: `run_conversation_loop` has a single
+  call site (`server/ask.rs:769`) and needs a full daemon context; the
+  existing tests only pin `APPROVAL_GATED` membership (`stream.rs:1204+`).
+
+## Spec
+
+1. **Delete the batch-scoped declarations** — in `src/daemon/stream.rs`,
+   `patch` with this exact `old_str` (unique; includes the trailing blank
+   line) and an empty `new_str`:
+
+   ```rust
+                       // Per-turn tool-call loop guard.
+                       // Approval-gated tools are always exempt — the user's per-call
+                       // approval prompt is the gate.
+                       let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
+                       let mut total_turn_call_count: u32 = 0;
+
+   ```
+
+2. **Hoist them to turn scope** — in `src/daemon/stream.rs`, `patch` the
+   unique anchor
+
+   ```rust
+       } = ctx;
+       loop {
+   ```
+
+   to
+
+   ```rust
+       } = ctx;
+
+       // Per-turn tool-call loop guard — spans every batch cycle in this turn.
+       // Declared outside the batch loop so sequential single-call batches
+       // accumulate (the 2026-08-11 per-batch cap bug). Approval-gated tools
+       // are always exempt — the user's per-call approval prompt is the gate.
+       let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
+       let mut total_turn_call_count: u32 = 0;
+
+       loop {
+   ```
+
+   This exact change was prototyped by the architect: `cargo check` exits 0.
+
+3. **Capture the end-to-end evidence** — run § End-to-end verification
+   sections S1–S3 verbatim in order, evaluate
+   (`grep -c ': FAIL' /tmp/e2e-m14-04.txt` → `0`, `': OK'` → `3`; any FAIL →
+   blocker entry, stop — and S3 runs unconditionally regardless), then paste
+   `/tmp/e2e-m14-04.txt` into a new Update Log entry headed
+   `### Update — <date> (end-to-end verification)` and run Section S6,
+   appending its `PASTE MATCH` line inside the entry. The server-authored
+   `(complete)` entry does not satisfy this.
+
+## Acceptance criteria
+
+- [ ] `grep -c 'tool_call_counts' src/daemon/stream.rs` prints `2` (one
+      declaration at turn scope, one use site — unchanged count, moved
+      location: the declaration line now appears *before* line 900 —
+      `awk 'NR<900 && /let mut tool_call_counts/' src/daemon/stream.rs`
+      prints one line).
+- [ ] `grep -c 'the 2026-08-11 per-batch cap bug' src/daemon/stream.rs`
+      prints `1`.
+- [ ] `grep -c ': FAIL' /tmp/e2e-m14-04.txt` prints `0` and `grep -c ': OK'`
+      prints `3` (CHECK-S1, CHECK-T, CHECK-S3).
+- [ ] `diff /tmp/m14-cfg-backup4.toml ~/.daemoneye/etc/config.toml` exits 0.
+- [ ] The Update Log's new end-to-end entry ends with `PASTE MATCH`.
+- [ ] Four gates green.
+
+## Test plan
+
+No new unit tests, stated plainly: cap enforcement lives inside
+`run_conversation_loop`, which has no test harness (single call site, needs a
+live daemon context and an AI client; building a fake-client harness is a
+refactor phase, not this bugfix). The decisive verification is live:
+CHECK-T below reproduces phase-02's failed CHECK-J probe against the fixed
+daemon, and phase-02's round 3 re-run then re-proves it in the full sweep.
+
+## End-to-end verification
+
+All sections append to `/tmp/e2e-m14-04.txt`; piped commands record
+`${PIPESTATUS[0]}`. Fixture and polling mechanics are phase-02's proven
+ones: attached-session window, chat via send-keys, session-JSONL evidence.
+
+**Section S1 — rebuild, reinstall, cap config, restart:**
+
+```sh
+A=/tmp/e2e-m14-04.txt
+: > "$A"
+{
+echo "== S1 REBUILD-CAP-RESTART =="
+cargo build --release 2>&1 | tail -3; echo "build exit=${PIPESTATUS[0]}"
+cp ~/.daemoneye/etc/config.toml /tmp/m14-cfg-backup4.toml && echo "backup: done"
+awk '{print} /^\[limits\.per_tool\]$/{print "list_panes = 1"}' /tmp/m14-cfg-backup4.toml > /tmp/m14-cfg-mod4.toml
+cp /tmp/m14-cfg-mod4.toml ~/.daemoneye/etc/config.toml && echo "capped config installed"
+daemoneye stop 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g'
+install -m755 target/release/daemoneye ~/.cargo/bin/daemoneye && echo "install: done"
+daemoneye daemon 2>&1 | tail -2 | sed 's/\x1b\[[0-9;]*m//g'; echo "daemon-start exit=${PIPESTATUS[0]}"
+sleep 2
+daemoneye ping 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g'
+PID=$(tr -dc 0-9 < ~/.daemoneye/var/run/daemoneye.pid)
+H1=$(sha256sum ~/.cargo/bin/daemoneye | cut -d' ' -f1)
+H2=$(sha256sum "/proc/$PID/exe" | cut -d' ' -f1)
+echo "sha256 installed=$H1 running=$H2"
+if [ "$H1" = "$H2" ]; then echo "CHECK-S1 binary-identity: OK"; else echo "CHECK-S1 binary-identity: FAIL"; fi
+} >> "$A" 2>&1
+```
+
+**Section S2 — live per-turn cap check:**
+
+```sh
+A=/tmp/e2e-m14-04.txt
+SDIR=~/.daemoneye/var/log/sessions
+{
+echo "== S2 CAP-PER-TURN =="
+HS=$(tmux list-sessions -F '#S' | grep -vxe daemoneye | head -1)
+tmux kill-window -t "$HS:m14fix4" 2>/dev/null
+tmux new-window -d -t "$HS:" -n m14fix4
+CP="$HS:m14fix4.0"
+touch /tmp/m14-mark4
+sleep 1
+tmux send-keys -t "$CP" 'daemoneye chat' Enter
+sleep 8
+tmux send-keys -t "$CP" 'Call the list_panes tool twice in a row and compare the two outputs before answering' Enter
+t=0
+until [ $t -ge 120 ]; do
+  SL=$(find "$SDIR" -name '*.jsonl' ! -name '*archive*' -newer /tmp/m14-mark4 | head -1)
+  [ -n "$SL" ] && grep -q 'has been called 1 times this turn' "$SL" && break
+  sleep 5; t=$((t+5))
+done
+if [ -z "$SL" ] || ! grep -q 'has been called 1 times this turn' "$SL" 2>/dev/null; then
+  echo "-- cap retry --"
+  tmux send-keys -t "$CP" 'Please call the list_panes tool two separate times in this same turn and tell me if anything changed between the calls' Enter
+  t=0
+  until [ $t -ge 120 ]; do
+    SL=$(find "$SDIR" -name '*.jsonl' ! -name '*archive*' -newer /tmp/m14-mark4 | head -1)
+    [ -n "$SL" ] && grep -q 'has been called 1 times this turn' "$SL" && break
+    sleep 5; t=$((t+5))
+  done
+fi
+echo "session-log=$SL"
+if [ -n "$SL" ] && grep 'has been called 1 times this turn' "$SL" 2>/dev/null | grep -q 'list_panes'; then echo "CHECK-T cap-per-turn: OK"; else echo "CHECK-T cap-per-turn: FAIL"; fi
+tmux kill-window -t "$HS:m14fix4" 2>/dev/null
+echo "m14fix4 windows left: $(tmux list-windows -a -F '#W' | grep -c m14fix4)"
+} >> "$A" 2>&1
+```
+
+**Section S3 — restore config, restart, gates (run unconditionally):**
+
+```sh
+A=/tmp/e2e-m14-04.txt
+{
+echo "== S3 RESTORE-AND-GATES =="
+cp /tmp/m14-cfg-backup4.toml ~/.daemoneye/etc/config.toml && echo "config restored"
+daemoneye stop 2>&1 | tail -1 | sed 's/\x1b\[[0-9;]*m//g'
+sleep 1
+daemoneye daemon 2>&1 | tail -2 | sed 's/\x1b\[[0-9;]*m//g'; echo "daemon-start exit=${PIPESTATUS[0]}"
+sleep 2
+if diff -q /tmp/m14-cfg-backup4.toml ~/.daemoneye/etc/config.toml >/dev/null && daemoneye ping >/dev/null 2>&1; then echo "CHECK-S3 config-restored: OK"; else echo "CHECK-S3 config-restored: FAIL"; fi
+cargo fmt --all --check 2>&1 | tail -1; echo "fmt exit=${PIPESTATUS[0]}"
+cargo build 2>&1 | tail -1; echo "build exit=${PIPESTATUS[0]}"
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1; echo "clippy exit=${PIPESTATUS[0]}"
+cargo test 2>&1 | grep -E '^test result'; echo "test exit=${PIPESTATUS[0]}"
+echo "== END =="
+} >> "$A" 2>&1
+```
+
+**Section S6 — paste self-check (run AFTER pasting; last-entry anchor):**
+
+```sh
+D=docs/dev/milestones/M14-live-verification/phase-04-per-turn-cap-scope.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-m14-04.txt
+if diff -q /tmp/pasted-m14-04.txt /tmp/e2e-m14-04.txt >/dev/null; then echo "PASTE MATCH"; else echo "PASTE MISMATCH"; diff /tmp/pasted-m14-04.txt /tmp/e2e-m14-04.txt | head -20; fi
+```
+
+## Authorizations
+
+- Rebuild and reinstall `~/.cargo/bin/daemoneye`; stop/start the daemon
+  twice (left running on the restored config).
+- Temporarily add `list_panes = 1` under `[limits.per_tool]` in
+  `~/.daemoneye/etc/config.toml` (backup `/tmp/m14-cfg-backup4.toml`,
+  restored unconditionally in S3, byte-identical diff required).
+- Create and destroy tmux window `m14fix4` in the attached session; nothing
+  else in tmux.
+- Spend up to ~4 AI turns in the scripted chat session.
+
+## Out of scope
+
+- **Reading any file under `src/` other than `src/daemon/stream.rs`**, and
+  in that file only the two specified patches. The evidence sections are
+  commands-and-outputs; an unexpected result gets a FAIL verdict and a
+  blocker entry, not a diagnosis — the read-only src-diving stall has now
+  hard-failed two M14 runs.
+- Changing the cap's error text, the config doc, `LimitsConfig`, or the
+  per-session counter — all already correct for per-turn semantics.
+- Building a `run_conversation_loop` test harness.
+- Re-running phase-02 — that is the next dispatch, not part of this phase.
+
+## Update Log
+
+### Update — 2026-08-11 (drafted)
+
+Drafted by the architect on the PE's (a2) decision. The exact change was
+prototyped in-tree first — both patches applied, `cargo check` exit 0, then
+reverted — so the worked examples are compile-verified, the anchors are
+verified unique, and the `&'static str` key lifetime is confirmed safe.
+Verdict emitters in the block: 3 (CHECK-S1, CHECK-T, CHECK-S3) — matches
+the acceptance criterion. S2's probe is phase-02's CHECK-J probe verbatim
+(same prompts, same evidence grep), pointed at the fixed daemon.

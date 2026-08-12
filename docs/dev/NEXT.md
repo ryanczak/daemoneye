@@ -1,6 +1,16 @@
 # NEXT
 
-## Active: M14 blocked on a second live finding — PE decision needed (2026-08-11)
+## Active phase: [M14 phase-04 — per-turn-cap-scope](milestones/M14-live-verification/phase-04-per-turn-cap-scope.md)
+
+Drafted 2026-08-11 on the PE's (a2) decision (inside the resumed
+/rexymcp:auto run). Hoists `tool_call_counts` + `total_turn_call_count`
+from the batch handler (`stream.rs:928-932`) to turn scope in
+`run_conversation_loop` — prototyped in-tree (`cargo check` clean,
+reverted) so both worked-example patches are compile-verified. Own live
+check (CHECK-T) reruns phase-02's failed CHECK-J probe against the fixed
+daemon; phase-02 round 3 follows.
+
+### Resolved by phase-04 (was: blocked on second live finding)
 
 **Phase-02 round 2: the phase-03 fix is proven live (CHECK-G OK — deny path
 prompts, denies, informs the AI), but CHECK-J surfaced live defect #2: the
