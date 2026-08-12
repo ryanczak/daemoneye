@@ -54,7 +54,7 @@ plainly instead of ticking.
 |----|--------------------------------------------------------------|--------|
 | 01 | scripted-live-sweep (phase-01-scripted-live-sweep.md)        | done        |
 | 02 | approval-roundtrip-live (phase-02-approval-roundtrip-live.md) | blocked |
-| 03 | approval-state-persistence (phase-03-approval-state-persistence.md) | todo |
+| 03 | approval-state-persistence (phase-03-approval-state-persistence.md) | in-progress |
 
 Phase 01 covers everything drivable without a human at the approval prompt:
 daemon restart onto the current binary, the two-session fixture, `list_panes`

@@ -10,7 +10,6 @@ use tokio::io::BufReader;
 use crate::cli::input::*;
 use crate::cli::markdown::MarkdownRenderer;
 use crate::cli::render::*;
-use crate::config::Config;
 use crate::ipc::{Request, Response};
 
 use super::approval::SessionApproval;
@@ -648,12 +647,6 @@ pub(super) async fn ask_with_session_ratatui(
     // Flush a started-but-never-finished tool so its panel is not lost.
     if let Some((title, body)) = pending_tool.take() {
         let _ = renderer.commit_panel(&title, &body, false);
-    }
-
-    // Update approval from config in case it changed during the turn.
-    {
-        let cfg = Config::load().unwrap_or_default();
-        *approval = SessionApproval::from_config(&cfg.approvals);
     }
 
     // Turn completed normally — reset interrupt state for next turn.

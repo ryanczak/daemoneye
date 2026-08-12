@@ -44,7 +44,9 @@ impl Default for SessionApproval {
 
 impl SessionApproval {
     /// Build initial approval state from `config.toml [approvals]` settings.
-    /// Called at session start (chat, ask, and in-session resets via /clear etc.).
+    /// Called once at session start (chat/ask entry). Never re-derive this
+    /// mid-session: runtime state (`/approvals`, prompt answers) must win —
+    /// a turn-end re-derive was the 2026-08-11 approval-persistence bug.
     pub(super) fn from_config(cfg: &crate::config::ApprovalsConfig) -> Self {
         Self {
             regular: cfg.commands,

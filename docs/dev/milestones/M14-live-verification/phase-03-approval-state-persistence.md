@@ -1,7 +1,7 @@
 # Phase 03: Approval state persistence
 
 **Milestone:** M14 — Live Verification
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-02 (its blocker is this phase's cause)
 **Estimated diff:** ~10 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -255,3 +255,48 @@ to its import" applying to a `use` line). The S2 mechanics reuse phase-02's
 proven prototype patterns: attached-session fixture window, prompt-count
 polling (never a bare grep), single-keypress answers. Verdict emitters in
 the block: 2 (CHECK-S1, CHECK-P) — matches the acceptance criterion.
+
+### Update — 2026-08-12 00:20 (started)
+
+Executor: Claude. Applying the three spec edits (delete turn-end reset block,
+delete orphaned Config import, pin semantics in doc comment), then running
+the end-to-end verification sections S1–S3 and S6.
+
+### Update — 2026-08-12 00:25 (end-to-end verification)
+
+```
+== S1 REBUILD-RESTART ==
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `release` profile [optimized] target(s) in 20.38s
+build exit=0
+Daemon stopped.
+install: done
+daemoneye daemon started (PID 891824)
+daemon-start exit=0
+Daemon is running.
+sha256 target=a16f2aee9496eb5b2219b853f328a34a56a09494ea668e0f919e399546683f41 installed=a16f2aee9496eb5b2219b853f328a34a56a09494ea668e0f919e399546683f41
+CHECK-S1 binary-identity: OK
+== S2 REVOKE-PERSISTS ==
+target-pane=%32
+turn-1 session-log=/home/matt/.daemoneye/var/log/sessions/bac5be5e4869c84d.jsonl
+prompt-count before=0 after=1 (must increase: revoke survived turn 1)
+CHECK-P revoke-persists: OK
+m14fix3 windows left: 0
+== S3 GATES ==
+fmt exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+build exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy exit=0
+test result: ok. 1241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.08s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== END ==
+```
+
+PASTE MATCH
