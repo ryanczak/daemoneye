@@ -1,6 +1,16 @@
 # NEXT
 
-## Active phase: [M14 phase-02 — approval-roundtrip-live](milestones/M14-live-verification/phase-02-approval-roundtrip-live.md)
+## Active phase: [M14 phase-03 — approval-state-persistence](milestones/M14-live-verification/phase-03-approval-state-persistence.md)
+
+Drafted 2026-08-11 on the PE's option-(a) decision (inside the resumed
+/rexymcp:auto run). Deletes the turn-end `SessionApproval::from_config`
+reset (`stream.rs:653-657`, slipped in via `93fa228` untested) plus its
+orphaned `Config` import (caught by scratch-applying the deletion — it would
+have failed `-D warnings`), pins the session-start semantics in a
+`from_config` doc comment, and live-checks that `/approvals revoke`
+survives a completed turn (CHECK-P). Phase-02 re-runs after this lands.
+
+## Blocked behind phase-03: [M14 phase-02 — approval-roundtrip-live](milestones/M14-live-verification/phase-02-approval-roundtrip-live.md)
 
 **BLOCKED 2026-08-11 — live finding, PE decision needed.** The sweep ran
 S1–S5; CHECK-G (deny-path) FAILed for a real reason: **runtime approval state
