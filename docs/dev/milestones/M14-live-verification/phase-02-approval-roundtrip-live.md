@@ -1,7 +1,7 @@
 # Phase 02: Approval round trip live
 
 **Milestone:** M14 — Live Verification
-**Status:** blocked (CHECK-G finding — see the 04:55 blocker entry; architect decision needed)
+**Status:** in-progress (round 2 — blocker resolved by phase-03)
 **Depends on:** phase-01
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -557,3 +557,13 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bee8820cea1177a0453d50fd0678158e8a96495e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-08-11 (round 2, architect — blocker resolved)
+
+The CHECK-G blocker is fixed: phase-03 (`done`, commit `bec7bff`, reviewed
+`fdbec53`) deleted the turn-end `SessionApproval` reset, and its live
+CHECK-P proved `/approvals revoke` now survives a completed turn. Round 2
+re-runs this phase's E2E sections S1-S6 verbatim and unchanged — the spec
+was never the problem. Expected now: R2 prompts (deny path exercisable),
+S4 reached, all 7 verdicts OK. Any remaining FAIL is a fresh finding:
+blocker entry, stop, do not adjust the block.
