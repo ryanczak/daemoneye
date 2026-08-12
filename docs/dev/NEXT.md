@@ -1,6 +1,26 @@
 # NEXT
 
-## Active phase: [M14 phase-03 — approval-state-persistence](milestones/M14-live-verification/phase-03-approval-state-persistence.md)
+## Active: M14 blocked on a second live finding — PE decision needed (2026-08-11)
+
+**Phase-02 round 2: the phase-03 fix is proven live (CHECK-G OK — deny path
+prompts, denies, informs the AI), but CHECK-J surfaced live defect #2: the
+per-tool cap enforces per *batch*, not per *turn*.** `tool_call_counts` is
+declared inside the per-batch handler (`src/daemon/stream.rs:931`), so
+sequential single-call batches never accumulate — with `list_panes = 1`
+live, the AI called it twice in one turn, twice, unblocked (session JSONL
+evidence in the phase-02 blocker entry). Comment, config doc and the cap's
+error text all promise per-turn. Unit tests are green because they exercise
+one batch. **Decision:** (a2) phase-04 hoists the counter to turn scope,
+phase-02 re-runs; or (b2) bless per-batch and align the three doc surfaces.
+Architect recommends (a2). Environment verified restored at takeover
+(config byte-identical, daemon up, fixture gone, gates green).
+
+Also carried: the executor's read-only src/-diving stall recurred (2nd
+M14 occurrence, this time with no blocker entry written) — the
+"impulse-to-diagnose" ban held it off in phase-01 round 2/3 but not here;
+calibration item for close.
+
+## Done: [M14 phase-03 — approval-state-persistence](milestones/M14-live-verification/phase-03-approval-state-persistence.md)
 
 Drafted 2026-08-11 on the PE's option-(a) decision (inside the resumed
 /rexymcp:auto run). Deletes the turn-end `SessionApproval::from_config`

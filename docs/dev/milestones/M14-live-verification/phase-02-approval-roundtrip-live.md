@@ -1,7 +1,7 @@
 # Phase 02: Approval round trip live
 
 **Milestone:** M14 — Live Verification
-**Status:** in-progress (round 2 — blocker resolved by phase-03)
+**Status:** blocked (round 2 — CHECK-J finding: per-tool cap enforces per batch, not per turn)
 **Depends on:** phase-01
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -567,3 +567,36 @@ re-runs this phase's E2E sections S1-S6 verbatim and unchanged — the spec
 was never the problem. Expected now: R2 prompts (deny path exercisable),
 S4 reached, all 7 verdicts OK. Any remaining FAIL is a fresh finding:
 blocker entry, stop, do not adjust the block.
+
+### Update — 2026-08-11 (round 2 blocker, architect takeover)
+
+Round 2 ran S1-S4 and then hard-failed (`NoProgressStall`, 60 read-only
+turns spent reading `src/` against § Out of scope, second occurrence; S5
+never ran — the architect executed S5 verbatim at takeover, restoring the
+config byte-identical and re-running the gates green).
+
+**The deny path is fixed and proven live**: CHECK-G OK (R2 prompted, `n`
+denied, `User denied execution` in the session JSONL) — phase-03's fix
+verified through the door that found the bug. S1/F/H/K/S5 also OK.
+
+**CHECK-J FAIL is a genuine second live defect.** Evidence
+(`~/.daemoneye/var/log/sessions/cec150e371e340df.jsonl`): the AI called
+`list_panes` twice within turn 5 and twice within turn 6, cap `list_panes
+= 1` live — and no `has been called` block fired. Root cause verified in
+source: `tool_call_counts` is declared at `src/daemon/stream.rs:931`,
+**inside the per-batch handler**, so it is reborn for every assistant
+message; sequential single-call batches within a turn never accumulate.
+The comment above it ("Per-turn tool-call loop guard"), the config doc
+("max consecutive calls of one non-approval tool per turn") and the cap's
+own error text ("has been called N times this turn") all promise per-turn
+semantics. The unit tests pinning the cap exercise a single batch, which
+is why they are green over this gap — the exact M12 risk this milestone
+exists to catch.
+
+**Decision needed (PE):** (a2) phase-04 hoists the counter to turn scope
+(small diff — declare it beside `this_turn_count` and thread it into the
+batch handler), then phase-02 re-runs once more; or (b2) declare per-batch
+the intended semantics and align the three doc/error surfaces to it,
+re-speccing CHECK-J. The architect recommends (a2): per-batch is trivially
+bypassed by a model that sequences its calls, which defeats the cap as a
+budget control, and every documented surface already promises per-turn.
