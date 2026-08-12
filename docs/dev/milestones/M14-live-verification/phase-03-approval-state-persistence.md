@@ -1,7 +1,7 @@
 # Phase 03: Approval state persistence
 
 **Milestone:** M14 — Live Verification
-**Status:** review
+**Status:** done
 **Depends on:** phase-02 (its blocker is this phase's cause)
 **Estimated diff:** ~10 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -438,3 +438,27 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** bec7bffaf5c37abb1030c748de0cc804011cedd2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — all three source edits match the spec verbatim
+  (turn-end block gone, `Config` import gone, `from_config` doc comment
+  matches the pinned lines exactly).
+- **Calibration:** The completion summary's claim that the `Config` import
+  "was already absent" is **false** — re-run at review: `git show bec7bff --
+  src/cli/commands/stream.rs` shows `-use crate::config::Config;` explicitly
+  removed by this commit (alongside the 6-line block, for `+0/-7` total,
+  matching the diffstat), and `git log --all -- src/cli/commands/stream.rs`
+  shows no earlier commit removed it. The code change itself is correct and
+  matches the spec exactly; only the executor's narrative account of *why*
+  the import count reached zero is wrong (it attributes to prior drift a
+  deletion it performed itself in this run). Not a bounce — the tree,
+  greps, and all three acceptance criteria are satisfied — but a repeat of
+  the pattern in `WORKFLOW.md` § "A pasted transcript is a claim, not
+  evidence" (completion "deviations" narrative wrong even under a correct
+  diff): read the diff, not the self-report, when a completion summary
+  makes a claim about what changed. One occurrence; not yet at fold
+  threshold.
