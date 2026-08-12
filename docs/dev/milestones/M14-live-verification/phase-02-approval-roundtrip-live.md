@@ -611,3 +611,73 @@ one more time, expecting all 7 verdicts OK. Any FAIL is a fresh finding:
 blocker entry, stop. Reminder from the two hard-failed rounds: reading
 `src/` is out of scope entirely — the verdict lines and the blocker entry
 are the only responses to any result, expected or not.
+
+### Update — 2026-08-12 01:20 (started)
+
+Executor running phase-02 E2E sections S1–S6 verbatim (round 3). All output appended to `/tmp/e2e-m14-02.txt`.
+
+### Update — 2026-08-12 01:20 (end-to-end verification)
+
+```
+== S1 CAP-CONFIG-RESTART ==
+backup: done
+2
+capped config installed
+Daemon stopped.
+daemoneye daemon started (PID 979453)
+daemon-start exit=0
+Daemon is running.
+CHECK-S1 cap-warning: OK
+== S2 FIXTURE-AND-CHAT ==
+home-session=0
+%36 1
+%37 0
+│                                                                                                                                                                                                                                                             │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ session:ded4a54a… · Qwen/Qwen3.6-27B-FP8 · up 7s
+== S3 APPROVAL-ROUND-TRIPS ==
+target-pane=%37
+-- R1: zoom + y --
+prompt-count before=0 after=1
+  → target: %37
+zoomed-after-y=1
+CHECK-F approve-path: OK
+CHECK-H target-hint: OK
+-- R2: unzoom + n (also proves y was one-shot) --
+prompt-count before=0 after=1
+highlight-style-during-prompt= (informational)
+zoomed-after-n=1
+session-log=/home/matt/.daemoneye/var/log/sessions/ded4a54a1d1037e8.jsonl
+CHECK-G deny-path: OK
+-- R3: unzoom + y (restore; second gated execution under cap=1) --
+zoomed-after-restore=0
+== S4 CAP-AND-EXEMPTION ==
+session-log=/home/matt/.daemoneye/var/log/sessions/ded4a54a1d1037e8.jsonl
+CHECK-J cap-enforced: OK
+non-denied tmux_control results=2 (cap was 1; 2+ proves exemption)
+CHECK-K gated-exempt: OK
+== S5 RESTORE-TEARDOWN-GATES ==
+config restored
+Daemon stopped.
+daemoneye daemon started (PID 981665)
+daemon-start exit=0
+Daemon is running.
+CHECK-S5 config-restored: OK
+m14fix2 windows left: 0
+fmt exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+build exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.08s
+clippy exit=0
+test result: ok. 1241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.05s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== END ==
+```
+
+PASTE MATCH
