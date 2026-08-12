@@ -1,7 +1,7 @@
 # Phase 02: Approval round trip live
 
 **Milestone:** M14 — Live Verification
-**Status:** review
+**Status:** done
 **Depends on:** phase-01
 **Estimated diff:** ~0 source lines — this phase ships evidence, not code
 **Tags:** language=shell, kind=test, size=m
@@ -814,3 +814,31 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 **Commit:** 0aa13458f99bbeb0a3f8254ef9bcc5c3f4bad3c7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-08-11
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (at review level — this phase's own spec never bounced; the
+  two live defects it surfaced during earlier dispatch rounds, `/approvals
+  revoke` not persisting and the per-batch cap scope, were fixed by sibling
+  phases phase-03 and phase-04, not by a bug filed against phase-02. Round 3
+  re-ran phase-02's unchanged spec against the fixed daemon and it passed
+  clean — same pattern as M13 phase-05 (`README.md`: "spec-correct and
+  approved_first_try" despite the live check driving two unplanned phases).
+- **Executor:** Qwen/Qwen3.6-27B-FP8
+- **Scope deviations:** none — S1-S6 ran verbatim and unchanged across all
+  three rounds; the only variable was the state of the daemon underneath them.
+- **Calibration:** Two live defects found and fixed outside this phase:
+  (1) `SessionApproval` was reset every turn (`stream.rs:656`), so
+  `/approvals revoke` only gated one turn — fixed by phase-03. (2)
+  `tool_call_counts` was declared inside the per-batch handler
+  (`stream.rs:931`), so sequential single-call batches within a turn never
+  accumulated toward the per-tool cap — fixed by phase-04. Round 2's hard-fail
+  was a `NoProgressStall` from 60 read-only turns reading `src/` against
+  § Out of scope (second occurrence project-wide) while diagnosing CHECK-J;
+  the architect took over only to run S5 (config restore + gates) and did not
+  complete the phase. Both defects are exactly the class this milestone exists
+  to catch: unit tests were green over both gaps (per-batch tests never
+  exercised sequential batches within a turn; no test exercised a completed
+  turn's approval-state carryover) until a live multi-turn probe forced the
+  question.
