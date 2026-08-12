@@ -1,14 +1,31 @@
 # NEXT
 
-## Active phase: [M14 phase-04 — per-turn-cap-scope](milestones/M14-live-verification/phase-04-per-turn-cap-scope.md)
+## Active phase: none — M14 milestone boundary (closed 2026-08-11, awaiting PE sign-off)
 
-Drafted 2026-08-11 on the PE's (a2) decision (inside the resumed
-/rexymcp:auto run). Hoists `tool_call_counts` + `total_turn_call_count`
-from the batch handler (`stream.rs:928-932`) to turn scope in
-`run_conversation_loop` — prototyped in-tree (`cargo check` clean,
-reverted) so both worked-example patches are compile-verified. Own live
-check (CHECK-T) reruns phase-02's failed CHECK-J probe against the fixed
-daemon; phase-02 round 3 follows.
+**M14 — Live Verification is closed.** Four phases, all `done`: 01
+`approved_after_1`, 02/03/04 `approved_first_try`. Two genuine product
+defects found live and fixed in-milestone (turn-end approval-state reset;
+per-batch cap scope) — both invisible to 1200+ green unit tests, both
+proven fixed through the same probes that caught them. All exit criteria
+live-verified; retrospective in
+`docs/dev/milestones/M14-live-verification/README.md` § "M14 retrospective".
+Run hands-off under `/rexymcp:auto` (first multi-blocker autonomous run).
+
+**What needs the human (§ Calibration inventory in the retrospective):**
+
+1. Fold: amend the PASTE MATCH recipe in WORKFLOW.md § E2E to the
+   last-entry anchor (the first-fence form diffs a superseded round).
+2. Fold: specs must not demand byte-exact pasting of non-round-trippable
+   bytes — strip ANSI at generation, as part of the block.
+3. Hold-or-fold (2 occurrences): make the FAIL→blocker duty a seeded task,
+   not a prose ban — the src-diving stall cost two hard_fails despite the
+   written rule.
+4. Sign off / name the next milestone. Still carried: M6 — Verification &
+   Hygiene (12 phases scoped 2026-07-30, never dispatched), the upstream
+   push backlog (M13's four folds + M14's above), width-flip scrollback
+   ghosts (cosmetic backlog).
+
+**Next action:** PE decides the folds and the next milestone.
 
 ### Resolved by phase-04 (was: blocked on second live finding)
 
