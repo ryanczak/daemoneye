@@ -205,3 +205,25 @@ on all — no unticked criteria this time.
    numeric tmux session names make bare `-t <n>` a window-index reference
    (use `"$HS:"`); `daemoneye chat` hangs in a clientless session; one-shot
    `ask` persists no session JSONL — chat is the evidence-bearing door.
+
+### PE sign-off — 2026-08-11
+
+Milestone signed off. Calibration decisions:
+
+- **Item 1 (last-entry PASTE MATCH) — folded.** WORKFLOW.md § "End-to-end
+  verification" PASTE MATCH recipe now anchors the last E2E entry; validated
+  both ways against M14 phase-01's two entries.
+- **Item 2 (no unpastable bytes) — folded.** New § E2E clause: the artifact
+  must contain only round-trippable bytes; strip ANSI inside the mechanical
+  generator, never as a post-edit.
+- **Item 3 (seeded FAIL→blocker task) — held** at two occurrences; fold on a
+  third.
+- **Item 4 (false completion-narrative) — tallied**, one occurrence; existing
+  rule caught it.
+- Both folds added to the upstream push backlog (with M13's four).
+
+**Next milestone: not yet named.** The boundary notes' carried claim that
+M6 — Verification & Hygiene was "never dispatched" was checked at sign-off
+and found stale: M6 closed 2026-07-31 (commit `c40faae`, all phases `done`).
+The PE names the next milestone; NEXT.md carries the correction and the
+genuinely-carried backlog (upstream push; width-flip scrollback ghosts).

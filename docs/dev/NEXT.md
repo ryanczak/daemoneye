@@ -1,6 +1,30 @@
 # NEXT
 
-## Active phase: none — M14 milestone boundary (closed 2026-08-11, awaiting PE sign-off)
+## Active phase: none — M14 signed off 2026-08-11; next milestone not yet named
+
+**PE sign-off landed 2026-08-11.** Calibration decisions: folds 1+2 (last-entry
+PASTE MATCH anchor; no-unpastable-bytes/strip-ANSI-at-generation) are in
+`docs/dev/WORKFLOW.md` § "End-to-end verification"; item 3 (seeded
+FAIL→blocker task) **held** at two occurrences; item 4 tallied. Both folds
+join the upstream push backlog. Sign-off record in the M14 README.
+
+**Correction (2026-08-11): the carried "M6 — Verification & Hygiene, never
+dispatched" claim below was stale and wrong.** M6 was completed and closed
+2026-07-31 (commit `c40faae`; all 13 phase docs `done`, retrospective in its
+README, its folds signed off — see WORKFLOW.md's "Folded 2026-07-31 after
+M6" note). The claim propagated unverified from the 2026-07-30 scoping-era
+text through the M13/M14 boundary notes. Remaining genuinely-carried items:
+the **upstream push backlog** (~14 local-only WORKFLOW.md sections + M13's
+four folds + M14's two — a rexyMCP-repo change, out of bounds from this
+repo's architect session) and **width-flip scrollback ghosts** (cosmetic,
+recorded as not milestone-shaped).
+
+**Next action:** PE names the next milestone; then `/rexymcp:architect next`
+scopes it.
+
+---
+
+## Historical: M14 milestone boundary (closed 2026-08-11)
 
 **M14 — Live Verification is closed.** Four phases, all `done`: 01
 `approved_after_1`, 02/03/04 `approved_first_try`. Two genuine product

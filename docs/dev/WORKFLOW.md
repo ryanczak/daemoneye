@@ -332,22 +332,42 @@ Keep the block itself in § End-to-end verification — this task points at it.
 The point is that the *obligation* is tracked, not that the commands are
 duplicated.
 
-**Close the entry with a PASTE MATCH self-check, scoped to the entry's first
-fence.** The proven finish condition for paste fidelity (per § "Give the
-executor a condition it can check") is a final task that re-extracts the
-pasted fence from the phase doc, diffs it against the artifact file, and
-prints a verdict the executor and the review can both read. Three mechanics,
-each earned:
+**The artifact must contain only bytes an LLM can round-trip.** A spec that
+demands byte-exact pasting of raw ANSI escape sequences (or any other
+control-byte soup) makes the executor's only compliant path impossible — the
+paste *will* diverge, and the bounce is architect-caused. Strip at
+generation, as part of the mechanical generator itself, never as a post-edit:
 
-1. **The extraction anchors on the entry heading and takes only the first
-   fenced block after it.** A bare substring grep over the whole phase doc
-   sweeps in the server-authored `(complete)` entry's gate-output tails and
-   reports a false `PASTE MISMATCH` — this bit two reviews before the scoping
-   was pinned. Shape:
+```sh
+cmd 2>&1 | sed 's/\x1b\[[0-9;]*m//g' >> "$A"
+```
+
+*(Folded 2026-08-11 at M14 close, on PE sign-off. bug-01-1's root cause was
+shared: the spec demanded byte-exact pasting of an artifact full of ANSI
+escapes, so the executor retyped — the round-3 spec moved the `sed` into the
+generator and the paste came back byte-exact first try.)*
+
+**Close the entry with a PASTE MATCH self-check, anchored to the *last*
+end-to-end entry.** The proven finish condition for paste fidelity (per
+§ "Give the executor a condition it can check") is a final task that
+re-extracts the pasted fence from the phase doc, diffs it against the
+artifact file, and prints a verdict the executor and the review can both
+read. Three mechanics, each earned:
+
+1. **The extraction anchors on the *last* entry heading in the doc and takes
+   only the first fenced block after it.** Two failure modes pinned this
+   shape: a bare substring grep over the whole phase doc sweeps in the
+   server-authored `(complete)` entry's gate-output tails and reports a false
+   `PASTE MISMATCH` (bit two reviews); and a first-match anchor diffs a
+   bounced round's superseded entry, which stays in the doc — multi-round
+   phases made the first-fence form report false `PASTE MISMATCH` on the
+   current round's byte-exact paste (caught and flagged by the M14 phase-01
+   round-3 executor). Shape:
 
    ```sh
-   awk '/^### Update.*end-to-end verification/{f=1} f&&/^```/{c++; next} f&&c==1{print} f&&c==2{exit}' \
-     docs/dev/milestones/<M>/<phase>.md > /tmp/pasted-NN.txt
+   D=docs/dev/milestones/<M>/<phase>.md
+   L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+   tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-NN.txt
    diff /tmp/pasted-NN.txt /tmp/e2e-NN.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
    ```
 
@@ -365,7 +385,11 @@ M12 phase-05 r2, M13 phase-04 r2 (38 turns, zero source edits, after the
 retyped-evidence class had recurred), M13 phase-07 r1 (the first fully clean
 first-round artifact). The two absent-verdict-line entries were M13 phases 05
 and 06; the two false-positive review extractions were the M12 documented case
-and M13 phase-06's.)*
+and M13 phase-06's. Amended 2026-08-11 at M14 close, on PE sign-off: the
+extraction anchor moved from first-fence to last-entry — first-fence does not
+survive multi-round phases; validated both ways against M14 phase-01's two
+entries: last-entry → `PASTE MATCH`, first-entry → `PASTE MISMATCH` on the
+superseded round-2 content.)*
 
 *(Folded 2026-07-31 after M6, on PE sign-off. Ten of that milestone's fourteen
 bounces and two of its four architect takeovers were this single requirement —
