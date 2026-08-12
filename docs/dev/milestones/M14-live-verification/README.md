@@ -53,7 +53,7 @@ plainly instead of ticking.
 | #  | Phase                                                        | Status |
 |----|--------------------------------------------------------------|--------|
 | 01 | scripted-live-sweep (phase-01-scripted-live-sweep.md)        | done        |
-| 02 | approval-roundtrip-live (phase-02-approval-roundtrip-live.md) | in-progress |
+| 02 | approval-roundtrip-live (phase-02-approval-roundtrip-live.md) | review      |
 | 03 | approval-state-persistence (phase-03-approval-state-persistence.md) | done        |
 | 04 | per-turn-cap-scope (phase-04-per-turn-cap-scope.md) | done        |
 
