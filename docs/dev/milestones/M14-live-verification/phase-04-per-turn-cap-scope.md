@@ -1,7 +1,7 @@
 # Phase 04: Per-turn cap scope
 
 **Milestone:** M14 — Live Verification
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-03
 **Estimated diff:** ~15 lines
 **Tags:** language=rust, kind=bugfix, size=s
@@ -265,3 +265,54 @@ verified unique, and the `&'static str` key lifetime is confirmed safe.
 Verdict emitters in the block: 3 (CHECK-S1, CHECK-T, CHECK-S3) — matches
 the acceptance criterion. S2's probe is phase-02's CHECK-J probe verbatim
 (same prompts, same evidence grep), pointed at the fixed daemon.
+
+### Update — 2026-08-12 01:10 (started)
+
+Executor began phase. Applied Spec tasks 1 and 2: deleted batch-scoped
+`tool_call_counts` / `total_turn_call_count` declarations and hoisted them to
+turn scope (before the `loop {`). `cargo check` clean, acceptance greps
+confirmed (2 `tool_call_counts`, 1 bug comment, declaration before line 900).
+
+### Update — 2026-08-12 01:10 (end-to-end verification)
+
+```
+== S1 REBUILD-CAP-RESTART ==
+   Compiling daemoneye v0.9.9 (/home/matt/src/daemoneye)
+    Finished `release` profile [optimized] target(s) in 20.48s
+build exit=0
+backup: done
+capped config installed
+Daemon stopped.
+install: done
+daemoneye daemon started (PID 964818)
+daemon-start exit=0
+Daemon is running.
+sha256 installed=4669659a9e01b3ca2f374027eb5c013139fe66650f9623e2b2169814cad694fe running=4669659a9e01b3ca2f374027eb5c013139fe66650f9623e2b2169814cad694fe
+CHECK-S1 binary-identity: OK
+== S2 CAP-PER-TURN ==
+session-log=/home/matt/.daemoneye/var/log/sessions/39b2761a1ea4a00b.jsonl
+CHECK-T cap-per-turn: OK
+m14fix4 windows left: 0
+== S3 RESTORE-AND-GATES ==
+config restored
+Daemon stopped.
+daemoneye daemon started (PID 965951)
+daemon-start exit=0
+CHECK-S3 config-restored: OK
+fmt exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+build exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+clippy exit=0
+test result: ok. 1241 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.07s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 30 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.15s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test exit=0
+== END ==
+```
+
+PASTE MATCH

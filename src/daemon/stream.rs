@@ -81,6 +81,14 @@ where
         schedule_store,
         cost_attribution,
     } = ctx;
+
+    // Per-turn tool-call loop guard — spans every batch cycle in this turn.
+    // Declared outside the batch loop so sequential single-call batches
+    // accumulate (the 2026-08-11 per-batch cap bug). Approval-gated tools
+    // are always exempt — the user's per-call approval prompt is the gate.
+    let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
+    let mut total_turn_call_count: u32 = 0;
+
     loop {
         let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
 
@@ -924,12 +932,6 @@ where
                         tool_results: None,
                         turn: Some(this_turn_count),
                     });
-
-                    // Per-turn tool-call loop guard.
-                    // Approval-gated tools are always exempt — the user's per-call
-                    // approval prompt is the gate.
-                    let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
-                    let mut total_turn_call_count: u32 = 0;
 
                     let mut tool_results = Vec::new();
                     let mut user_message_redirect: Option<String> = None;
