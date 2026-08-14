@@ -41,7 +41,7 @@ ratatui panels.
 |----|------------------------------|--------|
 | 01 | read-pane-grep-null ([phase-01-read-pane-grep-null.md](phase-01-read-pane-grep-null.md)) | done (escalated) |
 | 02 | sudo-cached-detection ([phase-02-sudo-cached-detection.md](phase-02-sudo-cached-detection.md)) | done |
-| 03 | resize-border-corruption ([phase-03-resize-border-corruption.md](phase-03-resize-border-corruption.md)) | in-progress |
+| 03 | resize-border-corruption ([phase-03-resize-border-corruption.md](phase-03-resize-border-corruption.md)) | review      |
 | 04 | approval-panel               | todo   |
 | 05 | sudo-credential-panel        | todo   |
 
