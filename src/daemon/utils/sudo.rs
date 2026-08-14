@@ -38,6 +38,22 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     re.is_match(cmd)
 }
 
+/// The credential-prompt text sent to the client for a sudo password
+/// request. Deliberately takes no command argument: the command is already
+/// on screen directly above the dialog (the approval flow's scrollback
+/// panel), so the prompt text must never embed a copy of it.
+pub fn sudo_password_prompt(attempt: usize, max: usize) -> String {
+    if attempt == 0 {
+        "[sudo] password required".to_string()
+    } else {
+        format!(
+            "sudo: Sorry, try again. Password for attempt {}/{}",
+            attempt + 1,
+            max
+        )
+    }
+}
+
 /// Returns `true` if the current user's sudo credentials are cached, i.e.
 /// `sudo -n true` exits 0 without requiring a password.
 ///
@@ -171,6 +187,20 @@ mod tests {
     #[test]
     fn command_has_sudo_no_sudo() {
         assert!(!command_has_sudo("ls -la /home"));
+    }
+
+    #[test]
+    fn sudo_password_prompt_first_attempt_omits_command() {
+        assert_eq!(sudo_password_prompt(0, 3), "[sudo] password required");
+        assert!(!sudo_password_prompt(0, 3).contains("for:"));
+    }
+
+    #[test]
+    fn sudo_password_prompt_retry_names_attempt() {
+        assert_eq!(
+            sudo_password_prompt(1, 3),
+            "sudo: Sorry, try again. Password for attempt 2/3"
+        );
     }
 
     #[test]

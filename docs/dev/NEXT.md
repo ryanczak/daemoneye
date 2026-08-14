@@ -34,17 +34,24 @@ deferred to milestone close. Qwen3.8: two for two, both 74 turns.
 `e2a631a` + approval `f3c1038`. Themed in-viewport approval dialog; legacy
 prompt path preserved for the other flows. Qwen3.8: three for three.
 
-**Active phase: phase-05 — sudo-credential-panel** (`docs/dev/milestones/
-M15-chat-reliability/phase-05-sudo-credential-panel.md`, status: todo,
-drafted 2026-08-14; hard-depends on phase-04's panel, now in-tree). Mirrors
-`draw_approval_panel` for the credential prompt: `credential_hint_line`
-(`[Enter] submit  [Esc] cancel`) + `draw_credential_panel` + three-call
-rewire in `prompt_credential_ratatui`. Security invariants pinned: renderer
-only ever sees the bullet display buffer; Esc clears `cred_real`; both
-scrollback commits byte-identical. Last M15 phase — milestone close (live
-verification sweep of 01–05 + retrospective) follows its approval.
+**phase-05 — sudo-credential-panel: done (approved_first_try) 2026-08-14**,
+commit `f532ad3` + approval `63ef02a`; Qwen3.8: four for four, 59 turns.
+Live sudo-dialog check deferred to milestone close with the others.
 
-**Next action:** `/rexymcp:dispatch phase-05-sudo-credential-panel`.
+**Active phase: phase-06 — dedup-approval-dialogs** (`docs/dev/milestones/
+M15-chat-reliability/phase-06-dedup-approval-dialogs.md`, status: todo,
+drafted 2026-08-14 on PE direction: the approval and sudo credential
+dialogs must not contain a copy of the command they concern — it is
+already in scrollback directly above). Scope: `draw_approval_panel` loses
+its summary row/parameter (six call sites, tests); the daemon's
+`CredentialPrompt` text drops the `: {cmd}` suffix via a new pure
+`sudo_password_prompt(attempt, max)` helper in `utils/sudo.rs` (both
+`foreground.rs` sites). Matching exit criterion added to the M15 README.
+All four mechanical acceptance criteria validated failing against the
+current tree. New last M15 phase — milestone close (live verification
+sweep of 01–06 + retrospective) follows its approval.
+
+**Next action:** `/rexymcp:dispatch phase-06-dedup-approval-dialogs`.
 
 ---
 

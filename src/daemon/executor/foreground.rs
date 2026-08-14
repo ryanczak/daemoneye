@@ -8,8 +8,8 @@ use crate::daemon::session::{FG_HOOK_COUNTER, bg_done_subscribe, with_sessions};
 use crate::daemon::utils::{
     command_has_sudo, extract_command_output, fingerprint_pam_configured, interactive_destination,
     is_fingerprint_prompt, is_interactive_command, log_command, normalize_output, shell_escape_arg,
-    sudo_auth_failed, sudo_credentials_cached, sudo_sentinel, wait_for_sudo_prompt_and_inject,
-    with_sudo_sentinel,
+    sudo_auth_failed, sudo_credentials_cached, sudo_password_prompt, sudo_sentinel,
+    wait_for_sudo_prompt_and_inject, with_sudo_sentinel,
 };
 use crate::ipc::{Request, Response};
 use crate::tmux;
@@ -545,17 +545,7 @@ where
                             let mut sudo_fail: Option<SudoFail> = None;
                             let mut attempt = 0usize;
                             'sudo: while attempt < MAX_SUDO_RETRIES {
-                                let prompt = if attempt == 0 {
-                                    format!("[sudo] password required for: {}", cmd)
-                                } else {
-                                    format!(
-                                        "sudo: Sorry, try again. \
-                                     Password for attempt {}/{}: {}",
-                                        attempt + 1,
-                                        MAX_SUDO_RETRIES,
-                                        cmd
-                                    )
-                                };
+                                let prompt = sudo_password_prompt(attempt, MAX_SUDO_RETRIES);
                                 send_response_split(
                                     tx,
                                     Response::CredentialPrompt {
@@ -1184,7 +1174,7 @@ where
                 tx,
                 Response::CredentialPrompt {
                     id: id.to_string(),
-                    prompt: format!("[sudo] password required for: {}", cmd),
+                    prompt: sudo_password_prompt(0, MAX_SUDO_RETRIES),
                 },
             )
             .await?;

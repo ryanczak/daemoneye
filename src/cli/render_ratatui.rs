@@ -454,13 +454,13 @@ impl<B: Backend> RatatuiRenderer<B> {
     }
 
     /// Draw the live region as a themed approval dialog: a rounded blood-red
-    /// bordered panel (yellow title) holding the command summary, the
-    /// multicolor Y/A/N options line, and the editable input line; the status
-    /// bar keeps the bottom row. Transient — leaves no residue in scrollback.
+    /// bordered panel (yellow title) holding the multicolor Y/A/N options line
+    /// and the editable input line; the command it approves is in the
+    /// scrollback panel directly above. The status bar keeps the bottom row.
+    /// Transient — leaves no residue in scrollback.
     pub fn draw_approval_panel(
         &mut self,
         title: &str,
-        summary: &str,
         session_label: &str,
         input: &InputLine,
         status: &StatusBarState<'_>,
@@ -476,7 +476,6 @@ impl<B: Backend> RatatuiRenderer<B> {
         let model = status.model.to_string();
         let start_time = self.start_time;
         let title_owned = title.to_string();
-        let summary_owned = summary.to_string();
         let session_label_owned = session_label.to_string();
 
         self.terminal.draw(|frame| {
@@ -498,12 +497,7 @@ impl<B: Backend> RatatuiRenderer<B> {
                     Style::default().fg(yellow).add_modifier(Modifier::BOLD),
                 ));
 
-            let inner_width = area.width.saturating_sub(2) as usize;
             let content = Paragraph::new(vec![
-                Line::from(Span::styled(
-                    truncate_with_ellipsis(&summary_owned, inner_width),
-                    Style::default().fg(Color::Gray),
-                )),
                 approval_options_line(&session_label_owned, red, yellow),
                 Line::from(vec![
                     Span::styled("› ", Style::default().fg(yellow)),
@@ -2475,14 +2469,12 @@ mod tests {
     /// Draw the approval panel on a fresh 80-col test renderer.
     fn draw_approval_panel_test(
         renderer: &mut RatatuiRenderer<TestBackend>,
-        summary: &str,
         session_label: &str,
         input: &InputLine,
     ) {
         renderer
             .draw_approval_panel(
                 "approve command",
-                summary,
                 session_label,
                 input,
                 &approval_test_status(),
@@ -2522,7 +2514,7 @@ mod tests {
         };
 
         let input = InputLine::new();
-        draw_approval_panel_test(&mut renderer, "$ ls -la", "session", &input);
+        draw_approval_panel_test(&mut renderer, "session", &input);
 
         let rows = buffer_rows(&renderer);
         let options_row = rows
@@ -2606,7 +2598,7 @@ mod tests {
         };
 
         let input = InputLine::new();
-        draw_approval_panel_test(&mut renderer, "$ sudo apt install", "sudo session", &input);
+        draw_approval_panel_test(&mut renderer, "sudo session", &input);
 
         let rows = buffer_rows(&renderer);
         assert!(
@@ -2618,7 +2610,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_panel_truncates_long_summary() {
+    fn approval_panel_has_no_command_row() {
         let backend = TestBackend::new(80, 24);
         let terminal = Terminal::with_options(
             backend,
@@ -2639,20 +2631,12 @@ mod tests {
         };
 
         let input = InputLine::new();
-        let long_summary = format!("$ {}", "x".repeat(300));
-        draw_approval_panel_test(&mut renderer, &long_summary, "session", &input);
+        draw_approval_panel_test(&mut renderer, "session", &input);
 
         let rows = buffer_rows(&renderer);
-        let summary_row = rows
-            .iter()
-            .find(|r| r.contains('$'))
-            .expect("summary row should be rendered");
-        // The row is `│<summary>…│` — the ellipsis is the last content glyph
-        // before the right border.
         assert!(
-            summary_row.ends_with("…│"),
-            "summary row should end with ellipsis before the border, got: {:?}",
-            summary_row
+            !rows.iter().any(|r| r.contains("$ ")),
+            "approval panel must not render a command row, got: {rows:?}"
         );
     }
 
@@ -2679,7 +2663,7 @@ mod tests {
 
         let mut input = InputLine::new();
         input.insert_str("why");
-        draw_approval_panel_test(&mut renderer, "$ ls", "session", &input);
+        draw_approval_panel_test(&mut renderer, "session", &input);
 
         let rows = buffer_rows(&renderer);
         let input_row = rows
@@ -2719,7 +2703,6 @@ mod tests {
         renderer
             .draw_approval_panel(
                 "approve command",
-                "$ ls",
                 "session",
                 &input,
                 &approval_test_status(),
@@ -2763,7 +2746,7 @@ mod tests {
         draw_credential_panel_test(
             &mut renderer,
             "sudo password",
-            "[sudo] password required for: /usr/bin/apt",
+            "[sudo] password required",
             &input,
         );
 
@@ -2829,7 +2812,7 @@ mod tests {
         draw_credential_panel_test(
             &mut renderer,
             "sudo password",
-            "[sudo] password required for: /usr/bin/apt",
+            "[sudo] password required",
             &input,
         );
 
@@ -2867,13 +2850,13 @@ mod tests {
         };
 
         let input = InputLine::new();
-        let long_detail = format!("[sudo] password required for: {}", "x".repeat(300));
+        let long_detail = format!("[sudo] password required {}", "x".repeat(300));
         draw_credential_panel_test(&mut renderer, "sudo password", &long_detail, &input);
 
         let rows = buffer_rows(&renderer);
         let detail_row = rows
             .iter()
-            .find(|r| r.contains("password required for"))
+            .find(|r| r.contains("password required"))
             .expect("detail row should be rendered");
         assert!(
             detail_row.ends_with("…│") || detail_row.trim_end().ends_with('…'),
@@ -2908,7 +2891,7 @@ mod tests {
         renderer
             .draw_credential_panel(
                 "sudo password",
-                "[sudo] password required for: /usr/bin/apt",
+                "[sudo] password required",
                 &input,
                 &approval_test_status(),
             )

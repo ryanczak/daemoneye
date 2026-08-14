@@ -887,7 +887,6 @@ async fn read_approval_input_panel(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     title: &str,
-    summary: &str,
     session_label: &str,
     status: &crate::cli::render::StatusBarState<'_>,
 ) -> String {
@@ -895,7 +894,7 @@ async fn read_approval_input_panel(
 
     // Initial draw with empty input.
     let mut line = InputLine::new();
-    let _ = renderer.draw_approval_panel(title, summary, session_label, &line, status);
+    let _ = renderer.draw_approval_panel(title, session_label, &line, status);
 
     // Read the first byte to decide: single-key shortcut vs. full line edit.
     if let Some(first) = stdin.read_byte().await {
@@ -904,7 +903,7 @@ async fn read_approval_input_panel(
             'y' | 'n' | 'a' => {
                 // Show the key the user pressed in the input box, then return.
                 line.insert(ch);
-                let _ = renderer.draw_approval_panel(title, summary, session_label, &line, status);
+                let _ = renderer.draw_approval_panel(title, session_label, &line, status);
                 ch.to_string()
             }
             '\r' | '\n' => {
@@ -914,7 +913,7 @@ async fn read_approval_input_panel(
             _ => {
                 // Start of a typed message — use the input editor.
                 line.insert(ch);
-                let _ = renderer.draw_approval_panel(title, summary, session_label, &line, status);
+                let _ = renderer.draw_approval_panel(title, session_label, &line, status);
 
                 loop {
                     match stdin.read_byte().await {
@@ -923,13 +922,8 @@ async fn read_approval_input_panel(
                         }
                         Some(b'\x7f' | b'\x08') => {
                             line.backspace();
-                            let _ = renderer.draw_approval_panel(
-                                title,
-                                summary,
-                                session_label,
-                                &line,
-                                status,
-                            );
+                            let _ =
+                                renderer.draw_approval_panel(title, session_label, &line, status);
                         }
                         Some(b'\x03') => {
                             // Ctrl+C — cancel, return empty
@@ -944,7 +938,6 @@ async fn read_approval_input_panel(
                                 line.insert(b as char);
                                 let _ = renderer.draw_approval_panel(
                                     title,
-                                    summary,
                                     session_label,
                                     &line,
                                     status,
@@ -1017,16 +1010,8 @@ pub(super) async fn prompt_tool_call_ratatui(
     }
 
     let session_label = if is_sudo { "sudo session" } else { "session" };
-    let summary = format!("$ {}", command);
-    let input = read_approval_input_panel(
-        renderer,
-        stdin,
-        "approve command",
-        &summary,
-        session_label,
-        status,
-    )
-    .await;
+    let input =
+        read_approval_input_panel(renderer, stdin, "approve command", session_label, status).await;
     let (approved, is_session, user_msg) = parse_approval_response(&input);
 
     if approved {
